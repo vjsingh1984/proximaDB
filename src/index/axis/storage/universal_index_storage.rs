@@ -403,15 +403,15 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 ));
                 let reader =
                     UnifiedSstableReader::new(filesystem, unified_fs, self.collection_id.clone());
-                // UnifiedSstableReader's get_vector returns a VectorRecord, not raw bytes
+                // UnifiedSstableReader returns a canonical ProximaRecord, not raw bytes
                 // We need to handle this differently
                 if let Some(_vector_record) =
                     reader.vector(&file_path.to_string_lossy(), id).await?
                 {
-                    // For now, we can't directly deserialize since we get a VectorRecord
+                    // For now, we can't directly deserialize since we get a ProximaRecord
                     // This would need a different storage approach
                     debug!(
-                        "Found record {} in SST but cannot deserialize generic type T from VectorRecord",
+                        "Found record {} in SST but cannot deserialize generic type T from ProximaRecord",
                         id
                     );
                 }

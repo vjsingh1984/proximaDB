@@ -177,15 +177,17 @@ pub async fn find_vector_by_id(
 
         let current_time = chrono::Utc::now().timestamp() as u64;
         for record in block.records {
-            if record.id == vector_id {
+            if record.oid == vector_id {
                 // Check if record is expired (tombstone support)
-                if let Some(expires_at) = record.expires_at
+                if let Some(expires_at) = record.valid_to_ns
                     && expires_at as u64 <= current_time
                 {
                     // Record is expired, treat as deleted
                     return Ok(None);
                 }
-                return Ok(Some(record));
+                return Ok(Some(crate::proto::proximadb_v1::VectorRecord::from(
+                    &record,
+                )));
             }
         }
     }
@@ -480,11 +482,13 @@ pub async fn search_sstable_quantized(
 
                         // Get record ID and vector from block
                         if let Some(record) = block.records.get(vec_idx) {
+                            let wire_record =
+                                crate::proto::proximadb_v1::VectorRecord::from(record);
                             // Use with_vector constructor which takes id, score, and vector
                             let result = OptimizedSearchRecord::with_vector(
-                                record.id.clone(),
+                                wire_record.id,
                                 similarity,
-                                record.vector.clone(),
+                                wire_record.vector,
                             );
                             results.push(result);
                         }
@@ -532,10 +536,12 @@ pub async fn search_sstable_quantized(
 
                         // Get record ID and vector from block
                         if let Some(record) = block.records.get(vec_idx) {
+                            let wire_record =
+                                crate::proto::proximadb_v1::VectorRecord::from(record);
                             let result = OptimizedSearchRecord::with_vector(
-                                record.id.clone(),
+                                wire_record.id,
                                 similarity,
-                                record.vector.clone(),
+                                wire_record.vector,
                             );
                             results.push(result);
                         }
@@ -546,18 +552,19 @@ pub async fn search_sstable_quantized(
             // Fallback: No quantized section, use FP32 vectors directly
             // This ensures backwards compatibility with non-quantized data
             for record in &block.records {
+                let wire_record = crate::proto::proximadb_v1::VectorRecord::from(record);
                 // Simple cosine-like similarity approximation
                 let dot: f32 = query_vector
                     .iter()
-                    .zip(record.vector.iter())
+                    .zip(wire_record.vector.iter())
                     .map(|(&a, &b)| a * b)
                     .sum();
                 let similarity = (dot + 1.0) / 2.0; // Normalize to [0, 1]
 
                 let result = OptimizedSearchRecord::with_vector(
-                    record.id.clone(),
+                    wire_record.id,
                     similarity,
-                    record.vector.clone(),
+                    wire_record.vector,
                 );
                 results.push(result);
             }

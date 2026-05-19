@@ -18,6 +18,7 @@ use crate::storage::engines::core::formats::arrow_block::{ArrowBlockConfig, Arro
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // Quantization now handled by unified compute module
 use anyhow::Result;
+use proximadb_records::ProximaRecord;
 use std::cmp::{Ordering, Reverse};
 use std::collections::{BinaryHeap, HashMap};
 use std::sync::Arc;
@@ -83,6 +84,36 @@ impl Ord for MergeEntry {
             }
             other => other.reverse(), // Reverse for min-heap behavior
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ProximaMergeEntry {
+    record: ProximaRecord,
+    file_index: usize,
+    timestamp: u32,
+}
+
+impl Eq for ProximaMergeEntry {}
+
+impl PartialEq for ProximaMergeEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.record.oid == other.record.oid && self.timestamp == other.timestamp
+    }
+}
+
+impl Ord for ProximaMergeEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match self.record.oid.cmp(&other.record.oid) {
+            Ordering::Equal => other.timestamp.cmp(&self.timestamp),
+            other => other.reverse(),
+        }
+    }
+}
+
+impl PartialOrd for ProximaMergeEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
     }
 }
 
@@ -552,21 +583,21 @@ impl SstCompactor {
     /// Uses streaming iterators for memory-efficient compaction
     async fn k_way_merge(
         &self,
-        iterators: Vec<(usize, BlockIterator<VectorRecord>)>,
+        iterators: Vec<(usize, BlockIterator<ProximaRecord>)>,
     ) -> Result<(Vec<VectorRecord>, ZeroCopyCompactionStats)> {
         let mut heap = BinaryHeap::new();
-        let mut merged_records = Vec::new();
+        let mut merged_records: Vec<ProximaRecord> = Vec::new();
         let mut stats = ZeroCopyCompactionStats::default();
         // Track all versions for each ID to apply MVCC rules
-        let mut id_versions: HashMap<String, Vec<VectorRecord>> = HashMap::new();
-        let mut active_iterators: Vec<(usize, BlockIterator<VectorRecord>)> = Vec::new();
+        let mut id_versions: HashMap<String, Vec<ProximaRecord>> = HashMap::new();
+        let mut active_iterators: Vec<(usize, BlockIterator<ProximaRecord>)> = Vec::new();
 
         // Initialize heap with first record from each iterator
         for (file_idx, mut iter) in iterators.into_iter() {
             if let Some(record) = iter.next() {
                 let rec = record?;
-                heap.push(Reverse(MergeEntry {
-                    timestamp: rec.timestamp.unwrap_or(0) as u32,
+                heap.push(Reverse(ProximaMergeEntry {
+                    timestamp: (rec.created_at_ns / 1_000_000) as u32,
                     record: rec,
                     file_index: file_idx,
                 }));
@@ -576,7 +607,7 @@ impl SstCompactor {
 
         // Collect all records grouped by ID
         while let Some(Reverse(entry)) = heap.pop() {
-            let record_id = entry.record.id.clone().clone();
+            let record_id = entry.record.oid.clone();
             stats.records_read += 1;
 
             // Collect all versions of each ID
@@ -592,8 +623,8 @@ impl SstCompactor {
                 && let Some(next_record) = iter.next()
             {
                 let rec = next_record?;
-                heap.push(Reverse(MergeEntry {
-                    timestamp: rec.timestamp.unwrap_or(0) as u32,
+                heap.push(Reverse(ProximaMergeEntry {
+                    timestamp: (rec.created_at_ns / 1_000_000) as u32,
                     record: rec,
                     file_index: entry.file_index,
                 }));
@@ -624,13 +655,15 @@ impl SstCompactor {
 
             // Check for empty vector tombstones (deleted records)
             // Tombstone design: empty vector + expires_at in past (including 0 = epoch = always past)
-            let has_empty_vector_tombstone = versions.iter().any(|r| r.vector.is_empty());
+            let has_empty_vector_tombstone = versions
+                .iter()
+                .any(|r| r.embeddings.first().is_none_or(|e| e.values.is_empty()));
             if has_empty_vector_tombstone {
                 // Check if any tombstone has expired (past grace period)
                 // expires_at = 0 means "epoch time" which is always in the past = tombstone marker
                 let tombstone_expired = versions.iter().any(|r| {
-                    r.vector.is_empty()
-                        && r.expires_at.is_some_and(|exp| exp <= current_time as i64)
+                    r.embeddings.first().is_none_or(|e| e.values.is_empty())
+                        && r.valid_to_ns.is_some_and(|exp| exp <= current_time as i64)
                 });
 
                 if tombstone_expired {
@@ -644,7 +677,10 @@ impl SstCompactor {
                     // but don't include any actual data versions
                     debug!("Keeping active tombstone for record: {}", id);
                     // Keep only the tombstone record (newest empty vector)
-                    if let Some(tombstone) = versions.iter().find(|r| r.vector.is_empty()).cloned()
+                    if let Some(tombstone) = versions
+                        .iter()
+                        .find(|r| r.embeddings.first().is_none_or(|e| e.values.is_empty()))
+                        .cloned()
                     {
                         stats.tombstoned_ids.push(id.clone());
                         merged_records.push(tombstone);
@@ -656,7 +692,7 @@ impl SstCompactor {
             // Check for expired records (via expires_at without empty vector)
             let has_expired = versions
                 .iter()
-                .any(|r| r.expires_at.is_some_and(|exp| exp < current_time as i64));
+                .any(|r| r.valid_to_ns.is_some_and(|exp| exp < current_time as i64));
             if has_expired {
                 debug!("Skipping expired record: {}", id);
                 stats.deleted_vector_ids.push(id.clone());
@@ -669,20 +705,20 @@ impl SstCompactor {
 
             // Sort by version (ascending), then by timestamp (ascending for same version)
             versions.sort_by(|a, b| {
-                let ver_a = Self::normalize_version(a.version);
-                let ver_b = Self::normalize_version(b.version);
+                let ver_a = a.record_version as u32;
+                let ver_b = b.record_version as u32;
 
                 ver_a
                     .cmp(&ver_b)
-                    .then_with(|| a.timestamp.cmp(&b.timestamp))
+                    .then_with(|| a.created_at_ns.cmp(&b.created_at_ns))
             });
 
             // Find the highest continuous version
             let mut expected_version = 1u32;
-            let mut last_valid: Option<VectorRecord> = None;
+            let mut last_valid: Option<ProximaRecord> = None;
 
             for record in versions {
-                let version = Self::normalize_version(record.version);
+                let version = record.record_version as u32;
 
                 if version == expected_version {
                     // This version is continuous
@@ -701,7 +737,7 @@ impl SstCompactor {
 
             // Add the highest continuous version to output
             if let Some(record) = last_valid {
-                let selected_version = Self::normalize_version(record.version);
+                let selected_version = record.record_version as u32;
 
                 // Track if this was an update (version > 1 OR multiple records with same ID)
                 if selected_version > 1 || has_multiple_versions {
@@ -748,7 +784,10 @@ impl SstCompactor {
             stats.tombstoned_ids.len()
         );
 
-        Ok((merged_records, stats))
+        Ok((
+            merged_records.into_iter().map(VectorRecord::from).collect(),
+            stats,
+        ))
     }
 
     /// Write merged records to a new SST file

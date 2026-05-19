@@ -217,6 +217,7 @@ use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::VectorRecord;
 use proximadb_compression::CompressionAlgorithm;
+use proximadb_records::ProximaRecord;
 
 // SYNERGY: Reuse row-based bloom filter structures (shared with SST)
 // Proxima encoding for columnar vector optimization
@@ -420,7 +421,10 @@ impl QuantizedIndex {
 
 fn compute_block_centroid(block: &ProximaDataBlock) -> Vec<f32> {
     let first = match block.records.first() {
-        Some(r) => r.vector.as_slice(),
+        Some(r) => r
+            .embeddings
+            .first()
+            .map_or(&[][..], |embedding| embedding.values.as_slice()),
         None => return Vec::new(),
     };
     let dim = first.len();
@@ -430,10 +434,14 @@ fn compute_block_centroid(block: &ProximaDataBlock) -> Vec<f32> {
     let mut sum = vec![0f32; dim];
     let mut count = 0f32;
     for record in &block.records {
-        if record.vector.len() != dim {
+        let vector = record
+            .embeddings
+            .first()
+            .map_or(&[][..], |embedding| embedding.values.as_slice());
+        if vector.len() != dim {
             return Vec::new();
         }
-        for (i, v) in record.vector.iter().enumerate() {
+        for (i, v) in vector.iter().enumerate() {
             sum[i] += *v;
         }
         count += 1.0;
@@ -626,7 +634,10 @@ impl SwiftFile {
         // Group records into blocks (~2000 vectors per block)
         let records_per_block = self.header.records_per_block as usize;
 
-        for (block_id, chunk) in records.chunks(records_per_block).enumerate() {
+        let canonical_records: Vec<ProximaRecord> =
+            records.iter().map(ProximaRecord::from).collect();
+
+        for (block_id, chunk) in canonical_records.chunks(records_per_block).enumerate() {
             // ✅ Proxima automatically provides:
             // - 🔍 Automatic Bloom Filter Generation
             // - 📊 Automatic Metadata Statistics
@@ -654,7 +665,14 @@ impl SwiftFile {
             // This enables 10-50x speedup by filtering 95% of candidates with Hamming distance
             use crate::storage::engines::core::formats::proximablocks::block_structures::QuantizedSection;
 
-            let vectors: Vec<Vec<f32>> = chunk.iter().map(|r| r.vector.clone()).collect();
+            let vectors: Vec<Vec<f32>> = chunk
+                .iter()
+                .filter_map(|r| {
+                    r.embeddings
+                        .first()
+                        .map(|embedding| embedding.values.clone())
+                })
+                .collect();
             if !vectors.is_empty() && !vectors[0].is_empty() {
                 let dimension = vectors[0].len();
 
@@ -712,8 +730,9 @@ impl SwiftFile {
 
             // Update ID index
             for (idx, record) in chunk.iter().enumerate() {
-                if !record.id.is_empty() {
-                    self.id_index.add(record.id.clone(), block_id as u32, idx)?;
+                if !record.oid.is_empty() {
+                    self.id_index
+                        .add(record.oid.clone(), block_id as u32, idx)?;
                 }
             }
 
@@ -777,7 +796,10 @@ impl SwiftFile {
         }
         let mut block_centroids = Vec::new();
 
-        for chunk in records.chunks(records_per_block) {
+        let canonical_records: Vec<ProximaRecord> =
+            records.iter().map(ProximaRecord::from).collect();
+
+        for chunk in canonical_records.chunks(records_per_block) {
             use crate::storage::engines::core::formats::proximablocks::compression_config::RowBasedCompressionConfig;
             let mut block_compression_config =
                 RowBasedCompressionConfig::create_block_config_from_proto(
@@ -878,8 +900,8 @@ impl SwiftFile {
 
             // Update ID index with clustered block ordering
             for (idx, record) in block.records.iter().enumerate() {
-                if !record.id.is_empty() {
-                    self.id_index.add(record.id.clone(), block_id, idx)?;
+                if !record.oid.is_empty() {
+                    self.id_index.add(record.oid.clone(), block_id, idx)?;
                 }
             }
 
@@ -951,7 +973,9 @@ impl SwiftFile {
             ));
         }
 
-        Ok(block.records[location.offset_in_block as usize].clone())
+        Ok(VectorRecord::from(
+            &block.records[location.offset_in_block as usize],
+        ))
     }
 
     /// Create a new SWIFT file - clean slate, no legacy
@@ -1326,7 +1350,9 @@ impl SwiftFile {
             let mut all_vectors = Vec::new();
             for block in &superblock.blocks {
                 for record in &block.records {
-                    all_vectors.push(&record.vector);
+                    if let Some(embedding) = record.embeddings.first() {
+                        all_vectors.push(&embedding.values);
+                    }
                 }
             }
 

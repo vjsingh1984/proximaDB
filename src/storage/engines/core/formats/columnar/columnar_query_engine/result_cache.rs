@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Cache strategy for queries
 #[derive(Debug, Clone, Copy)]
@@ -24,7 +24,7 @@ pub enum CacheStrategy {
 /// Query cache for storing results
 pub struct QueryCache {
     strategy: CacheStrategy,
-    cache: Arc<RwLock<HashMap<String, Vec<VectorRecord>>>>,
+    cache: Arc<RwLock<HashMap<String, Vec<ProximaRecord>>>>,
     capacity: usize,
     stats: CacheStats,
 }
@@ -41,7 +41,7 @@ impl QueryCache {
     }
 
     /// Get cached results
-    pub fn get(&mut self, key: &str) -> Option<Vec<VectorRecord>> {
+    pub fn get(&mut self, key: &str) -> Option<Vec<ProximaRecord>> {
         match self.strategy {
             CacheStrategy::None => None,
             CacheStrategy::LRU => {
@@ -62,7 +62,7 @@ impl QueryCache {
     }
 
     /// Put results in cache
-    pub fn put(&mut self, key: String, records: Vec<VectorRecord>) {
+    pub fn put(&mut self, key: String, records: Vec<ProximaRecord>) {
         match self.strategy {
             CacheStrategy::None => {}
             CacheStrategy::LRU => {

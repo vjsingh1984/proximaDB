@@ -164,7 +164,7 @@ impl UnifiedNOVAReader {
             )
             .await?;
 
-        Ok(records)
+        Ok(records.iter().map(VectorRecord::from).collect())
     }
 
     /// Cached read with zone map pruning (for selective queries)
@@ -195,7 +195,7 @@ impl UnifiedNOVAReader {
         // Use read_all_records since read_for_similarity_search is not async
         let records = reader.read_all_records(0, None).await?;
 
-        Ok(records)
+        Ok(records.iter().map(VectorRecord::from).collect())
     }
 
     /// Convert FilterExpression to MetadataFilter for columnar module
@@ -273,8 +273,7 @@ impl UnifiedNOVAReader {
 
         // Convert Arrow batches to VectorRecords
         let mut records = Vec::new();
-        // batches is Vec<VectorRecord>, so we can extend directly
-        records.extend(batches);
+        records.extend(batches.iter().map(VectorRecord::from));
 
         Ok(records)
     }
@@ -417,7 +416,7 @@ impl DirectNOVAReader {
             )
             .await?;
 
-        Ok(records)
+        Ok(records.iter().map(VectorRecord::from).collect())
     }
 }
 
@@ -498,7 +497,7 @@ impl CachedNOVAReader {
             )
             .await?;
 
-        Ok(records)
+        Ok(records.iter().map(VectorRecord::from).collect())
     }
 }
 

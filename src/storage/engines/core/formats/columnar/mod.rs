@@ -301,7 +301,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Common configuration for columnar operations
 ///
@@ -606,10 +606,10 @@ pub struct SearchCandidate {
 #[allow(async_fn_in_trait)]
 pub trait ColumnarOperations {
     /// Search vectors based on mode
-    async fn search(&self, mode: ColumnarSearchMode) -> Result<Vec<VectorRecord>>;
+    async fn search(&self, mode: ColumnarSearchMode) -> Result<Vec<ProximaRecord>>;
 
     /// Get vectors by IDs (optimized batch lookup)
-    async fn get_by_ids(&self, ids: &[String]) -> Result<Vec<VectorRecord>>;
+    async fn get_by_ids(&self, ids: &[String]) -> Result<Vec<ProximaRecord>>;
 
     /// Progressive similarity search
     async fn progressive_search(
@@ -617,7 +617,7 @@ pub trait ColumnarOperations {
         query: &[f32],
         top_k: usize,
         filter: Option<MetadataFilter>,
-    ) -> Result<Vec<VectorRecord>>;
+    ) -> Result<Vec<ProximaRecord>>;
 
     /// Get row group statistics
     fn row_group_stats(&self) -> Vec<RowGroupStats>;

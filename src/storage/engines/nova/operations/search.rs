@@ -207,22 +207,28 @@ impl NovaSearchOperations {
 
             // Compute distances and insert into bounded queue
             for record in records {
-                let vector = &record.vector;
+                let vector = record
+                    .embeddings
+                    .first()
+                    .map_or(Vec::new(), |embedding| embedding.values.clone());
                 let similarity_result = self.distance_engine.calculate_distance(
                     query_vector,
-                    vector,
+                    &vector,
                     &ctx.distance_metric(),
                 );
+                let wire_record = crate::proto::proximadb_v1::VectorRecord::from(&record);
 
                 let search_record = OptimizedSearchRecord {
-                    id: record.id.clone(),
-                    vector_id: Some(record.id),
+                    id: wire_record.id.clone(),
+                    vector_id: Some(wire_record.id),
                     score: similarity_result.normalized_score,
                     similarity: Some(similarity_result.normalized_score),
-                    vector: Some(Arc::new(vector.clone())),
-                    metadata: crate::core::search::results::sql_map_to_proxima(record.metadata),
-                    version: record.version,
-                    timestamp: record.timestamp,
+                    vector: Some(Arc::new(vector)),
+                    metadata: crate::core::search::results::sql_map_to_proxima(
+                        wire_record.metadata,
+                    ),
+                    version: wire_record.version,
+                    timestamp: wire_record.timestamp,
                     ..Default::default()
                 };
 

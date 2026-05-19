@@ -130,12 +130,23 @@ _Retirement condition_: remove or demote when Phase 6 benchmarks show that ORION
 | Projection | Status | Notes
 | Canonical `ProximaRecord` log/metric/span storage | ✅ Retained (durable authority) | Observability records are `ProximaRecord` instances. No separate durable truth.
 | Time-series compression blocks | ✅ Retained (rebuildable) | Compression metadata tracked in xCatalog. Rebuildable from canonical records.
+| Trace/service-correlation index | ✅ Retained (rebuildable) | `ProjectionDirective::ObservabilityTraceIndex`. Rebuilt from canonical span/log/metric records and service graph edges.
+| Time-series rollup projection | ✅ Retained (rebuildable or retained aggregate) | `ProjectionDirective::TimeSeriesRollup`. Durable only when materialized back as canonical aggregate records by retention policy.
 | SIEM adapter projections | ✅ Retained (external authority) | 6 SIEM adapters (`src/observability/`) push events to external sinks. External tables marked as external-authority in xCatalog when ownership is delegated.
 |===
 
 ---
 
 == Benchmark Evidence Baseline (Phase 6)
+
+== Open-Format Catalog Projections
+
+[cols="2,1,3", options="header"]
+|===
+| Projection | Status | Notes
+| Iceberg REST manifest facade | ✅ Retained (rebuildable) | `ProjectionDirective::OpenFormatManifest { format: Iceberg }`. Refreshes Layer 3 catalog metadata from xCatalog + canonical records.
+| Delta/Hudi manifest publication | ⚠️ Planned projection | Shares the same directive with `Delta`/`Hudi` variants. May become externally authoritative only when xCatalog records ownership, snapshot/isolation, type mapping, policy boundary, write/refresh mode, and repair source.
+|===
 
 These baselines will be filled with actual Criterion measurements as Phase 6 progresses. The benchmark harness is in `crates/storage/proximadb-storage-common/benches/wal_throughput.rs`.
 

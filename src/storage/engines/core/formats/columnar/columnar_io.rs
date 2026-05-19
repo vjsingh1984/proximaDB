@@ -661,11 +661,19 @@ impl UnifiedColumnarWriter {
         ))
     }
 
-    fn calculate_compression_ratio(&self, records: &[ProximaRecord], compressed_size: usize) -> f64 {
+    fn calculate_compression_ratio(
+        &self,
+        records: &[ProximaRecord],
+        compressed_size: usize,
+    ) -> f64 {
         let uncompressed_size: usize = records
             .iter()
             .map(|r| {
-                let vec_bytes = r.embeddings.first().map(|e| e.values.len() * 4).unwrap_or(0);
+                let vec_bytes = r
+                    .embeddings
+                    .first()
+                    .map(|e| e.values.len() * 4)
+                    .unwrap_or(0);
                 vec_bytes + r.oid.len() + 100
             })
             .sum();

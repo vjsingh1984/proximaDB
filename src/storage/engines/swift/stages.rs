@@ -362,8 +362,13 @@ impl SwiftCandidateLoader {
             if let Some(block) = superblock.blocks.get(block_idx) {
                 // Load records from block
                 for record in &block.records {
-                    let mut candidate =
-                        ScoredCandidate::with_vector(record.id.clone(), record.vector.clone());
+                    let mut candidate = ScoredCandidate::with_vector(
+                        record.oid.clone(),
+                        record
+                            .embeddings
+                            .first()
+                            .map_or(Vec::new(), |embedding| embedding.values.clone()),
+                    );
 
                     // Add quantized data if available
                     if let Some(ref quantized) = block.quantized_vectors {
@@ -373,7 +378,7 @@ impl SwiftCandidateLoader {
                             block
                                 .records
                                 .iter()
-                                .position(|r| r.id == record.id)
+                                .position(|r| r.oid == record.oid)
                                 .unwrap_or(0),
                         ) {
                             // Quantized vectors in SWIFT are stored as Vec<u8>

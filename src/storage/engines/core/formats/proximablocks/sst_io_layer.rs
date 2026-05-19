@@ -62,6 +62,16 @@ use tracing::info;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 use proximadb_kernel::error::{ProximaDBError, StorageError};
+use proximadb_records::ProximaRecord;
+
+#[inline]
+fn record_vector(record: &ProximaRecord) -> &[f32] {
+    record
+        .embeddings
+        .first()
+        .map(|embedding| embedding.values.as_slice())
+        .unwrap_or(&[])
+}
 
 /// File type enum for cache key discrimination
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -558,40 +568,45 @@ impl SharedSstFormatReader {
             let mut block_vectors = Vec::new();
 
             for record in &block.records {
-                // Apply filter expression if provided (type-safe SqlValue filtering)
-                // Uses centralized utility from core::search::sql_value_filter
+                // Apply filter expression against canonical ProximaRecord props.
                 if let Some(filter) = filter_expression
-                    && !crate::core::search::sql_value_filter::evaluate_filter(
+                    && !crate::core::search::sql_value_filter::evaluate_filter_proxima(
                         filter,
-                        &record.metadata,
+                        &record.props,
                     )
                 {
                     continue; // Skip records that don't match filter
                 }
-                block_records.push(record);
-                block_vectors.push(record.vector.as_slice());
+                let vector = record_vector(record);
+                if vector.is_empty() {
+                    continue;
+                }
+                block_vectors.push(vector.to_vec());
+                block_records.push(record.clone());
             }
 
             // Batch calculate distances for entire block
             if !block_vectors.is_empty() {
+                let block_vector_refs: Vec<&[f32]> =
+                    block_vectors.iter().map(Vec::as_slice).collect();
                 let distances = distance_compute.batch_distance_pooled_simd(
                     query_vector,
-                    &block_vectors,
+                    &block_vector_refs,
                     &distance_metric,
                 );
 
                 // Create search records with batch distances
                 for (record, distance_result) in block_records.into_iter().zip(distances.iter()) {
                     let search_record = crate::core::search::results::OptimizedSearchRecord {
-                        id: record.id.clone(),
-                        vector_id: Some(record.id.clone()),
+                        id: record.oid.clone(),
+                        vector_id: record.local_id.clone().or_else(|| Some(record.oid.clone())),
                         score: distance_result.normalized_score,
                         similarity: Some(distance_result.normalized_score),
-                        metadata: crate::core::search::results::sql_map_to_proxima(
-                            record.metadata.clone(),
+                        metadata: crate::core::search::sql_value_filter::proxima_tree_to_value_map(
+                            &record.props,
                         ),
-                        vector: Some(Arc::new(record.vector.clone())),
-                        timestamp: record.timestamp,
+                        vector: Some(Arc::new(record_vector(&record).to_vec())),
+                        timestamp: Some(record.created_at_ns),
                         ..Default::default()
                     };
                     all_results.push(search_record);

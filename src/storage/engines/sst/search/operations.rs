@@ -197,16 +197,26 @@ impl SearchOperations {
             Ok(Some(record)) => {
                 debug!("✅ Found vector {} in {}", vector_id, file_path);
 
-                // Convert VectorRecord to OptimizedSearchRecord
+                let vector = record
+                    .embeddings
+                    .first()
+                    .map(|embedding| embedding.values.clone())
+                    .unwrap_or_default();
+
                 let result = OptimizedSearchRecord {
-                    id: record.id,
+                    id: record
+                        .local_id
+                        .clone()
+                        .unwrap_or_else(|| record.oid.clone()),
                     score: 1.0, // Perfect match for point lookup
-                    vector: Some(Arc::new(record.vector)),
-                    timestamp: record.timestamp,
-                    updated_at: record.updated_at,
-                    expires_at: record.expires_at,
-                    version: record.version,
-                    metadata: crate::core::search::results::sql_map_to_proxima(record.metadata),
+                    vector: Some(Arc::new(vector)),
+                    timestamp: Some(record.created_at_ns),
+                    updated_at: Some(record.updated_at_ns),
+                    expires_at: record.valid_to_ns,
+                    version: Some(record.record_version as u32),
+                    metadata: crate::core::search::sql_value_filter::proxima_tree_to_value_map(
+                        &record.props,
+                    ),
                     ..Default::default()
                 };
 

@@ -49,7 +49,6 @@ use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::bloom::BloomFilterConfig;
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::search::{FilterExpression, SearchParams};
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::engines::core::formats::proximablocks::sst_io_layer::{
     SharedSstFormatReader, SstMmapStrategy, SstRegion,
@@ -61,6 +60,7 @@ use proximadb_compression::CompressionAlgorithm;
 // Using UnifiedCachingFilesystem instead of ZeroCopyIOSystem
 use crate::storage::persistence::filesystem::FileSystem;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
+use proximadb_records::ProximaRecord;
 
 // Vectorized execution imports (TD-041)
 use crate::storage::engines::core::formats::columnar::columnar_query_engine::vectorized_executor::evaluate_predicate_vectorized;
@@ -72,6 +72,30 @@ pub(crate) use super::block_pruning::{compute_query_zorder_code, select_blocks_b
 
 // Type alias for bloom filter
 type BloomFilter = SstableBloomFilter;
+
+#[inline]
+fn record_id(record: &ProximaRecord) -> String {
+    record
+        .local_id
+        .clone()
+        .unwrap_or_else(|| record.oid.clone())
+}
+
+#[inline]
+fn record_vector(record: &ProximaRecord) -> &[f32] {
+    record
+        .embeddings
+        .first()
+        .map(|embedding| embedding.values.as_slice())
+        .unwrap_or(&[])
+}
+
+#[inline]
+fn record_metadata(
+    record: &ProximaRecord,
+) -> std::collections::HashMap<String, proximadb_data_model::ProximaValue> {
+    crate::core::search::sql_value_filter::proxima_tree_to_value_map(&record.props)
+}
 
 /// SSTable reading strategies for different access patterns
 #[derive(Debug, Clone)]
@@ -289,7 +313,7 @@ impl BlockReader for ModularBlockReader {
 /// Generator-like streaming iterator for data blocks
 pub struct BlockIterator<T> {
     reader: Box<dyn Read + Send>,
-    buffer: Vec<VectorRecord>, // OPTIMIZED: Direct VectorRecord streaming
+    buffer: Vec<ProximaRecord>,
     position: usize,
     #[allow(dead_code)]
     block_size: usize,
@@ -461,18 +485,22 @@ impl ModularBlockReader {
 
             for record in data_block.records.iter() {
                 total_records_scanned += 1;
+                let vector = record_vector(record);
+                if vector.is_empty() {
+                    continue;
+                }
 
                 let distance =
                     crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
-                        .calculate_distance(query_vector, &record.vector, distance_metric);
+                        .calculate_distance(query_vector, vector, distance_metric);
 
                 // Use normalized_score for both fields - consistency across all engines
                 // Higher similarity = better match, VOS sorts descending
                 let search_record =
-                    OptimizedSearchRecord::new(record.id.clone(), distance.normalized_score)
+                    OptimizedSearchRecord::new(record_id(record), distance.normalized_score)
                         .with_similarity(distance.normalized_score)
-                        .add_vector(record.vector.clone())
-                        .with_metadata(record.metadata.clone());
+                        .add_vector(vector.to_vec())
+                        .with_proxima_metadata(record_metadata(record));
 
                 // Try to insert into bounded queue - only keeps top-k
                 priority_queue.try_insert(search_record);
@@ -874,9 +902,9 @@ impl ModularBlockReader {
     }
 }
 
-/// Iterator implementation for VectorRecord streaming (OPTIMIZED: Direct VectorRecord iteration)
-impl Iterator for BlockIterator<VectorRecord> {
-    type Item = Result<VectorRecord>;
+/// Iterator implementation for canonical record streaming.
+impl Iterator for BlockIterator<ProximaRecord> {
+    type Item = Result<ProximaRecord>;
 
     fn next(&mut self) -> Option<Self::Item> {
         // First check if we have records in the buffer
@@ -885,8 +913,8 @@ impl Iterator for BlockIterator<VectorRecord> {
             self.position += 1;
 
             debug!(
-                "🔍 VectorRecord STREAMING: Returning record {:?} from block {}, position {}/{}",
-                record.id,
+                "🔍 ProximaRecord STREAMING: Returning record {:?} from block {}, position {}/{}",
+                record.oid,
                 self.current_block,
                 self.position,
                 self.buffer.len()
@@ -978,16 +1006,16 @@ impl Iterator for BlockIterator<VectorRecord> {
             }
             Err(e) => {
                 error!(
-                    "❌ VectorRecord STREAMING ERROR: Failed to read {} bytes for block data: {:?}",
+                    "❌ ProximaRecord STREAMING ERROR: Failed to read {} bytes for block data: {:?}",
                     block_size, e
                 );
                 error!(
-                    "❌ VectorRecord STREAMING ERROR: Error kind: {:?}",
+                    "❌ ProximaRecord STREAMING ERROR: Error kind: {:?}",
                     e.kind()
                 );
                 if let Some(raw_error) = e.get_ref() {
                     error!(
-                        "❌ VectorRecord STREAMING ERROR: Raw error: {:?}",
+                        "❌ ProximaRecord STREAMING ERROR: Raw error: {:?}",
                         raw_error
                     );
                 }
@@ -997,7 +1025,7 @@ impl Iterator for BlockIterator<VectorRecord> {
 
         // Deserialize the DataBlock using the proper DataBlock::deserialize method
         debug!(
-            "🔍 VectorRecord STREAMING: Attempting to deserialize DataBlock from {} bytes",
+            "🔍 ProximaRecord STREAMING: Attempting to deserialize DataBlock from {} bytes",
             block_data.len()
         );
         match ProximaDataBlock::deserialize(&block_data, None) {
@@ -1006,7 +1034,6 @@ impl Iterator for BlockIterator<VectorRecord> {
                     "🔍 VectorRecord STREAMING: Successfully deserialized ProximaDataBlock with {} records",
                     data_block.records.len()
                 );
-                // OPTIMIZED: Extract all VectorRecords from the DataBlock (no conversion needed)
                 self.buffer = data_block.records;
                 self.position = 0;
                 self.current_block += 1;
@@ -1016,7 +1043,7 @@ impl Iterator for BlockIterator<VectorRecord> {
             }
             Err(e) => {
                 error!(
-                    "❌ VectorRecord STREAMING ERROR: Failed to deserialize ProximaDataBlock: {:?}",
+                    "❌ ProximaRecord STREAMING ERROR: Failed to deserialize ProximaDataBlock: {:?}",
                     e
                 );
                 debug!(
@@ -1057,18 +1084,18 @@ impl SstDirectReader {
         })
     }
 
-    /// Stream VectorRecords directly without conversion for compaction (OPTIMIZED: Direct VectorRecord streaming)
+    /// Stream canonical records directly for compaction.
     /// NEW: Uses hierarchical header offsets for efficient selective reading
     pub async fn stream_vector_records(
         &mut self,
         file_path: String,
-    ) -> Result<BlockIterator<VectorRecord>> {
+    ) -> Result<BlockIterator<ProximaRecord>> {
         let header = self.block_reader.read_header().await?;
         let total_blocks = header.block_count as usize;
         let block_size = header.block_size as usize;
 
         info!(
-            "🔄 Streaming VectorRecords from {} with {} blocks (hierarchical format)",
+            "🔄 Streaming ProximaRecords from {} with {} blocks (hierarchical format)",
             file_path, total_blocks
         );
 
@@ -1219,9 +1246,9 @@ impl SstDirectReader {
         Ok(index.entries)
     }
 
-    /// Read all VectorRecords for compaction without caching (OPTIMIZED: Direct VectorRecord extraction)
+    /// Read all canonical records for compaction without caching.
     /// Uses efficient range reads for cloud storage (S3/GCS/Azure)
-    pub async fn read_all_for_compaction(&mut self) -> Result<Vec<VectorRecord>> {
+    pub async fn read_all_for_compaction(&mut self) -> Result<Vec<ProximaRecord>> {
         let header = self.block_reader.read_header().await?;
 
         let mut all_records = Vec::with_capacity(header.entry_count as usize);
@@ -1254,11 +1281,11 @@ impl SstDirectReader {
     }
 
     /// Create streaming iterator for memory-efficient compaction
-    pub async fn stream_blocks(&mut self) -> Result<impl Stream<Item = Result<VectorRecord>>> {
+    pub async fn stream_blocks(&mut self) -> Result<impl Stream<Item = Result<ProximaRecord>>> {
         let header = self.block_reader.read_header().await?;
         let block_reader = std::sync::Arc::new(tokio::sync::Mutex::new(self.block_reader.clone()));
 
-        // Create async stream of VectorRecords
+        // Create async stream of canonical records
         let stream = futures::stream::iter(0..header.block_count)
             .then(move |block_id| {
                 let reader = block_reader.clone();
@@ -1267,7 +1294,7 @@ impl SstDirectReader {
                     let block = reader
                         .read_data_block(block_id as u64, ReadMode::Buffered)
                         .await?;
-                    Ok::<Vec<VectorRecord>, anyhow::Error>(block.records)
+                    Ok::<Vec<ProximaRecord>, anyhow::Error>(block.records)
                 }
             })
             .map(|result| result.map(|records| futures::stream::iter(records.into_iter().map(Ok))))
@@ -1364,16 +1391,15 @@ impl UnifiedSstableReader {
 
         for block in blocks {
             for record in block.records {
-                // Apply metadata filtering at record level (type-safe, no conversion)
-                // Uses centralized SqlValue filtering from core::search::sql_value_filter
+                // Apply metadata filtering at record level against canonical props.
                 if let Some(filter_expr) = &filter {
-                    let matches = crate::core::search::sql_value_filter::evaluate_filter(
+                    let matches = crate::core::search::sql_value_filter::evaluate_filter_proxima(
                         filter_expr,
-                        &record.metadata,
+                        &record.props,
                     );
                     trace!(
                         "Filter evaluation: record {} metadata={:?} matches={}",
-                        record.id, record.metadata, matches
+                        record.oid, record.props, matches
                     );
                     if !matches {
                         // Record doesn't match filter, skip it
@@ -1381,23 +1407,25 @@ impl UnifiedSstableReader {
                     }
                 }
 
+                let vector = record_vector(&record);
+                if vector.is_empty() {
+                    continue;
+                }
+
                 // Compute distance
-                let distance = distance_compute.calculate_distance(
-                    query_vector,
-                    &record.vector,
-                    &distance_metric,
-                );
+                let distance =
+                    distance_compute.calculate_distance(query_vector, vector, &distance_metric);
 
                 // Create result
                 // Use normalized_score for consistency across all engines
                 // Higher similarity = better match, VOS sorts descending
                 let result = crate::core::search::results::OptimizedSearchRecord::new(
-                    record.id.clone(),
+                    record_id(&record),
                     distance.normalized_score,
                 )
                 .with_similarity(distance.normalized_score)
-                .add_vector(record.vector.clone())
-                .with_metadata(record.metadata.clone());
+                .add_vector(vector.to_vec())
+                .with_proxima_metadata(record_metadata(&record));
 
                 results.push(result);
             }
@@ -1481,7 +1509,6 @@ impl UnifiedSstableReader {
         let mut results = Vec::new();
 
         for block in blocks {
-            // Convert records to Arrow RecordBatch for vectorized processing
             let batch = self.records_to_batch(&block.records)?;
 
             // Apply vectorized filtering if filter expression exists
@@ -1507,22 +1534,23 @@ impl UnifiedSstableReader {
             for idx in filtered_indices {
                 if idx < block.records.len() {
                     let record = &block.records[idx];
+                    let vector = record_vector(record);
+                    if vector.is_empty() {
+                        continue;
+                    }
 
                     // Compute distance
-                    let distance = distance_compute.calculate_distance(
-                        query_vector,
-                        &record.vector,
-                        &distance_metric,
-                    );
+                    let distance =
+                        distance_compute.calculate_distance(query_vector, vector, &distance_metric);
 
                     // Create result
                     let result = crate::core::search::results::OptimizedSearchRecord::new(
-                        record.id.clone(),
+                        record_id(record),
                         distance.normalized_score,
                     )
                     .with_similarity(distance.normalized_score)
-                    .add_vector(record.vector.clone())
-                    .with_metadata(record.metadata.clone());
+                    .add_vector(vector.to_vec())
+                    .with_proxima_metadata(record_metadata(record));
 
                     results.push(result);
                 }
@@ -1604,7 +1632,7 @@ impl UnifiedSstableReader {
         );
 
         // Flatten all records from all blocks
-        let all_records: Vec<VectorRecord> =
+        let all_records: Vec<ProximaRecord> =
             blocks.into_iter().flat_map(|block| block.records).collect();
 
         let total_records = all_records.len();
@@ -1662,26 +1690,30 @@ impl UnifiedSstableReader {
                     for record in morsel_records {
                         // Apply filter if present
                         if let Some(filter_expr) = &filter_clone
-                            && !crate::core::search::sql_value_filter::evaluate_filter(
+                            && !crate::core::search::sql_value_filter::evaluate_filter_proxima(
                                 filter_expr,
-                                &record.metadata,
+                                &record.props,
                             )
                         {
                             continue; // Skip filtered records
                         }
 
+                        let vector = record_vector(&record);
+                        if vector.is_empty() {
+                            continue;
+                        }
+
                         // Compute distance
-                        let distance =
-                            distance_compute.calculate_distance(&qv, &record.vector, &metric);
+                        let distance = distance_compute.calculate_distance(&qv, vector, &metric);
 
                         // Create result
                         let result = crate::core::search::results::OptimizedSearchRecord::new(
-                            record.id.clone(),
+                            record_id(&record),
                             distance.normalized_score,
                         )
                         .with_similarity(distance.normalized_score)
-                        .add_vector(record.vector.clone())
-                        .with_metadata(record.metadata.clone());
+                        .add_vector(vector.to_vec())
+                        .with_proxima_metadata(record_metadata(&record));
 
                         results.push(result);
                     }
@@ -1728,9 +1760,6 @@ impl UnifiedSstableReader {
         collection: Option<&crate::proto::proximadb_v1::Collection>,
         block_prune: &crate::core::search::BlockPruneConfig,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        use crate::compute::PipelineExecutor;
-        use crate::compute::PipelineOperator;
-
         trace!(
             "SST Reader: pipeline execution search called with file_path: {}",
             file_path
@@ -1767,8 +1796,7 @@ impl UnifiedSstableReader {
             blocks.len()
         );
 
-        // Flatten all records from all blocks
-        let all_records: Vec<VectorRecord> =
+        let all_records: Vec<ProximaRecord> =
             blocks.into_iter().flat_map(|block| block.records).collect();
 
         trace!(
@@ -1776,55 +1804,41 @@ impl UnifiedSstableReader {
             all_records.len()
         );
 
-        // Build pipeline operators
-        let mut operators = vec![PipelineOperator::Scan {
-            source: file_path.to_string(),
-        }];
+        let distance_compute =
+            crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
+                distance_metric,
+            );
+        let mut queue = BoundedPriorityQueue::new(k);
 
-        // Add filter operator if filter expression exists
-        if let Some(filter_expr) = &filter {
-            operators.push(PipelineOperator::Filter {
-                expression: filter_expr.clone(),
-            });
-        }
+        for record in &all_records {
+            if let Some(filter_expr) = &filter
+                && !crate::core::search::sql_value_filter::evaluate_filter_proxima(
+                    filter_expr,
+                    &record.props,
+                )
+            {
+                continue;
+            }
 
-        // Add TopK operator for final results
-        // Note: We compute distances first, then apply TopK
-        operators.push(PipelineOperator::TopK {
-            k,
-            sort_column: "score".to_string(),
-        });
+            let vector = record_vector(record);
+            if vector.is_empty() {
+                continue;
+            }
 
-        // Create pipeline executor
-        let executor = PipelineExecutor::new(operators.clone());
-
-        // Execute pipeline on records
-        let pipeline_results = executor.execute_on_records(all_records).await?;
-
-        // Convert VectorRecord results to OptimizedSearchRecord
-        let results: Vec<crate::core::search::results::OptimizedSearchRecord> = pipeline_results
-            .into_iter()
-            .map(|record| {
-                // Calculate distance for final ranking
-                let distance_compute =
-                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                        distance_metric,
-                    );
-                let distance = distance_compute.calculate_distance(
-                    query_vector,
-                    &record.vector,
-                    &distance_metric,
-                );
-
+            let distance =
+                distance_compute.calculate_distance(query_vector, vector, &distance_metric);
+            queue.try_insert(
                 crate::core::search::results::OptimizedSearchRecord::new(
-                    record.id.clone(),
+                    record_id(record),
                     distance.normalized_score,
                 )
                 .with_similarity(distance.normalized_score)
-                .add_vector(record.vector.clone())
-                .with_metadata(record.metadata.clone())
-            })
-            .collect();
+                .add_vector(vector.to_vec())
+                .with_proxima_metadata(record_metadata(record)),
+            );
+        }
+
+        let results = queue.into_sorted_vec();
 
         debug!(
             "✅ SST: Pipeline execution complete, found {} results",
@@ -1833,8 +1847,8 @@ impl UnifiedSstableReader {
         Ok(results)
     }
 
-    /// Convert VectorRecord batch to Arrow RecordBatch for vectorized processing
-    fn records_to_batch(&self, records: &[VectorRecord]) -> Result<RecordBatch> {
+    /// Convert canonical record batch to Arrow RecordBatch for vectorized processing.
+    fn records_to_batch(&self, records: &[ProximaRecord]) -> Result<RecordBatch> {
         use arrow::array::{Float32Array, StringArray};
 
         if records.is_empty() {
@@ -1854,15 +1868,19 @@ impl UnifiedSstableReader {
         }
 
         // Extract IDs
-        let ids: Vec<&str> = records.iter().map(|r| r.id.as_str()).collect();
+        let ids: Vec<&str> = records.iter().map(|r| r.oid.as_str()).collect();
 
         // Extract vectors (assuming all vectors have the same dimension)
-        let vector_dim = records.first().map(|r| r.vector.len()).unwrap_or(384);
+        let vector_dim = records
+            .first()
+            .map(record_vector)
+            .map(|v| v.len())
+            .unwrap_or(384);
 
         // Flatten vectors for Arrow FixedSizeList
         let mut vector_values = Vec::with_capacity(records.len() * vector_dim);
         for record in records {
-            vector_values.extend_from_slice(&record.vector);
+            vector_values.extend_from_slice(record_vector(record));
         }
 
         let _vector_array = Float32Array::from(vector_values);
@@ -2050,7 +2068,7 @@ impl UnifiedSstableReader {
     pub async fn read_all_records_for_compaction(
         &self,
         sstable_files: &[String],
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         // Use read_with_compaction_strategy which actually reads files
         self.read_with_compaction_strategy(sstable_files, None)
             .await
@@ -2166,7 +2184,7 @@ impl UnifiedSstableReader {
         bandwidth_optimizer: Option<
             Arc<crate::storage::engines::core::io::zero_copy::BandwidthOptimizer>,
         >,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         info!(
             "🔥 SST COMPACTION: Starting compaction read strategy for {} files",
             sstable_files.len()
@@ -2221,7 +2239,6 @@ impl UnifiedSstableReader {
             blocks.len()
         );
 
-        // Convert blocks to VectorRecords for compaction processing
         let mut all_records = Vec::new();
         for block in blocks {
             all_records.extend(block.records);
@@ -2318,7 +2335,7 @@ impl UnifiedSstableReader {
             for (j, record) in block.records.iter().take(3).enumerate() {
                 debug!(
                     "    Record {}: id={:?}, metadata={:?}",
-                    j, record.id, record.metadata
+                    j, record.oid, record.props
                 );
             }
         }
@@ -2692,81 +2709,45 @@ impl UnifiedSstableReader {
             // Process records with optimized filtering and distance calculation
             for record in &block.records {
                 // Fast tombstone check (most common early exit)
-                // A tombstone is indicated by expires_at being set and in the past
-                let current_time = chrono::Utc::now().timestamp_millis();
+                let current_time_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default();
                 if record
-                    .expires_at
-                    .is_some_and(|expires_at| expires_at > 0 && expires_at < current_time)
+                    .valid_to_ns
+                    .is_some_and(|valid_to| valid_to > 0 && valid_to < current_time_ns)
                 {
                     tombstones += 1;
                     continue;
                 }
 
-                // Type-safe metadata filtering (zero-allocation, zero-conversion)
-                // Uses centralized SqlValue filtering from core::search::sql_value_filter
+                // Type-safe metadata filtering against canonical props.
                 if let Some(filter) = filter_expr
-                    && !crate::core::search::sql_value_filter::evaluate_filter(
+                    && !crate::core::search::sql_value_filter::evaluate_filter_proxima(
                         filter,
-                        &record.metadata,
+                        &record.props,
                     )
                 {
                     filtered_out += 1;
                     continue; // Skip to next record immediately
                 }
 
+                let vector = record_vector(record);
+                if vector.is_empty() {
+                    continue;
+                }
+
                 // Calculate similarity using unified distance computation for semantic correctness
                 let metric = distance_metric.unwrap_or(
                     crate::compute::distance_computation::engine::DistanceMetric::Cosine,
                 );
-                let similarity =
-                    distance_compute.calculate_distance(query_vector, &record.vector, &metric);
-
-                // Efficient SearchResult creation (minimize allocations)
-                // Convert metadata to TypedMetadata
-                let mut metadata_map = std::collections::HashMap::new();
-                for (key, item) in &record.metadata {
-                    if let Some(value) = &item.value {
-                        let typed_value = match value {
-                            crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
-                                MetadataValue::String(std::sync::Arc::from(s.as_str()))
-                            }
-                            crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
-                                MetadataValue::Number(*f)
-                            }
-                            crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
-                                MetadataValue::Bool(*b)
-                            }
-                            crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
-                                MetadataValue::Number(*i as f64)
-                            }
-                            crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => {
-                                MetadataValue::String(std::sync::Arc::from("[binary]"))
-                            }
-                            crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => {
-                                MetadataValue::String(std::sync::Arc::from("[null]"))
-                            }
-                            crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => {
-                                MetadataValue::String(std::sync::Arc::from("[array]"))
-                            }
-                            crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => {
-                                MetadataValue::String(std::sync::Arc::from("[object]"))
-                            }
-                        };
-                        metadata_map.insert(key.clone(), typed_value);
-                    }
-                }
+                let similarity = distance_compute.calculate_distance(query_vector, vector, &metric);
 
                 // Use normalized_score for consistency across all engines
                 // Higher similarity = better match, VOS sorts descending
                 let search_record =
-                    OptimizedSearchRecord::new(record.id.clone(), similarity.normalized_score)
+                    OptimizedSearchRecord::new(record_id(record), similarity.normalized_score)
                         .with_similarity(similarity.normalized_score)
-                        .add_vector(record.vector.clone())
-                        .with_metadata(record.metadata.clone())
-                        .with_version_info(
-                            record.version.unwrap_or(0),
-                            record.timestamp.unwrap_or(0),
-                        );
+                        .add_vector(vector.to_vec())
+                        .with_proxima_metadata(record_metadata(record))
+                        .with_version_info(record.record_version as u32, record.created_at_ns);
 
                 // Try to insert into bounded queue - only keeps top-k
                 priority_queue.try_insert(search_record);
@@ -2877,7 +2858,7 @@ impl UnifiedSstableReader {
                 for (i, record) in first_block.records.iter().take(3).enumerate() {
                     debug!(
                         "    Record {}: id={:?}, metadata={:?}",
-                        i, record.id, record.metadata
+                        i, record.oid, record.props
                     );
                 }
             }
@@ -3223,7 +3204,7 @@ impl UnifiedSstableReader {
                     for (i, record) in block.records.iter().take(3).enumerate() {
                         debug!(
                             "      Record {}: id={:?}, metadata={:?}",
-                            i, record.id, record.metadata
+                            i, record.oid, record.props
                         );
                     }
                     all_blocks.push(block);
@@ -3282,22 +3263,8 @@ impl UnifiedSstableReader {
         let block = self.load_block_from_disk(context, block_idx).await?;
 
         if let Some(block) = block.as_ref() {
-            // Cache the block's vectors in central cache
-            // Convert SstRecord to VectorRecord for caching
-            let _vector_records: Vec<VectorRecord> = block
-                .records
-                .iter()
-                .map(|r| VectorRecord {
-                    id: r.id.clone(),
-                    vector: r.vector.clone(),
-                    metadata: r.metadata.clone(),
-                    timestamp: r.timestamp,
-                    updated_at: r.updated_at,
-                    expires_at: r.expires_at,
-                    version: r.version,
-                    source: None,
-                })
-                .collect();
+            // Cache integration consumes canonical ProximaRecord blocks.
+            let _record_count = block.records.len();
             // Zero-copy system uses disk cache for vectors, not in-memory caching
         }
 
@@ -3550,7 +3517,7 @@ impl UnifiedSstableReader {
     /// OPTIMIZED: Uses B+ tree index for O(log n) block lookup instead of full scan.
     /// This is critical for RAG use cases where we need to fetch full records by ID
     /// after HNSW returns candidate IDs.
-    pub async fn vector(&self, file_path: &str, vector_id: &str) -> Result<Option<VectorRecord>> {
+    pub async fn vector(&self, file_path: &str, vector_id: &str) -> Result<Option<ProximaRecord>> {
         debug!(
             "🔍 vector: Looking for vector '{}' in file '{}'",
             vector_id, file_path
@@ -3621,18 +3588,9 @@ impl UnifiedSstableReader {
 
                         // Search within the block for the exact ID
                         for record in &block.records {
-                            if record.id == vector_id {
+                            if record.oid == vector_id {
                                 debug!("✅ Found vector '{}' in block", vector_id);
-                                return Ok(Some(VectorRecord {
-                                    id: record.id.clone(),
-                                    vector: record.vector.clone(),
-                                    metadata: record.metadata.clone(),
-                                    timestamp: record.timestamp,
-                                    updated_at: record.updated_at,
-                                    expires_at: record.expires_at,
-                                    version: record.version,
-                                    source: None,
-                                }));
+                                return Ok(Some(record.clone()));
                             }
                         }
 
@@ -3661,17 +3619,8 @@ impl UnifiedSstableReader {
                         .await?;
 
                     for record in &block.records {
-                        if record.id == vector_id {
-                            return Ok(Some(VectorRecord {
-                                id: record.id.clone(),
-                                vector: record.vector.clone(),
-                                metadata: record.metadata.clone(),
-                                timestamp: record.timestamp,
-                                updated_at: record.updated_at,
-                                expires_at: record.expires_at,
-                                version: record.version,
-                                source: None,
-                            }));
+                        if record.oid == vector_id {
+                            return Ok(Some(record.clone()));
                         }
                     }
                 }
@@ -3692,12 +3641,12 @@ impl UnifiedSstableReader {
     /// * `vector_ids` - Slice of vector IDs to fetch
     ///
     /// # Returns
-    /// * Vector of (id, VectorRecord) tuples for found records
+    /// * Vector of (id, ProximaRecord) tuples for found records
     pub async fn vectors_batch(
         &self,
         file_path: &str,
         vector_ids: &[&str],
-    ) -> Result<Vec<(String, VectorRecord)>> {
+    ) -> Result<Vec<(String, ProximaRecord)>> {
         use std::collections::HashMap;
 
         if vector_ids.is_empty() {
@@ -3784,7 +3733,7 @@ impl UnifiedSstableReader {
         debug!("📦 IDs grouped into {} blocks", block_to_ids.len());
 
         // Step 4: Read each block once and extract all matching records
-        let mut results: Vec<(String, VectorRecord)> = Vec::with_capacity(candidate_ids.len());
+        let mut results: Vec<(String, ProximaRecord)> = Vec::with_capacity(candidate_ids.len());
         let id_set: std::collections::HashSet<&str> = candidate_ids.iter().copied().collect();
 
         for (block_idx, ids_in_block) in block_to_ids {
@@ -3806,20 +3755,8 @@ impl UnifiedSstableReader {
 
             // Scan block once, collect all matching records
             for record in &block.records {
-                if id_set.contains(record.id.as_str()) {
-                    results.push((
-                        record.id.clone(),
-                        VectorRecord {
-                            id: record.id.clone(),
-                            vector: record.vector.clone(),
-                            metadata: record.metadata.clone(),
-                            timestamp: record.timestamp,
-                            updated_at: record.updated_at,
-                            expires_at: record.expires_at,
-                            version: record.version,
-                            source: None,
-                        },
-                    ));
+                if id_set.contains(record.oid.as_str()) {
+                    results.push((record.oid.clone(), record.clone()));
                 }
             }
         }
@@ -4489,7 +4426,7 @@ impl UnifiedSstableReader {
             if let Some(first_block) = blocks.first() {
                 debug!("  🔎 First block has {} records", first_block.records.len());
                 for (i, record) in first_block.records.iter().take(3).enumerate() {
-                    debug!("    Record {}: id={:?}", i, record.id);
+                    debug!("    Record {}: id={:?}", i, record.oid);
                 }
             }
 
@@ -4814,9 +4751,12 @@ impl UnifiedSstableReader {
                         debug!(
                             "  Record {}: id='{:?}', vector_len={}, metadata_keys={:?}",
                             i,
-                            record.id,
-                            record.vector.len(),
-                            record.metadata.keys().cloned().collect::<Vec<_>>()
+                            record.oid,
+                            record
+                                .embeddings
+                                .first()
+                                .map_or(0, |embedding| embedding.values.len()),
+                            record.props.keys().cloned().collect::<Vec<_>>()
                         );
                     }
                     blocks.push(block);
@@ -5047,9 +4987,7 @@ impl UnifiedSstableReader {
             all_sst_records.extend(sst_records);
         }
 
-        // Convert to DataBlocks only when needed for compatibility
-        // OPTIMIZED: Direct VectorRecord to DataBlock conversion
-        let blocks = self.vector_records_to_data_blocks(all_sst_records)?;
+        let blocks = self.records_to_data_blocks(all_sst_records)?;
 
         Ok(blocks)
     }
@@ -5212,11 +5150,7 @@ impl UnifiedSstableReader {
         }
     }
 
-    fn vector_records_to_data_blocks(
-        &self,
-        records: Vec<VectorRecord>,
-    ) -> Result<Vec<ProximaDataBlock>> {
-        // Group records into blocks (temporary conversion for compatibility)
+    fn records_to_data_blocks(&self, records: Vec<ProximaRecord>) -> Result<Vec<ProximaDataBlock>> {
         let block_size = 1000; // Default block size
         let mut blocks = Vec::new();
 
@@ -5418,7 +5352,7 @@ impl ReadingStrategySelector {
     pub async fn read_all_records_for_compaction(
         &self,
         sstable_files: &[String],
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         info!(
             "🔥 COMPACTION READ: Starting optimized read of {} SSTable files",
             sstable_files.len()
@@ -5446,7 +5380,6 @@ impl ReadingStrategySelector {
         let blocks: Vec<ProximaDataBlock> = Vec::new();
         info!("📦 COMPACTION: Loaded {} data blocks total", blocks.len());
 
-        // Convert all SstRecord to VectorRecord for compaction processing
         let mut all_records = Vec::new();
         let mut total_records = 0;
         let mut tombstone_records = 0;
@@ -5463,19 +5396,19 @@ impl ReadingStrategySelector {
 
                 // Check if record is a tombstone (expired or empty vector)
                 let is_tombstone = record
-                    .expires_at
+                    .valid_to_ns
                     .is_some_and(|exp| exp < chrono::Utc::now().timestamp())
-                    || record.vector.is_empty();
+                    || record
+                        .embeddings
+                        .first()
+                        .is_none_or(|embedding| embedding.values.is_empty());
 
                 if is_tombstone {
                     tombstone_records += 1;
                     // Include tombstones for compaction to handle properly
                 }
 
-                // VectorRecord already has all the fields we need
-                let vector_record = record.clone();
-
-                all_records.push(vector_record);
+                all_records.push(record.clone());
             }
         }
 

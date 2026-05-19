@@ -31,6 +31,25 @@ impl RlsRecordPredicate {
     pub fn is_passthrough(&self) -> bool {
         self.required_tenant_id.is_none() && self.required_principal.is_none()
     }
+
+    /// Evaluate this predicate against a canonical record.
+    ///
+    /// Engines should use this helper inside scan/search iterators so REST,
+    /// gRPC, Arrow Flight, pgwire, and internal query paths share the same
+    /// engine-level RLS semantics.
+    pub fn matches_record(&self, record: &proximadb_records::ProximaRecord) -> bool {
+        let tenant_matches = self
+            .required_tenant_id
+            .as_deref()
+            .is_none_or(|tenant_id| record.matches_tenant(tenant_id));
+
+        let principal_matches = self
+            .required_principal
+            .as_deref()
+            .is_none_or(|principal| record.is_accessible_by(principal));
+
+        tenant_matches && principal_matches
+    }
 }
 
 /// Search context for STORAGE ENGINES - bundles immutable references to search parameters
@@ -539,6 +558,39 @@ mod tests {
         assert!(!pred.is_passthrough());
         assert_eq!(pred.required_tenant_id.as_deref(), Some("acme"));
         assert_eq!(pred.required_principal.as_deref(), Some("alice"));
+    }
+
+    #[test]
+    fn test_rls_predicate_matches_canonical_record() {
+        let mut record = proximadb_records::ProximaRecord {
+            tenant_id: "acme".to_string(),
+            permitted_principals: vec!["alice".to_string()],
+            ..Default::default()
+        };
+
+        let pred = RlsRecordPredicate {
+            required_tenant_id: Some("acme".to_string()),
+            required_principal: Some("alice".to_string()),
+        };
+        assert!(pred.matches_record(&record));
+
+        record.tenant_id = "other".to_string();
+        assert!(!pred.matches_record(&record));
+    }
+
+    #[test]
+    fn test_rls_predicate_open_principals_match_any_user() {
+        let record = proximadb_records::ProximaRecord {
+            tenant_id: "acme".to_string(),
+            permitted_principals: Vec::new(),
+            ..Default::default()
+        };
+        let pred = RlsRecordPredicate {
+            required_tenant_id: Some("acme".to_string()),
+            required_principal: Some("bob".to_string()),
+        };
+
+        assert!(pred.matches_record(&record));
     }
 
     #[test]

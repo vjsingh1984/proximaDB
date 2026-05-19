@@ -2,7 +2,8 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::proto::proximadb_v1::{VectorRecord, Collection};
+use crate::proto::proximadb_v1::{Collection};
+use proximadb_records::{EmbeddingCell, ProximaRecord};
 use crate::storage::traits::{FlushParameters, FlushResult};
 use crate::compute::quantization::precompute::{
     QuantizationPrecomputeService, QuantizedBatch, QuantizedVector
@@ -75,7 +76,7 @@ pub trait ProximaBlockQuantization {
     /// Create a single ProximaDataBlock with quantization
     fn create_proxima_block_with_quantization(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         quantized: Vec<Option<QuantizedVector>>,
         block_id: u32,
     ) -> Result<ProximaDataBlock> {
@@ -224,7 +225,7 @@ pub trait ProximaBlockQuantization {
     }
 
     /// Estimate size of a vector record
-    fn estimate_record_size(&self, record: &VectorRecord) -> usize {
+    fn estimate_record_size(&self, record: &ProximaRecord) -> usize {
         // ID + vector + metadata estimate
         record.id.len() + (record.values.len() * 4) + 100
     }

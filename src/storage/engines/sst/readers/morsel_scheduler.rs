@@ -44,7 +44,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 use tracing::{debug, info, trace};
 
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Fixed morsel size for optimal CPU cache utilization
 pub const MORSEL_SIZE: usize = 4096;
@@ -172,11 +172,11 @@ impl MorselScheduler {
     /// Combined results from all morsels
     pub async fn process_morsels<F, R, Fut>(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         processor: F,
     ) -> Result<Vec<R>>
     where
-        F: Fn(Vec<VectorRecord>) -> Fut + Clone + Send + Sync + 'static,
+        F: Fn(Vec<ProximaRecord>) -> Fut + Clone + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<Vec<R>>> + Send + 'static,
         R: Send + 'static,
     {
@@ -196,7 +196,7 @@ impl MorselScheduler {
 
         for morsel in &morsels {
             let end = start + morsel.row_count;
-            let morsel_records: Vec<VectorRecord> = records[start..end].to_vec();
+            let morsel_records: Vec<ProximaRecord> = records[start..end].to_vec();
             morsel_records_vec.push((morsel.clone(), morsel_records));
             start = end;
         }
@@ -325,7 +325,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_morsels_single() {
         let scheduler = MorselScheduler::new(Some(4));
-        let records = vec![VectorRecord::default(); 100];
+        let records = vec![ProximaRecord::default(); 100];
 
         let results = scheduler
             .process_morsels(records, |morsel_records| async move {
@@ -342,7 +342,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_morsels_multiple() {
         let scheduler = MorselScheduler::new(Some(4));
-        let records = (0..10000).map(|_| VectorRecord::default()).collect();
+        let records = (0..10000).map(|_| ProximaRecord::default()).collect();
 
         let results = scheduler
             .process_morsels(records, |morsel_records| async move {

@@ -188,7 +188,7 @@ impl UnifiedSWIFTReader {
         let mut records = Vec::new();
         for superblock in &swift_file.superblocks {
             for block in &superblock.blocks {
-                records.extend_from_slice(&block.records);
+                records.extend(block.records.iter().map(VectorRecord::from));
             }
         }
 
@@ -243,7 +243,9 @@ impl UnifiedSWIFTReader {
                     // Process blocks that might contain matching records
                     for block in &superblock.blocks {
                         // Apply filter at block level for efficiency
-                        let filtered = self.apply_filter_to_block(&block.records, filter)?;
+                        let legacy_records: Vec<VectorRecord> =
+                            block.records.iter().map(VectorRecord::from).collect();
+                        let filtered = self.apply_filter_to_block(&legacy_records, filter)?;
                         records.extend(filtered);
                     }
                 }
@@ -252,7 +254,7 @@ impl UnifiedSWIFTReader {
                 // No filter - but still use hierarchical pruning for search
                 for superblock in &swift_file.superblocks {
                     for block in &superblock.blocks {
-                        records.extend_from_slice(&block.records);
+                        records.extend(block.records.iter().map(VectorRecord::from));
                     }
                 }
             }

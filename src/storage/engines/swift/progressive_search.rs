@@ -15,6 +15,14 @@ use crate::compute::quantization::storage_engine::{
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
+use proximadb_records::ProximaRecord;
+
+fn record_vector(record: &ProximaRecord) -> &[f32] {
+    record
+        .embeddings
+        .first()
+        .map_or(&[][..], |embedding| embedding.values.as_slice())
+}
 
 /// Helper function to compute L2 distance squared for INT8 vectors
 fn compute_l2_distance_squared_i8(a: &[i8], b: &[i8]) -> Result<f32> {
@@ -703,7 +711,7 @@ async fn phase4_full_precision(
         for v_idx in vector_indices {
             if let Some(record) = block.records.get(v_idx as usize) {
                 // Compute full precision distance
-                let distance = compute_distance(query, &record.vector, &metric);
+                let distance = compute_distance(query, record_vector(record), &metric);
                 all_results.push((record.clone(), distance));
             }
         }
@@ -711,7 +719,7 @@ async fn phase4_full_precision(
 
     // Apply final metadata filter if needed
     if let Some(f) = filter {
-        all_results.retain(|(record, _)| record_matches_filter(record, &f));
+        all_results.retain(|(record, _)| record_matches_filter(&VectorRecord::from(record), &f));
     }
 
     // Use bounded priority queue for efficient top-k selection
@@ -720,14 +728,15 @@ async fn phase4_full_precision(
     for (record, distance) in all_results {
         // Convert distance to score (higher is better)
         let score = 1.0 / (1.0 + distance);
+        let wire_record = VectorRecord::from(&record);
 
         let search_record = crate::core::search::results::OptimizedSearchRecord {
-            id: record.id.clone(),
-            vector_id: Some(record.id.clone()),
+            id: record.oid.clone(),
+            vector_id: Some(record.oid.clone()),
             score,
             similarity: Some(distance),
-            vector: Some(Arc::new(record.vector.clone())),
-            metadata: crate::core::search::results::sql_map_to_proxima(record.metadata.clone()),
+            vector: Some(Arc::new(record_vector(&record).to_vec())),
+            metadata: crate::core::search::results::sql_map_to_proxima(wire_record.metadata),
             ..Default::default()
         };
 

@@ -1630,7 +1630,10 @@ mod block_utils {
             encoding_marker: 0x00, // Will be set based on encoding
             encoding_metadata: None,
             block_id,
-            records,
+            records: records
+                .iter()
+                .map(proximadb_records::ProximaRecord::from)
+                .collect(),
             quantized_vectors: None,
             quantization_level: None,
             encoded_vectors: None,
@@ -1853,7 +1856,15 @@ mod block_operations {
     ) -> Result<()> {
         // Extract vectors from records
         // Note: quantization currently requires owned vectors
-        let vectors: Vec<Vec<f32>> = block.records.iter().map(|r| r.vector.clone()).collect();
+        let vectors: Vec<Vec<f32>> = block
+            .records
+            .iter()
+            .filter_map(|r| {
+                r.embeddings
+                    .first()
+                    .map(|embedding| embedding.values.clone())
+            })
+            .collect();
 
         if vectors.is_empty() {
             // Keep empty quantized section for consistency
@@ -1914,7 +1925,13 @@ mod block_operations {
     ) -> Vec<(usize, Vec<f32>)> {
         indices
             .iter()
-            .filter_map(|&idx| block.records.get(idx).map(|r| (idx, r.vector.clone())))
+            .filter_map(|&idx| {
+                block.records.get(idx).and_then(|r| {
+                    r.embeddings
+                        .first()
+                        .map(|embedding| (idx, embedding.values.clone()))
+                })
+            })
             .collect()
     }
 
@@ -1935,7 +1952,11 @@ mod block_operations {
         let original_size = block
             .records
             .iter()
-            .map(|r| r.vector.len() * 4) // f32 = 4 bytes
+            .map(|r| {
+                r.embeddings
+                    .first()
+                    .map_or(0, |embedding| embedding.values.len() * 4)
+            }) // f32 = 4 bytes
             .sum::<usize>();
 
         // Calculate quantized memory usage if present

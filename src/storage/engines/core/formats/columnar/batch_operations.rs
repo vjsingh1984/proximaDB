@@ -8,7 +8,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use super::{ColumnarConfig, ParquetLocation, UnifiedParquetReader};
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 use proximadb_runtime_common::pool::VectorMemoryPool;
 
 /// Batch operations for columnar storage
@@ -50,7 +50,7 @@ impl ColumnarBatchOperations {
         &self,
         _file_paths: &[String],
         _ids: &[String],
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         // Deferred: Re-implement when batch_id_lookup API is available
         Err(anyhow::anyhow!(
             "BatchOperations temporarily disabled due to API changes"
@@ -60,7 +60,7 @@ impl ColumnarBatchOperations {
     /// Batch write vectors to columnar format
     pub async fn batch_write_vectors(
         &self,
-        vectors: &[VectorRecord],
+        vectors: &[ProximaRecord],
         target_file: &str,
         compression_config: Option<&super::QuantizationConfig>,
     ) -> Result<BatchWriteResult> {
@@ -205,7 +205,7 @@ impl ColumnarBatchOperations {
     }
 
     /// Organize vectors into optimal batches for writing
-    fn organize_into_batches(&self, vectors: &[VectorRecord]) -> Result<Vec<Vec<VectorRecord>>> {
+    fn organize_into_batches(&self, vectors: &[ProximaRecord]) -> Result<Vec<Vec<ProximaRecord>>> {
         const OPTIMAL_BATCH_SIZE: usize = 10000; // Optimal for Parquet row groups
 
         let mut batches = Vec::new();
@@ -235,7 +235,7 @@ impl ColumnarBatchOperations {
     /// Write a single batch with memory pool optimization
     async fn write_batch_optimized(
         &self,
-        batch: &[VectorRecord],
+        batch: &[ProximaRecord],
         target_file: &str,
         batch_idx: usize,
         _compression_config: Option<&super::QuantizationConfig>,
@@ -343,7 +343,7 @@ impl ColumnarBatchOperations {
 
     /// Cache operation result
     #[allow(dead_code)]
-    async fn cache_result(&self, cache_key: String, records: &[VectorRecord]) {
+    async fn cache_result(&self, cache_key: String, records: &[ProximaRecord]) {
         let cached = CachedBatchResult {
             records: records.to_vec(),
             timestamp: chrono::Utc::now(),
@@ -440,7 +440,7 @@ pub struct FailedDelete {
 /// Cached batch operation result
 #[derive(Debug, Clone)]
 struct CachedBatchResult {
-    pub records: Vec<VectorRecord>,
+    pub records: Vec<ProximaRecord>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
     #[allow(dead_code)]
     pub ttl_seconds: i64,
@@ -519,16 +519,21 @@ mod tests {
         let batch_ops = create_test_batch_ops();
 
         // Create test vectors
-        let vectors: Vec<VectorRecord> = (0..25000)
-            .map(|i| VectorRecord {
-                id: format!("test_{i}"),
-                vector: vec![i as f32; 768],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: Some(0),
-                expires_at: None,
-                version: Some(1),
-                source: Some("test".to_string()),
+        let vectors: Vec<ProximaRecord> = (0..25000)
+            .map(|i| {
+                let values = vec![i as f32; 768];
+                let dim = values.len() as u32;
+                let mut record = ProximaRecord {
+                    oid: format!("test_{i}"),
+                    ..Default::default()
+                };
+                record.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values,
+                    dim,
+                });
+                record
             })
             .collect();
 

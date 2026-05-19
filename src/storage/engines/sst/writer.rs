@@ -584,7 +584,14 @@ impl SstableWriter {
             .collect::<Vec<_>>();
 
         // Note: Some operations still require owned vectors
-        let all_vectors: Vec<Vec<f32>> = vector_records.iter().map(|r| r.vector.clone()).collect();
+        let all_vectors: Vec<Vec<f32>> = vector_records
+            .iter()
+            .filter_map(|r| {
+                r.embeddings
+                    .first()
+                    .map(|embedding| embedding.values.clone())
+            })
+            .collect();
 
         // Quantization: Unified engine already initialized above (lines 114-120)
         // Three-stage filtering: Bloom → Quantized → Full precision implemented
@@ -614,7 +621,7 @@ impl SstableWriter {
             let mut builder = BloomFilterBuilder::new(bloom_config.clone());
 
             for record in &vector_records {
-                builder.add(record.id.as_bytes());
+                builder.add(record.oid.as_bytes());
             }
 
             let bloom_strategy = builder.build();
@@ -678,13 +685,13 @@ impl SstableWriter {
             total_records: processed_count as u64,
             min_timestamp: vector_records
                 .iter()
-                .filter_map(|r| r.timestamp)
+                .map(|r| r.created_at_ns)
                 .map(|t| t as u64)
                 .min()
                 .unwrap_or(0),
             max_timestamp: vector_records
                 .iter()
-                .filter_map(|r| r.timestamp)
+                .map(|r| r.created_at_ns)
                 .map(|t| t as u64)
                 .max()
                 .unwrap_or(0),
@@ -702,7 +709,7 @@ impl SstableWriter {
                 .map(|r| {
                     use std::hash::{Hash, Hasher};
                     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    r.id.hash(&mut hasher);
+                    r.oid.hash(&mut hasher);
                     hasher.finish()
                 })
                 .collect();
@@ -955,8 +962,12 @@ impl SstableWriter {
         // - 🗜️ Automatic Compression
         // NEW: SIMD-Enhanced Block Creation for Maximum SST Compression
         // Always use SIMD-optimized block creation with SST engine profile
+        let canonical_block: Vec<proximadb_records::ProximaRecord> = current_block
+            .iter()
+            .map(proximadb_records::ProximaRecord::from)
+            .collect();
         let mut data_block = ProximaDataBlock::new_with_engine_profile(
-            current_block.to_vec(),
+            canonical_block,
             block_compression_config,
             EngineProfile::SST,
         );
@@ -1541,7 +1552,12 @@ impl SstableWriter {
         let mut all_dimensions = Vec::new();
         for block in data_blocks {
             for record in &block.records {
-                all_dimensions.push(record.vector.len());
+                all_dimensions.push(
+                    record
+                        .embeddings
+                        .first()
+                        .map_or(0, |embedding| embedding.values.len()),
+                );
             }
         }
 
@@ -1586,7 +1602,7 @@ impl SstableWriter {
 
         for block in data_blocks {
             for record in &block.records {
-                for key in record.metadata.keys() {
+                for key in record.props.keys() {
                     metadata_columns.insert(key.clone());
                 }
             }

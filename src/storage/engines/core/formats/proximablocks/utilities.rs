@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::{ProximaDataBlock, RowBasedConfig};
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::proto::v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Row-based utilities collection
 pub struct RowBasedUtilities;
@@ -25,9 +25,12 @@ impl RowBasedUtilities {
 
             // Calculate vector data size
             for record in &block.records {
-                total_vector_bytes += record.vector.len() * 4; // 4 bytes per f32
-                if !record.metadata.is_empty() {
-                    total_metadata_bytes += record.metadata.len() * 32; // Rough estimate per metadata item
+                total_vector_bytes += record
+                    .embeddings
+                    .first()
+                    .map_or(0, |embedding| embedding.values.len() * 4);
+                if !record.props.is_empty() {
+                    total_metadata_bytes += record.props.len() * 32; // Rough estimate per metadata item
                 }
             }
 
@@ -111,34 +114,40 @@ impl RowBasedUtilities {
     }
 
     /// Validate record integrity
-    pub fn validate_records(records: &[VectorRecord]) -> ValidationReport {
+    pub fn validate_records(records: &[ProximaRecord]) -> ValidationReport {
         let mut report = ValidationReport::default();
 
         for (idx, record) in records.iter().enumerate() {
             let mut record_issues = Vec::new();
 
             // Check ID
-            if record.id.is_empty() {
+            if record.oid.is_empty() {
                 record_issues.push("Missing or empty ID".to_string());
             }
 
             // Check vector
-            if record.vector.is_empty() {
+            let vector = record
+                .embeddings
+                .first()
+                .map(|embedding| embedding.values.as_slice());
+            if vector.is_none_or(|values| values.is_empty()) {
                 record_issues.push("Empty vector".to_string());
             }
 
             // Check for NaN or infinite values
-            for (i, &value) in record.vector.iter().enumerate() {
-                if value.is_nan() {
-                    record_issues.push(format!("NaN value at position {i}"));
-                }
-                if value.is_infinite() {
-                    record_issues.push(format!("Infinite value at position {i}"));
+            if let Some(vector) = vector {
+                for (i, &value) in vector.iter().enumerate() {
+                    if value.is_nan() {
+                        record_issues.push(format!("NaN value at position {i}"));
+                    }
+                    if value.is_infinite() {
+                        record_issues.push(format!("Infinite value at position {i}"));
+                    }
                 }
             }
 
             // Check timestamp
-            if record.timestamp.unwrap_or(0) < 0 {
+            if record.created_at_ns < 0 {
                 record_issues.push("Invalid timestamp".to_string());
             }
 
@@ -148,7 +157,7 @@ impl RowBasedUtilities {
                 report.invalid_records += 1;
                 report.validation_errors.push(RecordValidationError {
                     record_index: idx,
-                    record_id: Some(record.id.clone()),
+                    record_id: Some(record.oid.clone()),
                     issues: record_issues,
                 });
             }
@@ -676,19 +685,19 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::common::FilenameCodec;
     use crate::storage::engines::core::formats::proximablocks::block_structures::BlockStatistics;
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
 
     #[test]
     fn test_memory_usage_calculation() {
         let records = vec![
-            VectorRecord {
+            ProximaRecord {
                 id: "test1".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
                 ..Default::default()
             },
-            VectorRecord {
+            ProximaRecord {
                 id: "test2".to_string(),
                 vector: vec![4.0, 5.0, 6.0],
                 ..Default::default()
@@ -740,19 +749,19 @@ mod tests {
     #[test]
     fn test_record_validation() {
         let records = vec![
-            VectorRecord {
+            ProximaRecord {
                 id: "valid".to_string(),
                 vector: vec![1.0, 2.0, 3.0],
                 timestamp: Some(1000),
                 ..Default::default()
             },
-            VectorRecord {
+            ProximaRecord {
                 id: "".to_string(), // Invalid - no ID
                 vector: vec![4.0, 5.0, 6.0],
                 timestamp: Some(2000),
                 ..Default::default()
             },
-            VectorRecord {
+            ProximaRecord {
                 id: "invalid_vector".to_string(),
                 vector: vec![f32::NAN, 2.0, f32::INFINITY], // Invalid - NaN and Infinity
                 timestamp: Some(3000),

@@ -16,7 +16,7 @@ use crate::core::bloom::{
     BloomFilter, BloomFilterBuilder as CoreBloomBuilder, BloomFilterConfig as CoreConfig,
     BloomStrategy,
 };
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Wrapper around core bloom filter builder for Parquet-specific use
 pub struct BloomFilterBuilder {
@@ -108,14 +108,14 @@ impl BloomFilterBuilder {
     }
 
     /// Add records to current bloom filter
-    pub fn add_batch(&mut self, records: &[VectorRecord]) -> Result<()> {
+    pub fn add_batch(&mut self, records: &[ProximaRecord]) -> Result<()> {
         let filter = self.get_or_create_filter(self.current_row_group)?;
 
         for record in records {
-            filter.insert(record.id.as_bytes());
+            filter.insert(record.oid.as_bytes());
 
             // Optionally add metadata keys for filtering
-            for key in record.metadata.keys() {
+            for key in record.props.keys() {
                 filter.insert(key.as_bytes());
             }
         }
@@ -323,18 +323,12 @@ mod tests {
             .expect("Failed to start row group");
 
         let records = vec![
-            VectorRecord {
-                id: "batch_1".to_string(),
-                vector: vec![1.0, 2.0],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
+            ProximaRecord {
+                oid: "batch_1".to_string(),
                 ..Default::default()
             },
-            VectorRecord {
-                id: "batch_2".to_string(),
-                vector: vec![3.0, 4.0],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
+            ProximaRecord {
+                oid: "batch_2".to_string(),
                 ..Default::default()
             },
         ];

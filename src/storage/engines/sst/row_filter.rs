@@ -1,6 +1,6 @@
 //! SST Row-Oriented Filtering Optimization
 //!
-//! Implements fast in-memory filtering on deserialized SstRecord/VectorRecord data.
+//! Implements fast in-memory filtering on deserialized ProximaRecord data.
 //! Optimized for SST's row-based storage where entire blocks are read into memory.
 
 use anyhow::Result;
@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use tracing::{debug, info};
 
 use crate::core::search::FilterExpression;
-use crate::proto::proximadb_v1::VectorRecord; // OPTIMIZED: Direct VectorRecord usage
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
+use proximadb_records::ProximaRecord;
 
 /// Fast in-memory filter evaluator for row-oriented SST data
 pub struct SSTRowFilterEvaluator {
@@ -24,39 +24,33 @@ impl SSTRowFilterEvaluator {
         }
     }
 
-    /// Fast filter evaluation on already-loaded VectorRecords
+    /// Fast filter evaluation on already-loaded canonical records.
     ///
     /// This is optimal for SST because:
     /// 1. Data is already in memory (row-oriented blocks read in full)
     /// 2. No I/O savings from predicate pushdown
-    /// 3. Fast metadata field access from VectorRecord
+    /// 3. Fast metadata field access from ProximaRecord
     /// 4. Can filter entire blocks in memory efficiently
     pub fn filter_records_fast(
         &mut self,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         filter_expr: &FilterExpression,
     ) -> Result<Vec<usize>> {
         let mut qualifying_indices = Vec::new();
 
         info!(
-            "SST Row Filter: Evaluating {} VectorRecords in mem",
+            "SST Row Filter: Evaluating {} ProximaRecords in mem",
             records.len()
         );
 
         for (index, record) in records.iter().enumerate() {
-            // Use record ID or index as cache key
-            let _formatted_key = format!("idx_{}", index);
-            let cache_key = record.id.as_str();
-            let metadata_map = self.get_or_convert_vector_metadata(cache_key, &record.metadata)?;
-
-            // Fast filter evaluation using centralized logic
-            if self.evaluate_filter_fast(filter_expr, &metadata_map) {
+            if self.evaluate_filter_fast(filter_expr, &record.props) {
                 qualifying_indices.push(index);
             }
         }
 
         debug!(
-            "SST Row Filter: {} out of {} VectorRecords qualify",
+            "SST Row Filter: {} out of {} ProximaRecords qualify",
             qualifying_indices.len(),
             records.len()
         );
@@ -67,34 +61,10 @@ impl SSTRowFilterEvaluator {
     /// Filter VectorRecord array (common case for SST unified search)
     pub fn filter_vector_records_fast(
         &mut self,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         filter_expr: &FilterExpression,
     ) -> Result<Vec<usize>> {
-        let mut qualifying_indices = Vec::new();
-
-        info!(
-            "SST Row Filter: Evaluating {} VectorRecords in mem",
-            records.len()
-        );
-
-        for (index, record) in records.iter().enumerate() {
-            // Use record ID or index as cache key
-            let _formatted_key = format!("idx_{}", index);
-            let cache_key = record.id.as_str();
-            let metadata_map = self.get_or_convert_vector_metadata(cache_key, &record.metadata)?;
-
-            if self.evaluate_filter_fast(filter_expr, &metadata_map) {
-                qualifying_indices.push(index);
-            }
-        }
-
-        debug!(
-            "SST Row Filter: {} out of {} VectorRecords qualify",
-            qualifying_indices.len(),
-            records.len()
-        );
-
-        Ok(qualifying_indices)
+        self.filter_records_fast(records, filter_expr)
     }
 
     /// Filter entire ProximaDataBlock efficiently
@@ -189,10 +159,9 @@ impl SSTRowFilterEvaluator {
     fn evaluate_filter_fast(
         &self,
         expr: &FilterExpression,
-        metadata: &HashMap<String, serde_json::Value>,
+        metadata: &proximadb_records::ProximaTree,
     ) -> bool {
-        // Use the unified filter evaluator for consistency across engines
-        crate::storage::engines::core::evaluate_filter(expr, metadata)
+        crate::core::search::sql_value_filter::evaluate_filter_proxima(expr, metadata)
     }
 
     /// Clear metadata cache to prevent memory bloat
@@ -214,7 +183,7 @@ impl SSTRowFilterEvaluator {
     /// Immutable version for Arc-wrapped read operations (no caching)
     pub fn filter_vector_records_immutable(
         &self,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         filter_expr: &FilterExpression,
     ) -> Result<Vec<usize>> {
         let mut qualifying_indices = Vec::new();
@@ -225,11 +194,10 @@ impl SSTRowFilterEvaluator {
         );
 
         for (index, record) in records.iter().enumerate() {
-            // Convert metadata without caching for immutable operation
-            let metadata_map =
-                crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata);
-
-            if crate::storage::engines::core::evaluate_filter(filter_expr, &metadata_map) {
+            if crate::core::search::sql_value_filter::evaluate_filter_proxima(
+                filter_expr,
+                &record.props,
+            ) {
                 qualifying_indices.push(index);
             }
         }
@@ -272,7 +240,7 @@ impl SSTBatchFilterEvaluator {
     /// - Final_result = AND_result ∪ Thread3 = [1, 3, 5, 8, 9, 12]
     pub async fn evaluate_parallel_filters(
         &mut self,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         filter_expr: &FilterExpression,
     ) -> Result<Vec<usize>> {
         match filter_expr {
@@ -390,7 +358,7 @@ impl SSTBatchFilterEvaluator {
     /// Immutable version for Arc-wrapped read operations
     pub async fn evaluate_parallel_filters_immutable(
         &self,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         filter_expr: &FilterExpression,
     ) -> Result<Vec<usize>> {
         match filter_expr {

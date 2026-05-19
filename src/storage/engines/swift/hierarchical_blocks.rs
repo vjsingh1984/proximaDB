@@ -288,29 +288,15 @@ impl MetadataIndex {
 
         // Process each record's metadata
         for record in &block.records {
-            if !record.metadata.is_empty() {
-                for (key, value) in &record.metadata {
+            if !record.props.is_empty() {
+                for (key, value) in &record.props {
                     // Only index filterable columns
                     if !self.filterable_columns.contains(key) {
                         continue;
                     }
 
-                    // Convert SqlValue to serde_json::Value
-                    let json_value = match &value.value {
-                        Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
-                            serde_json::Value::String(s.clone())
-                        }
-                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
-                            serde_json::json!(n)
-                        }
-                        Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
-                            serde_json::Value::Bool(*b)
-                        }
-                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
-                            serde_json::json!(i)
-                        }
-                        _ => serde_json::Value::Null,
-                    };
+                    // Convert canonical ProximaTreeNode to serde_json::Value
+                    let json_value = serde_json::to_value(value).unwrap_or(serde_json::Value::Null);
 
                     // Get or create column index
                     let new_index = if !self.column_indexes.contains_key(key) {

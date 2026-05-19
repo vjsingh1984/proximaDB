@@ -753,13 +753,17 @@ impl SwiftEngine {
                 // For now, simulate with placeholder results
                 for block in &superblock.blocks {
                     for record in block.records.iter() {
+                        let vector = record
+                            .embeddings
+                            .first()
+                            .map_or(&[][..], |embedding| embedding.values.as_slice());
                         // Compute approximate distance
                         let distance = query
                             .iter()
-                            .zip(record.vector.iter())
+                            .zip(vector.iter())
                             .map(|(a, b)| (a - b).abs())
                             .sum::<f32>();
-                        results.push((record.id.clone(), distance));
+                        results.push((record.oid.clone(), distance));
                     }
                 }
             }
@@ -1316,7 +1320,10 @@ impl UnifiedStorageEngine for SwiftEngine {
                 for block in &superblock.blocks {
                     for record in &block.records {
                         total_entries += 1;
-                        merged.insert(record.id.clone(), record.clone());
+                        merged.insert(
+                            record.oid.clone(),
+                            crate::proto::proximadb_v1::VectorRecord::from(record),
+                        );
                     }
                 }
             }
@@ -1956,11 +1963,12 @@ impl SwiftEngine {
             for superblock in &swift_file.superblocks {
                 for block in &superblock.blocks {
                     for record in &block.records {
+                        let wire_record = VectorRecord::from(record);
                         // Apply metadata filter if present
                         if let Some(filter_expr) = _filter_expression {
                             let matches = crate::core::search::sql_value_filter::evaluate_filter(
                                 filter_expr,
-                                &record.metadata,
+                                &wire_record.metadata,
                             );
                             if !matches {
                                 continue; // Skip records that don't match filter
@@ -1970,25 +1978,25 @@ impl SwiftEngine {
                         // Compute actual distance using distance engine
                         let distance_result = self.distance_engine.calculate_distance(
                             query_vector,
-                            &record.vector,
+                            &wire_record.vector,
                             &distance_metric,
                         );
 
-                        let id = if record.id.is_empty() {
-                            format!("unknown_{:?}", record.timestamp)
+                        let id = if wire_record.id.is_empty() {
+                            format!("unknown_{:?}", wire_record.timestamp)
                         } else {
-                            record.id.clone()
+                            wire_record.id.clone()
                         };
 
                         let mut search_record =
                             OptimizedSearchRecord::new(id, distance_result.normalized_score)
                                 .with_similarity(distance_result.normalized_score)
-                                .add_vector(record.vector.clone())
-                                .with_metadata(record.metadata.clone());
+                                .add_vector(wire_record.vector.clone())
+                                .with_metadata(wire_record.metadata.clone());
 
-                        if let Some(version) = record.version {
+                        if let Some(version) = wire_record.version {
                             search_record = search_record
-                                .with_version_info(version, record.timestamp.unwrap_or(0));
+                                .with_version_info(version, wire_record.timestamp.unwrap_or(0));
                         }
 
                         // Try to insert into bounded queue - only keeps top-k

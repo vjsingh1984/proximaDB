@@ -18,9 +18,9 @@ use super::serialization::{
     ColumnarSerializationConfig, ColumnarSerializer, FormatPreference, SerializationResult,
 };
 use super::{ColumnarConfig, ColumnarFileMetadata, CompressionMetadata, QuantizationConfig};
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use proximadb_compression::CompressionAlgorithm;
+use proximadb_records::ProximaRecord;
 
 /// Common configuration for VIPER and NOVA engines
 #[derive(Debug, Clone, Default)]
@@ -624,7 +624,7 @@ impl CommonColumnarOperations {
     /// Serialize vector records with transparent quantization
     pub async fn serialize_records(
         &self,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         schema: &Schema,
     ) -> Result<SerializationResult> {
         let start_time = std::time::Instant::now();
@@ -637,9 +637,9 @@ impl CommonColumnarOperations {
         let result = self.serializer.serialize_vectors(records, schema).await?;
 
         let serialization_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        let bytes_processed = records
-            .first()
-            .map_or(0, |r| records.len() * r.vector.len() * 4);
+        let bytes_processed = records.first().map_or(0, |r| {
+            records.len() * r.embeddings.first().map_or(0, |e| e.values.len()) * 4
+        });
 
         // Update metrics
         self.performance_monitor
@@ -662,7 +662,7 @@ impl CommonColumnarOperations {
         arrays: &HashMap<String, ArrayRef>,
         schema: &Schema,
         format_preference: FormatPreference,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         let start_time = std::time::Instant::now();
 
         debug!(

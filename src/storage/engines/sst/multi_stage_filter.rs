@@ -17,7 +17,6 @@ use tracing::{debug, info, warn};
 
 use crate::core::bloom::SstableBloomFilter;
 use crate::core::search::{ComparisonOperator, FilterExpression};
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use crate::storage::engines::sst::IndexEntry;
 use crate::storage::engines::sst::readers::sst_query_engine::ReadStrategy;
@@ -422,21 +421,18 @@ impl ThreeStageFilterPipeline {
         );
 
         for block in qualifying_blocks {
-            // Convert SstRecord to VectorRecord for filtering
-            let vector_records: Vec<VectorRecord> = block.records.to_vec();
-
             // Use batch evaluator for AND/OR support
             let block_indices = match filter_expr {
                 FilterExpression::And(_) | FilterExpression::Or(_) => {
                     self.batch_filter
                         .as_ref()
-                        .evaluate_parallel_filters_immutable(&vector_records, filter_expr)
+                        .evaluate_parallel_filters_immutable(&block.records, filter_expr)
                         .await?
                 }
                 _ => self
                     .row_filter
                     .as_ref()
-                    .filter_vector_records_immutable(&vector_records, filter_expr)?,
+                    .filter_vector_records_immutable(&block.records, filter_expr)?,
             };
 
             // Convert block-local indices to global indices

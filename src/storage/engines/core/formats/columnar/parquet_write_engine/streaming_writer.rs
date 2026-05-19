@@ -13,11 +13,11 @@ use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, error, info, trace};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::ColumnarFilterableSpec;
 use crate::storage::engines::core::formats::columnar::{
     metadata_collector::MetadataCollector, native_metadata::NativeMetadataHandler,
 };
+use proximadb_records::{ProximaRecord, ProximaTree, ProximaTreeNode};
 
 use super::{
     schema_builder::{ParquetSchemaBuilder, create_writer_properties},
@@ -31,7 +31,7 @@ pub struct StreamingParquetWriter {
     config: ParquetWriterConfig,
     schema: Arc<Schema>,
     dimension: usize,
-    current_batch: Vec<VectorRecord>,
+    current_batch: Vec<ProximaRecord>,
     current_row_group: usize,
     total_records_written: u64,
 
@@ -175,12 +175,16 @@ impl StreamingParquetWriter {
     }
 
     /// Write a batch of records (streaming interface)
-    pub async fn write_batch(&mut self, records: &[VectorRecord]) -> Result<()> {
+    pub async fn write_batch(&mut self, records: &[ProximaRecord]) -> Result<()> {
         debug!(
             "Writing batch of {} records, dimension={}",
             records.len(),
             if !records.is_empty() {
-                records[0].vector.len()
+                records[0]
+                    .embeddings
+                    .first()
+                    .map(|e| e.values.len())
+                    .unwrap_or(0)
             } else {
                 0
             }
@@ -207,7 +211,7 @@ impl StreamingParquetWriter {
     }
 
     /// Write a single record
-    pub async fn write_record(&mut self, record: VectorRecord) -> Result<()> {
+    pub async fn write_record(&mut self, record: ProximaRecord) -> Result<()> {
         self.write_batch(&[record]).await
     }
 
@@ -259,8 +263,8 @@ impl StreamingParquetWriter {
         Ok(())
     }
 
-    /// Convert VectorRecords to Arrow RecordBatch
-    fn create_record_batch(&self, records: &[VectorRecord]) -> Result<RecordBatch> {
+    /// Convert ProximaRecords to Arrow RecordBatch
+    fn create_record_batch(&self, records: &[ProximaRecord]) -> Result<RecordBatch> {
         // This is a simplified version - the full implementation would handle
         // all the columns including quantized vectors, metadata, etc.
 
@@ -268,7 +272,7 @@ impl StreamingParquetWriter {
         let mut arrays: Vec<ArrayRef> = Vec::new();
 
         // ID column
-        let ids: Vec<Option<String>> = records.iter().map(|r| Some(r.id.clone())).collect();
+        let ids: Vec<Option<String>> = records.iter().map(|r| Some(r.oid.clone())).collect();
         arrays.push(Arc::new(StringArray::from(ids)));
 
         // Row group offset and row index
@@ -285,14 +289,30 @@ impl StreamingParquetWriter {
         let mut values = Vec::with_capacity(records.len() * self.dimension);
         for record in records {
             // Ensure vector has correct dimension
-            if record.vector.len() != self.dimension {
+            if record
+                .embeddings
+                .first()
+                .map(|e| e.values.len())
+                .unwrap_or(0)
+                != self.dimension
+            {
                 return Err(anyhow::anyhow!(
                     "Vector dimension mismatch: expected {}, got {}",
                     self.dimension,
-                    record.vector.len()
+                    record
+                        .embeddings
+                        .first()
+                        .map(|e| e.values.len())
+                        .unwrap_or(0)
                 ));
             }
-            values.extend_from_slice(&record.vector);
+            values.extend_from_slice(
+                record
+                    .embeddings
+                    .first()
+                    .map(|e| e.values.as_slice())
+                    .unwrap_or(&[]),
+            );
         }
 
         let values_array = Float32Array::from(values);
@@ -315,23 +335,35 @@ impl StreamingParquetWriter {
         }
 
         // Timestamp
-        let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp.unwrap_or(0)).collect();
+        let timestamps: Vec<i64> = records
+            .iter()
+            .map(|r| r.created_at_ns / 1_000_000)
+            .collect();
         arrays.push(Arc::new(Int64Array::from(timestamps)));
 
         // Updated at (optional)
-        let updated_at: Vec<Option<i64>> = records.iter().map(|r| r.updated_at).collect();
+        let updated_at: Vec<Option<i64>> = records
+            .iter()
+            .map(|r| Some(r.updated_at_ns / 1_000_000))
+            .collect();
         arrays.push(Arc::new(Int64Array::from(updated_at)));
 
         // Expires at (optional)
-        let expires_at: Vec<Option<i64>> = records.iter().map(|r| r.expires_at).collect();
+        let expires_at: Vec<Option<i64>> = records
+            .iter()
+            .map(|r| r.valid_to_ns.map(|t| t / 1_000_000))
+            .collect();
         arrays.push(Arc::new(Int64Array::from(expires_at)));
 
         // Version (optional)
-        let versions: Vec<Option<u32>> = records.iter().map(|r| r.version).collect();
+        let versions: Vec<Option<u32>> = records
+            .iter()
+            .map(|r| Some(r.record_version as u32))
+            .collect();
         arrays.push(Arc::new(UInt32Array::from(versions)));
 
         // Source (optional)
-        let sources: Vec<Option<String>> = records.iter().map(|r| r.source.clone()).collect();
+        let sources: Vec<Option<String>> = records.iter().map(|r| r.origin.clone()).collect();
         arrays.push(Arc::new(StringArray::from(sources)));
 
         // Add filterable column arrays if specified
@@ -351,13 +383,10 @@ impl StreamingParquetWriter {
                         let values: Vec<Option<String>> = records
                             .iter()
                             .map(|r| {
-                                r.metadata.get(&col_spec.name).and_then(|sql_value| {
-                                    if let Some(value) = &sql_value.value {
-                                        use crate::proto::proximadb_v1::sql_value::Value;
-                                        match value {
-                                            Value::StringValue(s) => Some(s.clone()),
-                                            _ => None,
-                                        }
+                                r.props.get(&col_spec.name).and_then(|node| {
+                                    use proximadb_data_model::ProximaValue;
+                                    if let ProximaTreeNode::Value(ProximaValue::String(s)) = node {
+                                        Some(s.clone())
                                     } else {
                                         None
                                     }
@@ -370,16 +399,14 @@ impl StreamingParquetWriter {
                         let values: Vec<Option<i64>> = records
                             .iter()
                             .map(|r| {
-                                r.metadata.get(&col_spec.name).and_then(|sql_value| {
-                                    if let Some(value) = &sql_value.value {
-                                        use crate::proto::proximadb_v1::sql_value::Value;
-                                        match value {
-                                            Value::Int64Value(i) => Some(*i),
-                                            Value::NumberValue(f) => Some(*f as i64),
-                                            _ => None,
+                                r.props.get(&col_spec.name).and_then(|node| {
+                                    use proximadb_data_model::ProximaValue;
+                                    match node {
+                                        ProximaTreeNode::Value(ProximaValue::Int64(i)) => Some(*i),
+                                        ProximaTreeNode::Value(ProximaValue::Float64(f)) => {
+                                            Some(*f as i64)
                                         }
-                                    } else {
-                                        None
+                                        _ => None,
                                     }
                                 })
                             })
@@ -390,16 +417,16 @@ impl StreamingParquetWriter {
                         let values: Vec<Option<f64>> = records
                             .iter()
                             .map(|r| {
-                                r.metadata.get(&col_spec.name).and_then(|sql_value| {
-                                    if let Some(value) = &sql_value.value {
-                                        use crate::proto::proximadb_v1::sql_value::Value;
-                                        match value {
-                                            Value::NumberValue(f) => Some(*f),
-                                            Value::Int64Value(i) => Some(*i as f64),
-                                            _ => None,
+                                r.props.get(&col_spec.name).and_then(|node| {
+                                    use proximadb_data_model::ProximaValue;
+                                    match node {
+                                        ProximaTreeNode::Value(ProximaValue::Float64(f)) => {
+                                            Some(*f)
                                         }
-                                    } else {
-                                        None
+                                        ProximaTreeNode::Value(ProximaValue::Int64(i)) => {
+                                            Some(*i as f64)
+                                        }
+                                        _ => None,
                                     }
                                 })
                             })
@@ -410,13 +437,10 @@ impl StreamingParquetWriter {
                         let values: Vec<Option<bool>> = records
                             .iter()
                             .map(|r| {
-                                r.metadata.get(&col_spec.name).and_then(|sql_value| {
-                                    if let Some(value) = &sql_value.value {
-                                        use crate::proto::proximadb_v1::sql_value::Value;
-                                        match value {
-                                            Value::BoolValue(b) => Some(*b),
-                                            _ => None,
-                                        }
+                                r.props.get(&col_spec.name).and_then(|node| {
+                                    use proximadb_data_model::ProximaValue;
+                                    if let ProximaTreeNode::Value(ProximaValue::Boolean(b)) = node {
+                                        Some(*b)
                                     } else {
                                         None
                                     }
@@ -430,13 +454,10 @@ impl StreamingParquetWriter {
                         let values: Vec<Option<i64>> = records
                             .iter()
                             .map(|r| {
-                                r.metadata.get(&col_spec.name).and_then(|sql_value| {
-                                    if let Some(value) = &sql_value.value {
-                                        use crate::proto::proximadb_v1::sql_value::Value;
-                                        match value {
-                                            Value::Int64Value(i) => Some(*i),
-                                            _ => None,
-                                        }
+                                r.props.get(&col_spec.name).and_then(|node| {
+                                    use proximadb_data_model::ProximaValue;
+                                    if let ProximaTreeNode::Value(ProximaValue::Int64(i)) = node {
+                                        Some(*i)
                                     } else {
                                         None
                                     }
@@ -450,13 +471,10 @@ impl StreamingParquetWriter {
                         let values: Vec<Option<String>> = records
                             .iter()
                             .map(|r| {
-                                r.metadata.get(&col_spec.name).and_then(|sql_value| {
-                                    if let Some(value) = &sql_value.value {
-                                        use crate::proto::proximadb_v1::sql_value::Value;
-                                        match value {
-                                            Value::StringValue(s) => Some(s.clone()),
-                                            _ => None,
-                                        }
+                                r.props.get(&col_spec.name).and_then(|node| {
+                                    use proximadb_data_model::ProximaValue;
+                                    if let ProximaTreeNode::Value(ProximaValue::String(s)) = node {
+                                        Some(s.clone())
                                     } else {
                                         None
                                     }
@@ -502,18 +520,18 @@ impl StreamingParquetWriter {
         // Build the key-value pairs for each record's metadata
         for (idx, record) in records.iter().enumerate() {
             map_offsets.push(current_offset);
-            let metadata_count = record.metadata.len();
+            let metadata_count = record.props.len();
 
             if idx < 3 || metadata_count > 0 {
                 trace!(
                     "Record {} (id={}) has {} metadata entries",
-                    idx, record.id, metadata_count
+                    idx, record.oid, metadata_count
                 );
             }
 
             // Add only non-filterable metadata entries for this record
             // Filterable metadata is already in typed columns
-            for (key, sql_value) in &record.metadata {
+            for (key, node) in &record.props {
                 // Skip if this is a filterable column (already in typed column)
                 if filterable_names.contains(key) {
                     if idx < 3 {
@@ -524,18 +542,15 @@ impl StreamingParquetWriter {
 
                 all_keys.push(key.clone());
 
-                // Convert SqlValue to string representation
-                let value_str = if let Some(value) = &sql_value.value {
-                    use crate::proto::proximadb_v1::sql_value::Value;
-                    match value {
-                        Value::StringValue(s) => Some(s.clone()),
-                        Value::NumberValue(f) => Some(f.to_string()),
-                        Value::BoolValue(b) => Some(b.to_string()),
-                        Value::Int64Value(i) => Some(i.to_string()),
-                        _ => Some("".to_string()),
-                    }
-                } else {
-                    None
+                // Convert ProximaTreeNode to string representation
+                use proximadb_data_model::ProximaValue;
+                let value_str = match node {
+                    ProximaTreeNode::Value(ProximaValue::String(s)) => Some(s.clone()),
+                    ProximaTreeNode::Value(ProximaValue::Float64(f)) => Some(f.to_string()),
+                    ProximaTreeNode::Value(ProximaValue::Boolean(b)) => Some(b.to_string()),
+                    ProximaTreeNode::Value(ProximaValue::Int64(i)) => Some(i.to_string()),
+                    ProximaTreeNode::Object(_) => None,
+                    _ => Some("".to_string()),
                 };
 
                 all_values.push(value_str);
@@ -599,7 +614,7 @@ impl StreamingParquetWriter {
     fn add_quantization_arrays(
         &self,
         arrays: &mut Vec<ArrayRef>,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
     ) -> Result<()> {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
         use crate::compute::quantization::quantization_engine::{
@@ -616,7 +631,13 @@ impl StreamingParquetWriter {
         if self.config.quantization.enable_binary.unwrap_or(false) {
             let mut builder = BinaryBuilder::new();
             for record in records {
-                let binary_vec = engine.quantize_to_binary(&record.vector)?;
+                let binary_vec = engine.quantize_to_binary(
+                    record
+                        .embeddings
+                        .first()
+                        .map(|e| e.values.as_slice())
+                        .unwrap_or(&[]),
+                )?;
                 builder.append_value(&binary_vec);
             }
             arrays.push(Arc::new(builder.finish()));
@@ -630,7 +651,13 @@ impl StreamingParquetWriter {
             let mut max_values = Vec::with_capacity(records.len());
 
             for record in records {
-                let (int8_vec, min, max) = engine.quantize_to_u8(&record.vector)?;
+                let (int8_vec, min, max) = engine.quantize_to_u8(
+                    record
+                        .embeddings
+                        .first()
+                        .map(|e| e.values.as_slice())
+                        .unwrap_or(&[]),
+                )?;
                 int8_builder.append_value(&int8_vec);
 
                 // Calculate scale from min/max
@@ -664,7 +691,7 @@ impl StreamingParquetWriter {
     }
 
     /// Update bloom filters with current batch
-    fn update_bloom_filters(&mut self, records: &[VectorRecord]) -> Result<()> {
+    fn update_bloom_filters(&mut self, records: &[ProximaRecord]) -> Result<()> {
         // Ensure we have a bloom filter for current row group
         while self.id_bloom_filters.len() <= self.current_row_group {
             let _estimated_items = self.config.bloom_filter_ndv.max(100000);
@@ -680,19 +707,19 @@ impl StreamingParquetWriter {
         // Update ID bloom filter
         let bloom = &mut self.id_bloom_filters[self.current_row_group];
         for record in records {
-            bloom.insert(&record.id);
+            bloom.insert(&record.oid);
         }
 
         Ok(())
     }
 
     /// Collect metadata samples for type inference
-    fn collect_metadata_samples(&mut self, records: &[VectorRecord]) -> Result<()> {
+    fn collect_metadata_samples(&mut self, records: &[ProximaRecord]) -> Result<()> {
         for record in records {
-            if !record.metadata.is_empty() && self.metadata_samples.len() < 100 {
+            if !record.props.is_empty() && self.metadata_samples.len() < 100 {
                 // Default metadata inference sample size
                 // Convert metadata to JSON for sampling
-                let metadata_map = self.convert_metadata_to_json(&record.metadata)?;
+                let metadata_map = self.convert_metadata_to_json(&record.props)?;
                 self.metadata_samples.push(metadata_map);
 
                 // Perform type inference once we have enough samples
@@ -705,23 +732,25 @@ impl StreamingParquetWriter {
         Ok(())
     }
 
-    /// Convert metadata to JSON map
+    /// Convert props to JSON map
     fn convert_metadata_to_json(
         &self,
-        metadata: &HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+        props: &ProximaTree,
     ) -> Result<serde_json::Map<String, serde_json::Value>> {
+        use proximadb_data_model::ProximaValue;
         let mut map = serde_json::Map::new();
 
-        for (key, sql_value) in metadata {
-            if let Some(value) = &sql_value.value {
-                use crate::proto::proximadb_v1::sql_value::Value;
+        for (key, node) in props {
+            if let ProximaTreeNode::Value(value) = node {
                 let json_value = match value {
-                    Value::StringValue(s) => serde_json::Value::String(s.clone()),
-                    Value::NumberValue(f) => serde_json::Value::Number(
+                    ProximaValue::String(s) => serde_json::Value::String(s.clone()),
+                    ProximaValue::Float64(f) => serde_json::Value::Number(
                         serde_json::Number::from_f64(*f).unwrap_or(serde_json::Number::from(0)),
                     ),
-                    Value::BoolValue(b) => serde_json::Value::Bool(*b),
-                    Value::Int64Value(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
+                    ProximaValue::Boolean(b) => serde_json::Value::Bool(*b),
+                    ProximaValue::Int64(i) => {
+                        serde_json::Value::Number(serde_json::Number::from(*i))
+                    }
                     _ => serde_json::Value::String("".to_string()),
                 };
                 map.insert(key.clone(), json_value);

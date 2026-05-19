@@ -248,7 +248,7 @@ async fn load_block_from_disk(_superblock_idx: u32, _block_idx: u32) -> Result<P
 
 /// Extract a record from a block at the given offset
 fn extract_record_from_block(block: &ProximaDataBlock, offset: u32) -> Option<VectorRecord> {
-    block.records.get(offset as usize).cloned()
+    block.records.get(offset as usize).map(VectorRecord::from)
 }
 
 /// Estimate memory size of a block

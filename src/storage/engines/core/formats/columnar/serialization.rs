@@ -18,8 +18,8 @@ use crate::compute::distance_computation::SelectedFormat;
 use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine, StorageQuantizedData,
 };
-use crate::proto::proximadb_v1::VectorRecord;
 use proximadb_compression::CompressionAlgorithm;
+use proximadb_records::{EmbeddingCell, ProximaRecord};
 
 /// Serialization configuration for columnar storage
 #[derive(Debug, Clone)]
@@ -379,7 +379,7 @@ impl ColumnarSerializer {
     /// Serialize vector records with transparent quantization
     pub async fn serialize_vectors(
         &self,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         _schema: &Schema,
     ) -> Result<SerializationResult> {
         let start_time = std::time::Instant::now();
@@ -393,7 +393,14 @@ impl ColumnarSerializer {
         );
 
         // Extract vectors from records
-        let vectors: Vec<&[f32]> = records.iter().map(|r| r.vector.as_slice()).collect();
+        let vectors: Vec<&[f32]> = records
+            .iter()
+            .map(|r| {
+                r.embeddings
+                    .first()
+                    .map_or(&[][..], |e| e.values.as_slice())
+            })
+            .collect();
 
         // Serialize FP32 vectors
         let fp32_array = self.serialize_fp32_vectors(&vectors)?;
@@ -493,7 +500,7 @@ impl ColumnarSerializer {
         arrays: &HashMap<String, ArrayRef>,
         _schema: &Schema,
         format_preference: FormatPreference,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         let start_time = std::time::Instant::now();
 
         info!(
@@ -563,15 +570,25 @@ impl ColumnarSerializer {
             }
         };
 
-        // Convert to VectorRecord format (this would need ID and metadata from other columns)
+        // Convert to ProximaRecord format
         let records = vectors
             .into_iter()
             .enumerate()
-            .map(|(i, vector)| VectorRecord {
-                id: format!("record_{i}"), // Placeholder - would come from ID column
-                vector,
-                timestamp: Some(chrono::Utc::now().timestamp()),
-                ..Default::default()
+            .map(|(i, vector)| {
+                let dim = vector.len() as u32;
+                let mut record = ProximaRecord {
+                    oid: format!("record_{i}"), // Placeholder - would come from ID column
+                    ..Default::default()
+                };
+                if !vector.is_empty() {
+                    record.embeddings.push(EmbeddingCell {
+                        model_id: "default".to_string(),
+                        modality: "vector".to_string(),
+                        values: vector,
+                        dim,
+                    });
+                }
+                record
             })
             .collect();
 

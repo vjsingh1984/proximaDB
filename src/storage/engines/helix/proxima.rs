@@ -85,8 +85,12 @@ impl HelixSIMDWriter {
 
         // Create Proxima block with HELIX engine profile
         // The block will internally apply SIMD encoding based on the layout
+        let canonical_records: Vec<proximadb_records::ProximaRecord> = records
+            .iter()
+            .map(proximadb_records::ProximaRecord::from)
+            .collect();
         let mut block = ProximaDataBlock::new_with_engine_profile(
-            records.to_vec(),
+            canonical_records,
             compression_config,
             EngineProfile::Helix,
         );
@@ -930,11 +934,12 @@ pub async fn search_helix_sstable(
 
         // Search within block
         for record in &block.records {
+            let wire_record = crate::proto::proximadb_v1::VectorRecord::from(record);
             // Apply type-safe filter if present
             if let Some(filter_expr) = filter_expression {
                 let matches = crate::core::search::sql_value_filter::evaluate_filter(
                     filter_expr,
-                    &record.metadata,
+                    &wire_record.metadata,
                 );
                 if !matches {
                     continue; // Skip records that don't match filter
@@ -942,10 +947,10 @@ pub async fn search_helix_sstable(
             }
 
             // Use shared UnifiedDistanceCompute for correct metric-specific distance calculation
-            let distance = distance_compute.distance(query_vector, &record.vector);
+            let distance = distance_compute.distance(query_vector, &wire_record.vector);
 
             // Return SqlValue metadata (type-safe)
-            results.push((record.id.clone(), distance, record.metadata.clone()));
+            results.push((wire_record.id, distance, wire_record.metadata));
         }
     }
 

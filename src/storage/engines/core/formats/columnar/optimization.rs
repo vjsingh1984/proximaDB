@@ -7,7 +7,6 @@
 //! - Cost-based query optimization
 
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
     ColumnarConfig, MetadataFilter, RowGroupStats, SearchCandidate,
 };
@@ -17,6 +16,7 @@ use arrow_array::RecordBatch;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::bloom_filter::Sbbf as BloomFilter;
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
+use proximadb_records::{EmbeddingCell, ProximaRecord};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -394,7 +394,11 @@ impl ColumnarOptimizer {
                     }),
                     score: candidate.similarity,
                     similarity: Some(1.0 - candidate.similarity),
-                    vector: Some(Arc::new(vector.vector)),
+                    vector: vector
+                        .embeddings
+                        .into_iter()
+                        .next()
+                        .map(|e| Arc::new(e.values)),
                     metadata: HashMap::new(), // Use SqlValue metadata
                     ..Default::default()
                 });
@@ -567,25 +571,29 @@ impl ColumnarOptimizer {
         Ok(Some(vec![0.0; 768])) // Placeholder vector
     }
 
-    /// Load full VectorRecord at candidate location
+    /// Load full ProximaRecord at candidate location
     async fn load_vector_at_location(
         &self,
         candidate: &SearchCandidate,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<ProximaRecord>> {
         // In production, would load the full record from Parquet
-        Ok(Some(VectorRecord {
-            id: candidate
-                .vector_id
-                .clone()
-                .unwrap_or_else(|| format!("unknown_{}", candidate.row_offset)),
-            vector: vec![0.0; 768], // Placeholder
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(0),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
-        }))
+        let oid = candidate
+            .vector_id
+            .clone()
+            .unwrap_or_else(|| format!("unknown_{}", candidate.row_offset));
+        let values = vec![0.0_f32; 768]; // Placeholder
+        let dim = values.len() as u32;
+        let mut record = ProximaRecord {
+            oid,
+            ..Default::default()
+        };
+        record.embeddings.push(EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "vector".to_string(),
+            values,
+            dim,
+        });
+        Ok(Some(record))
     }
 
     /// Optimize row group layout for better performance

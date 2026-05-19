@@ -12,12 +12,12 @@
 
 use anyhow::{Result, anyhow};
 use arrow_array::{ArrayRef, RecordBatch, StringArray, UInt32Array};
+use proximadb_records::ProximaRecord;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, info, trace, warn};
 
 use super::{FilterCondition, MetadataFilter};
-use crate::proto::proximadb_v1::VectorRecord;
 
 /// Strategy for handling metadata filters based on column types
 #[derive(Debug, Clone)]
@@ -492,7 +492,7 @@ pub trait BranchedMetadataFiltering {
         file_path: &str,
         filters: &[MetadataFilter],
         projection: Option<Vec<String>>,
-    ) -> Result<Vec<VectorRecord>>;
+    ) -> Result<Vec<ProximaRecord>>;
 }
 
 /// Performance metrics for filter operations

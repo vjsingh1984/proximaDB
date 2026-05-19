@@ -119,20 +119,24 @@ impl VectorExtractor for NovaExtractor {
 
             // Track bytes (approximate)
             for record in &records {
-                total_bytes_read += record.vector.len() * 4;
+                total_bytes_read += record
+                    .embeddings
+                    .first()
+                    .map_or(0, |embedding| embedding.values.len() * 4);
             }
             files_processed += 1;
 
-            // Convert VectorRecord to ExtractedVector
+            // Convert canonical ProximaRecord to ExtractedVector
             for record in records {
+                let record_id = record.oid.clone();
                 // Handle vector filtering based on mode
                 let fp32_vector = match request.mode {
                     ExtractionMode::Fp32Only | ExtractionMode::Both | ExtractionMode::Auto => {
-                        if !record.vector.is_empty() {
-                            Some(record.vector)
-                        } else {
-                            None
-                        }
+                        record
+                            .embeddings
+                            .first()
+                            .map(|embedding| embedding.values.clone())
+                            .filter(|values| !values.is_empty())
                     }
                     ExtractionMode::QuantizedOnly => None,
                 };
@@ -141,12 +145,12 @@ impl VectorExtractor for NovaExtractor {
                 // Quantization is handled at the columnar storage layer
                 let quantized = None;
 
-                // Handle metadata - convert HashMap<String, SqlValue> to JSON Value
-                let metadata = if !record.metadata.is_empty() {
+                // Handle metadata - convert ProximaRecord props to JSON Value
+                let metadata = if !record.props.is_empty() {
                     let json_map: serde_json::Map<String, serde_json::Value> = record
-                        .metadata
+                        .props
                         .into_iter()
-                        .filter_map(|(k, v)| sql_value_to_json(&v).map(|jv| (k, jv)))
+                        .filter_map(|(k, v)| serde_json::to_value(v).ok().map(|jv| (k, jv)))
                         .collect();
                     if json_map.is_empty() {
                         None
@@ -159,13 +163,13 @@ impl VectorExtractor for NovaExtractor {
 
                 // Apply ID filter if selective extraction
                 let should_include = match &request.vector_ids {
-                    Some(ids) => ids.contains(&record.id),
+                    Some(ids) => ids.contains(&record_id),
                     None => true,
                 };
 
                 if should_include && fp32_vector.is_some() {
                     all_vectors.push(ExtractedVector {
-                        id: record.id,
+                        id: record_id,
                         fp32_vector,
                         quantized,
                         metadata,

@@ -2,7 +2,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::proto::proximadb_v1::VectorRecord;
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
     use std::collections::HashMap;
     use tempfile::tempdir;
 
@@ -15,8 +15,8 @@ mod tests {
         let file_path = dir.path().join("test_branched.parquet");
 
         // Create simple test data without metadata to avoid MapArray issues
-        let test_records: Vec<VectorRecord> = (0..100)
-            .map(|i| VectorRecord {
+        let test_records: Vec<ProximaRecord> = (0..100)
+            .map(|i| ProximaRecord {
                 id: format!("id_{i}"),
                 vector: vec![i as f32; 128],
                 metadata: HashMap::new(), // Empty to avoid MapArray
@@ -56,7 +56,7 @@ mod tests {
             .collect::<Vec<_>>();
         // TODO: Implement optimized_batch_id_lookup method
         // For now, simulate lookup results
-        let results: Vec<crate::proto::proximadb_v1::VectorRecord> = test_records[0..10].to_vec();
+        let results: Vec<ProximaRecord> = test_records[0..10].to_vec();
         /*
         let results = reader
             .optimized_batch_id_lookup(

@@ -82,7 +82,12 @@ impl HelixExtractor {
             // Deserialize block
             match ProximaDataBlock::deserialize(&block_data, None) {
                 Ok(block) => {
-                    records.extend(block.records);
+                    records.extend(
+                        block
+                            .records
+                            .iter()
+                            .map(crate::proto::proximadb_v1::VectorRecord::from),
+                    );
                 }
                 Err(e) => {
                     debug!("Failed to deserialize block {}: {}", block_idx, e);
@@ -158,15 +163,16 @@ impl VectorExtractor for HelixExtractor {
             }
             files_processed += 1;
 
-            // Convert VectorRecord to ExtractedVector
+            // Convert legacy VectorRecord reader output to ExtractedVector
             for record in records {
+                let record_id = record.id.clone();
                 // Handle vector filtering based on mode
                 let fp32_vector = match request.mode {
                     ExtractionMode::Fp32Only | ExtractionMode::Both | ExtractionMode::Auto => {
-                        if !record.vector.is_empty() {
-                            Some(record.vector)
-                        } else {
+                        if record.vector.is_empty() {
                             None
+                        } else {
+                            Some(record.vector.clone())
                         }
                     }
                     ExtractionMode::QuantizedOnly => None,
@@ -194,13 +200,13 @@ impl VectorExtractor for HelixExtractor {
 
                 // Apply ID filter if selective extraction
                 let should_include = match &request.vector_ids {
-                    Some(ids) => ids.contains(&record.id),
+                    Some(ids) => ids.contains(&record_id),
                     None => true,
                 };
 
                 if should_include && fp32_vector.is_some() {
                     all_vectors.push(ExtractedVector {
-                        id: record.id,
+                        id: record_id,
                         fp32_vector,
                         quantized,
                         metadata,

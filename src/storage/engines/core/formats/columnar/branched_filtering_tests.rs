@@ -10,7 +10,8 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
+    use crate::proto::proximadb_v1::{SqlValue};
+use proximadb_records::{EmbeddingCell, ProximaRecord};
     use crate::storage::engines::core::formats::columnar::{
         ParquetWriterConfig, StreamingParquetWriter, UnifiedParquetReader,
     };
@@ -21,7 +22,7 @@ mod tests {
     use tracing::info;
 
     /// Create test data with both filterable and non-filterable metadata
-    fn create_test_records(count: usize) -> Vec<VectorRecord> {
+    fn create_test_records(count: usize) -> Vec<ProximaRecord> {
         (0..count)
             .map(|i| {
                 let mut metadata = HashMap::new();
@@ -62,7 +63,7 @@ mod tests {
                     },
                 );
 
-                VectorRecord {
+                ProximaRecord {
                     id: format!("vec_{:06}", i),
                     vector: vec![i as f32; 128],
                     metadata,
@@ -79,7 +80,7 @@ mod tests {
     /// Write test data with specified filterable columns
     async fn write_test_data(
         file_path: &std::path::Path,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         filterable_columns: Vec<String>,
     ) -> anyhow::Result<()> {
         let config = ParquetWriterConfig {
@@ -213,8 +214,8 @@ mod tests {
         let file_path = dir.path().join("test_slow_path.parquet");
 
         // Create test data with NO metadata (to avoid MapArray issues in test)
-        let records: Vec<VectorRecord> = (0..500)
-            .map(|i| VectorRecord {
+        let records: Vec<ProximaRecord> = (0..500)
+            .map(|i| ProximaRecord {
                 id: format!("vec_{:06}", i),
                 vector: vec![i as f32; 128],
                 metadata: HashMap::new(), // Empty to avoid MapArray
@@ -292,8 +293,8 @@ mod tests {
         let file_path = dir.path().join("test_mixed_path.parquet");
 
         // Create test data with empty metadata to avoid MapArray
-        let records: Vec<VectorRecord> = (0..800)
-            .map(|i| VectorRecord {
+        let records: Vec<ProximaRecord> = (0..800)
+            .map(|i| ProximaRecord {
                 id: format!("vec_{:06}", i),
                 vector: vec![i as f32; 128],
                 metadata: HashMap::new(), // Empty to avoid MapArray issues
@@ -368,8 +369,8 @@ mod tests {
         let dir = tempdir().unwrap();
         let file_path = dir.path().join("test_no_filter.parquet");
 
-        let records: Vec<VectorRecord> = (0..100)
-            .map(|i| VectorRecord {
+        let records: Vec<ProximaRecord> = (0..100)
+            .map(|i| ProximaRecord {
                 id: format!("vec_{:06}", i),
                 vector: vec![i as f32; 128],
                 metadata: HashMap::new(),

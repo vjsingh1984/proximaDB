@@ -3,7 +3,6 @@
 
 use crate::core::search::DataFreshnessTier;
 use crate::proto::proximadb_v1::VectorRecord;
-use proximadb_records::conversions::proxima_record_to_vector;
 // Import column constants from columnar module
 use crate::storage::engines::core::formats::columnar::FIELD_ID;
 use crate::storage::engines::core::ops::{
@@ -855,14 +854,8 @@ impl NovaEngine {
         // 4. Uploading to cloud/local storage
         // 5. Populating disk cache for future reads
         // 6. Returning metadata collector for sidecar generation
-        // Convert ProximaRecord → VectorRecord for the columnar writer (protocol adapter boundary)
-        let vector_records_v1: Vec<VectorRecord> = params
-            .vector_records
-            .iter()
-            .map(proxima_record_to_vector)
-            .collect();
         let (stats, collector) = HybridParquetWriter::write_with_cache(
-            &vector_records_v1,
+            &params.vector_records,
             nova_file.metadata.dimension,
             hybrid_config,
             file_path,

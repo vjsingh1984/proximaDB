@@ -7,8 +7,9 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use tracing::info;
 
-use crate::proto::proximadb_v1::{FilterableColumnSpec, VectorRecord};
+use crate::proto::proximadb_v1::FilterableColumnSpec;
 use crate::storage::engines::core::formats::columnar::metadata_collector::MetadataCollector;
+use proximadb_records::ProximaRecord;
 
 use super::{
     streaming_writer::StreamingParquetWriter, writer_config::ParquetWriterConfig,
@@ -55,7 +56,7 @@ impl BatchParquetWriter {
     /// Write all records at once with optional metadata collection
     pub async fn write_all(
         &mut self,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
     ) -> Result<(
         StreamingParquetWriterStats,
         Option<Box<dyn MetadataCollector>>,
@@ -99,7 +100,7 @@ impl BatchParquetWriter {
     /// Write all records and return only statistics (convenience method)
     pub async fn write_all_simple(
         &mut self,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
     ) -> Result<StreamingParquetWriterStats> {
         let (stats, _) = self.write_all(records).await?;
         Ok(stats)
@@ -200,19 +201,31 @@ mod tests {
         let mut writer = BatchParquetWriter::new(&file_path, 128, config);
 
         let records = vec![
-            VectorRecord {
-                id: "test_1".to_string(),
-                vector: vec![1.0; 128],
-                metadata: Default::default(),
-                timestamp: Some(0),
-                ..Default::default()
+            {
+                let mut r = ProximaRecord {
+                    oid: "test_1".to_string(),
+                    ..Default::default()
+                };
+                r.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: vec![1.0; 128],
+                    dim: 128,
+                });
+                r
             },
-            VectorRecord {
-                id: "test_2".to_string(),
-                vector: vec![2.0; 128],
-                metadata: Default::default(),
-                timestamp: Some(1),
-                ..Default::default()
+            {
+                let mut r = ProximaRecord {
+                    oid: "test_2".to_string(),
+                    ..Default::default()
+                };
+                r.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: vec![2.0; 128],
+                    dim: 128,
+                });
+                r
             },
         ];
 
@@ -238,23 +251,23 @@ mod tests {
         let mut writer =
             BatchParquetWriter::new(&file_path, 64, config).with_filterable_columns(columns);
 
-        let mut metadata = std::collections::HashMap::new();
-        metadata.insert(
-            "category".to_string(),
-            crate::proto::proximadb_v1::SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    "test_category".to_string(),
-                )),
-            },
-        );
-
-        let records = vec![VectorRecord {
-            id: "test_1".to_string(),
-            vector: vec![1.0; 64],
-            metadata: metadata.clone(),
-            timestamp: Some(0),
+        let mut r = ProximaRecord {
+            oid: "test_1".to_string(),
             ..Default::default()
-        }];
+        };
+        r.embeddings.push(EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "vector".to_string(),
+            values: vec![1.0; 64],
+            dim: 64,
+        });
+        r.props.insert(
+            "category".to_string(),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                "test_category".to_string(),
+            )),
+        );
+        let records = vec![r];
 
         let stats = writer.write_all_simple(&records).await.unwrap();
         assert_eq!(stats.total_records, 1);

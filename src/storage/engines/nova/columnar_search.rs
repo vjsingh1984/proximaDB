@@ -441,7 +441,10 @@ impl NovaColumnarSearch {
                     );
                 let distance_result = distance_compute.calculate_distance(
                     query_vector,
-                    &record.vector,
+                    record
+                        .embeddings
+                        .first()
+                        .map_or(&[][..], |embedding| embedding.values.as_slice()),
                     &distance_metric,
                 );
                 let distance = distance_result.distance;
@@ -450,7 +453,7 @@ impl NovaColumnarSearch {
                     row_group_id: rg_idx,
                     row_offset: 0, // Will be calculated when proper indexing is implemented
                     similarity: 1.0 - distance,
-                    vector_id: Some(record.id.clone()),
+                    vector_id: Some(record.oid.clone()),
                 });
             }
         }
@@ -642,10 +645,14 @@ impl NovaColumnarSearch {
                     1.0 - (hamming_distance / 256.0)
                 } else {
                     // Full vector mode: compute actual distance
-                    if !record.vector.is_empty() {
+                    let vector = record
+                        .embeddings
+                        .first()
+                        .map_or(&[][..], |embedding| embedding.values.as_slice());
+                    if !vector.is_empty() {
                         let distance = self.distance_compute.calculate_distance(
                             query_vector,
-                            &record.vector,
+                            vector,
                             &distance_metric,
                         );
                         distance.normalized_score
@@ -658,7 +665,7 @@ impl NovaColumnarSearch {
                     row_group_id: rg_idx,
                     row_offset: row_offset as u32,
                     similarity,
-                    vector_id: Some(record.id.clone()),
+                    vector_id: Some(record.oid.clone()),
                 });
 
                 if candidates.len() > max_candidates {
@@ -879,7 +886,7 @@ impl NovaColumnarSearch {
                     // Find record by ID or index
                     batch
                         .iter()
-                        .find(|r| &r.id == candidate.vector_id.as_ref().unwrap_or(&String::new()))
+                        .find(|r| &r.oid == candidate.vector_id.as_ref().unwrap_or(&String::new()))
                         .cloned()
                 {
                     batch_records.push(record);
@@ -889,8 +896,14 @@ impl NovaColumnarSearch {
             // Batch compute distances if we have vectors
             if !batch_records.is_empty() {
                 // Collect vector references after all records are collected
-                let batch_vectors: Vec<&[f32]> =
-                    batch_records.iter().map(|r| r.vector.as_slice()).collect();
+                let batch_vectors: Vec<&[f32]> = batch_records
+                    .iter()
+                    .map(|r| {
+                        r.embeddings
+                            .first()
+                            .map_or(&[][..], |embedding| embedding.values.as_slice())
+                    })
+                    .collect();
 
                 let distance_compute =
                     crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
@@ -904,7 +917,10 @@ impl NovaColumnarSearch {
 
                 // Combine records with distances
                 for (record, distance_result) in batch_records.into_iter().zip(distances.iter()) {
-                    final_results.push((record, distance_result.distance));
+                    final_results.push((
+                        crate::proto::proximadb_v1::VectorRecord::from(&record),
+                        distance_result.distance,
+                    ));
                 }
             }
         }

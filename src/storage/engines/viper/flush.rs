@@ -423,9 +423,15 @@ impl Flush {
             sample_rate: 1.0, // Sample all vectors for accurate radius
         });
 
+        // Convert sorted VectorRecords to ProximaRecords for write_with_cache
+        let proxima_records: Vec<proximadb_records::ProximaRecord> = sorted_records
+            .iter()
+            .map(proximadb_records::ProximaRecord::from)
+            .collect();
+
         // Use HybridParquetWriter::write_with_cache like NOVA does
         let (stats, returned_collector) = match crate::storage::engines::core::formats::columnar::hybrid_writer::HybridParquetWriter::write_with_cache(
-            &sorted_records,
+            &proxima_records,
             vector_dimensions as usize,
             hybrid_config,
             &final_url,

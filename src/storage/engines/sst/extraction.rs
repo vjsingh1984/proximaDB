@@ -120,19 +120,28 @@ impl VectorExtractor for SstExtractor {
             request.file_paths.len()
         );
 
-        // Convert VectorRecord to ExtractedVector
+        // Convert canonical records to extracted vectors without touching the v1 proto envelope.
         let mut vectors = Vec::with_capacity(records.len());
         let mut bytes_read = 0usize;
 
         for record in records {
+            let record_id = record
+                .local_id
+                .clone()
+                .unwrap_or_else(|| record.oid.clone());
             // Handle vector filtering based on mode
             let fp32_vector = match request.mode {
                 ExtractionMode::Fp32Only | ExtractionMode::Both | ExtractionMode::Auto => {
-                    if !record.vector.is_empty() {
-                        bytes_read += record.vector.len() * 4; // f32 = 4 bytes
-                        Some(record.vector)
-                    } else {
+                    let vector = record
+                        .embeddings
+                        .first()
+                        .map(|embedding| embedding.values.as_slice())
+                        .unwrap_or(&[]);
+                    if vector.is_empty() {
                         None
+                    } else {
+                        bytes_read += vector.len() * 4;
+                        Some(vector.to_vec())
                     }
                 }
                 ExtractionMode::QuantizedOnly => None,
@@ -142,15 +151,24 @@ impl VectorExtractor for SstExtractor {
             // Quantization is handled at the storage layer
             let quantized = None;
 
-            // Handle metadata - convert HashMap<String, SqlValue> to JSON Value
-            let metadata = if !record.metadata.is_empty() {
-                // Convert SqlValue map to serde_json::Value
+            let metadata = if !record.props.is_empty() {
                 let json_map: serde_json::Map<String, serde_json::Value> = record
-                    .metadata
-                    .into_iter()
-                    .filter_map(|(k, v)| {
-                        // Convert SqlValue to JSON Value
-                        sql_value_to_json(&v).map(|jv| (k, jv))
+                    .props
+                    .iter()
+                    .map(|(k, node)| {
+                        let value = match node {
+                            proximadb_records::ProximaTreeNode::Value(value) => {
+                                crate::core::search::sql_value_filter::proxima_value_to_json(value)
+                            }
+                            proximadb_records::ProximaTreeNode::Object(subtree) => {
+                                let object =
+                                    crate::core::search::sql_value_filter::proxima_tree_to_json_map(
+                                        subtree,
+                                    );
+                                serde_json::Value::Object(object.into_iter().collect())
+                            }
+                        };
+                        (k.clone(), value)
                     })
                     .collect();
                 if json_map.is_empty() {
@@ -164,13 +182,13 @@ impl VectorExtractor for SstExtractor {
 
             // Apply ID filter if selective extraction
             let should_include = match &request.vector_ids {
-                Some(ids) => ids.contains(&record.id),
+                Some(ids) => ids.contains(&record_id),
                 None => true,
             };
 
             if should_include && fp32_vector.is_some() {
                 vectors.push(ExtractedVector {
-                    id: record.id,
+                    id: record_id,
                     fp32_vector,
                     quantized,
                     metadata,

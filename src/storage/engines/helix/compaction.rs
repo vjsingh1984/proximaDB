@@ -711,18 +711,18 @@ impl LeveledCompactor {
 
             // Filter out expired records (physical delete during compaction)
             for record in block.records {
-                if let Some(expires_at) = record.expires_at
+                if let Some(expires_at) = record.valid_to_ns
                     && expires_at as u64 <= current_time
                 {
                     // Record is expired, skip it (physical delete)
                     debug!(
                         "Filtering expired record: {} (expired at {})",
-                        record.id, expires_at
+                        record.oid, expires_at
                     );
                     continue;
                 }
                 // Record is not expired or has no expiration, keep it
-                records.push(record);
+                records.push(crate::proto::proximadb_v1::VectorRecord::from(&record));
             }
         }
 

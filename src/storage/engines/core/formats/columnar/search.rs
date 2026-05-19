@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, trace};
 
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::{EmbeddingCell, ProximaRecord};
 use crate::core::search::{SearchResult, FilterExpression};
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
 use crate::storage::engines::core::ops::crate::storage::engines::core::search::search_common::{SearchableFile, SearchableBlock, FileSearcher};
@@ -147,7 +147,7 @@ impl SearchableFile for ParquetFile {
 pub struct RowGroup {
     pub index: usize,
     pub metadata: RowGroupMetaData,
-    pub records: Option<Vec<VectorRecord>>, // Lazy loaded
+    pub records: Option<Vec<ProximaRecord>>, // Lazy loaded
 }
 
 impl SearchableBlock for RowGroup {
@@ -156,7 +156,7 @@ impl SearchableBlock for RowGroup {
         Box::leak(format!("rg_{}", self.index).into_boxed_str())
     }
     
-    fn records(&self) -> &[VectorRecord] {
+    fn records(&self) -> &[ProximaRecord] {
         self.records.as_ref().map(|v| v.as_slice())
     }
     

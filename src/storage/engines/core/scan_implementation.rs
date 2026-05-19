@@ -12,15 +12,15 @@
 //! 4. **Zero-copy where possible**: Use memory mapping and direct buffers
 
 use anyhow::{Context, Result};
-use arrow_array::{RecordBatch, ArrayRef, StringArray, BinaryArray, Float32Array, Int64Array};
-use arrow_schema::{Schema, Field, DataType};
+use arrow_array::{ArrayRef, BinaryArray, Float32Array, Int64Array, RecordBatch, StringArray};
+use arrow_schema::{DataType, Field, Schema};
 use async_trait::async_trait;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::scan_strategy::{ScanStrategy, ScanIterator, ScanStatistics};
+use crate::storage::scan_strategy::{ScanIterator, ScanStatistics, ScanStrategy};
 use crate::storage::traits::UnifiedStorageEngine;
+use proximadb_records::ProximaRecord;
 
 /// Unified scan implementation that all engines can use
 pub struct UnifiedScanImpl {
@@ -36,7 +36,7 @@ impl UnifiedScanImpl {
             ipc_scanner: None,
         }
     }
-    
+
     /// Create scan iterator based on strategy
     pub async fn create_scan(
         &self,
@@ -46,7 +46,12 @@ impl UnifiedScanImpl {
         collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Box<dyn ScanIterator>> {
         match strategy {
-            ScanStrategy::FullScan { include_deleted, batch_size, parallel, use_cache } => {
+            ScanStrategy::FullScan {
+                include_deleted,
+                batch_size,
+                parallel,
+                use_cache,
+            } => {
                 // Use Arrow IPC for all full scans
                 self.create_arrow_ipc_scan(
                     engine,
@@ -55,10 +60,15 @@ impl UnifiedScanImpl {
                     batch_size,
                     parallel,
                     use_cache,
-                ).await
+                )
+                .await
             }
-            
-            ScanStrategy::FilteredScan { predicates, enable_pushdown, .. } => {
+
+            ScanStrategy::FilteredScan {
+                predicates,
+                enable_pushdown,
+                ..
+            } => {
                 // Use engine-specific filtered scan
                 self.create_engine_filtered_scan(
                     engine,
@@ -66,13 +76,15 @@ impl UnifiedScanImpl {
                     predicates,
                     enable_pushdown,
                     collection_config,
-                ).await
+                )
+                .await
             }
-            
+
             ScanStrategy::ProgressiveScan { .. } => {
                 // Only NOVA supports progressive scan
                 if self.engine_name == "NOVA" {
-                    self.create_nova_progressive_scan(engine, collection_id, strategy).await
+                    self.create_nova_progressive_scan(engine, collection_id, strategy)
+                        .await
                 } else {
                     // Fall back to filtered scan for other engines
                     self.create_engine_filtered_scan(
@@ -81,11 +93,17 @@ impl UnifiedScanImpl {
                         None,
                         false,
                         collection_config,
-                    ).await
+                    )
+                    .await
                 }
             }
-            
-            ScanStrategy::RangeScan { start_key, end_key, reverse, use_index } => {
+
+            ScanStrategy::RangeScan {
+                start_key,
+                end_key,
+                reverse,
+                use_index,
+            } => {
                 // SST and tree-based engines support range scans
                 if self.engine_name == "SST" || self.engine_name == "PRISM" {
                     self.create_range_scan(
@@ -95,14 +113,18 @@ impl UnifiedScanImpl {
                         end_key,
                         reverse,
                         use_index,
-                    ).await
+                    )
+                    .await
                 } else {
-                    Err(anyhow::anyhow!("{} does not support range scans", self.engine_name))
+                    Err(anyhow::anyhow!(
+                        "{} does not support range scans",
+                        self.engine_name
+                    ))
                 }
             }
         }
     }
-    
+
     /// Create Arrow IPC scan for full table scans
     async fn create_arrow_ipc_scan(
         &self,
@@ -113,8 +135,11 @@ impl UnifiedScanImpl {
         parallel: bool,
         use_cache: bool,
     ) -> Result<Box<dyn ScanIterator>> {
-        info!("Creating Arrow IPC full scan for {} engine", self.engine_name);
-        
+        info!(
+            "Creating Arrow IPC full scan for {} engine",
+            self.engine_name
+        );
+
         // Different engines need different converters
         let converter: Box<dyn EngineToArrowConverter> = match self.engine_name.as_str() {
             "SST" => Box::new(SSTToArrowConverter::new()),
@@ -124,10 +149,10 @@ impl UnifiedScanImpl {
             "SWIFT" => Box::new(SwiftToArrowConverter::new()),
             _ => return Err(anyhow::anyhow!("Unknown engine: {}", self.engine_name)),
         };
-        
+
         // Get data files for the collection
         let data_files = self.get_collection_files(engine, collection_id).await?;
-        
+
         // Create Arrow IPC iterator
         Ok(Box::new(ArrowIpcFullScanIterator {
             converter,
@@ -141,7 +166,7 @@ impl UnifiedScanImpl {
             stats: ScanStatistics::default(),
         }))
     }
-    
+
     /// Create engine-specific filtered scan
     async fn create_engine_filtered_scan(
         &self,
@@ -151,8 +176,11 @@ impl UnifiedScanImpl {
         enable_pushdown: bool,
         collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> Result<Box<dyn ScanIterator>> {
-        info!("Creating filtered scan for {} engine with pushdown={}", self.engine_name, enable_pushdown);
-        
+        info!(
+            "Creating filtered scan for {} engine with pushdown={}",
+            self.engine_name, enable_pushdown
+        );
+
         // Each engine has its own optimized filtered scan
         match self.engine_name.as_str() {
             "SST" => {
@@ -173,11 +201,14 @@ impl UnifiedScanImpl {
             }
             _ => {
                 // Fall back to basic filtering
-                Err(anyhow::anyhow!("{} filtered scan not implemented", self.engine_name))
+                Err(anyhow::anyhow!(
+                    "{} filtered scan not implemented",
+                    self.engine_name
+                ))
             }
         }
     }
-    
+
     /// Create NOVA progressive scan
     async fn create_nova_progressive_scan(
         &self,
@@ -188,7 +219,7 @@ impl UnifiedScanImpl {
         // NOVA-specific progressive quantization scan
         Err(anyhow::anyhow!("NOVA progressive scan not yet implemented"))
     }
-    
+
     /// Create range scan for SST/PRISM
     async fn create_range_scan(
         &self,
@@ -201,7 +232,7 @@ impl UnifiedScanImpl {
     ) -> Result<Box<dyn ScanIterator>> {
         Err(anyhow::anyhow!("Range scan not yet implemented"))
     }
-    
+
     /// Get data files for a collection
     async fn get_collection_files(
         &self,
@@ -217,8 +248,12 @@ impl UnifiedScanImpl {
 #[async_trait]
 trait EngineToArrowConverter: Send + Sync {
     /// Convert a data file to Arrow RecordBatches
-    async fn convert_to_arrow(&self, file_path: &str, batch_size: usize) -> Result<Vec<RecordBatch>>;
-    
+    async fn convert_to_arrow(
+        &self,
+        file_path: &str,
+        batch_size: usize,
+    ) -> Result<Vec<RecordBatch>>;
+
     /// Get Arrow schema for the engine's data
     fn get_arrow_schema(&self) -> Schema;
 }
@@ -234,14 +269,18 @@ impl SSTToArrowConverter {
 
 #[async_trait]
 impl EngineToArrowConverter for SSTToArrowConverter {
-    async fn convert_to_arrow(&self, file_path: &str, batch_size: usize) -> Result<Vec<RecordBatch>> {
+    async fn convert_to_arrow(
+        &self,
+        file_path: &str,
+        batch_size: usize,
+    ) -> Result<Vec<RecordBatch>> {
         // Read SSTable blocks and convert to Arrow format
         // SST stores data in blocks with VectorRecords
-        
+
         // Deferred: Implement actual SST reading
         Ok(Vec::new())
     }
-    
+
     fn get_arrow_schema(&self) -> Schema {
         Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
@@ -263,23 +302,27 @@ impl ParquetToArrowConverter {
 
 #[async_trait]
 impl EngineToArrowConverter for ParquetToArrowConverter {
-    async fn convert_to_arrow(&self, file_path: &str, batch_size: usize) -> Result<Vec<RecordBatch>> {
+    async fn convert_to_arrow(
+        &self,
+        file_path: &str,
+        batch_size: usize,
+    ) -> Result<Vec<RecordBatch>> {
         // Parquet is already columnar, just read as RecordBatches
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use std::fs::File;
-        
+
         let file = File::open(file_path)?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
         let mut reader = builder.with_batch_size(batch_size).build()?;
-        
+
         let mut batches = Vec::new();
         for batch in reader {
             batches.push(batch?);
         }
-        
+
         Ok(batches)
     }
-    
+
     fn get_arrow_schema(&self) -> Schema {
         // Parquet schema varies, this is a default
         Schema::new(vec![
@@ -301,14 +344,18 @@ impl RaptorToArrowConverter {
 
 #[async_trait]
 impl EngineToArrowConverter for RaptorToArrowConverter {
-    async fn convert_to_arrow(&self, file_path: &str, batch_size: usize) -> Result<Vec<RecordBatch>> {
+    async fn convert_to_arrow(
+        &self,
+        file_path: &str,
+        batch_size: usize,
+    ) -> Result<Vec<RecordBatch>> {
         // RAPTOR uses Proxima columnar encoding
         // Convert rowgroups to Arrow batches
-        
+
         // Deferred: Implement RAPTOR Proxima decoding
         Ok(Vec::new())
     }
-    
+
     fn get_arrow_schema(&self) -> Schema {
         Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
@@ -330,14 +377,18 @@ impl PrismToArrowConverter {
 
 #[async_trait]
 impl EngineToArrowConverter for PrismToArrowConverter {
-    async fn convert_to_arrow(&self, file_path: &str, batch_size: usize) -> Result<Vec<RecordBatch>> {
+    async fn convert_to_arrow(
+        &self,
+        file_path: &str,
+        batch_size: usize,
+    ) -> Result<Vec<RecordBatch>> {
         // PRISM uses tree structure with Proxima
         // Traverse tree and collect into batches
-        
+
         // Deferred: Implement PRISM tree traversal
         Ok(Vec::new())
     }
-    
+
     fn get_arrow_schema(&self) -> Schema {
         Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
@@ -359,14 +410,18 @@ impl SwiftToArrowConverter {
 
 #[async_trait]
 impl EngineToArrowConverter for SwiftToArrowConverter {
-    async fn convert_to_arrow(&self, file_path: &str, batch_size: usize) -> Result<Vec<RecordBatch>> {
+    async fn convert_to_arrow(
+        &self,
+        file_path: &str,
+        batch_size: usize,
+    ) -> Result<Vec<RecordBatch>> {
         // SWIFT uses hierarchical superblocks
         // Convert blocks to Arrow batches
-        
+
         // Deferred: Implement SWIFT superblock reading
         Ok(Vec::new())
     }
-    
+
     fn get_arrow_schema(&self) -> Schema {
         Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
@@ -392,7 +447,7 @@ struct ArrowIpcFullScanIterator {
 
 #[async_trait]
 impl ScanIterator for ArrowIpcFullScanIterator {
-    async fn next_batch(&mut self) -> Result<Option<Vec<VectorRecord>>> {
+    async fn next_batch(&mut self) -> Result<Option<Vec<ProximaRecord>>> {
         // Process next batch from current file
         if let Some(ref mut batches) = self.current_batch {
             if !batches.is_empty() {
@@ -400,27 +455,30 @@ impl ScanIterator for ArrowIpcFullScanIterator {
                 return Ok(Some(self.batch_to_records(batch)?));
             }
         }
-        
+
         // Move to next file
         if self.current_file >= self.data_files.len() {
             return Ok(None);
         }
-        
+
         // Convert file to Arrow batches
         let file_path = &self.data_files[self.current_file];
         self.current_file += 1;
-        
-        let batches = self.converter.convert_to_arrow(file_path, self.batch_size).await?;
+
+        let batches = self
+            .converter
+            .convert_to_arrow(file_path, self.batch_size)
+            .await?;
         self.current_batch = Some(batches);
-        
+
         // Recurse to get first batch
         self.next_batch().await
     }
-    
+
     fn statistics(&self) -> ScanStatistics {
         self.stats.clone()
     }
-    
+
     fn cancel(&mut self) {
         self.current_file = self.data_files.len();
         self.current_batch = None;
@@ -428,11 +486,11 @@ impl ScanIterator for ArrowIpcFullScanIterator {
 }
 
 impl ArrowIpcFullScanIterator {
-    fn batch_to_records(&mut self, batch: RecordBatch) -> Result<Vec<VectorRecord>> {
+    fn batch_to_records(&mut self, batch: RecordBatch) -> Result<Vec<ProximaRecord>> {
         // Convert RecordBatch to VectorRecords
         // Update statistics
         self.stats.records_scanned += batch.num_rows();
-        
+
         // Deferred: Implement actual conversion
         Ok(Vec::new())
     }
@@ -481,13 +539,15 @@ pub async fn create_unified_scan(
     collection_config: Option<&crate::proto::proximadb_v1::Collection>,
 ) -> Result<Box<dyn ScanIterator>> {
     let impl_helper = UnifiedScanImpl::new(engine.engine_name());
-    impl_helper.create_scan(engine, collection_id, strategy, collection_config).await
+    impl_helper
+        .create_scan(engine, collection_id, strategy, collection_config)
+        .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_converter_creation() {
         let _sst = SSTToArrowConverter::new();

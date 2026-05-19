@@ -149,6 +149,47 @@ pub enum ProjectionDirective {
         collection_id: String,
         fields: Vec<String>,
     },
+    /// Rebuild an observability trace/service-correlation index.
+    ///
+    /// Trace indexes are Layer 2 projections over canonical log/span/metric
+    /// records. They must not introduce independent WAL or retention semantics.
+    ObservabilityTraceIndex {
+        collection_id: String,
+        service_name: Option<String>,
+        trace_id_field: String,
+        span_id_field: String,
+    },
+    /// Rebuild a retained time-series rollup projection.
+    ///
+    /// The rollup is authoritative only when materialized back as canonical
+    /// aggregate records by policy. Otherwise it remains rebuildable from WAL
+    /// and canonical observability records.
+    TimeSeriesRollup {
+        collection_id: String,
+        metric_name: String,
+        window_ms: u64,
+        dimensions: Vec<String>,
+    },
+    /// Refresh an open-format manifest projection such as Iceberg REST catalog
+    /// metadata.
+    ///
+    /// This directive models Layer 3 catalog facade refresh. Ownership remains
+    /// with xCatalog + ProximaRecord unless the catalog marks the table as
+    /// explicitly external-authoritative.
+    OpenFormatManifest {
+        namespace: String,
+        table_name: String,
+        format: OpenTableFormat,
+    },
+}
+
+/// Open table format whose manifest/protocol facade can be refreshed from
+/// canonical records.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum OpenTableFormat {
+    Iceberg,
+    Delta,
+    Hudi,
 }
 
 /// A lightweight edge reference stored inside `AdjacencyTableRow`.
@@ -748,6 +789,62 @@ mod tests {
             .filter(|(_, d)| matches!(d, ProjectionDirective::CsrRebuild { .. }))
             .count();
         assert_eq!(csr_count, 1);
+    }
+
+    #[test]
+    fn crash_recovery_observability_projection_directives_are_typed() {
+        let trace_dir = ProjectionDirective::ObservabilityTraceIndex {
+            collection_id: "otel_spans".into(),
+            service_name: Some("checkout".into()),
+            trace_id_field: "trace_id".into(),
+            span_id_field: "span_id".into(),
+        };
+        let rollup_dir = ProjectionDirective::TimeSeriesRollup {
+            collection_id: "metrics".into(),
+            metric_name: "http.server.duration".into(),
+            window_ms: 60_000,
+            dimensions: vec!["service.name".into()],
+        };
+
+        let entries = vec![upsert_entry(
+            1,
+            "span-1",
+            vec![trace_dir.clone(), rollup_dir.clone()],
+        )];
+        let mut rb = RecordingRebuilder::default();
+        let result = recover_from_canonical_wal(&entries, &mut rb, 0);
+
+        assert_eq!(result.directives_applied, 2);
+        assert!(rb.applied.iter().any(|(_, directive)| matches!(
+            directive,
+            ProjectionDirective::ObservabilityTraceIndex { .. }
+        )));
+        assert!(rb.applied.iter().any(|(_, directive)| matches!(
+            directive,
+            ProjectionDirective::TimeSeriesRollup { .. }
+        )));
+    }
+
+    #[test]
+    fn crash_recovery_open_format_manifest_directive_is_typed() {
+        let manifest_dir = ProjectionDirective::OpenFormatManifest {
+            namespace: "main".into(),
+            table_name: "events".into(),
+            format: OpenTableFormat::Iceberg,
+        };
+
+        let entries = vec![upsert_entry(1, "evt-1", vec![manifest_dir])];
+        let mut rb = RecordingRebuilder::default();
+        let result = recover_from_canonical_wal(&entries, &mut rb, 0);
+
+        assert_eq!(result.directives_applied, 1);
+        assert!(matches!(
+            rb.applied.first().map(|(_, directive)| directive),
+            Some(ProjectionDirective::OpenFormatManifest {
+                format: OpenTableFormat::Iceberg,
+                ..
+            })
+        ));
     }
 
     #[test]

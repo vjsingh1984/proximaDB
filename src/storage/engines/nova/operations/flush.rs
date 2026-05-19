@@ -149,8 +149,12 @@ impl NovaFlushOperations {
         );
         debug!("📂 NOVA flush: full_path={}", full_path);
 
+        let canonical_records: Vec<proximadb_records::ProximaRecord> = records
+            .iter()
+            .map(proximadb_records::ProximaRecord::from)
+            .collect();
         let (stats, _collector) = match HybridParquetWriter::write_with_cache(
-            &records,
+            &canonical_records,
             dimension,
             hybrid_config,
             &full_path,

@@ -1,7 +1,7 @@
 // Unified Parquet Compaction for Columnar Engines (VIPER, NOVA, etc.)
 //
 // Works directly with Arrow RecordBatches for efficient columnar compaction
-// without unnecessary conversions to/from VectorRecord
+// without unnecessary conversions to/from ProximaRecord
 
 use anyhow::{Context, Result};
 use arrow_array::{Array, Int64Array, RecordBatch, StringArray, UInt32Array};

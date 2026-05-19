@@ -244,7 +244,8 @@ impl NovaCompactionOperations {
         )?;
 
         // Read all records
-        reader.read_all_records(100000, None).await
+        let records = reader.read_all_records(100000, None).await?;
+        Ok(records.iter().map(VectorRecord::from).collect())
     }
 
     /// Write compacted file using HybridParquetWriter
@@ -303,9 +304,15 @@ impl NovaCompactionOperations {
             max_row_group_size: 100000,
         };
 
+        // Convert to ProximaRecord for write_with_cache
+        let proxima_records: Vec<proximadb_records::ProximaRecord> = records
+            .iter()
+            .map(proximadb_records::ProximaRecord::from)
+            .collect();
+
         // Use HybridParquetWriter::write_with_cache for compaction
         let (stats, _) = HybridParquetWriter::write_with_cache(
-            &records,
+            &proxima_records,
             dimension,
             hybrid_config,
             output_path,

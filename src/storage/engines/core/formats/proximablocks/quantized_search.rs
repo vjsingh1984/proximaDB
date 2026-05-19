@@ -5,7 +5,8 @@ use tracing::{debug, info, trace};
 use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
 use crate::compute::quantization::precompute::QuantizationPrecomputeService;
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::proto::proximadb_v1::{Collection, VectorRecord};
+use crate::proto::proximadb_v1::{Collection};
+use proximadb_records::{EmbeddingCell, ProximaRecord};
 use crate::storage::engines::core::formats::proximablocks::{ProximaDataBlock, QuantizedSection};
 
 /// Search using precomputed quantized vectors for massive speedup
@@ -86,7 +87,7 @@ impl QuantizedProximaSearch {
         blocks: Vec<ProximaDataBlock>,
         candidates_needed: usize,
         metric: DistanceMetric,
-    ) -> Result<Vec<(VectorRecord, f32)>> {
+    ) -> Result<Vec<(ProximaRecord, f32)>> {
         let mut all_candidates = Vec::new();
 
         for block in blocks {
@@ -182,7 +183,7 @@ impl QuantizedProximaSearch {
         &self,
         query_binary: &[u8],
         binary_vectors: &[Vec<u8>],
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         max_candidates: usize,
     ) -> Result<Vec<usize>> {
         let mut distances: Vec<(usize, u32)> = Vec::with_capacity(binary_vectors.len());
@@ -204,7 +205,7 @@ impl QuantizedProximaSearch {
         &self,
         query_int8: &[i8],
         int8_vectors: &[Vec<i8>],
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         candidate_indices: Vec<usize>,
         max_candidates: usize,
         metric: DistanceMetric,
@@ -230,11 +231,11 @@ impl QuantizedProximaSearch {
         &self,
         query_pq: &[u8],
         pq_vectors: &[Vec<u8>],
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         candidate_indices: Vec<usize>,
         codebooks: Option<&Vec<Vec<f32>>>,
         metric: DistanceMetric,
-    ) -> Result<Vec<(VectorRecord, f32)>> {
+    ) -> Result<Vec<(ProximaRecord, f32)>> {
         let mut results = Vec::new();
 
         for &idx in &candidate_indices {
@@ -257,10 +258,10 @@ impl QuantizedProximaSearch {
     fn compute_full_precision_scores(
         &self,
         query: &[f32],
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         indices: Vec<usize>,
         metric: DistanceMetric,
-    ) -> Result<Vec<(VectorRecord, f32)>> {
+    ) -> Result<Vec<(ProximaRecord, f32)>> {
         let mut results = Vec::new();
 
         for idx in indices {
@@ -279,7 +280,7 @@ impl QuantizedProximaSearch {
     async fn rerank_with_full_precision(
         &self,
         query: &[f32],
-        candidates: Vec<(VectorRecord, f32)>,
+        candidates: Vec<(ProximaRecord, f32)>,
         top_k: usize,
         metric: DistanceMetric,
     ) -> Result<Vec<OptimizedSearchRecord>> {
@@ -288,7 +289,7 @@ impl QuantizedProximaSearch {
             candidates.len()
         );
 
-        let mut reranked: Vec<(VectorRecord, f32)> = Vec::with_capacity(candidates.len());
+        let mut reranked: Vec<(ProximaRecord, f32)> = Vec::with_capacity(candidates.len());
 
         for (record, _approximate_score) in candidates {
             let exact_distance =

@@ -162,8 +162,9 @@ pub use unified_cache_config::{
 };
 pub use wal_entry::{
     CanonicalOperation, CanonicalWalEntry, CdcLogicalView, CdcOperation, CdcRecordEvent, EdgeRef,
-    ProjectionDirective, ProjectionFreshness, ProjectionRebuilder, RecoveryResult,
-    SnapshotManifest, latest_checkpoint, recover_from_canonical_wal,
+    OpenTableFormat as CanonicalOpenTableFormat, ProjectionDirective, ProjectionFreshness,
+    ProjectionRebuilder, RecoveryResult, SnapshotManifest, latest_checkpoint,
+    recover_from_canonical_wal,
 };
 pub use writer_statistics::{AggregatedBatchStats, BatchWriteStats, StreamingParquetWriterStats};
 pub use zero_copy_traits::{

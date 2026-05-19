@@ -6,10 +6,10 @@
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::read_strategy::{ReadAccessStrategy, StrategyAwareReader};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
+use proximadb_records::ProximaRecord;
 
 use super::readers::sst_query_engine::UnifiedSstableReader;
 
@@ -132,13 +132,13 @@ impl UnifiedSSTReader {
     }
 
     /// Read a vector by ID
-    pub async fn read_vector(&self, id: &str, file_path: &str) -> Result<Option<VectorRecord>> {
+    pub async fn read_vector(&self, id: &str, file_path: &str) -> Result<Option<ProximaRecord>> {
         // The inner reader handles the actual read
         self.inner_reader.vector(file_path, id).await
     }
 
     /// Read vectors in batch (optimized for the current strategy)
-    pub async fn read_batch(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
+    pub async fn read_batch(&self, file_path: &str) -> Result<Vec<ProximaRecord>> {
         // For direct stream, we should read sequentially without caching
         // For cached strategies, we can use the cache
         match &self.strategy {
@@ -221,7 +221,7 @@ impl DirectSSTReader {
     }
 
     /// Stream records directly from file
-    pub async fn stream_records(&self, file_path: &str) -> Result<Vec<VectorRecord>> {
+    pub async fn stream_records(&self, file_path: &str) -> Result<Vec<ProximaRecord>> {
         // Deferred: Implement true streaming that reads blocks sequentially
         // without caching or loading entire file into memory
         let _data = self.read_file_direct(file_path).await?;
@@ -261,7 +261,11 @@ impl CachedSSTReader {
     }
 
     /// Read with cache benefit
-    pub async fn read_with_cache(&self, file_path: &str, id: &str) -> Result<Option<VectorRecord>> {
+    pub async fn read_with_cache(
+        &self,
+        file_path: &str,
+        id: &str,
+    ) -> Result<Option<ProximaRecord>> {
         self.inner_reader.vector(file_path, id).await
     }
 }

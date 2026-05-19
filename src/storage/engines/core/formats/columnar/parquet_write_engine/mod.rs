@@ -20,14 +20,14 @@ pub use writer_statistics::StreamingParquetWriterStats;
 // MetadataCollector is already in parent module, not here
 
 // Common traits used across writer implementations
-use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::Result;
+use proximadb_records::ProximaRecord;
 
 /// Common trait for all Parquet writers
 #[allow(async_fn_in_trait)]
 pub trait ParquetWriter: Send + Sync {
     /// Write a batch of records
-    async fn write_batch(&mut self, records: &[VectorRecord]) -> Result<()>;
+    async fn write_batch(&mut self, records: &[ProximaRecord]) -> Result<()>;
 
     /// Finalize the writer and return statistics
     async fn finalize(self) -> Result<StreamingParquetWriterStats>;

@@ -1684,13 +1684,16 @@ impl Compaction {
                     debug!(
                         "  UNIFIED Record {}: id={:?}, vector_len={}, metadata_len={}",
                         i,
-                        record.id,
-                        record.vector.len(),
-                        record.metadata.len()
+                        record.oid,
+                        record
+                            .embeddings
+                            .first()
+                            .map_or(0, |embedding| embedding.values.len()),
+                        record.props.len()
                     );
                 }
 
-                Ok(records)
+                Ok(records.into_iter().map(VectorRecord::from).collect())
             }
             Err(e) => {
                 warn!("❌ COMPACTION UNIFIED: Failed to read {}: {}", file_path, e);

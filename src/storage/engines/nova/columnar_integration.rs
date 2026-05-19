@@ -801,9 +801,13 @@ impl NovaUnifiedEngine {
         batch: Vec<VectorRecord>,
     ) -> Result<BatchInsertResult> {
         // Process batch using unified infrastructure
+        let canonical_batch: Vec<proximadb_records::ProximaRecord> = batch
+            .iter()
+            .map(proximadb_records::ProximaRecord::from)
+            .collect();
         let serialization_result = self
             .common_ops
-            .serialize_records(&batch, &metadata.schema)
+            .serialize_records(&canonical_batch, &metadata.schema)
             .await?;
 
         // Generate hierarchical updates (placeholder)

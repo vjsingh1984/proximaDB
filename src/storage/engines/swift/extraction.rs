@@ -125,15 +125,16 @@ impl VectorExtractor for SwiftExtractor {
                 file_path
             );
 
-            // Convert VectorRecord to ExtractedVector
+            // Convert legacy VectorRecord reader output to ExtractedVector
             for record in read_result.records {
+                let record_id = record.id.clone();
                 // Handle vector filtering based on mode
                 let fp32_vector = match request.mode {
                     ExtractionMode::Fp32Only | ExtractionMode::Both | ExtractionMode::Auto => {
-                        if !record.vector.is_empty() {
-                            Some(record.vector)
-                        } else {
+                        if record.vector.is_empty() {
                             None
+                        } else {
+                            Some(record.vector.clone())
                         }
                     }
                     ExtractionMode::QuantizedOnly => None,
@@ -161,13 +162,13 @@ impl VectorExtractor for SwiftExtractor {
 
                 // Apply ID filter if selective extraction
                 let should_include = match &request.vector_ids {
-                    Some(ids) => ids.contains(&record.id),
+                    Some(ids) => ids.contains(&record_id),
                     None => true,
                 };
 
                 if should_include && fp32_vector.is_some() {
                     all_vectors.push(ExtractedVector {
-                        id: record.id,
+                        id: record_id,
                         fp32_vector,
                         quantized,
                         metadata,
