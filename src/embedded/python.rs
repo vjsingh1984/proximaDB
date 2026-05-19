@@ -2791,6 +2791,23 @@ impl PyProximaDB {
         Ok(dict.into())
     }
 
+    /// Execute a read-only Cypher query through the embedded GRAPH_QUERY SQL
+    /// extension. The durable authority remains the shared graph/query stack.
+    #[pyo3(signature = (cypher, graph_id=None))]
+    fn execute_cypher(
+        &self,
+        py: Python<'_>,
+        cypher: &str,
+        graph_id: Option<&str>,
+    ) -> PyResult<PyObject> {
+        let cypher = inject_graph_target_into_cypher(graph_id, cypher);
+        let sql = format!(
+            "SELECT * FROM GRAPH_QUERY('{}')",
+            cypher.replace('\'', "''")
+        );
+        self.execute_sql(py, &sql, None, None)
+    }
+
     /// Delete entire graph
     ///
     /// Removes all nodes and edges in the graph.
@@ -3976,6 +3993,29 @@ fn trace_span_to_python(py: Python<'_>, span: super::EmbeddedTraceSpan) -> PyRes
     dict.set_item("attributes", attributes)?;
 
     Ok(dict.into_any().unbind())
+}
+
+fn inject_graph_target_into_cypher(graph_id: Option<&str>, cypher: &str) -> String {
+    let cypher = cypher.trim().trim_end_matches(';').trim();
+    let Some(graph_id) = graph_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return cypher.to_string();
+    };
+
+    let upper = cypher.to_ascii_uppercase();
+    if upper.contains(" FROM ") {
+        return cypher.to_string();
+    }
+
+    if let Some(return_index) = upper.find(" RETURN ") {
+        format!(
+            "{} FROM {}{}",
+            &cypher[..return_index],
+            graph_id,
+            &cypher[return_index..]
+        )
+    } else {
+        format!("{cypher} FROM {graph_id}")
+    }
 }
 
 /// Initialize tracing/logging for the embedded ProximaDB module.

@@ -378,13 +378,14 @@ def run_relational(db: ProximaDB, scale: int, dimension: int) -> list[dict[str, 
         lambda i: db.get_vector("bench_accounts_batch", f"acct-batch-{i}") is not None,
     )
     sql_select = safe_metric(
-        "relational.sql_select_limit10",
+        "relational.sql_vector_search_top10",
         lambda: latency_sample(
-            "relational.sql_select_limit10",
+            "relational.sql_vector_search_top10",
             min(50, scale),
-            lambda _i: db.execute_sql("SELECT * FROM bench_accounts_batch LIMIT 10")[
-                "row_count"
-            ],
+            lambda _i: db.execute_sql(
+                "SELECT * FROM VECTOR_SEARCH("
+                f"'bench_accounts_batch', '{vector_literal}', 10)"
+            )["row_count"],
         ),
     )
     return [insert_single, insert_batch, get, sql_select]
@@ -459,7 +460,18 @@ def run_graph_entity(db: ProximaDB, scale: int) -> list[dict[str, Any]]:
             )["nodes"]
         ),
     )
-    return [insert_nodes, insert_edges, traverse]
+    cypher = safe_metric(
+        "graph_entity.cypher_match_entity_limit10",
+        lambda: latency_sample(
+            "graph_entity.cypher_match_entity_limit10",
+            min(50, scale),
+            lambda _i: db.execute_cypher(
+                "MATCH (n:Entity) RETURN n LIMIT 10",
+                graph_id=graph_id,
+            )["row_count"],
+        ),
+    )
+    return [insert_nodes, insert_edges, traverse, cypher]
 
 
 def run_observability(db: ProximaDB, scale: int) -> list[dict[str, Any]]:
@@ -698,36 +710,31 @@ def run_record_wire(db: ProximaDB, scale: int, dimension: int) -> list[dict[str,
             record_wire_search_profile,
         ),
     )
+    search_literal = "[" + ", ".join(str(float(value)) for value in vectors[0]) + "]"
     vector_search_sql = safe_metric(
-        "record_wire.sql_select_limit10",
+        "record_wire.sql_vector_search_top10",
         lambda: latency_sample(
-            "record_wire.sql_select_limit10",
+            "record_wire.sql_vector_search_top10",
             min(50, scale),
             lambda _i: db.execute_sql(
-                "SELECT * FROM bench_record_wire_vectors LIMIT 10"
+                "SELECT * FROM VECTOR_SEARCH("
+                f"'bench_record_wire_vectors', '{search_literal}', 10)"
             )["row_count"],
         ),
     )
     vector_search_uql = safe_metric(
-        "record_wire.uql_select_limit10",
+        "record_wire.uql_vector_search_top10",
         lambda: latency_sample(
-            "record_wire.uql_select_limit10",
+            "record_wire.uql_vector_search_top10",
             min(50, scale),
             lambda _i: len(
                 db.execute_unified_query(
-                    "SELECT * FROM bench_record_wire_vectors LIMIT 10"
+                    "SELECT * FROM VECTOR_SEARCH("
+                    f"'bench_record_wire_vectors', '{search_literal}', 10)"
                 )
             ),
         ),
     )
-    vector_search_cypher = {
-        "name": "record_wire.cypher_match_limit10.skipped",
-        "operations": 0,
-        "seconds": 0.0,
-        "ops_per_second": None,
-        "result": "skipped: embedded Python does not expose a Cypher executor",
-    }
-
     zero_vectors = np.zeros((scale, dimension), dtype=np.float32)
     db.create_collection("bench_record_wire_docs", dimension=dimension, engine="sst")
     document_records = [
@@ -840,7 +847,6 @@ def run_record_wire(db: ProximaDB, scale: int, dimension: int) -> list[dict[str,
         vector_search_profiled,
         vector_search_sql,
         vector_search_uql,
-        vector_search_cypher,
         document_insert,
         document_insert_profiled,
         graph_insert,
