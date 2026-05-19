@@ -854,6 +854,13 @@ impl PredicateSelectivityPolicy {
     }
 }
 
+fn validate_unit_interval(name: &str, value: f64) -> Result<()> {
+    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+        anyhow::bail!("{name} must be finite and between 0.0 and 1.0, got {value}");
+    }
+    Ok(())
+}
+
 /// Cost model for different data models
 #[derive(Debug, Clone)]
 pub struct CostModel {
@@ -1047,6 +1054,8 @@ pub struct AdvancedCostEstimator {
     io_cost_per_page: f64,
     /// Memory access cost factor
     memory_access_cost: f64,
+    /// Smoothing factor for feedback-driven cost model updates.
+    feedback_ema_alpha: f64,
 }
 
 impl Default for AdvancedCostEstimator {
@@ -1056,6 +1065,7 @@ impl Default for AdvancedCostEstimator {
             cpu_cycles_per_distance: 0.001,
             io_cost_per_page: 1.0,
             memory_access_cost: 0.1,
+            feedback_ema_alpha: 0.2,
         }
     }
 }
@@ -1064,6 +1074,21 @@ impl AdvancedCostEstimator {
     /// Create a new advanced cost estimator
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create an advanced cost estimator with explicit feedback EMA smoothing.
+    pub fn with_feedback_ema_alpha(mut self, alpha: f64) -> Self {
+        debug_assert!(
+            validate_unit_interval("feedback_ema_alpha", alpha).is_ok(),
+            "invalid feedback_ema_alpha: {alpha}"
+        );
+        self.feedback_ema_alpha = alpha;
+        self
+    }
+
+    /// Validate advanced cost estimator tuning.
+    pub fn validate(&self) -> Result<()> {
+        validate_unit_interval("feedback_ema_alpha", self.feedback_ema_alpha)
     }
 
     /// Calculate cost for vector search based on collection size and top_k
@@ -1242,21 +1267,21 @@ impl AdvancedCostEstimator {
     }
 
     /// Update cost model parameters from observed execution feedback.
-    /// Uses exponential moving average (alpha=0.2) to smooth parameter updates.
+    /// Uses exponential moving average to smooth parameter updates.
     pub fn update_from_feedback(&mut self, feedback: &ExecutionFeedback) {
-        const ALPHA: f64 = 0.2; // EMA smoothing factor
+        let alpha = self.feedback_ema_alpha;
 
         if let Some(observed_cpu_per_distance) = feedback.observed_cpu_per_distance {
             self.cpu_cycles_per_distance =
-                self.cpu_cycles_per_distance * (1.0 - ALPHA) + observed_cpu_per_distance * ALPHA;
+                self.cpu_cycles_per_distance * (1.0 - alpha) + observed_cpu_per_distance * alpha;
         }
         if let Some(observed_io_per_page) = feedback.observed_io_per_page {
             self.io_cost_per_page =
-                self.io_cost_per_page * (1.0 - ALPHA) + observed_io_per_page * ALPHA;
+                self.io_cost_per_page * (1.0 - alpha) + observed_io_per_page * alpha;
         }
         if let Some(observed_mem_cost) = feedback.observed_memory_cost {
             self.memory_access_cost =
-                self.memory_access_cost * (1.0 - ALPHA) + observed_mem_cost * ALPHA;
+                self.memory_access_cost * (1.0 - alpha) + observed_mem_cost * alpha;
         }
     }
 }

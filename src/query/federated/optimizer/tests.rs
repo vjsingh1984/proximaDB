@@ -858,6 +858,32 @@ mod tests {
     }
 
     #[test]
+    fn test_advanced_cost_estimator_feedback_alpha_validation() {
+        assert!(AdvancedCostEstimator::new().validate().is_ok());
+        let mut estimator = AdvancedCostEstimator::new();
+        estimator.feedback_ema_alpha = 1.5;
+        assert!(estimator.validate().is_err());
+    }
+
+    #[test]
+    fn test_advanced_cost_estimator_uses_configured_feedback_alpha() {
+        let mut estimator = AdvancedCostEstimator::new().with_feedback_ema_alpha(0.5);
+        let initial_cpu = estimator.cpu_cycles_per_distance;
+
+        estimator.update_from_feedback(&ExecutionFeedback {
+            observed_cpu_per_distance: Some(0.005),
+            ..Default::default()
+        });
+
+        let expected = initial_cpu * 0.5 + 0.005 * 0.5;
+        assert!(
+            (estimator.cpu_cycles_per_distance - expected).abs() < 1e-6,
+            "cpu cost should use configured EMA alpha, got {}",
+            estimator.cpu_cycles_per_distance
+        );
+    }
+
+    #[test]
     fn test_advanced_cost_estimator_multiple_feedback_convergence() {
         let mut estimator = AdvancedCostEstimator::new();
 
