@@ -14,6 +14,8 @@ use tracing::{debug, info};
 
 use crate::query::execution::ExecutionPlan;
 
+const DEFAULT_EXECUTION_TIME_EMA_ALPHA: f64 = 0.2;
+
 /// Unique identifier for a query plan
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PlanKey {
@@ -68,11 +70,25 @@ pub struct CachedPlan {
     pub estimated_cost: f64,
     /// Whether this plan has been validated
     pub is_validated: bool,
+    /// Smoothing factor for execution-time exponential moving average.
+    execution_time_ema_alpha: f64,
 }
 
 impl CachedPlan {
     /// Create a new cached plan
     pub fn new(plan: ExecutionPlan) -> Self {
+        Self::with_execution_time_ema_alpha(plan, DEFAULT_EXECUTION_TIME_EMA_ALPHA)
+    }
+
+    /// Create a cached plan with explicit execution-time EMA smoothing.
+    pub fn with_execution_time_ema_alpha(
+        plan: ExecutionPlan,
+        execution_time_ema_alpha: f64,
+    ) -> Self {
+        debug_assert!(
+            validate_unit_interval("execution_time_ema_alpha", execution_time_ema_alpha).is_ok(),
+            "invalid execution_time_ema_alpha: {execution_time_ema_alpha}"
+        );
         Self {
             plan,
             created_at: Instant::now(),
@@ -80,6 +96,7 @@ impl CachedPlan {
             avg_execution_time_ms: 0.0,
             estimated_cost: 0.0,
             is_validated: false,
+            execution_time_ema_alpha,
         }
     }
 
@@ -90,8 +107,7 @@ impl CachedPlan {
 
     /// Update average execution time based on new measurement
     pub fn update_execution_time(&mut self, new_time_ms: f64) {
-        // Exponential moving average with alpha = 0.2
-        let alpha = 0.2;
+        let alpha = self.execution_time_ema_alpha;
         if self.avg_execution_time_ms == 0.0 {
             self.avg_execution_time_ms = new_time_ms;
         } else {
@@ -117,6 +133,8 @@ pub struct PlanCacheConfig {
     pub enable_validation: bool,
     /// Threshold for plan reuse (reuse below this doesn't justify caching)
     pub min_reuse_threshold: u32,
+    /// Smoothing factor for cached plan execution-time EMA.
+    pub execution_time_ema_alpha: f64,
 }
 
 impl Default for PlanCacheConfig {
@@ -126,8 +144,28 @@ impl Default for PlanCacheConfig {
             max_plan_age: Duration::from_secs(300), // 5 minutes
             enable_validation: true,
             min_reuse_threshold: 3,
+            execution_time_ema_alpha: DEFAULT_EXECUTION_TIME_EMA_ALPHA,
         }
     }
+}
+
+impl PlanCacheConfig {
+    /// Validate cache tuning values before use.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.max_plans == 0 {
+            return Err("max_plans must be greater than zero".to_string());
+        }
+        validate_unit_interval("execution_time_ema_alpha", self.execution_time_ema_alpha)
+    }
+}
+
+fn validate_unit_interval(name: &str, value: f64) -> Result<(), String> {
+    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+        return Err(format!(
+            "{name} must be finite and between 0.0 and 1.0, got {value}"
+        ));
+    }
+    Ok(())
 }
 
 /// Query plan cache
@@ -145,6 +183,11 @@ pub struct QueryPlanCache {
 impl QueryPlanCache {
     /// Create a new query plan cache
     pub fn new(config: PlanCacheConfig) -> Self {
+        debug_assert!(
+            config.validate().is_ok(),
+            "invalid plan cache configuration: {:?}",
+            config.validate().err()
+        );
         info!("Creating query plan cache with {:?}", config);
         Self {
             cache: DashMap::new(),
@@ -191,7 +234,8 @@ impl QueryPlanCache {
             self.evict_lru(1);
         }
 
-        let cached_plan = CachedPlan::new(plan);
+        let cached_plan =
+            CachedPlan::with_execution_time_ema_alpha(plan, self.config.execution_time_ema_alpha);
         self.cache.insert(key, cached_plan);
         debug!("Inserted new plan into cache (size: {})", self.cache.len());
     }
@@ -314,6 +358,20 @@ impl fmt::Display for PlanCacheStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::execution::ExecutionStrategy;
+
+    fn make_plan() -> ExecutionPlan {
+        ExecutionPlan {
+            execution_strategy: ExecutionStrategy::VectorOnly,
+            operations: vec![],
+            estimated_cost: 0.0,
+            optimizations: vec![],
+            performance_hints: vec![],
+            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
+            limit: None,
+            offset: None,
+        }
+    }
 
     #[test]
     fn test_plan_key_creation() {
@@ -324,19 +382,25 @@ mod tests {
     }
 
     #[test]
-    fn test_cached_plan_reuse() {
-        use crate::query::execution::ExecutionStrategy;
-        let plan = ExecutionPlan {
-            execution_strategy: ExecutionStrategy::VectorOnly,
-            operations: vec![],
-            estimated_cost: 0.0,
-            optimizations: vec![],
-            performance_hints: vec![],
-            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
-            limit: None,
-            offset: None,
+    fn test_plan_cache_config_validation() {
+        assert!(PlanCacheConfig::default().validate().is_ok());
+
+        let invalid_alpha = PlanCacheConfig {
+            execution_time_ema_alpha: 1.5,
+            ..Default::default()
         };
-        let mut cached_plan = CachedPlan::new(plan);
+        assert!(invalid_alpha.validate().is_err());
+
+        let invalid_size = PlanCacheConfig {
+            max_plans: 0,
+            ..Default::default()
+        };
+        assert!(invalid_size.validate().is_err());
+    }
+
+    #[test]
+    fn test_cached_plan_reuse() {
+        let mut cached_plan = CachedPlan::new(make_plan());
 
         assert_eq!(cached_plan.reuse_count, 0);
         cached_plan.record_reuse();
@@ -347,18 +411,7 @@ mod tests {
 
     #[test]
     fn test_execution_time_update() {
-        use crate::query::execution::ExecutionStrategy;
-        let plan = ExecutionPlan {
-            execution_strategy: ExecutionStrategy::VectorOnly,
-            operations: vec![],
-            estimated_cost: 0.0,
-            optimizations: vec![],
-            performance_hints: vec![],
-            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
-            limit: None,
-            offset: None,
-        };
-        let mut cached_plan = CachedPlan::new(plan);
+        let mut cached_plan = CachedPlan::new(make_plan());
 
         assert_eq!(cached_plan.avg_execution_time_ms, 0.0);
 
@@ -373,6 +426,30 @@ mod tests {
     }
 
     #[test]
+    fn test_execution_time_update_uses_configured_alpha() {
+        let mut cached_plan = CachedPlan::with_execution_time_ema_alpha(make_plan(), 0.5);
+        cached_plan.update_execution_time(100.0);
+        cached_plan.update_execution_time(200.0);
+
+        assert_eq!(cached_plan.avg_execution_time_ms, 150.0);
+    }
+
+    #[test]
+    fn test_cache_insert_uses_configured_execution_time_alpha() {
+        let cache = QueryPlanCache::new(PlanCacheConfig {
+            execution_time_ema_alpha: 0.5,
+            ..Default::default()
+        });
+        let key = PlanKey::from_query("SELECT 1", "test", "sql");
+        cache.insert(key.clone(), make_plan());
+
+        let mut cached = cache.cache.get_mut(&key).expect("cached plan");
+        cached.update_execution_time(100.0);
+        cached.update_execution_time(200.0);
+        assert_eq!(cached.avg_execution_time_ms, 150.0);
+    }
+
+    #[test]
     fn test_plan_cache_stats() {
         let config = PlanCacheConfig::default();
         let cache = QueryPlanCache::new(config);
@@ -383,19 +460,8 @@ mod tests {
         assert_eq!(stats.hit_rate, 0.0);
 
         // Add a plan
-        use crate::query::execution::ExecutionStrategy;
         let key = PlanKey::from_query("SELECT 1", "test", "sql");
-        let plan = ExecutionPlan {
-            execution_strategy: ExecutionStrategy::VectorOnly,
-            operations: vec![],
-            estimated_cost: 0.0,
-            optimizations: vec![],
-            performance_hints: vec![],
-            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
-            limit: None,
-            offset: None,
-        };
-        cache.insert(key.clone(), plan);
+        cache.insert(key.clone(), make_plan());
 
         // Should now have one plan
         let stats = cache.stats();
