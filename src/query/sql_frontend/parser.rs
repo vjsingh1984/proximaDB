@@ -1595,6 +1595,7 @@ mod tests {
             columns,
             if_not_exists,
             properties,
+            ..
         } = statement
         {
             assert_eq!(table_name, "agent_store");
@@ -1636,6 +1637,76 @@ mod tests {
         } else {
             panic!("expected create table statement");
         }
+    }
+
+    #[test]
+    fn parse_ddl_create_table_supports_tpcc_constraints() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl(
+                "CREATE TABLE customer (
+                    c_w_id int NOT NULL,
+                    c_d_id int NOT NULL,
+                    c_id int NOT NULL,
+                    c_credit char(2) NOT NULL,
+                    c_since timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (c_w_id, c_d_id) REFERENCES district (d_w_id, d_id) ON DELETE CASCADE,
+                    PRIMARY KEY (c_w_id, c_d_id, c_id),
+                    UNIQUE (c_w_id, c_d_id, c_id)
+                );",
+            )
+            .expect("expected tpcc ddl parse to succeed")
+            .expect("expected create table ddl");
+
+        let DdlStatement::CreateTable {
+            table_name,
+            columns,
+            constraints,
+            ..
+        } = statement
+        else {
+            panic!("expected create table statement");
+        };
+
+        assert_eq!(table_name, "customer");
+        assert!(matches!(
+            columns
+                .iter()
+                .find(|column| column.name == "c_credit")
+                .expect("char column")
+                .data_type,
+            SqlDataType::Varchar {
+                max_length: Some(2)
+            }
+        ));
+        assert_eq!(
+            columns
+                .iter()
+                .filter(|column| column.primary_key)
+                .map(|column| column.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["c_w_id", "c_d_id", "c_id"]
+        );
+        assert!(constraints.iter().any(|constraint| matches!(
+            constraint,
+            TableConstraint::ForeignKey {
+                columns,
+                references_table,
+                references_columns,
+            } if columns == &vec!["c_w_id".to_string(), "c_d_id".to_string()]
+                && references_table == "district"
+                && references_columns == &vec!["d_w_id".to_string(), "d_id".to_string()]
+        )));
+        assert!(constraints.iter().any(|constraint| matches!(
+            constraint,
+            TableConstraint::Unique { columns }
+                if columns == &vec![
+                    "c_w_id".to_string(),
+                    "c_d_id".to_string(),
+                    "c_id".to_string()
+                ]
+        )));
     }
 
     #[test]
@@ -2199,12 +2270,13 @@ impl SqlFrontendParser {
                     .iter()
                     .map(|col| self.convert_column_def(col))
                     .collect::<Result<Vec<_>>>()?;
-                apply_table_constraints(&mut columns, &create_table.constraints)?;
+                let constraints = apply_table_constraints(&mut columns, &create_table.constraints)?;
                 let properties = table_options_to_properties(&create_table.table_options);
 
                 Ok(Some(DdlStatement::CreateTable {
                     table_name,
                     columns,
+                    constraints,
                     if_not_exists,
                     properties,
                 }))
@@ -2391,7 +2463,10 @@ impl SqlFrontendParser {
                     }),
                 }
             }
-            SqlDt::Varchar(info) | SqlDt::CharVarying(info) => {
+            SqlDt::Varchar(info)
+            | SqlDt::CharVarying(info)
+            | SqlDt::Char(info)
+            | SqlDt::Character(info) => {
                 use sqlparser::ast::CharacterLength;
                 let max_length = match info {
                     Some(CharacterLength::IntegerLength { length, .. }) => Some(*length as u32),
@@ -2450,21 +2525,80 @@ impl SqlFrontendParser {
 fn apply_table_constraints(
     columns: &mut [ColumnDefinition],
     constraints: &[sqlparser::ast::TableConstraint],
-) -> Result<()> {
+) -> Result<Vec<TableConstraint>> {
+    use sqlparser::ast::TableConstraint as SqlConstraint;
+
+    let mut table_constraints = Vec::new();
+
     for constraint in constraints {
-        if let sqlparser::ast::TableConstraint::PrimaryKey { columns: pk, .. } = constraint {
-            for ident in pk {
-                let name = unquote_identifier_text(&ident.to_string());
-                if let Some(column) = columns.iter_mut().find(|column| column.name == name) {
-                    column.primary_key = true;
-                    column.nullable = false;
-                } else {
-                    return Err(anyhow!("PRIMARY KEY references unknown column {}", name));
+        match constraint {
+            SqlConstraint::PrimaryKey { columns: pk, .. } => {
+                for ident in pk {
+                    let name = unquote_identifier_text(&ident.to_string());
+                    if let Some(column) = columns.iter_mut().find(|column| column.name == name) {
+                        column.primary_key = true;
+                        column.nullable = false;
+                    } else {
+                        return Err(anyhow!("PRIMARY KEY references unknown column {}", name));
+                    }
                 }
             }
+            SqlConstraint::Unique {
+                columns: unique, ..
+            } => {
+                let unique_columns = unique
+                    .iter()
+                    .map(|ident| {
+                        let name = unquote_identifier_text(&ident.to_string());
+                        if columns.iter().any(|column| column.name == name) {
+                            Ok(name)
+                        } else {
+                            Err(anyhow!("UNIQUE references unknown column {}", name))
+                        }
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                table_constraints.push(TableConstraint::Unique {
+                    columns: unique_columns,
+                });
+            }
+            SqlConstraint::Check { expr, .. } => {
+                table_constraints.push(TableConstraint::Check {
+                    expression: format!("{}", expr),
+                });
+            }
+            SqlConstraint::ForeignKey {
+                columns: fk,
+                foreign_table,
+                referred_columns,
+                ..
+            } => {
+                let fk_columns = fk
+                    .iter()
+                    .map(|ident| {
+                        let name = unquote_identifier_text(&ident.to_string());
+                        if columns.iter().any(|column| column.name == name) {
+                            Ok(name)
+                        } else {
+                            Err(anyhow!("FOREIGN KEY references unknown column {}", name))
+                        }
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let references_columns = referred_columns
+                    .iter()
+                    .map(|ident| unquote_identifier_text(&ident.to_string()))
+                    .collect::<Vec<_>>();
+
+                table_constraints.push(TableConstraint::ForeignKey {
+                    columns: fk_columns,
+                    references_table: unquote_object_name(&foreign_table.to_string()),
+                    references_columns,
+                });
+            }
+            _ => {}
         }
     }
-    Ok(())
+
+    Ok(table_constraints)
 }
 
 fn table_options_to_properties(options: &CreateTableOptions) -> HashMap<String, String> {

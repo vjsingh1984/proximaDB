@@ -21,7 +21,7 @@ use tracing::{debug, info, warn};
 use super::session::Session;
 use super::translator::QueryTranslator;
 use super::types::{FieldDescription, PgType};
-use crate::catalog::CatalogManager;
+use crate::catalog::{CatalogColumn, CatalogDataType, CatalogManager, CatalogTableSchema};
 use crate::graph::GraphService;
 use crate::network::arrow_ipc::ArrowProtoCodec;
 use crate::observability::ObservabilityService;
@@ -29,8 +29,10 @@ use crate::query::multimodal_router::{self, DataModel};
 use crate::query::sql_frontend::SqlFrontendParser;
 use crate::services::CollectionService;
 use crate::services::VectorOperationsService;
+use crate::services::operations::vectors::RichRecordGetRequest;
 use crate::services::{DdlService, DmlService};
 use crate::storage::document::DocumentService;
+use proximadb_data_model::ProximaValue;
 
 /// PostgreSQL protocol handler
 pub struct PostgresProtocol {
@@ -131,6 +133,90 @@ fn pg_type_for_catalog_column(column_type: &str) -> PgType {
     }
 }
 
+fn pg_type_for_catalog_data_type(data_type: CatalogDataType) -> PgType {
+    match data_type {
+        CatalogDataType::Boolean => PgType::Bool,
+        CatalogDataType::Int8 => PgType::Int2,
+        CatalogDataType::Int16 => PgType::Int2,
+        CatalogDataType::Int32 => PgType::Int4,
+        CatalogDataType::Int64 => PgType::Int8,
+        CatalogDataType::Float32 => PgType::Float4,
+        CatalogDataType::Float64 => PgType::Float8,
+        CatalogDataType::Binary => PgType::Bytea,
+        CatalogDataType::Date => PgType::Date,
+        CatalogDataType::Timestamp => PgType::Timestamp,
+        CatalogDataType::TimestampTz => PgType::Timestamptz,
+        CatalogDataType::Json => PgType::Jsonb,
+        CatalogDataType::Uuid => PgType::Uuid,
+        CatalogDataType::Vector | CatalogDataType::SparseVector | CatalogDataType::BinaryVector => {
+            PgType::Vector
+        }
+        CatalogDataType::String | CatalogDataType::Time | CatalogDataType::Decimal => PgType::Text,
+    }
+}
+
+fn proxima_value_to_pg_text(value: &ProximaValue) -> String {
+    match value {
+        ProximaValue::Boolean(value) => {
+            if *value {
+                "t".to_string()
+            } else {
+                "f".to_string()
+            }
+        }
+        ProximaValue::Int8(value) => value.to_string(),
+        ProximaValue::Int16(value) => value.to_string(),
+        ProximaValue::Int32(value) => value.to_string(),
+        ProximaValue::Int64(value) => value.to_string(),
+        ProximaValue::UInt8(value) => value.to_string(),
+        ProximaValue::UInt16(value) => value.to_string(),
+        ProximaValue::UInt32(value) => value.to_string(),
+        ProximaValue::UInt64(value) => value.to_string(),
+        ProximaValue::Float16(value) => value.to_string(),
+        ProximaValue::Float32(value) => value.to_string(),
+        ProximaValue::Float64(value) => value.to_string(),
+        ProximaValue::Decimal(value) => value.clone(),
+        ProximaValue::String(value) | ProximaValue::Symbol(value) => value.clone(),
+        ProximaValue::Binary(value) | ProximaValue::BinaryVector(value) => {
+            format!("\\x{}", bytes_to_hex(value))
+        }
+        ProximaValue::Date(value) => value.to_string(),
+        ProximaValue::Time(value, _) => value.to_string(),
+        ProximaValue::Timestamp(value, _) => value.to_string(),
+        ProximaValue::TimestampTz(value, _) => value.to_string(),
+        ProximaValue::Uuid(value) | ProximaValue::ULID(value) => bytes_to_hex(value),
+        ProximaValue::Json(value) | ProximaValue::Jsonb(value) => value.to_string(),
+        ProximaValue::Array(values) => {
+            let parts = values
+                .iter()
+                .map(proxima_value_to_pg_text)
+                .collect::<Vec<_>>();
+            format!("{{{}}}", parts.join(","))
+        }
+        ProximaValue::Map(value) | ProximaValue::Struct(value) => {
+            serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
+        }
+        ProximaValue::DenseVector(values) => {
+            let parts = values.iter().map(ToString::to_string).collect::<Vec<_>>();
+            format!("[{}]", parts.join(","))
+        }
+        ProximaValue::SparseVector { indices, values } => {
+            serde_json::json!({ "indices": indices, "values": values }).to_string()
+        }
+        ProximaValue::Null => String::new(),
+    }
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
 /// PostgreSQL message types (frontend)
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -223,6 +309,17 @@ impl PostgresProtocol {
             graph_service: None,
             observability_service: None,
         }
+    }
+
+    /// Attach catalog-backed DDL/DML services to an existing protocol handler.
+    pub fn with_catalog_manager(mut self, catalog_manager: Arc<CatalogManager>) -> Self {
+        self.ddl_service = Some(Arc::new(DdlService::new(catalog_manager.clone())));
+        self.dml_service = Some(Arc::new(DmlService::new(
+            catalog_manager.clone(),
+            self.vector_ops.clone(),
+        )));
+        self.catalog_manager = Some(catalog_manager);
+        self
     }
 
     /// Run the protocol loop
@@ -402,6 +499,33 @@ impl PostgresProtocol {
         if upper.contains("AS SEARCH_PATH") {
             return self.send_single_value_result("search_path", "public").await;
         }
+        if upper.starts_with("SELECT") && upper.contains("CURRENT_SCHEMA()") {
+            return self
+                .send_single_value_result("current_schema", "public")
+                .await;
+        }
+        if upper.starts_with("SELECT") && upper.contains("CURRENT_DATABASE()") {
+            return self
+                .send_single_value_result("current_database", "benchbase")
+                .await;
+        }
+        if upper.starts_with("SELECT")
+            && (upper.contains("CURRENT_USER") || upper.contains("SESSION_USER"))
+        {
+            return self
+                .send_single_value_result("current_user", "postgres")
+                .await;
+        }
+        if upper.contains("FROM PG_CATALOG.PG_SETTINGS") {
+            if upper.contains("MAX_INDEX_KEYS") {
+                return self.send_single_value_result("setting", "32").await;
+            }
+            if upper.contains("DEFAULT_TRANSACTION_ISOLATION") {
+                return self
+                    .send_single_value_result("setting", "read committed")
+                    .await;
+            }
+        }
 
         if crate::services::CatalogIntrospectionService::is_catalog_query(query) {
             return self.execute_catalog_introspection_query(query).await;
@@ -414,6 +538,10 @@ impl PostgresProtocol {
 
         // Handle SELECT queries
         if upper.starts_with("SELECT") {
+            if let Some((column, value)) = Self::extract_simple_constant_select(query) {
+                return self.send_single_value_result(&column, &value).await;
+            }
+
             // Check if this is a vector search query
             if upper.contains("<->") || upper.contains("<=>") || upper.contains("<#>") {
                 return self.execute_vector_search(query).await;
@@ -472,7 +600,17 @@ impl PostgresProtocol {
                     },
                     Ok(None) => {}
                     Err(e) => {
-                        if upper.starts_with("CREATE INDEX") || upper.starts_with("ALTER TABLE") {
+                        let legacy_create_table = upper.starts_with("CREATE TABLE")
+                            && (upper.contains(" USING VECTOR")
+                                || upper.contains(" USING DOCUMENT")
+                                || upper.contains(" USING GRAPH")
+                                || upper.contains(" USING OBSERVABILITY")
+                                || upper.contains(" USING TIMESERIES"));
+                        if !legacy_create_table
+                            && (upper.starts_with("CREATE TABLE")
+                                || upper.starts_with("CREATE INDEX")
+                                || upper.starts_with("ALTER TABLE"))
+                        {
                             return self
                                 .send_error("ERROR", "42601", &format!("Parse error: {}", e))
                                 .await;
@@ -668,6 +806,107 @@ impl PostgresProtocol {
         after_limit[..limit_end].trim().parse().ok()
     }
 
+    fn extract_simple_constant_select(query: &str) -> Option<(String, String)> {
+        let trimmed = query.trim().trim_end_matches(';').trim();
+        let upper = trimmed.to_ascii_uppercase();
+        if !upper.starts_with("SELECT ") || upper.contains(" FROM ") {
+            return None;
+        }
+
+        let expr = trimmed[7..].trim();
+        let (value, column) = if let Some((left, right)) = expr.rsplit_once(" AS ") {
+            (left.trim(), right.trim())
+        } else if let Some((left, right)) = expr.rsplit_once(" as ") {
+            (left.trim(), right.trim())
+        } else {
+            (expr, "?column?")
+        };
+
+        let value = value.trim_matches('\'').to_string();
+        Some((Self::clean_identifier(column), value))
+    }
+
+    fn extract_selected_columns(query: &str, schema: &CatalogTableSchema) -> Vec<CatalogColumn> {
+        let upper = query.to_ascii_uppercase();
+        let Some(select_pos) = upper.find("SELECT ") else {
+            return schema.columns.clone();
+        };
+        let Some(from_pos) = upper.find(" FROM ") else {
+            return schema.columns.clone();
+        };
+
+        let projection = query[select_pos + 7..from_pos].trim();
+        if projection == "*" {
+            return schema.columns.clone();
+        }
+
+        let mut columns = Vec::new();
+        for requested in projection.split(',') {
+            let column_name = requested
+                .split_whitespace()
+                .next()
+                .map(Self::clean_identifier)
+                .unwrap_or_default();
+            if let Some(column) = schema
+                .columns
+                .iter()
+                .find(|column| column.name.eq_ignore_ascii_case(&column_name))
+            {
+                columns.push(column.clone());
+            }
+        }
+
+        if columns.is_empty() {
+            schema.columns.clone()
+        } else {
+            columns
+        }
+    }
+
+    fn extract_primary_key_filter(query: &str, primary_key: &str) -> Option<String> {
+        let upper = query.to_ascii_uppercase();
+        let where_pos = upper.find(" WHERE ")?;
+        let mut predicate = query[where_pos + 7..].trim();
+        for terminator in [" ORDER BY ", " GROUP BY ", " LIMIT ", " OFFSET "] {
+            if let Some(pos) = predicate.to_ascii_uppercase().find(terminator) {
+                predicate = predicate[..pos].trim();
+            }
+        }
+
+        for part in predicate.split(" AND ") {
+            let Some((left, right)) = part.split_once('=') else {
+                continue;
+            };
+            let column = Self::clean_identifier(left.trim());
+            if !column.eq_ignore_ascii_case(primary_key) {
+                continue;
+            }
+            let value = right
+                .trim()
+                .trim_end_matches(';')
+                .trim()
+                .trim_matches('\'')
+                .trim_matches('"')
+                .to_string();
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+
+        None
+    }
+
+    fn clean_identifier(identifier: &str) -> String {
+        identifier
+            .trim()
+            .trim_matches('"')
+            .split('.')
+            .next_back()
+            .unwrap_or(identifier)
+            .trim_matches('"')
+            .to_string()
+    }
+
     /// Detect store type for SELECT queries
     fn detect_select_store_type(&self, table_name: &str, query: &str) -> DataModel {
         multimodal_router::detect_store_type_from_query(query, table_name, None)
@@ -718,19 +957,82 @@ impl PostgresProtocol {
         }
     }
 
-    /// Execute a relational query against a standard SQL table (SEQUOIA engine)
-    /// Phase 2 will wire this to SequoiaEngine.query_rows() for actual row retrieval
-    async fn execute_relational_query(&mut self, _query: &str, table_name: &str) -> Result<()> {
+    /// Execute a relational query against a cataloged table.
+    ///
+    /// This supports the psql/JDBC smoke path for point reads via primary key. Wider scans still
+    /// need the relational execution engine/table-scan path rather than protocol-local logic.
+    async fn execute_relational_query(&mut self, query: &str, table_name: &str) -> Result<()> {
         debug!("Executing relational query on table: {}", table_name);
 
-        // Return empty result set with generic column descriptions
-        // Phase 2: Parse SELECT columns and wire to SequoiaEngine for real data
-        let fields = vec![
-            FieldDescription::new("id", PgType::Int4),
-            FieldDescription::new("result", PgType::Text),
-        ];
+        let Some(catalog_manager) = self.catalog_manager.clone() else {
+            return self.send_empty_result().await;
+        };
+        let Ok((catalog, table_id)) = catalog_manager.resolve_table(table_name).await else {
+            return self.send_empty_result().await;
+        };
+        let Ok(schema) = catalog.get_table(&table_id).await else {
+            return self.send_empty_result().await;
+        };
+
+        let selected_columns = Self::extract_selected_columns(query, &schema);
+        let fields = selected_columns
+            .iter()
+            .map(|column| {
+                FieldDescription::new(
+                    &column.name,
+                    pg_type_for_catalog_data_type(column.data_type),
+                )
+            })
+            .collect::<Vec<_>>();
         self.send_row_description(&fields).await?;
-        self.send_command_complete("SELECT 0").await
+
+        let Some(primary_key) = schema.primary_key.first() else {
+            self.send_command_complete("SELECT 0").await?;
+            return Ok(());
+        };
+        let Some(record_id) = Self::extract_primary_key_filter(query, primary_key) else {
+            self.send_command_complete("SELECT 0").await?;
+            return Ok(());
+        };
+
+        let record = self
+            .vector_ops
+            .get_record_with_tenant_context(
+                RichRecordGetRequest {
+                    collection_id: table_id.name.clone(),
+                    record_id,
+                    include_vector: true,
+                    include_props: true,
+                },
+                None,
+            )
+            .await?;
+
+        let Some(record) = record else {
+            self.send_command_complete("SELECT 0").await?;
+            return Ok(());
+        };
+
+        let values = selected_columns
+            .iter()
+            .map(|column| {
+                record
+                    .props
+                    .get(&column.name)
+                    .map(proxima_value_to_pg_text)
+                    .or_else(|| {
+                        if &column.name == primary_key {
+                            Some(record.id.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or_default()
+            })
+            .collect::<Vec<_>>();
+        let refs = values.iter().map(String::as_str).collect::<Vec<_>>();
+        self.send_data_row(&refs).await?;
+        self.send_command_complete("SELECT 1").await
     }
 
     /// Execute a document store query

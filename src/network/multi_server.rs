@@ -533,6 +533,7 @@ impl MultiServer {
             let pg_bind_addr = self.config.postgres_config.active_bind_address();
             let collection_service = services.collection_service.clone();
             let vector_ops = services.vector_operations_service.clone();
+            let catalog_manager = services.catalog_manager.clone();
             let document_service = Some(services.document_service.clone());
             let graph_service = Some(services.graph_service.clone());
             let observability_service = Some(services.observability_service.clone());
@@ -543,6 +544,7 @@ impl MultiServer {
                     pg_bind_addr,
                     collection_service,
                     vector_ops,
+                    catalog_manager,
                     document_service,
                     graph_service,
                     observability_service,
@@ -821,7 +823,28 @@ impl MultiServer {
                 "🐘 Starting PostgreSQL Server on port {} (separate port for wire protocol)",
                 self.config.postgres_config.port
             );
-            // PostgreSQL startup logic would go here (same as in legacy mode)
+
+            let pg_bind_addr = self.config.postgres_config.active_bind_address();
+            let services = self.shared_services.clone();
+            let postgres_handle = tokio::spawn(async move {
+                use crate::network::postgres::PostgresServer;
+
+                let server = PostgresServer::new(
+                    pg_bind_addr,
+                    services.collection_service.clone(),
+                    services.vector_operations_service.clone(),
+                    services.catalog_manager.clone(),
+                    Some(services.document_service.clone()),
+                    Some(services.graph_service.clone()),
+                    Some(services.observability_service.clone()),
+                );
+
+                if let Err(e) = server.start().await {
+                    tracing::error!("❌ PostgreSQL Server error: {}", e);
+                }
+            });
+            handles.push(postgres_handle);
+            info!("✅ PostgreSQL Server started on {}", pg_bind_addr);
         }
 
         *self.server_handles.lock().await = handles;

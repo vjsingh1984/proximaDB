@@ -13,7 +13,7 @@ use std::sync::Arc;
 use anyhow::{Result, anyhow};
 use proximadb_catalog::{
     CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogSchemaEvolution,
-    CatalogTableSchema, ColumnConstraint, SchemaChange,
+    CatalogTableSchema, ColumnConstraint, RelationalCapabilities, SchemaChange,
 };
 use tracing::info;
 
@@ -28,6 +28,8 @@ pub enum DdlStatement {
         table_name: String,
         /// Column definitions for the new table.
         columns: Vec<ColumnDefinition>,
+        /// Table-level relational constraints.
+        constraints: Vec<TableConstraint>,
         /// When `true`, silently succeeds if the table already exists.
         if_not_exists: bool,
         /// Additional table-level properties (e.g., storage options).
@@ -387,10 +389,11 @@ impl DdlService {
             DdlStatement::CreateTable {
                 table_name,
                 columns,
+                constraints,
                 if_not_exists,
                 properties,
             } => {
-                self.create_table(&table_name, columns, if_not_exists, properties)
+                self.create_table(&table_name, columns, constraints, if_not_exists, properties)
                     .await
             }
             DdlStatement::DropTable {
@@ -458,6 +461,7 @@ impl DdlService {
         &self,
         table_name: &str,
         columns: Vec<ColumnDefinition>,
+        constraints: Vec<TableConstraint>,
         if_not_exists: bool,
         properties: HashMap<String, String>,
     ) -> Result<DdlResult> {
@@ -473,7 +477,16 @@ impl DdlService {
         }
 
         // Build catalog schema
-        let schema = self.build_catalog_schema(&table_id.name, columns, properties)?;
+        let schema = self.build_catalog_schema(&table_id.name, columns, constraints, properties)?;
+
+        // PostgreSQL clients routinely create unqualified tables without
+        // explicitly creating a schema first. Keep the native catalog path
+        // aligned with the OLTP catalog by materializing the resolved namespace.
+        if !catalog.namespace_exists(&table_id.namespace).await? {
+            catalog
+                .create_namespace(&table_id.namespace, HashMap::new())
+                .await?;
+        }
 
         // Create the table
         catalog.create_table(&table_id, schema).await?;
@@ -759,7 +772,7 @@ impl DdlService {
             },
         ];
 
-        let schema = self.build_catalog_schema(&table_id.name, columns, properties)?;
+        let schema = self.build_catalog_schema(&table_id.name, columns, Vec::new(), properties)?;
 
         // Create the collection/table
         catalog.create_table(&table_id, schema).await?;
@@ -788,6 +801,7 @@ impl DdlService {
         &self,
         table_name: &str,
         columns: Vec<ColumnDefinition>,
+        constraints: Vec<TableConstraint>,
         properties: HashMap<String, String>,
     ) -> Result<CatalogTableSchema> {
         let mut schema = CatalogTableSchema::new(table_name);
@@ -828,6 +842,12 @@ impl DdlService {
             schema = schema.with_primary_key(primary_key_cols);
         }
 
+        let relational_capabilities =
+            self.build_relational_capabilities(&schema.primary_key, constraints);
+        if relational_capabilities.has_enforced_semantics() {
+            schema = schema.with_relational_capabilities(relational_capabilities);
+        }
+
         schema
             .properties
             .entry("schema_kind".to_string())
@@ -839,6 +859,47 @@ impl DdlService {
             });
 
         Ok(schema)
+    }
+
+    fn build_relational_capabilities(
+        &self,
+        primary_key: &[String],
+        constraints: Vec<TableConstraint>,
+    ) -> RelationalCapabilities {
+        let mut capabilities = RelationalCapabilities {
+            primary_key: primary_key.to_vec(),
+            ..Default::default()
+        };
+
+        for constraint in constraints {
+            match constraint {
+                TableConstraint::Unique { columns } => {
+                    let index_name = format!("unique_{}", columns.join("_"));
+                    let index = CatalogIndex::new(index_name, columns, CatalogIndexType::BTree);
+                    capabilities.unique_indexes.push(index);
+                }
+                TableConstraint::Check { expression } => {
+                    capabilities
+                        .constraints
+                        .push(ColumnConstraint::Check { expression });
+                }
+                TableConstraint::ForeignKey {
+                    columns,
+                    references_table,
+                    references_columns,
+                } => {
+                    capabilities.constraints.push(ColumnConstraint::ForeignKey {
+                        columns,
+                        references_table,
+                        references_columns,
+                        on_delete: None,
+                        on_update: None,
+                    });
+                }
+            }
+        }
+
+        capabilities
     }
 
     /// Convert a SQL data type to its catalog equivalent and extract type properties.

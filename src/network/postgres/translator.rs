@@ -95,9 +95,8 @@ impl QueryTranslator {
     }
 
     /// Handle catalog queries
-    fn handle_catalog_query(&self, _query: &str) -> String {
-        // Return empty result for catalog queries
-        "SELECT 1 WHERE false".to_string()
+    fn handle_catalog_query(&self, query: &str) -> String {
+        query.to_string()
     }
 
     /// Translate SQL query

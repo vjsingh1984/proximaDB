@@ -25,6 +25,7 @@ use tracing::{debug, error, info, warn};
 
 use self::protocol::PostgresProtocol;
 use self::session::SessionManager;
+use crate::catalog::CatalogManager;
 use crate::graph::GraphService;
 use crate::observability::ObservabilityService;
 use crate::services::CollectionService;
@@ -41,6 +42,8 @@ pub struct PostgresServer {
     collection_service: Arc<CollectionService>,
     /// Vector operations service for search
     vector_ops: Arc<VectorOperationsService>,
+    /// Shared xCatalog manager for SQL DDL/DML and metadata introspection
+    catalog_manager: Arc<CatalogManager>,
     /// Document service for JSON document collections
     document_service: Option<Arc<DocumentService>>,
     /// Graph service for graph collections
@@ -57,6 +60,7 @@ impl PostgresServer {
         bind_address: SocketAddr,
         collection_service: Arc<CollectionService>,
         vector_ops: Arc<VectorOperationsService>,
+        catalog_manager: Arc<CatalogManager>,
         document_service: Option<Arc<DocumentService>>,
         graph_service: Option<Arc<GraphService>>,
         observability_service: Option<Arc<ObservabilityService>>,
@@ -66,6 +70,7 @@ impl PostgresServer {
             session_manager: Arc::new(SessionManager::new()),
             collection_service,
             vector_ops,
+            catalog_manager,
             document_service,
             graph_service,
             observability_service,
@@ -88,6 +93,7 @@ impl PostgresServer {
                     let session_manager = self.session_manager.clone();
                     let collection_service = self.collection_service.clone();
                     let vector_ops = self.vector_ops.clone();
+                    let catalog_manager = self.catalog_manager.clone();
                     let document_service = self.document_service.clone();
                     let graph_service = self.graph_service.clone();
                     let observability_service = self.observability_service.clone();
@@ -99,6 +105,7 @@ impl PostgresServer {
                             session_manager,
                             collection_service,
                             vector_ops,
+                            catalog_manager,
                             document_service,
                             graph_service,
                             observability_service,
@@ -132,6 +139,7 @@ impl PostgresServer {
         session_manager: Arc<SessionManager>,
         collection_service: Arc<CollectionService>,
         vector_ops: Arc<VectorOperationsService>,
+        catalog_manager: Arc<CatalogManager>,
         document_service: Option<Arc<DocumentService>>,
         graph_service: Option<Arc<GraphService>>,
         observability_service: Option<Arc<ObservabilityService>>,
@@ -149,7 +157,8 @@ impl PostgresServer {
             document_service,
             graph_service,
             observability_service,
-        );
+        )
+        .with_catalog_manager(catalog_manager);
 
         // Run protocol loop
         match protocol.run().await {
