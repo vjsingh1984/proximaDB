@@ -8,6 +8,7 @@ import pytest
 from proximadb_embedded import (
     ProximaRecord,
     insert_proxima_records,
+    insert_records_profiled,
     insert_records,
     proxima_value,
     upsert_records,
@@ -53,6 +54,17 @@ class NativeRecordingDb(RecordingDb):
     def _insert_proxima_record_batch_native(self, collection, ids, vectors, props):
         self.native_batch_insert_calls.append((collection, ids, vectors, props))
         return len(ids)
+
+    def _insert_proxima_record_batch_native_profiled(self, collection, ids, vectors, props):
+        self.native_batch_insert_calls.append((collection, ids, vectors, props))
+        return len(ids), {
+            "native_props_conversion_seconds": 0.001,
+            "native_vector_copy_seconds": 0.002,
+            "native_record_assembly_seconds": 0.003,
+            "native_build_records_seconds": 0.004,
+            "native_storage_insert_seconds": 0.005,
+            "native_total_seconds": 0.006,
+        }
 
 
 def test_mapping_normalizes_to_v2_record_shape():
@@ -316,6 +328,26 @@ def test_insert_proxima_records_prefers_columnar_native_boundary_for_dense_recor
     assert ids == ["r1", "r2"]
     np.testing.assert_allclose(matrix, vectors)
     assert props == [{"kind": "note"}, {"kind": "note"}]
+
+
+def test_insert_records_profiled_includes_native_batch_subcounters():
+    db = NativeRecordingDb()
+    vectors = np.array([[0.1, 0.2]], dtype=np.float32)
+
+    count, profile = insert_records_profiled(
+        db,
+        "records",
+        [ProximaRecord(id="r1", vector=vectors[0], props={"kind": "note"})],
+    )
+
+    assert count == 1
+    assert profile["path"] == "proxima_record_batch_native"
+    assert profile["native_props_conversion_seconds"] == 0.001
+    assert profile["native_vector_copy_seconds"] == 0.002
+    assert profile["native_record_assembly_seconds"] == 0.003
+    assert profile["native_build_records_seconds"] == 0.004
+    assert profile["native_storage_insert_seconds"] == 0.005
+    assert profile["native_total_seconds"] == 0.006
 
 
 def test_upsert_records_accepts_numpy_matrix_with_props():

@@ -431,6 +431,12 @@ def _insert_native_record_batch(db, collection, ids, vectors, props):
     return db._insert_proxima_record_batch_native(collection, ids, vectors, props)
 
 
+def _insert_native_record_batch_profiled(db, collection, ids, vectors, props):
+    if not hasattr(db, "_insert_proxima_record_batch_native_profiled"):
+        return None
+    return db._insert_proxima_record_batch_native_profiled(collection, ids, vectors, props)
+
+
 def insert_records_profiled(
     db: ProximaDB,
     collection: str,
@@ -447,7 +453,12 @@ def insert_records_profiled(
         ids, vectors, props = native_batch
         lowering_elapsed = time.perf_counter() - started
         native_started = time.perf_counter()
-        result = _insert_native_record_batch(db, collection, ids, vectors, props)
+        profiled_result = _insert_native_record_batch_profiled(db, collection, ids, vectors, props)
+        if profiled_result is not None:
+            result, native_profile = profiled_result
+        else:
+            result = _insert_native_record_batch(db, collection, ids, vectors, props)
+            native_profile = {}
         native_elapsed = time.perf_counter() - native_started
         profile = {
             "path": "proxima_record_batch_native",
@@ -458,6 +469,7 @@ def insert_records_profiled(
             "native_insert_seconds": native_elapsed,
             "total_insert_seconds": lowering_elapsed + native_elapsed,
         }
+        profile.update(native_profile)
         return result, profile
 
     native_records = None

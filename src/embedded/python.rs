@@ -1553,6 +1553,104 @@ impl PyProximaDB {
             .map_err(|e| PyRuntimeError::new_err(format!("Record insert failed: {}", e)))
     }
 
+    /// Profiled variant of `_insert_proxima_record_batch_native` used by the
+    /// benchmark harness to locate native-side hot spots.
+    #[pyo3(signature = (collection, ids, vectors, props=None))]
+    fn _insert_proxima_record_batch_native_profiled(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        ids: Vec<String>,
+        vectors: PyReadonlyArray2<f32>,
+        props: Option<&Bound<'_, PyList>>,
+    ) -> PyResult<(usize, PyObject)> {
+        let total_started = std::time::Instant::now();
+        let array = vectors.as_array();
+        let shape = array.shape();
+        let n_records = shape[0];
+        if ids.len() != n_records {
+            return Err(PyValueError::new_err(format!(
+                "Number of IDs ({}) doesn't match number of records ({})",
+                ids.len(),
+                n_records
+            )));
+        }
+        if let Some(prop_list) = props
+            && prop_list.len() != n_records
+        {
+            return Err(PyValueError::new_err(format!(
+                "Number of props ({}) doesn't match number of records ({})",
+                prop_list.len(),
+                n_records
+            )));
+        }
+
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let dimension = shape[1];
+        let mut records = Vec::with_capacity(n_records);
+        let mut props_conversion = std::time::Duration::ZERO;
+        let mut vector_copy = std::time::Duration::ZERO;
+        let mut record_assembly = std::time::Duration::ZERO;
+
+        if let Some(slice) = array.as_slice() {
+            for (index, values) in slice.chunks(dimension).enumerate() {
+                let props_started = std::time::Instant::now();
+                let props = python_props_list_item(props, index)?;
+                props_conversion += props_started.elapsed();
+
+                let vector_started = std::time::Instant::now();
+                let values = values.to_vec();
+                vector_copy += vector_started.elapsed();
+
+                let record_started = std::time::Instant::now();
+                records.push(proxima_record_from_batch_parts(
+                    ids[index].clone(),
+                    values,
+                    props,
+                    now_ns,
+                ));
+                record_assembly += record_started.elapsed();
+            }
+        } else {
+            for (index, row) in array.rows().into_iter().enumerate() {
+                let props_started = std::time::Instant::now();
+                let props = python_props_list_item(props, index)?;
+                props_conversion += props_started.elapsed();
+
+                let vector_started = std::time::Instant::now();
+                let values = row.to_vec();
+                vector_copy += vector_started.elapsed();
+
+                let record_started = std::time::Instant::now();
+                records.push(proxima_record_from_batch_parts(
+                    ids[index].clone(),
+                    values,
+                    props,
+                    now_ns,
+                ));
+                record_assembly += record_started.elapsed();
+            }
+        }
+
+        let build_elapsed = total_started.elapsed();
+        let inner = self.db()?;
+        let insert_started = std::time::Instant::now();
+        let result = py
+            .allow_threads(move || inner.insert_proxima_records(collection, records))
+            .map_err(|e| PyRuntimeError::new_err(format!("Record insert failed: {}", e)))?;
+        let insert_elapsed = insert_started.elapsed();
+        let total_elapsed = total_started.elapsed();
+
+        let profile = PyDict::new(py);
+        profile.set_item("native_props_conversion_seconds", props_conversion.as_secs_f64())?;
+        profile.set_item("native_vector_copy_seconds", vector_copy.as_secs_f64())?;
+        profile.set_item("native_record_assembly_seconds", record_assembly.as_secs_f64())?;
+        profile.set_item("native_build_records_seconds", build_elapsed.as_secs_f64())?;
+        profile.set_item("native_storage_insert_seconds", insert_elapsed.as_secs_f64())?;
+        profile.set_item("native_total_seconds", total_elapsed.as_secs_f64())?;
+        Ok((result, profile.into()))
+    }
+
     /// Search with a NumPy query vector (zero-copy)
     ///
     /// Args:
@@ -1599,6 +1697,61 @@ impl PyProximaDB {
                 .collect()
         })
         .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))
+    }
+
+    /// Profiled variant of `search_numpy` used by the benchmark harness to
+    /// locate Python/native search boundary hot spots.
+    #[pyo3(signature = (collection, query, top_k=10, filter=None, search_mode=None))]
+    fn _search_numpy_profiled(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        query: PyReadonlyArray1<f32>,
+        top_k: usize,
+        filter: Option<&str>,
+        search_mode: Option<&str>,
+    ) -> PyResult<(Vec<PySearchResult>, PyObject)> {
+        let total_started = std::time::Instant::now();
+        let copy_started = std::time::Instant::now();
+        let query_vec: Vec<f32> = query
+            .as_slice()
+            .map(|slice| slice.to_vec())
+            .unwrap_or_else(|_| query.as_array().to_vec());
+        let query_vector_copy = copy_started.elapsed();
+
+        let inner = self.db()?;
+        let search_started = std::time::Instant::now();
+        let results = py
+            .allow_threads(move || {
+                inner.search_with_mode(collection, query_vec, top_k, filter, search_mode)
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))?;
+        let native_search = search_started.elapsed();
+
+        let conversion_started = std::time::Instant::now();
+        let py_results = results
+            .into_iter()
+            .map(|r| PySearchResult {
+                id: r.id,
+                score: r.score,
+                metadata_map: r.metadata,
+            })
+            .collect();
+        let result_conversion = conversion_started.elapsed();
+        let total_elapsed = total_started.elapsed();
+
+        let profile = PyDict::new(py);
+        profile.set_item(
+            "native_query_vector_copy_seconds",
+            query_vector_copy.as_secs_f64(),
+        )?;
+        profile.set_item("native_search_seconds", native_search.as_secs_f64())?;
+        profile.set_item(
+            "native_search_result_conversion_seconds",
+            result_conversion.as_secs_f64(),
+        )?;
+        profile.set_item("native_search_total_seconds", total_elapsed.as_secs_f64())?;
+        Ok((py_results, profile.into()))
     }
 
     /// Batch search with multiple query vectors (zero-copy)
@@ -3349,8 +3502,8 @@ impl PyProximaDB {
         query_vector: Option<Vec<f32>>,
         fusion_strategy: Option<&str>,
     ) -> PyResult<Vec<PyObject>> {
-        self.db()?
-            .execute_unified_query(query, query_vector, fusion_strategy)
+        let inner = self.db()?;
+        py.allow_threads(move || inner.execute_unified_query(query, query_vector, fusion_strategy))
             .map(|records| {
                 records
                     .into_iter()

@@ -12,6 +12,8 @@ import argparse
 import json
 import platform
 import statistics
+import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -71,6 +73,47 @@ def latency_sample(
     }
 
 
+def profiled_latency_sample(
+    name: str,
+    op_count: int,
+    func: Callable[[int], tuple[Any, dict[str, Any]]],
+) -> dict[str, Any]:
+    samples_ms: list[float] = []
+    profile_samples: list[dict[str, Any]] = []
+    last_result: Any = None
+    for i in range(op_count):
+        started = time.perf_counter()
+        last_result, profile = func(i)
+        samples_ms.append((time.perf_counter() - started) * 1000.0)
+        profile_samples.append(profile)
+
+    samples_sorted = sorted(samples_ms)
+    p95_idx = min(len(samples_sorted) - 1, int(len(samples_sorted) * 0.95))
+    p99_idx = min(len(samples_sorted) - 1, int(len(samples_sorted) * 0.99))
+    total_seconds = sum(samples_ms) / 1000.0
+    merged_profile: dict[str, Any] = {"path": profile_samples[-1].get("path", "profiled")}
+    for key in sorted({key for profile in profile_samples for key in profile}):
+        values = [
+            profile[key]
+            for profile in profile_samples
+            if isinstance(profile.get(key), int | float)
+        ]
+        if values:
+            merged_profile[key] = statistics.median(values)
+
+    return {
+        "name": name,
+        "operations": op_count,
+        "seconds": total_seconds,
+        "ops_per_second": op_count / total_seconds if total_seconds > 0 else None,
+        "mean_ms": statistics.fmean(samples_ms),
+        "p95_ms": samples_sorted[p95_idx],
+        "p99_ms": samples_sorted[p99_idx],
+        "result": last_result,
+        "profile": merged_profile,
+    }
+
+
 def profiled_insert_metric(
     name: str,
     op_count: int,
@@ -89,6 +132,80 @@ def profiled_insert_metric(
     }
 
 
+def aggregate_reports(reports: list[dict[str, Any]]) -> dict[str, Any]:
+    if len(reports) == 1:
+        return reports[0]
+
+    metric_names = sorted(
+        {
+            result["name"]
+            for report in reports
+            for result in report.get("results", [])
+            if result.get("ops_per_second") is not None
+        }
+    )
+    aggregate_results = []
+    for name in metric_names:
+        samples = [
+            result
+            for report in reports
+            for result in report.get("results", [])
+            if result.get("name") == name and result.get("ops_per_second") is not None
+        ]
+        ops_values = [sample["ops_per_second"] for sample in samples]
+        seconds_values = [sample["seconds"] for sample in samples]
+        aggregate: dict[str, Any] = {
+            "name": name,
+            "runs": len(samples),
+            "ops_per_second_min": min(ops_values),
+            "ops_per_second_median": statistics.median(ops_values),
+            "ops_per_second_max": max(ops_values),
+            "seconds_median": statistics.median(seconds_values),
+        }
+        profile_paths = [
+            sample.get("profile", {}).get("path")
+            for sample in samples
+            if sample.get("profile", {}).get("path")
+        ]
+        if profile_paths:
+            aggregate["profile_paths"] = sorted(set(profile_paths))
+            for field in (
+                "normalize_seconds",
+                "batch_parts_seconds",
+                "native_insert_seconds",
+                "native_props_conversion_seconds",
+                "native_vector_copy_seconds",
+                "native_record_assembly_seconds",
+                "native_build_records_seconds",
+                "native_storage_insert_seconds",
+                "native_total_seconds",
+                "native_query_vector_copy_seconds",
+                "native_search_seconds",
+                "native_search_result_conversion_seconds",
+                "native_search_total_seconds",
+            ):
+                values = [
+                    sample["profile"][field]
+                    for sample in samples
+                    if field in sample.get("profile", {})
+                ]
+                if values:
+                    aggregate[f"{field}_median"] = statistics.median(values)
+        aggregate_results.append(aggregate)
+
+    representative = reports[-1]
+    return {
+        "benchmark": representative["benchmark"],
+        "scale": representative["scale"],
+        "dimension": representative["dimension"],
+        "python": representative["python"],
+        "platform": representative["platform"],
+        "runs": len(reports),
+        "aggregate_results": aggregate_results,
+        "reports": reports,
+    }
+
+
 def failed_metric(name: str, exc: Exception) -> dict[str, Any]:
     return {
         "name": f"{name}.error",
@@ -97,6 +214,13 @@ def failed_metric(name: str, exc: Exception) -> dict[str, Any]:
         "ops_per_second": None,
         "result": f"{type(exc).__name__}: {exc}",
     }
+
+
+def safe_metric(name: str, func: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    try:
+        return func()
+    except Exception as exc:
+        return failed_metric(name, exc)
 
 
 def run_suite(name: str, func: Callable[[], list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -124,7 +248,25 @@ def run_vector(db: ProximaDB, scale: int, dimension: int) -> list[dict[str, Any]
         min(50, scale),
         lambda i: len(db.search("bench_vectors", query=vectors[i], top_k=10)),
     )
-    return [insert, search]
+
+    def search_profile(i: int) -> tuple[int, dict[str, Any]]:
+        results, profile = db._search_numpy_profiled(
+            "bench_vectors",
+            vectors[i],
+            top_k=10,
+        )
+        profile["path"] = "search_numpy_native"
+        return len(results), profile
+
+    profiled_search = safe_metric(
+        "vector.search_top10_profiled",
+        lambda: profiled_latency_sample(
+            "vector.search_top10_profiled",
+            min(50, scale),
+            search_profile,
+        ),
+    )
+    return [insert, search, profiled_search]
 
 
 def run_arrow_batch(db: ProximaDB, scale: int, dimension: int) -> list[dict[str, Any]]:
@@ -235,7 +377,17 @@ def run_relational(db: ProximaDB, scale: int, dimension: int) -> list[dict[str, 
         min(50, scale),
         lambda i: db.get_vector("bench_accounts_batch", f"acct-batch-{i}") is not None,
     )
-    return [insert_single, insert_batch, get]
+    sql_select = safe_metric(
+        "relational.sql_select_limit10",
+        lambda: latency_sample(
+            "relational.sql_select_limit10",
+            min(50, scale),
+            lambda _i: db.execute_sql("SELECT * FROM bench_accounts_batch LIMIT 10")[
+                "row_count"
+            ],
+        ),
+    )
+    return [insert_single, insert_batch, get, sql_select]
 
 
 def run_documents(db: ProximaDB, scale: int) -> list[dict[str, Any]]:
@@ -529,8 +681,54 @@ def run_record_wire(db: ProximaDB, scale: int, dimension: int) -> list[dict[str,
             db.search("bench_record_wire_vectors", query=vectors[i], top_k=10)
         ),
     )
+    def record_wire_search_profile(i: int) -> tuple[int, dict[str, Any]]:
+        results, profile = db._search_numpy_profiled(
+            "bench_record_wire_vectors",
+            vectors[i],
+            top_k=10,
+        )
+        profile["path"] = "search_numpy_native"
+        return len(results), profile
 
-    zero_vector = [0.0] * dimension
+    vector_search_profiled = safe_metric(
+        "record_wire.vector_search_top10_profiled",
+        lambda: profiled_latency_sample(
+            "record_wire.vector_search_top10_profiled",
+            min(50, scale),
+            record_wire_search_profile,
+        ),
+    )
+    vector_search_sql = safe_metric(
+        "record_wire.sql_select_limit10",
+        lambda: latency_sample(
+            "record_wire.sql_select_limit10",
+            min(50, scale),
+            lambda _i: db.execute_sql(
+                "SELECT * FROM bench_record_wire_vectors LIMIT 10"
+            )["row_count"],
+        ),
+    )
+    vector_search_uql = safe_metric(
+        "record_wire.uql_select_limit10",
+        lambda: latency_sample(
+            "record_wire.uql_select_limit10",
+            min(50, scale),
+            lambda _i: len(
+                db.execute_unified_query(
+                    "SELECT * FROM bench_record_wire_vectors LIMIT 10"
+                )
+            ),
+        ),
+    )
+    vector_search_cypher = {
+        "name": "record_wire.cypher_match_limit10.skipped",
+        "operations": 0,
+        "seconds": 0.0,
+        "ops_per_second": None,
+        "result": "skipped: embedded Python does not expose a Cypher executor",
+    }
+
+    zero_vectors = np.zeros((scale, dimension), dtype=np.float32)
     db.create_collection("bench_record_wire_docs", dimension=dimension, engine="sst")
     document_records = [
         normalize_document(
@@ -541,7 +739,7 @@ def run_record_wire(db: ProximaDB, scale: int, dimension: int) -> list[dict[str,
                 "score": i,
                 "payload": {"title": f"doc-{i}"},
             },
-            zero_vector,
+            zero_vectors[i],
             text_columns=["kind"],
         )
         for i in range(scale)
@@ -572,7 +770,7 @@ def run_record_wire(db: ProximaDB, scale: int, dimension: int) -> list[dict[str,
             f"wire-entity-{i}",
             ["Entity", "Account" if i % 2 == 0 else "Person"],
             {"tenant": "embedded", "seq": i},
-            zero_vector,
+            zero_vectors[i],
         )
         for i in range(scale)
     ]
@@ -609,7 +807,7 @@ def run_record_wire(db: ProximaDB, scale: int, dimension: int) -> list[dict[str,
                 "service": "embedded",
                 "fields": {"tenant": "embedded", "seq": i},
             },
-            zero_vector,
+            zero_vectors[i],
             event_type="log",
         )
         for i in range(scale)
@@ -639,6 +837,10 @@ def run_record_wire(db: ProximaDB, scale: int, dimension: int) -> list[dict[str,
         vector_insert_profiled,
         vector_dict_insert_profiled,
         vector_search,
+        vector_search_profiled,
+        vector_search_sql,
+        vector_search_uql,
+        vector_search_cypher,
         document_insert,
         document_insert_profiled,
         graph_insert,
@@ -650,26 +852,29 @@ def run_record_wire(db: ProximaDB, scale: int, dimension: int) -> list[dict[str,
 
 def run(data_dir: Path, scale: int, dimension: int) -> dict[str, Any]:
     db = ProximaDB(data_dirs=str(data_dir), cache_size_mb=512, default_engine="sst")
-    results = []
-    results.extend(run_suite("vector", lambda: run_vector(db, scale, dimension)))
-    results.extend(run_suite("arrow_embedded", lambda: run_arrow_batch(db, scale, dimension)))
-    results.extend(run_suite("relational", lambda: run_relational(db, scale, dimension)))
-    results.extend(run_suite("document", lambda: run_documents(db, scale)))
-    results.extend(run_suite("graph_entity", lambda: run_graph_entity(db, scale)))
-    results.extend(run_suite("observability", lambda: run_observability(db, scale)))
-    results.extend(run_suite("record_wire", lambda: run_record_wire(db, scale, dimension)))
-    db.flush()
+    try:
+        results = []
+        results.extend(run_suite("vector", lambda: run_vector(db, scale, dimension)))
+        results.extend(run_suite("arrow_embedded", lambda: run_arrow_batch(db, scale, dimension)))
+        results.extend(run_suite("relational", lambda: run_relational(db, scale, dimension)))
+        results.extend(run_suite("document", lambda: run_documents(db, scale)))
+        results.extend(run_suite("graph_entity", lambda: run_graph_entity(db, scale)))
+        results.extend(run_suite("observability", lambda: run_observability(db, scale)))
+        results.extend(run_suite("record_wire", lambda: run_record_wire(db, scale, dimension)))
+        db.flush()
 
-    return {
-        "benchmark": "embedded_python_modalities_record_wire_comparison",
-        "scale": scale,
-        "dimension": dimension,
-        "python": platform.python_version(),
-        "platform": platform.platform(),
-        "data_dir": str(data_dir),
-        "results": results,
-        "wire_format_comparison": compare_wire_format(results),
-    }
+        return {
+            "benchmark": "embedded_python_modalities_record_wire_comparison",
+            "scale": scale,
+            "dimension": dimension,
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "data_dir": str(data_dir),
+            "results": results,
+            "wire_format_comparison": compare_wire_format(results),
+        }
+    finally:
+        db.close()
 
 
 def main() -> None:
@@ -677,6 +882,7 @@ def main() -> None:
     parser.add_argument("--data-dir", type=Path, default=None)
     parser.add_argument("--scale", type=int, default=200)
     parser.add_argument("--dimension", type=int, default=64)
+    parser.add_argument("--runs", type=int, default=1)
     parser.add_argument("--json-out", type=Path, default=None)
     args = parser.parse_args()
 
@@ -684,13 +890,52 @@ def main() -> None:
         raise SystemExit("--scale must be at least 2")
     if args.dimension < 1:
         raise SystemExit("--dimension must be at least 1")
+    if args.runs < 1:
+        raise SystemExit("--runs must be at least 1")
 
-    if args.data_dir is None:
-        with tempfile.TemporaryDirectory(prefix="proximadb-embedded-bench-") as tmp:
-            report = run(Path(tmp), args.scale, args.dimension)
+    if args.runs == 1:
+        if args.data_dir is None:
+            with tempfile.TemporaryDirectory(prefix="proximadb-embedded-bench-") as tmp:
+                reports = [run(Path(tmp), args.scale, args.dimension)]
+        else:
+            args.data_dir.mkdir(parents=True, exist_ok=True)
+            reports = [run(args.data_dir, args.scale, args.dimension)]
     else:
-        args.data_dir.mkdir(parents=True, exist_ok=True)
-        report = run(args.data_dir, args.scale, args.dimension)
+        reports = []
+        with tempfile.TemporaryDirectory(prefix="proximadb-embedded-bench-reports-") as tmp:
+            report_dir = Path(tmp)
+            for run_index in range(args.runs):
+                child_json = report_dir / f"run-{run_index}.json"
+                child_args = [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "--scale",
+                    str(args.scale),
+                    "--dimension",
+                    str(args.dimension),
+                    "--runs",
+                    "1",
+                    "--json-out",
+                    str(child_json),
+                ]
+                if args.data_dir is not None:
+                    child_data_dir = args.data_dir / f"run-{run_index}"
+                    child_args.extend(["--data-dir", str(child_data_dir)])
+                completed = subprocess.run(
+                    child_args,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                if completed.returncode != 0:
+                    raise SystemExit(
+                        f"benchmark child run {run_index} failed\n"
+                        f"stdout:\n{completed.stdout}\n"
+                        f"stderr:\n{completed.stderr}"
+                    )
+                reports.append(json.loads(child_json.read_text(encoding="utf-8")))
+
+    report = aggregate_reports(reports)
 
     payload = json.dumps(report, indent=2, sort_keys=True)
     print(payload)
