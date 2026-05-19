@@ -54,9 +54,9 @@ mod streaming_flush_tests {
                 oid: format!("vec_{}", start_id + i),
                 embeddings: vec![EmbeddingCell {
                     model_id: "default".to_string(),
+                    modality: String::new(),
                     values: vec![0.1 * (i as f32); dimension],
                     dim: dimension as u32,
-                    ..Default::default()
                 }],
                 ..Default::default()
             })
@@ -1731,9 +1731,9 @@ mod cross_workstream_tests {
                 oid: format!("vec_{}", i),
                 embeddings: vec![EmbeddingCell {
                     model_id: "default".to_string(),
+                    modality: String::new(),
                     values: vec![0.1 * (i as f32); dimension],
                     dim: dimension as u32,
-                    ..Default::default()
                 }],
                 ..Default::default()
             })

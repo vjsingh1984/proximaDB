@@ -6,7 +6,6 @@
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -16,6 +15,7 @@ mod tests {
     use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::engines::sst::SstEngine;
     use crate::storage::persistence::write_ahead_log::WALConfig;
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
 
     /// Create test vector record with customizable properties
     fn create_test_vector_record(
@@ -48,17 +48,19 @@ mod tests {
         }
     }
 
-    /// Create core VectorRecord for testing
-    fn create_core_test_vector(id: &str, vector: Vec<f32>) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector,
-            metadata: HashMap::new(),
-            timestamp: Some(chrono::Utc::now().timestamp()),
-            updated_at: Some(chrono::Utc::now().timestamp()),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+    /// Create canonical ProximaRecord for testing internal vector records.
+    fn create_core_test_vector(id: &str, vector: Vec<f32>) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.to_string(),
+            local_id: Some(id.to_string()),
+            record_version: 1,
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "vector".to_string(),
+                dim: vector.len() as u32,
+                values: vector,
+            }],
+            ..Default::default()
         }
     }
 
@@ -155,9 +157,8 @@ mod tests {
         assert_eq!(proto_record.metadata.len(), 2);
 
         let core_record = create_core_test_vector("test_id", vector.clone());
-        assert_eq!(core_record.id, "test_id");
-        assert_eq!(core_record.vector, vector);
-        // Core VectorRecord no longer has collection_id field
+        assert_eq!(core_record.oid, "test_id");
+        assert_eq!(core_record.embeddings[0].values, vector);
     }
 
     #[tokio::test]
@@ -166,8 +167,8 @@ mod tests {
         let test_vector = create_core_test_vector("test_vector", vec![1.0, 2.0, 3.0]);
 
         // Test that service can handle vector records
-        assert_eq!(test_vector.id, "test_vector");
-        assert_eq!(test_vector.vector.len(), 3);
+        assert_eq!(test_vector.oid, "test_vector");
+        assert_eq!(test_vector.embeddings[0].values.len(), 3);
 
         // Basic service validation
         assert!(true, "Service can process vectors");
@@ -180,9 +181,9 @@ mod tests {
         let vector_512d = create_core_test_vector("test_512", vec![0.0; 512]);
         let vector_1536d = create_core_test_vector("test_1536", vec![0.0; 1536]);
 
-        assert_eq!(vector_128d.vector.len(), 128);
-        assert_eq!(vector_512d.vector.len(), 512);
-        assert_eq!(vector_1536d.vector.len(), 1536);
+        assert_eq!(vector_128d.embeddings[0].values.len(), 128);
+        assert_eq!(vector_512d.embeddings[0].values.len(), 512);
+        assert_eq!(vector_1536d.embeddings[0].values.len(), 1536);
     }
 
     #[tokio::test]
@@ -220,7 +221,7 @@ mod tests {
         assert_eq!(record_with_empty_meta.metadata.len(), 0);
 
         let core_record = create_core_test_vector("empty_core", vec![1.0, 2.0]);
-        assert_eq!(core_record.metadata.len(), 0);
+        assert_eq!(core_record.props.len(), 0);
     }
 
     #[tokio::test]
@@ -237,15 +238,15 @@ mod tests {
     async fn test_vector_edge_cases() {
         // Test zero-length vector
         let empty_vector = create_core_test_vector("empty_vec", vec![]);
-        assert_eq!(empty_vector.vector.len(), 0);
+        assert_eq!(empty_vector.embeddings[0].values.len(), 0);
 
         // Test single element vector
         let single_elem = create_core_test_vector("single", vec![42.0]);
-        assert_eq!(single_elem.vector.len(), 1);
-        assert_eq!(single_elem.vector[0], 42.0);
+        assert_eq!(single_elem.embeddings[0].values.len(), 1);
+        assert_eq!(single_elem.embeddings[0].values[0], 42.0);
 
         // Test vector with negative values
         let negative_vec = create_core_test_vector("negative", vec![-1.0, -2.0, -3.0]);
-        assert!(negative_vec.vector.iter().all(|&x| x < 0.0));
+        assert!(negative_vec.embeddings[0].values.iter().all(|&x| x < 0.0));
     }
 }

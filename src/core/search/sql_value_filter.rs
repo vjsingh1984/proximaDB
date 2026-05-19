@@ -328,6 +328,127 @@ pub fn proxima_tree_to_json_map(props: &ProximaTree) -> HashMap<String, serde_js
         .collect()
 }
 
+/// Flatten a `ProximaTree` into the canonical `OptimizedSearchRecord` metadata map.
+///
+/// Nested objects are preserved as `ProximaValue::Struct` so storage engines can return
+/// canonical metadata without detouring through the deprecated v1 `SqlValue` envelope.
+pub fn proxima_tree_to_value_map(props: &ProximaTree) -> HashMap<String, ProximaValue> {
+    fn node_to_value(node: &ProximaTreeNode) -> ProximaValue {
+        match node {
+            ProximaTreeNode::Value(value) => value.clone(),
+            ProximaTreeNode::Object(subtree) => ProximaValue::Struct(
+                subtree
+                    .iter()
+                    .map(|(key, child)| (key.clone(), node_to_value(child)))
+                    .collect(),
+            ),
+        }
+    }
+
+    props
+        .iter()
+        .map(|(key, node)| (key.clone(), node_to_value(node)))
+        .collect()
+}
+
+/// Evaluate a filter expression against a `ProximaTree` (canonical v2 path).
+pub fn evaluate_filter_proxima(expr: &FilterExpression, props: &ProximaTree) -> bool {
+    match expr {
+        FilterExpression::And(exprs) => exprs.iter().all(|e| evaluate_filter_proxima(e, props)),
+        FilterExpression::Or(exprs) => exprs.iter().any(|e| evaluate_filter_proxima(e, props)),
+        FilterExpression::Not(e) => !evaluate_filter_proxima(e, props),
+        FilterExpression::Comparison {
+            field,
+            operator,
+            value,
+        } => {
+            let node = props.get(field);
+            match (node, operator) {
+                (Some(ProximaTreeNode::Value(pv)), op) => {
+                    let json_val = proxima_value_to_json(pv);
+                    match op {
+                        ComparisonOperator::Equals => json_val == *value,
+                        ComparisonOperator::NotEquals => json_val != *value,
+                        ComparisonOperator::LessThan => compare_json_lt(&json_val, value),
+                        ComparisonOperator::LessThanOrEqual => compare_json_lte(&json_val, value),
+                        ComparisonOperator::GreaterThan => compare_json_gt(&json_val, value),
+                        ComparisonOperator::GreaterThanOrEqual => {
+                            compare_json_gte(&json_val, value)
+                        }
+                        ComparisonOperator::In => value
+                            .as_array()
+                            .is_some_and(|values| values.iter().any(|v| v == &json_val)),
+                        ComparisonOperator::NotIn => value
+                            .as_array()
+                            .is_none_or(|values| values.iter().all(|v| v != &json_val)),
+                        ComparisonOperator::Contains => json_val
+                            .as_str()
+                            .zip(value.as_str())
+                            .is_some_and(|(haystack, needle)| haystack.contains(needle)),
+                        ComparisonOperator::StartsWith => json_val
+                            .as_str()
+                            .zip(value.as_str())
+                            .is_some_and(|(haystack, prefix)| haystack.starts_with(prefix)),
+                        ComparisonOperator::EndsWith => json_val
+                            .as_str()
+                            .zip(value.as_str())
+                            .is_some_and(|(haystack, suffix)| haystack.ends_with(suffix)),
+                        ComparisonOperator::Between => value.as_array().is_some_and(|bounds| {
+                            bounds.len() == 2
+                                && compare_json_gte(&json_val, &bounds[0])
+                                && compare_json_lte(&json_val, &bounds[1])
+                        }),
+                        ComparisonOperator::IsNull => json_val.is_null(),
+                        ComparisonOperator::IsNotNull => !json_val.is_null(),
+                        ComparisonOperator::Like => json_val
+                            .as_str()
+                            .zip(value.as_str())
+                            .is_some_and(|(haystack, pattern)| {
+                                let needle = pattern.trim_matches('%');
+                                if pattern.starts_with('%') && pattern.ends_with('%') {
+                                    haystack.contains(needle)
+                                } else if pattern.starts_with('%') {
+                                    haystack.ends_with(needle)
+                                } else if pattern.ends_with('%') {
+                                    haystack.starts_with(needle)
+                                } else {
+                                    haystack == pattern
+                                }
+                            }),
+                    }
+                }
+                (None, _) => false,
+                _ => false,
+            }
+        }
+    }
+}
+
+fn compare_json_lt(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(av), Some(bv)) => av < bv,
+        _ => false,
+    }
+}
+fn compare_json_lte(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(av), Some(bv)) => av <= bv,
+        _ => false,
+    }
+}
+fn compare_json_gt(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(av), Some(bv)) => av > bv,
+        _ => false,
+    }
+}
+fn compare_json_gte(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(av), Some(bv)) => av >= bv,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

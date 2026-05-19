@@ -36,7 +36,6 @@ use async_trait::async_trait;
 use tracing::{debug, info, instrument};
 
 use crate::proto::proximadb_v1::{IncludeFields, SearchQuery, VectorSearchRequest};
-use proximadb_data_model::ProximaValue;
 use proximadb_records::{ProximaRecord, ProximaTreeNode, ScoredRecord};
 
 use crate::query::facade::{
@@ -265,6 +264,7 @@ impl QueryStrategy for VectorSearchStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::formats::sql_value_to_json;
 
     #[test]
     fn test_sql_value_to_json_string() {
@@ -272,8 +272,8 @@ mod tests {
         let value = SqlValue {
             value: Some(Value::StringValue("hello".to_string())),
         };
-        let json = sql_value_to_json(value);
-        assert_eq!(json, Some(serde_json::json!("hello")));
+        let json = sql_value_to_json(&value);
+        assert_eq!(json, serde_json::json!("hello"));
     }
 
     #[test]
@@ -282,8 +282,8 @@ mod tests {
         let value = SqlValue {
             value: Some(Value::Int64Value(42)),
         };
-        let json = sql_value_to_json(value);
-        assert_eq!(json, Some(serde_json::json!(42)));
+        let json = sql_value_to_json(&value);
+        assert_eq!(json, serde_json::json!(42));
     }
 
     #[test]
@@ -292,8 +292,8 @@ mod tests {
         let value = SqlValue {
             value: Some(Value::NumberValue(3.14)),
         };
-        let json = sql_value_to_json(value);
-        if let Some(serde_json::Value::Number(n)) = json {
+        let json = sql_value_to_json(&value);
+        if let serde_json::Value::Number(n) = json {
             let f = n.as_f64().unwrap();
             assert!((f - 3.14).abs() < 0.001);
         } else {
@@ -307,8 +307,8 @@ mod tests {
         let value = SqlValue {
             value: Some(Value::BoolValue(true)),
         };
-        let json = sql_value_to_json(value);
-        assert_eq!(json, Some(serde_json::json!(true)));
+        let json = sql_value_to_json(&value);
+        assert_eq!(json, serde_json::json!(true));
     }
 
     #[test]
@@ -317,16 +317,16 @@ mod tests {
         let value = SqlValue {
             value: Some(Value::NullValue(0)),
         };
-        let json = sql_value_to_json(value);
-        assert_eq!(json, Some(serde_json::Value::Null));
+        let json = sql_value_to_json(&value);
+        assert_eq!(json, serde_json::Value::Null);
     }
 
     #[test]
     fn test_sql_value_to_json_none() {
         use crate::proto::proximadb_v1::SqlValue;
         let value = SqlValue { value: None };
-        let json = sql_value_to_json(value);
-        assert_eq!(json, None);
+        let json = sql_value_to_json(&value);
+        assert_eq!(json, serde_json::Value::Null);
     }
 
     #[test]
