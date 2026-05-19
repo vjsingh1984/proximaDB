@@ -516,6 +516,40 @@ mod tests {
     }
 
     #[test]
+    fn test_predicate_selectivity_policy_validation() {
+        let mut policy = PredicateSelectivityPolicy::default();
+        assert!(policy.validate().is_ok());
+
+        policy.eq = 1.2;
+        assert!(policy.validate().is_err());
+    }
+
+    #[test]
+    fn test_predicate_selectivity_uses_configured_policy() {
+        let optimizer = CrossModelOptimizer::new().with_predicate_selectivity_policy(
+            PredicateSelectivityPolicy {
+                eq: 0.42,
+                range: 0.33,
+                ..Default::default()
+            },
+        );
+
+        let eq_pred = Predicate {
+            column: "id".to_string(),
+            op: PredicateOp::Eq,
+            value: PredicateValue::Int(42),
+        };
+        assert!((optimizer.estimate_predicate_selectivity(&eq_pred) - 0.42).abs() < 0.001);
+
+        let range_pred = Predicate {
+            column: "price".to_string(),
+            op: PredicateOp::Gt,
+            value: PredicateValue::Float(100.0),
+        };
+        assert!((optimizer.estimate_predicate_selectivity(&range_pred) - 0.33).abs() < 0.001);
+    }
+
+    #[test]
     fn test_predicate_to_string() {
         let optimizer = CrossModelOptimizer::new();
 

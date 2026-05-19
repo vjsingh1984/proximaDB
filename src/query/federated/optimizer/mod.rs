@@ -804,6 +804,56 @@ impl GraphQueryPlanShape {
     }
 }
 
+/// Fallback selectivity policy for federated SQL predicates when stats are absent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PredicateSelectivityPolicy {
+    pub eq: f64,
+    pub ne: f64,
+    pub range: f64,
+    pub like: f64,
+    pub in_list: f64,
+    pub is_null: f64,
+    pub is_not_null: f64,
+    pub between: f64,
+}
+
+impl Default for PredicateSelectivityPolicy {
+    fn default() -> Self {
+        Self {
+            eq: 0.1,
+            ne: 0.9,
+            range: 0.3,
+            like: 0.2,
+            in_list: 0.15,
+            is_null: 0.05,
+            is_not_null: 0.95,
+            between: 0.25,
+        }
+    }
+}
+
+impl PredicateSelectivityPolicy {
+    pub fn validate(&self) -> Result<()> {
+        for (name, value) in [
+            ("eq", self.eq),
+            ("ne", self.ne),
+            ("range", self.range),
+            ("like", self.like),
+            ("in_list", self.in_list),
+            ("is_null", self.is_null),
+            ("is_not_null", self.is_not_null),
+            ("between", self.between),
+        ] {
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                anyhow::bail!(
+                    "predicate selectivity policy {name} must be finite and between 0.0 and 1.0, got {value}"
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Cost model for different data models
 #[derive(Debug, Clone)]
 pub struct CostModel {
@@ -2154,6 +2204,8 @@ pub struct CrossModelOptimizer {
     statistics_provider: Option<std::sync::Arc<dyn StatisticsProvider>>,
     /// Runtime statistics collector for adaptive cost model tuning
     runtime_stats: std::sync::Arc<RuntimeStatisticsCollector>,
+    /// Predicate selectivity policy used when statistics are unavailable.
+    predicate_selectivity_policy: PredicateSelectivityPolicy,
 }
 
 impl CrossModelOptimizer {
@@ -2217,6 +2269,7 @@ impl CrossModelOptimizer {
             plan_cache: std::sync::Arc::new(PlanCache::default()),
             statistics_provider: None,
             runtime_stats: std::sync::Arc::new(RuntimeStatisticsCollector::default()),
+            predicate_selectivity_policy: PredicateSelectivityPolicy::default(),
         }
     }
 
@@ -2232,6 +2285,17 @@ impl CrossModelOptimizer {
     /// Create an optimizer with a custom runtime statistics collector
     pub fn with_runtime_stats(mut self, stats: std::sync::Arc<RuntimeStatisticsCollector>) -> Self {
         self.runtime_stats = stats;
+        self
+    }
+
+    /// Create an optimizer with explicit predicate selectivity policy.
+    pub fn with_predicate_selectivity_policy(mut self, policy: PredicateSelectivityPolicy) -> Self {
+        debug_assert!(
+            policy.validate().is_ok(),
+            "invalid predicate selectivity policy: {:?}",
+            policy.validate().err()
+        );
+        self.predicate_selectivity_policy = policy;
         self
     }
 
@@ -3896,15 +3960,16 @@ impl CrossModelOptimizer {
 
     /// Estimate selectivity of a predicate (fraction of rows that match)
     fn estimate_predicate_selectivity(&self, predicate: &Predicate) -> f64 {
+        let policy = &self.predicate_selectivity_policy;
         match predicate.op {
-            PredicateOp::Eq => 0.1, // Equality typically selects 10%
-            PredicateOp::Ne => 0.9, // Not equal selects 90%
-            PredicateOp::Lt | PredicateOp::Le | PredicateOp::Gt | PredicateOp::Ge => 0.3, // Range selects ~30%
-            PredicateOp::Like => 0.2,       // Pattern match ~20%
-            PredicateOp::In => 0.15,        // IN clause ~15%
-            PredicateOp::IsNull => 0.05,    // Null check ~5%
-            PredicateOp::IsNotNull => 0.95, // Not null ~95%
-            PredicateOp::Between => 0.25,   // Between ~25%
+            PredicateOp::Eq => policy.eq,
+            PredicateOp::Ne => policy.ne,
+            PredicateOp::Lt | PredicateOp::Le | PredicateOp::Gt | PredicateOp::Ge => policy.range,
+            PredicateOp::Like => policy.like,
+            PredicateOp::In => policy.in_list,
+            PredicateOp::IsNull => policy.is_null,
+            PredicateOp::IsNotNull => policy.is_not_null,
+            PredicateOp::Between => policy.between,
         }
     }
 
