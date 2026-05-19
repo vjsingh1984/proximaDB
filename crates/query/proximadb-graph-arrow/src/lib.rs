@@ -290,12 +290,10 @@ impl GraphArrowBridge {
         let context = GraphQueryContext::default();
         let results = executor.execute_query_rows(query, &context).await?;
 
-        let stream = stream::iter(results.into_iter())
-            .chunks(batch_size)
-            .map(move |batch| {
-                GraphArrowBridge::graph_results_to_arrow(&batch, true)
-                    .map_err(|e| VectorDBError::Internal(format!("Batch conversion failed: {}", e)))
-            });
+        let stream = stream::iter(results).chunks(batch_size).map(move |batch| {
+            GraphArrowBridge::graph_results_to_arrow(&batch, true)
+                .map_err(|e| VectorDBError::Internal(format!("Batch conversion failed: {}", e)))
+        });
 
         Ok(Box::pin(stream))
     }
@@ -419,7 +417,7 @@ mod tests {
             DataType::Int64
         );
         assert_eq!(
-            GraphArrowBridge::json_type_to_arrow(&json!(3.14)),
+            GraphArrowBridge::json_type_to_arrow(&json!(3.125)),
             DataType::Float64
         );
         assert_eq!(

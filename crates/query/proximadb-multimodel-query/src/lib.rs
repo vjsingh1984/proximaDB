@@ -226,21 +226,12 @@ impl ViewMaterialization {
 }
 
 /// Freshness contract for a rebuildable projection.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProjectionFreshness {
     /// Maximum acceptable lag behind canonical records.
     pub max_lag_ms: u64,
     /// Canonical repair source, usually a record table/collection name.
     pub repair_source: String,
-}
-
-impl Default for ProjectionFreshness {
-    fn default() -> Self {
-        Self {
-            max_lag_ms: 0,
-            repair_source: String::new(),
-        }
-    }
 }
 
 impl ProjectionFreshness {
@@ -840,16 +831,22 @@ mod tests {
 
     #[test]
     fn block_batch_config_rejects_zero_fields() {
-        let mut left = BlockBatchConfig::default();
-        left.batch_size_left = 0;
+        let left = BlockBatchConfig {
+            batch_size_left: 0,
+            ..Default::default()
+        };
         assert!(matches!(left.validate(), Err(msg) if msg.contains("batch_size_left")));
 
-        let mut right = BlockBatchConfig::default();
-        right.batch_size_right = 0;
+        let right = BlockBatchConfig {
+            batch_size_right: 0,
+            ..Default::default()
+        };
         assert!(matches!(right.validate(), Err(msg) if msg.contains("batch_size_right")));
 
-        let mut max_calls = BlockBatchConfig::default();
-        max_calls.max_calls = 0;
+        let max_calls = BlockBatchConfig {
+            max_calls: 0,
+            ..Default::default()
+        };
         assert!(matches!(max_calls.validate(), Err(msg) if msg.contains("max_calls")));
     }
 

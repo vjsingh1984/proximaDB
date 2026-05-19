@@ -115,6 +115,11 @@ pub unsafe fn int8_squared_diff_avx2(vec_a: &[i8], vec_b: &[i8]) -> i32 {
 }
 
 /// NEON-optimized INT8 dot product for ARM64
+///
+/// # Safety
+///
+/// This function enables and uses ARM NEON intrinsics. Callers must ensure the
+/// current CPU supports NEON, and both input slices must have the same length.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 pub unsafe fn int8_dot_product_neon(vec_a: &[i8], vec_b: &[i8]) -> i32 {
@@ -163,6 +168,11 @@ pub unsafe fn int8_dot_product_neon(vec_a: &[i8], vec_b: &[i8]) -> i32 {
 }
 
 /// NEON-optimized INT8 squared difference for ARM64
+///
+/// # Safety
+///
+/// This function enables and uses ARM NEON intrinsics. Callers must ensure the
+/// current CPU supports NEON, and both input slices must have the same length.
 #[cfg(target_arch = "aarch64")]
 #[target_feature(enable = "neon")]
 pub unsafe fn int8_squared_diff_neon(vec_a: &[i8], vec_b: &[i8]) -> i32 {

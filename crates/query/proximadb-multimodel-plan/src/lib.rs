@@ -162,11 +162,10 @@ impl MultiModelPlan {
                         errors.push(format!("Operator {}: Scan has empty source", idx));
                     }
                 }
-                Operator::Join { .. } => {
-                    if !has_scan {
-                        errors.push(format!("Operator {}: Join before any Scan operator", idx));
-                    }
+                Operator::Join { .. } if !has_scan => {
+                    errors.push(format!("Operator {}: Join before any Scan operator", idx));
                 }
+                Operator::Join { .. } => {}
                 Operator::Aggregate { .. } => {
                     // Aggregate validation - currently no specific rules
                 }
@@ -176,11 +175,10 @@ impl MultiModelPlan {
                         errors.push(format!("Operator {}: Invalid filter: {}", idx, e));
                     }
                 }
-                Operator::Project { columns } => {
-                    if columns.is_empty() {
-                        warnings.push(format!("Operator {}: Project with no columns", idx));
-                    }
+                Operator::Project { columns } if columns.is_empty() => {
+                    warnings.push(format!("Operator {}: Project with no columns", idx));
                 }
+                Operator::Project { .. } => {}
                 _ => {}
             }
         }

@@ -90,11 +90,11 @@ pub fn normalize_document_result_shape(record: &UnifiedRecord) -> serde_json::Va
 
     // Hoist legacy `_id`/`id` from the inner payload when present so that the
     // envelope `_id` is authoritative and the payload is clean.
-    if let serde_json::Value::Object(ref mut env) = base {
-        if let Some(serde_json::Value::Object(doc)) = env.get_mut("_data") {
-            for key in &["_id", "id", "_model", "_score"] {
-                doc.remove(*key);
-            }
+    if let serde_json::Value::Object(ref mut env) = base
+        && let Some(serde_json::Value::Object(doc)) = env.get_mut("_data")
+    {
+        for key in &["_id", "id", "_model", "_score"] {
+            doc.remove(*key);
         }
     }
 

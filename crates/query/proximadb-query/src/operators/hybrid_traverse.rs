@@ -229,7 +229,7 @@ mod tests {
     }
     impl AnnSeedProvider for FixedAnn {
         fn find_seeds(&self, _query: &[f32], k: usize) -> Result<Vec<(String, f32)>> {
-            Ok(self.results.iter().cloned().take(k).collect())
+            Ok(self.results.iter().take(k).cloned().collect())
         }
     }
 

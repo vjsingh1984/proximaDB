@@ -548,7 +548,7 @@ mod tests {
         assert!(!blocks.is_empty());
         // All blocks should target one of the nodes
         for block in &blocks {
-            assert!(vec!["node1", "node2", "node3"].contains(&block.target_node.as_str()));
+            assert!(["node1", "node2", "node3"].contains(&block.target_node.as_str()));
         }
     }
 
@@ -604,7 +604,7 @@ mod tests {
         let columns = vec![
             serde_json::json!("col1"),
             serde_json::json!(42),
-            serde_json::json!(3.14),
+            serde_json::json!(3.125),
         ];
         let key = ShuffleExchange::create_join_key(&columns).unwrap();
 

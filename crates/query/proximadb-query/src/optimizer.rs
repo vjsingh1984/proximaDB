@@ -798,11 +798,13 @@ mod tests {
 
     #[tokio::test]
     async fn evolutionary_optimize_uses_measured_fitness_when_available() {
-        let mut config = OptimizerConfig::default();
-        config.enable_evolutionary_optimizer = true;
-        config.enable_measured_fitness = true;
-        config.evolutionary_population_size = 12;
-        config.evolutionary_generations = 8;
+        let config = OptimizerConfig {
+            enable_evolutionary_optimizer: true,
+            enable_measured_fitness: true,
+            evolutionary_population_size: 12,
+            evolutionary_generations: 8,
+            ..Default::default()
+        };
         let optimizer = QueryOptimizerRuntime::new(config);
 
         let components = vec![
@@ -831,9 +833,11 @@ mod tests {
 
     #[tokio::test]
     async fn time_and_record_records_on_ok() {
-        let mut config = OptimizerConfig::default();
-        config.enable_measured_fitness = true;
-        config.measured_fitness_max_entries = 8;
+        let config = OptimizerConfig {
+            enable_measured_fitness: true,
+            measured_fitness_max_entries: 8,
+            ..Default::default()
+        };
         let optimizer = QueryOptimizerRuntime::new(config);
         let components = vec![make_vector_search_component(None, 10)];
         let order = vec![0usize];

@@ -285,7 +285,7 @@ impl VectorQueryService for VectorServiceImpl {
                             ProximaTreeNode::Value(ProximaValue::Float64(f)) => Some(*f),
                             _ => None,
                         })
-                        .map_or(false, |score| score >= threshold as f64)
+                        .is_some_and(|score| score >= threshold as f64)
                 })
                 .collect()
         } else {
@@ -341,13 +341,13 @@ mod tests {
     #[tokio::test]
     async fn test_vector_service_creation() {
         let service = VectorServiceImpl::new().unwrap();
-        assert_eq!(service.enable_progressive, true);
+        assert!(service.enable_progressive);
     }
 
     #[tokio::test]
     async fn test_vector_service_without_progressive() {
         let service = VectorServiceImpl::without_progressive(IndexConfig::default()).unwrap();
-        assert_eq!(service.enable_progressive, false);
+        assert!(!service.enable_progressive);
     }
 
     #[tokio::test]

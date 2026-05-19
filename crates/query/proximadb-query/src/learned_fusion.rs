@@ -651,7 +651,7 @@ impl LearnedFusion {
 
         let mut records: Vec<UnifiedRecord> = record_ids
             .into_iter()
-            .zip(scores.into_iter())
+            .zip(scores)
             .map(|(id, score)| {
                 let mut record = all_records
                     .remove(&id)

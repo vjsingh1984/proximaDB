@@ -190,9 +190,11 @@ mod tests {
 
     #[tokio::test]
     async fn reorder_returns_none_for_single_component_query() {
-        let mut config = OptimizerConfig::default();
-        config.enable_evolutionary_optimizer = true;
-        config.enable_measured_fitness = true;
+        let config = OptimizerConfig {
+            enable_evolutionary_optimizer: true,
+            enable_measured_fitness: true,
+            ..Default::default()
+        };
         let optimizer = Arc::new(QueryOptimizerRuntime::new(config));
 
         let mut q = empty_query(vec![vector_component()]);
@@ -204,11 +206,13 @@ mod tests {
 
     #[tokio::test]
     async fn reorder_picks_measured_faster_order() {
-        let mut config = OptimizerConfig::default();
-        config.enable_evolutionary_optimizer = true;
-        config.enable_measured_fitness = true;
-        config.evolutionary_population_size = 12;
-        config.evolutionary_generations = 8;
+        let config = OptimizerConfig {
+            enable_evolutionary_optimizer: true,
+            enable_measured_fitness: true,
+            evolutionary_population_size: 12,
+            evolutionary_generations: 8,
+            ..Default::default()
+        };
         let optimizer = Arc::new(QueryOptimizerRuntime::new(config));
 
         let components = vec![vector_component(), document_component()];
@@ -230,8 +234,10 @@ mod tests {
 
     #[tokio::test]
     async fn reorder_respects_dependency_topology() {
-        let mut config = OptimizerConfig::default();
-        config.enable_evolutionary_optimizer = true;
+        let config = OptimizerConfig {
+            enable_evolutionary_optimizer: true,
+            ..Default::default()
+        };
         let optimizer = Arc::new(QueryOptimizerRuntime::new(config));
 
         let mut c1 = document_component();

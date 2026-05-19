@@ -294,10 +294,10 @@ pub fn cypher_query_to_operators(query: &CypherQuery, graph_name: &str) -> Vec<O
                 pattern: match_pattern_to_cypher_string(pattern),
             });
 
-            if let Some(where_clause) = &pattern.where_clause {
-                if let Some(expr) = where_clause_to_filter_expression(where_clause) {
-                    operators.push(Operator::Filter { expression: expr });
-                }
+            if let Some(where_clause) = &pattern.where_clause
+                && let Some(expr) = where_clause_to_filter_expression(where_clause)
+            {
+                operators.push(Operator::Filter { expression: expr });
             }
         }
     }

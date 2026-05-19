@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_random_valid_order() {
-        let components = vec![
+        let components = [
             mock_component(0, vec![]),
             mock_component(1, vec![0]),
             mock_component(2, vec![0]),
