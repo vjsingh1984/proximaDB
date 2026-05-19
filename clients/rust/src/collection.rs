@@ -384,6 +384,7 @@ impl<'a> CollectionHandle<'a> {
 
     /// Get a vector by ID
     #[cfg(feature = "client")]
+    #[allow(deprecated)]
     pub async fn get_vector(&self, id: &str) -> Result<Option<VectorRecord>> {
         let client = self.client.expect("Client reference required");
         let url = format!(
@@ -657,20 +658,17 @@ impl<'a> InsertBuilder<'a> {
             return Ok(InsertResponse { inserted_count: 0 });
         }
 
-        let request = InsertRequest {
-            collection: self.collection,
-            vectors: self
+        let collection = self.collection;
+        let request = ProximaRecordBatchRequest {
+            records: self
                 .records
                 .into_iter()
-                .map(|r| VectorRecord {
-                    id: r.id,
-                    vector: r.vector,
-                    metadata: r.metadata,
-                })
+                .map(ProximaRecord::from_insert_record)
                 .collect(),
+            validate_schema: true,
         };
 
-        let url = format!("{}/api/v1/vectors/insert", client.url());
+        let url = format!("{}/api/v2/collections/{}/records/batch", client.url(), collection);
         client.post(&url, &request).await
     }
 }
@@ -820,25 +818,49 @@ struct CreateCollectionResponse {
 }
 
 #[derive(Debug, Serialize)]
-struct InsertRequest {
-    collection: String,
-    vectors: Vec<VectorRecord>,
+struct ProximaRecordBatchRequest {
+    records: Vec<ProximaRecord>,
+    validate_schema: bool,
 }
 
-/// A vector record with ID, vector data, and metadata
+/// Canonical record payload with optional vector embedding and rich properties.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VectorRecord {
-    /// Vector ID
+pub struct ProximaRecord {
+    /// Record ID
     pub id: String,
-    /// Vector data
+    /// Dense vector embedding
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vector: Vec<f32>,
-    /// Associated metadata
-    #[serde(default)]
-    pub metadata: HashMap<String, serde_json::Value>,
+    /// Rich record properties
+    #[serde(
+        default,
+        alias = "metadata",
+        skip_serializing_if = "HashMap::is_empty"
+    )]
+    pub props: HashMap<String, serde_json::Value>,
+    /// Original source text or external reference
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
+
+impl ProximaRecord {
+    fn from_insert_record(record: InsertRecord) -> Self {
+        Self {
+            id: record.id,
+            vector: record.vector,
+            props: record.metadata,
+            source: None,
+        }
+    }
+}
+
+/// Deprecated compatibility alias for vector-shaped SDK callers.
+#[deprecated(note = "use ProximaRecord; VectorRecord is a compatibility alias")]
+pub type VectorRecord = ProximaRecord;
 
 #[derive(Debug, Deserialize)]
 struct InsertResponse {
+    #[serde(default, alias = "success_count")]
     inserted_count: usize,
 }
 

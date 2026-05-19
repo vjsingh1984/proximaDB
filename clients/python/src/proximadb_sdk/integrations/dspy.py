@@ -29,8 +29,6 @@ from typing import Any, Callable, Optional, Union
 
 import dspy
 
-from proximadb_sdk.models import VectorRecord
-
 
 class ProximaDBRM(dspy.Retrieve):
     """DSPy retrieval model backed by ProximaDB.

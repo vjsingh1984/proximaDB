@@ -13,6 +13,7 @@ import time
 from typing import Any, Dict, List, Optional, Union
 
 from ..models import (
+    BatchResult,
     Collection,
     CollectionConfig,
     FilterDict,
@@ -24,6 +25,7 @@ from ..models import (
     VectorOperationResponse,
     VectorRecord,
 )
+from ..models_v2 import ProximaRecord
 from ..proto_conversion import ProtoConverter
 from .base import BaseProtocolAdapter
 
@@ -192,7 +194,108 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             return False
 
     # ==========================================================================
-    # Vector Operations
+    # Record Operations
+    # ==========================================================================
+
+    @staticmethod
+    def _record_payloads(records: Union[List[ProximaRecord], List[Dict[str, Any]]]):
+        payloads = []
+        for record in records:
+            if isinstance(record, dict):
+                payloads.append(record)
+            elif hasattr(record, "model_dump"):
+                payloads.append(record.model_dump(exclude_none=True))
+            else:
+                payloads.append(ProtoConverter.vector_record_to_dict(record))
+        return payloads
+
+    @staticmethod
+    def _to_batch_result(result: Any, total_count: int) -> BatchResult:
+        if isinstance(result, BatchResult):
+            return result
+        if isinstance(result, VectorOperationResponse):
+            metrics = result.metrics or OperationMetrics()
+            return BatchResult(
+                total=total_count,
+                success=metrics.successful_count,
+                failed=metrics.failed_count,
+                errors=[result.error_message] if result.error_message else [],
+                metrics=metrics,
+            )
+        if isinstance(result, dict):
+            success = result.get(
+                "success",
+                result.get("successful_count", result.get("inserted_count", total_count)),
+            )
+            failed = result.get("failed", result.get("failed_count", 0))
+            return BatchResult(
+                total=result.get("total", success + failed),
+                success=success,
+                failed=failed,
+                errors=result.get("errors", []),
+                metrics=OperationMetrics(
+                    total_processed=result.get("total", success + failed),
+                    successful_count=success,
+                    failed_count=failed,
+                ),
+            )
+        successful = getattr(result, "success", total_count)
+        if isinstance(successful, bool):
+            successful = total_count if successful else 0
+        failed = getattr(result, "failed", 0)
+        return BatchResult(
+            total=successful + failed,
+            success=successful,
+            failed=failed,
+            metrics=OperationMetrics(
+                total_processed=successful + failed,
+                successful_count=successful,
+                failed_count=failed,
+            ),
+        )
+
+    @staticmethod
+    def _batch_to_vector_response(
+        result: BatchResult, operation: str
+    ) -> VectorOperationResponse:
+        return VectorOperationResponse(
+            success=result.success,
+            operation=operation,
+            metrics=result.metrics,
+            error_message="; ".join(result.errors) if result.errors else None,
+        )
+
+    def insert_records(
+        self,
+        collection_id: str,
+        records: Union[List[ProximaRecord], List[Dict[str, Any]]],
+        **kwargs,
+    ) -> BatchResult:
+        """Insert ProximaRecord-shaped payloads into a collection."""
+        result = self._client.insert_records(
+            collection_id, self._record_payloads(records), **kwargs
+        )
+        return self._to_batch_result(result, len(records))
+
+    def upsert_records(
+        self,
+        collection_id: str,
+        records: Union[List[ProximaRecord], List[Dict[str, Any]]],
+        **kwargs,
+    ) -> BatchResult:
+        """Upsert ProximaRecord-shaped payloads into a collection."""
+        if hasattr(self._client, "upsert_records"):
+            result = self._client.upsert_records(
+                collection_id, self._record_payloads(records), **kwargs
+            )
+        else:
+            result = self._client.insert_records(
+                collection_id, self._record_payloads(records), upsert=True, **kwargs
+            )
+        return self._to_batch_result(result, len(records))
+
+    # ==========================================================================
+    # Vector Compatibility Aliases
     # ==========================================================================
 
     def insert_vectors(
@@ -201,43 +304,9 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
         **kwargs,
     ) -> VectorOperationResponse:
-        """Insert vectors into a collection."""
-        # Convert VectorRecord objects to dicts if needed
-        vector_dicts = []
-        for v in vectors:
-            if isinstance(v, dict):
-                vector_dicts.append(v)
-            elif hasattr(v, "model_dump"):
-                vector_dicts.append(v.model_dump(exclude_none=True))
-            else:
-                vector_dicts.append(ProtoConverter.vector_record_to_dict(v))
-
-        result = self._client.insert_vectors(collection_id, vector_dicts, **kwargs)
-
-        if isinstance(result, VectorOperationResponse):
-            return result
-
-        # Convert dict or other response to VectorOperationResponse
-        if isinstance(result, dict):
-            return VectorOperationResponse(
-                success=result.get("success", True),
-                operation="INSERT",
-                metrics=OperationMetrics(
-                    successful_count=result.get("successful_count", len(vectors)),
-                    failed_count=result.get("failed_count", 0),
-                    total_count=len(vectors),
-                ),
-            )
-
-        # Handle wrapper objects
-        return VectorOperationResponse(
-            success=getattr(result, "success", True),
-            operation="INSERT",
-            metrics=OperationMetrics(
-                successful_count=len(vectors),
-                failed_count=0,
-                total_count=len(vectors),
-            ),
+        """Compatibility alias for record-native inserts."""
+        return self._batch_to_vector_response(
+            self.insert_records(collection_id, vectors, **kwargs), "INSERT"
         )
 
     def upsert_vectors(
@@ -246,38 +315,9 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
         **kwargs,
     ) -> VectorOperationResponse:
-        """Upsert (insert or update) vectors in a collection."""
-        # Convert VectorRecord objects to dicts if needed
-        vector_dicts = []
-        for v in vectors:
-            if isinstance(v, dict):
-                vector_dicts.append(v)
-            elif hasattr(v, "model_dump"):
-                vector_dicts.append(v.model_dump(exclude_none=True))
-            else:
-                vector_dicts.append(ProtoConverter.vector_record_to_dict(v))
-
-        # Use upsert method if available, otherwise insert with upsert flag
-        if hasattr(self._client, "upsert_vectors"):
-            result = self._client.upsert_vectors(collection_id, vector_dicts, **kwargs)
-        else:
-            result = self._client.insert_vectors(
-                collection_id, vector_dicts, upsert=True, **kwargs
-            )
-
-        if isinstance(result, VectorOperationResponse):
-            return result
-
-        return VectorOperationResponse(
-            success=(
-                getattr(result, "success", True) if hasattr(result, "success") else True
-            ),
-            operation="UPSERT",
-            metrics=OperationMetrics(
-                successful_count=len(vectors),
-                failed_count=0,
-                total_count=len(vectors),
-            ),
+        """Compatibility alias for record-native upserts."""
+        return self._batch_to_vector_response(
+            self.upsert_records(collection_id, vectors, **kwargs), "UPSERT"
         )
 
     def get_vectors(

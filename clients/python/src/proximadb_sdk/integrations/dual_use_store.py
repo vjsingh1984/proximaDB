@@ -43,7 +43,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Any, List, Optional, Protocol, Sequence, runtime_checkable
 
-from proximadb_sdk.models import VectorRecord
+from proximadb_sdk.integrations._records import insert_records, record_payload
 
 
 @runtime_checkable
@@ -98,7 +98,7 @@ class DualUseStore:
 
     Args:
         client: A ProximaDB client. The integration uses
-            ``insert_vectors``, ``search``, and ``delete_vectors`` only.
+            ``insert_records``, ``search``, and ``delete_vectors`` only.
             Any object satisfying that surface (real or stub) works.
         collection_id: Name of the ProximaDB collection.
         model: Anything implementing the :class:`DualUseModel`
@@ -125,8 +125,8 @@ class DualUseStore:
         """
         vector = self._model.embed(text)
         assigned_id = doc_id if doc_id is not None else _new_id()
-        record = VectorRecord(id=assigned_id, vector=vector, metadata={})
-        self._client.insert_vectors(self._collection_id, records=[record])
+        record = record_payload(record_id=assigned_id, vector=vector)
+        insert_records(self._client, self._collection_id, [record])
         return assigned_id
 
     def add_many(
@@ -147,17 +147,15 @@ class DualUseStore:
         if not texts:
             return []
 
-        records: List[VectorRecord] = []
+        records: List[dict[str, Any]] = []
         out_ids: List[str] = []
         for i, text in enumerate(texts):
             vector = self._model.embed(text)
             doc_id = ids[i] if ids is not None else _new_id()
-            records.append(
-                VectorRecord(id=doc_id, vector=vector, metadata={})
-            )
+            records.append(record_payload(record_id=doc_id, vector=vector))
             out_ids.append(doc_id)
 
-        self._client.insert_vectors(self._collection_id, records=records)
+        insert_records(self._client, self._collection_id, records)
         return out_ids
 
     # ---- reads ----------------------------------------------------

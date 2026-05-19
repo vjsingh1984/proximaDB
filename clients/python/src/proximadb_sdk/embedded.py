@@ -483,7 +483,7 @@ class EmbeddedConfig:
 class EmbeddedCollection:
     """A collection in the embedded database.
 
-    Supports both raw vector operations and text-based operations
+    Supports record-native operations and text-based operations
     with automatic embedding generation.
     """
 
@@ -507,19 +507,26 @@ class EmbeddedCollection:
         """
         self._embedding_model = model
 
-    async def insert(
+    async def insert_records(
         self,
-        vectors: List[Dict[str, Any]],
+        records: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """Insert vectors into collection.
+        """Insert ProximaRecord-shaped records into collection.
 
         Args:
-            vectors: List of dicts with 'id', 'vector', and optional 'metadata'
+            records: List of dicts with 'id', 'vector', and optional 'props'
 
         Returns:
             Insert result with success status
         """
-        return await self._db._insert_vectors(self.name, vectors)
+        return await self._db._insert_records(self.name, records)
+
+    async def insert(
+        self,
+        vectors: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Compatibility alias for record-native insert."""
+        return await self.insert_records(vectors)
 
     async def insert_with_embedding(
         self,
@@ -552,20 +559,19 @@ class EmbeddedCollection:
         texts = [doc["text"] for doc in documents]
         embeddings = await self._embedding_model.embed_batch_async(texts)
 
-        # Build vector records
-        vectors = []
+        # Build record-native payloads.
+        records = []
         for doc, embedding in zip(documents, embeddings):
-            vector_record = {
+            record = {
                 "id": doc["id"],
                 "vector": embedding,
             }
-            # Include text in metadata for retrieval
-            metadata = doc.get("metadata", {}).copy()
-            metadata["text"] = doc["text"]
-            vector_record["metadata"] = metadata
-            vectors.append(vector_record)
+            props = doc.get("props") or doc.get("metadata", {}).copy()
+            props["text"] = doc["text"]
+            record["props"] = props
+            records.append(record)
 
-        return await self._db._insert_vectors(self.name, vectors)
+        return await self._db._insert_records(self.name, records)
 
     async def search(
         self,
@@ -1060,32 +1066,90 @@ prefetch_budget = 4
         """Convert metadata dict to SqlValue format."""
         return {str(k): self._to_sql_value(v) for k, v in metadata.items()}
 
+    def _to_proxima_value(self, value: Any) -> Any:
+        """Convert Python values to v2 REST ProximaValue JSON."""
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return {"type": "binary", "value": base64.b64encode(bytes(value)).decode("ascii")}
+        if isinstance(value, (list, tuple)):
+            return {"type": "array", "value": [self._to_proxima_value(v) for v in value]}
+        if isinstance(value, dict):
+            if set(value.keys()) == {"type", "value"}:
+                return value
+            return {
+                "type": "jsonb",
+                "value": {str(k): self._to_proxima_value(v) for k, v in value.items()},
+            }
+        return str(value)
+
+    def _normalize_record_payload(
+        self, record: Dict[str, Any], index: int = 0
+    ) -> Dict[str, Any]:
+        """Normalize embedded inputs to the v2 ProximaRecord REST shape."""
+        vector = record.get("vector")
+        if vector is None:
+            raise ValueError("record is missing vector")
+
+        props = {}
+        for source in ("props", "metadata", "flexible_fields"):
+            values = record.get(source)
+            if isinstance(values, dict):
+                props.update({str(k): self._to_proxima_value(v) for k, v in values.items()})
+
+        typed_fields = record.get("typed_fields")
+        if isinstance(typed_fields, dict):
+            for key, typed_value in typed_fields.items():
+                if hasattr(typed_value, "model_dump"):
+                    typed_value = typed_value.model_dump(exclude_none=True)
+                if isinstance(typed_value, dict) and "value" in typed_value:
+                    props[str(key)] = {
+                        "type": typed_value.get("value_type") or typed_value.get("type"),
+                        "value": typed_value["value"],
+                    }
+                else:
+                    props[str(key)] = self._to_proxima_value(typed_value)
+
+        payload = {
+            "id": record.get("id") or record.get("oid") or f"record_{index}",
+            "vector": [float(v) for v in vector],
+            "props": props,
+        }
+        if record.get("text_fields"):
+            payload["text_fields"] = record["text_fields"]
+        return payload
+
+    async def _insert_records(
+        self,
+        collection_name: str,
+        records: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Insert ProximaRecord-shaped records into a collection."""
+        import httpx
+
+        formatted = [
+            self._normalize_record_payload(record, index)
+            for index, record in enumerate(records)
+        ]
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{self.rest_url}/api/v2/collections/{collection_name}/records/batch",
+                json={
+                    "records": formatted,
+                    "validate_schema": True,
+                },
+                timeout=60.0,
+            )
+            return response.json()
+
     async def _insert_vectors(
         self,
         collection_name: str,
         vectors: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """Insert vectors into a collection."""
-        import httpx
-
-        # Format vectors with SqlValue metadata
-        formatted = []
-        for v in vectors:
-            item = {"id": v["id"], "vector": v["vector"]}
-            if "metadata" in v:
-                item["metadata"] = self._convert_metadata(v["metadata"])
-            formatted.append(item)
-
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{self.rest_url}/api/v1/vectors/batch",
-                json={
-                    "collection_id": collection_name,
-                    "vectors": formatted,
-                },
-                timeout=60.0,
-            )
-            return response.json()
+        """Compatibility alias for record-native insert."""
+        return await self._insert_records(collection_name, vectors)
 
     async def _search_vectors(
         self,

@@ -314,8 +314,8 @@ class CodeKnowledgeBuilder:
             # Generate embeddings
             embeddings = await self._generate_embeddings(chunks)
 
-            # Insert into vector store
-            await self._insert_vectors(chunks, embeddings, file_path, language)
+            # Insert vector-bearing code records.
+            await self._insert_records(chunks, embeddings, file_path, language)
             result.symbols_indexed = len(chunks)
 
             # Extract and insert graph relationships
@@ -481,15 +481,15 @@ class CodeKnowledgeBuilder:
 
         return embedding[: self.config.vector_dimension]
 
-    async def _insert_vectors(
+    async def _insert_records(
         self,
         chunks: List[TextChunk],
         embeddings: List[List[float]],
         file_path: Path,
         language: str,
     ) -> None:
-        """Insert code symbols into vector store."""
-        vectors = []
+        """Insert code symbols as ProximaRecord-shaped vector-bearing records."""
+        records = []
 
         for chunk, embedding in zip(chunks, embeddings):
             # Build rich metadata for RAG
@@ -524,20 +524,25 @@ class CodeKnowledgeBuilder:
             if chunk.metadata.get("complexity"):
                 metadata["complexity"] = str(chunk.metadata["complexity"])
 
-            vectors.append(
+            records.append(
                 {
                     "id": metadata["symbol_id"],
                     "vector": embedding,
-                    "metadata": metadata,
+                    "props": metadata,
+                    "source": chunk.text,
+                    "text_fields": [{"name": "source_code", "content": chunk.text}],
                 }
             )
 
         # Batch insert
-        if vectors:
+        if records:
             collection = await self.client.get_collection(
                 self.config.vector_collection_name
             )
-            await collection.insert(vectors)
+            if hasattr(collection, "insert_records"):
+                await collection.insert_records(records)
+            else:
+                await collection.insert(records)
 
     async def _insert_graph_data(
         self,

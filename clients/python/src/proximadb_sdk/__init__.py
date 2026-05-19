@@ -260,10 +260,15 @@ try:
         ChunkingStrategy,
         TextChunk,
         TextChunker,
+        chunk_and_embed_records,
+        chunk_and_embed_text,
         chunk_by_paragraphs,
         chunk_by_sentences,
         chunk_sliding_window,
         create_chunker,
+        create_records,
+        create_vector_records,
+        prepare_records,
         prepare_vector_records,
     )
 
@@ -446,9 +451,14 @@ if _chunking_available:
             "ChunkingConfig",
             "TextChunk",
             "create_chunker",
+            "create_records",
+            "create_vector_records",
+            "chunk_and_embed_records",
+            "chunk_and_embed_text",
             "chunk_by_sentences",
             "chunk_by_paragraphs",
             "chunk_sliding_window",
+            "prepare_records",
             "prepare_vector_records",
         ]
     )
@@ -491,6 +501,7 @@ try:
         BatchStrategy,
         Pipeline,
         RequestBatcher,
+        batch_insert_records,
         batch_insert_vectors,
         create_vector_batcher,
     )
@@ -554,6 +565,7 @@ if _batching_available:
             "BatchMetrics",
             "Pipeline",
             "create_vector_batcher",
+            "batch_insert_records",
             "batch_insert_vectors",
         ]
     )

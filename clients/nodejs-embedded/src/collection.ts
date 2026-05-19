@@ -10,6 +10,7 @@
 import type {
   CollectionConfig,
   CollectionInfo,
+  ProximaRecord,
   VectorRecord,
   SearchResult,
   JsonValue,
@@ -20,6 +21,31 @@ import {
   IndexType,
 } from "./types";
 import { SearchBuilder, SearchHttpClient } from "./search";
+
+type RecordBatchResponse = {
+  inserted_count?: number;
+  success_count?: number;
+  success?: number;
+};
+
+function recordPayload(record: {
+  id: string;
+  vector?: number[];
+  metadata?: Record<string, JsonValue>;
+  props?: Record<string, JsonValue>;
+  source?: string;
+}): ProximaRecord {
+  return {
+    id: record.id,
+    vector: record.vector ?? [],
+    props: record.props ?? record.metadata ?? {},
+    source: record.source,
+  };
+}
+
+function insertedCount(response: RecordBatchResponse): number {
+  return response.success_count ?? response.inserted_count ?? response.success ?? 0;
+}
 
 /**
  * HTTP client interface for collection operations
@@ -214,16 +240,16 @@ export class InsertBuilder {
     const record = {
       id: this.currentId,
       vector: this.currentVector,
-      metadata: this.currentMetadata,
+      props: this.currentMetadata,
     };
 
     const request = {
-      collection: this.collectionName,
-      vectors: [record],
+      records: [record],
+      validate_schema: true,
     };
 
-    const url = this.client.url() + "/api/v1/vectors/insert";
-    await this.client.post<{ inserted_count: number }>(url, request);
+    const url = this.client.url() + `/api/v2/collections/${this.collectionName}/records/batch`;
+    await this.client.post<RecordBatchResponse>(url, request);
   }
 }
 
@@ -281,13 +307,13 @@ export class BatchInsertBuilder {
    */
   async execute(): Promise<number> {
     const request = {
-      collection: this.collectionName,
-      vectors: this.records,
+      records: this.records.map(recordPayload),
+      validate_schema: true,
     };
 
-    const url = this.client.url() + "/api/v1/vectors/insert";
-    const response = await this.client.post<{ inserted_count: number }>(url, request);
-    return response.inserted_count;
+    const url = this.client.url() + `/api/v2/collections/${this.collectionName}/records/batch`;
+    const response = await this.client.post<RecordBatchResponse>(url, request);
+    return insertedCount(response);
   }
 }
 

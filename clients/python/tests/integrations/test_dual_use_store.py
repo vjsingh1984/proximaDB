@@ -23,7 +23,7 @@ from proximadb_sdk.integrations.dual_use_store import (  # noqa: E402
     DualUseRetrievalResult,
     DualUseStore,
 )
-from proximadb_sdk.models import SearchResult, VectorRecord
+from proximadb_sdk.models import SearchResult
 
 
 # ---- stub model ----------------------------------------------------
@@ -70,7 +70,7 @@ class StubDualUseModel:
 @dataclass
 class _Insert:
     collection_id: str
-    records: list[VectorRecord]
+    records: list[dict[str, Any]]
 
 
 @dataclass
@@ -93,7 +93,7 @@ class StubClient:
     deletes: list[tuple[str, list[str]]] = field(default_factory=list)
     next_search_results: list[SearchResult] = field(default_factory=list)
 
-    def insert_vectors(
+    def insert_records(
         self, collection_id: str, records=None, **kwargs: Any
     ) -> dict[str, Any]:
         records = records or kwargs.get("records") or []
@@ -159,12 +159,12 @@ def test_add_stores_only_embedding_no_raw_text() -> None:
 
     assert len(client.inserts) == 1
     inserted = client.inserts[0].records[0]
-    assert inserted.id == "d1"
-    assert inserted.vector == [11.0, float(sum(ord(c) for c in "hello world") % 100), 1.0]
+    assert inserted["id"] == "d1"
+    assert inserted["vector"] == [11.0, float(sum(ord(c) for c in "hello world") % 100), 1.0]
 
     # The metadata MUST NOT carry the original text -- if a future
     # change accidentally stuffs it back in, this assertion catches it.
-    md = inserted.metadata or {}
+    md = inserted.get("props") or {}
     assert "text" not in md
     assert "source" not in md
     assert "raw" not in md
@@ -181,7 +181,7 @@ def test_add_generates_doc_id_when_not_supplied() -> None:
     returned_id = store.add("alpha")
     assert returned_id, "must return a non-empty id"
     inserted = client.inserts[0].records[0]
-    assert inserted.id == returned_id
+    assert inserted["id"] == returned_id
 
 
 def test_add_calls_embed_exactly_once() -> None:
@@ -208,7 +208,7 @@ def test_add_many_stores_each_text_with_no_raw_text() -> None:
     records = client.inserts[0].records
     assert len(records) == 3
     for rec in records:
-        md = rec.metadata or {}
+        md = rec.get("props") or {}
         assert "text" not in md and "source" not in md
 
 
@@ -216,7 +216,7 @@ def test_add_many_uses_supplied_ids_when_provided() -> None:
     store, client, _ = make_store()
     ids = store.add_many(["x", "y"], ids=["i1", "i2"])
     assert ids == ["i1", "i2"]
-    inserted_ids = [r.id for r in client.inserts[0].records]
+    inserted_ids = [r["id"] for r in client.inserts[0].records]
     assert inserted_ids == ["i1", "i2"]
 
 

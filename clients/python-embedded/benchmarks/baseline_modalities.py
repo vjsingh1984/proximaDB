@@ -20,8 +20,14 @@ from typing import Any, Callable
 
 import numpy as np
 
-from proximadb_embedded import GraphEdge, GraphNode, ProximaDB
+from proximadb_embedded import GraphEdge, GraphNode, ProximaDB, ProximaRecord
 from proximadb_embedded import insert_arrow as embedded_insert_arrow
+from proximadb_embedded import insert_proxima_records, insert_records_profiled
+from proximadb_embedded import (
+    normalize_document,
+    normalize_graph_node,
+    normalize_observability_event,
+)
 
 
 def timed(name: str, op_count: int, func: Callable[[], Any]) -> dict[str, Any]:
@@ -63,6 +69,41 @@ def latency_sample(
         "p99_ms": samples_sorted[p99_idx],
         "result": last_result,
     }
+
+
+def profiled_insert_metric(
+    name: str,
+    op_count: int,
+    func: Callable[[], tuple[int, dict[str, Any]]],
+) -> dict[str, Any]:
+    started = time.perf_counter()
+    result, profile = func()
+    elapsed = time.perf_counter() - started
+    return {
+        "name": name,
+        "operations": op_count,
+        "seconds": elapsed,
+        "ops_per_second": op_count / elapsed if elapsed > 0 else None,
+        "result": result,
+        "profile": profile,
+    }
+
+
+def failed_metric(name: str, exc: Exception) -> dict[str, Any]:
+    return {
+        "name": f"{name}.error",
+        "operations": 0,
+        "seconds": 0.0,
+        "ops_per_second": None,
+        "result": f"{type(exc).__name__}: {exc}",
+    }
+
+
+def run_suite(name: str, func: Callable[[], list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    try:
+        return func()
+    except Exception as exc:
+        return [failed_metric(name, exc)]
 
 
 def run_vector(db: ProximaDB, scale: int, dimension: int) -> list[dict[str, Any]]:
@@ -376,25 +417,258 @@ def run_observability(db: ProximaDB, scale: int) -> list[dict[str, Any]]:
     ]
 
 
+def _comparison(
+    baseline: dict[str, Any] | None,
+    candidate: dict[str, Any] | None,
+    *,
+    name: str,
+) -> dict[str, Any]:
+    baseline_ops = baseline.get("ops_per_second") if baseline else None
+    candidate_ops = candidate.get("ops_per_second") if candidate else None
+    ratio = None
+    delta_percent = None
+    if baseline_ops and candidate_ops is not None:
+        ratio = candidate_ops / baseline_ops
+        delta_percent = (ratio - 1.0) * 100.0
+    return {
+        "name": name,
+        "baseline": baseline["name"] if baseline else None,
+        "candidate": candidate["name"] if candidate else None,
+        "baseline_ops_per_second": baseline_ops,
+        "candidate_ops_per_second": candidate_ops,
+        "candidate_to_baseline_ratio": ratio,
+        "delta_percent": delta_percent,
+    }
+
+
+def compare_wire_format(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_name = {result["name"]: result for result in results}
+    return [
+        _comparison(
+            by_name.get("vector.insert_numpy"),
+            by_name.get("record_wire.vector_insert"),
+            name="vector_legacy_vs_proximarecord_wire",
+        ),
+        _comparison(
+            by_name.get("document.insert"),
+            by_name.get("record_wire.document_insert"),
+            name="document_facade_vs_proximarecord_wire",
+        ),
+        _comparison(
+            by_name.get("graph_entity.create_nodes"),
+            by_name.get("record_wire.graph_node_insert"),
+            name="graph_node_facade_vs_proximarecord_wire",
+        ),
+        _comparison(
+            by_name.get("observability.ingest_logs"),
+            by_name.get("record_wire.observability_event_insert"),
+            name="observability_log_facade_vs_proximarecord_wire",
+        ),
+    ]
+
+
+def run_record_wire(db: ProximaDB, scale: int, dimension: int) -> list[dict[str, Any]]:
+    rng = np.random.default_rng(84)
+    vector_count = scale * 5
+    vectors = rng.random((vector_count, dimension), dtype=np.float32)
+
+    db.create_collection("bench_record_wire_vectors", dimension=dimension, engine="sst")
+    vector_records = [
+        ProximaRecord(
+            id=f"wire-vec-{i}",
+            vector=vectors[i],
+            props={"tenant": "embedded", "kind": "vector", "seq": i},
+            source="python-embedded-benchmark",
+            schema_id="benchmark.vector.v1",
+        )
+        for i in range(vector_count)
+    ]
+    vector_insert = timed(
+        "record_wire.vector_insert",
+        vector_count,
+        lambda: insert_proxima_records(
+            db,
+            "bench_record_wire_vectors",
+            vector_records,
+        ),
+    )
+    db.create_collection("bench_record_wire_vectors_profiled", dimension=dimension, engine="sst")
+    vector_insert_profiled = profiled_insert_metric(
+        "record_wire.vector_insert_profiled",
+        vector_count,
+        lambda: insert_records_profiled(
+            db,
+            "bench_record_wire_vectors_profiled",
+            vector_records,
+        ),
+    )
+    dict_records = [
+        {
+            "id": f"wire-dict-vec-{i}",
+            "vector": vectors[i],
+            "props": {"tenant": "embedded", "kind": "vector", "seq": i},
+            "source": "python-embedded-benchmark",
+            "schema_id": "benchmark.vector.v1",
+        }
+        for i in range(vector_count)
+    ]
+    db.create_collection("bench_record_wire_vectors_dict_profiled", dimension=dimension, engine="sst")
+    vector_dict_insert_profiled = profiled_insert_metric(
+        "record_wire.vector_dict_insert_profiled",
+        vector_count,
+        lambda: insert_records_profiled(
+            db,
+            "bench_record_wire_vectors_dict_profiled",
+            dict_records,
+        ),
+    )
+    vector_search = latency_sample(
+        "record_wire.vector_search_top10",
+        min(50, scale),
+        lambda i: len(
+            db.search("bench_record_wire_vectors", query=vectors[i], top_k=10)
+        ),
+    )
+
+    zero_vector = [0.0] * dimension
+    db.create_collection("bench_record_wire_docs", dimension=dimension, engine="sst")
+    document_records = [
+        normalize_document(
+            f"wire-doc-{i}",
+            {
+                "kind": "note" if i % 2 == 0 else "event",
+                "tenant": "embedded",
+                "score": i,
+                "payload": {"title": f"doc-{i}"},
+            },
+            zero_vector,
+            text_columns=["kind"],
+        )
+        for i in range(scale)
+    ]
+    document_insert = timed(
+        "record_wire.document_insert",
+        scale,
+        lambda: insert_proxima_records(
+            db,
+            "bench_record_wire_docs",
+            document_records,
+        ),
+    )
+    db.create_collection("bench_record_wire_docs_profiled", dimension=dimension, engine="sst")
+    document_insert_profiled = profiled_insert_metric(
+        "record_wire.document_insert_profiled",
+        scale,
+        lambda: insert_records_profiled(
+            db,
+            "bench_record_wire_docs_profiled",
+            document_records,
+        ),
+    )
+
+    db.create_collection("bench_record_wire_graph_nodes", dimension=dimension, engine="sst")
+    graph_records = [
+        normalize_graph_node(
+            f"wire-entity-{i}",
+            ["Entity", "Account" if i % 2 == 0 else "Person"],
+            {"tenant": "embedded", "seq": i},
+            zero_vector,
+        )
+        for i in range(scale)
+    ]
+    graph_insert = timed(
+        "record_wire.graph_node_insert",
+        scale,
+        lambda: insert_proxima_records(
+            db,
+            "bench_record_wire_graph_nodes",
+            graph_records,
+        ),
+    )
+    db.create_collection("bench_record_wire_graph_nodes_profiled", dimension=dimension, engine="sst")
+    graph_insert_profiled = profiled_insert_metric(
+        "record_wire.graph_node_insert_profiled",
+        scale,
+        lambda: insert_records_profiled(
+            db,
+            "bench_record_wire_graph_nodes_profiled",
+            graph_records,
+        ),
+    )
+
+    db.create_collection("bench_record_wire_observability", dimension=dimension, engine="sst")
+    base_ns = 1_700_000_000_000_000_000
+    observability_records = [
+        normalize_observability_event(
+            f"wire-log-{i}",
+            {
+                "timestamp_ns": base_ns + i,
+                "severity": "INFO",
+                "message": f"embedded benchmark log {i}",
+                "source": "benchmark",
+                "service": "embedded",
+                "fields": {"tenant": "embedded", "seq": i},
+            },
+            zero_vector,
+            event_type="log",
+        )
+        for i in range(scale)
+    ]
+    observability_insert = timed(
+        "record_wire.observability_event_insert",
+        scale,
+        lambda: insert_proxima_records(
+            db,
+            "bench_record_wire_observability",
+            observability_records,
+        ),
+    )
+    db.create_collection("bench_record_wire_observability_profiled", dimension=dimension, engine="sst")
+    observability_insert_profiled = profiled_insert_metric(
+        "record_wire.observability_event_insert_profiled",
+        scale,
+        lambda: insert_records_profiled(
+            db,
+            "bench_record_wire_observability_profiled",
+            observability_records,
+        ),
+    )
+
+    return [
+        vector_insert,
+        vector_insert_profiled,
+        vector_dict_insert_profiled,
+        vector_search,
+        document_insert,
+        document_insert_profiled,
+        graph_insert,
+        graph_insert_profiled,
+        observability_insert,
+        observability_insert_profiled,
+    ]
+
+
 def run(data_dir: Path, scale: int, dimension: int) -> dict[str, Any]:
     db = ProximaDB(data_dirs=str(data_dir), cache_size_mb=512, default_engine="sst")
     results = []
-    results.extend(run_vector(db, scale, dimension))
-    results.extend(run_arrow_batch(db, scale, dimension))
-    results.extend(run_relational(db, scale, dimension))
-    results.extend(run_documents(db, scale))
-    results.extend(run_graph_entity(db, scale))
-    results.extend(run_observability(db, scale))
+    results.extend(run_suite("vector", lambda: run_vector(db, scale, dimension)))
+    results.extend(run_suite("arrow_embedded", lambda: run_arrow_batch(db, scale, dimension)))
+    results.extend(run_suite("relational", lambda: run_relational(db, scale, dimension)))
+    results.extend(run_suite("document", lambda: run_documents(db, scale)))
+    results.extend(run_suite("graph_entity", lambda: run_graph_entity(db, scale)))
+    results.extend(run_suite("observability", lambda: run_observability(db, scale)))
+    results.extend(run_suite("record_wire", lambda: run_record_wire(db, scale, dimension)))
     db.flush()
 
     return {
-        "benchmark": "embedded_python_modalities_baseline",
+        "benchmark": "embedded_python_modalities_record_wire_comparison",
         "scale": scale,
         "dimension": dimension,
         "python": platform.python_version(),
         "platform": platform.platform(),
         "data_dir": str(data_dir),
         "results": results,
+        "wire_format_comparison": compare_wire_format(results),
     }
 
 

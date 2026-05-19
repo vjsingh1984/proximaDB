@@ -9,11 +9,13 @@ Features:
 """
 
 import logging
+import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from ..exceptions import ProximaDBError
-from ..models import SearchResult, VectorOperationResponse
+from ..models import BatchResult, OperationMetrics, SearchResult, VectorOperationResponse
+from ..models_v2 import ProximaRecord
 from .connection_pools import GrpcChannelContext, GrpcConnectionPool
 
 
@@ -198,9 +200,17 @@ try:
     except Exception:  # pragma: no cover - optional
         v1_graph_pb2_grpc = None
         v1_graph_pb2 = None
+    try:
+        from proximadb.v2 import record_pb2 as v2_record_pb2  # type: ignore
+        from proximadb.v2 import record_pb2_grpc as v2_record_pb2_grpc  # type: ignore
+    except Exception:  # pragma: no cover - broken generated-stub install
+        v2_record_pb2 = None
+        v2_record_pb2_grpc = None
     GRPC_AVAILABLE = True
 except ImportError:
     GRPC_AVAILABLE = False
+    v2_record_pb2 = None
+    v2_record_pb2_grpc = None
 
 logger = logging.getLogger(__name__)
 
@@ -375,6 +385,28 @@ class ProximaDBSyncGrpcClient:
                 stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
 
                 # Execute the operation with timeout
+                return operation_func(stub)
+
+        except grpc.RpcError as e:
+            logger.error(f"gRPC {operation_name} RPC error: {e.code()} - {e.details()}")
+            details = e.details() or str(e)
+            if e.code() == grpc.StatusCode.UNAVAILABLE or "connect" in details.lower():
+                raise ProximaDBError(f"{operation_name} connection failed: {details}")
+            raise ProximaDBError(f"{operation_name} RPC failed: {details}")
+        except Exception as e:
+            logger.error(f"gRPC {operation_name} failed: {e}")
+            raise ProximaDBError(f"{operation_name} failed: {e}")
+
+    def _execute_record_with_pool(self, operation_name: str, operation_func):
+        """Execute record operation using the v2 ProximaRecordService."""
+        if not GRPC_AVAILABLE or v2_record_pb2_grpc is None:
+            raise ProximaDBError(
+                "v2 record gRPC stubs not available. Regenerate Python protobuf stubs."
+            )
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                stub = v2_record_pb2_grpc.ProximaRecordServiceStub(channel)
                 return operation_func(stub)
 
         except grpc.RpcError as e:
@@ -783,7 +815,225 @@ class ProximaDBSyncGrpcClient:
             "delete_collection", _delete_collection_operation
         )
 
-    # Vector Operations - Unified Interface
+    # Record Operations - Unified Interface
+    def _python_to_v2_typed_value(self, value: Any):
+        """Encode Python values into v2 ProximaValue/TypedValue protobufs."""
+        if v2_record_pb2 is None:
+            raise ProximaDBError("v2 record protobuf stubs not available")
+
+        type_hint = None
+        if isinstance(value, dict) and set(value.keys()) == {"type", "value"}:
+            type_hint = str(value["type"]).lower()
+            value = value["value"]
+
+        tv = v2_record_pb2.TypedValue()
+        if value is None:
+            tv.declared_type = v2_record_pb2.COLUMN_TYPE_UNSPECIFIED
+            tv.is_null = True
+        elif isinstance(value, bool):
+            tv.declared_type = v2_record_pb2.BOOLEAN
+            tv.boolean_value = value
+        elif isinstance(value, int) and not isinstance(value, bool):
+            tv.declared_type = v2_record_pb2.INTEGER
+            tv.integer_value = value
+        elif isinstance(value, float):
+            tv.declared_type = v2_record_pb2.FLOAT32 if type_hint == "float32" else v2_record_pb2.FLOAT
+            if type_hint == "float32":
+                tv.float32_value = value
+            else:
+                tv.float_value = value
+        elif isinstance(value, (bytes, bytearray, memoryview)):
+            tv.declared_type = v2_record_pb2.BINARY
+            tv.binary_value = bytes(value)
+        elif isinstance(value, str):
+            tv.declared_type = v2_record_pb2.SYMBOL if type_hint == "symbol" else v2_record_pb2.TEXT
+            if type_hint == "symbol":
+                tv.symbol_value = value
+            else:
+                tv.text_value = value
+        elif isinstance(value, (list, tuple)):
+            tv.declared_type = v2_record_pb2.ARRAY_ANY
+            tv.array_value.values.extend(
+                self._python_to_v2_typed_value(item) for item in value
+            )
+        elif isinstance(value, dict):
+            tv.declared_type = v2_record_pb2.JSONB
+            tv.jsonb_value = json.dumps(value, separators=(",", ":")).encode("utf-8")
+        else:
+            tv.declared_type = v2_record_pb2.TEXT
+            tv.text_value = str(value)
+        return tv
+
+    def _record_proto_for_grpc(
+        self, record: Union[ProximaRecord, Dict[str, Any]], index: int = 0
+    ):
+        if v2_record_pb2 is None:
+            raise ProximaDBError("v2 record protobuf stubs not available")
+
+        if hasattr(record, "model_dump"):
+            record = record.model_dump(exclude_none=True)
+        elif hasattr(record, "dict"):
+            record = record.dict(exclude_none=True)
+        if not isinstance(record, dict):
+            raise TypeError(f"Unsupported record input: {type(record)!r}")
+
+        vector = record.get("vector")
+        if vector is None and record.get("embeddings"):
+            first_embedding = record["embeddings"][0]
+            vector = (
+                first_embedding.get("values")
+                if isinstance(first_embedding, dict)
+                else first_embedding
+            )
+        if vector is None:
+            raise ValueError("record is missing vector")
+
+        proto = v2_record_pb2.ProximaRecord()
+        proto.id = str(record.get("id") or record.get("oid") or f"record_{index}")
+        proto.vector.extend(float(v) for v in vector)
+        if record.get("vector_dimension") is not None:
+            proto.vector_dimension = int(record["vector_dimension"])
+
+        for source in ("props", "metadata", "flexible_fields"):
+            values = record.get(source)
+            if isinstance(values, dict):
+                for key, value in values.items():
+                    proto.props[str(key)].CopyFrom(self._python_to_v2_typed_value(value))
+
+        typed_fields = record.get("typed_fields")
+        if isinstance(typed_fields, dict):
+            for key, value in typed_fields.items():
+                if hasattr(value, "model_dump"):
+                    value = value.model_dump(exclude_none=True)
+                if isinstance(value, dict) and "value" in value:
+                    value = {
+                        "type": value.get("value_type") or value.get("type"),
+                        "value": value["value"],
+                    }
+                proto.props[str(key)].CopyFrom(self._python_to_v2_typed_value(value))
+
+        for text_field in record.get("text_fields") or []:
+            if hasattr(text_field, "model_dump"):
+                text_field = text_field.model_dump(exclude_none=True)
+            if isinstance(text_field, dict):
+                proto.text_fields.add(
+                    name=str(text_field.get("name") or ""),
+                    content=str(text_field.get("content") or ""),
+                    storage_hint=str(text_field.get("storage_hint") or ""),
+                    chunk_count=int(text_field.get("chunk_count") or 0),
+                    chunk_reference=str(text_field.get("chunk_reference") or ""),
+                )
+
+        if record.get("timestamp_ms") is not None:
+            proto.timestamp_ms = int(record["timestamp_ms"])
+        for field in (
+            "updated_at_ms",
+            "expires_at_ms",
+            "version",
+            "source",
+            "source_type",
+            "schema_id",
+            "partition_key",
+            "created_by",
+            "updated_by",
+        ):
+            if record.get(field) is not None:
+                setattr(proto, field, record[field])
+        if isinstance(record.get("partition_values"), dict):
+            proto.partition_values.update(
+                {str(k): str(v) for k, v in record["partition_values"].items()}
+            )
+        if isinstance(record.get("custom_metadata"), dict):
+            proto.custom_metadata.update(
+                {str(k): str(v) for k, v in record["custom_metadata"].items()}
+            )
+        return proto
+
+    def _v2_record_batch_result(self, response) -> BatchResult:
+        errors = [
+            f"{error.record_id or error.record_index}: {error.error_message}"
+            for error in response.errors
+        ]
+        return BatchResult(
+            total=int(response.total_processed),
+            success=int(response.success_count),
+            failed=int(response.failed_count),
+            errors=errors,
+            metrics=OperationMetrics(
+                total_processed=int(response.total_processed),
+                successful_count=int(response.success_count),
+                failed_count=int(response.failed_count),
+                processing_time_us=int(response.processing_time_us),
+            ),
+        )
+
+    def insert_records(
+        self,
+        collection_id: str,
+        records: List[Union[ProximaRecord, Dict[str, Any]]],
+        **kwargs,
+    ) -> BatchResult:
+        upsert = bool(kwargs.pop("upsert", False))
+        if upsert:
+            return self.upsert_records(collection_id, records, **kwargs)
+
+        if v2_record_pb2 is None or v2_record_pb2_grpc is None:
+            raise ProximaDBError("v2 ProximaRecord gRPC stubs are required")
+
+        request = v2_record_pb2.ProximaRecordBatch(
+            collection_id=collection_id,
+            write_mode=v2_record_pb2.INSERT,
+            validate_schema=bool(kwargs.get("validate_schema", True)),
+            return_ids=bool(kwargs.get("return_ids", True)),
+            return_errors=bool(kwargs.get("return_errors", True)),
+        )
+        request.records.extend(
+            self._record_proto_for_grpc(record, index)
+            for index, record in enumerate(records)
+        )
+        if kwargs.get("schema_id"):
+            request.schema_id = str(kwargs["schema_id"])
+
+        def _insert_records_operation(stub):
+            return stub.InsertRecords(request, timeout=self.timeout)
+
+        return self._v2_record_batch_result(
+            self._execute_record_with_pool("insert_records", _insert_records_operation)
+        )
+
+    def upsert_records(
+        self,
+        collection_id: str,
+        records: List[Union[ProximaRecord, Dict[str, Any]]],
+        **kwargs,
+    ) -> BatchResult:
+        """Upsert ProximaRecord-shaped payloads."""
+        kwargs.pop("upsert", None)
+        if v2_record_pb2 is None or v2_record_pb2_grpc is None:
+            raise ProximaDBError("v2 ProximaRecord gRPC stubs are required")
+
+        request = v2_record_pb2.ProximaRecordBatch(
+            collection_id=collection_id,
+            write_mode=v2_record_pb2.UPSERT,
+            validate_schema=bool(kwargs.get("validate_schema", True)),
+            return_ids=bool(kwargs.get("return_ids", True)),
+            return_errors=bool(kwargs.get("return_errors", True)),
+        )
+        request.records.extend(
+            self._record_proto_for_grpc(record, index)
+            for index, record in enumerate(records)
+        )
+        if kwargs.get("schema_id"):
+            request.schema_id = str(kwargs["schema_id"])
+
+        def _upsert_records_operation(stub):
+            return stub.UpsertRecords(request, timeout=self.timeout)
+
+        return self._v2_record_batch_result(
+            self._execute_record_with_pool("upsert_records", _upsert_records_operation)
+        )
+
+    # Vector Compatibility Aliases
     def insert_vectors(
         self, collection_id: str, vectors: List[Dict[str, Any]], upsert: bool = False
     ) -> VectorOperationResponse:

@@ -234,9 +234,11 @@ pub use client::{
     ClientBuilder, ClientConfig, CollectionInfo, GraphInfo, HealthStatus, ProximaClient,
 };
 
+#[allow(deprecated)]
 pub use collection::{
     CollectionBuilder, CollectionHandle, DistanceMetric, IndexType, InsertBuilder,
-    InsertBuilderBatch, InsertBuilderWithId, StorageEngine, UpdateBuilder, VectorRecord,
+    InsertBuilderBatch, InsertBuilderWithId, ProximaRecord, StorageEngine, UpdateBuilder,
+    VectorRecord,
 };
 
 pub use search::{SearchBuilder, SearchMode, SearchResult};

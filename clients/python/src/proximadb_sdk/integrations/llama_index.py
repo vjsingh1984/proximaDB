@@ -47,7 +47,7 @@ from llama_index.core.vector_stores.types import (
     VectorStoreQueryMode,
 )
 
-from proximadb_sdk.models import VectorRecord
+from proximadb_sdk.integrations._records import insert_records, record_payload
 
 
 class ProximaDBVectorStore(BasePydanticVectorStore):
@@ -92,7 +92,7 @@ class ProximaDBVectorStore(BasePydanticVectorStore):
             List of node IDs that were added.
         """
         ids: List[str] = []
-        records: List[VectorRecord] = []
+        records: List[dict[str, Any]] = []
 
         for node in nodes:
             doc_id = node.node_id or str(uuid.uuid4())
@@ -109,19 +109,15 @@ class ProximaDBVectorStore(BasePydanticVectorStore):
                 )
 
             records.append(
-                VectorRecord(
-                    id=doc_id,
-                    vector=(
-                        node.embedding.tolist()
-                        if hasattr(node.embedding, "tolist")
-                        else list(node.embedding)
-                    ),
-                    source=node.content,
+                record_payload(
+                    record_id=doc_id,
+                    vector=node.embedding,
+                    text=node.content,
                     metadata=metadata,
                 )
             )
 
-        self._client.insert_vectors(self._collection_name, records=records)
+        insert_records(self._client, self._collection_name, records)
         return ids
 
     def delete(self, ref_doc_id: str, **delete_kwargs: Any) -> None:

@@ -60,7 +60,19 @@ const (
 	EngineRaptor StorageEngine = "raptor"
 )
 
-// VectorRecord represents a vector with its ID and metadata.
+// ProximaRecord represents the canonical record payload with optional vector data.
+type ProximaRecord struct {
+	// ID is the unique identifier for the record.
+	ID string `json:"id"`
+	// Vector is the embedding data.
+	Vector []float32 `json:"vector,omitempty"`
+	// Props contains rich record properties.
+	Props map[string]interface{} `json:"props,omitempty"`
+	// Source is the original content reference.
+	Source string `json:"source,omitempty"`
+}
+
+// VectorRecord represents a legacy vector-shaped compatibility payload.
 type VectorRecord struct {
 	// ID is the unique identifier for the vector.
 	ID string `json:"id"`

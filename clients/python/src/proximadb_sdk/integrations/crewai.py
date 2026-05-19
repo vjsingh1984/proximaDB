@@ -28,7 +28,7 @@ from typing import Any, Callable, Optional, Type
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from proximadb_sdk.models import VectorRecord
+from proximadb_sdk.integrations._records import insert_records, record_payload
 
 
 class _SearchInput(BaseModel):
@@ -112,7 +112,7 @@ class ProximaDBKnowledgeSource:
 
         Returns the list of IDs for the inserted records.
         """
-        records: list[VectorRecord] = []
+        records: list[dict[str, Any]] = []
         generated_ids: list[str] = []
 
         for i, text in enumerate(texts):
@@ -123,10 +123,15 @@ class ProximaDBKnowledgeSource:
             if metadatas and i < len(metadatas):
                 meta.update(metadatas[i])
             records.append(
-                VectorRecord(id=doc_id, vector=vector, source=text, metadata=meta)
+                record_payload(
+                    record_id=doc_id,
+                    vector=vector,
+                    text=text,
+                    metadata=meta,
+                )
             )
 
-        self._client.insert_vectors(self._collection_name, records=records)
+        insert_records(self._client, self._collection_name, records)
         return generated_ids
 
     def query(self, query: str, limit: int = 5) -> list[dict[str, Any]]:

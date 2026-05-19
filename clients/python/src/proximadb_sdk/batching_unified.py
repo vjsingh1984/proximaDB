@@ -30,6 +30,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from .exceptions import BatchError, ProximaDBError
 from .models import VectorOperationResponse, VectorRecord
+from .models_v2 import ProximaRecord
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +48,10 @@ class BatchStrategy(str, Enum):
 class BatchOperationType(str, Enum):
     """Types of operations that can be batched"""
 
-    INSERT_VECTORS = "insert_vectors"
-    UPSERT_VECTORS = "upsert_vectors"
+    INSERT_RECORDS = "insert_records"
+    UPSERT_RECORDS = "upsert_records"
+    INSERT_VECTORS = "insert_vectors"  # compatibility alias
+    UPSERT_VECTORS = "upsert_vectors"  # compatibility alias
     DELETE_VECTORS = "delete_vectors"
     SEARCH_VECTORS = "search_vectors"
     GET_VECTORS = "get_vectors"
@@ -509,11 +512,24 @@ def create_vector_batcher(
 def batch_insert_vectors(
     client, collection_id: str, vectors: List["VectorRecord"], batch_size: int = 100
 ) -> List[Dict]:
-    """Helper function to batch insert vectors"""
+    """Compatibility alias for batch_insert_records."""
+    return batch_insert_records(client, collection_id, vectors, batch_size)
+
+
+def batch_insert_records(
+    client,
+    collection_id: str,
+    records: List[Union[ProximaRecord, Dict[str, Any]]],
+    batch_size: int = 100,
+) -> List[Dict]:
+    """Helper function to batch insert ProximaRecord-shaped records."""
     results = []
-    for i in range(0, len(vectors), batch_size):
-        batch = vectors[i : i + batch_size]
-        response = client.insert_vectors(collection_id, records=batch)
+    for i in range(0, len(records), batch_size):
+        batch = records[i : i + batch_size]
+        if hasattr(client, "insert_records"):
+            response = client.insert_records(collection_id, batch)
+        else:
+            response = client.insert_vectors(collection_id, records=batch)
         results.append(response)
     return results
 

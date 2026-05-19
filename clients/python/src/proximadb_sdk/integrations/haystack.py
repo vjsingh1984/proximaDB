@@ -43,6 +43,7 @@ from typing import Any, List, Optional, Union, cast
 from haystack.dataclasses import Document
 from haystack.document_stores import DuplicatePolicy
 
+from proximadb_sdk.integrations._records import insert_records, record_payload
 from proximadb_sdk.models import VectorRecord
 
 
@@ -132,7 +133,7 @@ class ProximaDBDocumentStore:
             ValueError: If a document without embedding is provided and
                 policy is DUPLICATE_POLICY.FAIL.
         """
-        records: List[VectorRecord] = []
+        records: List[dict[str, Any]] = []
         indexed_docs: List[Document] = []
 
         for doc in documents:
@@ -159,15 +160,15 @@ class ProximaDBDocumentStore:
                     )
 
             records.append(
-                VectorRecord(
-                    id=doc_id,
+                record_payload(
+                    record_id=doc_id,
                     vector=doc.embedding,
-                    source=doc.content,
+                    text=doc.content,
                     metadata=metadata,
                 )
             )
 
-        self._client.insert_vectors(self._collection_name, records=records)
+        insert_records(self._client, self._collection_name, records)
         return indexed_docs
 
     def delete_documents(self, document_ids: List[str]) -> None:

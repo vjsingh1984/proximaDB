@@ -33,7 +33,7 @@
 
 use pyo3::exceptions::{PyRuntimeError, PyUserWarning, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyList, PyModule};
+use pyo3::types::{PyAny, PyDict, PyList, PyModule, PyTuple};
 use pyo3::{Bound, IntoPyObject, PyErr};
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -42,9 +42,11 @@ use std::sync::{Arc, Mutex};
 // Zero-copy numpy support
 use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 
-use super::{AccessMode, EmbeddedConfig, EmbeddedProximaDB, StorageLocationConfig};
+use super::{
+    AccessMode, EmbeddedConfig, EmbeddedProximaDB, StorageLocationConfig, json_to_proxima_value,
+    proxima_value_to_json,
+};
 use crate::core::config::{AdvancedPruneConfig, PruneModeConfig};
-use crate::core::proto_metadata_helper::sqlvalue_metadata_to_json;
 
 /// Python wrapper for disk configuration
 #[pyclass(name = "DiskConfig")]
@@ -1467,6 +1469,90 @@ impl PyProximaDB {
             .map_err(|e| PyRuntimeError::new_err(format!("Insert failed: {}", e)))
     }
 
+    /// Insert canonical ProximaRecord payloads without lowering through the
+    /// legacy ids/vectors/metadata Python transport.
+    #[pyo3(signature = (collection, records))]
+    fn _insert_proxima_records_native(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        records: &Bound<'_, PyAny>,
+    ) -> PyResult<usize> {
+        let record_list = records.downcast::<PyList>()?;
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let rust_records = record_list
+            .iter()
+            .map(|record| python_to_proxima_record(&record, now_ns))
+            .collect::<PyResult<Vec<_>>>()?;
+
+        let inner = self.db()?;
+        py.allow_threads(move || inner.insert_proxima_records(collection, rust_records))
+            .map_err(|e| PyRuntimeError::new_err(format!("Record insert failed: {}", e)))
+    }
+
+    /// Insert canonical ProximaRecord payloads from a columnar Python batch:
+    /// ids + dense embedding matrix + props. This preserves the canonical
+    /// record/storage boundary while avoiding per-record vector extraction.
+    #[pyo3(signature = (collection, ids, vectors, props=None))]
+    fn _insert_proxima_record_batch_native(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        ids: Vec<String>,
+        vectors: PyReadonlyArray2<f32>,
+        props: Option<&Bound<'_, PyList>>,
+    ) -> PyResult<usize> {
+        let array = vectors.as_array();
+        let shape = array.shape();
+        let n_records = shape[0];
+        if ids.len() != n_records {
+            return Err(PyValueError::new_err(format!(
+                "Number of IDs ({}) doesn't match number of records ({})",
+                ids.len(),
+                n_records
+            )));
+        }
+        if let Some(prop_list) = props
+            && prop_list.len() != n_records
+        {
+            return Err(PyValueError::new_err(format!(
+                "Number of props ({}) doesn't match number of records ({})",
+                prop_list.len(),
+                n_records
+            )));
+        }
+
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let dimension = shape[1];
+        let mut records = Vec::with_capacity(n_records);
+
+        if let Some(slice) = array.as_slice() {
+            for (index, values) in slice.chunks(dimension).enumerate() {
+                let props = python_props_list_item(props, index)?;
+                records.push(proxima_record_from_batch_parts(
+                    ids[index].clone(),
+                    values.to_vec(),
+                    props,
+                    now_ns,
+                ));
+            }
+        } else {
+            for (index, row) in array.rows().into_iter().enumerate() {
+                let props = python_props_list_item(props, index)?;
+                records.push(proxima_record_from_batch_parts(
+                    ids[index].clone(),
+                    row.to_vec(),
+                    props,
+                    now_ns,
+                ));
+            }
+        }
+
+        let inner = self.db()?;
+        py.allow_threads(move || inner.insert_proxima_records(collection, records))
+            .map_err(|e| PyRuntimeError::new_err(format!("Record insert failed: {}", e)))
+    }
+
     /// Search with a NumPy query vector (zero-copy)
     ///
     /// Args:
@@ -1712,23 +1798,25 @@ impl PyProximaDB {
         match self.db()?.get_vector(collection, vector_id) {
             Ok(Some(record)) => {
                 let dict = PyDict::new(py);
-                dict.set_item("id", &record.id)?;
-                dict.set_item("vector", record.vector.clone())?;
+                dict.set_item("id", &record.oid)?;
+                let vector = record
+                    .embeddings
+                    .first()
+                    .map(|embedding| embedding.values.clone())
+                    .unwrap_or_default();
+                dict.set_item("vector", vector)?;
 
-                // Convert metadata HashMap<String, SqlValue> to Python dict
-                // First convert SqlValue to serde_json::Value, then to Python
-                let metadata_dict = PyDict::new(py);
-                let json_metadata = sqlvalue_metadata_to_json(&record.metadata);
-                for (key, value) in &json_metadata {
-                    let py_value = json_to_python(py, value)?;
-                    metadata_dict.set_item(key, py_value)?;
+                let props_dict = PyDict::new(py);
+                for (key, node) in &record.props {
+                    let value = proxima_tree_node_to_json(node);
+                    let py_value = json_to_python(py, &value)?;
+                    props_dict.set_item(key, py_value)?;
                 }
-                dict.set_item("metadata", metadata_dict)?;
+                dict.set_item("props", &props_dict)?;
+                dict.set_item("metadata", &props_dict)?;
 
-                // Include timestamp if available
-                if let Some(ts) = record.timestamp {
-                    dict.set_item("timestamp", ts)?;
-                }
+                dict.set_item("timestamp", record.created_at_ns / 1_000_000)?;
+                dict.set_item("updated_at", record.updated_at_ns / 1_000_000)?;
 
                 Ok(Some(dict.into()))
             }
@@ -3469,7 +3557,221 @@ fn python_to_json(value: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     }
 }
 
+fn python_to_json_record_value(value: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
+    if value.is_none() {
+        Ok(serde_json::Value::Null)
+    } else if let Ok(b) = value.extract::<bool>() {
+        Ok(serde_json::Value::Bool(b))
+    } else if let Ok(i) = value.extract::<i64>() {
+        Ok(serde_json::Value::Number(i.into()))
+    } else if let Ok(f) = value.extract::<f64>() {
+        Ok(serde_json::json!(f))
+    } else if let Ok(s) = value.extract::<String>() {
+        Ok(serde_json::Value::String(s))
+    } else if let Ok(list) = value.downcast::<PyList>() {
+        let arr: Vec<serde_json::Value> = list
+            .iter()
+            .map(|item| python_to_json_record_value(&item))
+            .collect::<PyResult<_>>()?;
+        Ok(serde_json::Value::Array(arr))
+    } else if let Ok(tuple) = value.downcast::<PyTuple>() {
+        let arr: Vec<serde_json::Value> = tuple
+            .iter()
+            .map(|item| python_to_json_record_value(&item))
+            .collect::<PyResult<_>>()?;
+        Ok(serde_json::Value::Array(arr))
+    } else if let Ok(dict) = value.downcast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (k, v) in dict.iter() {
+            let key: String = k.extract()?;
+            map.insert(key, python_to_json_record_value(&v)?);
+        }
+        Ok(serde_json::Value::Object(map))
+    } else if value.hasattr("to_dict")? {
+        let converted = value.call_method0("to_dict")?;
+        python_to_json_record_value(&converted)
+    } else {
+        Ok(serde_json::Value::String(value.str()?.to_string()))
+    }
+}
+
+fn python_record_field<'py>(
+    record: &Bound<'py, PyAny>,
+    name: &str,
+) -> PyResult<Option<Bound<'py, PyAny>>> {
+    if let Ok(dict) = record.downcast::<PyDict>() {
+        dict.get_item(name)
+    } else if record.hasattr(name)? {
+        Ok(Some(record.getattr(name)?))
+    } else {
+        Ok(None)
+    }
+}
+
+fn required_python_record_field<'py>(
+    record: &Bound<'py, PyAny>,
+    name: &str,
+) -> PyResult<Bound<'py, PyAny>> {
+    python_record_field(record, name)?
+        .ok_or_else(|| PyValueError::new_err(format!("ProximaRecord is missing {name:?}")))
+}
+
+fn python_record_vector(value: &Bound<'_, PyAny>) -> PyResult<Vec<f32>> {
+    if value.hasattr("tolist")? {
+        value.call_method0("tolist")?.extract()
+    } else {
+        value.extract()
+    }
+}
+
+fn python_record_props(record: &Bound<'_, PyAny>) -> PyResult<proximadb_records::ProximaTree> {
+    let mut props = proximadb_records::ProximaTree::new();
+    if let Some(props_value) = python_record_field(record, "props")?
+        && !props_value.is_none()
+    {
+        let props_dict = props_value.downcast::<PyDict>()?;
+        for (key, value) in props_dict.iter() {
+            let key: String = key.extract()?;
+            props.insert(
+                key,
+                proximadb_records::ProximaTreeNode::Value(json_to_proxima_value(
+                    python_to_json_record_value(&value)?,
+                )),
+            );
+        }
+    }
+
+    for (field_name, prop_name) in [
+        ("text_fields", "_text_fields"),
+        ("source", "_source"),
+        ("schema_id", "_schema_id"),
+    ] {
+        if let Some(value) = python_record_field(record, field_name)?
+            && !value.is_none()
+        {
+            props.insert(
+                prop_name.to_string(),
+                proximadb_records::ProximaTreeNode::Value(json_to_proxima_value(
+                    python_to_json_record_value(&value)?,
+                )),
+            );
+        }
+    }
+
+    Ok(props)
+}
+
+fn python_dict_to_proxima_tree(dict: &Bound<'_, PyDict>) -> PyResult<proximadb_records::ProximaTree> {
+    let mut props = proximadb_records::ProximaTree::new();
+    for (key, value) in dict.iter() {
+        let key: String = key.extract()?;
+        props.insert(
+            key,
+            proximadb_records::ProximaTreeNode::Value(json_to_proxima_value(
+                python_to_json_record_value(&value)?,
+            )),
+        );
+    }
+    Ok(props)
+}
+
+fn python_props_list_item(
+    props: Option<&Bound<'_, PyList>>,
+    index: usize,
+) -> PyResult<proximadb_records::ProximaTree> {
+    if let Some(prop_list) = props {
+        let item = prop_list.get_item(index)?;
+        let dict = item.downcast::<PyDict>()?;
+        python_dict_to_proxima_tree(dict)
+    } else {
+        Ok(proximadb_records::ProximaTree::new())
+    }
+}
+
+fn proxima_record_modality(props: &proximadb_records::ProximaTree) -> String {
+    props
+        .get("_modality")
+        .and_then(|node| match node {
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                value,
+            )) => Some(value.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| "vector".to_string())
+}
+
+fn proxima_record_from_batch_parts(
+    oid: String,
+    values: Vec<f32>,
+    props: proximadb_records::ProximaTree,
+    now_ns: i64,
+) -> proximadb_records::ProximaRecord {
+    let dim = values.len() as u32;
+    let modality = proxima_record_modality(&props);
+    proximadb_records::ProximaRecord {
+        oid,
+        embeddings: vec![proximadb_records::EmbeddingCell {
+            model_id: "default".to_string(),
+            modality,
+            dim,
+            values,
+        }],
+        props,
+        created_at_ns: now_ns,
+        updated_at_ns: now_ns,
+        record_version: 1,
+        ..Default::default()
+    }
+}
+
+fn python_to_proxima_record(
+    record: &Bound<'_, PyAny>,
+    now_ns: i64,
+) -> PyResult<proximadb_records::ProximaRecord> {
+    let oid_value = python_record_field(record, "id")?
+        .or_else(|| python_record_field(record, "oid").ok().flatten())
+        .ok_or_else(|| PyValueError::new_err("ProximaRecord is missing 'id'"))?;
+    let oid: String = oid_value.extract()?;
+    let vector_value = required_python_record_field(record, "vector")?;
+    let values = python_record_vector(&vector_value)?;
+    if values.is_empty() {
+        return Err(PyValueError::new_err("ProximaRecord vector must not be empty"));
+    }
+
+    let props = python_record_props(record)?;
+    let modality = python_record_field(record, "modality")?
+        .and_then(|value| value.extract::<String>().ok())
+        .unwrap_or_else(|| proxima_record_modality(&props));
+    let dim = values.len() as u32;
+
+    Ok(proximadb_records::ProximaRecord {
+        oid,
+        embeddings: vec![proximadb_records::EmbeddingCell {
+            model_id: "default".to_string(),
+            modality,
+            dim,
+            values,
+        }],
+        props,
+        created_at_ns: now_ns,
+        updated_at_ns: now_ns,
+        record_version: 1,
+        ..Default::default()
+    })
+}
+
 /// Convert serde_json::Value to Python object
+fn proxima_tree_node_to_json(node: &proximadb_records::ProximaTreeNode) -> serde_json::Value {
+    match node {
+        proximadb_records::ProximaTreeNode::Value(value) => proxima_value_to_json(value.clone()),
+        proximadb_records::ProximaTreeNode::Object(tree) => serde_json::Value::Object(
+            tree.iter()
+                .map(|(key, value)| (key.clone(), proxima_tree_node_to_json(value)))
+                .collect(),
+        ),
+    }
+}
+
 fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
     match value {
         serde_json::Value::Null => Ok(py.None()),

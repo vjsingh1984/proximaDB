@@ -22,6 +22,7 @@ from .adapters import BaseProtocolAdapter, create_adapter
 from .config import ClientConfig, Protocol, load_config
 from .exceptions import ProximaDBError
 from .models import (
+    BatchResult,
     Collection,
     CollectionConfig,
     DistanceMetric,
@@ -35,6 +36,7 @@ from .models import (
     VectorOperationResponse,
     VectorRecord,
 )
+from .models_v2 import ProximaRecord
 
 logger = logging.getLogger(__name__)
 
@@ -208,7 +210,44 @@ class ProximaDBClient:
         return self._adapter.delete_collection(collection_id)
 
     # ==========================================================================
-    # Vector Operations
+    # Record Operations
+    # ==========================================================================
+
+    @staticmethod
+    def _batch_to_vector_response(
+        result: BatchResult, operation: str
+    ) -> VectorOperationResponse:
+        return VectorOperationResponse(
+            success=result.success,
+            operation=operation,
+            metrics=result.metrics,
+            error_message="; ".join(result.errors) if result.errors else None,
+        )
+
+    def insert_records(
+        self,
+        collection_id: str,
+        records: List[Union[ProximaRecord, Dict[str, Any]]],
+        **kwargs,
+    ) -> BatchResult:
+        """Insert ProximaRecord-shaped payloads through the active adapter."""
+        if records is None or len(records) == 0:
+            raise ValueError("'records' must be provided")
+        return self._adapter.insert_records(collection_id, records, **kwargs)
+
+    def upsert_records(
+        self,
+        collection_id: str,
+        records: List[Union[ProximaRecord, Dict[str, Any]]],
+        **kwargs,
+    ) -> BatchResult:
+        """Upsert ProximaRecord-shaped payloads through the active adapter."""
+        if records is None or len(records) == 0:
+            raise ValueError("'records' must be provided")
+        return self._adapter.upsert_records(collection_id, records, **kwargs)
+
+    # ==========================================================================
+    # Vector Compatibility Aliases
     # ==========================================================================
 
     def insert_vectors(
@@ -222,9 +261,9 @@ class ProximaDBClient:
         records: Optional[List[VectorRecord]] = None,
         **kwargs,
     ) -> VectorOperationResponse:
-        """Insert vectors into a collection.
+        """Compatibility alias for record-native inserts.
 
-        Supports both new API (VectorRecord objects) and old API (vectors/ids/metadata).
+        Supports record objects plus legacy vectors/ids/metadata inputs.
         """
         # Handle backward compatibility
         if vectors is not None:
@@ -262,13 +301,17 @@ class ProximaDBClient:
         if records is None or len(records) == 0:
             raise ValueError("Either 'records' or 'vectors' must be provided")
 
-        return self._adapter.insert_vectors(collection_id, records, **kwargs)
+        return self._batch_to_vector_response(
+            self.insert_records(collection_id, records, **kwargs), "INSERT"
+        )
 
     def upsert_vectors(
         self, collection_id: str, records: List[VectorRecord]
     ) -> VectorOperationResponse:
-        """Upsert vectors into a collection."""
-        return self._adapter.upsert_vectors(collection_id, records)
+        """Compatibility alias for record-native upserts."""
+        return self._batch_to_vector_response(
+            self.upsert_records(collection_id, records), "UPSERT"
+        )
 
     def get_vectors(
         self,

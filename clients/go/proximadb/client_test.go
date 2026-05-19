@@ -200,10 +200,10 @@ func TestMockServer(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": "collection not found",
 			})
-		case "/api/v1/collections/test_collection/vectors":
+		case "/api/v2/collections/test_collection/records/batch":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"inserted_count": 1,
+				"success_count": 1,
 			})
 		case "/api/v1/collections/test_collection/search":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -630,11 +630,11 @@ func TestBatchInsert(t *testing.T) {
 	// Create mock server that tracks insert counts
 	insertCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/collections/test_collection/vectors" {
+		if r.URL.Path == "/api/v2/collections/test_collection/records/batch" {
 			insertCount++
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"inserted_count": 100,
+				"success_count": 100,
 			})
 		}
 	}))
@@ -734,11 +734,11 @@ func TestBatchSearch(t *testing.T) {
 func TestStreamInsert(t *testing.T) {
 	insertCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/collections/test_collection/vectors" {
+		if r.URL.Path == "/api/v2/collections/test_collection/records/batch" {
 			insertCalls++
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"inserted_count": 1,
+				"success_count": 1,
 			})
 		}
 	}))

@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 
 from ..models import MetadataDict, VectorRecord
+from ..models_v2 import ProximaRecord
 
 
 class InsertBuilder:
@@ -24,9 +25,9 @@ class InsertBuilder:
             .build())
 
         # From existing data
-        vectors = [...]  # List of VectorRecord objects
+        records = [...]  # List of ProximaRecord objects or record-shaped dicts
         insert = (InsertBuilder()
-            .add_vectors(vectors)
+            .add_records(records)
             .overwrite_existing()
             .async_mode()
             .build())
@@ -44,11 +45,63 @@ class InsertBuilder:
 
     def __init__(self):
         """Initialize insert builder"""
-        self.vectors: List[VectorRecord] = []
+        self.records: List[Dict[str, Any]] = []
         self._batch_size = 1000
         self._overwrite = False
         self._validate_vectors = True
         self._async_mode = False
+
+    @staticmethod
+    def _normalize_record(record: Union[ProximaRecord, VectorRecord, Dict[str, Any]]) -> Dict[str, Any]:
+        if hasattr(record, "model_dump"):
+            record = record.model_dump(exclude_none=True)
+        elif hasattr(record, "dict"):
+            record = record.dict(exclude_none=True)
+        if not isinstance(record, dict):
+            raise TypeError(f"Unsupported record type: {type(record)!r}")
+
+        props = {}
+        for source in ("props", "metadata", "flexible_fields"):
+            values = record.get(source)
+            if isinstance(values, dict):
+                props.update(values)
+
+        normalized = {
+            "id": record.get("id"),
+            "vector": list(record.get("vector") or []),
+            "props": props,
+        }
+        for field in (
+            "typed_fields",
+            "text_fields",
+            "timestamp_ms",
+            "updated_at_ms",
+            "expires_at_ms",
+            "version",
+            "source",
+            "source_type",
+            "schema_id",
+        ):
+            if record.get(field) is not None:
+                normalized[field] = record[field]
+        return normalized
+
+    def add_record(
+        self,
+        record: Union[ProximaRecord, Dict[str, Any]],
+    ) -> "InsertBuilder":
+        """Add a single ProximaRecord-shaped record."""
+        self.records.append(self._normalize_record(record))
+        return self
+
+    def add_records(
+        self,
+        records: List[Union[ProximaRecord, Dict[str, Any]]],
+    ) -> "InsertBuilder":
+        """Add ProximaRecord-shaped records."""
+        for record in records:
+            self.add_record(record)
+        return self
 
     def add_vector(
         self,
@@ -56,25 +109,14 @@ class InsertBuilder:
         vector: List[float],
         metadata: Optional[MetadataDict] = None,
     ) -> "InsertBuilder":
-        """Add a single vector"""
-        record = VectorRecord(id=vector_id, vector=vector, metadata=metadata or {})
-        self.vectors.append(record)
+        """Compatibility alias for adding one vector-bearing record."""
+        self.add_record({"id": vector_id, "vector": vector, "props": metadata or {}})
         return self
 
     def add_vectors(self, vectors: List[VectorRecord]) -> "InsertBuilder":
-        """Add multiple VectorRecord objects"""
-        self.vectors.extend(vectors)
-        return self
-
-    def add_records(self, records: List[Dict[str, Any]]) -> "InsertBuilder":
-        """Add vectors from dictionary records"""
-        for record in records:
-            vector_record = VectorRecord(
-                id=record["id"],
-                vector=record["vector"],
-                metadata=record.get("metadata", {}),
-            )
-            self.vectors.append(vector_record)
+        """Compatibility alias for adding multiple vector records."""
+        for vector in vectors:
+            self.add_record(vector)
         return self
 
     def from_arrays(
@@ -94,10 +136,13 @@ class InsertBuilder:
             raise ValueError("Metadata list must have the same length as IDs")
 
         for i, (vector_id, vector) in enumerate(zip(ids, vectors)):
-            record = VectorRecord(
-                id=vector_id, vector=vector, metadata=metadata[i] if metadata else {}
+            self.add_record(
+                {
+                    "id": vector_id,
+                    "vector": vector,
+                    "props": metadata[i] if metadata else {},
+                }
             )
-            self.vectors.append(record)
 
         return self
 
@@ -136,8 +181,7 @@ class InsertBuilder:
                     if col in row:
                         metadata[col] = row[col]
 
-            record = VectorRecord(id=vector_id, vector=vector, metadata=metadata)
-            self.vectors.append(record)
+            self.add_record({"id": vector_id, "vector": vector, "props": metadata})
 
         return self
 
@@ -166,66 +210,79 @@ class InsertBuilder:
         return self
 
     def clear(self) -> "InsertBuilder":
-        """Clear all vectors"""
-        self.vectors.clear()
+        """Clear all records."""
+        self.records.clear()
         return self
 
     def filter_duplicates(self) -> "InsertBuilder":
-        """Remove duplicate vector IDs (keeps first occurrence)"""
+        """Remove duplicate record IDs (keeps first occurrence)"""
         seen_ids = set()
-        filtered_vectors = []
+        filtered_records = []
 
-        for vector in self.vectors:
-            if vector.id not in seen_ids:
-                seen_ids.add(vector.id)
-                filtered_vectors.append(vector)
+        for record in self.records:
+            if record.get("id") not in seen_ids:
+                seen_ids.add(record.get("id"))
+                filtered_records.append(record)
 
-        self.vectors = filtered_vectors
+        self.records = filtered_records
         return self
 
     def validate_dimensions(self, expected_dimension: int) -> "InsertBuilder":
-        """Validate that all vectors have the expected dimension"""
-        for i, vector in enumerate(self.vectors):
-            if len(vector.vector) != expected_dimension:
+        """Validate that all vectors have the expected dimension."""
+        for i, record in enumerate(self.records):
+            vector = record.get("vector") or []
+            if len(vector) != expected_dimension:
                 raise ValueError(
-                    f"Vector {i} (id: {vector.id}) has dimension {len(vector.vector)}, "
+                    f"Record {i} (id: {record.get('id')}) has dimension {len(vector)}, "
                     f"expected {expected_dimension}"
                 )
         return self
 
     def normalize_vectors(self) -> "InsertBuilder":
-        """L2 normalize all vectors"""
-        for vector in self.vectors:
-            norm = sum(x * x for x in vector.vector) ** 0.5
+        """L2 normalize all record vectors."""
+        for record in self.records:
+            vector = record.get("vector") or []
+            norm = sum(x * x for x in vector) ** 0.5
             if norm > 0:
-                vector.vector = [x / norm for x in vector.vector]
+                record["vector"] = [x / norm for x in vector]
         return self
 
     def add_metadata_field(self, key: str, value: Any) -> "InsertBuilder":
-        """Add a metadata field to all vectors"""
-        for vector in self.vectors:
-            vector.metadata[key] = value
+        """Add a property field to all records."""
+        for record in self.records:
+            record.setdefault("props", {})[key] = value
         return self
 
     def transform_metadata(self, transformer) -> "InsertBuilder":
-        """Apply transformation function to all metadata"""
-        for vector in self.vectors:
-            vector.metadata = transformer(vector.metadata)
+        """Apply transformation function to all record properties."""
+        for record in self.records:
+            record["props"] = transformer(record.get("props", {}))
         return self
 
-    def build(self) -> tuple[List[VectorRecord], Dict[str, Any]]:
-        """Build vectors list and insert options"""
+    def build(self) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Build records list and insert options."""
         options = {
             "batch_size": self._batch_size,
             "overwrite": self._overwrite,
             "validate_vectors": self._validate_vectors,
             "async_mode": self._async_mode,
         }
-        return self.vectors.copy(), options
+        return self.build_records(), options
+
+    def build_records(self) -> List[Dict[str, Any]]:
+        """Build just the record list."""
+        return [record.copy() for record in self.records]
 
     def build_vectors(self) -> List[VectorRecord]:
-        """Build just the vectors list"""
-        return self.vectors.copy()
+        """Compatibility builder returning legacy VectorRecord objects."""
+        return [
+            VectorRecord(
+                id=record.get("id"),
+                vector=record.get("vector") or [],
+                metadata=record.get("props") or {},
+            )
+            for record in self.records
+        ]
 
     def build_options(self) -> Dict[str, Any]:
         """Build just the insert options"""
@@ -237,39 +294,39 @@ class InsertBuilder:
         }
 
     def count(self) -> int:
-        """Get number of vectors"""
-        return len(self.vectors)
+        """Get number of records."""
+        return len(self.records)
 
     def is_empty(self) -> bool:
-        """Check if no vectors are added"""
-        return len(self.vectors) == 0
+        """Check if no records are added."""
+        return len(self.records) == 0
 
     def get_vector_ids(self) -> List[str]:
-        """Get list of all vector IDs"""
-        return [v.id for v in self.vectors]
+        """Get list of all record IDs."""
+        return [record.get("id") for record in self.records]
 
     def get_dimensions(self) -> List[int]:
-        """Get dimensions of all vectors"""
-        return [len(v.vector) for v in self.vectors]
+        """Get dimensions of all record vectors."""
+        return [len(record.get("vector") or []) for record in self.records]
 
     def summary(self) -> Dict[str, Any]:
         """Get summary statistics"""
-        if not self.vectors:
+        if not self.records:
             return {"count": 0, "dimensions": [], "has_metadata": False}
 
         dimensions = self.get_dimensions()
-        metadata_counts = sum(1 for v in self.vectors if v.metadata)
+        metadata_counts = sum(1 for record in self.records if record.get("props"))
 
         return {
-            "count": len(self.vectors),
+            "count": len(self.records),
             "dimensions": {
                 "min": min(dimensions),
                 "max": max(dimensions),
                 "unique": list(set(dimensions)),
             },
             "has_metadata": metadata_counts > 0,
-            "metadata_coverage": metadata_counts / len(self.vectors),
-            "duplicate_ids": len(self.vectors) - len(set(self.get_vector_ids())),
+            "metadata_coverage": metadata_counts / len(self.records),
+            "duplicate_ids": len(self.records) - len(set(self.get_vector_ids())),
         }
 
 
@@ -280,10 +337,10 @@ def insert() -> InsertBuilder:
 
 
 def batch_insert(
-    vectors: List[VectorRecord], batch_size: int = 1000
-) -> tuple[List[VectorRecord], Dict[str, Any]]:
-    """Create simple batch insert"""
-    return InsertBuilder().add_vectors(vectors).batch_size(batch_size).build()
+    records: List[Union[ProximaRecord, Dict[str, Any]]], batch_size: int = 1000
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Create simple record batch insert."""
+    return InsertBuilder().add_records(records).batch_size(batch_size).build()
 
 
 def from_numpy(
@@ -291,8 +348,8 @@ def from_numpy(
     vectors: np.ndarray,
     metadata: Optional[List[MetadataDict]] = None,
     batch_size: int = 1000,
-) -> tuple[List[VectorRecord], Dict[str, Any]]:
-    """Create batch insert from numpy array"""
+) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Create record batch insert from numpy array."""
     return (
         InsertBuilder()
         .from_arrays(ids, vectors, metadata)

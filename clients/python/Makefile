@@ -13,7 +13,8 @@ PROTO_SRC= \
 	$(PROTO_DIR)/proximadb/v1/relations.proto \
 	$(PROTO_DIR)/proximadb/v1/context.proto \
 	$(PROTO_DIR)/proximadb/v1/graph.proto \
-	$(PROTO_DIR)/proximadb/v1/graph_collection.proto
+	$(PROTO_DIR)/proximadb/v1/graph_collection.proto \
+	$(PROTO_DIR)/proximadb/v2/record.proto
 
 .PHONY: gen-proto
 gen-proto:

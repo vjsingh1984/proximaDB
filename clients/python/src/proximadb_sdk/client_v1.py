@@ -31,6 +31,12 @@ from .v1 import (
     vector_types_pb2,
 )
 
+try:
+    from .v2 import record_pb2, record_pb2_grpc
+except Exception:  # pragma: no cover - generated v2 stubs may be absent in old installs
+    record_pb2 = None
+    record_pb2_grpc = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,6 +67,10 @@ class ProximaDBClientV1:
             grpc_url = url.replace("http://", "").replace("https://", "")
             self.channel = grpc.insecure_channel(grpc_url)
             self.vector_stub = vector_pb2_grpc.VectorServiceStub(self.channel)
+            if record_pb2_grpc is not None:
+                self.record_stub = record_pb2_grpc.ProximaRecordServiceStub(
+                    self.channel
+                )
             self.collection_stub = collection_pb2_grpc.CollectionServiceStub(
                 self.channel
             )
@@ -310,14 +320,146 @@ class ProximaDBClientV1:
             raise NetworkError(f"REST request failed: {e}")
 
     # Vector operations
+    def insert_records(
+        self, collection_id: str, records: List[Union[VectorRecord, Dict[str, Any]]]
+    ) -> Dict[str, Any]:
+        """Insert ProximaRecord-shaped payloads through the record API."""
+        if self.protocol == "grpc":
+            return self._insert_records_grpc(collection_id, records)
+        return self._insert_records_rest(collection_id, records)
+
     def insert_vectors(
         self, collection_id: str, vectors: List[VectorRecord]
     ) -> Dict[str, Any]:
-        """Insert vectors into collection"""
-        if self.protocol == "grpc":
-            return self._insert_vectors_grpc(collection_id, vectors)
-        else:
-            return self._insert_vectors_rest(collection_id, vectors)
+        """Compatibility alias for record-native inserts."""
+        return self.insert_records(collection_id, vectors)
+
+    def _record_payload(
+        self, record: Union[VectorRecord, Dict[str, Any]], index: int
+    ) -> Dict[str, Any]:
+        if isinstance(record, dict):
+            payload = dict(record)
+            if "props" not in payload and "metadata" in payload:
+                payload["props"] = payload.pop("metadata")
+            payload.setdefault("id", payload.get("oid") or f"record_{index}")
+            return payload
+
+        payload = {
+            "id": record.id or f"record_{index}",
+            "vector": record.vector,
+            "props": record.metadata or {},
+        }
+        source = getattr(record, "source", None)
+        if source:
+            payload["source"] = source
+            payload["text_fields"] = [{"name": "text", "content": source}]
+        return payload
+
+    def _insert_records_rest(
+        self, collection_id: str, records: List[Union[VectorRecord, Dict[str, Any]]]
+    ) -> Dict[str, Any]:
+        payload = {
+            "records": [
+                self._record_payload(record, index)
+                for index, record in enumerate(records)
+            ],
+            "validate_schema": True,
+        }
+
+        url = urljoin(self.base_url, f"/api/v2/collections/{collection_id}/records/batch")
+        try:
+            response = requests.post(url, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            raise NetworkError(f"REST request failed: {e}")
+
+    def _typed_value(self, value: Any):
+        if record_pb2 is None:
+            raise ProximaDBError("v2 record protobuf stubs are unavailable")
+        if value is None:
+            return record_pb2.TypedValue(
+                declared_type=record_pb2.COLUMN_TYPE_UNSPECIFIED,
+                is_null=True,
+            )
+        if isinstance(value, bool):
+            return record_pb2.TypedValue(
+                declared_type=record_pb2.BOOLEAN,
+                boolean_value=value,
+            )
+        if isinstance(value, int) and not isinstance(value, bool):
+            return record_pb2.TypedValue(
+                declared_type=record_pb2.INTEGER,
+                integer_value=value,
+            )
+        if isinstance(value, float):
+            return record_pb2.TypedValue(
+                declared_type=record_pb2.FLOAT,
+                float_value=value,
+            )
+        return record_pb2.TypedValue(
+            declared_type=record_pb2.TEXT,
+            text_value=str(value),
+        )
+
+    def _insert_records_grpc(
+        self, collection_id: str, records: List[Union[VectorRecord, Dict[str, Any]]]
+    ) -> Dict[str, Any]:
+        if record_pb2 is None or not hasattr(self, "record_stub"):
+            raise ProximaDBError("v2 ProximaRecord gRPC stubs are unavailable")
+
+        proto_records = []
+        for index, record in enumerate(records):
+            payload = self._record_payload(record, index)
+            props = {
+                str(key): self._typed_value(value)
+                for key, value in (payload.get("props") or {}).items()
+            }
+            text_fields = [
+                record_pb2.TextField(
+                    name=str(field.get("name", "text")),
+                    content=str(field.get("content", "")),
+                )
+                for field in payload.get("text_fields", [])
+            ]
+            proto_records.append(
+                record_pb2.ProximaRecord(
+                    id=payload["id"],
+                    vector=payload.get("vector") or [],
+                    props=props,
+                    source=payload.get("source"),
+                    text_fields=text_fields,
+                )
+            )
+
+        request = record_pb2.ProximaRecordBatch(
+            collection_id=collection_id,
+            records=proto_records,
+            write_mode=record_pb2.INSERT,
+            validate_schema=True,
+            return_ids=True,
+            return_errors=True,
+        )
+        try:
+            response = self.record_stub.InsertRecords(request, timeout=self.timeout)
+            return {
+                "success": response.success,
+                "total_processed": response.total_processed,
+                "success_count": response.success_count,
+                "failed_count": response.failed_count,
+                "inserted_ids": list(response.inserted_ids),
+                "errors": [
+                    {
+                        "record_index": error.record_index,
+                        "record_id": error.record_id,
+                        "error_code": error.error_code,
+                        "error_message": error.error_message,
+                    }
+                    for error in response.errors
+                ],
+            }
+        except grpc.RpcError as e:
+            raise ProximaDBError(f"gRPC error: {e.details()}")
 
     def _convert_metadata_to_sql_value(
         self, metadata_dict: Dict[str, Any]
@@ -331,63 +473,14 @@ class ProximaDBClientV1:
     def _insert_vectors_grpc(
         self, collection_id: str, vectors: List[VectorRecord]
     ) -> Dict[str, Any]:
-        """Insert vectors via gRPC"""
-        proto_vectors = []
-        for vec in vectors:
-            proto_vec = vector_types_pb2.VectorRecord(
-                id=vec.id,
-                vector=vec.vector,
-                metadata=self._convert_metadata_to_sql_value(vec.metadata),
-            )
-            proto_vectors.append(proto_vec)
-
-        request = vector_types_pb2.VectorBatchRequest(
-            collection_id=collection_id, vectors=proto_vectors
-        )
-
-        try:
-            response = self.vector_stub.VectorBatch(request, timeout=self.timeout)
-            return {
-                "success": response.success,
-                "vector_ids": list(response.vector_ids),
-                "metrics": (
-                    {
-                        "total_processed": (
-                            response.metrics.total_processed if response.metrics else 0
-                        ),
-                        "successful_count": (
-                            response.metrics.successful_count if response.metrics else 0
-                        ),
-                        "failed_count": (
-                            response.metrics.failed_count if response.metrics else 0
-                        ),
-                    }
-                    if response.metrics
-                    else {}
-                ),
-            }
-        except grpc.RpcError as e:
-            raise ProximaDBError(f"gRPC error: {e.details()}")
+        """Compatibility alias for record-native gRPC inserts."""
+        return self._insert_records_grpc(collection_id, vectors)
 
     def _insert_vectors_rest(
         self, collection_id: str, vectors: List[VectorRecord]
     ) -> Dict[str, Any]:
-        """Insert vectors via REST"""
-        payload = {
-            "collection_id": collection_id,
-            "vectors": [
-                {"id": vec.id, "vector": vec.vector, "metadata": vec.metadata or {}}
-                for vec in vectors
-            ],
-        }
-
-        url = urljoin(self.base_url, "/api/v1/vectors/batch")
-        try:
-            response = requests.post(url, json=payload, timeout=self.timeout)
-            response.raise_for_status()
-            return response.json()
-        except requests.RequestException as e:
-            raise NetworkError(f"REST request failed: {e}")
+        """Compatibility alias for record-native REST inserts."""
+        return self._insert_records_rest(collection_id, vectors)
 
     def search_vectors(
         self,

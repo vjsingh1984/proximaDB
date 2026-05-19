@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Union
 import numpy as np
 
 from ..models import (
+    BatchResult,
     Collection,
     CollectionConfig,
     CollectionStats,
@@ -34,6 +35,7 @@ from ..models import (
     VectorOperationResponse,
     VectorRecord,
 )
+from ..models_v2 import ProximaRecord
 from ..proto_conversion import ProtoConverter
 from .base import BaseProtocolAdapter
 
@@ -482,7 +484,123 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         )
 
     # ==========================================================================
-    # Vector Operations
+    # Record Operations
+    # ==========================================================================
+
+    @staticmethod
+    def _batch_result_from_vector_response(
+        response: VectorOperationResponse, total_count: int
+    ) -> BatchResult:
+        return BatchResult(
+            total=total_count,
+            success=response.metrics.successful_count,
+            failed=response.metrics.failed_count,
+            errors=[response.error_message] if response.error_message else [],
+            metrics=response.metrics,
+        )
+
+    @staticmethod
+    def _batch_to_vector_response(
+        result: BatchResult, operation: str
+    ) -> VectorOperationResponse:
+        return VectorOperationResponse(
+            success=result.success,
+            operation=operation,
+            metrics=result.metrics,
+            error_message="; ".join(result.errors) if result.errors else None,
+        )
+
+    def insert_records(
+        self,
+        collection_id: str,
+        records: Union[List[ProximaRecord], List[Dict[str, Any]]],
+        **kwargs,
+    ) -> BatchResult:
+        """Insert ProximaRecord-shaped payloads into a collection.
+
+        Prefer a native embedded record helper when the PyO3 package exposes it.
+        Current vector-only embedded builds still route through the shared numpy
+        write path as a temporary compatibility alias.
+        """
+        if self._db is not None and hasattr(self._db, "insert_records"):
+            start_time = time.time()
+            try:
+                result = self._db.insert_records(collection_id, records, **kwargs)
+                successful = result if isinstance(result, int) else len(records)
+                failed = max(len(records) - successful, 0)
+                return BatchResult(
+                    total=len(records),
+                    success=successful,
+                    failed=failed,
+                    metrics=OperationMetrics(
+                        total_processed=len(records),
+                        successful_count=successful,
+                        failed_count=failed,
+                        processing_time_us=int((time.time() - start_time) * 1_000_000),
+                    ),
+                )
+            except Exception as exc:
+                return BatchResult(
+                    total=len(records),
+                    success=0,
+                    failed=len(records),
+                    errors=[str(exc)],
+                    metrics=OperationMetrics(
+                        total_processed=len(records),
+                        successful_count=0,
+                        failed_count=len(records),
+                        processing_time_us=int((time.time() - start_time) * 1_000_000),
+                    ),
+                )
+
+        ids, vector_values, metadata_values = self._normalize_vector_records(records)
+        response = self.insert_numpy(collection_id, ids, vector_values, metadata_values)
+        return self._batch_result_from_vector_response(response, len(records))
+
+    def upsert_records(
+        self,
+        collection_id: str,
+        records: Union[List[ProximaRecord], List[Dict[str, Any]]],
+        **kwargs,
+    ) -> BatchResult:
+        """Upsert ProximaRecord-shaped payloads into a collection."""
+        if self._db is not None and hasattr(self._db, "upsert_records"):
+            start_time = time.time()
+            try:
+                result = self._db.upsert_records(collection_id, records, **kwargs)
+                successful = result[0] if isinstance(result, tuple) else len(records)
+                failed = max(len(records) - successful, 0)
+                return BatchResult(
+                    total=len(records),
+                    success=successful,
+                    failed=failed,
+                    metrics=OperationMetrics(
+                        total_processed=len(records),
+                        successful_count=successful,
+                        failed_count=failed,
+                        processing_time_us=int((time.time() - start_time) * 1_000_000),
+                    ),
+                )
+            except Exception as exc:
+                return BatchResult(
+                    total=len(records),
+                    success=0,
+                    failed=len(records),
+                    errors=[str(exc)],
+                    metrics=OperationMetrics(
+                        total_processed=len(records),
+                        successful_count=0,
+                        failed_count=len(records),
+                        processing_time_us=int((time.time() - start_time) * 1_000_000),
+                    ),
+                )
+
+        ids, vector_values, metadata_values = self._normalize_vector_records(records)
+        response = self.upsert_numpy(collection_id, ids, vector_values, metadata_values)
+        return self._batch_result_from_vector_response(response, len(records))
+
+    # ==========================================================================
+    # Vector Compatibility Aliases
     # ==========================================================================
 
     def insert_vectors(
@@ -491,17 +609,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
         **kwargs,
     ) -> VectorOperationResponse:
-        """Insert vectors into a collection.
-
-        The embedded API typically returns an int (count of inserted vectors).
-        This method wraps that into a VectorOperationResponse for API consistency.
-        """
-        ids, vector_values, metadata_values = self._normalize_vector_records(vectors)
-        return self.insert_numpy(
-            collection_id,
-            ids,
-            vector_values,
-            metadata_values,
+        """Compatibility alias for record-native inserts."""
+        return self._batch_to_vector_response(
+            self.insert_records(collection_id, vectors, **kwargs), "INSERT"
         )
 
     def upsert_vectors(
@@ -510,13 +620,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
         **kwargs,
     ) -> VectorOperationResponse:
-        """Upsert (insert or update) vectors in a collection."""
-        ids, vector_values, metadata_values = self._normalize_vector_records(vectors)
-        return self.upsert_numpy(
-            collection_id,
-            ids,
-            vector_values,
-            metadata_values,
+        """Compatibility alias for record-native upserts."""
+        return self._batch_to_vector_response(
+            self.upsert_records(collection_id, vectors, **kwargs), "UPSERT"
         )
 
     def get_vectors(

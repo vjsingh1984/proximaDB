@@ -25,9 +25,19 @@ from rich.table import Table
 # Local imports
 from proximadb_sdk.config import ProximaDBConfig
 from proximadb_sdk.models import SearchFilter
-from proximadb_sdk.unified_client import UnifiedProximaDBClient
+from proximadb_sdk.unified_client import ProximaDBClient as UnifiedProximaDBClient
 
 console = Console()
+
+
+def _record_payload(
+    record: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Normalize legacy CLI vector JSON into the SDK record write shape."""
+    payload = dict(record)
+    if "props" not in payload and "metadata" in payload:
+        payload["props"] = payload.pop("metadata")
+    return payload
 
 
 def get_client(
@@ -309,7 +319,8 @@ def insert_vectors(
             console.print("[red]Either --file or --vector is required.[/red]")
             sys.exit(1)
 
-        result = client.insert_vectors(collection, vectors_data)
+        records_data = [_record_payload(record) for record in vectors_data]
+        result = client.insert_records(collection, records_data)
 
         if ctx.obj["json_output"]:
             click.echo(json.dumps(result, indent=2))
@@ -595,7 +606,8 @@ def benchmark(
             )
 
         start = time.time()
-        client.insert_vectors(collection, vectors)
+        records = [_record_payload(record) for record in vectors]
+        client.insert_records(collection, records)
         insert_time = time.time() - start
 
         # Search

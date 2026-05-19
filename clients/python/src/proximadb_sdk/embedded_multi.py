@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from proximadb_sdk.adapters.embedded_adapter import EmbeddedProtocolAdapter
+from proximadb_sdk.integrations._records import insert_records, record_payload
 
 
 class EmbeddedMultiModelProvider:
@@ -230,20 +231,18 @@ class EmbeddedMultiModelProvider:
                     }
                 )
 
-                # For embedded mode, we insert as vector records
-                # In production, this would use an embedding model
+                # For embedded mode, write record-shaped vector payloads.
+                # In production, this would use an embedding model.
                 dummy_vector = [hash(f"{file_hash}:{i}") % 1000 / 1000.0] * 384
 
-                from proximadb_sdk.models import VectorRecord
-
-                record = VectorRecord(
-                    id=f"{file_hash}:chunk_{i}",
+                record = record_payload(
+                    record_id=f"{file_hash}:chunk_{i}",
                     vector=dummy_vector,
-                    source=chunk["content"],
+                    text=chunk["content"],
                     metadata=chunk_meta,
                 )
 
-                self._adapter.insert_vectors(self._vector_collection, [record])
+                insert_records(self._adapter, self._vector_collection, [record])
 
             results["vectors"] = len(chunks)
         except Exception as e:

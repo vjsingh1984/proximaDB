@@ -14,8 +14,6 @@ from proximadb_sdk.integrations.agentic_store import (
     ProximaBaseStore,
     ProximaCheckpointSaver,
 )
-from proximadb_sdk.models import VectorRecord
-
 
 @dataclass
 class _Hit:
@@ -27,7 +25,7 @@ class _Hit:
 class FakeAdapter:
     def __init__(self) -> None:
         self.documents: dict[str, dict[str, dict[str, Any]]] = {}
-        self.vectors: dict[str, dict[str, VectorRecord]] = {}
+        self.vectors: dict[str, dict[str, dict[str, Any]]] = {}
 
     def create_document_collection(
         self, name: str, config: dict[str, Any] | None = None
@@ -70,12 +68,12 @@ class FakeAdapter:
         self.vectors.setdefault(collection_id, {})
         return {"success": True}
 
-    def insert_vectors(
-        self, collection_id: str, records: list[VectorRecord]
+    def insert_records(
+        self, collection_id: str, records: list[dict[str, Any]]
     ) -> dict[str, Any]:
         bucket = self.vectors.setdefault(collection_id, {})
         for record in records:
-            bucket[record.id or ""] = record
+            bucket[record.get("id") or ""] = dict(record)
         return {"success": True, "count": len(records)}
 
     def search(
@@ -89,10 +87,10 @@ class FakeAdapter:
         del query_vector
         hits = []
         for record in self.vectors.get(collection_id, {}).values():
-            metadata = dict(record.metadata or {})
+            metadata = dict(record.get("props") or {})
             if filter and any(metadata.get(k) != v for k, v in filter.items()):
                 continue
-            hits.append(_Hit(record.id or "", 1.0, metadata))
+            hits.append(_Hit(record.get("id") or "", 1.0, metadata))
         return hits[:top_k]
 
     def delete_vectors(

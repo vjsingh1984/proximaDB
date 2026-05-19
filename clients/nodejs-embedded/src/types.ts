@@ -155,14 +155,16 @@ export type JsonValue =
   | { [key: string]: JsonValue };
 
 /**
- * Vector record for storing and retrieving vectors
+ * Canonical ProximaRecord payload for storing records with optional vectors.
  */
-export interface VectorRecord {
-  /** Unique vector identifier */
+export interface ProximaRecord {
+  /** Unique record identifier */
   id: string;
-  /** Vector data as array of floats */
+  /** Dense vector embedding */
   vector: number[];
-  /** Associated metadata */
+  /** Rich record properties */
+  props?: Record<string, JsonValue>;
+  /** @deprecated Use props. */
   metadata?: Metadata;
   /** Creation timestamp in milliseconds */
   timestampMs?: number;
@@ -174,7 +176,14 @@ export interface VectorRecord {
   version?: number;
   /** Original content that generated this vector (e.g., chunk text for RAG) */
   source?: string;
+  /** Text fields for dedicated text storage */
+  textFields?: Array<{ name: string; content: string }>;
 }
+
+/**
+ * @deprecated Use ProximaRecord. VectorRecord remains a compatibility alias.
+ */
+export type VectorRecord = ProximaRecord;
 
 /**
  * Search result with score and optional metadata

@@ -236,7 +236,7 @@ class ProximaMapperSession:
         self.adapter.insert_document(collection_name, payload, id=doc_id)
 
         if vector is not None:
-            from proximadb_sdk.models import VectorRecord
+            from proximadb_sdk.integrations._records import insert_records, record_payload
 
             target_vector_collection = vector_collection or f"{collection_name}__vectors"
             try:
@@ -246,13 +246,14 @@ class ProximaMapperSession:
                 )
             except Exception:
                 pass
-            self.adapter.insert_vectors(
+            insert_records(
+                self.adapter,
                 target_vector_collection,
                 [
-                    VectorRecord(
-                        id=doc_id,
+                    record_payload(
+                        record_id=doc_id,
                         vector=vector,
-                        source=source,
+                        text=source,
                         metadata={"document_collection": collection_name},
                     )
                 ],

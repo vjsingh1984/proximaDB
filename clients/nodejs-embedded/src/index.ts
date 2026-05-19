@@ -71,6 +71,7 @@ export {
 
 // Type-only exports (interfaces and types)
 export type {
+  ProximaRecord,
   VectorRecord,
   SearchResult,
   CollectionConfig,

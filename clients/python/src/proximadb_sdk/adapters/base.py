@@ -13,6 +13,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Union
 
 from ..models import (
+    BatchResult,
     Collection,
     CollectionConfig,
     FilterDict,
@@ -23,6 +24,7 @@ from ..models import (
     VectorOperationResponse,
     VectorRecord,
 )
+from ..models_v2 import ProximaRecord
 
 
 class BaseProtocolAdapter(ABC):
@@ -83,7 +85,31 @@ class BaseProtocolAdapter(ABC):
         pass
 
     # ==========================================================================
-    # Vector Operations
+    # Record Operations
+    # ==========================================================================
+
+    @abstractmethod
+    def insert_records(
+        self,
+        collection_id: str,
+        records: Union[List[ProximaRecord], List[Dict[str, Any]]],
+        **kwargs,
+    ) -> BatchResult:
+        """Insert ProximaRecord-shaped payloads into a collection."""
+        pass
+
+    @abstractmethod
+    def upsert_records(
+        self,
+        collection_id: str,
+        records: Union[List[ProximaRecord], List[Dict[str, Any]]],
+        **kwargs,
+    ) -> BatchResult:
+        """Upsert ProximaRecord-shaped payloads into a collection."""
+        pass
+
+    # ==========================================================================
+    # Vector Compatibility Aliases
     # ==========================================================================
 
     @abstractmethod
@@ -93,7 +119,7 @@ class BaseProtocolAdapter(ABC):
         vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
         **kwargs,
     ) -> VectorOperationResponse:
-        """Insert vectors into a collection."""
+        """Compatibility alias for record-native inserts."""
         pass
 
     @abstractmethod
@@ -103,7 +129,7 @@ class BaseProtocolAdapter(ABC):
         vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
         **kwargs,
     ) -> VectorOperationResponse:
-        """Upsert (insert or update) vectors in a collection."""
+        """Compatibility alias for record-native upserts."""
         pass
 
     @abstractmethod

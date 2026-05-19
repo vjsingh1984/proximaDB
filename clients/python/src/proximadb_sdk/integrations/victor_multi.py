@@ -41,8 +41,8 @@ from victor.storage.vector_stores.base import (
     EmbeddingSearchResult,
 )
 
+from proximadb_sdk.integrations._records import insert_records, record_payload
 from proximadb_sdk.integrations.victor import ProximaDBEmbeddingProvider
-from proximadb_sdk.models import VectorRecord
 
 
 class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
@@ -217,16 +217,15 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
             }
         )
 
-        # For document store, we use the REST API directly
-        # This would need a document_insert method in the client
-        # For now, we'll store as a vector with special metadata
-        record = VectorRecord(
-            id=f"doc:{metadata['file_hash']}",
-            vector=[0.0] * self._dimension,  # Dummy vector for document
-            source=content,
+        # Store through the record-native SDK surface while this optional
+        # provider still uses the vector collection as its projection target.
+        record = record_payload(
+            record_id=f"doc:{metadata['file_hash']}",
+            vector=[0.0] * self._dimension,
+            text=content,
             metadata=doc_meta,
         )
-        self._client.insert_vectors(self._vector_collection, [record])
+        insert_records(self._client, self._vector_collection, [record])
 
     async def _index_as_graph(
         self,
@@ -287,14 +286,15 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
                 "metadata": {**metadata, "language": metric.get("language")},
             }
 
-            # Store as a vector for time-series (in production, use time-series API)
-            record = VectorRecord(
-                id=f"metric:{file_path}:{metric['name']}:{timestamp}",
+            # Store through the record-native SDK surface while this optional
+            # provider still projects metrics into the vector collection.
+            record = record_payload(
+                record_id=f"metric:{file_path}:{metric['name']}:{timestamp}",
                 vector=[0.0] * self._dimension,
-                source=json.dumps(metric_record),
+                text=json.dumps(metric_record),
                 metadata={"type": "metric", "file_path": file_path},
             )
-            self._client.insert_vectors(self._vector_collection, [record])
+            insert_records(self._client, self._vector_collection, [record])
 
     # ========================================================================
     # Hybrid Search

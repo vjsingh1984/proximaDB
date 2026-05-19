@@ -49,6 +49,7 @@ from .models import (
     QuantizationType,
     SearchResult,
     StorageEngine,
+    BatchResult,
     VectorArray,
     VectorOperationResponse,
     VectorRecord,
@@ -2086,6 +2087,101 @@ class ProximaDBClient:
             },
         }
 
+    def _record_payload_from_legacy_input(
+        self, record: Union[VectorRecord, Dict[str, Any]], index: int = 0
+    ) -> Dict[str, Any]:
+        """Normalize legacy vector-shaped inputs into the record write shape."""
+        if isinstance(record, dict):
+            payload = dict(record)
+            if "props" not in payload and "metadata" in payload:
+                payload["props"] = payload.pop("metadata")
+            payload.setdefault("id", payload.get("oid") or f"record_{index}")
+            return payload
+
+        payload: Dict[str, Any] = {
+            "id": record.id or f"record_{index}",
+            "vector": (
+                record.vector.tolist()
+                if hasattr(record.vector, "tolist")
+                else list(record.vector or [])
+            ),
+            "props": dict(record.metadata or {}),
+        }
+        source = getattr(record, "source", None)
+        if source:
+            payload["source"] = source
+            payload["text_fields"] = [{"name": "text", "content": source}]
+        return payload
+
+    def _batch_result_to_vector_response(
+        self, result: BatchResult, operation: str, records: List[Dict[str, Any]]
+    ) -> VectorOperationResponse:
+        return VectorOperationResponse(
+            success=result.success,
+            operation=operation,
+            metrics=OperationMetrics(
+                total_processed=result.total,
+                successful_count=result.success,
+                failed_count=result.failed,
+            ),
+            vector_ids=[record["id"] for record in records if record.get("id")],
+            error_message="; ".join(result.errors) if result.errors else None,
+        )
+
+    def insert_records(
+        self,
+        collection_id: str,
+        records: List[Union[VectorRecord, Dict[str, Any]]],
+        **kwargs: Any,
+    ) -> BatchResult:
+        """Insert ProximaRecord-shaped payloads through the active transport."""
+        record_payloads = [
+            self._record_payload_from_legacy_input(record, index)
+            for index, record in enumerate(records)
+        ]
+        if not record_payloads:
+            raise ValueError("'records' must not be empty")
+
+        if self._prefer_local_fallback:
+            vector_records = [
+                VectorRecord(
+                    id=record.get("id"),
+                    vector=record.get("vector") or [],
+                    metadata=record.get("props") or {},
+                    source=record.get("source"),
+                )
+                for record in record_payloads
+            ]
+            self._store_local_vector_records(collection_id, vector_records)
+            return BatchResult(total=len(record_payloads), success=len(record_payloads))
+
+        target = self._adapter or self._rest_client or self._grpc_client
+        if target and hasattr(target, "insert_records"):
+            return target.insert_records(collection_id, record_payloads, **kwargs)
+
+        raise NotImplementedError(
+            "insert_records requires a record-native adapter or protocol client"
+        )
+
+    def upsert_records(
+        self,
+        collection_id: str,
+        records: List[Union[VectorRecord, Dict[str, Any]]],
+        **kwargs: Any,
+    ) -> BatchResult:
+        """Upsert ProximaRecord-shaped payloads through the active transport."""
+        record_payloads = [
+            self._record_payload_from_legacy_input(record, index)
+            for index, record in enumerate(records)
+        ]
+        if not record_payloads:
+            raise ValueError("'records' must not be empty")
+
+        target = self._adapter or self._rest_client or self._grpc_client
+        if target and hasattr(target, "upsert_records"):
+            return target.upsert_records(collection_id, record_payloads, **kwargs)
+        return self.insert_records(collection_id, record_payloads, **kwargs)
+
     def insert_vectors(
         self,
         collection_id: str,
@@ -2141,6 +2237,18 @@ class ProximaDBClient:
 
         if records is None or (hasattr(records, "__len__") and len(records) == 0):
             raise ValueError("Either 'records' or 'vectors' must be provided")
+
+        record_payloads = [
+            self._record_payload_from_legacy_input(record, index)
+            for index, record in enumerate(records)
+        ]
+        try:
+            batch_result = self.insert_records(collection_id, record_payloads, **kwargs)
+            return self._batch_result_to_vector_response(
+                batch_result, "INSERT", record_payloads
+            )
+        except NotImplementedError:
+            pass
 
         if self._prefer_local_fallback:
             self._store_local_vector_records(collection_id, list(records))
@@ -2361,8 +2469,8 @@ class ProximaDBClient:
 
             elif client == self._rest_client:
                 protocol_used = Protocol.REST
-                # REST API accepts VectorRecord objects via /api/v1/vectors/batch
-                # Convert VectorRecord to dict format with ALL fields
+                # Legacy fallback for clients without record-native insert support.
+                # Convert VectorRecord to dict format with ALL fields.
                 vector_dicts = []
                 for record in records:
                     vector_dict = {
@@ -2508,9 +2616,21 @@ class ProximaDBClient:
             raise
 
     def upsert_vectors(
-        self, collection_id: str, records: List[VectorRecord]
+        self, collection_id: str, records: List[Union[VectorRecord, Dict[str, Any]]]
     ) -> VectorOperationResponse:
-        """Upsert vectors into a collection"""
+        """Compatibility alias for record-native upserts."""
+        record_payloads = [
+            self._record_payload_from_legacy_input(record, index)
+            for index, record in enumerate(records)
+        ]
+        try:
+            batch_result = self.upsert_records(collection_id, record_payloads)
+            return self._batch_result_to_vector_response(
+                batch_result, "UPSERT", record_payloads
+            )
+        except NotImplementedError:
+            pass
+
         if self._prefer_local_fallback:
             self._store_local_vector_records(collection_id, list(records))
             success_value: Union[bool, int] = (

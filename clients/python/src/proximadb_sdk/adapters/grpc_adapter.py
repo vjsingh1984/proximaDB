@@ -12,6 +12,7 @@ import logging
 from typing import Any, Dict, List, Optional, Union
 
 from ..models import (
+    BatchResult,
     Collection,
     CollectionConfig,
     FilterDict,
@@ -23,6 +24,7 @@ from ..models import (
     VectorOperationResponse,
     VectorRecord,
 )
+from ..models_v2 import ProximaRecord
 from ..proto_conversion import ProtoConverter
 from .base import BaseProtocolAdapter
 
@@ -219,7 +221,87 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         )
 
     # ==========================================================================
-    # Vector Operations
+    # Record Operations
+    # ==========================================================================
+
+    @staticmethod
+    def _record_payloads(records: Union[List[ProximaRecord], List[Dict[str, Any]]]):
+        payloads = []
+        for record in records:
+            if isinstance(record, dict):
+                payloads.append(record)
+            elif hasattr(record, "model_dump"):
+                payloads.append(record.model_dump(exclude_none=True))
+            else:
+                payloads.append(ProtoConverter.vector_record_to_dict(record))
+        return payloads
+
+    @staticmethod
+    def _batch_to_vector_response(
+        result: BatchResult, operation: str
+    ) -> VectorOperationResponse:
+        return VectorOperationResponse(
+            success=result.success,
+            operation=operation,
+            metrics=result.metrics,
+            error_message="; ".join(result.errors) if result.errors else None,
+        )
+
+    def insert_records(
+        self,
+        collection_id: str,
+        records: Union[List[ProximaRecord], List[Dict[str, Any]]],
+        **kwargs,
+    ) -> BatchResult:
+        """Insert ProximaRecord-shaped payloads into a collection."""
+        payloads = self._record_payloads(records)
+        if hasattr(self._client, "insert_records"):
+            result = self._client.insert_records(
+                collection_id=collection_id, records=payloads, **kwargs
+            )
+        else:
+            result = self._client.insert_vectors(
+                collection_id=collection_id, vectors=payloads, **kwargs
+            )
+        response = self._to_vector_operation_response(result, "INSERT", len(records))
+        return BatchResult(
+            total=len(records),
+            success=response.metrics.successful_count,
+            failed=response.metrics.failed_count,
+            errors=[response.error_message] if response.error_message else [],
+            metrics=response.metrics,
+        )
+
+    def upsert_records(
+        self,
+        collection_id: str,
+        records: Union[List[ProximaRecord], List[Dict[str, Any]]],
+        **kwargs,
+    ) -> BatchResult:
+        """Upsert ProximaRecord-shaped payloads into a collection."""
+        payloads = self._record_payloads(records)
+        if hasattr(self._client, "upsert_records"):
+            result = self._client.upsert_records(
+                collection_id=collection_id, records=payloads, **kwargs
+            )
+        else:
+            result = self._client.insert_vectors(
+                collection_id=collection_id,
+                vectors=payloads,
+                upsert=True,
+                **kwargs,
+            )
+        response = self._to_vector_operation_response(result, "UPSERT", len(records))
+        return BatchResult(
+            total=len(records),
+            success=response.metrics.successful_count,
+            failed=response.metrics.failed_count,
+            errors=[response.error_message] if response.error_message else [],
+            metrics=response.metrics,
+        )
+
+    # ==========================================================================
+    # Vector Compatibility Aliases
     # ==========================================================================
 
     def insert_vectors(
@@ -228,22 +310,10 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
         **kwargs,
     ) -> VectorOperationResponse:
-        """Insert vectors into a collection."""
-        # Convert VectorRecord objects to dicts
-        vector_dicts = []
-        for v in vectors:
-            if isinstance(v, dict):
-                vector_dicts.append(v)
-            elif hasattr(v, "model_dump"):
-                vector_dicts.append(v.model_dump(exclude_none=True))
-            else:
-                vector_dicts.append(ProtoConverter.vector_record_to_dict(v))
-
-        result = self._client.insert_vectors(
-            collection_id=collection_id, vectors=vector_dicts, **kwargs
+        """Compatibility alias for record-native inserts."""
+        return self._batch_to_vector_response(
+            self.insert_records(collection_id, vectors, **kwargs), "INSERT"
         )
-
-        return self._to_vector_operation_response(result, "INSERT", len(vectors))
 
     def upsert_vectors(
         self,
@@ -251,23 +321,10 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
         **kwargs,
     ) -> VectorOperationResponse:
-        """Upsert (insert or update) vectors in a collection."""
-        # Convert VectorRecord objects to dicts
-        vector_dicts = []
-        for v in vectors:
-            if isinstance(v, dict):
-                vector_dicts.append(v)
-            elif hasattr(v, "model_dump"):
-                vector_dicts.append(v.model_dump(exclude_none=True))
-            else:
-                vector_dicts.append(ProtoConverter.vector_record_to_dict(v))
-
-        # gRPC insert with upsert flag
-        result = self._client.insert_vectors(
-            collection_id=collection_id, vectors=vector_dicts, upsert=True, **kwargs
+        """Compatibility alias for record-native upserts."""
+        return self._batch_to_vector_response(
+            self.upsert_records(collection_id, vectors, **kwargs), "UPSERT"
         )
-
-        return self._to_vector_operation_response(result, "UPSERT", len(vectors))
 
     def get_vectors(
         self,

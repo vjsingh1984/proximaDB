@@ -71,6 +71,7 @@ from ..models import (
     VectorRecord,
     VectorSearchRequest,
 )
+from ..models_v2 import ProximaRecord
 from ..proto_conversion import ProtoConverter
 
 logger = logging.getLogger(__name__)
@@ -1181,79 +1182,192 @@ class ProximaDBClient:
         Returns:
             Insert operation result
         """
-        import time
-
-        # Normalize vector format
-        if isinstance(vector, np.ndarray):
-            if vector.dtype != np.float32:
-                vector = vector.astype(np.float32)
-            vector = vector.tolist()
-
-        # Convert metadata to server format
-        metadata_items = (
-            self._convert_metadata_to_rest_format(metadata) if metadata else []
+        return self.insert_records(
+            collection_id,
+            [
+                {
+                    "id": vector_id,
+                    "vector": vector,
+                    "props": metadata or {},
+                }
+            ],
+            upsert=upsert,
         )
 
-        # Use batch API with single vector
-        vector_record = {
-            "id": vector_id,
-            "collection_id": collection_id,
-            "vector": vector,
-            "metadata": metadata_items,
-            "timestamp": int(time.time()),  # Seconds (proto expects seconds)
-            "version": 1,
-        }
-
-        request_data = {
-            "operation": "upsert" if upsert else "insert",
-            "collection_id": collection_id,
-            "vectors": [vector_record],
-        }
-
-        response = self._make_request(
-            "POST", "/api/v1/vectors/batch", json=request_data
-        )
-
-        # Convert response to BatchResult
-        resp_data = response.json()
-        logger.debug(f"Server response for batch operation: {resp_data}")
-        metrics_data = resp_data.get("metrics", {}) or {}
-        logger.debug(f"Metrics data extracted: {metrics_data}")
-
-        # Extract counts from vector_ids array (the actual list of inserted vectors)
-        vector_ids = resp_data.get("vector_ids", [])
-        total_count = len(vector_ids)
-        success_count = len(vector_ids)  # If we got vector_ids, they were successful
-        failed_count = 0  # Server would set error_code if there were failures
-
+    def _record_write_result(self, response_data: Dict[str, Any]) -> BatchResult:
+        """Convert v2 record batch response JSON to the SDK batch result."""
+        inserted_count = int(response_data.get("inserted_count", 0) or 0)
+        failed_count = int(response_data.get("failed_count", 0) or 0)
+        total_count = inserted_count + failed_count
         return BatchResult(
             total=total_count,
-            success=success_count,
+            success=inserted_count,
             failed=failed_count,
-            errors=resp_data.get("errors", []),
-            duration_ms=resp_data.get("duration_ms", 0.0),
+            errors=response_data.get("errors", []),
+            duration_ms=response_data.get("duration_ms", 0.0),
             metrics=OperationMetrics(
-                total_processed=(
-                    metrics_data.get("total_processed")
-                    if metrics_data.get("total_processed") is not None
-                    else total_count
-                ),
-                successful_count=(
-                    metrics_data.get("successful_count")
-                    if metrics_data.get("successful_count") is not None
-                    else success_count
-                ),
-                failed_count=(
-                    metrics_data.get("failed_count")
-                    if metrics_data.get("failed_count") is not None
-                    else failed_count
-                ),
-                processing_time_us=(
-                    metrics_data.get("processing_time_us")
-                    if metrics_data.get("processing_time_us") is not None
-                    else int(resp_data.get("duration_ms", 0) * 1000)
-                ),
+                total_processed=total_count,
+                successful_count=inserted_count,
+                failed_count=failed_count,
+                processing_time_us=int(response_data.get("duration_ms", 0) * 1000),
             ),
+        )
+
+    def _proxima_rest_value(self, value: Any) -> Any:
+        """Convert Python values to v2 REST ProximaValue JSON."""
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return {
+                "type": "binary",
+                "value": base64.b64encode(bytes(value)).decode("ascii"),
+            }
+        if isinstance(value, tuple):
+            return {"type": "array", "value": [self._proxima_rest_value(v) for v in value]}
+        if isinstance(value, dict):
+            if set(value.keys()) == {"type", "value"}:
+                return value
+            return {
+                "type": "jsonb",
+                "value": {str(k): self._json_scalar(v) for k, v in value.items()},
+            }
+        return self._json_scalar(value)
+
+    def _json_scalar(self, value: Any) -> Any:
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        return value
+
+    def _normalize_record_payload(self, record: Any, index: int = 0) -> Dict[str, Any]:
+        """Normalize SDK record-like inputs to the v2 REST ProximaRecord shape."""
+        if hasattr(record, "model_dump"):
+            record = record.model_dump(exclude_none=True)
+        elif hasattr(record, "dict"):
+            record = record.dict(exclude_none=True)
+
+        if not isinstance(record, dict):
+            if hasattr(record, "id") and hasattr(record, "vector"):
+                record = {
+                    "id": getattr(record, "id", None),
+                    "vector": getattr(record, "vector"),
+                    "props": getattr(record, "metadata", {}) or {},
+                }
+            else:
+                raise TypeError(f"Unsupported record input: {type(record)!r}")
+
+        vector = record.get("vector")
+        if vector is None and "embeddings" in record and record["embeddings"]:
+            first = record["embeddings"][0]
+            vector = first.get("values") if isinstance(first, dict) else first
+        if vector is None:
+            raise ValueError("record is missing vector")
+        if isinstance(vector, np.ndarray):
+            vector = vector.astype(np.float32, copy=False).tolist()
+        vector = [float(v) for v in vector]
+        if not vector:
+            raise ValueError("record vector cannot be empty")
+
+        props = {}
+        for prop_source in ("props", "metadata", "flexible_fields"):
+            values = record.get(prop_source)
+            if isinstance(values, dict):
+                props.update(
+                    {str(k): self._proxima_rest_value(v) for k, v in values.items()}
+                )
+        typed_fields = record.get("typed_fields")
+        if isinstance(typed_fields, dict):
+            for key, typed_value in typed_fields.items():
+                if hasattr(typed_value, "model_dump"):
+                    typed_value = typed_value.model_dump(exclude_none=True)
+                if hasattr(typed_value, "dict"):
+                    typed_value = typed_value.dict(exclude_none=True)
+                if isinstance(typed_value, dict):
+                    props[str(key)] = {
+                        "type": typed_value.get("value_type")
+                        or typed_value.get("type")
+                        or typed_value.get("declared_type"),
+                        "value": typed_value.get("value"),
+                    }
+                else:
+                    props[str(key)] = self._proxima_rest_value(typed_value)
+
+        text_fields = record.get("text_fields") or []
+        normalized = {
+            "id": record.get("id") or record.get("oid") or f"record_{index}",
+            "vector": vector,
+            "props": props,
+        }
+        if text_fields:
+            normalized["text_fields"] = text_fields
+        return normalized
+
+    def insert_records(
+        self,
+        collection_id: str,
+        records: List[Union[ProximaRecord, Dict[str, Any]]],
+        *,
+        upsert: bool = False,
+        batch_size: Optional[int] = None,
+        validate_schema: bool = True,
+    ) -> BatchResult:
+        """Insert record batches through the v2 ProximaRecord REST surface."""
+        self._auto_warmup(collection_id)
+        record_data = [
+            self._normalize_record_payload(record, index)
+            for index, record in enumerate(records)
+        ]
+        effective_batch_size = batch_size or self.config.default_batch_size
+
+        total_successful = 0
+        total_failed = 0
+        all_errors = []
+        for start in range(0, len(record_data), effective_batch_size):
+            batch_data = record_data[start : start + effective_batch_size]
+            response = self._make_request(
+                "POST",
+                f"/api/v2/collections/{collection_id}/records/batch",
+                json={"records": batch_data, "validate_schema": validate_schema},
+            )
+            result = self._record_write_result(response.json())
+            total_successful += result.success
+            total_failed += result.failed
+            all_errors.extend(result.errors or [])
+
+        if total_successful > 0:
+            self._invalidate_collection_cache(collection_id)
+
+        return BatchResult(
+            total=total_successful + total_failed,
+            success=total_successful,
+            failed=total_failed,
+            errors=all_errors,
+            duration_ms=0.0,
+            metrics=OperationMetrics(
+                total_processed=total_successful + total_failed,
+                successful_count=total_successful,
+                failed_count=total_failed,
+            ),
+        )
+
+    def upsert_records(
+        self,
+        collection_id: str,
+        records: List[Union[ProximaRecord, Dict[str, Any]]],
+        *,
+        batch_size: Optional[int] = None,
+        validate_schema: bool = True,
+    ) -> BatchResult:
+        """Upsert records through the canonical record batch surface."""
+        return self.insert_records(
+            collection_id,
+            records,
+            upsert=True,
+            batch_size=batch_size,
+            validate_schema=validate_schema,
         )
 
     def _convert_metadata_to_rest_format(
@@ -1337,200 +1451,35 @@ class ProximaDBClient:
         Returns:
             Batch insert operation result
         """
-        self._auto_warmup(collection_id)
-
-        # NEW: If vector_records provided, use them directly (full VectorRecord support)
         if vector_records is not None:
-            vector_data = []
-            for record in vector_records:
-                # Convert metadata to REST format
-                metadata_items = self._convert_metadata_to_rest_format(
-                    record.get("metadata", {})
-                )
-                item = {
-                    "id": record.get("id", f"vec_{len(vector_data)}"),
-                    "vector": record["vector"],
-                    "metadata": metadata_items,
-                }
-                # Add all VectorRecord fields if present
-                if "timestamp" in record:
-                    item["timestamp"] = record["timestamp"]
-                if "updated_at" in record:
-                    item["updated_at"] = record["updated_at"]
-                if "expires_at" in record:
-                    item["expires_at"] = record["expires_at"]
-                if "version" in record:
-                    item["version"] = record["version"]
-                if "source" in record:
-                    item["source"] = record["source"]
-
-                vector_data.append(item)
+            records = vector_records
+        elif isinstance(vectors, list) and vectors and isinstance(vectors[0], dict):
+            records = vectors
         else:
-            # OLD PATH: Legacy array interface
             vectors_list = self._normalize_vectors(vectors)
-
             if ids is None:
-                ids = [f"vec_{i}" for i in range(len(vectors_list))]
-
+                ids = [f"record_{i}" for i in range(len(vectors_list))]
             if len(vectors_list) != len(ids):
                 raise ValueError("Number of vectors must match number of IDs")
-
             if metadata and len(metadata) != len(vectors_list):
                 raise ValueError(
                     "Number of metadata items must match number of vectors"
                 )
-
-            # Prepare vector data with basic fields
-            vector_data = []
-            for i, (vector_id, vector) in enumerate(zip(ids, vectors_list)):
-                # Convert metadata dict to REST API format
-                metadata_items = self._convert_metadata_to_rest_format(
-                    metadata[i] if metadata else {}
-                )
-                item = {
+            records = [
+                {
                     "id": vector_id,
                     "vector": vector,
-                    "metadata": metadata_items,
-                    "timestamp": int(
-                        time.time() * 1000
-                    ),  # Current time in milliseconds
+                    "props": metadata[i] if metadata else {},
                 }
-                vector_data.append(item)
+                for i, (vector_id, vector) in enumerate(zip(ids, vectors_list))
+            ]
 
-        # Use batching for large datasets
-        effective_batch_size = batch_size or self.config.default_batch_size
-
-        if len(vector_data) <= effective_batch_size:
-            # Single batch - use unified API
-            unified_request = {
-                "operation": "upsert" if upsert else "insert",
-                "collection_id": collection_id,
-                "vectors": vector_data,
-            }
-
-            # Debug logging
-            logger.debug(
-                f"Sending vector batch request with {len(vector_data)} vectors"
-            )
-            logger.debug(
-                f"Request payload preview: operation={unified_request['operation']}, collection_id={collection_id}, vector_count={len(vector_data)}"
-            )
-            if vector_data:
-                logger.debug(
-                    f"First vector: id={vector_data[0].get('id')}, metadata_items={len(vector_data[0].get('metadata', []))}"
-                )
-
-            # Print full request for debugging
-            import json as debug_json
-
-            logger.debug(
-                f"Full request JSON:\n{debug_json.dumps(unified_request, indent=2)[:1000]}"
-            )
-
-            # Use vector batch API (entities API is for different use case - SKS)
-            response = self._make_request(
-                "POST", "/api/v1/vectors/batch", json=unified_request
-            )
-
-            response_data = response.json()
-            # Handle unified API response
-            if "metrics" in response_data:
-                metrics_data = response_data["metrics"]
-                result = BatchResult(
-                    total=metrics_data.get("total_processed", len(vector_data)),
-                    success=metrics_data.get("successful_count", len(vector_data)),
-                    failed=metrics_data.get("failed_count", 0),
-                    errors=[],
-                    duration_ms=metrics_data.get("processing_time_us", 0) / 1000.0,
-                    metrics=OperationMetrics(
-                        total_processed=metrics_data.get(
-                            "total_processed", len(vector_data)
-                        ),
-                        successful_count=metrics_data.get(
-                            "successful_count", len(vector_data)
-                        ),
-                        failed_count=metrics_data.get("failed_count", 0),
-                        processing_time_us=metrics_data.get("processing_time_us", 0),
-                        wal_write_time_us=metrics_data.get("wal_write_time_us", 0),
-                        index_update_time_us=metrics_data.get(
-                            "index_update_time_us", 0
-                        ),
-                    ),
-                )
-
-                # Invalidate cache for collection after successful write
-                if result.success > 0:
-                    self._invalidate_collection_cache(collection_id)
-
-                return result
-            else:
-                success_count = len(vector_data) if response_data.get("success") else 0
-                failed_count = 0 if response_data.get("success") else len(vector_data)
-                return BatchResult(
-                    total=len(vector_data),
-                    success=success_count,
-                    failed=failed_count,
-                    errors=[],
-                    duration_ms=0.0,
-                    metrics=OperationMetrics(
-                        total_processed=len(vector_data),
-                        successful_count=success_count,
-                        failed_count=failed_count,
-                    ),
-                )
-
-        else:
-            # Multiple batches
-            total_successful = 0
-            total_failed = 0
-            all_errors = []
-
-            for i in range(0, len(vector_data), effective_batch_size):
-                batch_data = vector_data[i : i + effective_batch_size]
-
-                try:
-                    # Send batch using unified API
-                    unified_request = {
-                        "operation": "upsert" if upsert else "insert",
-                        "collection_id": collection_id,
-                        "vectors": batch_data,
-                    }
-                    # For multi-batch, use legacy endpoint to minimize negotiation overhead
-                    response = self._make_request(
-                        "POST", "/api/v1/vectors/batch", json=unified_request
-                    )
-
-                    batch_response = response.json()
-                    if "data" in batch_response and "success" in batch_response:
-                        batch_count = (
-                            len(batch_response["data"]) if batch_response["data"] else 0
-                        )
-                        total_successful += batch_count
-                    else:
-                        total_failed += len(batch_data)
-
-                    # Check for errors in response
-                    if batch_response.get("error"):
-                        all_errors.append(
-                            f"Batch {i//effective_batch_size}: {batch_response['error']}"
-                        )
-
-                except Exception as e:
-                    total_failed += len(batch_data)
-                    all_errors.append(f"Batch {i//effective_batch_size}: {str(e)}")
-
-            return BatchResult(
-                total=len(vector_data),
-                success=total_successful,
-                failed=total_failed,
-                duration_ms=0,  # Total duration not tracked for multi-batch
-                errors=all_errors if all_errors else [],
-                metrics=OperationMetrics(
-                    total_processed=len(vector_data),
-                    successful_count=total_successful,
-                    failed_count=total_failed,
-                ),
-            )
+        return self.insert_records(
+            collection_id,
+            records,
+            upsert=upsert,
+            batch_size=batch_size,
+        )
 
     def search(
         self,
@@ -2047,85 +1996,39 @@ class ProximaDBClient:
         ]
 
     def delete_vector(self, collection_id: str, vector_id: str) -> DeleteResult:
-        """Delete a single vector"""
+        """Delete a single record by ID."""
         self._auto_warmup(collection_id)
 
-        # Use new vector DELETE endpoint
         response = self._make_request(
-            "DELETE", f"/api/v1/vectors/{collection_id}/{vector_id}"
+            "DELETE", f"/api/v2/collections/{collection_id}/records/{vector_id}"
         )
         response_data = response.json()
         return DeleteResult(
             success=response_data.get("success", False),
-            deleted_count=response_data.get("metrics", {}).get("successful_count", 0),
+            deleted_count=1 if response_data.get("success", False) else 0,
             errors=[],
         )
 
     def delete_vectors(self, collection_id: str, vector_ids: List[str]) -> DeleteResult:
-        """Delete multiple vectors by reading them first, then marking with expires_at=0"""
+        """Delete multiple records by ID through the record delete endpoint."""
         self._auto_warmup(collection_id)
 
-        # Fetch existing vectors to get their current state (vector data, version, metadata)
-        vectors_to_delete = []
-        fetch_errors = []
-
+        deleted_count = 0
+        errors = []
         for vector_id in vector_ids:
             try:
-                # Get the current vector with all its data
-                existing = self.get_vector(
-                    collection_id, vector_id, include_vector=True, include_metadata=True
-                )
-                if existing:
-                    # Prepare delete record with existing vector data and expires_at=0
-                    delete_record = {
-                        "id": vector_id,
-                        "vector": existing.get(
-                            "vector", existing.get("values", [])
-                        ),  # Keep original vector
-                        "metadata": existing.get(
-                            "metadata", {}
-                        ),  # Keep original metadata
-                        "version": existing.get("version"),  # Keep version for MVCC
-                        "expires_at": 0,  # Set to 0 (past time) for immediate deletion
-                    }
-                    vectors_to_delete.append(delete_record)
+                result = self.delete_vector(collection_id, vector_id)
+                if result.success:
+                    deleted_count += result.deleted_count
+                else:
+                    errors.extend(result.errors or [f"Delete failed for {vector_id}"])
             except Exception as e:
-                # Vector might not exist or already deleted - skip it
-                fetch_errors.append(f"Failed to fetch {vector_id}: {str(e)}")
-                continue
-
-        if not vectors_to_delete:
-            # No vectors found to delete
-            return DeleteResult(
-                success=(len(fetch_errors) == 0), deleted_count=0, errors=fetch_errors
-            )
-
-        # Use batch insert API with expires_at=0 for tombstoning
-        unified_request = {"collection_id": collection_id, "vectors": vectors_to_delete}
-
-        response = self._make_request(
-            "POST", "/api/v1/vectors/batch", json=unified_request
-        )
-        response_data = response.json()
-
-        # Extract metrics from VectorOperationResponse
-        # The response may be nested in "results" field
-        if "results" in response_data and isinstance(response_data["results"], dict):
-            metrics = response_data["results"].get("metrics", {})
-        else:
-            metrics = response_data.get("metrics", {})
-
-        successful_count = metrics.get("successful_count", 0)
-        failed_count = metrics.get("failed_count", 0)
-
-        # If metrics are missing, count from response success field and vector count
-        if successful_count == 0 and response_data.get("success", False):
-            successful_count = len(vectors_to_delete)
+                errors.append(f"Delete failed for {vector_id}: {str(e)}")
 
         return DeleteResult(
-            success=(failed_count == 0 or response_data.get("success", False)),
-            deleted_count=successful_count,
-            errors=fetch_errors,
+            success=not errors,
+            deleted_count=deleted_count,
+            errors=errors,
         )
 
     def get_vector(

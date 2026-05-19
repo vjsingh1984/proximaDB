@@ -203,7 +203,15 @@ type CollectionInfo struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// VectorRecord represents a vector with its ID and metadata.
+// ProximaRecord represents the canonical record payload with optional vector data.
+type ProximaRecord struct {
+	ID     string                 `json:"id"`
+	Vector []float32              `json:"vector,omitempty"`
+	Props  map[string]interface{} `json:"props,omitempty"`
+	Source string                 `json:"source,omitempty"`
+}
+
+// VectorRecord represents a legacy vector-shaped compatibility payload.
 type VectorRecord struct {
 	ID       string                 `json:"id"`
 	Vector   []float32              `json:"vector"`
@@ -303,12 +311,13 @@ func (a *Adapter) DeleteCollection(ctx context.Context, name string) error {
 	return a.doRequest(ctx, http.MethodDelete, url, nil, nil)
 }
 
-// Insert inserts vectors into a collection.
+// Insert inserts records into a collection.
 func (a *Adapter) Insert(ctx context.Context, collection string, records []*VectorRecord) error {
-	url := fmt.Sprintf("%s/api/v1/collections/%s/vectors", a.baseURL, collection)
+	url := fmt.Sprintf("%s/api/v2/collections/%s/records/batch", a.baseURL, collection)
 
 	body, err := json.Marshal(map[string]interface{}{
-		"vectors": records,
+		"records":         recordsToProximaRecords(records),
+		"validate_schema": true,
 	})
 	if err != nil {
 		return &AdapterError{
@@ -321,12 +330,14 @@ func (a *Adapter) Insert(ctx context.Context, collection string, records []*Vect
 	return a.doRequest(ctx, http.MethodPost, url, body, nil)
 }
 
-// Upsert inserts or updates vectors in a collection.
+// Upsert inserts or updates records in a collection.
 func (a *Adapter) Upsert(ctx context.Context, collection string, records []*VectorRecord) error {
-	url := fmt.Sprintf("%s/api/v1/collections/%s/vectors/upsert", a.baseURL, collection)
+	url := fmt.Sprintf("%s/api/v2/collections/%s/records/batch", a.baseURL, collection)
 
 	body, err := json.Marshal(map[string]interface{}{
-		"vectors": records,
+		"records":         recordsToProximaRecords(records),
+		"validate_schema": true,
+		"upsert":          true,
 	})
 	if err != nil {
 		return &AdapterError{
@@ -337,6 +348,18 @@ func (a *Adapter) Upsert(ctx context.Context, collection string, records []*Vect
 	}
 
 	return a.doRequest(ctx, http.MethodPost, url, body, nil)
+}
+
+func recordsToProximaRecords(records []*VectorRecord) []*ProximaRecord {
+	result := make([]*ProximaRecord, len(records))
+	for i, record := range records {
+		result[i] = &ProximaRecord{
+			ID:     record.ID,
+			Vector: record.Vector,
+			Props:  record.Metadata,
+		}
+	}
+	return result
 }
 
 // Search performs a vector similarity search.

@@ -21,7 +21,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from proximadb_sdk.models import VectorRecord
+from proximadb_sdk.integrations._records import insert_records, record_payload
 
 Namespace = tuple[str, ...]
 EmbeddingFn = Callable[[Sequence[str]], list[list[float]]]
@@ -140,13 +140,14 @@ class ProximaBaseStore:
             text = _text_for_index(value, index)
             if text:
                 vector = self.embed([text])[0]
-                self.adapter.insert_vectors(
+                insert_records(
+                    self.adapter,
                     self.vector_collection,
                     [
-                        VectorRecord(
-                            id=doc_id,
+                        record_payload(
+                            record_id=doc_id,
                             vector=vector,
-                            source=text,
+                            text=text,
                             metadata={
                                 "namespace_path": _namespace_path(ns),
                                 "key": key,
