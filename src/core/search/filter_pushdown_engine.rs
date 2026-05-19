@@ -70,6 +70,18 @@ pub struct FilterPushdownConfig {
     /// Minimum selectivity threshold (0.0-1.0)
     /// Filters with selectivity below this threshold are pushed down
     pub min_selectivity_threshold: f32,
+
+    /// Placeholder selectivity before a storage filter is costed.
+    pub default_selectivity: f32,
+
+    /// Fallback range selectivity when column statistics lack min/max detail.
+    pub stats_range_selectivity: f32,
+
+    /// Per-condition selectivity used for AND filters without statistics.
+    pub heuristic_and_condition_selectivity: f32,
+
+    /// Per-condition selectivity contribution used for OR filters without statistics.
+    pub heuristic_or_condition_selectivity: f32,
 }
 
 impl Default for FilterPushdownConfig {
@@ -79,7 +91,37 @@ impl Default for FilterPushdownConfig {
             enable_statistics: true,
             enable_index_filters: true,
             min_selectivity_threshold: 0.5, // Push down filters that select <50% of data
+            default_selectivity: 0.5,
+            stats_range_selectivity: 0.2,
+            heuristic_and_condition_selectivity: 0.5,
+            heuristic_or_condition_selectivity: 0.3,
         }
+    }
+}
+
+impl FilterPushdownConfig {
+    /// Validate selectivity factors before installing the planner.
+    pub fn validate(&self) -> Result<()> {
+        for (name, value) in [
+            ("min_selectivity_threshold", self.min_selectivity_threshold),
+            ("default_selectivity", self.default_selectivity),
+            ("stats_range_selectivity", self.stats_range_selectivity),
+            (
+                "heuristic_and_condition_selectivity",
+                self.heuristic_and_condition_selectivity,
+            ),
+            (
+                "heuristic_or_condition_selectivity",
+                self.heuristic_or_condition_selectivity,
+            ),
+        ] {
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                return Err(ProximaDBError::Config(format!(
+                    "filter pushdown config {name} must be finite and between 0.0 and 1.0, got {value}"
+                )));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -178,6 +220,11 @@ pub struct FilterPushdownPlanner {
 impl FilterPushdownPlanner {
     /// Create a new filter pushdown planner
     pub fn new(config: FilterPushdownConfig) -> Self {
+        debug_assert!(
+            config.validate().is_ok(),
+            "invalid filter pushdown configuration: {:?}",
+            config.validate().err()
+        );
         Self { config }
     }
 
@@ -248,7 +295,7 @@ impl FilterPushdownPlanner {
                 Ok(StorageFilter {
                     conditions: all_conditions,
                     logic: FilterLogic::And,
-                    estimated_selectivity: 0.5, // Will be estimated later
+                    estimated_selectivity: self.config.default_selectivity,
                 })
             }
             FilterExpression::Or(conditions) => {
@@ -263,7 +310,7 @@ impl FilterPushdownPlanner {
                 Ok(StorageFilter {
                     conditions: all_conditions,
                     logic: FilterLogic::Or,
-                    estimated_selectivity: 0.5,
+                    estimated_selectivity: self.config.default_selectivity,
                 })
             }
             FilterExpression::Not(_condition) => {
@@ -286,7 +333,7 @@ impl FilterPushdownPlanner {
                 Ok(StorageFilter {
                     conditions: vec![storage_condition],
                     logic: FilterLogic::And,
-                    estimated_selectivity: 0.5,
+                    estimated_selectivity: self.config.default_selectivity,
                 })
             }
         }
@@ -399,8 +446,7 @@ impl FilterPushdownPlanner {
                     }
                 }
                 StorageFilterCondition::Range { .. } => {
-                    // Assume 20% selectivity for range filters (heuristic)
-                    selectivity *= 0.2;
+                    selectivity *= self.config.stats_range_selectivity;
                 }
                 StorageFilterCondition::In { field, values } => {
                     if let Some(column_stats) = stats.column_stats.get(field) {
@@ -426,15 +472,12 @@ impl FilterPushdownPlanner {
         let num_conditions = storage_filter.conditions.len();
 
         match storage_filter.logic {
-            FilterLogic::And => {
-                // AND filters: each condition reduces selectivity
-                // Assume each condition filters 50% of data
-                0.5_f32.powi(num_conditions as i32)
-            }
+            FilterLogic::And => self
+                .config
+                .heuristic_and_condition_selectivity
+                .powi(num_conditions as i32),
             FilterLogic::Or => {
-                // OR filters: selectivity increases
-                // Assume each condition adds 30% selectivity
-                let base = 0.3 * num_conditions as f32;
+                let base = self.config.heuristic_or_condition_selectivity * num_conditions as f32;
                 base.min(1.0)
             }
         }
@@ -540,6 +583,20 @@ mod tests {
         assert!(config.enable_statistics);
         assert!(config.enable_index_filters);
         assert_eq!(config.min_selectivity_threshold, 0.5);
+        assert_eq!(config.default_selectivity, 0.5);
+        assert_eq!(config.stats_range_selectivity, 0.2);
+        assert_eq!(config.heuristic_and_condition_selectivity, 0.5);
+        assert_eq!(config.heuristic_or_condition_selectivity, 0.3);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_filter_pushdown_config_validation_rejects_invalid_policy() {
+        let config = FilterPushdownConfig {
+            heuristic_or_condition_selectivity: 1.1,
+            ..Default::default()
+        };
+        assert!(config.validate().is_err());
     }
 
     #[test]
@@ -578,6 +635,62 @@ mod tests {
 
         let selectivity = planner.estimate_selectivity_heuristic(&and_filter);
         assert_eq!(selectivity, 0.5); // One condition with AND
+    }
+
+    #[test]
+    fn test_estimate_selectivity_heuristic_uses_configured_policy() {
+        let planner = FilterPushdownPlanner::new(FilterPushdownConfig {
+            heuristic_and_condition_selectivity: 0.25,
+            heuristic_or_condition_selectivity: 0.4,
+            ..Default::default()
+        });
+
+        let and_filter = StorageFilter {
+            conditions: vec![
+                StorageFilterCondition::Equals {
+                    field: "category".to_string(),
+                    value: FilterValue::String("electronics".to_string()),
+                },
+                StorageFilterCondition::Equals {
+                    field: "region".to_string(),
+                    value: FilterValue::String("us".to_string()),
+                },
+            ],
+            logic: FilterLogic::And,
+            estimated_selectivity: 0.5,
+        };
+        assert_eq!(planner.estimate_selectivity_heuristic(&and_filter), 0.0625);
+
+        let or_filter = StorageFilter {
+            conditions: and_filter.conditions,
+            logic: FilterLogic::Or,
+            estimated_selectivity: 0.5,
+        };
+        assert_eq!(planner.estimate_selectivity_heuristic(&or_filter), 0.8);
+    }
+
+    #[test]
+    fn test_stats_range_selectivity_uses_configured_policy() {
+        let planner = FilterPushdownPlanner::new(FilterPushdownConfig {
+            stats_range_selectivity: 0.35,
+            ..Default::default()
+        });
+        let storage_filter = StorageFilter {
+            conditions: vec![StorageFilterCondition::Range {
+                field: "price".to_string(),
+                min: FilterValue::Integer(10),
+                max: FilterValue::Integer(100),
+            }],
+            logic: FilterLogic::And,
+            estimated_selectivity: 0.5,
+        };
+        let stats = FilterCollectionStats {
+            total_vectors: 1000,
+            column_stats: HashMap::new(),
+        };
+
+        let selectivity = planner.estimate_selectivity_with_stats(&storage_filter, &stats);
+        assert_eq!(selectivity, 0.35);
     }
 
     #[test]
