@@ -51,6 +51,7 @@ flowchart TB
 | Guide | Description | Time |
 |-------|-------------|------|
 | [SQL Extensions](./sql-extensions.md) | Custom SQL functions reference | 20 min |
+| [API Surface Performance](./api-surface-performance-guide.md) | Which SDK, query, and protocol path to choose | 15 min |
 | [Performance Tuning](./performance-tuning.md) | Engine selection, indexing, caching | 30 min |
 
 ## Quick Links
@@ -58,6 +59,7 @@ flowchart TB
 - [Platform Packages](./platform-packages.md) - RPM/DEB/MSI installation
 - [Unified Port Migration](./unified-port-migration.md) - Migrate from multi-port
 - [Python SDK](./sdk-python-guide.md) - Python client library
+- [API Surface Performance](./api-surface-performance-guide.md) - Choose embedded, SQL, UQL, Cypher, REST/gRPC, pgwire, or Arrow Flight
 
 ---
 
