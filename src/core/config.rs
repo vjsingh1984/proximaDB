@@ -1,5 +1,6 @@
 use crate::ai::LLMConfig;
 use crate::network::NetworkConfig;
+use crate::query::unified::RerankConfig;
 use crate::security::SecurityConfig;
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -839,6 +840,16 @@ pub struct QueryConfig {
     /// RL-based adaptive query planner configuration
     #[serde(default)]
     pub rl_planner: RLPlannerConfig,
+    /// Cross-modal reranking policy. Defaults are neutral and disabled.
+    #[serde(default)]
+    pub reranking: RerankConfig,
+}
+
+impl QueryConfig {
+    /// Validate query-scoped runtime policy before the server starts.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        self.reranking.validate()
+    }
 }
 
 /// RL-based Adaptive Query Planner Configuration

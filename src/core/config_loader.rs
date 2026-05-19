@@ -121,8 +121,23 @@ impl ConfigLoader {
 
         // Resolve all relative paths to absolute paths
         Self::resolve_config_paths(&mut merged_config)?;
+        Self::validate_config(&merged_config)?;
 
         Ok(merged_config)
+    }
+
+    fn validate_config(config: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(query_config) = &config.query {
+            query_config.validate().map_err(|err| {
+                let message = format!("Invalid query configuration: {err}");
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    message,
+                )) as Box<dyn std::error::Error + Send + Sync>
+            })?;
+        }
+
+        Ok(())
     }
 
     /// Recursively merge TOML values

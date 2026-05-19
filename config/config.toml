@@ -66,6 +66,51 @@ log_all_executions = true
 # Default optimization goal: MinLatency, MaxRecall, MaxThroughput, Balanced
 default_goal = "Balanced"
 
+# Cross-modal reranking policy. Defaults are neutral and disabled so result
+# scoring is driven by engine scores unless an operator explicitly opts in.
+[query.reranking]
+enabled = false
+semantic_rerank = false
+diversity_optimization = false
+diversity_weight = 0.0
+mmr_lambda = 1.0
+context_aware = false
+missing_score = "zero"
+missing_semantic_score = 0.0
+semantic_base_weight = 0.7
+semantic_signal_weight = 0.3
+navigational_min_base_score = 0.9
+generate_explanations = false
+diversity_model_weight = 0.5
+diversity_dissimilarity_weight = 0.5
+explanation_empty_confidence = 0.5
+rerank_top_k = 100
+
+[query.reranking.model_weights]
+vector = 1.0
+document = 1.0
+graph = 1.0
+observability = 1.0
+
+[query.reranking.intent_boosts]
+similarity_vector = 0.0
+relationship_graph = 0.0
+navigational_high_confidence = 0.0
+informational = 0.0
+analytical_observability = 0.0
+required_model = 0.0
+
+[query.reranking.temporal]
+recent_weight = 0.0
+historical_weight = 0.0
+recent_half_life_hours = 24.0
+historical_half_life_hours = 720.0
+
+[query.reranking.diversity_similarity]
+same_model_weight = 0.0
+metadata_overlap_weight = 0.0
+score_proximity_weight = 0.0
+
 [api]
 # Unified Port Mode - all protocols on single port
 unified_mode = true

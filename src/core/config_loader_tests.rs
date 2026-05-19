@@ -130,6 +130,59 @@ metadata_url = "/custom/path"
     }
 
     #[test]
+    fn test_query_reranking_config_loads_from_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("reranking.toml");
+
+        let config_content = r#"
+[query.reranking]
+enabled = true
+context_aware = true
+missing_score = "configured"
+configured_missing_score = 0.25
+semantic_signal_weight = 0.4
+rerank_top_k = 25
+
+[query.reranking.intent_boosts]
+similarity_vector = 0.42
+
+[query.reranking.model_weights]
+document = 0.9
+"#;
+        fs::write(&config_path, config_content).unwrap();
+
+        let config = ConfigLoader::load_with_defaults(config_path.to_str().unwrap()).unwrap();
+        let reranking = &config.query.expect("query config should load").reranking;
+
+        assert!(reranking.enabled);
+        assert!(reranking.context_aware);
+        assert_eq!(reranking.rerank_top_k, 25);
+        assert_eq!(reranking.configured_missing_score, Some(0.25));
+        assert!((reranking.semantic_signal_weight - 0.4).abs() < f64::EPSILON);
+        assert!((reranking.intent_boosts.similarity_vector - 0.42).abs() < f64::EPSILON);
+        assert!((reranking.model_weights.document - 0.9).abs() < f64::EPSILON);
+        assert!((reranking.model_weights.vector - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_query_reranking_config_validation_rejects_invalid_values() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("bad_reranking.toml");
+
+        let config_content = r#"
+[query.reranking]
+enabled = true
+mmr_lambda = 1.5
+"#;
+        fs::write(&config_path, config_content).unwrap();
+
+        let result = ConfigLoader::load_with_defaults(config_path.to_str().unwrap());
+        assert!(result.is_err());
+        let error = result.err().unwrap().to_string();
+        assert!(error.contains("query.reranking.mmr_lambda"));
+    }
+
+    #[test]
     fn test_load_with_defaults_file_exists() {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("test_config.toml");

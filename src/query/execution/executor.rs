@@ -354,7 +354,7 @@ impl QueryExecutor {
             total_found,
             execution_time_ms: execution_time,
             operations_performed: plan.operations.iter().map(|op| op.describe()).collect(),
-            cache_hits: performance_metrics.cache_hit_ratio as usize,
+            cache_hits: 0,
             performance_metrics,
         })
     }
@@ -696,7 +696,7 @@ impl QueryExecutor {
             total_found,
             execution_time_ms: execution_time,
             operations_performed: plan.operations.iter().map(|op| op.describe()).collect(),
-            cache_hits: performance_metrics.cache_hit_ratio as usize,
+            cache_hits: 0,
             performance_metrics,
         };
 
@@ -736,7 +736,6 @@ impl QueryExecutor {
                     // Update performance metrics for test data
                     metrics.vectors_scanned = rows.len();
                     metrics.metadata_lookups += rows.len(); // Each result involves metadata access
-                    metrics.cache_hit_ratio = 0.8; // Simulated cache hit ratio
 
                     // Avoid clone by using Arc for shared test data
                     return Ok(rows.clone());
@@ -833,7 +832,6 @@ impl QueryExecutor {
         // Update performance metrics
         metrics.vectors_scanned = vos_results.len();
         metrics.metadata_lookups += vos_results.len(); // Each result involves metadata access
-        metrics.cache_hit_ratio = 0.8; // Deferred: Get actual cache hit ratio from VOS
 
         // Convert VOS results to QueryRow format
         let rows = vos_results

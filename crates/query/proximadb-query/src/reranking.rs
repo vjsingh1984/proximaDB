@@ -16,44 +16,388 @@ use tracing::{debug, trace};
 use crate::results::{QueryResult, UnifiedRecord};
 
 /// Reranking strategy configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RerankConfig {
+    /// Enable cross-modal reranking. Defaults to false so production ranking is
+    /// not changed by heuristic policy unless explicitly configured.
+    #[serde(default)]
+    pub enabled: bool,
     /// Enable cross-modal semantic similarity reranking.
+    #[serde(default)]
     pub semantic_rerank: bool,
     /// Enable diversity optimization.
+    #[serde(default)]
     pub diversity_optimization: bool,
     /// Diversity weight (0.0 to 1.0).
+    #[serde(default)]
     pub diversity_weight: f64,
     /// Maximum marginal relevance lambda (0.0 = max diversity, 1.0 = max relevance).
+    #[serde(default)]
     pub mmr_lambda: f64,
     /// Enable context-aware scoring.
+    #[serde(default)]
     pub context_aware: bool,
     /// Model weights per data model for final scoring.
-    pub model_weights: HashMap<DataModel, f64>,
+    #[serde(default)]
+    pub model_weights: ModelWeightConfig,
+    /// Policy for records that do not carry a score.
+    #[serde(default)]
+    pub missing_score: MissingScorePolicy,
+    /// Score to use when `missing_score = "configured"`.
+    #[serde(default)]
+    pub configured_missing_score: Option<f64>,
+    /// Score to use when semantic rerank is enabled and no semantic signal exists.
+    #[serde(default)]
+    pub missing_semantic_score: f64,
+    /// Existing rank score weight when semantic reranking is enabled.
+    #[serde(default = "default_semantic_base_weight")]
+    pub semantic_base_weight: f64,
+    /// Semantic signal weight when semantic reranking is enabled.
+    #[serde(default = "default_semantic_signal_weight")]
+    pub semantic_signal_weight: f64,
+    /// Query-intent boost policy.
+    #[serde(default)]
+    pub intent_boosts: IntentBoostConfig,
+    /// Minimum base score for navigational high-confidence boosts.
+    #[serde(default = "default_navigational_min_base_score")]
+    pub navigational_min_base_score: f64,
+    /// Temporal boost policy.
+    #[serde(default)]
+    pub temporal: TemporalBoostConfig,
+    /// Similarity policy used by MMR diversity.
+    #[serde(default)]
+    pub diversity_similarity: DiversitySimilarityConfig,
     /// Generate explanations for reranking decisions.
+    #[serde(default)]
     pub generate_explanations: bool,
+    /// Weight of model diversity in aggregate diversity scoring.
+    #[serde(default = "default_diversity_score_weight")]
+    pub diversity_model_weight: f64,
+    /// Weight of pairwise dissimilarity in aggregate diversity scoring.
+    #[serde(default = "default_diversity_score_weight")]
+    pub diversity_dissimilarity_weight: f64,
+    /// Confidence used when no explanation components exist.
+    #[serde(default = "default_explanation_empty_confidence")]
+    pub explanation_empty_confidence: f64,
     /// Top-k results to consider for reranking.
+    #[serde(default = "default_rerank_top_k")]
     pub rerank_top_k: usize,
 }
 
 impl Default for RerankConfig {
     fn default() -> Self {
-        let mut model_weights = HashMap::new();
-        model_weights.insert(DataModel::Vector, 1.0);
-        model_weights.insert(DataModel::Document, 0.8);
-        model_weights.insert(DataModel::Graph, 0.9);
-        model_weights.insert(DataModel::Observability, 0.7);
-
         Self {
-            semantic_rerank: true,
-            diversity_optimization: true,
-            diversity_weight: 0.3,
-            mmr_lambda: 0.7,
-            context_aware: true,
-            model_weights,
+            enabled: false,
+            semantic_rerank: false,
+            diversity_optimization: false,
+            diversity_weight: 0.0,
+            mmr_lambda: 1.0,
+            context_aware: false,
+            model_weights: ModelWeightConfig::default(),
+            missing_score: MissingScorePolicy::Zero,
+            configured_missing_score: None,
+            missing_semantic_score: 0.0,
+            semantic_base_weight: default_semantic_base_weight(),
+            semantic_signal_weight: default_semantic_signal_weight(),
+            intent_boosts: IntentBoostConfig::default(),
+            navigational_min_base_score: default_navigational_min_base_score(),
+            temporal: TemporalBoostConfig::default(),
+            diversity_similarity: DiversitySimilarityConfig::default(),
             generate_explanations: false,
-            rerank_top_k: 100,
+            diversity_model_weight: default_diversity_score_weight(),
+            diversity_dissimilarity_weight: default_diversity_score_weight(),
+            explanation_empty_confidence: default_explanation_empty_confidence(),
+            rerank_top_k: default_rerank_top_k(),
         }
+    }
+}
+
+fn default_rerank_top_k() -> usize {
+    100
+}
+
+fn default_semantic_base_weight() -> f64 {
+    0.7
+}
+
+fn default_semantic_signal_weight() -> f64 {
+    0.3
+}
+
+fn default_navigational_min_base_score() -> f64 {
+    0.9
+}
+
+fn default_diversity_score_weight() -> f64 {
+    0.5
+}
+
+fn default_explanation_empty_confidence() -> f64 {
+    0.5
+}
+
+/// Data-model weights for base score normalization.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct ModelWeightConfig {
+    #[serde(default = "default_weight_one")]
+    pub vector: f64,
+    #[serde(default = "default_weight_one")]
+    pub document: f64,
+    #[serde(default = "default_weight_one")]
+    pub graph: f64,
+    #[serde(default = "default_weight_one")]
+    pub observability: f64,
+}
+
+impl Default for ModelWeightConfig {
+    fn default() -> Self {
+        Self {
+            vector: 1.0,
+            document: 1.0,
+            graph: 1.0,
+            observability: 1.0,
+        }
+    }
+}
+
+impl ModelWeightConfig {
+    fn weight_for(self, model: DataModel) -> f64 {
+        match model {
+            DataModel::Vector => self.vector,
+            DataModel::Document => self.document,
+            DataModel::Graph => self.graph,
+            DataModel::Observability => self.observability,
+            _ => 1.0,
+        }
+    }
+}
+
+fn default_weight_one() -> f64 {
+    1.0
+}
+
+/// Policy for records without engine-provided scores.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MissingScorePolicy {
+    /// Use 0.0 and make the absence explicit rather than inventing a neutral score.
+    #[default]
+    Zero,
+    /// Preserve input order for missing-score records by assigning no positive contribution.
+    Preserve,
+    /// Use `configured_missing_score`.
+    Configured,
+}
+
+/// Query-intent boosts. Defaults are neutral.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub struct IntentBoostConfig {
+    #[serde(default)]
+    pub similarity_vector: f64,
+    #[serde(default)]
+    pub relationship_graph: f64,
+    #[serde(default)]
+    pub navigational_high_confidence: f64,
+    #[serde(default)]
+    pub informational: f64,
+    #[serde(default)]
+    pub analytical_observability: f64,
+    #[serde(default)]
+    pub required_model: f64,
+}
+
+/// Temporal boost policy. Defaults are neutral.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct TemporalBoostConfig {
+    #[serde(default)]
+    pub recent_weight: f64,
+    #[serde(default)]
+    pub historical_weight: f64,
+    #[serde(default = "default_recent_half_life_hours")]
+    pub recent_half_life_hours: f64,
+    #[serde(default = "default_historical_half_life_hours")]
+    pub historical_half_life_hours: f64,
+}
+
+impl Default for TemporalBoostConfig {
+    fn default() -> Self {
+        Self {
+            recent_weight: 0.0,
+            historical_weight: 0.0,
+            recent_half_life_hours: default_recent_half_life_hours(),
+            historical_half_life_hours: default_historical_half_life_hours(),
+        }
+    }
+}
+
+fn default_recent_half_life_hours() -> f64 {
+    24.0
+}
+
+fn default_historical_half_life_hours() -> f64 {
+    720.0
+}
+
+/// Similarity components used by MMR diversity. Defaults are neutral.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub struct DiversitySimilarityConfig {
+    #[serde(default)]
+    pub same_model_weight: f64,
+    #[serde(default)]
+    pub metadata_overlap_weight: f64,
+    #[serde(default)]
+    pub score_proximity_weight: f64,
+}
+
+impl RerankConfig {
+    pub fn validate(&self) -> Result<()> {
+        if self.rerank_top_k == 0 {
+            anyhow::bail!("query.reranking.rerank_top_k must be greater than 0");
+        }
+        validate_unit_interval("query.reranking.diversity_weight", self.diversity_weight)?;
+        validate_unit_interval("query.reranking.mmr_lambda", self.mmr_lambda)?;
+        validate_unit_interval(
+            "query.reranking.missing_semantic_score",
+            self.missing_semantic_score,
+        )?;
+        validate_unit_interval(
+            "query.reranking.semantic_base_weight",
+            self.semantic_base_weight,
+        )?;
+        validate_unit_interval(
+            "query.reranking.semantic_signal_weight",
+            self.semantic_signal_weight,
+        )?;
+        validate_unit_interval(
+            "query.reranking.navigational_min_base_score",
+            self.navigational_min_base_score,
+        )?;
+        validate_unit_interval(
+            "query.reranking.diversity_model_weight",
+            self.diversity_model_weight,
+        )?;
+        validate_unit_interval(
+            "query.reranking.diversity_dissimilarity_weight",
+            self.diversity_dissimilarity_weight,
+        )?;
+        validate_unit_interval(
+            "query.reranking.explanation_empty_confidence",
+            self.explanation_empty_confidence,
+        )?;
+        if self.semantic_rerank && self.semantic_base_weight + self.semantic_signal_weight <= 0.0 {
+            anyhow::bail!(
+                "query.reranking semantic weights must have positive total when semantic_rerank is enabled"
+            );
+        }
+        if self.missing_score == MissingScorePolicy::Configured {
+            match self.configured_missing_score {
+                Some(score) => {
+                    validate_unit_interval("query.reranking.configured_missing_score", score)?
+                }
+                None => anyhow::bail!(
+                    "query.reranking.configured_missing_score is required when missing_score = \"configured\""
+                ),
+            }
+        }
+
+        for (name, value) in [
+            (
+                "query.reranking.model_weights.vector",
+                self.model_weights.vector,
+            ),
+            (
+                "query.reranking.model_weights.document",
+                self.model_weights.document,
+            ),
+            (
+                "query.reranking.model_weights.graph",
+                self.model_weights.graph,
+            ),
+            (
+                "query.reranking.model_weights.observability",
+                self.model_weights.observability,
+            ),
+            (
+                "query.reranking.intent_boosts.similarity_vector",
+                self.intent_boosts.similarity_vector,
+            ),
+            (
+                "query.reranking.intent_boosts.relationship_graph",
+                self.intent_boosts.relationship_graph,
+            ),
+            (
+                "query.reranking.intent_boosts.navigational_high_confidence",
+                self.intent_boosts.navigational_high_confidence,
+            ),
+            (
+                "query.reranking.intent_boosts.informational",
+                self.intent_boosts.informational,
+            ),
+            (
+                "query.reranking.intent_boosts.analytical_observability",
+                self.intent_boosts.analytical_observability,
+            ),
+            (
+                "query.reranking.intent_boosts.required_model",
+                self.intent_boosts.required_model,
+            ),
+            (
+                "query.reranking.temporal.recent_weight",
+                self.temporal.recent_weight,
+            ),
+            (
+                "query.reranking.temporal.historical_weight",
+                self.temporal.historical_weight,
+            ),
+            (
+                "query.reranking.diversity_similarity.same_model_weight",
+                self.diversity_similarity.same_model_weight,
+            ),
+            (
+                "query.reranking.diversity_similarity.metadata_overlap_weight",
+                self.diversity_similarity.metadata_overlap_weight,
+            ),
+            (
+                "query.reranking.diversity_similarity.score_proximity_weight",
+                self.diversity_similarity.score_proximity_weight,
+            ),
+        ] {
+            validate_non_negative(name, value)?;
+        }
+
+        validate_positive(
+            "query.reranking.temporal.recent_half_life_hours",
+            self.temporal.recent_half_life_hours,
+        )?;
+        validate_positive(
+            "query.reranking.temporal.historical_half_life_hours",
+            self.temporal.historical_half_life_hours,
+        )?;
+        Ok(())
+    }
+}
+
+fn validate_unit_interval(name: &str, value: f64) -> Result<()> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Ok(())
+    } else {
+        anyhow::bail!("{name} must be finite and in [0.0, 1.0], got {value}")
+    }
+}
+
+fn validate_non_negative(name: &str, value: f64) -> Result<()> {
+    if value.is_finite() && value >= 0.0 {
+        Ok(())
+    } else {
+        anyhow::bail!("{name} must be finite and non-negative, got {value}")
+    }
+}
+
+fn validate_positive(name: &str, value: f64) -> Result<()> {
+    if value.is_finite() && value > 0.0 {
+        Ok(())
+    } else {
+        anyhow::bail!("{name} must be finite and positive, got {value}")
     }
 }
 
@@ -187,6 +531,18 @@ impl CrossModalReranker {
             });
         }
 
+        self.config.validate()?;
+
+        if !self.config.enabled {
+            let records = result.records;
+            return Ok(RerankedResult {
+                quality_score: self.compute_quality_score(&records),
+                diversity_score: self.compute_diversity_score(&records),
+                records,
+                explanations: vec![],
+            });
+        }
+
         let records_to_rerank: Vec<UnifiedRecord> = result
             .records
             .into_iter()
@@ -242,14 +598,8 @@ impl CrossModalReranker {
             .iter()
             .enumerate()
             .map(|(idx, record)| {
-                let model_weight = self
-                    .config
-                    .model_weights
-                    .get(&record.source_model)
-                    .copied()
-                    .unwrap_or(1.0);
-
-                let base_score = record.score.unwrap_or(0.5);
+                let model_weight = self.config.model_weights.weight_for(record.source_model);
+                let base_score = self.base_score(record.score);
                 let weighted_score = base_score * model_weight;
 
                 ScoredRecord {
@@ -289,18 +639,19 @@ impl CrossModalReranker {
                 ) {
                     self.compute_text_similarity(query_text, record_text)
                 } else {
-                    0.5
+                    self.config.missing_semantic_score
                 };
 
                 record.semantic_score = semantic_score;
                 record.score_components.push(ScoreComponent {
                     name: "semantic_score".to_string(),
                     value: semantic_score,
-                    weight: 0.3,
-                    contribution: semantic_score * 0.3,
+                    weight: self.config.semantic_signal_weight,
+                    contribution: semantic_score * self.config.semantic_signal_weight,
                 });
 
-                record.final_score = record.final_score * 0.7 + semantic_score * 0.3;
+                record.final_score = record.final_score * self.config.semantic_base_weight
+                    + semantic_score * self.config.semantic_signal_weight;
             }
         }
 
@@ -318,34 +669,26 @@ impl CrossModalReranker {
 
             if let Some(intent) = &context.intent {
                 let intent_boost = match intent {
-                    QueryIntent::SimilaritySearch => {
-                        if record.record.source_model == DataModel::Vector {
-                            0.2
-                        } else {
-                            0.0
-                        }
+                    QueryIntent::SimilaritySearch
+                        if record.record.source_model == DataModel::Vector =>
+                    {
+                        self.config.intent_boosts.similarity_vector
                     }
-                    QueryIntent::RelationshipExploration => {
-                        if record.record.source_model == DataModel::Graph {
-                            0.2
-                        } else {
-                            0.0
-                        }
+                    QueryIntent::RelationshipExploration
+                        if record.record.source_model == DataModel::Graph =>
+                    {
+                        self.config.intent_boosts.relationship_graph
                     }
-                    QueryIntent::Navigational => {
-                        if record.base_score > 0.9 {
-                            0.15
-                        } else {
-                            0.0
-                        }
+                    QueryIntent::Navigational
+                        if record.base_score > self.config.navigational_min_base_score =>
+                    {
+                        self.config.intent_boosts.navigational_high_confidence
                     }
-                    QueryIntent::Informational => 0.05,
-                    QueryIntent::Analytical => {
-                        if record.record.source_model == DataModel::Observability {
-                            0.15
-                        } else {
-                            0.0
-                        }
+                    QueryIntent::Informational => self.config.intent_boosts.informational,
+                    QueryIntent::Analytical
+                        if record.record.source_model == DataModel::Observability =>
+                    {
+                        self.config.intent_boosts.analytical_observability
                     }
                     _ => 0.0,
                 };
@@ -375,12 +718,13 @@ impl CrossModalReranker {
                 .required_models
                 .contains(&record.record.source_model)
             {
-                context_score += 0.1;
+                let required_model_boost = self.config.intent_boosts.required_model;
+                context_score += required_model_boost;
                 components.push(ScoreComponent {
                     name: "required_model_boost".to_string(),
-                    value: 0.1,
+                    value: required_model_boost,
                     weight: 1.0,
-                    contribution: 0.1,
+                    contribution: required_model_boost,
                 });
             }
 
@@ -523,6 +867,16 @@ impl CrossModalReranker {
             .and_then(|v| v.as_i64())
     }
 
+    fn base_score(&self, score: Option<f64>) -> f64 {
+        match (score, self.config.missing_score) {
+            (Some(score), _) => score,
+            (None, MissingScorePolicy::Configured) => {
+                self.config.configured_missing_score.unwrap_or(0.0)
+            }
+            (None, MissingScorePolicy::Zero | MissingScorePolicy::Preserve) => 0.0,
+        }
+    }
+
     fn compute_cosine_similarity(&self, a: &[f32], b: &[f32]) -> f64 {
         if a.len() != b.len() || a.is_empty() {
             return 0.0;
@@ -566,11 +920,17 @@ impl CrossModalReranker {
         let age_hours = (now_ns - timestamp) as f64 / (3600.0 * 1_000_000_000.0);
 
         match preference {
-            TemporalPreference::Recent => (-age_hours / 24.0).exp() * 0.1,
-            TemporalPreference::Historical => (1.0 - (-age_hours / 720.0).exp()) * 0.1,
+            TemporalPreference::Recent => {
+                (-age_hours / self.config.temporal.recent_half_life_hours).exp()
+                    * self.config.temporal.recent_weight
+            }
+            TemporalPreference::Historical => {
+                (1.0 - (-age_hours / self.config.temporal.historical_half_life_hours).exp())
+                    * self.config.temporal.historical_weight
+            }
             TemporalPreference::Neutral => 0.0,
             TemporalPreference::Custom { half_life_hours } => {
-                (-age_hours / half_life_hours).exp() * 0.1
+                (-age_hours / half_life_hours).exp() * self.config.temporal.recent_weight
             }
         }
     }
@@ -579,7 +939,7 @@ impl CrossModalReranker {
         let mut similarity = 0.0;
 
         if a.source_model == b.source_model {
-            similarity += 0.3;
+            similarity += self.config.diversity_similarity.same_model_weight;
         }
 
         let keys_a: HashSet<&String> = a.metadata.keys().collect();
@@ -587,11 +947,13 @@ impl CrossModalReranker {
         let key_overlap = keys_a.intersection(&keys_b).count() as f64;
         let key_union = keys_a.union(&keys_b).count() as f64;
         if key_union > 0.0 {
-            similarity += 0.3 * (key_overlap / key_union);
+            similarity += self.config.diversity_similarity.metadata_overlap_weight
+                * (key_overlap / key_union);
         }
 
         if let (Some(score_a), Some(score_b)) = (a.score, b.score) {
-            similarity += 0.4 * (1.0 - (score_a - score_b).abs());
+            similarity += self.config.diversity_similarity.score_proximity_weight
+                * (1.0 - (score_a - score_b).abs());
         }
 
         similarity.min(1.0)
@@ -621,7 +983,9 @@ impl CrossModalReranker {
             0.0
         };
 
-        (model_diversity * 0.5 + avg_dissimilarity * 0.5).min(1.0)
+        (model_diversity * self.config.diversity_model_weight
+            + avg_dissimilarity * self.config.diversity_dissimilarity_weight)
+            .min(1.0)
     }
 
     fn compute_quality_score(&self, records: &[UnifiedRecord]) -> f64 {
@@ -664,7 +1028,7 @@ impl CrossModalReranker {
         if total_components > 0 {
             positive_components as f64 / total_components as f64
         } else {
-            0.5
+            self.config.explanation_empty_confidence
         }
     }
 }
@@ -696,6 +1060,16 @@ mod tests {
         }
     }
 
+    fn make_unscored_record(id: &str, model: DataModel) -> UnifiedRecord {
+        UnifiedRecord {
+            id: id.to_string(),
+            source_model: model,
+            data: serde_json::json!({"id": id}),
+            score: None,
+            metadata: HashMap::new(),
+        }
+    }
+
     #[test]
     fn test_rerank_empty() {
         let reranker = CrossModalReranker::default_reranker();
@@ -711,11 +1085,12 @@ mod tests {
     }
 
     #[test]
-    fn test_rerank_preserves_records() {
+    fn test_default_reranker_is_disabled_and_preserves_order() {
+        assert!(!RerankConfig::default().enabled);
         let reranker = CrossModalReranker::default_reranker();
         let records = vec![
-            make_record("a", 0.9, DataModel::Vector),
-            make_record("b", 0.8, DataModel::Document),
+            make_record("vector", 0.8, DataModel::Vector),
+            make_record("graph", 0.85, DataModel::Graph),
             make_record("c", 0.7, DataModel::Graph),
         ];
 
@@ -725,16 +1100,33 @@ mod tests {
             metrics: Default::default(),
         };
 
-        let reranked = reranker.rerank(result, &QueryContext::default()).unwrap();
+        let context = QueryContext {
+            intent: Some(QueryIntent::SimilaritySearch),
+            ..Default::default()
+        };
+
+        let reranked = reranker.rerank(result, &context).unwrap();
         assert_eq!(reranked.records.len(), 3);
+        assert_eq!(reranked.records[0].id, "vector");
+        assert_eq!(reranked.records[1].id, "graph");
+        assert!(reranked.explanations.is_empty());
     }
 
     #[test]
-    fn test_rerank_with_intent() {
-        let reranker = CrossModalReranker::default_reranker();
+    fn test_configured_similarity_intent_boost_changes_rank() {
+        let config = RerankConfig {
+            enabled: true,
+            context_aware: true,
+            intent_boosts: IntentBoostConfig {
+                similarity_vector: 0.2,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let reranker = CrossModalReranker::new(config);
         let records = vec![
-            make_record("vector", 0.8, DataModel::Vector),
             make_record("graph", 0.85, DataModel::Graph),
+            make_record("vector", 0.8, DataModel::Vector),
         ];
 
         let result = QueryResult {
@@ -750,13 +1142,61 @@ mod tests {
 
         let reranked = reranker.rerank(result, &context).unwrap();
         assert_eq!(reranked.records.len(), 2);
+        assert_eq!(reranked.records[0].id, "vector");
+    }
+
+    #[test]
+    fn test_configured_missing_score_is_explicit() {
+        let config = RerankConfig {
+            enabled: true,
+            missing_score: MissingScorePolicy::Configured,
+            configured_missing_score: Some(0.95),
+            ..Default::default()
+        };
+        let reranker = CrossModalReranker::new(config);
+        let result = QueryResult {
+            records: vec![
+                make_record("scored", 0.5, DataModel::Document),
+                make_unscored_record("configured_missing", DataModel::Vector),
+            ],
+            total_count: Some(2),
+            metrics: Default::default(),
+        };
+
+        let reranked = reranker.rerank(result, &QueryContext::default()).unwrap();
+        assert_eq!(reranked.records[0].id, "configured_missing");
+    }
+
+    #[test]
+    fn test_invalid_rerank_config_is_rejected() {
+        let missing_score_config = RerankConfig {
+            enabled: true,
+            missing_score: MissingScorePolicy::Configured,
+            configured_missing_score: None,
+            ..Default::default()
+        };
+        assert!(missing_score_config.validate().is_err());
+
+        let bad_mmr_config = RerankConfig {
+            enabled: true,
+            mmr_lambda: 1.5,
+            ..Default::default()
+        };
+        assert!(bad_mmr_config.validate().is_err());
     }
 
     #[test]
     fn test_mmr_diversity() {
         let config = RerankConfig {
+            enabled: true,
             diversity_optimization: true,
+            diversity_weight: 0.5,
             mmr_lambda: 0.5,
+            diversity_similarity: DiversitySimilarityConfig {
+                same_model_weight: 0.3,
+                metadata_overlap_weight: 0.3,
+                score_proximity_weight: 0.4,
+            },
             ..Default::default()
         };
 
@@ -781,6 +1221,7 @@ mod tests {
     #[test]
     fn test_explanation_generation() {
         let config = RerankConfig {
+            enabled: true,
             generate_explanations: true,
             ..Default::default()
         };
