@@ -320,6 +320,14 @@ pub struct HybridRuntimeConfig {
 
     /// Fusion weights for [vector, graph].
     pub fusion_weights: Option<Vec<f64>>,
+
+    /// Selectivity below this value uses filter-first hybrid execution.
+    #[serde(default = "default_filter_first_max_selectivity")]
+    pub filter_first_max_selectivity: f64,
+
+    /// Selectivity above this value uses vector-first hybrid execution.
+    #[serde(default = "default_vector_first_min_selectivity")]
+    pub vector_first_min_selectivity: f64,
 }
 
 impl Default for HybridRuntimeConfig {
@@ -327,7 +335,44 @@ impl Default for HybridRuntimeConfig {
         Self {
             seeding_strategy: "AVERAGE".to_string(),
             fusion_weights: Some(vec![0.6, 0.4]),
+            filter_first_max_selectivity: default_filter_first_max_selectivity(),
+            vector_first_min_selectivity: default_vector_first_min_selectivity(),
         }
+    }
+}
+
+fn default_filter_first_max_selectivity() -> f64 {
+    0.1
+}
+
+fn default_vector_first_min_selectivity() -> f64 {
+    0.5
+}
+
+impl HybridRuntimeConfig {
+    /// Validate hybrid runtime policy before startup.
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.filter_first_max_selectivity.is_finite()
+            || !(0.0..=1.0).contains(&self.filter_first_max_selectivity)
+        {
+            return Err(
+                "hybrid.filter_first_max_selectivity must be finite and in [0.0, 1.0]".to_string(),
+            );
+        }
+        if !self.vector_first_min_selectivity.is_finite()
+            || !(0.0..=1.0).contains(&self.vector_first_min_selectivity)
+        {
+            return Err(
+                "hybrid.vector_first_min_selectivity must be finite and in [0.0, 1.0]".to_string(),
+            );
+        }
+        if self.filter_first_max_selectivity >= self.vector_first_min_selectivity {
+            return Err(
+                "hybrid.filter_first_max_selectivity must be less than hybrid.vector_first_min_selectivity"
+                    .to_string(),
+            );
+        }
+        Ok(())
     }
 }
 
@@ -965,6 +1010,9 @@ mod tests {
 
         assert_eq!(config.seeding_strategy, "AVERAGE");
         assert_eq!(config.fusion_weights, Some(vec![0.6, 0.4]));
+        assert_eq!(config.filter_first_max_selectivity, 0.1);
+        assert_eq!(config.vector_first_min_selectivity, 0.5);
+        assert!(config.validate().is_ok());
     }
 
     #[test]

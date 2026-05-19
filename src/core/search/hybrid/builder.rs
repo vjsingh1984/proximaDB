@@ -47,6 +47,49 @@ use crate::core::search::FilterExpression;
 use crate::core::search::filter_contract::{CandidateSet, FilterContract, MetadataLookup};
 use crate::index::axis::management::manager::HybridQuery as AxisHybridQuery;
 
+const DEFAULT_FILTER_FIRST_MAX_SELECTIVITY: f64 = 0.1;
+const DEFAULT_VECTOR_FIRST_MIN_SELECTIVITY: f64 = 0.5;
+
+/// Selectivity thresholds for automatic hybrid execution strategy selection.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HybridStrategyPolicy {
+    /// Selectivity below this value uses filter-first execution.
+    pub filter_first_max_selectivity: f64,
+    /// Selectivity above this value uses vector-first execution.
+    pub vector_first_min_selectivity: f64,
+}
+
+impl Default for HybridStrategyPolicy {
+    fn default() -> Self {
+        Self {
+            filter_first_max_selectivity: DEFAULT_FILTER_FIRST_MAX_SELECTIVITY,
+            vector_first_min_selectivity: DEFAULT_VECTOR_FIRST_MIN_SELECTIVITY,
+        }
+    }
+}
+
+impl HybridStrategyPolicy {
+    /// Validate threshold ordering and numeric bounds.
+    pub fn validate(&self) -> Result<()> {
+        if !self.filter_first_max_selectivity.is_finite()
+            || !(0.0..=1.0).contains(&self.filter_first_max_selectivity)
+        {
+            anyhow::bail!("hybrid.filter_first_max_selectivity must be finite and in [0.0, 1.0]");
+        }
+        if !self.vector_first_min_selectivity.is_finite()
+            || !(0.0..=1.0).contains(&self.vector_first_min_selectivity)
+        {
+            anyhow::bail!("hybrid.vector_first_min_selectivity must be finite and in [0.0, 1.0]");
+        }
+        if self.filter_first_max_selectivity >= self.vector_first_min_selectivity {
+            anyhow::bail!(
+                "hybrid.filter_first_max_selectivity must be less than hybrid.vector_first_min_selectivity"
+            );
+        }
+        Ok(())
+    }
+}
+
 /// Execution strategy for hybrid queries
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HybridExecutionStrategy {
@@ -72,15 +115,29 @@ pub enum HybridExecutionStrategy {
 impl HybridExecutionStrategy {
     /// Select the optimal strategy based on filter selectivity
     pub fn from_selectivity(selectivity: f64) -> Self {
-        if selectivity < 0.1 {
+        Self::from_selectivity_with_policy(selectivity, HybridStrategyPolicy::default())
+            .unwrap_or(HybridExecutionStrategy::Parallel)
+    }
+
+    /// Select the optimal strategy using explicit, validated policy thresholds.
+    pub fn from_selectivity_with_policy(
+        selectivity: f64,
+        policy: HybridStrategyPolicy,
+    ) -> Result<Self> {
+        policy.validate()?;
+        if !selectivity.is_finite() || !(0.0..=1.0).contains(&selectivity) {
+            anyhow::bail!("hybrid selectivity must be finite and in [0.0, 1.0]");
+        }
+
+        if selectivity < policy.filter_first_max_selectivity {
             // Highly selective: filter first to reduce vector search space
-            HybridExecutionStrategy::FilterFirst
-        } else if selectivity > 0.5 {
+            Ok(HybridExecutionStrategy::FilterFirst)
+        } else if selectivity > policy.vector_first_min_selectivity {
             // Low selectivity: vector search first, then filter
-            HybridExecutionStrategy::VectorFirst
+            Ok(HybridExecutionStrategy::VectorFirst)
         } else {
             // Moderate selectivity: parallel execution
-            HybridExecutionStrategy::Parallel
+            Ok(HybridExecutionStrategy::Parallel)
         }
     }
 }
@@ -102,6 +159,9 @@ pub struct HybridQuery {
 
     /// Execution strategy
     pub strategy: HybridExecutionStrategy,
+
+    /// Auto-strategy threshold policy
+    pub strategy_policy: HybridStrategyPolicy,
 
     /// Similarity threshold (0.0 to 1.0)
     pub similarity_threshold: f32,
@@ -135,7 +195,10 @@ impl HybridQuery {
                 .as_ref()
                 .map(|f| f.estimated_selectivity())
                 .unwrap_or(1.0);
-            HybridExecutionStrategy::from_selectivity(selectivity)
+            HybridExecutionStrategy::from_selectivity_with_policy(
+                selectivity,
+                self.strategy_policy,
+            )?
         } else {
             self.strategy
         };
@@ -329,6 +392,9 @@ pub struct HybridQueryBuilder {
     /// Execution strategy
     strategy: Option<HybridExecutionStrategy>,
 
+    /// Auto-strategy threshold policy
+    strategy_policy: HybridStrategyPolicy,
+
     /// Similarity threshold
     similarity_threshold: Option<f32>,
 
@@ -351,6 +417,7 @@ impl HybridQueryBuilder {
             filter: None,
             collection_id: None,
             strategy: None,
+            strategy_policy: HybridStrategyPolicy::default(),
             similarity_threshold: Some(0.0),
             include_expired: Some(false),
             enable_candidate_optimization: Some(true),
@@ -391,6 +458,12 @@ impl HybridQueryBuilder {
     /// Set the execution strategy
     pub fn strategy(mut self, strategy: HybridExecutionStrategy) -> Self {
         self.strategy = Some(strategy);
+        self
+    }
+
+    /// Set the automatic strategy threshold policy.
+    pub fn strategy_policy(mut self, policy: HybridStrategyPolicy) -> Self {
+        self.strategy_policy = policy;
         self
     }
 
@@ -442,6 +515,7 @@ impl HybridQueryBuilder {
             filter: self.filter,
             collection_id,
             strategy,
+            strategy_policy: self.strategy_policy,
             similarity_threshold: self.similarity_threshold.unwrap_or(0.0),
             include_expired: self.include_expired.unwrap_or(false),
             enable_candidate_optimization: self.enable_candidate_optimization.unwrap_or(true),
@@ -502,6 +576,37 @@ mod tests {
     }
 
     #[test]
+    fn test_strategy_selection_uses_configured_policy() {
+        let policy = HybridStrategyPolicy {
+            filter_first_max_selectivity: 0.2,
+            vector_first_min_selectivity: 0.8,
+        };
+
+        assert_eq!(
+            HybridExecutionStrategy::from_selectivity_with_policy(0.15, policy).unwrap(),
+            HybridExecutionStrategy::FilterFirst
+        );
+        assert_eq!(
+            HybridExecutionStrategy::from_selectivity_with_policy(0.6, policy).unwrap(),
+            HybridExecutionStrategy::Parallel
+        );
+        assert_eq!(
+            HybridExecutionStrategy::from_selectivity_with_policy(0.9, policy).unwrap(),
+            HybridExecutionStrategy::VectorFirst
+        );
+    }
+
+    #[test]
+    fn test_strategy_policy_validation_rejects_bad_thresholds() {
+        let policy = HybridStrategyPolicy {
+            filter_first_max_selectivity: 0.8,
+            vector_first_min_selectivity: 0.2,
+        };
+
+        assert!(policy.validate().is_err());
+    }
+
+    #[test]
     fn test_hybrid_query_builder_basic() {
         let query = HybridQuery::builder()
             .query_vector(vec![0.1, 0.2, 0.3])
@@ -514,6 +619,7 @@ mod tests {
         assert_eq!(query.top_k, 10);
         assert_eq!(query.collection_id, "test_collection");
         assert_eq!(query.strategy, HybridExecutionStrategy::Auto);
+        assert_eq!(query.strategy_policy, HybridStrategyPolicy::default());
     }
 
     #[test]

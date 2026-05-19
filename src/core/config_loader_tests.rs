@@ -183,6 +183,47 @@ mmr_lambda = 1.5
     }
 
     #[test]
+    fn test_hybrid_runtime_selectivity_policy_loads_from_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("hybrid.toml");
+
+        let config_content = r#"
+[hybrid]
+seeding_strategy = "PER_SEED"
+fusion_weights = [0.7, 0.3]
+filter_first_max_selectivity = 0.2
+vector_first_min_selectivity = 0.8
+"#;
+        fs::write(&config_path, config_content).unwrap();
+
+        let config = ConfigLoader::load_with_defaults(config_path.to_str().unwrap()).unwrap();
+        let hybrid = config.hybrid.expect("hybrid config should load");
+
+        assert_eq!(hybrid.seeding_strategy, "PER_SEED");
+        assert_eq!(hybrid.fusion_weights, Some(vec![0.7, 0.3]));
+        assert_eq!(hybrid.filter_first_max_selectivity, 0.2);
+        assert_eq!(hybrid.vector_first_min_selectivity, 0.8);
+    }
+
+    #[test]
+    fn test_hybrid_runtime_selectivity_policy_rejects_invalid_ordering() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("bad_hybrid.toml");
+
+        let config_content = r#"
+[hybrid]
+filter_first_max_selectivity = 0.9
+vector_first_min_selectivity = 0.2
+"#;
+        fs::write(&config_path, config_content).unwrap();
+
+        let result = ConfigLoader::load_with_defaults(config_path.to_str().unwrap());
+        assert!(result.is_err());
+        let error = result.err().unwrap().to_string();
+        assert!(error.contains("hybrid.filter_first_max_selectivity"));
+    }
+
+    #[test]
     fn test_load_with_defaults_file_exists() {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("test_config.toml");

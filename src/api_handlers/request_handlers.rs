@@ -2333,6 +2333,7 @@ mod hybrid_tests {
         let runtime = crate::core::config::HybridRuntimeConfig {
             seeding_strategy: "PER_SEED".to_string(),
             fusion_weights: Some(vec![0.8, 0.2]),
+            ..Default::default()
         };
         let sql = "-- SEEDING: NONE\nSELECT * FROM a";
         let (seeding, weights) = UnifiedHandlers::resolve_hybrid_static(Some(runtime), sql);

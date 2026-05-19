@@ -111,6 +111,18 @@ same_model_weight = 0.0
 metadata_overlap_weight = 0.0
 score_proximity_weight = 0.0
 
+[hybrid]
+# Default seeding strategy for hybrid query execution: AVERAGE, PER_SEED, NONE
+seeding_strategy = "AVERAGE"
+# Fusion weights for [vector, graph]
+fusion_weights = [0.6, 0.4]
+# Auto execution strategy thresholds for metadata filter selectivity.
+# selectivity < filter_first_max_selectivity => filter-first
+# selectivity > vector_first_min_selectivity => vector-first
+# otherwise => parallel
+filter_first_max_selectivity = 0.1
+vector_first_min_selectivity = 0.5
+
 [api]
 # Unified Port Mode - all protocols on single port
 unified_mode = true

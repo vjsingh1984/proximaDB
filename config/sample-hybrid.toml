@@ -11,3 +11,9 @@ seeding_strategy = "PER_SEED"
 # Fusion weights for [vector, graph]
 fusion_weights = [0.7, 0.3]
 
+# Auto execution strategy thresholds for metadata filter selectivity.
+# selectivity < filter_first_max_selectivity => filter-first
+# selectivity > vector_first_min_selectivity => vector-first
+# otherwise => parallel
+filter_first_max_selectivity = 0.1
+vector_first_min_selectivity = 0.5

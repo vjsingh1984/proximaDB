@@ -136,6 +136,15 @@ impl ConfigLoader {
                 )) as Box<dyn std::error::Error + Send + Sync>
             })?;
         }
+        if let Some(hybrid_config) = &config.hybrid {
+            hybrid_config.validate().map_err(|err| {
+                let message = format!("Invalid hybrid configuration: {err}");
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    message,
+                )) as Box<dyn std::error::Error + Send + Sync>
+            })?;
+        }
 
         Ok(())
     }
