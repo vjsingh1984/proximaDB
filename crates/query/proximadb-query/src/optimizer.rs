@@ -32,6 +32,11 @@ pub struct QueryOptimizerRuntime {
 impl QueryOptimizerRuntime {
     /// Create a new query optimizer runtime.
     pub fn new(config: OptimizerConfig) -> Self {
+        debug_assert!(
+            config.validate().is_ok(),
+            "invalid optimizer configuration: {:?}",
+            config.validate().err()
+        );
         let plan_cache = if config.enable_plan_cache {
             Some(Arc::new(PlanCache::new(1000, config.plan_cache_ttl_secs)))
         } else {
@@ -478,22 +483,24 @@ impl QueryOptimizerRuntime {
     }
 
     fn estimate_filter_selectivity(&self, filter: &PathFilter) -> f64 {
+        let policy = &self.config.selectivity_policy;
         match filter.operator {
-            FilterOperator::Eq => 0.1,
-            FilterOperator::Ne => 0.9,
-            FilterOperator::Gt | FilterOperator::Lt => 0.5,
-            FilterOperator::Gte | FilterOperator::Lte => 0.5,
-            FilterOperator::In => 0.2,
-            FilterOperator::NotIn => 0.8,
-            FilterOperator::Contains => 0.3,
-            FilterOperator::StartsWith => 0.2,
-            FilterOperator::EndsWith => 0.3,
-            FilterOperator::Exists => 0.8,
-            FilterOperator::Type => 0.5,
+            FilterOperator::Eq => policy.eq,
+            FilterOperator::Ne => policy.ne,
+            FilterOperator::Gt | FilterOperator::Lt => policy.range,
+            FilterOperator::Gte | FilterOperator::Lte => policy.range,
+            FilterOperator::In => policy.in_list,
+            FilterOperator::NotIn => policy.not_in,
+            FilterOperator::Contains => policy.contains,
+            FilterOperator::StartsWith => policy.starts_with,
+            FilterOperator::EndsWith => policy.ends_with,
+            FilterOperator::Exists => policy.exists,
+            FilterOperator::Type => policy.type_match,
         }
     }
 
     fn estimate_graph_selectivity(&self, expr: &GraphTraversalExpr) -> SelectivityEstimate {
+        let policy = &self.config.selectivity_policy;
         let mut confidence = 0.3;
         let mut selectivity;
 
@@ -505,23 +512,27 @@ impl QueryOptimizerRuntime {
                 confidence = 0.6;
             }
             StartNodeSpec::Label(_) => {
-                selectivity = 0.1;
+                selectivity = policy.graph_label;
             }
             StartNodeSpec::Filter(_) => {
-                selectivity = 0.05;
+                selectivity = policy.graph_filter;
             }
             StartNodeSpec::FromComponent(_) => {
-                selectivity = 0.01;
+                selectivity = policy.graph_from_component;
                 confidence = 0.2;
             }
         }
 
         if !expr.edge_types.is_empty() {
-            selectivity *= 0.3_f64.powi(expr.edge_types.len() as i32);
+            selectivity *= policy
+                .graph_edge_type_multiplier
+                .powi(expr.edge_types.len() as i32);
         }
 
         if !expr.node_filters.is_empty() {
-            selectivity *= 0.5_f64.powi(expr.node_filters.len() as i32);
+            selectivity *= policy
+                .graph_node_filter_multiplier
+                .powi(expr.node_filters.len() as i32);
         }
 
         let estimated_rows = (selectivity * 1_000_000.0).max(1.0) as u64;
@@ -550,6 +561,7 @@ impl QueryOptimizerRuntime {
     }
 
     fn estimate_log_selectivity(&self, expr: &LogQueryExpr) -> SelectivityEstimate {
+        let policy = &self.config.selectivity_policy;
         let mut selectivity = 1.0;
         let confidence = 0.5;
 
@@ -561,15 +573,17 @@ impl QueryOptimizerRuntime {
         }
 
         if !expr.severities.is_empty() {
-            selectivity *= 0.2;
+            selectivity *= policy.log_severity_multiplier;
         }
 
         if !expr.services.is_empty() {
-            selectivity *= 0.1_f64.powi(expr.services.len() as i32);
+            selectivity *= policy
+                .log_service_multiplier
+                .powi(expr.services.len() as i32);
         }
 
         if expr.query.is_some() {
-            selectivity *= 0.1;
+            selectivity *= policy.log_text_multiplier;
         }
 
         let estimated_rows = (selectivity * 10_000_000.0) as u64;
@@ -583,6 +597,7 @@ impl QueryOptimizerRuntime {
     }
 
     fn estimate_metric_selectivity(&self, expr: &MetricQueryExpr) -> SelectivityEstimate {
+        let policy = &self.config.selectivity_policy;
         let mut selectivity = 1.0;
         let confidence = 0.5;
 
@@ -594,10 +609,12 @@ impl QueryOptimizerRuntime {
         }
 
         if !expr.metric_name.is_empty() {
-            selectivity *= 0.01;
+            selectivity *= policy.metric_name_multiplier;
         }
 
-        selectivity *= 0.5_f64.powi(expr.label_filters.len() as i32);
+        selectivity *= policy
+            .metric_label_multiplier
+            .powi(expr.label_filters.len() as i32);
 
         let estimated_rows = (selectivity * 1_000_000.0) as u64;
 
@@ -613,6 +630,7 @@ impl QueryOptimizerRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::optimizer_support::SelectivityPolicy;
     use proximadb_document_query::DocumentQueryExpr;
     use proximadb_multimodel_query::{
         ComponentDependency, JoinType, ModelOperation, MultiModelQuery, QueryComponent,
@@ -680,6 +698,16 @@ mod tests {
     }
 
     #[test]
+    fn optimizer_config_validates_selectivity_policy() {
+        let mut config = OptimizerConfig::default();
+        assert!(config.validate().is_ok());
+
+        config.selectivity_policy.eq = 1.5;
+        let error = config.validate().expect_err("invalid selectivity rejected");
+        assert!(error.contains("eq"));
+    }
+
+    #[test]
     fn vector_selectivity_tracks_threshold_and_top_k() {
         let optimizer = QueryOptimizerRuntime::with_defaults();
 
@@ -717,6 +745,28 @@ mod tests {
     }
 
     #[test]
+    fn document_selectivity_follows_configured_policy() {
+        let policy = SelectivityPolicy {
+            eq: 0.42,
+            ..Default::default()
+        };
+        let optimizer = QueryOptimizerRuntime::new(OptimizerConfig {
+            selectivity_policy: policy,
+            ..Default::default()
+        });
+
+        let component = make_document_query_component(vec![PathFilter {
+            path: "$.category".to_string(),
+            operator: FilterOperator::Eq,
+            value: FilterValue::String("electronics".to_string()),
+        }]);
+
+        let estimate = optimizer.estimate_selectivity(&component);
+        assert!((estimate.selectivity - 0.42).abs() < f64::EPSILON);
+        assert_eq!(estimate.estimated_rows, 42_000);
+    }
+
+    #[test]
     fn graph_selectivity_becomes_more_selective_with_edge_filters() {
         let optimizer = QueryOptimizerRuntime::with_defaults();
         let no_edge_filter = make_graph_traversal_component(vec![], 2);
@@ -725,6 +775,25 @@ mod tests {
         let estimate = optimizer.estimate_selectivity(&no_edge_filter);
         let estimate2 = optimizer.estimate_selectivity(&with_edge_filter);
         assert!(estimate2.selectivity < estimate.selectivity);
+    }
+
+    #[test]
+    fn graph_selectivity_follows_configured_edge_multiplier() {
+        let policy = SelectivityPolicy {
+            graph_edge_type_multiplier: 0.8,
+            ..Default::default()
+        };
+        let optimizer = QueryOptimizerRuntime::new(OptimizerConfig {
+            selectivity_policy: policy,
+            ..Default::default()
+        });
+
+        let no_edge_filter = make_graph_traversal_component(vec![], 2);
+        let with_edge_filter = make_graph_traversal_component(vec!["KNOWS".to_string()], 2);
+
+        let base = optimizer.estimate_selectivity(&no_edge_filter);
+        let filtered = optimizer.estimate_selectivity(&with_edge_filter);
+        assert!((filtered.selectivity - (base.selectivity * 0.8)).abs() < f64::EPSILON);
     }
 
     #[test]

@@ -35,6 +35,8 @@ pub struct OptimizerConfig {
     pub enable_measured_fitness: bool,
     /// Soft cap on measured-fitness cache entries.
     pub measured_fitness_max_entries: usize,
+    /// Configurable fallback heuristics used when catalog/statistics are absent.
+    pub selectivity_policy: SelectivityPolicy,
 }
 
 impl Default for OptimizerConfig {
@@ -51,8 +53,120 @@ impl Default for OptimizerConfig {
             evolutionary_generations: 5,
             enable_measured_fitness: false,
             measured_fitness_max_entries: 1024,
+            selectivity_policy: SelectivityPolicy::default(),
         }
     }
+}
+
+impl OptimizerConfig {
+    /// Validate optimizer configuration ranges before installing it in a runtime.
+    pub fn validate(&self) -> Result<(), String> {
+        validate_unit_interval("min_selectivity_threshold", self.min_selectivity_threshold)?;
+        self.selectivity_policy.validate()
+    }
+}
+
+/// Configurable selectivity heuristics for planner fallback paths.
+///
+/// These values are only used when catalog statistics or measured history are not
+/// available. Keeping them in a policy object makes the production path explicit
+/// and avoids hidden tuning constants in planner branches.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SelectivityPolicy {
+    pub eq: f64,
+    pub ne: f64,
+    pub range: f64,
+    pub in_list: f64,
+    pub not_in: f64,
+    pub contains: f64,
+    pub starts_with: f64,
+    pub ends_with: f64,
+    pub exists: f64,
+    pub type_match: f64,
+    pub graph_label: f64,
+    pub graph_filter: f64,
+    pub graph_from_component: f64,
+    pub graph_edge_type_multiplier: f64,
+    pub graph_node_filter_multiplier: f64,
+    pub log_severity_multiplier: f64,
+    pub log_service_multiplier: f64,
+    pub log_text_multiplier: f64,
+    pub metric_name_multiplier: f64,
+    pub metric_label_multiplier: f64,
+}
+
+impl Default for SelectivityPolicy {
+    fn default() -> Self {
+        Self {
+            eq: 0.1,
+            ne: 0.9,
+            range: 0.5,
+            in_list: 0.2,
+            not_in: 0.8,
+            contains: 0.3,
+            starts_with: 0.2,
+            ends_with: 0.3,
+            exists: 0.8,
+            type_match: 0.5,
+            graph_label: 0.1,
+            graph_filter: 0.05,
+            graph_from_component: 0.01,
+            graph_edge_type_multiplier: 0.3,
+            graph_node_filter_multiplier: 0.5,
+            log_severity_multiplier: 0.2,
+            log_service_multiplier: 0.1,
+            log_text_multiplier: 0.1,
+            metric_name_multiplier: 0.01,
+            metric_label_multiplier: 0.5,
+        }
+    }
+}
+
+impl SelectivityPolicy {
+    /// Validate all selectivity factors as finite unit-interval probabilities.
+    pub fn validate(&self) -> Result<(), String> {
+        for (name, value) in [
+            ("eq", self.eq),
+            ("ne", self.ne),
+            ("range", self.range),
+            ("in_list", self.in_list),
+            ("not_in", self.not_in),
+            ("contains", self.contains),
+            ("starts_with", self.starts_with),
+            ("ends_with", self.ends_with),
+            ("exists", self.exists),
+            ("type_match", self.type_match),
+            ("graph_label", self.graph_label),
+            ("graph_filter", self.graph_filter),
+            ("graph_from_component", self.graph_from_component),
+            (
+                "graph_edge_type_multiplier",
+                self.graph_edge_type_multiplier,
+            ),
+            (
+                "graph_node_filter_multiplier",
+                self.graph_node_filter_multiplier,
+            ),
+            ("log_severity_multiplier", self.log_severity_multiplier),
+            ("log_service_multiplier", self.log_service_multiplier),
+            ("log_text_multiplier", self.log_text_multiplier),
+            ("metric_name_multiplier", self.metric_name_multiplier),
+            ("metric_label_multiplier", self.metric_label_multiplier),
+        ] {
+            validate_unit_interval(name, value)?;
+        }
+
+        Ok(())
+    }
+}
+
+fn validate_unit_interval(name: &str, value: f64) -> Result<(), String> {
+    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+        return Err(format!(
+            "{name} must be finite and between 0.0 and 1.0, got {value}"
+        ));
+    }
+    Ok(())
 }
 
 /// Selectivity estimate for a query component.
