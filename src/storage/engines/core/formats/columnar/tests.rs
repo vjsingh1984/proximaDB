@@ -21,6 +21,21 @@ use super::create_columnar_schema;
 use super::{OptimizationRecommendations, QuantizationStrategy, QueryPattern, StorageBudget};
 use super::{ParquetWriterConfig, StreamingParquetWriter, UnifiedParquetReader};
 
+fn prop_string<'a>(record: &'a ProximaRecord, key: &str) -> Option<&'a str> {
+    match record.props.get(key) {
+        Some(ProximaTreeNode::Value(ProximaValue::String(value))) => Some(value.as_str()),
+        _ => None,
+    }
+}
+
+fn first_vector_len(record: &ProximaRecord) -> usize {
+    record
+        .embeddings
+        .first()
+        .map(|embedding| embedding.values.len())
+        .unwrap_or(0)
+}
+
 #[tokio::test]
 async fn test_id_column_always_preserved() {
     let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
@@ -370,10 +385,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
 
     // Verify all results match filter
     for record in &fast_results {
-        let cat = record.metadata.get("category").unwrap();
-        if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) = &cat.value {
-            assert_eq!(s, "cat_2");
-        }
+        assert_eq!(prop_string(record, "category"), Some("cat_2"));
     }
 
     println!(
@@ -482,15 +494,8 @@ async fn test_branched_filtering_fast_vs_slow_path() {
 
     // Verify results match both filters
     for record in &mixed_results {
-        let cat = record.metadata.get("category").unwrap();
-        if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) = &cat.value {
-            assert_eq!(s, "cat_1");
-        }
-
-        let custom = record.metadata.get("custom_field").unwrap();
-        if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) = &custom.value {
-            assert_eq!(s, "custom_0");
-        }
+        assert_eq!(prop_string(record, "category"), Some("cat_1"));
+        assert_eq!(prop_string(record, "custom_field"), Some("custom_0"));
     }
 
     // Performance expectation: fast < mixed < slow (in most cases)
@@ -900,9 +905,9 @@ async fn test_customer_api_compatibility() {
     }];
 
     assert_eq!(single_result.len(), 1);
-    assert_eq!(&single_result[0].id, "cust_002");
-    assert_eq!(single_result[0].timestamp.unwrap(), 2000);
-    assert_eq!(single_result[0].vector.len(), 384);
+    assert_eq!(&single_result[0].oid, "cust_002");
+    assert_eq!(single_result[0].created_at_ns / 1_000_000, 2000);
+    assert_eq!(first_vector_len(&single_result[0]), 384);
 
     // Batch ID lookup
     // Deferred: Implement optimized_batch_id_lookup method
@@ -944,7 +949,7 @@ async fn test_customer_api_compatibility() {
     ];
 
     assert_eq!(batch_result.len(), 2);
-    let ids: Vec<String> = batch_result.iter().map(|r| r.id.clone()).collect();
+    let ids: Vec<String> = batch_result.iter().map(|r| r.oid.clone()).collect();
     assert!(ids.contains(&"cust_001".to_string()));
     assert!(ids.contains(&"cust_003".to_string()));
 
@@ -1270,16 +1275,20 @@ fn convert_batches_to_records(batches: Vec<arrow_array::RecordBatch>) -> Vec<Pro
                 .map(|j| vector_values.value(j))
                 .collect();
 
-            records.push(ProximaRecord {
-                id,
-                vector,
-                metadata: HashMap::new(),
-                timestamp: Some(timestamp),
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
-                source: None,
+            let mut record = ProximaRecord {
+                oid: id,
+                record_version: 1,
+                created_at_ns: timestamp * 1_000_000,
+                updated_at_ns: timestamp * 1_000_000,
+                ..Default::default()
+            };
+            record.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                dim: vector.len() as u32,
+                values: vector,
             });
+            records.push(record);
         }
     }
 

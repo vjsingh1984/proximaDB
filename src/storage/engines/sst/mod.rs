@@ -2237,7 +2237,7 @@ mod compression_tests_unified {
         CompressionAlgorithm as UnifiedCompressionAlgorithm, CompressionContext,
     };
 
-    fn create_test_record(id: &str, vector_dim: usize) -> VectorRecord {
+    fn create_test_record(id: &str, vector_dim: usize) -> proximadb_records::ProximaRecord {
         VectorRecord {
             id: id.to_string(),
             vector: vec![1.0; vector_dim],
@@ -2248,6 +2248,7 @@ mod compression_tests_unified {
             version: None,
             source: None,
         }
+        .into()
     }
 
     #[test]
@@ -2298,8 +2299,8 @@ mod compression_tests_unified {
             // Deserialize and verify data integrity
             let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
             assert_eq!(deserialized.records.len(), 2);
-            assert_eq!(deserialized.records[0].id, "test1");
-            assert_eq!(deserialized.records[1].id, "test2");
+            assert_eq!(deserialized.records[0].oid, "test1");
+            assert_eq!(deserialized.records[1].oid, "test2");
             assert_eq!(deserialized.compression_algorithm, algorithm);
 
             // Verify vector data integrity (type mismatch between SstRecord and VectorRecord)
@@ -2312,7 +2313,10 @@ mod compression_tests_unified {
     fn test_unified_compression_efficiency() {
         // Create highly compressible data
         let mut record = create_test_record("compress_test", 1000);
-        record.vector = vec![42.0; 1000]; // Highly compressible repeated values
+        if let Some(embedding) = record.embeddings.first_mut() {
+            embedding.values = vec![42.0; 1000];
+            embedding.dim = 1000;
+        }
 
         // Test uncompressed
         let uncompressed_config = BlockCompressionConfig {
@@ -2360,8 +2364,13 @@ mod compression_tests_unified {
 
             // Verify decompression integrity
             let deserialized = ProximaDataBlock::deserialize(&compressed, None).unwrap();
-            assert_eq!(deserialized.records[0].vector.len(), 1000);
-            assert_eq!(deserialized.records[0].vector[0], 42.0);
+            let values = deserialized.records[0]
+                .embeddings
+                .first()
+                .map(|embedding| embedding.values.as_slice())
+                .unwrap_or(&[]);
+            assert_eq!(values.len(), 1000);
+            assert_eq!(values[0], 42.0);
         }
     }
 
@@ -2446,7 +2455,7 @@ mod compression_tests_unified {
         for (i, (serialized, original_algorithm)) in serialized_blocks.iter().enumerate() {
             let deserialized = ProximaDataBlock::deserialize(serialized, None).unwrap();
             assert_eq!(deserialized.block_id, 0);
-            assert_eq!(deserialized.records[0].id, format!("test_{}", i));
+            assert_eq!(deserialized.records[0].oid, format!("test_{}", i));
             assert_eq!(deserialized.compression_algorithm, *original_algorithm);
         }
     }
@@ -2827,16 +2836,19 @@ mod decompression_cache_tests {
             // Create a block with some data
             let mut records = vec![];
             for j in 0..100 {
-                records.push(VectorRecord {
-                    id: format!("id_{}", j),
-                    vector: vec![0.0; 128],
-                    metadata: std::collections::HashMap::new(),
-                    timestamp: Some(0),
-                    updated_at: None,
-                    expires_at: None,
-                    version: Some(0),
-                    source: None,
-                });
+                records.push(
+                    VectorRecord {
+                        id: format!("id_{}", j),
+                        vector: vec![0.0; 128],
+                        metadata: std::collections::HashMap::new(),
+                        timestamp: Some(0),
+                        updated_at: None,
+                        expires_at: None,
+                        version: Some(0),
+                        source: None,
+                    }
+                    .into(),
+                );
             }
 
             let config = BlockCompressionConfig::default();
@@ -3007,16 +3019,19 @@ mod decompression_cache_tests {
         for i in 0..10 {
             let mut records = vec![];
             for j in 0..10 {
-                records.push(VectorRecord {
-                    id: format!("id_{}_{}", i, j),
-                    vector: vec![i as f32; 64],
-                    metadata: std::collections::HashMap::new(),
-                    timestamp: Some(0),
-                    updated_at: None,
-                    expires_at: None,
-                    version: Some(0),
-                    source: None,
-                });
+                records.push(
+                    VectorRecord {
+                        id: format!("id_{}_{}", i, j),
+                        vector: vec![i as f32; 64],
+                        metadata: std::collections::HashMap::new(),
+                        timestamp: Some(0),
+                        updated_at: None,
+                        expires_at: None,
+                        version: Some(0),
+                        source: None,
+                    }
+                    .into(),
+                );
             }
             let config = BlockCompressionConfig {
                 algorithm: CompressionAlgorithm::Lz4,
@@ -3135,7 +3150,7 @@ mod compression_tests {
     use proximadb_compression::CompressionAlgorithm as UnifiedCompressionAlgorithm;
     use proximadb_compression::markers::*;
 
-    fn create_test_record(id: &str, vector_dim: usize) -> VectorRecord {
+    fn create_test_record(id: &str, vector_dim: usize) -> proximadb_records::ProximaRecord {
         VectorRecord {
             id: id.to_string(),
             vector: vec![1.0; vector_dim],
@@ -3146,6 +3161,7 @@ mod compression_tests {
             version: None,
             source: None,
         }
+        .into()
     }
 
     #[test]
@@ -3187,13 +3203,16 @@ mod compression_tests {
             eprintln!(
                 "Record {}: id={}, vector.len()={}",
                 i,
-                record.id,
-                record.vector.len()
+                record.oid,
+                record
+                    .embeddings
+                    .first()
+                    .map_or(0, |embedding| embedding.values.len())
             );
         }
         assert_eq!(deserialized.block_id, 0);
         assert_eq!(deserialized.records.len(), 2);
-        assert_eq!(deserialized.records[0].id, "test1");
+        assert_eq!(deserialized.records[0].oid, "test1");
     }
 
     #[test]
@@ -3226,7 +3245,7 @@ mod compression_tests {
         let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
         assert_eq!(deserialized.block_id, 0);
         assert_eq!(deserialized.records.len(), 3);
-        assert_eq!(deserialized.records[0].id, "test1");
+        assert_eq!(deserialized.records[0].oid, "test1");
     }
 
     #[test]
@@ -3400,8 +3419,8 @@ mod compression_tests {
             let deserialized = ProximaDataBlock::deserialize(&serialized, None).unwrap();
             assert_eq!(deserialized.block_id, 0);
             assert_eq!(deserialized.records.len(), 2);
-            assert_eq!(deserialized.records[0].id, "test1");
-            assert_eq!(deserialized.records[1].id, "test2");
+            assert_eq!(deserialized.records[0].oid, "test1");
+            assert_eq!(deserialized.records[1].oid, "test2");
         }
     }
 
@@ -3431,7 +3450,10 @@ mod compression_tests {
     fn test_compression_ratio_check() {
         // Create highly compressible data (repeated values)
         let mut record = create_test_record("compress_test", 1000);
-        record.vector = vec![1.0; 1000]; // Highly compressible
+        if let Some(embedding) = record.embeddings.first_mut() {
+            embedding.values = vec![1.0; 1000]; // Highly compressible
+            embedding.dim = 1000;
+        }
 
         let config = BlockCompressionConfig {
             algorithm: UnifiedCompressionAlgorithm::Zstd,
@@ -3497,7 +3519,7 @@ mod compression_tests {
         for (i, serialized) in serialized_blocks.iter().enumerate() {
             let deserialized = ProximaDataBlock::deserialize(serialized, None).unwrap();
             assert_eq!(deserialized.block_id, 0);
-            assert_eq!(deserialized.records[0].id, format!("test_{}", i));
+            assert_eq!(deserialized.records[0].oid, format!("test_{}", i));
         }
     }
 
@@ -3685,8 +3707,15 @@ mod simple_sstable_tests {
         // Verify the record
         assert_eq!(block.records.len(), 1);
         let record = &block.records[0];
-        assert_eq!(record.id, "test_id");
-        assert_eq!(record.vector, vec![1.0, 2.0, 3.0]);
+        assert_eq!(record.oid, "test_id");
+        assert_eq!(
+            record
+                .embeddings
+                .first()
+                .map(|embedding| embedding.values.as_slice())
+                .unwrap_or(&[]),
+            &[1.0, 2.0, 3.0]
+        );
     }
 
     #[tokio::test]
@@ -3774,7 +3803,7 @@ mod simple_sstable_tests {
         // Test retrieving a vector
         match reader.vector(&file_url, "vec_005").await {
             Ok(Some(vector)) => {
-                assert_eq!(vector.id, "vec_005".to_string());
+                assert_eq!(vector.oid, "vec_005".to_string());
             }
             Ok(None) => {
                 panic!("Vector vec_005 not found in SSTable");

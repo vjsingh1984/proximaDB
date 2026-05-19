@@ -6847,7 +6847,17 @@ mod tests {
                 .iter()
                 .zip(grouped_deserialized.records.iter())
             {
-                for (tv, gv) in t.vector.iter().zip(g.vector.iter()) {
+                let t_vector = t
+                    .embeddings
+                    .first()
+                    .map(|embedding| embedding.values.as_slice())
+                    .unwrap_or(&[]);
+                let g_vector = g
+                    .embeddings
+                    .first()
+                    .map(|embedding| embedding.values.as_slice())
+                    .unwrap_or(&[]);
+                for (tv, gv) in t_vector.iter().zip(g_vector.iter()) {
                     assert!(
                         (tv - gv).abs() < 0.0001,
                         "Transpose and Grouped produce different results"
@@ -6862,7 +6872,13 @@ mod tests {
             let vectors = create_test_vectors(100, 256, "normalized");
 
             // Calculate raw size (100 vectors × 256 dims × 4 bytes)
-            let raw_size = vectors.len() * vectors[0].vector.len() * 4;
+            let raw_size = vectors.len()
+                * vectors[0]
+                    .embeddings
+                    .first()
+                    .map(|embedding| embedding.values.len())
+                    .unwrap_or(0)
+                * 4;
 
             // Test GroupedField compression
             let grouped_config = BlockCompressionConfig {

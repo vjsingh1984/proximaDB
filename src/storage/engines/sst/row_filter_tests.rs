@@ -6,6 +6,7 @@ mod tests {
     use crate::storage::engines::sst::row_filter::{
         SSTBatchFilterEvaluator, SSTRowFilterEvaluator,
     };
+    use proximadb_records::ProximaRecord;
 
     #[tokio::test]
     async fn test_sst_row_filter_performance() {
@@ -68,7 +69,7 @@ mod tests {
         println!("Parallel filter found {} matches", indices.len());
     }
 
-    fn create_test_vector_records(count: usize) -> Vec<VectorRecord> {
+    fn create_test_vector_records(count: usize) -> Vec<ProximaRecord> {
         let mut records = Vec::new();
 
         for i in 0..count {
@@ -130,7 +131,7 @@ mod tests {
                 }
             }
 
-            records.push(VectorRecord {
+            records.push(ProximaRecord::from(VectorRecord {
                 id: format!("vec_{}", i),
                 vector: vec![0.1; 128], // Dummy vector
                 metadata: map_metadata,
@@ -139,7 +140,7 @@ mod tests {
                 expires_at: None,
                 version: Some(1),
                 source: None,
-            });
+            }));
         }
 
         records

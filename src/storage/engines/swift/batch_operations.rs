@@ -414,16 +414,19 @@ mod tests {
             encoded_vectors: None,
             vector_layout:
                 crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
-            records: vec![VectorRecord {
-                id: "test".to_string(),
-                vector: vec![1.0; 768],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
-            }],
+            records: vec![
+                VectorRecord {
+                    id: "test".to_string(),
+                    vector: vec![1.0; 768],
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: Some(0),
+                    updated_at: None,
+                    expires_at: None,
+                    version: None,
+                    source: None,
+                }
+                .into(),
+            ],
             quantized_vectors: None,
             quantization_level: None,
             quantized_section: None,
@@ -444,7 +447,7 @@ mod tests {
         cache.put((0, 0), block.clone()).await;
         let retrieved = cache.get(&(0, 0)).await;
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().records[0].id, "test".to_string());
+        assert_eq!(retrieved.unwrap().records[0].oid, "test".to_string());
 
         // Test cache miss
         let miss = cache.get(&(1, 1)).await;
@@ -596,16 +599,19 @@ mod tests {
             encoded_vectors: None,
             vector_layout:
                 crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
-            records: vec![VectorRecord {
-                id: "r1".to_string(),
-                vector: vec![1.0; 128],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
-            }],
+            records: vec![
+                VectorRecord {
+                    id: "r1".to_string(),
+                    vector: vec![1.0; 128],
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: Some(0),
+                    updated_at: None,
+                    expires_at: None,
+                    version: None,
+                    source: None,
+                }
+                .into(),
+            ],
             quantized_vectors: None,
             quantization_level: None,
             quantized_section: None,
@@ -629,16 +635,19 @@ mod tests {
             encoded_vectors: None,
             vector_layout:
                 crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
-            records: vec![VectorRecord {
-                id: "r2".to_string(),
-                vector: vec![2.0; 128],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
-            }],
+            records: vec![
+                VectorRecord {
+                    id: "r2".to_string(),
+                    vector: vec![2.0; 128],
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: Some(0),
+                    updated_at: None,
+                    expires_at: None,
+                    version: None,
+                    source: None,
+                }
+                .into(),
+            ],
             quantized_vectors: None,
             quantization_level: None,
             quantized_section: None,
@@ -662,7 +671,7 @@ mod tests {
         // At least the second one should be present
         let retrieved = cache.get(&(0, 1)).await;
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().records[0].id, "r2");
+        assert_eq!(retrieved.unwrap().records[0].oid, "r2");
     }
 
     #[tokio::test]
@@ -676,16 +685,19 @@ mod tests {
             encoded_vectors: None,
             vector_layout:
                 crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
-            records: vec![VectorRecord {
-                id: "v1".to_string(),
-                vector: vec![1.0],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
-            }],
+            records: vec![
+                VectorRecord {
+                    id: "v1".to_string(),
+                    vector: vec![1.0],
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: Some(0),
+                    updated_at: None,
+                    expires_at: None,
+                    version: None,
+                    source: None,
+                }
+                .into(),
+            ],
             quantized_vectors: None,
             quantization_level: None,
             quantized_section: None,
@@ -709,16 +721,19 @@ mod tests {
             encoded_vectors: None,
             vector_layout:
                 crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
-            records: vec![VectorRecord {
-                id: "v2".to_string(),
-                vector: vec![2.0],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
-            }],
+            records: vec![
+                VectorRecord {
+                    id: "v2".to_string(),
+                    vector: vec![2.0],
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: Some(0),
+                    updated_at: None,
+                    expires_at: None,
+                    version: None,
+                    source: None,
+                }
+                .into(),
+            ],
             quantized_vectors: None,
             quantization_level: None,
             quantized_section: None,
@@ -740,7 +755,7 @@ mod tests {
 
         let retrieved = cache.get(&(0, 0)).await;
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().records[0].id, "v2");
+        assert_eq!(retrieved.unwrap().records[0].oid, "v2");
     }
 
     // ========================================================================
@@ -766,7 +781,8 @@ mod tests {
                     expires_at: None,
                     version: None,
                     source: None,
-                },
+                }
+                .into(),
                 VectorRecord {
                     id: "second".to_string(),
                     vector: vec![2.0],
@@ -776,7 +792,8 @@ mod tests {
                     expires_at: None,
                     version: None,
                     source: None,
-                },
+                }
+                .into(),
             ],
             quantized_vectors: None,
             quantization_level: None,
@@ -815,16 +832,19 @@ mod tests {
             encoded_vectors: None,
             vector_layout:
                 crate::storage::engines::core::formats::proximablocks::VectorEncodingLayout::Auto,
-            records: vec![VectorRecord {
-                id: "test".to_string(),
-                vector: vec![1.0; 768],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
-            }],
+            records: vec![
+                VectorRecord {
+                    id: "test".to_string(),
+                    vector: vec![1.0; 768],
+                    metadata: std::collections::HashMap::new(),
+                    timestamp: Some(0),
+                    updated_at: None,
+                    expires_at: None,
+                    version: None,
+                    source: None,
+                }
+                .into(),
+            ],
             quantized_vectors: None,
             quantization_level: None,
             quantized_section: None,

@@ -689,19 +689,27 @@ mod tests {
     use crate::storage::engines::core::formats::proximablocks::block_structures::BlockStatistics;
     use proximadb_records::{EmbeddingCell, ProximaRecord};
 
+    fn test_record(oid: &str, values: Vec<f32>, timestamp_ms: i64) -> ProximaRecord {
+        let mut record = ProximaRecord {
+            oid: oid.to_string(),
+            created_at_ns: timestamp_ms * 1_000_000,
+            updated_at_ns: timestamp_ms * 1_000_000,
+            ..Default::default()
+        };
+        record.embeddings.push(EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "vector".to_string(),
+            dim: values.len() as u32,
+            values,
+        });
+        record
+    }
+
     #[test]
     fn test_memory_usage_calculation() {
         let records = vec![
-            ProximaRecord {
-                id: "test1".to_string(),
-                vector: vec![1.0, 2.0, 3.0],
-                ..Default::default()
-            },
-            ProximaRecord {
-                id: "test2".to_string(),
-                vector: vec![4.0, 5.0, 6.0],
-                ..Default::default()
-            },
+            test_record("test1", vec![1.0, 2.0, 3.0], 1000),
+            test_record("test2", vec![4.0, 5.0, 6.0], 1001),
         ];
 
         // Deferred: Update to use proper data structure
@@ -749,24 +757,9 @@ mod tests {
     #[test]
     fn test_record_validation() {
         let records = vec![
-            ProximaRecord {
-                id: "valid".to_string(),
-                vector: vec![1.0, 2.0, 3.0],
-                timestamp: Some(1000),
-                ..Default::default()
-            },
-            ProximaRecord {
-                id: "".to_string(), // Invalid - no ID
-                vector: vec![4.0, 5.0, 6.0],
-                timestamp: Some(2000),
-                ..Default::default()
-            },
-            ProximaRecord {
-                id: "invalid_vector".to_string(),
-                vector: vec![f32::NAN, 2.0, f32::INFINITY], // Invalid - NaN and Infinity
-                timestamp: Some(3000),
-                ..Default::default()
-            },
+            test_record("valid", vec![1.0, 2.0, 3.0], 1000),
+            test_record("", vec![4.0, 5.0, 6.0], 2000),
+            test_record("invalid_vector", vec![f32::NAN, 2.0, f32::INFINITY], 3000),
         ];
 
         let report = RowBasedUtilities::validate_records(&records);

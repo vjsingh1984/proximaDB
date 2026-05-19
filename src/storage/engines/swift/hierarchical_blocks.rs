@@ -587,7 +587,8 @@ mod tests {
                 expires_at: None,
                 version: None,
                 source: Some("test".to_string()),
-            }],
+            }
+            .into()],
             quantized_vectors: None,
             quantization_level: None,
             quantized_section: None,

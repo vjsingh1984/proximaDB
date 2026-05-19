@@ -606,7 +606,8 @@ mod tests {
                     expires_at: None,
                     version: Some(1),
                     source: None,
-                },
+                }
+                .into(),
                 crate::proto::proximadb_v1::VectorRecord {
                     id: "vec2".to_string(),
                     vector: vec![0.2; 128],
@@ -627,7 +628,8 @@ mod tests {
                     expires_at: None,
                     version: Some(1),
                     source: None,
-                },
+                }
+                .into(),
                 crate::proto::proximadb_v1::VectorRecord {
                     id: "vec3".to_string(),
                     vector: vec![0.3; 128],
@@ -648,7 +650,8 @@ mod tests {
                     expires_at: None,
                     version: Some(1),
                     source: None,
-                },
+                }
+                .into(),
             ],
             quantized_vectors: None,
             quantization_level: None,

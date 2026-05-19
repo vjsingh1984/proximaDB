@@ -671,29 +671,32 @@ mod tests {
             // This should be approximately 500 * (256 * 4 + overhead) = ~512KB per block
             let mut records = vec![];
             for j in 0..500 {
-                records.push(crate::proto::proximadb_v1::VectorRecord {
-                    id: format!("id_long_name_for_testing_{}", j),
-                    vector: vec![0.0; 256], // 256-dim vector = 1KB per vector
-                    metadata: {
-                        let mut metadata = std::collections::HashMap::new();
-                        metadata.insert(
-                            "test_key".to_string(),
-                            crate::proto::proximadb_v1::SqlValue {
-                                value: Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                        "test_value".to_string(),
+                records.push(
+                    crate::proto::proximadb_v1::VectorRecord {
+                        id: format!("id_long_name_for_testing_{}", j),
+                        vector: vec![0.0; 256], // 256-dim vector = 1KB per vector
+                        metadata: {
+                            let mut metadata = std::collections::HashMap::new();
+                            metadata.insert(
+                                "test_key".to_string(),
+                                crate::proto::proximadb_v1::SqlValue {
+                                    value: Some(
+                                        crate::proto::proximadb_v1::sql_value::Value::StringValue(
+                                            "test_value".to_string(),
+                                        ),
                                     ),
-                                ),
-                            },
-                        );
-                        metadata
-                    },
-                    timestamp: Some(0i64),
-                    updated_at: None,
-                    expires_at: None,
-                    version: None,
-                    source: None,
-                });
+                                },
+                            );
+                            metadata
+                        },
+                        timestamp: Some(0i64),
+                        updated_at: None,
+                        expires_at: None,
+                        version: None,
+                        source: None,
+                    }
+                    .into(),
+                );
             }
 
             let block = ProximaDataBlock::new(records, crate::storage::engines::core::formats::proximablocks::BlockCompressionConfig::default());

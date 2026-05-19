@@ -224,19 +224,20 @@ mod tests {
         );
 
         // Verify first vector content
-        let first_vector = read_vectors.iter().find(|v| v.id == "vec_0");
+        let first_vector = read_vectors.iter().find(|v| v.oid == "vec_0");
         assert!(
             first_vector.is_some(),
             "Should find vec_0 in {} vectors",
             read_vectors.len()
         );
         if let Some(vec) = first_vector {
-            assert_eq!(vec.vector.len(), 3, "Vector should have 3 dimensions");
-            assert_eq!(
-                vec.vector,
-                vec![0.0, 0.0, 0.0],
-                "Vector values should match"
-            );
+            let values = vec
+                .embeddings
+                .first()
+                .map(|embedding| embedding.values.as_slice())
+                .unwrap_or(&[]);
+            assert_eq!(values.len(), 3, "Vector should have 3 dimensions");
+            assert_eq!(values, &[0.0, 0.0, 0.0], "Vector values should match");
         }
     }
 }
