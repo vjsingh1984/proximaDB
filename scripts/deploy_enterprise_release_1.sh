@@ -98,13 +98,13 @@ deploy_release_1_platform() {
     kubectl create namespace proximadb-enterprise --dry-run=client -o yaml | kubectl apply -f -
     
     # Deploy Release 1 with multi-tenant configuration
-    envsubst < k8s/release-1/proximadb-enterprise-deployment.yaml | kubectl apply -f -
-    envsubst < k8s/release-1/proximadb-enterprise-service.yaml | kubectl apply -f -
-    envsubst < k8s/release-1/proximadb-enterprise-configmap.yaml | kubectl apply -f -
-    envsubst < k8s/release-1/proximadb-enterprise-secrets.yaml | kubectl apply -f -
+    envsubst < deploy/k8s/release-1/proximadb-enterprise-deployment.yaml | kubectl apply -f -
+    envsubst < deploy/k8s/release-1/proximadb-enterprise-service.yaml | kubectl apply -f -
+    envsubst < deploy/k8s/release-1/proximadb-enterprise-configmap.yaml | kubectl apply -f -
+    envsubst < deploy/k8s/release-1/proximadb-enterprise-secrets.yaml | kubectl apply -f -
     
     # Deploy enterprise storage with multi-tenant support
-    envsubst < k8s/release-1/proximadb-enterprise-storage.yaml | kubectl apply -f -
+    envsubst < deploy/k8s/release-1/proximadb-enterprise-storage.yaml | kubectl apply -f -
     
     # Wait for Release 1 deployment to be ready
     log_info "Waiting for Release 1 enterprise platform to be ready..."

@@ -26,8 +26,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 ENVIRONMENT="dev"
 REGION="${AWS_REGION:-us-east-1}"
-TF_DIR="${PROJECT_ROOT}/infrastructure/terraform/environments/${ENVIRONMENT}"
-HELM_DIR="${PROJECT_ROOT}/infrastructure/helm/proximadb"
+TF_DIR="${PROJECT_ROOT}/deploy/infrastructure/terraform/environments/${ENVIRONMENT}"
+HELM_DIR="${PROJECT_ROOT}/deploy/infrastructure/helm/proximadb"
 
 # Functions
 log_info() {

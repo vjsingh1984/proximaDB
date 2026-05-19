@@ -94,7 +94,7 @@ helm version
 
 ```bash
 # Navigate to infrastructure directory
-cd proximadb/infrastructure/terraform/environments/dev
+cd proximadb/deploy/infrastructure/terraform/environments/dev
 ```
 
 ### Configure Backend
@@ -256,7 +256,7 @@ kubectl config set-context --current=proximadb
 
 ```bash
 # Navigate to Helm chart
-cd ../../helm/proximadb
+cd deploy/infrastructure/helm/proximadb
 
 # Install ProximaDB
 helm install proximadb . \
@@ -369,7 +369,7 @@ kubectl port-forward svc/prometheus-grafana 3000:80 \
 # Default credentials: admin / prom-operator
 
 # Import ProximaDB dashboard
-# Location: infrastructure/helm/proximadb/dashboards/
+# Location: deploy/infrastructure/helm/proximadb/dashboards/
 ```
 
 ## Scaling and Updates
@@ -494,7 +494,7 @@ kubectl delete namespace proximadb
 ### Remove Infrastructure
 
 ```bash
-cd infrastructure/terraform/environments/dev
+cd deploy/infrastructure/terraform/environments/dev
 
 # Destroy infrastructure
 terraform destroy

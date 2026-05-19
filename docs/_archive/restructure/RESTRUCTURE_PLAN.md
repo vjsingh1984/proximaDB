@@ -27,7 +27,7 @@
 ai/, api_handlers/, audit/, auth/, automl/, bin/, catalog/, cdc/,
 cluster/, compute/, config/, connectors/, core/, datafusion/,
 deployment/, embedded/, errors/, executive/, graph/, index/,
-infrastructure/, licensing/, llm/, metrics/, monitoring/, network/,
+deploy/infrastructure/, licensing/, llm/, metrics/, monitoring/, network/,
 observability/, prompts/, proto/, query/, revenue/, sales_enablement/,
 schema/, search/, security/, server/, services/, storage/, streaming/,
 utils/, vector/, version.rs

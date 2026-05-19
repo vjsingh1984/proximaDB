@@ -18,7 +18,7 @@ Successfully initiated **Phase 4: Cloud Service Implementation** by creating fou
 
 ### Terraform Infrastructure Modules (3 modules)
 
-**1. VPC Module** (`infrastructure/terraform/modules/vpc/`)
+**1. VPC Module** (`deploy/infrastructure/terraform/modules/vpc/`)
 - **Purpose**: Network foundation
 - **Components**:
   * VPC with CIDR configuration
@@ -39,7 +39,7 @@ Successfully initiated **Phase 4: Cloud Service Implementation** by creating fou
 
 - **Files**: main.tf, variables.tf, outputs.tf (250+ lines)
 
-**2. EKS Module** (`infrastructure/terraform/modules/eks/`)
+**2. EKS Module** (`deploy/infrastructure/terraform/modules/eks/`)
 - **Purpose**: Kubernetes orchestration
 - **Components**:
   * EKS cluster (Kubernetes 1.29)
@@ -64,7 +64,7 @@ Successfully initiated **Phase 4: Cloud Service Implementation** by creating fou
 
 - **Files**: main.tf, variables.tf, outputs.tf, templates/user_data.sh (400+ lines)
 
-**3. Dev Environment** (`infrastructure/terraform/environments/dev/`)
+**3. Dev Environment** (`deploy/infrastructure/terraform/environments/dev/`)
 - **Purpose**: Development environment configuration
 - **Components**:
   * VPC integration
@@ -85,7 +85,7 @@ Successfully initiated **Phase 4: Cloud Service Implementation** by creating fou
 
 ### Helm Chart (1 chart)
 
-**ProximaDB Helm Chart** (`infrastructure/helm/proximadb/`)
+**ProximaDB Helm Chart** (`deploy/infrastructure/helm/proximadb/`)
 - **Purpose**: Deploy ProximaDB on Kubernetes
 - **Components**:
   * Chart metadata (Chart.yaml)
@@ -117,7 +117,7 @@ Successfully initiated **Phase 4: Cloud Service Implementation** by creating fou
 
 ### Documentation (2 comprehensive guides)
 
-**1. Infrastructure README** (`infrastructure/README.md`)
+**1. Infrastructure README** (`deploy/infrastructure/README.md`)
 - Architecture overview diagram
 - Directory structure
 - Quick start guide (7 steps)
@@ -129,7 +129,7 @@ Successfully initiated **Phase 4: Cloud Service Implementation** by creating fou
 - Maintenance procedures
 - Troubleshooting guide
 
-**2. Deployment Guide** (`infrastructure/DEPLOYMENT_GUIDE.md`)
+**2. Deployment Guide** (`deploy/infrastructure/DEPLOYMENT_GUIDE.md`)
 - Prerequisites (AWS setup, tool installation)
 - Step-by-step deployment (5 steps)
 - Scaling and updates

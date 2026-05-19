@@ -112,10 +112,10 @@ deploy_to_kubernetes() {
     kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
     
     # Apply Kubernetes manifests
-    envsubst < k8s/proximadb-deployment.yaml | kubectl apply -f -
-    envsubst < k8s/proximadb-service.yaml | kubectl apply -f -
-    envsubst < k8s/proximadb-configmap.yaml | kubectl apply -f -
-    envsubst < k8s/proximadb-pvc.yaml | kubectl apply -f -
+    envsubst < deploy/k8s/proximadb-deployment.yaml | kubectl apply -f -
+    envsubst < deploy/k8s/proximadb-service.yaml | kubectl apply -f -
+    envsubst < deploy/k8s/proximadb-configmap.yaml | kubectl apply -f -
+    envsubst < deploy/k8s/proximadb-pvc.yaml | kubectl apply -f -
     
     # Wait for deployment to be ready
     log_info "Waiting for deployment to be ready..."

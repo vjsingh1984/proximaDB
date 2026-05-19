@@ -131,18 +131,18 @@ deploy_with_helm() {
     cd "$PROJECT_ROOT"
     
     # Check if Helm chart exists
-    if [[ ! -d "helm/proximadb" ]]; then
-        print_error "Helm chart not found at helm/proximadb"
+    if [[ ! -d "deploy/helm/proximadb" ]]; then
+        print_error "Helm chart not found at deploy/helm/proximadb"
         exit 1
     fi
     
     # Install or upgrade the release
-    helm upgrade --install "$RELEASE_NAME" helm/proximadb \
+    helm upgrade --install "$RELEASE_NAME" deploy/helm/proximadb \
         --namespace "$NAMESPACE" \
         --create-namespace \
         --set image.tag="$PROXIMADB_VERSION" \
         --set environment="$DEPLOYMENT_ENV" \
-        --values "helm/proximadb/values-${DEPLOYMENT_ENV}.yaml" \
+        --values "deploy/helm/proximadb/values-${DEPLOYMENT_ENV}.yaml" \
         --wait \
         --timeout=10m
     
@@ -165,7 +165,7 @@ deploy_monitoring() {
         --wait
     
     # Deploy Grafana dashboards
-    kubectl apply -f "$PROJECT_ROOT/k8s/monitoring/" -n monitoring
+    kubectl apply -f "$PROJECT_ROOT/deploy/k8s/monitoring/" -n monitoring
     
     print_success "Monitoring stack deployed"
 }
@@ -175,11 +175,11 @@ setup_storage() {
     print_status "Setting up storage..."
     
     # Create storage classes if they don't exist
-    kubectl apply -f "$PROJECT_ROOT/k8s/storage/"
+    kubectl apply -f "$PROJECT_ROOT/deploy/k8s/storage/"
     
     # Create persistent volumes
     if [[ "$DEPLOYMENT_ENV" == "production" ]]; then
-        kubectl apply -f "$PROJECT_ROOT/k8s/storage/production-pv.yaml"
+        kubectl apply -f "$PROJECT_ROOT/deploy/k8s/storage/production-pv.yaml"
     fi
     
     print_success "Storage setup completed"
@@ -190,13 +190,13 @@ setup_networking() {
     print_status "Setting up networking..."
     
     # Apply network policies
-    kubectl apply -f "$PROJECT_ROOT/k8s/networking/" -n "$NAMESPACE"
+    kubectl apply -f "$PROJECT_ROOT/deploy/k8s/networking/" -n "$NAMESPACE"
     
     # Setup ingress
     if [[ "$DEPLOYMENT_ENV" == "production" ]]; then
-        kubectl apply -f "$PROJECT_ROOT/k8s/ingress/production-ingress.yaml" -n "$NAMESPACE"
+        kubectl apply -f "$PROJECT_ROOT/deploy/k8s/ingress/production-ingress.yaml" -n "$NAMESPACE"
     else
-        kubectl apply -f "$PROJECT_ROOT/k8s/ingress/staging-ingress.yaml" -n "$NAMESPACE"
+        kubectl apply -f "$PROJECT_ROOT/deploy/k8s/ingress/staging-ingress.yaml" -n "$NAMESPACE"
     fi
     
     print_success "Networking setup completed"
@@ -251,7 +251,7 @@ setup_ssl() {
     fi
     
     # Apply certificate resources
-    kubectl apply -f "$PROJECT_ROOT/k8s/certificates/" -n "$NAMESPACE"
+    kubectl apply -f "$PROJECT_ROOT/deploy/k8s/certificates/" -n "$NAMESPACE"
     
     print_success "SSL certificates configured"
 }

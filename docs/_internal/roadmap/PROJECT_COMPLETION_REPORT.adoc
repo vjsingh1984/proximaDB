@@ -403,7 +403,7 @@ Deliver a comprehensive, production-ready vector database platform that addresse
 
 1. **Deploy Dev Environment**
    * Configure CI/CD secrets (AWS credentials, Terraform state)
-   * Run deployment script: `./infrastructure/scripts/deploy-dev.sh`
+   * Run deployment script: `./deploy/infrastructure/scripts/deploy-dev.sh`
    * Validate all components (integration tests)
 
 2. **Deploy Monitoring Stack**

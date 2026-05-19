@@ -41,7 +41,7 @@ This directory contains the infrastructure as code (IaC) for deploying ProximaDB
 ## Directory Structure
 
 ```
-infrastructure/
+deploy/infrastructure/
 ├── terraform/
 │   ├── modules/
 │   │   ├── vpc/              # VPC and networking
@@ -72,7 +72,7 @@ infrastructure/
 ### Step 1: Configure Environment
 
 ```bash
-cd infrastructure/terraform/environments/dev
+cd deploy/infrastructure/terraform/environments/dev
 
 # Copy and edit variables
 cp terraform.tfvars.example terraform.tfvars
@@ -117,7 +117,7 @@ helm repo add proximadb https://charts.proximadb.com
 helm repo update
 
 # Install ProximaDB
-helm install proximadb ../../helm/proximadb \
+helm install proximadb deploy/infrastructure/helm/proximadb \
   --namespace proximadb \
   --create-namespace \
   --values dev-values.yaml
@@ -219,7 +219,7 @@ module "eks" {
 
 ### ProximaDB Helm Chart
 
-**Location**: `helm/proximadb/`
+**Location**: `deploy/infrastructure/helm/proximadb/`
 
 **Features**:
 - Deployment or StatefulSet mode
@@ -364,7 +364,7 @@ persistence:
 
 ```bash
 # Update Helm chart values
-helm upgrade proximadb ../../helm/proximadb \
+helm upgrade proximadb deploy/infrastructure/helm/proximadb \
   --namespace proximadb \
   --values dev-values.yaml \
   --set image.tag=0.3.0
@@ -435,7 +435,7 @@ kubectl top nodes
 helm uninstall proximadb -n proximadb
 
 # Remove infrastructure
-cd infrastructure/terraform/environments/dev
+cd deploy/infrastructure/terraform/environments/dev
 terraform destroy
 ```
 
