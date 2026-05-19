@@ -1642,11 +1642,20 @@ impl PyProximaDB {
         let total_elapsed = total_started.elapsed();
 
         let profile = PyDict::new(py);
-        profile.set_item("native_props_conversion_seconds", props_conversion.as_secs_f64())?;
+        profile.set_item(
+            "native_props_conversion_seconds",
+            props_conversion.as_secs_f64(),
+        )?;
         profile.set_item("native_vector_copy_seconds", vector_copy.as_secs_f64())?;
-        profile.set_item("native_record_assembly_seconds", record_assembly.as_secs_f64())?;
+        profile.set_item(
+            "native_record_assembly_seconds",
+            record_assembly.as_secs_f64(),
+        )?;
         profile.set_item("native_build_records_seconds", build_elapsed.as_secs_f64())?;
-        profile.set_item("native_storage_insert_seconds", insert_elapsed.as_secs_f64())?;
+        profile.set_item(
+            "native_storage_insert_seconds",
+            insert_elapsed.as_secs_f64(),
+        )?;
         profile.set_item("native_total_seconds", total_elapsed.as_secs_f64())?;
         Ok((result, profile.into()))
     }
@@ -3831,7 +3840,9 @@ fn python_record_props(record: &Bound<'_, PyAny>) -> PyResult<proximadb_records:
     Ok(props)
 }
 
-fn python_dict_to_proxima_tree(dict: &Bound<'_, PyDict>) -> PyResult<proximadb_records::ProximaTree> {
+fn python_dict_to_proxima_tree(
+    dict: &Bound<'_, PyDict>,
+) -> PyResult<proximadb_records::ProximaTree> {
     let mut props = proximadb_records::ProximaTree::new();
     for (key, value) in dict.iter() {
         let key: String = key.extract()?;
@@ -3862,9 +3873,9 @@ fn proxima_record_modality(props: &proximadb_records::ProximaTree) -> String {
     props
         .get("_modality")
         .and_then(|node| match node {
-            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
-                value,
-            )) => Some(value.clone()),
+            proximadb_records::ProximaTreeNode::Value(
+                proximadb_data_model::ProximaValue::String(value),
+            ) => Some(value.clone()),
             _ => None,
         })
         .unwrap_or_else(|| "vector".to_string())
@@ -3905,7 +3916,9 @@ fn python_to_proxima_record(
     let vector_value = required_python_record_field(record, "vector")?;
     let values = python_record_vector(&vector_value)?;
     if values.is_empty() {
-        return Err(PyValueError::new_err("ProximaRecord vector must not be empty"));
+        return Err(PyValueError::new_err(
+            "ProximaRecord vector must not be empty",
+        ));
     }
 
     let props = python_record_props(record)?;

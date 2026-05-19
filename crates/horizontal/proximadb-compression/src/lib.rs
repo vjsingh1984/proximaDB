@@ -868,11 +868,8 @@ mod tests {
             let compressed = compress(&test_data, algorithm, 3, CompressionContext::Block)
                 .unwrap_or_else(|e| panic!("SST compression failed for {:?}: {}", algorithm, e));
 
-            let decompressed =
-                decompress(&compressed, algorithm, CompressionContext::Block)
-                    .unwrap_or_else(|e| {
-                        panic!("SST decompression failed for {:?}: {}", algorithm, e)
-                    });
+            let decompressed = decompress(&compressed, algorithm, CompressionContext::Block)
+                .unwrap_or_else(|e| panic!("SST decompression failed for {:?}: {}", algorithm, e));
 
             assert_eq!(
                 test_data,
@@ -928,8 +925,8 @@ mod tests {
         for algorithm in parquet_supported {
             println!("Testing Parquet WriterProperties for {:?}", algorithm);
 
-            let properties = create_parquet_writer_properties(algorithm, Some(3))
-                .unwrap_or_else(|e| {
+            let properties =
+                create_parquet_writer_properties(algorithm, Some(3)).unwrap_or_else(|e| {
                     panic!(
                         "Failed to create WriterProperties for {:?}: {}",
                         algorithm, e
@@ -1017,27 +1014,21 @@ mod tests {
             for level in levels {
                 println!("Testing {:?} at level {}", algorithm, level);
 
-                let compressed = compress(
-                    &test_data,
-                    algorithm,
-                    level,
-                    CompressionContext::Block,
-                )
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "Compression failed for {:?} level {}: {}",
-                        algorithm, level, e
-                    )
-                });
+                let compressed = compress(&test_data, algorithm, level, CompressionContext::Block)
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "Compression failed for {:?} level {}: {}",
+                            algorithm, level, e
+                        )
+                    });
 
-                let decompressed =
-                    decompress(&compressed, algorithm, CompressionContext::Block)
-                        .unwrap_or_else(|e| {
-                            panic!(
-                                "Decompression failed for {:?} level {}: {}",
-                                algorithm, level, e
-                            )
-                        });
+                let decompressed = decompress(&compressed, algorithm, CompressionContext::Block)
+                    .unwrap_or_else(|e| {
+                        panic!(
+                            "Decompression failed for {:?} level {}: {}",
+                            algorithm, level, e
+                        )
+                    });
 
                 assert_eq!(
                     test_data,

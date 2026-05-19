@@ -126,7 +126,6 @@ impl FromStr for DistanceMetric {
 }
 
 impl DistanceMetric {
-
     /// Check if this is a similarity metric (higher is better)
     ///
     /// Similarity metrics: InnerProduct

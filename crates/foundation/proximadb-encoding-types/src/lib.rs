@@ -85,7 +85,6 @@ impl FromStr for EncodingFormat {
 }
 
 impl EncodingFormat {
-
     /// Check if this is a text-based encoding
     pub fn is_text(&self) -> bool {
         matches!(self, Self::Json)

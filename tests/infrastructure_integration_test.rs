@@ -370,7 +370,12 @@ mod terraform_tests {
         // Test: Terraform files should be properly formatted
         let result = run_command(
             "terraform",
-            &["fmt", "-check", "-recursive", "deploy/infrastructure/terraform"],
+            &[
+                "fmt",
+                "-check",
+                "-recursive",
+                "deploy/infrastructure/terraform",
+            ],
         );
 
         assert!(result.is_ok(), "Terraform files should be formatted");
@@ -382,7 +387,10 @@ mod terraform_tests {
         // Test: Terraform configuration should be valid
         let result = run_command(
             "terraform",
-            &["validate", "deploy/infrastructure/terraform/environments/dev"],
+            &[
+                "validate",
+                "deploy/infrastructure/terraform/environments/dev",
+            ],
         );
 
         assert!(result.is_ok(), "Terraform should validate");

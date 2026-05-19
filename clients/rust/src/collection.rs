@@ -668,7 +668,11 @@ impl<'a> InsertBuilder<'a> {
             validate_schema: true,
         };
 
-        let url = format!("{}/api/v2/collections/{}/records/batch", client.url(), collection);
+        let url = format!(
+            "{}/api/v2/collections/{}/records/batch",
+            client.url(),
+            collection
+        );
         client.post(&url, &request).await
     }
 }
@@ -832,11 +836,7 @@ pub struct ProximaRecord {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vector: Vec<f32>,
     /// Rich record properties
-    #[serde(
-        default,
-        alias = "metadata",
-        skip_serializing_if = "HashMap::is_empty"
-    )]
+    #[serde(default, alias = "metadata", skip_serializing_if = "HashMap::is_empty")]
     pub props: HashMap<String, serde_json::Value>,
     /// Original source text or external reference
     #[serde(default, skip_serializing_if = "Option::is_none")]

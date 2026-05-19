@@ -135,7 +135,6 @@ impl FromStr for CompressionAlgorithm {
 }
 
 impl CompressionAlgorithm {
-
     /// Get the default compression level for this algorithm
     pub fn default_level(&self) -> Option<i32> {
         match self {

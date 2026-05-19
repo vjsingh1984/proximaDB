@@ -828,7 +828,9 @@ impl RestServer {
         tracing::info!("   GET    /metrics/json                     - JSON metrics");
         tracing::info!("   GET    /metrics/health                   - Metrics health check");
         tracing::info!("   POST   /api/v1/search                    - Vector search");
-        tracing::info!("   POST   /api/v1/vectors/batch             - Migration alias over record writes");
+        tracing::info!(
+            "   POST   /api/v1/vectors/batch             - Migration alias over record writes"
+        );
         tracing::info!("   POST   /api/v1/progressive/search/:id    - Progressive search (JSON)");
         tracing::info!(
             "   POST   /api/v1/collections               - Unified collection operations"

@@ -94,7 +94,6 @@ impl FromStr for QuantizationType {
 }
 
 impl QuantizationType {
-
     /// Check if this quantization type uses fixed-point arithmetic
     pub fn is_fixed_point(&self) -> bool {
         matches!(self, Self::Scalar | Self::Binary)
@@ -171,7 +170,6 @@ impl FromStr for QuantizationLevel {
 }
 
 impl QuantizationLevel {
-
     /// Get the bit width for this quantization level
     pub fn bit_width(&self) -> usize {
         match self {

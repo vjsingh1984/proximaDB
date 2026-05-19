@@ -384,9 +384,9 @@ fn matches_catalog_type(value: &ProximaValue, data_type: CatalogDataType) -> boo
 
 fn stable_value_string(value: &ProximaValue) -> Result<String> {
     let key = match value {
-        ProximaValue::String(value) | ProximaValue::Symbol(value) | ProximaValue::Decimal(value) => {
-            value.clone()
-        }
+        ProximaValue::String(value)
+        | ProximaValue::Symbol(value)
+        | ProximaValue::Decimal(value) => value.clone(),
         ProximaValue::Boolean(value) => value.to_string(),
         ProximaValue::Int8(value) => value.to_string(),
         ProximaValue::Int16(value) => value.to_string(),

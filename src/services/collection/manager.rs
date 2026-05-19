@@ -70,12 +70,12 @@ use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 // Using String directly instead of String alias for proto-first architecture
-use crate::core::config::StorageConfig;
 use crate::catalog::{
     CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogManager,
     CatalogPhysicalFormat, CatalogProjection, CatalogProjectionKind, CatalogStorageLayout,
     CatalogStorageLayoutKind, CatalogTableSchema, ProjectionFreshness, TableIdentifier,
 };
+use crate::core::config::StorageConfig;
 use crate::proto::proximadb_v1::{
     Collection, CollectionConfig, CollectionStats, FilterableColumnSpec, FilterableDataType,
     IndexConfig, IndexingAlgorithm, StorageAssignment, StorageEngine,
@@ -726,7 +726,10 @@ impl CollectionService {
             }),
         };
 
-        if let Err(e) = self.upsert_collection_catalog_asset(&proto_collection).await {
+        if let Err(e) = self
+            .upsert_collection_catalog_asset(&proto_collection)
+            .await
+        {
             return Ok(CollectionServiceResponse::error(
                 format!("CATALOG_CREATE_FAILED: {}", e),
                 start_time.elapsed().as_micros() as i64,
@@ -2098,7 +2101,9 @@ impl CollectionService {
             match config.storage_engine.unwrap_or(StorageEngine::Sst as i32) {
                 value if value == StorageEngine::Viper as i32 => CatalogStorageLayoutKind::Columnar,
                 value if value == StorageEngine::Nova as i32 => CatalogStorageLayoutKind::Columnar,
-                value if value == StorageEngine::Helix as i32 => CatalogStorageLayoutKind::LsmRecord,
+                value if value == StorageEngine::Helix as i32 => {
+                    CatalogStorageLayoutKind::LsmRecord
+                }
                 _ => CatalogStorageLayoutKind::RowRecord,
             },
         );
@@ -2143,9 +2148,7 @@ impl CollectionService {
             .properties
             .insert("vector.dimension".to_string(), config.dimension.to_string());
         if let Some(owner) = &config.owner {
-            schema
-                .properties
-                .insert("owner".to_string(), owner.clone());
+            schema.properties.insert("owner".to_string(), owner.clone());
         }
         if !config.tags.is_empty() {
             schema
@@ -2153,9 +2156,10 @@ impl CollectionService {
                 .insert("tags".to_string(), config.tags.join(","));
         }
         if let Some(stats) = &collection.stats {
-            schema
-                .properties
-                .insert("stats.row_count".to_string(), stats.vector_count.to_string());
+            schema.properties.insert(
+                "stats.row_count".to_string(),
+                stats.vector_count.to_string(),
+            );
             schema.properties.insert(
                 "stats.data_size_bytes".to_string(),
                 stats.data_size_bytes.to_string(),
@@ -2895,15 +2899,12 @@ mod tests {
                 .map(|config| config.dimension),
             Some(384)
         );
-        assert!(
-            catalog_backed_by_id
-                .config
-                .as_ref()
-                .is_some_and(|config| config.filterable_columns.iter().any(|column| {
-                    column.name == "category"
-                        && column.data_type == FilterableDataType::FilterableString as i32
-                }))
-        );
+        assert!(catalog_backed_by_id.config.as_ref().is_some_and(|config| {
+            config.filterable_columns.iter().any(|column| {
+                column.name == "category"
+                    && column.data_type == FilterableDataType::FilterableString as i32
+            })
+        }));
         assert!(
             service
                 .list_collections()
