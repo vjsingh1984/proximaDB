@@ -30,6 +30,12 @@ use anyhow::{Result, anyhow};
 use proximadb_graph_query::service::GraphExecutionService;
 use std::sync::Arc;
 
+fn default_hybrid_fusion_weights() -> Vec<f64> {
+    crate::core::config::HybridRuntimeConfig::default()
+        .fusion_weights
+        .unwrap_or_else(|| vec![0.6, 0.4])
+}
+
 /// Execution planner that transforms AST into ExecutionPlan
 pub struct ExecutionPlanner {
     #[allow(dead_code)]
@@ -56,7 +62,7 @@ impl ExecutionPlanner {
             cost_model: CostModel::new(),
             params: None,
             seeding_strategy: SeedingStrategy::Average,
-            fusion_weights: None,
+            fusion_weights: Some(default_hybrid_fusion_weights()),
             cache_orchestrator: None,
         }
     }
@@ -73,7 +79,7 @@ impl ExecutionPlanner {
             cost_model: CostModel::new(),
             params: None,
             seeding_strategy: SeedingStrategy::Average,
-            fusion_weights: None,
+            fusion_weights: Some(default_hybrid_fusion_weights()),
             cache_orchestrator: Some(cache_orchestrator),
         }
     }
@@ -242,7 +248,10 @@ impl ExecutionPlanner {
             self.plan_graph_traversal(select)?,
             ExecutionOperation::Fusion {
                 strategy: FusionStrategy::ReciprocalRankFusion { k: 60.0 },
-                weights: self.fusion_weights.clone().unwrap_or(vec![0.5, 0.5]),
+                weights: self
+                    .fusion_weights
+                    .clone()
+                    .unwrap_or_else(default_hybrid_fusion_weights),
             },
         ])
     }
@@ -313,6 +322,16 @@ impl ExecutionPlanner {
 
     fn generate_hints(&self, _select: &crate::query::ast::Select) -> Vec<String> {
         vec!["Use index-backed retrieval where possible".to_string()]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_hybrid_fusion_weights_follow_runtime_config() {
+        assert_eq!(default_hybrid_fusion_weights(), vec![0.6, 0.4]);
     }
 }
 
