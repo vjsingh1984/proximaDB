@@ -27,12 +27,11 @@ use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::index::axis::management::manager::{
     FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
 };
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
     FlushResult, StorageEngineStrategy, UnifiedStorageEngine,
 };
-use proximadb_records::conversions::proxima_record_to_vector;
+use proximadb_records::ProximaRecord;
 // Removed unused import: IndexingAlgorithm
 use crate::metrics::collectors::{EngineMetricsCollector, OperationTimer};
 // Removed unused compression common imports
@@ -53,6 +52,26 @@ use crate::storage::engines::core::formats::proximablocks::SuperBlock;
 lazy_static::lazy_static! {
     static ref SWIFT_GLOBAL_PCA_MODEL_CACHE: std::sync::RwLock<std::collections::HashMap<String, super::pca_manager::EnhancedPCAModel>> =
         std::sync::RwLock::new(std::collections::HashMap::new());
+}
+
+fn swift_record_id(record: &ProximaRecord) -> String {
+    record
+        .local_id
+        .clone()
+        .filter(|id| !id.is_empty())
+        .unwrap_or_else(|| record.oid.clone())
+}
+
+fn swift_record_vector(record: &ProximaRecord) -> &[f32] {
+    record
+        .embeddings
+        .first()
+        .map(|embedding| embedding.values.as_slice())
+        .unwrap_or(&[])
+}
+
+fn swift_record_is_live(record: &ProximaRecord) -> bool {
+    !swift_record_vector(record).is_empty()
 }
 
 /// Set PCA model for a collection in the global cache
@@ -1004,15 +1023,22 @@ impl SwiftEngine {
         &self,
         collection_id: &str,
         collection_data_dir: &str,
-        vectors: &[crate::proto::proximadb_v1::VectorRecord],
+        records: &[ProximaRecord],
     ) -> Result<()> {
         use super::pca_manager::AdaptivePcaConfig;
+
+        let vectors: Vec<Vec<f32>> = records
+            .iter()
+            .map(swift_record_vector)
+            .filter(|vector| !vector.is_empty())
+            .map(|vector| vector.to_vec())
+            .collect();
 
         if vectors.is_empty() {
             return Ok(());
         }
 
-        let vector_dim = vectors[0].vector.len();
+        let vector_dim = vectors[0].len();
         if vector_dim == 0 {
             return Ok(());
         }
@@ -1039,8 +1065,9 @@ impl SwiftEngine {
         );
 
         // Train PCA model
-        let model = super::pca_manager::EnhancedPCAModel::train(vectors, n_components)
-            .map_err(|e| anyhow!("Failed to train PCA model: {}", e))?;
+        let model =
+            super::pca_manager::EnhancedPCAModel::train_from_vectors(&vectors, n_components)
+                .map_err(|e| anyhow!("Failed to train PCA model: {}", e))?;
 
         // Save to disk
         self.save_pca_model(collection_data_dir, &model).await?;
@@ -1124,14 +1151,6 @@ impl UnifiedStorageEngine for SwiftEngine {
             "euclidean".to_string(),
         );
 
-        // Build blocks from vectors passed in flush parameters
-        // Convert ProximaRecord → VectorRecord for SWIFT engine internals (protocol adapter boundary)
-        let records: Vec<VectorRecord> = params
-            .vector_records
-            .iter()
-            .map(proxima_record_to_vector)
-            .collect();
-
         // Get compression config from storage config
         let compression_config = params
             .collection_config
@@ -1157,8 +1176,10 @@ impl UnifiedStorageEngine for SwiftEngine {
             });
 
         // Add records to the SwiftFile structure with compression config
-        swift_file
-            .build_blocks_from_records_with_compression(records.clone(), compression_config)?;
+        swift_file.build_blocks_from_proxima_records_with_compression(
+            params.vector_records.clone(),
+            compression_config,
+        )?;
 
         // Get storage path from collection config (always present)
         // Use standard trait method to get data directory (consistent with HELIX pattern)
@@ -1199,7 +1220,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         if params.vector_records.len() >= 100 {
             // Only train with enough samples
             match self
-                .train_and_cache_pca_model(&collection_id, &data_dir, &records)
+                .train_and_cache_pca_model(&collection_id, &data_dir, &params.vector_records)
                 .await
             {
                 Ok(()) => {
@@ -1259,7 +1280,7 @@ impl UnifiedStorageEngine for SwiftEngine {
         Ok(FlushResult {
             success: true,
             collections_affected: vec![collection_id.to_string()],
-            entries_flushed: Some(records.len() as u64),
+            entries_flushed: Some(params.vector_records.len() as u64),
             bytes_written: Some(bytes_written),
             files_created: Some(1),
             file_paths: vec![filename.clone()],
@@ -1311,7 +1332,7 @@ impl UnifiedStorageEngine for SwiftEngine {
 
         // Merge all records from loaded files, dedup by ID (latest wins)
         let input_count = files.len() as u64;
-        let mut merged: HashMap<String, VectorRecord> = HashMap::new();
+        let mut merged: HashMap<String, ProximaRecord> = HashMap::new();
         let mut total_entries: u64 = 0;
         let mut bytes_read: u64 = 0;
 
@@ -1320,10 +1341,7 @@ impl UnifiedStorageEngine for SwiftEngine {
                 for block in &superblock.blocks {
                     for record in &block.records {
                         total_entries += 1;
-                        merged.insert(
-                            record.oid.clone(),
-                            crate::proto::proximadb_v1::VectorRecord::from(record),
-                        );
+                        merged.insert(record.oid.clone(), record.clone());
                     }
                 }
             }
@@ -1331,10 +1349,8 @@ impl UnifiedStorageEngine for SwiftEngine {
         }
 
         // Filter tombstones (records marked as deleted have empty vectors)
-        let live_records: Vec<VectorRecord> = merged
-            .into_values()
-            .filter(|r| !r.vector.is_empty())
-            .collect();
+        let live_records: Vec<ProximaRecord> =
+            merged.into_values().filter(swift_record_is_live).collect();
 
         let entries_removed = total_entries.saturating_sub(live_records.len() as u64);
 
@@ -1348,7 +1364,7 @@ impl UnifiedStorageEngine for SwiftEngine {
                 |f| f.header.distance_metric.clone(),
             ),
         );
-        merged_file.build_blocks_from_records(live_records)?;
+        merged_file.build_blocks_from_proxima_records_with_compression(live_records, None)?;
 
         // Write merged file to disk
         let data_dir = StoragePath::collection_data_path(&storage_path, &collection_id);
@@ -1658,9 +1674,9 @@ impl UnifiedStorageEngine for SwiftEngine {
                     file_results
                         .into_iter()
                         .filter(|record| {
-                            crate::core::search::sql_value_filter::evaluate_filter(
+                            crate::core::search::sql_value_filter::evaluate_filter_proxima(
                                 filter_expr,
-                                &record.metadata,
+                                &record.props,
                             )
                         })
                         .collect()
@@ -1674,11 +1690,11 @@ impl UnifiedStorageEngine for SwiftEngine {
             all_results.sort_by(|a, b| {
                 let dist_a: f32 = self
                     .distance_engine
-                    .calculate_distance(query_vector, &a.vector, &distance_metric)
+                    .calculate_distance(query_vector, swift_record_vector(a), &distance_metric)
                     .normalized_score;
                 let dist_b: f32 = self
                     .distance_engine
-                    .calculate_distance(query_vector, &b.vector, &distance_metric)
+                    .calculate_distance(query_vector, swift_record_vector(b), &distance_metric)
                     .normalized_score;
                 dist_b
                     .partial_cmp(&dist_a)
@@ -1692,13 +1708,20 @@ impl UnifiedStorageEngine for SwiftEngine {
                 .map(|record| {
                     let distance_result = self.distance_engine.calculate_distance(
                         query_vector,
-                        &record.vector,
+                        swift_record_vector(&record),
                         &distance_metric,
                     );
-                    OptimizedSearchRecord::new(record.id.clone(), distance_result.normalized_score)
-                        .with_similarity(distance_result.normalized_score)
-                        .add_vector(record.vector.clone())
-                        .with_metadata(record.metadata.clone())
+                    OptimizedSearchRecord::new(
+                        swift_record_id(&record),
+                        distance_result.normalized_score,
+                    )
+                    .with_similarity(distance_result.normalized_score)
+                    .add_vector(swift_record_vector(&record).to_vec())
+                    .with_proxima_metadata(
+                        crate::core::search::sql_value_filter::proxima_tree_to_value_map(
+                            &record.props,
+                        ),
+                    )
                 })
                 .collect();
 
@@ -1740,9 +1763,9 @@ impl UnifiedStorageEngine for SwiftEngine {
                 let filtered: Vec<_> = file_results
                     .into_iter()
                     .filter(|record| {
-                        crate::core::search::sql_value_filter::evaluate_filter(
+                        crate::core::search::sql_value_filter::evaluate_filter_proxima(
                             filter_expr,
-                            &record.metadata,
+                            &record.props,
                         )
                     })
                     .collect();
@@ -1757,11 +1780,11 @@ impl UnifiedStorageEngine for SwiftEngine {
         all_results.sort_by(|a, b| {
             let dist_a: f32 = self
                 .distance_engine
-                .calculate_distance(query_vector, &a.vector, &distance_metric)
+                .calculate_distance(query_vector, swift_record_vector(a), &distance_metric)
                 .normalized_score;
             let dist_b: f32 = self
                 .distance_engine
-                .calculate_distance(query_vector, &b.vector, &distance_metric)
+                .calculate_distance(query_vector, swift_record_vector(b), &distance_metric)
                 .normalized_score;
             dist_b
                 .partial_cmp(&dist_a)
@@ -1775,13 +1798,18 @@ impl UnifiedStorageEngine for SwiftEngine {
             .map(|record| {
                 let distance_result = self.distance_engine.calculate_distance(
                     query_vector,
-                    &record.vector,
+                    swift_record_vector(&record),
                     &distance_metric,
                 );
-                OptimizedSearchRecord::new(record.id.clone(), distance_result.normalized_score)
-                    .with_similarity(distance_result.normalized_score)
-                    .add_vector(record.vector.clone())
-                    .with_metadata(record.metadata.clone())
+                OptimizedSearchRecord::new(
+                    swift_record_id(&record),
+                    distance_result.normalized_score,
+                )
+                .with_similarity(distance_result.normalized_score)
+                .add_vector(swift_record_vector(&record).to_vec())
+                .with_proxima_metadata(
+                    crate::core::search::sql_value_filter::proxima_tree_to_value_map(&record.props),
+                )
             })
             .collect();
 
@@ -1963,40 +1991,51 @@ impl SwiftEngine {
             for superblock in &swift_file.superblocks {
                 for block in &superblock.blocks {
                     for record in &block.records {
-                        let wire_record = VectorRecord::from(record);
                         // Apply metadata filter if present
                         if let Some(filter_expr) = _filter_expression {
-                            let matches = crate::core::search::sql_value_filter::evaluate_filter(
-                                filter_expr,
-                                &wire_record.metadata,
-                            );
+                            let matches =
+                                crate::core::search::sql_value_filter::evaluate_filter_proxima(
+                                    filter_expr,
+                                    &record.props,
+                                );
                             if !matches {
                                 continue; // Skip records that don't match filter
                             }
                         }
 
+                        let record_vector = swift_record_vector(record);
+                        if record_vector.is_empty() {
+                            continue;
+                        }
+
                         // Compute actual distance using distance engine
                         let distance_result = self.distance_engine.calculate_distance(
                             query_vector,
-                            &wire_record.vector,
+                            record_vector,
                             &distance_metric,
                         );
 
-                        let id = if wire_record.id.is_empty() {
-                            format!("unknown_{:?}", wire_record.timestamp)
+                        let id = if record.oid.is_empty() {
+                            format!("unknown_{}", record.created_at_ns)
                         } else {
-                            wire_record.id.clone()
+                            swift_record_id(record)
                         };
 
-                        let mut search_record =
-                            OptimizedSearchRecord::new(id, distance_result.normalized_score)
-                                .with_similarity(distance_result.normalized_score)
-                                .add_vector(wire_record.vector.clone())
-                                .with_metadata(wire_record.metadata.clone());
+                        let mut search_record = OptimizedSearchRecord::new(
+                            id,
+                            distance_result.normalized_score,
+                        )
+                        .with_similarity(distance_result.normalized_score)
+                        .add_vector(record_vector.to_vec())
+                        .with_proxima_metadata(
+                            crate::core::search::sql_value_filter::proxima_tree_to_value_map(
+                                &record.props,
+                            ),
+                        );
 
-                        if let Some(version) = wire_record.version {
+                        if let Ok(version) = u32::try_from(record.record_version) {
                             search_record = search_record
-                                .with_version_info(version, wire_record.timestamp.unwrap_or(0));
+                                .with_version_info(version, record.created_at_ns / 1_000_000);
                         }
 
                         // Try to insert into bounded queue - only keeps top-k
@@ -2072,29 +2111,19 @@ mod tests {
     #[test]
     fn test_swift_filter_evaluation() {
         use crate::core::search::{ComparisonOperator, FilterExpression};
-        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value as SqlVal};
+        use proximadb_data_model::ProximaValue;
+        use proximadb_records::{ProximaTree, ProximaTreeNode};
 
         // Create test records with metadata
-        let mut metadata = std::collections::HashMap::new();
-        metadata.insert(
+        let mut props = ProximaTree::new();
+        props.insert(
             "category".to_string(),
-            SqlValue {
-                value: Some(SqlVal::StringValue("electronics".to_string())),
-            },
+            ProximaTreeNode::Value(ProximaValue::String("electronics".to_string())),
         );
-        metadata.insert(
+        props.insert(
             "price".to_string(),
-            SqlValue {
-                value: Some(SqlVal::NumberValue(29.99)),
-            },
+            ProximaTreeNode::Value(ProximaValue::Float64(29.99)),
         );
-
-        let record = VectorRecord {
-            id: "vec_1".to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata,
-            ..Default::default()
-        };
 
         // Test Equals filter
         let eq_filter = FilterExpression::Comparison {
@@ -2102,10 +2131,7 @@ mod tests {
             operator: ComparisonOperator::Equals,
             value: serde_json::Value::String("electronics".to_string()),
         };
-        assert!(crate::core::search::sql_value_filter::evaluate_filter(
-            &eq_filter,
-            &record.metadata
-        ));
+        assert!(crate::core::search::sql_value_filter::evaluate_filter_proxima(&eq_filter, &props));
 
         // Test not-matching Equals filter
         let neq_filter = FilterExpression::Comparison {
@@ -2113,10 +2139,9 @@ mod tests {
             operator: ComparisonOperator::Equals,
             value: serde_json::Value::String("clothing".to_string()),
         };
-        assert!(!crate::core::search::sql_value_filter::evaluate_filter(
-            &neq_filter,
-            &record.metadata
-        ));
+        assert!(
+            !crate::core::search::sql_value_filter::evaluate_filter_proxima(&neq_filter, &props)
+        );
 
         // Test LessThan filter on numeric field
         let lt_filter = FilterExpression::Comparison {
@@ -2124,10 +2149,7 @@ mod tests {
             operator: ComparisonOperator::LessThan,
             value: serde_json::json!(50.0),
         };
-        assert!(crate::core::search::sql_value_filter::evaluate_filter(
-            &lt_filter,
-            &record.metadata
-        ));
+        assert!(crate::core::search::sql_value_filter::evaluate_filter_proxima(&lt_filter, &props));
 
         // Test GreaterThan filter on numeric field
         let gt_filter = FilterExpression::Comparison {
@@ -2135,10 +2157,9 @@ mod tests {
             operator: ComparisonOperator::GreaterThan,
             value: serde_json::json!(50.0),
         };
-        assert!(!crate::core::search::sql_value_filter::evaluate_filter(
-            &gt_filter,
-            &record.metadata
-        ));
+        assert!(
+            !crate::core::search::sql_value_filter::evaluate_filter_proxima(&gt_filter, &props)
+        );
     }
 
     // ========================================================================

@@ -860,7 +860,7 @@ impl VectorOperationsService {
         let native_vectors: Vec<proximadb_records::ProximaRecord> = req
             .vectors
             .into_iter()
-            .map(proximadb_records::ProximaRecord::from)
+            .map(crate::proto::defaults::vector_record_to_proxima_record)
             .collect();
 
         match self

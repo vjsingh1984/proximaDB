@@ -13,7 +13,6 @@ use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine,
 };
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 use proximadb_records::ProximaRecord;
 
@@ -246,7 +245,7 @@ impl PartialOrd for Candidate {
 ///
 /// # Returns
 ///
-/// Vector of top-k VectorRecord results sorted by similarity (descending)
+/// Vector of top-k ProximaRecord results sorted by similarity (descending)
 ///
 /// # Performance
 ///
@@ -283,7 +282,7 @@ pub async fn search_progressive(
     top_k: usize,
     filter: Option<MetadataFilter>,
     prune: &crate::core::search::BlockPruneConfig,
-) -> Result<Vec<VectorRecord>> {
+) -> Result<Vec<ProximaRecord>> {
     let config = ProgressiveSearchConfig::default();
 
     // Create quantization engine for binary operations
@@ -691,7 +690,7 @@ async fn phase4_full_precision(
     top_k: usize,
     filter: Option<MetadataFilter>,
     _max_concurrent: usize,
-) -> Result<Vec<VectorRecord>> {
+) -> Result<Vec<ProximaRecord>> {
     let metric = parse_distance_metric(&sst.header.distance_metric);
     let mut all_results = Vec::new();
 
@@ -719,47 +718,39 @@ async fn phase4_full_precision(
 
     // Apply final metadata filter if needed
     if let Some(f) = filter {
-        all_results.retain(|(record, _)| record_matches_filter(&VectorRecord::from(record), &f));
+        all_results.retain(|(record, _)| record_matches_filter(record, &f));
     }
 
     // Use bounded priority queue for efficient top-k selection
     let mut priority_queue = BoundedPriorityQueue::new(top_k);
 
-    for (record, distance) in all_results {
+    for (record, distance) in &all_results {
         // Convert distance to score (higher is better)
-        let score = 1.0 / (1.0 + distance);
-        let wire_record = VectorRecord::from(&record);
-
+        let score = 1.0 / (1.0 + *distance);
         let search_record = crate::core::search::results::OptimizedSearchRecord {
             id: record.oid.clone(),
             vector_id: Some(record.oid.clone()),
             score,
-            similarity: Some(distance),
+            similarity: Some(*distance),
             vector: Some(Arc::new(record_vector(&record).to_vec())),
-            metadata: crate::core::search::results::sql_map_to_proxima(wire_record.metadata),
+            metadata: crate::core::search::sql_value_filter::proxima_tree_to_value_map(
+                &record.props,
+            ),
             ..Default::default()
         };
 
         priority_queue.try_insert(search_record);
     }
 
-    // Get sorted results and convert back to VectorRecord format
+    // Get sorted results and return canonical records.
     let top_results = priority_queue.into_sorted_vec();
-    let final_records: Vec<VectorRecord> = top_results
+    let mut by_id: std::collections::HashMap<String, ProximaRecord> = all_results
         .into_iter()
-        .map(|search_record| VectorRecord {
-            id: search_record.id,
-            vector: search_record
-                .vector
-                .map(|v| (*v).clone())
-                .unwrap_or_default(),
-            metadata: crate::core::search::results::proxima_map_to_sql(search_record.metadata),
-            version: None,
-            timestamp: Some(0),
-            expires_at: None,
-            updated_at: None,
-            source: None,
-        })
+        .map(|(record, _)| (record.oid.clone(), record))
+        .collect();
+    let final_records: Vec<ProximaRecord> = top_results
+        .into_iter()
+        .filter_map(|search_record| by_id.remove(&search_record.id))
         .collect();
 
     Ok(final_records)
@@ -815,10 +806,10 @@ fn condition_matches_block_stats(
     }
 }
 
-fn record_matches_filter(record: &VectorRecord, filter: &MetadataFilter) -> bool {
+fn record_matches_filter(record: &ProximaRecord, filter: &MetadataFilter) -> bool {
     // Convert metadata to HashMap for easier lookup
     let metadata_map: std::collections::HashMap<String, serde_json::Value> =
-        crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata);
+        crate::core::search::sql_value_filter::proxima_tree_to_json_map(&record.props);
 
     for condition in &filter.conditions {
         if !condition_matches_record(condition, &metadata_map) {

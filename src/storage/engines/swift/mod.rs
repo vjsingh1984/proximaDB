@@ -782,6 +782,24 @@ impl SwiftFile {
         records: Vec<VectorRecord>,
         compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
     ) -> Result<()> {
+        let canonical_records: Vec<ProximaRecord> =
+            records.iter().map(ProximaRecord::from).collect();
+        self.build_blocks_from_proxima_records_with_compression(
+            canonical_records,
+            compression_config,
+        )
+    }
+
+    /// Build blocks directly from the canonical ProximaRecord envelope.
+    ///
+    /// ADR-009/010: SWIFT is a rebuildable projection/access method over the
+    /// ProximaRecord spine. Protocol VectorRecord conversion is kept only in
+    /// legacy compatibility methods above.
+    pub fn build_blocks_from_proxima_records_with_compression(
+        &mut self,
+        records: Vec<ProximaRecord>,
+        compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
+    ) -> Result<()> {
         if records.is_empty() {
             return Ok(());
         }
@@ -796,10 +814,7 @@ impl SwiftFile {
         }
         let mut block_centroids = Vec::new();
 
-        let canonical_records: Vec<ProximaRecord> =
-            records.iter().map(ProximaRecord::from).collect();
-
-        for chunk in canonical_records.chunks(records_per_block) {
+        for chunk in records.chunks(records_per_block) {
             use crate::storage::engines::core::formats::proximablocks::compression_config::RowBasedCompressionConfig;
             let mut block_compression_config =
                 RowBasedCompressionConfig::create_block_config_from_proto(
@@ -1029,7 +1044,7 @@ impl SwiftFile {
         top_k: usize,
         filter: Option<MetadataFilter>,
         prune: &crate::core::search::BlockPruneConfig,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         progressive_search::search_progressive(self, query, top_k, filter, prune).await
     }
 
