@@ -451,19 +451,22 @@ impl WALBehaviorWrapper {
         );
         drop(metrics);
 
-        // Debug: Check what GlobalPartitionedMemtable stats look like
-        let collection_stats = self.inner.get_all_collection_stats().await;
-        tracing::debug!(
-            "🚀 WAL_BEHAVIOR: After add, GlobalPartitionedMemtable has {} collections",
-            collection_stats.len()
-        );
-        for (coll_id, (entry_count, size_bytes)) in &collection_stats {
+        // Avoid collecting global memtable stats on the hot insert path unless
+        // the debug logs that consume them are enabled.
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            let collection_stats = self.inner.get_all_collection_stats().await;
             tracing::debug!(
-                "🚀 WAL_BEHAVIOR: Collection {} has {} entries, {} bytes",
-                coll_id,
-                entry_count,
-                size_bytes
+                "🚀 WAL_BEHAVIOR: After add, GlobalPartitionedMemtable has {} collections",
+                collection_stats.len()
             );
+            for (coll_id, (entry_count, size_bytes)) in &collection_stats {
+                tracing::debug!(
+                    "🚀 WAL_BEHAVIOR: Collection {} has {} entries, {} bytes",
+                    coll_id,
+                    entry_count,
+                    size_bytes
+                );
+            }
         }
 
         tracing::debug!(
