@@ -299,15 +299,14 @@ impl CatalogCache {
     }
 
     fn maybe_evict<T>(&self, cache: &mut HashMap<String, CacheEntry<T>>) {
-        if cache.len() >= self.max_entries {
-            if let Some(k) = cache
+        if cache.len() >= self.max_entries
+            && let Some(k) = cache
                 .iter()
                 .min_by_key(|(_, v)| v.last_accessed)
                 .map(|(k, _)| k.clone())
-            {
-                cache.remove(&k);
-                self.stats.write().evictions += 1;
-            }
+        {
+            cache.remove(&k);
+            self.stats.write().evictions += 1;
         }
     }
 }

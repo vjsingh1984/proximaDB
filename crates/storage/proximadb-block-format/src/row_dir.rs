@@ -159,7 +159,7 @@ impl RowDirectory {
 
     /// Deserialize from a byte slice.
     pub fn from_bytes(data: &[u8]) -> Result<Self> {
-        if data.len() % ROW_ENTRY_SIZE != 0 {
+        if !data.len().is_multiple_of(ROW_ENTRY_SIZE) {
             bail!(
                 "row directory size {} is not a multiple of {}",
                 data.len(),

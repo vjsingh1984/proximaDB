@@ -211,13 +211,13 @@ impl OltpCatalog {
             tables: RwLock::new(HashMap::new()),
         };
 
-        if catalog.config.auto_migrate {
-            if let Err(e) = catalog.run_migrations().await {
-                warn!(
-                    "OLTP catalog migration warning (continuing in-memory): {}",
-                    e
-                );
-            }
+        if catalog.config.auto_migrate
+            && let Err(e) = catalog.run_migrations().await
+        {
+            warn!(
+                "OLTP catalog migration warning (continuing in-memory): {}",
+                e
+            );
         }
 
         Ok(catalog)
@@ -561,18 +561,13 @@ impl Catalog for OltpCatalog {
     }
 
     async fn list_tables(&self, namespace: &[String]) -> Result<Vec<TableIdentifier>> {
-        let ns_prefix = namespace.join(".");
         let guard = self.tables.read();
         Ok(guard
             .keys()
             .filter_map(|key| {
-                if key.starts_with(&ns_prefix) {
-                    let table_name = key[ns_prefix.len()..].trim_start_matches('.').to_string();
-                    if !table_name.is_empty() && !table_name.contains('.') {
-                        Some(TableIdentifier::new(namespace.to_vec(), table_name))
-                    } else {
-                        None
-                    }
+                let parsed = TableIdentifier::parse(key);
+                if parsed.namespace == namespace {
+                    Some(parsed)
                 } else {
                     None
                 }

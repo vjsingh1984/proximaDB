@@ -789,12 +789,8 @@ mod tests {
         let h_far = curve.encode(&far_point);
 
         // Points closer in space should have closer Hilbert indices (generally)
-        let dist_close = if h1 > h_close {
-            h1 - h_close
-        } else {
-            h_close - h1
-        };
-        let dist_far = if h1 > h_far { h1 - h_far } else { h_far - h1 };
+        let dist_close = h1.abs_diff(h_close);
+        let dist_far = h1.abs_diff(h_far);
 
         // This is a soft assertion as Hilbert curve doesn't guarantee strict distance preservation
         // but statistically nearby points should be closer

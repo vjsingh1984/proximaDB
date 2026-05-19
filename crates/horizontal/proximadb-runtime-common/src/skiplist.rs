@@ -269,7 +269,7 @@ mod tests {
         }
 
         // All operations complete successfully
-        assert!(list.len() > 0);
+        assert!(!list.is_empty());
     }
 
     #[test]

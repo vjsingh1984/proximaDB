@@ -389,13 +389,17 @@ mod tests {
 
     #[test]
     fn test_resolve_conflict_lww() {
-        let mut r1 = ProximaRecord::default();
-        r1.updated_at_ns = 100;
-        r1.origin = Some("r1".to_string());
+        let r1 = ProximaRecord {
+            updated_at_ns: 100,
+            origin: Some("r1".to_string()),
+            ..ProximaRecord::default()
+        };
 
-        let mut r2 = ProximaRecord::default();
-        r2.updated_at_ns = 200;
-        r2.origin = Some("r2".to_string());
+        let r2 = ProximaRecord {
+            updated_at_ns: 200,
+            origin: Some("r2".to_string()),
+            ..ProximaRecord::default()
+        };
 
         let resolved = r1.resolve_conflict(&r2);
         assert_eq!(resolved.origin.unwrap(), "r2");
@@ -406,15 +410,19 @@ mod tests {
 
     #[test]
     fn test_memory_type_field() {
-        let mut r = ProximaRecord::default();
-        r.memory_type = Some(MemoryType::Decision);
+        let r = ProximaRecord {
+            memory_type: Some(MemoryType::Decision),
+            ..ProximaRecord::default()
+        };
         assert_eq!(r.memory_type, Some(MemoryType::Decision));
     }
 
     #[test]
     fn test_tenant_id_is_record_field() {
-        let mut r = ProximaRecord::default();
-        r.tenant_id = "acme".to_string();
+        let r = ProximaRecord {
+            tenant_id: "acme".to_string(),
+            ..ProximaRecord::default()
+        };
         assert_eq!(r.tenant_id, "acme");
         // Accessible without unwrapping an Option<UserContext>
     }
@@ -428,8 +436,10 @@ mod tests {
 
     #[test]
     fn test_permitted_principals_restricts_access() {
-        let mut r = ProximaRecord::default();
-        r.permitted_principals = vec!["alice".to_string()];
+        let r = ProximaRecord {
+            permitted_principals: vec!["alice".to_string()],
+            ..ProximaRecord::default()
+        };
         assert!(r.is_accessible_by("alice"));
         assert!(!r.is_accessible_by("bob"));
     }
@@ -446,13 +456,15 @@ mod tests {
 
     #[test]
     fn test_edge_shape_present_for_graph() {
-        let mut r = ProximaRecord::default();
-        r.edge = Some(EdgeShape {
-            source_id: "node_a".to_string(),
-            target_id: "node_b".to_string(),
-            edge_type: "KNOWS".to_string(),
-            weight: Some(0.9),
-        });
+        let r = ProximaRecord {
+            edge: Some(EdgeShape {
+                source_id: "node_a".to_string(),
+                target_id: "node_b".to_string(),
+                edge_type: "KNOWS".to_string(),
+                weight: Some(0.9),
+            }),
+            ..ProximaRecord::default()
+        };
         let edge = r.edge.as_ref().unwrap();
         assert_eq!(edge.source_id, "node_a");
         assert_eq!(edge.edge_type, "KNOWS");

@@ -14,18 +14,13 @@ use serde::{Deserialize, Serialize};
 use crate::{CatalogColumn, CatalogDataType, CatalogTableSchema};
 
 /// Schema enforcement mode for table writes and external/schema-on-read scans.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RelationalSchemaMode {
     /// Enforce catalog schema before accepting a row into canonical storage.
+    #[default]
     SchemaOnWrite,
     /// Validate/project known columns but allow source-shaped rows to carry extras.
     SchemaOnRead,
-}
-
-impl Default for RelationalSchemaMode {
-    fn default() -> Self {
-        Self::SchemaOnWrite
-    }
 }
 
 /// Validation profile shared by OLTP, OLAP, Arrow, SQL, and protocol surfaces.
@@ -388,7 +383,26 @@ fn matches_catalog_type(value: &ProximaValue, data_type: CatalogDataType) -> boo
 }
 
 fn stable_value_string(value: &ProximaValue) -> Result<String> {
-    serde_json::to_string(value).map_err(|e| anyhow!("Failed to encode primary key value: {}", e))
+    let key = match value {
+        ProximaValue::String(value) | ProximaValue::Symbol(value) | ProximaValue::Decimal(value) => {
+            value.clone()
+        }
+        ProximaValue::Boolean(value) => value.to_string(),
+        ProximaValue::Int8(value) => value.to_string(),
+        ProximaValue::Int16(value) => value.to_string(),
+        ProximaValue::Int32(value) => value.to_string(),
+        ProximaValue::Int64(value) => value.to_string(),
+        ProximaValue::UInt8(value) => value.to_string(),
+        ProximaValue::UInt16(value) => value.to_string(),
+        ProximaValue::UInt32(value) => value.to_string(),
+        ProximaValue::UInt64(value) => value.to_string(),
+        ProximaValue::Uuid(value) | ProximaValue::ULID(value) => {
+            value.iter().map(|byte| format!("{byte:02x}")).collect()
+        }
+        _ => serde_json::to_string(value)
+            .map_err(|e| anyhow!("Failed to encode primary key value: {}", e))?,
+    };
+    Ok(key)
 }
 
 fn new_local_record_id(schema: &CatalogTableSchema) -> String {
@@ -470,7 +484,7 @@ mod tests {
         assert_eq!(row.table, "users");
         assert_eq!(
             row.primary_key_string(&users_schema()).unwrap(),
-            Some("{\"Int64\":42}".to_string())
+            Some("42".to_string())
         );
     }
 
@@ -500,7 +514,7 @@ mod tests {
             )
             .expect("row should project to record");
 
-        assert_eq!(record.oid, "{\"Int64\":42}");
+        assert_eq!(record.oid, "42");
         assert_eq!(record.variation_id.as_deref(), Some("users"));
         assert_eq!(record.method.as_deref(), Some("sql_dml"));
         assert_eq!(record.created_at_ns, 123);

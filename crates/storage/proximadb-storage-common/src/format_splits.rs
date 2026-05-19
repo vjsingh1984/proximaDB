@@ -907,8 +907,8 @@ mod tests {
             Some(ScalarValue::Int64(42))
         );
         assert_eq!(
-            ScalarValue::from_json(&serde_json::json!(3.14)),
-            Some(ScalarValue::Float64(3.14))
+            ScalarValue::from_json(&serde_json::json!(3.125)),
+            Some(ScalarValue::Float64(3.125))
         );
         assert_eq!(
             ScalarValue::from_json(&serde_json::json!("hello")),

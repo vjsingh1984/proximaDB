@@ -420,9 +420,9 @@ mod tests {
 
         assert_eq!(count, size);
 
-        for i in 0..size {
+        for (i, value) in output.iter().enumerate().take(size) {
             let expected = ((i + 1) * (i + 2) / 2) as i64;
-            assert_eq!(output[i], expected, "Mismatch at index {}", i);
+            assert_eq!(*value, expected, "Mismatch at index {}", i);
         }
     }
 }

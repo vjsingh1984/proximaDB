@@ -683,7 +683,7 @@ mod tests {
         let encoded = base64_encode(small_data);
 
         // Encoded length should be approximately 4/3 of input + padding
-        let expected_len = ((small_data.len() + 2) / 3) * 4;
+        let expected_len = small_data.len().div_ceil(3) * 4;
         assert_eq!(encoded.len(), expected_len);
     }
 

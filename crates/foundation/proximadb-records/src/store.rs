@@ -45,7 +45,7 @@ pub struct RecordWriteResult {
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecordRecoveryOperation {
     /// Replay an insert/update as the authoritative record state.
-    Upsert(ProximaRecord),
+    Upsert(Box<ProximaRecord>),
     /// Replay a delete by canonical object id.
     Delete(RecordKey),
 }
@@ -114,16 +114,16 @@ impl RecordScanOptions {
     }
 
     pub fn matches_record(&self, record: &ProximaRecord) -> bool {
-        if let Some(label) = &self.required_label {
-            if !record.labels.contains(label) {
-                return false;
-            }
+        if let Some(label) = &self.required_label
+            && !record.labels.contains(label)
+        {
+            return false;
         }
 
-        if let Some(tenant_id) = &self.tenant_id {
-            if &record.tenant_id != tenant_id {
-                return false;
-            }
+        if let Some(tenant_id) = &self.tenant_id
+            && &record.tenant_id != tenant_id
+        {
+            return false;
         }
 
         self.properties.iter().all(|(key, expected)| {
@@ -213,7 +213,7 @@ where
     for operation in operations {
         match operation {
             RecordRecoveryOperation::Upsert(record) => {
-                store.upsert_record(record).await?;
+                store.upsert_record(*record).await?;
                 summary.upserts_replayed += 1;
             }
             RecordRecoveryOperation::Delete(key) => {
@@ -414,14 +414,14 @@ mod tests {
         let summary = replay_record_recovery_operations(
             &store,
             vec![
-                RecordRecoveryOperation::Upsert(ProximaRecord {
+                RecordRecoveryOperation::Upsert(Box::new(ProximaRecord {
                     oid: "r1".to_string(),
                     ..ProximaRecord::default()
-                }),
-                RecordRecoveryOperation::Upsert(ProximaRecord {
+                })),
+                RecordRecoveryOperation::Upsert(Box::new(ProximaRecord {
                     oid: "r2".to_string(),
                     ..ProximaRecord::default()
-                }),
+                })),
                 RecordRecoveryOperation::Delete(RecordKey::new("r1")),
             ],
         )

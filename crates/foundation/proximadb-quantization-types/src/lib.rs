@@ -23,6 +23,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::str::FromStr;
 
 /// Standardized quantization type enum.
 ///
@@ -35,10 +36,11 @@ use std::fmt;
 /// - `Scalar` - Scalar quantization (per-vector scalar quantization)
 /// - `Product` - Product quantization (PQ)
 /// - `Binary` - Binary quantization
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum QuantizationType {
     /// No quantization
+    #[default]
     None,
 
     /// Scalar quantization
@@ -57,12 +59,6 @@ pub enum QuantizationType {
     Binary,
 }
 
-impl Default for QuantizationType {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
 impl fmt::Display for QuantizationType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -76,15 +72,28 @@ impl fmt::Display for QuantizationType {
 
 impl QuantizationType {
     /// Create from string representation
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
+        s.parse().ok()
+    }
+}
+
+impl FromStr for QuantizationType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
             "none" | "no" => Some(Self::None),
             "scalar" | "int8" | "uint8" | "scalarquantization" => Some(Self::Scalar),
             "product" | "pq" | "productquantization" => Some(Self::Product),
             "binary" | "bit" | "binaryquantization" => Some(Self::Binary),
             _ => None,
         }
+        .ok_or(())
     }
+}
+
+impl QuantizationType {
 
     /// Check if this quantization type uses fixed-point arithmetic
     pub fn is_fixed_point(&self) -> bool {
@@ -100,10 +109,11 @@ impl QuantizationType {
 /// Standardized quantization level enum.
 ///
 /// This represents the bit-width or precision level for quantization.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum QuantizationLevel {
     /// No quantization
+    #[default]
     None,
 
     /// 4-bit quantization
@@ -122,12 +132,6 @@ pub enum QuantizationLevel {
     FP32,
 }
 
-impl Default for QuantizationLevel {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
 impl fmt::Display for QuantizationLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -143,8 +147,17 @@ impl fmt::Display for QuantizationLevel {
 
 impl QuantizationLevel {
     /// Create from string representation
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
+        s.parse().ok()
+    }
+}
+
+impl FromStr for QuantizationLevel {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
             "none" | "no" => Some(Self::None),
             "int4" | "4bit" => Some(Self::Int4),
             "int8" | "8bit" | "signed8" => Some(Self::Int8),
@@ -153,7 +166,11 @@ impl QuantizationLevel {
             "fp32" | "float32" => Some(Self::FP32),
             _ => None,
         }
+        .ok_or(())
     }
+}
+
+impl QuantizationLevel {
 
     /// Get the bit width for this quantization level
     pub fn bit_width(&self) -> usize {

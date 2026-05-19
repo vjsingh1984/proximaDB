@@ -676,7 +676,7 @@ mod tests {
     #[test]
     fn test_rolling_window_clone() {
         let window = RollingWindow::FiveMinutes;
-        let cloned = window.clone();
+        let cloned = window;
         assert_eq!(window, cloned);
     }
 

@@ -22,15 +22,17 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::str::FromStr;
 
 /// Standardized compression algorithm enum.
 ///
 /// This is the single source of truth for compression algorithms across ProximaDB.
 /// All other compression type definitions should migrate to use this enum.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CompressionAlgorithm {
     /// No compression
+    #[default]
     None,
     /// Fast compression/decompression, moderate compression ratio
     Snappy,
@@ -60,12 +62,6 @@ pub enum CompressionAlgorithm {
     Mixed,
 }
 
-impl Default for CompressionAlgorithm {
-    fn default() -> Self {
-        Self::None
-    }
-}
-
 impl fmt::Display for CompressionAlgorithm {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -89,24 +85,9 @@ impl fmt::Display for CompressionAlgorithm {
 
 impl CompressionAlgorithm {
     /// Create from string representation
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "none" | "no" => Some(Self::None),
-            "snappy" => Some(Self::Snappy),
-            "lz4" => Some(Self::Lz4),
-            "zstd" | "zstandard" => Some(Self::Zstd),
-            "gzip" => Some(Self::Gzip),
-            "brotli" => Some(Self::Brotli),
-            "bzip2" => Some(Self::Bzip2),
-            "deflate" => Some(Self::Deflate),
-            "xz" => Some(Self::Xz),
-            "zlib" => Some(Self::Zlib),
-            "lzo" => Some(Self::Lzo),
-            "lz4hc" => Some(Self::Lz4hc),
-            "lzma" => Some(Self::Lzma),
-            "mixed" => Some(Self::Mixed),
-            _ => None,
-        }
+        s.parse().ok()
     }
 
     /// Check if this compression algorithm is lossless
@@ -126,6 +107,34 @@ impl CompressionAlgorithm {
             Self::Xz | Self::Lzma => Some((0, 9)),
         }
     }
+}
+
+impl FromStr for CompressionAlgorithm {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "none" | "no" => Some(Self::None),
+            "snappy" => Some(Self::Snappy),
+            "lz4" => Some(Self::Lz4),
+            "zstd" | "zstandard" => Some(Self::Zstd),
+            "gzip" => Some(Self::Gzip),
+            "brotli" => Some(Self::Brotli),
+            "bzip2" => Some(Self::Bzip2),
+            "deflate" => Some(Self::Deflate),
+            "xz" => Some(Self::Xz),
+            "zlib" => Some(Self::Zlib),
+            "lzo" => Some(Self::Lzo),
+            "lz4hc" => Some(Self::Lz4hc),
+            "lzma" => Some(Self::Lzma),
+            "mixed" => Some(Self::Mixed),
+            _ => None,
+        }
+        .ok_or(())
+    }
+}
+
+impl CompressionAlgorithm {
 
     /// Get the default compression level for this algorithm
     pub fn default_level(&self) -> Option<i32> {

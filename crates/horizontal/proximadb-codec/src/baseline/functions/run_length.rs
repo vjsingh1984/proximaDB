@@ -298,7 +298,7 @@ mod tests {
         // Multiple different runs
         let mut values = Vec::new();
         for i in 0..10 {
-            values.extend(vec![i as i32; 100]);
+            values.extend(vec![i; 100]);
         }
 
         let encoded = encode_i32(&values).expect("Failed to encode i32 values with RLE");

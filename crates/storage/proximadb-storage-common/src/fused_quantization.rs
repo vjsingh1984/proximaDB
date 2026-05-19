@@ -895,11 +895,11 @@ mod tests {
         // Bipolar: 0->-127, 1->127
         // First 4: -127 * 0.01 = -1.27
         // Last 4: 127 * 0.01 = 1.27
-        for i in 0..4 {
-            assert!((output[i] - (-1.27)).abs() < 1e-4, "Mismatch at {}", i);
+        for (i, value) in output.iter().enumerate().take(4) {
+            assert!((*value - (-1.27)).abs() < 1e-4, "Mismatch at {}", i);
         }
-        for i in 4..8 {
-            assert!((output[i] - 1.27).abs() < 1e-4, "Mismatch at {}", i);
+        for (i, value) in output.iter().enumerate().take(8).skip(4) {
+            assert!((*value - 1.27).abs() < 1e-4, "Mismatch at {}", i);
         }
     }
 

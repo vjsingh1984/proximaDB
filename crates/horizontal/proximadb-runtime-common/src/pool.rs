@@ -130,12 +130,14 @@ impl<T> PooledBuffer<T> {
 }
 
 /// Generic memory pool for reusable buffers
+type Cleaner<T> = Box<dyn Fn(&mut T) + Send + Sync>;
+
 pub struct Pool<T> {
     config: PoolConfig,
     buffers: Arc<Mutex<VecDeque<PooledBuffer<T>>>>,
     stats: Arc<Mutex<PoolStats>>,
     factory: Box<dyn Fn() -> T + Send + Sync>,
-    cleaner: Option<Box<dyn Fn(&mut T) + Send + Sync>>,
+    cleaner: Option<Cleaner<T>>,
 }
 
 impl<T> Pool<T>
@@ -704,11 +706,13 @@ mod tests {
 
     #[test]
     fn test_pool_statistics() {
-        let mut config = PoolConfig::default();
-        config.enable_stats = true;
-        config.initial_size = 1;
+        let config = PoolConfig {
+            enable_stats: true,
+            initial_size: 1,
+            ..PoolConfig::default()
+        };
 
-        let pool = Pool::new(config, || Vec::<i32>::new());
+        let pool = Pool::new(config, Vec::<i32>::new);
 
         // Generate some activity
         for _ in 0..10 {
@@ -724,11 +728,13 @@ mod tests {
 
     #[test]
     fn test_pool_cleanup() {
-        let mut config = PoolConfig::default();
-        config.max_idle_duration = Duration::from_millis(50);
-        config.initial_size = 3;
+        let config = PoolConfig {
+            max_idle_duration: Duration::from_millis(50),
+            initial_size: 3,
+            ..PoolConfig::default()
+        };
 
-        let pool = Pool::new(config, || Vec::<u8>::new());
+        let pool = Pool::new(config, Vec::<u8>::new);
 
         // Wait for buffers to expire
         thread::sleep(Duration::from_millis(100));

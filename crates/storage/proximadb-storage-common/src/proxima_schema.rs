@@ -504,8 +504,7 @@ impl ProximaSchema {
         ];
 
         // Add custom metadata columns
-        let mut next_id = 4;
-        for (name, dtype) in metadata_fields {
+        for (next_id, (name, dtype)) in (4..).zip(metadata_fields) {
             columns.push(ProximaColumn {
                 id: next_id,
                 name,
@@ -517,7 +516,6 @@ impl ProximaSchema {
                 is_deleted: false,
                 original_id: None,
             });
-            next_id += 1;
         }
 
         Self::new(schema_id, columns, vec![1])

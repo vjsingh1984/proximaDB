@@ -423,7 +423,7 @@ impl RetentionManager {
     pub async fn add_policy(&self, policy: RetentionPolicy) {
         let mut policies = self.policies.write().await;
         policies.push(policy);
-        policies.sort_by(|a, b| b.priority.cmp(&a.priority));
+        policies.sort_by_key(|policy| std::cmp::Reverse(policy.priority));
         info!("Added retention policy, total: {}", policies.len());
     }
 
@@ -768,7 +768,7 @@ mod tests {
             RetentionMetadata::new("item1", "col1").with_age(Duration::from_secs(10 * 24 * 3600));
 
         let new_metadata =
-            RetentionMetadata::new("item2", "col1").with_age(Duration::from_secs(1 * 24 * 3600));
+            RetentionMetadata::new("item2", "col1").with_age(Duration::from_secs(24 * 3600));
 
         assert!(matches!(
             rule.evaluate(&old_metadata),
@@ -847,8 +847,8 @@ mod tests {
         assert!(matches!(action, Some(RetentionAction::Delete)));
 
         // New item - should not be deleted
-        let new_metadata = RetentionMetadata::new("item2", "collection1")
-            .with_age(Duration::from_secs(1 * 24 * 3600));
+        let new_metadata =
+            RetentionMetadata::new("item2", "collection1").with_age(Duration::from_secs(24 * 3600));
 
         let action = manager.evaluate_item(&new_metadata).await;
         assert!(action.is_none());
@@ -863,7 +863,7 @@ mod tests {
 
         let items = vec![
             RetentionMetadata::new("item1", "col1").with_age(Duration::from_secs(10 * 24 * 3600)),
-            RetentionMetadata::new("item2", "col1").with_age(Duration::from_secs(1 * 24 * 3600)),
+            RetentionMetadata::new("item2", "col1").with_age(Duration::from_secs(24 * 3600)),
             RetentionMetadata::new("item3", "col1").with_age(Duration::from_secs(15 * 24 * 3600)),
         ];
 
@@ -950,7 +950,7 @@ mod tests {
             // 6 days old - expires in 1 day
             RetentionMetadata::new("item1", "col1").with_age(Duration::from_secs(6 * 24 * 3600)),
             // 1 day old - expires in 6 days
-            RetentionMetadata::new("item2", "col1").with_age(Duration::from_secs(1 * 24 * 3600)),
+            RetentionMetadata::new("item2", "col1").with_age(Duration::from_secs(24 * 3600)),
             // 8 days old - already expired
             RetentionMetadata::new("item3", "col1").with_age(Duration::from_secs(8 * 24 * 3600)),
         ];

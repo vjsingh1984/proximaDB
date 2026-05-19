@@ -29,6 +29,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::str::FromStr;
 
 /// Standardized distance metric enum.
 ///
@@ -49,7 +50,7 @@ use std::fmt;
 /// - `DistanceMetric::Euclidean` → `DistanceMetric::L2`
 /// - `DistanceMetric::DotProduct` → `DistanceMetric::InnerProduct`
 /// - `DistanceMetric::Manhattan` → `DistanceMetric::L1`
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum DistanceMetric {
     /// Euclidean distance (L2 norm)
@@ -57,6 +58,7 @@ pub enum DistanceMetric {
     /// Also known as: Euclidean, L2, SquaredEuclidean
     ///
     /// Formula: `sqrt(sum((a_i - b_i)^2))`
+    #[default]
     L2,
 
     /// Cosine similarity/distance
@@ -77,12 +79,6 @@ pub enum DistanceMetric {
     ///
     /// Formula: `sum(|a_i - b_i|)`
     L1,
-}
-
-impl Default for DistanceMetric {
-    fn default() -> Self {
-        Self::L2
-    }
 }
 
 impl fmt::Display for DistanceMetric {
@@ -108,15 +104,28 @@ impl DistanceMetric {
     /// assert_eq!(DistanceMetric::from_str("cosine"), Some(DistanceMetric::Cosine));
     /// assert_eq!(DistanceMetric::from_str("unknown"), None);
     /// ```
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
+        s.parse().ok()
+    }
+}
+
+impl FromStr for DistanceMetric {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
             "l2" | "euclidean" | "euclideandistance" => Some(Self::L2),
             "cosine" | "cosinesimilarity" => Some(Self::Cosine),
             "innerproduct" | "dotproduct" | "dot" => Some(Self::InnerProduct),
             "l1" | "manhattan" | "manhattandistance" => Some(Self::L1),
             _ => None,
         }
+        .ok_or(())
     }
+}
+
+impl DistanceMetric {
 
     /// Check if this is a similarity metric (higher is better)
     ///
@@ -219,9 +228,10 @@ impl DistanceConfig {
 ///
 /// let mode = DistanceMode::Exact;
 /// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DistanceMode {
     /// Exact distance computation
+    #[default]
     Exact,
 
     /// Quantized distance computation (approximate)
@@ -232,12 +242,6 @@ pub enum DistanceMode {
 
     /// Streaming distance computation (for large vectors)
     Streaming,
-}
-
-impl Default for DistanceMode {
-    fn default() -> Self {
-        Self::Exact
-    }
 }
 
 // ============================================================================

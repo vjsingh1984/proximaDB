@@ -304,7 +304,7 @@ impl DocumentService {
                     } => {
                         #[cfg(feature = "canonical-document-store")]
                         canonical_recovery_ops
-                            .push(RecordRecoveryOperation::Upsert(record.clone()));
+                            .push(RecordRecoveryOperation::Upsert(Box::new(record.clone())));
 
                         if let Some(document) = proxima_record_to_legacy_document(&record) {
                             let mut documents = self.documents.write().await;

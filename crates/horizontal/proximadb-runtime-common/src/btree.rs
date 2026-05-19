@@ -323,6 +323,9 @@ enum NodeRef {
     OnDisk(u64), // Page ID
 }
 
+type SplitResult = Option<(Vec<u8>, NodeRef)>;
+type InsertResult = Option<(Option<Vec<u8>>, SplitResult)>;
+
 // NodeRef serde handled by derive macro
 
 impl NodeRef {
@@ -604,7 +607,7 @@ impl BPlusTree {
         node_ref: &NodeRef,
         key: Vec<u8>,
         value: Vec<u8>,
-    ) -> Option<(Option<Vec<u8>>, Option<(Vec<u8>, NodeRef)>)> {
+    ) -> InsertResult {
         let mut node_guard = node_ref.write().ok()?;
 
         match &mut *node_guard {

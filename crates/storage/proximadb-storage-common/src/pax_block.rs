@@ -413,15 +413,15 @@ impl PaxSegmentScanner {
             };
 
             // Block-level predicate pruning
-            if let Some(th) = self.predicate.tenant_hash {
-                if !reader.tenant_matches(th) {
-                    continue;
-                }
+            if let Some(th) = self.predicate.tenant_hash
+                && !reader.tenant_matches(th)
+            {
+                continue;
             }
-            if let Some((from, to)) = self.predicate.time_range {
-                if !reader.time_overlaps(from, to) {
-                    continue;
-                }
+            if let Some((from, to)) = self.predicate.time_range
+                && !reader.time_overlaps(from, to)
+            {
+                continue;
             }
 
             // SAFETY: we extend the lifetime here because `self.data` owns the

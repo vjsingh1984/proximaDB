@@ -865,11 +865,11 @@ mod tests {
         for algorithm in algorithms {
             println!("Testing SST compression with {:?}", algorithm);
 
-            let compressed = compress(&test_data, algorithm.clone(), 3, CompressionContext::Block)
+            let compressed = compress(&test_data, algorithm, 3, CompressionContext::Block)
                 .unwrap_or_else(|e| panic!("SST compression failed for {:?}: {}", algorithm, e));
 
             let decompressed =
-                decompress(&compressed, algorithm.clone(), CompressionContext::Block)
+                decompress(&compressed, algorithm, CompressionContext::Block)
                     .unwrap_or_else(|e| {
                         panic!("SST decompression failed for {:?}: {}", algorithm, e)
                     });
@@ -899,7 +899,7 @@ mod tests {
 
             let compressed = compress(
                 &test_data,
-                algorithm.clone(),
+                algorithm,
                 3,
                 CompressionContext::VectorSerialization,
             )
@@ -907,7 +907,7 @@ mod tests {
 
             let decompressed = decompress(
                 &compressed,
-                algorithm.clone(),
+                algorithm,
                 CompressionContext::VectorSerialization,
             )
             .unwrap_or_else(|e| panic!("Vector decompression failed for {:?}: {}", algorithm, e));
@@ -928,7 +928,7 @@ mod tests {
         for algorithm in parquet_supported {
             println!("Testing Parquet WriterProperties for {:?}", algorithm);
 
-            let properties = create_parquet_writer_properties(algorithm.clone(), Some(3))
+            let properties = create_parquet_writer_properties(algorithm, Some(3))
                 .unwrap_or_else(|e| {
                     panic!(
                         "Failed to create WriterProperties for {:?}: {}",
@@ -1019,7 +1019,7 @@ mod tests {
 
                 let compressed = compress(
                     &test_data,
-                    algorithm.clone(),
+                    algorithm,
                     level,
                     CompressionContext::Block,
                 )
@@ -1031,7 +1031,7 @@ mod tests {
                 });
 
                 let decompressed =
-                    decompress(&compressed, algorithm.clone(), CompressionContext::Block)
+                    decompress(&compressed, algorithm, CompressionContext::Block)
                         .unwrap_or_else(|e| {
                             panic!(
                                 "Decompression failed for {:?} level {}: {}",
@@ -1083,7 +1083,7 @@ mod tests {
                         case_name, algorithm, context
                     );
 
-                    let compressed = compress(&test_data, algorithm.clone(), 3, context.clone())
+                    let compressed = compress(&test_data, *algorithm, 3, context.clone())
                         .unwrap_or_else(|e| {
                             panic!(
                                 "Edge case compression failed for '{}' {:?} {:?}: {}",
@@ -1091,7 +1091,7 @@ mod tests {
                             )
                         });
 
-                    let decompressed = decompress(&compressed, algorithm.clone(), context.clone())
+                    let decompressed = decompress(&compressed, *algorithm, context.clone())
                         .unwrap_or_else(|e| {
                             panic!(
                                 "Edge case decompression failed for '{}' {:?} {:?}: {}",
@@ -1125,7 +1125,7 @@ mod tests {
         ];
 
         for algorithm in algorithms {
-            let estimated_ratio = estimate_ratio(&test_data, algorithm.clone());
+            let estimated_ratio = estimate_ratio(&test_data, algorithm);
             println!(
                 "Estimated compression ratio for {:?}: {:.2}",
                 algorithm, estimated_ratio
@@ -1237,7 +1237,7 @@ mod tests {
             };
 
             for level in levels {
-                let properties = create_parquet_writer_properties(algorithm.clone(), level)
+                let properties = create_parquet_writer_properties(*algorithm, level)
                     .unwrap_or_else(|e| {
                         panic!(
                             "Failed to create WriterProperties for {:?} level {:?}: {}",

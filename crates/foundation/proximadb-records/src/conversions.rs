@@ -497,9 +497,10 @@ mod tests {
 
     #[test]
     fn test_sql_float_to_proxima() {
-        let sv = make_sql_float(3.14);
+        let expected = 3.125;
+        let sv = make_sql_float(expected);
         match sql_value_to_proxima(&sv) {
-            ProximaValue::Float64(f) => assert!((f - 3.14).abs() < 1e-9),
+            ProximaValue::Float64(f) => assert!((f - expected).abs() < 1e-9),
             other => panic!("expected Float64, got {:?}", other),
         }
     }

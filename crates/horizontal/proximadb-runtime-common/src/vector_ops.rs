@@ -391,6 +391,6 @@ mod tests {
 
         let c = vec![1.0, 1.0];
         let similarity2 = cosine_similarity(&a, &c).unwrap();
-        assert!((similarity2 - 0.7071).abs() < 0.001);
+        assert!((similarity2 - std::f32::consts::FRAC_1_SQRT_2).abs() < 0.001);
     }
 }

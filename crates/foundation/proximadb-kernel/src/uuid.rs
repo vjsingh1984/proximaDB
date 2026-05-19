@@ -245,8 +245,8 @@ mod tests {
 
         // All should be unique
         for (i, item) in batch.iter().enumerate() {
-            for j in i + 1..batch.len() {
-                assert_ne!(*item, batch[j]);
+            for other in batch.iter().skip(i + 1) {
+                assert_ne!(item, other);
             }
         }
     }

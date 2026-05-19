@@ -56,7 +56,7 @@ fn make_upsert_entry(seq: u64, directives: Vec<ProjectionDirective>) -> Canonica
         seq,
         CanonicalOperation::RecordUpsert {
             collection_id: "bench_col".into(),
-            record: make_record(&format!("rec-{seq}")),
+            record: Box::new(make_record(&format!("rec-{seq}"))),
             projections: directives,
         },
         None,

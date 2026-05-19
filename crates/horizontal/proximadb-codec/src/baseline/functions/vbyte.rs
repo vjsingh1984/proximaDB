@@ -262,7 +262,7 @@ mod tests {
         // Mostly small values - best case for VByte
         let mut values = Vec::new();
         for i in 0..100 {
-            values.push(i as i32); // 0-99: all fit in 1-2 bytes
+            values.push(i); // 0-99: all fit in 1-2 bytes
         }
 
         let encoded = encode_i32(&values).expect("failed to encode compression test values");

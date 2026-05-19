@@ -207,11 +207,11 @@ impl TimePartitioner {
         {
             let mut partitions = self.partitions.write().await;
 
-            if partitions.len() >= self.config.max_partitions {
-                if let Some(&oldest_key) = partitions.keys().next() {
-                    partitions.remove(&oldest_key);
-                    debug!("Removed oldest partition for namespace {}", self.namespace);
-                }
+            if partitions.len() >= self.config.max_partitions
+                && let Some(&oldest_key) = partitions.keys().next()
+            {
+                partitions.remove(&oldest_key);
+                debug!("Removed oldest partition for namespace {}", self.namespace);
             }
 
             partitions.insert(partition_start_ns, partition.clone());

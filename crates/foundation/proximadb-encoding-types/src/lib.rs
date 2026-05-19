@@ -20,6 +20,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::str::FromStr;
 
 /// Standardized encoding format enum.
 ///
@@ -31,12 +32,13 @@ use std::fmt;
 /// - `Binary` - Binary encoding
 /// - `Json` - JSON encoding
 /// - `Protobuf` - Protocol Buffers encoding
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum EncodingFormat {
     /// Binary encoding
     ///
     /// Native binary format for efficient storage and transmission
+    #[default]
     Binary,
 
     /// JSON encoding
@@ -48,12 +50,6 @@ pub enum EncodingFormat {
     ///
     /// Compact binary format with schema
     Protobuf,
-}
-
-impl Default for EncodingFormat {
-    fn default() -> Self {
-        Self::Binary
-    }
 }
 
 impl fmt::Display for EncodingFormat {
@@ -68,14 +64,27 @@ impl fmt::Display for EncodingFormat {
 
 impl EncodingFormat {
     /// Create from string representation
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
+        s.parse().ok()
+    }
+}
+
+impl FromStr for EncodingFormat {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
             "binary" | "bin" => Some(Self::Binary),
             "json" => Some(Self::Json),
             "protobuf" | "proto" => Some(Self::Protobuf),
             _ => None,
         }
+        .ok_or(())
     }
+}
+
+impl EncodingFormat {
 
     /// Check if this is a text-based encoding
     pub fn is_text(&self) -> bool {

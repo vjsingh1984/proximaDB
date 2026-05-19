@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// TLS transport security configuration shared by protocol listeners.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TlsConfig {
     /// Path to the PEM-encoded TLS certificate file.
     pub cert_file: Option<String>,
@@ -28,17 +28,6 @@ pub struct TlsConfig {
 
     /// Network interface to bind the TLS listener to.
     pub bind_interface: Option<String>,
-}
-
-impl Default for TlsConfig {
-    fn default() -> Self {
-        Self {
-            cert_file: None,
-            key_file: None,
-            enabled: false,
-            bind_interface: None,
-        }
-    }
 }
 
 /// REST, gRPC, and Arrow Flight API endpoint configuration.

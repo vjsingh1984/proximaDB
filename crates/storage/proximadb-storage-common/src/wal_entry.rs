@@ -1,7 +1,8 @@
 //! Canonical WAL entry types for durability, recovery, and CDC consolidation.
 //!
 //! Every modality (document, graph node/edge, vector, observability) writes
-//! WAL entries as `CanonicalOperation::RecordUpsert` carrying a `ProximaRecord`.
+//! WAL entries as `CanonicalOperation::RecordUpsert` carrying a boxed
+//! `ProximaRecord`.
 //! Recovery replays these entries and calls `ProjectionRebuilder` to reconstruct
 //! modality-specific projections without those projections being an independent
 //! durable source of truth.
@@ -71,7 +72,7 @@ pub enum CanonicalOperation {
     /// rebuild or update when replaying this entry.
     RecordUpsert {
         collection_id: String,
-        record: ProximaRecord,
+        record: Box<ProximaRecord>,
         projections: Vec<ProjectionDirective>,
     },
     /// Delete a record by canonical OID.
@@ -353,7 +354,7 @@ pub fn recover_from_canonical_wal<R: ProjectionRebuilder>(
             } => {
                 result.upserts_replayed += 1;
                 for directive in projections {
-                    match rebuilder.apply_directive(Some(record), directive) {
+                    match rebuilder.apply_directive(Some(record.as_ref()), directive) {
                         Ok(()) => result.directives_applied += 1,
                         Err(_) => result.directive_errors += 1,
                     }
@@ -415,10 +416,10 @@ mod tests {
             record: Option<&ProximaRecord>,
             directive: &ProjectionDirective,
         ) -> Result<(), String> {
-            if let Some(fail) = self.fail_variant {
-                if std::mem::discriminant(directive) == fail {
-                    return Err("injected failure".into());
-                }
+            if let Some(fail) = self.fail_variant
+                && std::mem::discriminant(directive) == fail
+            {
+                return Err("injected failure".into());
             }
             let oid = record.map(|r| r.oid.clone());
             self.applied.push((oid, directive.clone()));
@@ -440,7 +441,7 @@ mod tests {
             seq,
             CanonicalOperation::RecordUpsert {
                 collection_id: "col".into(),
-                record: make_record(oid),
+                record: Box::new(make_record(oid)),
                 projections: dirs,
             },
             None,
@@ -477,7 +478,7 @@ mod tests {
             42,
             CanonicalOperation::RecordUpsert {
                 collection_id: "docs".into(),
-                record: make_record("r1"),
+                record: Box::new(make_record("r1")),
                 projections: vec![],
             },
             Some("acme".into()),

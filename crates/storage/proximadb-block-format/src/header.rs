@@ -19,14 +19,14 @@ pub const HEADER_SIZE: usize = 64;
 /// Physical storage mode of the block.
 ///
 /// * `Oltp`  — row-store: slot directory with per-row offsets + msgpack row blobs.
-///             Enables O(1) row lookup by index; suitable for ≤ 1 GB collections.
+///   Enables O(1) row lookup by index; suitable for ≤ 1 GB collections.
 /// * `Olap`  — pure column stripes, no row directory; bulk-scan optimised.
-///             External engines (Spark, Trino, DuckDB) consume this via Iceberg REST.
+///   External engines (Spark, Trino, DuckDB) consume this via Iceberg REST.
 /// * `Pax`   — Partition Attributes Across: row directory PLUS column stripes.
-///             Default for ProximaDB internal storage. Supports both row-level
-///             MVCC access (OLTP path) and vectorised column scan (OLAP path).
-///             Vector + filter columns are co-located in leading stripes for
-///             predicate-aware HNSW (ADR-007, spec §6.1).
+///   Default for ProximaDB internal storage. Supports both row-level
+///   MVCC access (OLTP path) and vectorised column scan (OLAP path).
+///   Vector + filter columns are co-located in leading stripes for
+///   predicate-aware HNSW (ADR-007, spec §6.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum BlockMode {
