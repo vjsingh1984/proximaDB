@@ -188,7 +188,11 @@ pub async fn vector_search(
         })
 }
 
-/// `POST /api/v1/vectors/batch` — upsert/delete a batch of vectors.
+/// `POST /api/v1/vectors/batch` — migration alias for record-native batch writes.
+///
+/// This route remains only while old v1 clients are migrated. The handler delegates through
+/// `ApiHandlersPort`, whose root implementation converts v1 wire payloads into
+/// `ProximaRecord` before any service/storage write.
 pub async fn vector_batch(
     State(state): State<RestAppState>,
     Extension(tenant): Extension<TenantContext>,

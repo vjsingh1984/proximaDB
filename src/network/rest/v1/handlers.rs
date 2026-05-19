@@ -888,7 +888,7 @@ pub fn create_router(state: AppState) -> axum::Router {
     info!("   DELETE /api/v1/collections/:id (port-backed via proximadb-api)");
     info!("   POST   /api/v1/search (port-backed via proximadb-api)");
     info!("   POST   /api/v1/search/with_metadata (port-backed via proximadb-api)");
-    info!("   POST   /api/v1/vectors/batch (port-backed via proximadb-api)");
+    info!("   POST   /api/v1/vectors/batch (migration alias over record-native writes)");
     info!("   GET    /api/v1/vectors/:collection_id/:vector_id (port-backed via proximadb-api)");
     info!("   DELETE /api/v1/vectors/:collection_id/:vector_id (port-backed via proximadb-api)");
     info!("   POST   /api/v1/hybrid/search (RestHybridPortImpl — real BM25+vector)");

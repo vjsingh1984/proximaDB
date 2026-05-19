@@ -10,7 +10,7 @@
 //! REST, gRPC, Arrow Flight, and PostgreSQL wire protocol handlers.
 //! It is the composition root for the server-side service graph.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -116,8 +116,18 @@ impl SharedServices {
             Arc::from(MetadataBackendFactory::create_from_url(&storage_config.metadata_url).await?);
         debug!("✅ SharedServices: Metadata backend created successfully");
 
-        let collection_service =
-            Arc::new(CollectionService::new(metadata_backend, storage_config.clone()).await?);
+        if catalog_manager.list_catalogs().await.is_empty() {
+            catalog_manager
+                .create_native_catalog("default", &storage_config.metadata_url)
+                .await
+                .context("Failed to initialize default xCatalog backend")?;
+        }
+
+        let collection_service = Arc::new(
+            CollectionService::new(metadata_backend, storage_config.clone())
+                .await?
+                .with_catalog_manager(catalog_manager.clone()),
+        );
         debug!("✅ SharedServices: CollectionService created successfully");
 
         // Collection service will be injected into StorageEngine by ProximaDB::new

@@ -966,10 +966,7 @@ impl UnifiedHandlers {
         let records: Vec<proximadb_records::ProximaRecord> = request
             .vectors
             .into_iter()
-            .map(|mut v| {
-                crate::proto::defaults::apply_vector_record_defaults(&mut v);
-                proximadb_records::ProximaRecord::from(v)
-            })
+            .map(crate::proto::defaults::vector_record_to_proxima_record)
             .collect();
 
         match self

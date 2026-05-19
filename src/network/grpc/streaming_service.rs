@@ -245,7 +245,7 @@ impl StreamingService for StreamingServiceImpl {
                         let records: Vec<proximadb_records::ProximaRecord> = request
                             .vectors
                             .into_iter()
-                            .map(|v| proximadb_records::ProximaRecord::from(v))
+                            .map(crate::proto::defaults::vector_record_to_proxima_record)
                             .collect();
 
                         // Push records to coordinator
@@ -482,7 +482,7 @@ impl StreamingService for StreamingServiceImpl {
                     let batch_records: Vec<proximadb_records::ProximaRecord> = batch
                         .vectors
                         .into_iter()
-                        .map(|v| proximadb_records::ProximaRecord::from(v))
+                        .map(crate::proto::defaults::vector_record_to_proxima_record)
                         .collect();
 
                     // Push records

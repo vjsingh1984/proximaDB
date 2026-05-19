@@ -65,12 +65,21 @@
 //! - **Smart Defaults**: Automatic selection of optimal configurations
 
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 // Using String directly instead of String alias for proto-first architecture
 use crate::core::config::StorageConfig;
-use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageEngine};
+use crate::catalog::{
+    CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogManager,
+    CatalogPhysicalFormat, CatalogProjection, CatalogProjectionKind, CatalogStorageLayout,
+    CatalogStorageLayoutKind, CatalogTableSchema, ProjectionFreshness, TableIdentifier,
+};
+use crate::proto::proximadb_v1::{
+    Collection, CollectionConfig, CollectionStats, FilterableColumnSpec, FilterableDataType,
+    IndexConfig, IndexingAlgorithm, StorageAssignment, StorageEngine,
+};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::InternalCollectionProvider;
 use proximadb_storage_common::storage_path::StoragePath;
@@ -100,6 +109,9 @@ pub struct CollectionService {
     index_config_cache: Arc<dashmap::DashMap<String, crate::index::config::IndexConfig>>,
     /// Global storage configuration for engine and WAL settings
     storage_config: StorageConfig,
+    /// Optional xCatalog manager. When present, collection lifecycle metadata is
+    /// mirrored through xCatalog and the legacy backend remains a storage-compatibility cache.
+    catalog_manager: Option<Arc<CatalogManager>>,
 
     // NEW: Multi-tenant integration
     /// Optional tenant manager for multi-tenant isolation
@@ -135,9 +147,19 @@ impl CollectionService {
             filesystem_factory,
             index_config_cache: Arc::new(dashmap::DashMap::new()),
             storage_config,
+            catalog_manager: None,
             tenant_manager: None, // Will be set via with_tenant_manager()
             rbac_enforcer: None,  // Will be set via with_rbac_enforcer()
         })
+    }
+
+    /// Attach the shared xCatalog manager.
+    ///
+    /// During migration, xCatalog is the lifecycle metadata authority when configured while the
+    /// legacy metadata backend is kept in sync for storage-engine callers that still read it.
+    pub fn with_catalog_manager(mut self, catalog_manager: Arc<CatalogManager>) -> Self {
+        self.catalog_manager = Some(catalog_manager);
+        self
     }
 
     /// Set tenant manager for multi-tenant support
@@ -222,7 +244,6 @@ impl CollectionService {
 
     async fn count_tenant_collections(&self, tenant_id: &str) -> Result<usize> {
         Ok(self
-            .metadata_backend
             .list_collections()
             .await?
             .into_iter()
@@ -247,10 +268,7 @@ impl CollectionService {
             return Ok(None);
         }
 
-        let collection = self
-            .metadata_backend
-            .get_collection(collection_identifier)
-            .await?;
+        let collection = self.collection(collection_identifier).await?;
 
         let Some(collection) = collection else {
             return Ok(None);
@@ -315,7 +333,7 @@ impl CollectionService {
         }
 
         // Proceed with normal collection retrieval
-        self.metadata_backend.get_collection(collection_name).await
+        self.collection(collection_name).await
     }
 
     /// List all collections, filtered to the given tenant context if multi-tenant mode is active.
@@ -323,7 +341,7 @@ impl CollectionService {
         &self,
         tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<Vec<Collection>> {
-        let collections = self.metadata_backend.list_collections().await?;
+        let collections = self.list_collections().await?;
 
         if let Some(tenant_ctx) = tenant_context.filter(|_| self.tenant_manager.is_some()) {
             if let Some(ref tenant_manager) = self.tenant_manager
@@ -628,15 +646,7 @@ impl CollectionService {
             // This allows collections to be created with quantization enabled, but enforces IDs at insert time
         }
 
-        // Check if collection already exists
-        // Check if collection already exists
-        // Check if collection already exists
-        if self
-            .metadata_backend
-            .get_collection(&config.name)
-            .await?
-            .is_some()
-        {
+        if self.collection(&config.name).await?.is_some() {
             return Ok(CollectionServiceResponse {
                 success: false,
                 collection: None,
@@ -647,7 +657,8 @@ impl CollectionService {
         }
 
         // Create proto collection directly - no Avro conversion needed!
-        // Generate base62 ID from microsecond timestamp with collision detection
+        // Collection IDs are UUIDs. Legacy base62/time IDs remain resolvable from older metadata,
+        // but new catalog assets use opaque UUID identity and keep names as stable logical aliases.
         let uuid = self.generate_unique_collection_id().await?;
         let now = chrono::Utc::now().timestamp_micros();
 
@@ -715,11 +726,24 @@ impl CollectionService {
             }),
         };
 
-        // Store proto collection using protobuf serialization (zero-copy)
-        self.metadata_backend
+        if let Err(e) = self.upsert_collection_catalog_asset(&proto_collection).await {
+            return Ok(CollectionServiceResponse::error(
+                format!("CATALOG_CREATE_FAILED: {}", e),
+                start_time.elapsed().as_micros() as i64,
+            ));
+        }
+
+        // Store proto collection using protobuf serialization (zero-copy). This remains as a
+        // compatibility cache for storage engines until all callers read xCatalog directly.
+        if let Err(e) = self
+            .metadata_backend
             .upsert_collection_proto(&proto_collection)
             .await
-            .context("Failed to store collection metadata_info")?;
+            .context("Failed to store collection metadata_info")
+        {
+            let _ = self.drop_collection_catalog_asset(&proto_collection).await;
+            return Err(e);
+        }
 
         info!(
             "✅ Collection created: {} (UUID: {}) with storage at: {} in {}μs",
@@ -751,7 +775,11 @@ impl CollectionService {
 
     /// Get Collection by name or UUID
     async fn get_native_proto(&self, identifier: &str) -> Result<Option<Collection>> {
-        // Use the metadata backend's collection_metadata which handles both name and UUID
+        if let Some(collection) = self.collection_from_catalog_asset(identifier).await? {
+            return Ok(Some(collection));
+        }
+
+        // Use the metadata backend's collection_metadata which handles both legacy name and UUID.
         self.metadata_backend.collection_metadata(identifier).await
     }
 
@@ -1040,7 +1068,31 @@ impl CollectionService {
     /// List all collections - returns proto Collections directly (proto-first architecture)
     pub async fn list_collections(&self) -> Result<Vec<Collection>> {
         debug!("📋 Listing all collections");
-        self.metadata_backend.list_collections().await
+        let mut collections = self.list_collections_from_catalog().await?;
+        let mut seen = HashSet::new();
+        for collection in &collections {
+            seen.insert(collection.id.clone());
+            if let Some(config) = &collection.config {
+                seen.insert(config.name.clone());
+            }
+        }
+
+        for collection in self.metadata_backend.list_collections().await? {
+            let mut duplicate = seen.contains(&collection.id);
+            if let Some(config) = &collection.config {
+                duplicate |= seen.contains(&config.name);
+            }
+            if duplicate {
+                continue;
+            }
+            seen.insert(collection.id.clone());
+            if let Some(config) = &collection.config {
+                seen.insert(config.name.clone());
+            }
+            collections.push(collection);
+        }
+
+        Ok(collections)
     }
 
     /// Delete collection with comprehensive cleanup across all storage components
@@ -1051,11 +1103,9 @@ impl CollectionService {
         info!("🗑️ Deleting collection: {}", collection_identifier);
         let start_time = std::time::Instant::now();
 
-        // Get collection record first to retrieve UUID and other details
-        let collection_record = self
-            .metadata_backend
-            .get_collection(collection_identifier)
-            .await?;
+        // Get collection record first to retrieve UUID and other details. xCatalog is checked
+        // first; the legacy backend is only a compatibility fallback.
+        let collection_record = self.collection(collection_identifier).await?;
 
         if let Some(record) = collection_record {
             let collection_uuid = record.id.clone();
@@ -1095,10 +1145,28 @@ impl CollectionService {
             // Step 2: Assignment removal is no longer needed
             // Storage assignment is now part of collection metadata which gets deleted
 
-            // Step 3: Delete from metadata backend
-            self.metadata_backend
+            // Step 3: Delete from xCatalog and metadata backend
+            if let Err(e) = self.drop_collection_catalog_asset(&record).await {
+                return Ok(CollectionServiceResponse::error(
+                    format!("CATALOG_DELETE_FAILED: {}", e),
+                    start_time.elapsed().as_micros() as i64,
+                ));
+            }
+
+            if let Err(e) = self
+                .metadata_backend
                 .delete_collection(collection_name.as_deref().unwrap_or(collection_identifier))
-                .await?;
+                .await
+            {
+                if Self::is_not_found_error(&e) {
+                    debug!(
+                        "Legacy collection metadata cache was already absent for {}",
+                        collection_identifier
+                    );
+                } else {
+                    return Err(e);
+                }
+            }
             let deleted = true;
 
             if deleted {
@@ -1161,6 +1229,8 @@ impl CollectionService {
                 stats.data_size_bytes += size_delta;
             }
             record.updated_at = chrono::Utc::now().timestamp_millis();
+
+            self.upsert_collection_catalog_asset(&record).await?;
 
             self.metadata_backend
                 .upsert_collection_proto(&record)
@@ -1245,9 +1315,8 @@ impl CollectionService {
         info!("📝 Updating collection: {}", identifier);
         let start_time = std::time::Instant::now();
 
-        // Get current record (supports both names and UUIDs)
-        // Get current record (supports both names and UUIDs)
-        let mut record = match self.metadata_backend.get_collection(identifier).await? {
+        // Get current record (supports both names and UUIDs) through xCatalog first.
+        let mut record = match self.collection(identifier).await? {
             Some(record) => record,
             None => {
                 return Ok(CollectionServiceResponse {
@@ -1259,6 +1328,7 @@ impl CollectionService {
                 });
             }
         };
+        let previous_record = record.clone();
 
         // Apply updates using native proto types
         if let Some(new_config) = config_update {
@@ -1298,6 +1368,21 @@ impl CollectionService {
 
         // Update timestamp
         record.updated_at = chrono::Utc::now().timestamp_millis();
+
+        if previous_record
+            .config
+            .as_ref()
+            .zip(record.config.as_ref())
+            .is_some_and(|(previous, current)| previous.name != current.name)
+        {
+            self.drop_collection_catalog_asset(&previous_record)
+                .await
+                .context("Failed to remove previous collection catalog asset")?;
+        }
+
+        self.upsert_collection_catalog_asset(&record)
+            .await
+            .context("Failed to update collection catalog metadata")?;
 
         // Store updated record
         self.metadata_backend
@@ -1632,67 +1717,556 @@ impl CollectionService {
         Ok(cleaned_components)
     }
 
-    /// Generate unique collection ID using base62-encoded seconds with random padding
-    /// Format: {base62(seconds)}{random_base62_char}
-    async fn generate_unique_collection_id(&self) -> Result<String> {
-        use crate::core::base62;
+    async fn upsert_collection_catalog_asset(&self, collection: &Collection) -> Result<()> {
+        let Some(catalog_manager) = &self.catalog_manager else {
+            return Ok(());
+        };
 
-        const BASE62_CHARS: &[u8] =
-            b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-        let base_timestamp = chrono::Utc::now().timestamp() as u64;
-        let base_id = base62::encode(base_timestamp);
+        let Some(config) = collection.config.as_ref() else {
+            return Ok(());
+        };
 
-        // Generate initial ID with random padding using rand::random which is Send
-        let random_index: u8 = rand::random::<u8>() % 62;
-        let random_char = BASE62_CHARS[random_index as usize] as char;
-        let id = format!("{}{}", base_id, random_char);
+        let catalog = catalog_manager.default_catalog().await?;
+        let identifier = Self::collection_table_identifier(config);
 
-        // Check if ID is available
-        if !self.metadata_backend.collection_id_exists(&id).await? {
-            return Ok(id);
+        if !catalog.namespace_exists(&identifier.namespace).await? {
+            catalog
+                .create_namespace(&identifier.namespace, std::collections::HashMap::new())
+                .await?;
         }
 
-        // If collision detected, try different random paddings
-        for _ in 0..62 {
-            let random_index: u8 = rand::random::<u8>() % 62;
-            let random_char = BASE62_CHARS[random_index as usize] as char;
-            let try_id = format!("{}{}", base_id, random_char);
-            if !self.metadata_backend.collection_id_exists(&try_id).await? {
-                return Ok(try_id);
+        let schema = Self::catalog_schema_from_collection(collection)?;
+        if catalog.table_exists(&identifier).await? {
+            let mut existing = catalog.get_table(&identifier).await?;
+            if existing
+                .properties
+                .get("asset.kind")
+                .is_none_or(|kind| kind != "collection")
+            {
+                existing
+                    .properties
+                    .insert("asset.capability.vector".to_string(), "true".to_string());
+                existing
+                    .properties
+                    .insert("collection.id".to_string(), collection.id.clone());
+                existing
+                    .properties
+                    .insert("collection.name".to_string(), config.name.clone());
+                existing
+                    .properties
+                    .insert("vector.dimension".to_string(), config.dimension.to_string());
+                existing.updated_at_ms = collection.updated_at / 1000;
+                if existing.storage_layouts.is_empty() {
+                    existing.storage_layouts = schema.storage_layouts.clone();
+                }
+                if existing.location.is_none() {
+                    existing.location = schema.location.clone();
+                }
+
+                let _ = catalog.drop_table(&identifier, false).await?;
+                catalog.create_table(&identifier, existing).await?;
+                return Ok(());
+            }
+
+            let _ = catalog.drop_table(&identifier, false).await?;
+        }
+        catalog.create_table(&identifier, schema).await?;
+        Ok(())
+    }
+
+    async fn drop_collection_catalog_asset(&self, collection: &Collection) -> Result<()> {
+        let Some(catalog_manager) = &self.catalog_manager else {
+            return Ok(());
+        };
+
+        let Some(config) = collection.config.as_ref() else {
+            return Ok(());
+        };
+
+        let catalog = catalog_manager.default_catalog().await?;
+        let identifier = Self::collection_table_identifier(config);
+        if catalog.table_exists(&identifier).await? {
+            let _ = catalog.drop_table(&identifier, false).await?;
+        }
+        Ok(())
+    }
+
+    async fn collection_from_catalog_asset(&self, identifier: &str) -> Result<Option<Collection>> {
+        let Some(catalog_manager) = &self.catalog_manager else {
+            return Ok(None);
+        };
+
+        if let Ok((catalog, table_id)) = catalog_manager.resolve_table(identifier).await
+            && catalog.table_exists(&table_id).await.unwrap_or(false)
+        {
+            let schema = catalog.get_table(&table_id).await?;
+            if let Some(collection) = Self::collection_from_catalog_schema(&table_id, &schema)? {
+                return Ok(Some(collection));
             }
         }
 
-        // If still colliding (very unlikely), try bidirectional search with padding
-        const MAX_ATTEMPTS: u64 = 100;
-
-        for offset in 1..=MAX_ATTEMPTS {
-            // Try incrementing seconds
-            let inc_timestamp = base_timestamp + offset;
-            let inc_base = base62::encode(inc_timestamp);
-            let random_index: u8 = rand::random::<u8>() % 62;
-            let random_char = BASE62_CHARS[random_index as usize] as char;
-            let inc_id = format!("{}{}", inc_base, random_char);
-            if !self.metadata_backend.collection_id_exists(&inc_id).await? {
-                return Ok(inc_id);
+        for collection in self.list_collections_from_catalog().await? {
+            if collection.id == identifier {
+                return Ok(Some(collection));
             }
+            if let Some(config) = &collection.config
+                && config.name == identifier
+            {
+                return Ok(Some(collection));
+            }
+        }
 
-            // Try decrementing seconds (if not underflow)
-            if base_timestamp > offset {
-                let dec_timestamp = base_timestamp - offset;
-                let dec_base = base62::encode(dec_timestamp);
-                let random_index: u8 = rand::random::<u8>() % 62;
-                let random_char = BASE62_CHARS[random_index as usize] as char;
-                let dec_id = format!("{}{}", dec_base, random_char);
-                if !self.metadata_backend.collection_id_exists(&dec_id).await? {
-                    return Ok(dec_id);
+        Ok(None)
+    }
+
+    async fn list_collections_from_catalog(&self) -> Result<Vec<Collection>> {
+        let Some(catalog_manager) = &self.catalog_manager else {
+            return Ok(Vec::new());
+        };
+
+        let catalog = match catalog_manager.default_catalog().await {
+            Ok(catalog) => catalog,
+            Err(_) => return Ok(Vec::new()),
+        };
+
+        let mut namespaces: Vec<Vec<String>> = catalog
+            .list_namespaces(None)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|namespace| namespace.levels)
+            .collect();
+        if !namespaces.iter().any(|namespace| namespace == &["default"]) {
+            namespaces.push(vec!["default".to_string()]);
+        }
+
+        let mut collections = Vec::new();
+        let mut seen_ids = HashSet::new();
+        for namespace in namespaces {
+            let table_ids = match catalog.list_tables(&namespace).await {
+                Ok(table_ids) => table_ids,
+                Err(_) => continue,
+            };
+
+            for table_id in table_ids {
+                let schema = match catalog.get_table(&table_id).await {
+                    Ok(schema) => schema,
+                    Err(_) => continue,
+                };
+                let Some(collection) = Self::collection_from_catalog_schema(&table_id, &schema)?
+                else {
+                    continue;
+                };
+                if seen_ids.insert(collection.id.clone()) {
+                    collections.push(collection);
                 }
             }
         }
 
-        // Extremely unlikely case: append another random character
-        let random_index: u8 = rand::random::<u8>() % 62;
-        let random_suffix = BASE62_CHARS[random_index as usize] as char;
-        Ok(format!("{}{}{}", base_id, random_char, random_suffix))
+        Ok(collections)
+    }
+
+    fn collection_from_catalog_schema(
+        table_id: &TableIdentifier,
+        schema: &CatalogTableSchema,
+    ) -> Result<Option<Collection>> {
+        if schema
+            .properties
+            .get("asset.kind")
+            .is_none_or(|kind| kind != "collection")
+        {
+            return Ok(None);
+        }
+
+        let Some(id) = schema.properties.get("collection.id").cloned() else {
+            return Ok(None);
+        };
+
+        let name = schema
+            .properties
+            .get("collection.name")
+            .cloned()
+            .unwrap_or_else(|| table_id.to_fqn());
+        let dimension = schema
+            .properties
+            .get("vector.dimension")
+            .and_then(|dimension| dimension.parse::<u32>().ok())
+            .or_else(|| {
+                schema
+                    .columns
+                    .iter()
+                    .find(|column| column.name == "embedding")
+                    .and_then(|column| column.properties.get("dimension"))
+                    .and_then(|dimension| dimension.parse::<u32>().ok())
+            })
+            .unwrap_or_default();
+
+        let storage_engine = schema
+            .storage_layouts
+            .first()
+            .and_then(|layout| layout.properties.get("storage_engine"))
+            .map(|engine| Self::storage_engine_from_catalog(engine))
+            .unwrap_or(StorageEngine::Sst as i32);
+
+        let mut config = CollectionConfig {
+            name,
+            dimension,
+            storage_engine: Some(storage_engine),
+            owner: schema.properties.get("owner").cloned(),
+            tags: schema
+                .properties
+                .get("tags")
+                .map(|tags| {
+                    tags.split(',')
+                        .map(str::trim)
+                        .filter(|tag| !tag.is_empty())
+                        .map(ToString::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            ..Default::default()
+        };
+
+        config.filterable_columns = schema
+            .columns
+            .iter()
+            .filter(|column| column.id >= 100)
+            .map(|column| {
+                let indexed = schema
+                    .indexes
+                    .iter()
+                    .any(|index| index.columns.iter().any(|name| name == &column.name));
+                let supports_range = schema.indexes.iter().any(|index| {
+                    index.columns.iter().any(|name| name == &column.name)
+                        && index.index_type == CatalogIndexType::BTree
+                });
+                FilterableColumnSpec {
+                    name: column.name.clone(),
+                    data_type: Self::filterable_data_type(column.data_type),
+                    indexed,
+                    supports_range,
+                    estimated_cardinality: None,
+                }
+            })
+            .collect();
+
+        config.index_configs = schema
+            .indexes
+            .iter()
+            .filter(|index| index.columns.iter().any(|column| column == "embedding"))
+            .map(|index| IndexConfig {
+                index_name: index.name.clone(),
+                algorithm: Self::indexing_algorithm(index.index_type),
+                parameters: index.properties.clone(),
+                enabled: Some(true),
+                ..Default::default()
+            })
+            .collect();
+
+        let location = schema
+            .storage_layouts
+            .first()
+            .and_then(|layout| layout.location.clone())
+            .or_else(|| schema.location.clone())
+            .unwrap_or_default();
+        let storage_assignment = if location.is_empty() {
+            None
+        } else {
+            Some(StorageAssignment {
+                primary_path: location.clone(),
+                engine: storage_engine,
+                base_location: location,
+                ..Default::default()
+            })
+        };
+
+        Ok(Some(Collection {
+            id,
+            config: Some(config),
+            stats: Some(CollectionStats {
+                vector_count: schema
+                    .properties
+                    .get("stats.row_count")
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or_default(),
+                data_size_bytes: schema
+                    .properties
+                    .get("stats.data_size_bytes")
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or_default(),
+                index_size_bytes: schema
+                    .properties
+                    .get("stats.index_size_bytes")
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or_default(),
+            }),
+            created_at: schema.created_at_ms * 1000,
+            updated_at: schema.updated_at_ms * 1000,
+            storage_assignment,
+        }))
+    }
+
+    fn collection_table_identifier(config: &CollectionConfig) -> TableIdentifier {
+        let parsed = TableIdentifier::parse(&config.name);
+        if parsed.namespace.is_empty() {
+            TableIdentifier::new(vec!["default".to_string()], parsed.name)
+        } else {
+            parsed
+        }
+    }
+
+    fn catalog_schema_from_collection(collection: &Collection) -> Result<CatalogTableSchema> {
+        let config = collection
+            .config
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Collection has no config"))?;
+        let identifier = Self::collection_table_identifier(config);
+        let mut embedding_column = CatalogColumn::new(20, "embedding", CatalogDataType::Vector);
+        embedding_column
+            .properties
+            .insert("dimension".to_string(), config.dimension.to_string());
+
+        let mut schema = CatalogTableSchema::new(identifier.name.clone())
+            .with_column(CatalogColumn::new(0, "oid", CatalogDataType::String).nullable(false))
+            .with_column(CatalogColumn::new(1, "tenant_id", CatalogDataType::String))
+            .with_column(CatalogColumn::new(
+                2,
+                "created_at_ns",
+                CatalogDataType::TimestampTz,
+            ))
+            .with_column(CatalogColumn::new(
+                3,
+                "updated_at_ns",
+                CatalogDataType::TimestampTz,
+            ))
+            .with_column(CatalogColumn::new(8, "props", CatalogDataType::Json))
+            .with_column(embedding_column)
+            .with_primary_key(vec!["oid".to_string()]);
+
+        for (idx, column) in config.filterable_columns.iter().enumerate() {
+            if column.name.is_empty() {
+                continue;
+            }
+            schema = schema.with_column(CatalogColumn::new(
+                100 + idx as i32,
+                column.name.clone(),
+                Self::catalog_data_type(column.data_type),
+            ));
+
+            if column.indexed {
+                let index_type = if column.supports_range {
+                    CatalogIndexType::BTree
+                } else {
+                    CatalogIndexType::Hash
+                };
+                schema = schema.with_index(CatalogIndex::new(
+                    format!("idx_{}_{}", identifier.name, column.name),
+                    vec![column.name.clone()],
+                    index_type,
+                ));
+            }
+        }
+
+        for index in &config.index_configs {
+            let index_type = Self::catalog_index_type(index.algorithm);
+            schema = schema.with_index(CatalogIndex::new(
+                if index.index_name.is_empty() {
+                    format!("idx_{}_embedding", identifier.name)
+                } else {
+                    index.index_name.clone()
+                },
+                vec!["embedding".to_string()],
+                index_type,
+            ));
+
+            let mut projection = CatalogProjection::rebuildable(
+                if index.index_name.is_empty() {
+                    format!("{}_ann", identifier.name)
+                } else {
+                    index.index_name.clone()
+                },
+                CatalogProjectionKind::VectorAnn,
+                "primary",
+            );
+            projection.physical_format = CatalogPhysicalFormat::ProximaBlock;
+            projection.freshness = ProjectionFreshness::Lazy;
+            schema = schema.with_projection(projection);
+        }
+
+        let mut layout = CatalogStorageLayout::internal(
+            "primary",
+            match config.storage_engine.unwrap_or(StorageEngine::Sst as i32) {
+                value if value == StorageEngine::Viper as i32 => CatalogStorageLayoutKind::Columnar,
+                value if value == StorageEngine::Nova as i32 => CatalogStorageLayoutKind::Columnar,
+                value if value == StorageEngine::Helix as i32 => CatalogStorageLayoutKind::LsmRecord,
+                _ => CatalogStorageLayoutKind::RowRecord,
+            },
+        );
+        layout.location = collection
+            .storage_assignment
+            .as_ref()
+            .map(|assignment| assignment.base_location.clone())
+            .filter(|location| !location.is_empty());
+        layout
+            .properties
+            .insert("collection_id".to_string(), collection.id.clone());
+        layout.properties.insert(
+            "storage_engine".to_string(),
+            config
+                .storage_engine
+                .and_then(|engine| StorageEngine::try_from(engine).ok())
+                .map(|engine| format!("{:?}", engine))
+                .unwrap_or_else(|| "Sst".to_string()),
+        );
+
+        schema.storage_layouts = vec![layout];
+        schema.location = collection
+            .storage_assignment
+            .as_ref()
+            .map(|assignment| assignment.base_location.clone())
+            .filter(|location| !location.is_empty());
+        schema.created_at_ms = collection.created_at / 1000;
+        schema.updated_at_ms = collection.updated_at / 1000;
+        schema
+            .properties
+            .insert("asset.kind".to_string(), "collection".to_string());
+        schema
+            .properties
+            .insert("asset.capability.vector".to_string(), "true".to_string());
+        schema
+            .properties
+            .insert("collection.id".to_string(), collection.id.clone());
+        schema
+            .properties
+            .insert("collection.name".to_string(), config.name.clone());
+        schema
+            .properties
+            .insert("vector.dimension".to_string(), config.dimension.to_string());
+        if let Some(owner) = &config.owner {
+            schema
+                .properties
+                .insert("owner".to_string(), owner.clone());
+        }
+        if !config.tags.is_empty() {
+            schema
+                .properties
+                .insert("tags".to_string(), config.tags.join(","));
+        }
+        if let Some(stats) = &collection.stats {
+            schema
+                .properties
+                .insert("stats.row_count".to_string(), stats.vector_count.to_string());
+            schema.properties.insert(
+                "stats.data_size_bytes".to_string(),
+                stats.data_size_bytes.to_string(),
+            );
+            schema.properties.insert(
+                "stats.index_size_bytes".to_string(),
+                stats.index_size_bytes.to_string(),
+            );
+        }
+
+        Ok(schema)
+    }
+
+    fn catalog_data_type(data_type: i32) -> CatalogDataType {
+        match FilterableDataType::try_from(data_type).ok() {
+            Some(FilterableDataType::FilterableInteger) => CatalogDataType::Int64,
+            Some(FilterableDataType::FilterableFloat) => CatalogDataType::Float64,
+            Some(FilterableDataType::FilterableBoolean) => CatalogDataType::Boolean,
+            Some(FilterableDataType::FilterableDatetime) => CatalogDataType::Timestamp,
+            Some(FilterableDataType::FilterableDecimal) => CatalogDataType::Decimal,
+            Some(FilterableDataType::FilterableTimestampTz) => CatalogDataType::TimestampTz,
+            Some(FilterableDataType::FilterableDate) => CatalogDataType::Date,
+            Some(FilterableDataType::FilterableTime) => CatalogDataType::Time,
+            Some(FilterableDataType::FilterableUuid) => CatalogDataType::Uuid,
+            Some(FilterableDataType::FilterableBinary) => CatalogDataType::Binary,
+            Some(FilterableDataType::FilterableJson)
+            | Some(FilterableDataType::FilterableMapStringAny) => CatalogDataType::Json,
+            _ => CatalogDataType::String,
+        }
+    }
+
+    fn catalog_index_type(algorithm: i32) -> CatalogIndexType {
+        match IndexingAlgorithm::try_from(algorithm).ok() {
+            Some(IndexingAlgorithm::Hnsw) => CatalogIndexType::Hnsw,
+            Some(IndexingAlgorithm::Ivf) => CatalogIndexType::Ivf,
+            Some(IndexingAlgorithm::Pq) => CatalogIndexType::Pq,
+            _ => CatalogIndexType::Hnsw,
+        }
+    }
+
+    fn filterable_data_type(data_type: CatalogDataType) -> i32 {
+        match data_type {
+            CatalogDataType::Int8
+            | CatalogDataType::Int16
+            | CatalogDataType::Int32
+            | CatalogDataType::Int64 => FilterableDataType::FilterableInteger as i32,
+            CatalogDataType::Float32 | CatalogDataType::Float64 => {
+                FilterableDataType::FilterableFloat as i32
+            }
+            CatalogDataType::Boolean => FilterableDataType::FilterableBoolean as i32,
+            CatalogDataType::Timestamp => FilterableDataType::FilterableDatetime as i32,
+            CatalogDataType::TimestampTz => FilterableDataType::FilterableTimestampTz as i32,
+            CatalogDataType::Decimal => FilterableDataType::FilterableDecimal as i32,
+            CatalogDataType::Date => FilterableDataType::FilterableDate as i32,
+            CatalogDataType::Time => FilterableDataType::FilterableTime as i32,
+            CatalogDataType::Uuid => FilterableDataType::FilterableUuid as i32,
+            CatalogDataType::Binary => FilterableDataType::FilterableBinary as i32,
+            CatalogDataType::Json => FilterableDataType::FilterableJson as i32,
+            _ => FilterableDataType::FilterableString as i32,
+        }
+    }
+
+    fn indexing_algorithm(index_type: CatalogIndexType) -> i32 {
+        match index_type {
+            CatalogIndexType::Ivf => IndexingAlgorithm::Ivf as i32,
+            CatalogIndexType::Pq => IndexingAlgorithm::Pq as i32,
+            CatalogIndexType::Hnsw => IndexingAlgorithm::Hnsw as i32,
+            _ => IndexingAlgorithm::Hnsw as i32,
+        }
+    }
+
+    fn storage_engine_from_catalog(engine: &str) -> i32 {
+        match engine.to_ascii_uppercase().as_str() {
+            "VIPER" => StorageEngine::Viper as i32,
+            "NOVA" => StorageEngine::Nova as i32,
+            "HELIX" => StorageEngine::Helix as i32,
+            "SWIFT" => StorageEngine::Swift as i32,
+            "RAPTOR" => StorageEngine::Raptor as i32,
+            "MMAP" => StorageEngine::Mmap as i32,
+            "HYBRID" => StorageEngine::Hybrid as i32,
+            "TST" => StorageEngine::Tst as i32,
+            "CEDAR" => StorageEngine::Cedar as i32,
+            "TITAN" => StorageEngine::Titan as i32,
+            "CHRONO" => StorageEngine::Chrono as i32,
+            _ => StorageEngine::Sst as i32,
+        }
+    }
+
+    fn is_not_found_error(error: &anyhow::Error) -> bool {
+        let message = error.to_string().to_ascii_lowercase();
+        message.contains("not found") || message.contains("does not exist")
+    }
+
+    /// Generate unique collection ID using UUIDs.
+    ///
+    /// Base62 timestamp IDs are still accepted as legacy identifiers by lookup paths, but new
+    /// catalog assets use UUID strings so identity is opaque, non-time-leaking, and compatible
+    /// with catalog/schema UUID fields across SDKs and embedded mode.
+    async fn generate_unique_collection_id(&self) -> Result<String> {
+        for _ in 0..8 {
+            let id = uuid::Uuid::new_v4().to_string();
+            if !self.metadata_backend.collection_id_exists(&id).await?
+                && self.collection_from_catalog_asset(&id).await?.is_none()
+            {
+                return Ok(id);
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "Unable to generate a unique UUID for collection"
+        ))
     }
 }
 
@@ -2125,7 +2699,11 @@ mod tests {
         };
 
         let result = service.create_collection(&config).await?;
-        assert!(result.success);
+        assert!(
+            result.success,
+            "create failed with error_code={:?}",
+            result.error_code
+        );
 
         let stored = service
             .collection("metric_default_test")
@@ -2184,7 +2762,11 @@ mod tests {
         };
 
         let result = service.create_collection(&config).await?;
-        assert!(result.success);
+        assert!(
+            result.success,
+            "create failed with error_code={:?}",
+            result.error_code
+        );
 
         let stored = service
             .collection("exact_default_case")
@@ -2196,6 +2778,147 @@ mod tests {
                 .as_ref()
                 .is_some_and(|cfg| cfg.index_configs.is_empty())
         );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_collection_lifecycle_mirrors_to_xcatalog_with_uuid_id() -> Result<()> {
+        use crate::storage::metadata::backends::universal_backend::{
+            UniversalMetadataBackend, UniversalMetadataConfig,
+        };
+        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+
+        let filestore_config = UniversalMetadataConfig {
+            storage_url: temp_path.clone(),
+            compression: false,
+            enable_snapshots: false,
+            snapshot_threshold: 1000,
+            keep_snapshots: 3,
+            backup_url: None,
+            temp_dir: None,
+        };
+
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .context("Failed to create filesystem factory for test")?,
+        );
+        let backend = Arc::new(
+            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
+                .await
+                .context("Failed to create metadata backend for test")?,
+        );
+
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("Failed to create test xCatalog")?;
+
+        let service = CollectionService::new(backend, StorageConfig::default())
+            .await
+            .context("Failed to create collection service for test")?
+            .with_catalog_manager(catalog_manager.clone());
+
+        let config = CollectionConfig {
+            name: "catalog_vector_assets".to_string(),
+            dimension: 384,
+            storage_engine: Some(StorageEngine::Sst as i32),
+            filterable_columns: vec![crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: "category".to_string(),
+                data_type: FilterableDataType::FilterableString as i32,
+                indexed: true,
+                supports_range: false,
+                estimated_cardinality: Some(32),
+            }],
+            index_configs: vec![crate::proto::proximadb_v1::IndexConfig {
+                index_name: "catalog_vector_assets_hnsw".to_string(),
+                algorithm: IndexingAlgorithm::Hnsw as i32,
+                enabled: Some(true),
+                ..Default::default()
+            }],
+            auto_index_selection: Some(false),
+            ..Default::default()
+        };
+
+        let result = service.create_collection(&config).await?;
+        assert!(
+            result.success,
+            "create failed with error_code={:?}",
+            result.error_code
+        );
+        let collection = result.collection.expect("collection should be returned");
+        assert!(uuid::Uuid::parse_str(&collection.id).is_ok());
+
+        let catalog = catalog_manager.default_catalog().await?;
+        let table_id = TableIdentifier::new(
+            vec!["default".to_string()],
+            "catalog_vector_assets".to_string(),
+        );
+        let schema = catalog.get_table(&table_id).await?;
+        assert_eq!(schema.properties.get("collection.id"), Some(&collection.id));
+        assert_eq!(
+            schema.properties.get("asset.capability.vector"),
+            Some(&"true".to_string())
+        );
+        assert!(
+            schema
+                .columns
+                .iter()
+                .any(|column| column.name == "category")
+        );
+        assert_eq!(schema.projections.len(), 1);
+
+        service
+            .metadata_backend()
+            .delete_collection("catalog_vector_assets")
+            .await?;
+
+        let catalog_backed_by_name = service
+            .collection("catalog_vector_assets")
+            .await?
+            .expect("collection should be reconstructed from xCatalog by name");
+        assert_eq!(catalog_backed_by_name.id, collection.id);
+        let catalog_backed_by_id = service
+            .collection(&collection.id)
+            .await?
+            .expect("collection should be reconstructed from xCatalog by UUID");
+        assert_eq!(
+            catalog_backed_by_id
+                .config
+                .as_ref()
+                .map(|config| config.dimension),
+            Some(384)
+        );
+        assert!(
+            catalog_backed_by_id
+                .config
+                .as_ref()
+                .is_some_and(|config| config.filterable_columns.iter().any(|column| {
+                    column.name == "category"
+                        && column.data_type == FilterableDataType::FilterableString as i32
+                }))
+        );
+        assert!(
+            service
+                .list_collections()
+                .await?
+                .iter()
+                .any(|listed| listed.id == collection.id)
+        );
+
+        let duplicate = service.create_collection(&config).await?;
+        assert!(!duplicate.success);
+        assert_eq!(duplicate.error_code.as_deref(), Some("COLLECTION_EXISTS"));
+
+        let delete = service.delete_collection("catalog_vector_assets").await?;
+        assert!(delete.success);
+        assert!(!catalog.table_exists(&table_id).await?);
 
         Ok(())
     }

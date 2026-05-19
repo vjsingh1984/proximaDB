@@ -835,13 +835,9 @@ impl EmbeddedProximaDB {
             .first()
             .map_or_else(|| "./data".to_string(), |loc| loc.path.clone());
 
-        let catalog_manager = std::sync::Arc::new(crate::catalog::CatalogManager::new());
+        let catalog_manager = shared_services.catalog_manager.clone();
         runtime
             .block_on(async {
-                let catalog_path = std::path::Path::new(&base_path).join("catalog");
-                catalog_manager
-                    .create_native_catalog("embedded", catalog_path.to_string_lossy().as_ref())
-                    .await?;
                 let ddl_service = crate::services::DdlService::new(catalog_manager.clone());
                 ddl_service
                     .execute(crate::services::DdlStatement::CreateNamespace {
@@ -1526,6 +1522,53 @@ impl EmbeddedProximaDB {
             .record_insert_us(elapsed_us, count as u64);
 
         // Record error if insert failed
+        if result.is_err() {
+            self.metrics_collector.record_error();
+        }
+
+        result
+    }
+
+    /// Insert canonical records into a collection without lowering through
+    /// legacy ids/vectors/metadata transport at the language binding boundary.
+    pub fn insert_proxima_records(
+        &self,
+        collection: &str,
+        records: Vec<proximadb_records::ProximaRecord>,
+    ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        self.check_write_access()?;
+
+        let start = std::time::Instant::now();
+        let count = records.len();
+
+        let result = self.runtime.block_on(async {
+            let result = self
+                .shared_services
+                .vector_operations_service
+                .insert_batch(collection, records)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::other(e.to_string()))
+                })?;
+
+            if !result.success {
+                return Err(Box::new(std::io::Error::other(
+                    result
+                        .errors
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "Record batch insert failed".to_string()),
+                ))
+                    as Box<dyn std::error::Error + Send + Sync>);
+            }
+
+            Ok(result.metrics.successful_count.max(0) as usize)
+        });
+
+        let elapsed_us = start.elapsed().as_micros() as u64;
+        self.metrics_collector
+            .record_insert_us(elapsed_us, count as u64);
+
         if result.is_err() {
             self.metrics_collector.record_error();
         }
