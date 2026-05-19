@@ -988,6 +988,7 @@ pub struct HybridWriterStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_records::EmbeddingCell;
     use tempfile::tempdir;
 
     #[tokio::test]

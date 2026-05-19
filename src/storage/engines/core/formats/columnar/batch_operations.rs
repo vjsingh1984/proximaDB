@@ -467,6 +467,7 @@ pub struct BatchCacheStats {
 mod tests {
     use super::*;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+    use proximadb_records::EmbeddingCell;
     use proximadb_runtime_common::pool::VectorMemoryPool;
 
     #[tokio::test]
