@@ -19,8 +19,8 @@
 //! Implements cold storage backends for QUASAR's hybrid tiering system.
 //! Supports multiple storage formats: SST, Parquet, and JSON.
 
-use proximadb_kernel::error::{ProximaDBError, StorageError, VectorDBError};
-type Result<T> = std::result::Result<T, ProximaDBError>;
+use proximadb_kernel::error::VectorDBError;
+type Result<T> = std::result::Result<T, VectorDBError>;
 use super::ColdStorageBackend as BackendType;
 use crate::graph::{Edge, EdgeId, Node, NodeId};
 use serde::{Deserialize, Serialize};
@@ -110,7 +110,7 @@ impl ColdStorageBackend {
     pub async fn new(backend_type: BackendType, storage_path: &Path) -> Result<Self> {
         // Create storage directory if it doesn't exist
         fs::create_dir_all(storage_path).await.map_err(|e| {
-            VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
+            VectorDBError::Filesystem(e.to_string())
         })?;
 
         let backend = Self {
@@ -397,27 +397,20 @@ impl ColdStorageBackend {
         fs::create_dir_all(file_path.parent().unwrap())
             .await
             .map_err(|e| {
-                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
+                VectorDBError::Filesystem(e.to_string())
             })?;
 
         let json_data = serde_json::to_string_pretty(node)
-            .map_err(|e| VectorDBError::Storage(StorageError::Serialization(e.to_string())))?;
+            .map_err(|e| VectorDBError::Internal(format!("Serialization error: {}", e)))?;
 
         fs::write(&file_path, json_data.as_bytes())
             .await
-            .map_err(|e| {
-                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
-            })?;
+            .map_err(|e| VectorDBError::Filesystem(e.to_string()))?;
 
         Ok(StorageLocation {
             file_path: file_path
                 .strip_prefix(&self.storage_path)
-                .map_err(|e| {
-                    VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Path strip failed: {}", e),
-                    )))
-                })?
+                .map_err(|e| VectorDBError::Filesystem(format!("Path strip failed: {}", e)))?
                 .to_path_buf(),
             offset: 0,
             size: json_data.len() as u64,
@@ -432,28 +425,19 @@ impl ColdStorageBackend {
             .join(format!("{}.json", edge.id));
         fs::create_dir_all(file_path.parent().unwrap())
             .await
-            .map_err(|e| {
-                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
-            })?;
+            .map_err(|e| VectorDBError::Filesystem(e.to_string()))?;
 
         let json_data = serde_json::to_string_pretty(edge)
-            .map_err(|e| VectorDBError::Storage(StorageError::Serialization(e.to_string())))?;
+            .map_err(|e| VectorDBError::Internal(format!("Serialization error: {}", e)))?;
 
         fs::write(&file_path, json_data.as_bytes())
             .await
-            .map_err(|e| {
-                VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
-            })?;
+            .map_err(|e| VectorDBError::Filesystem(e.to_string()))?;
 
         Ok(StorageLocation {
             file_path: file_path
                 .strip_prefix(&self.storage_path)
-                .map_err(|e| {
-                    VectorDBError::Storage(StorageError::DiskIO(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Path strip failed: {}", e),
-                    )))
-                })?
+                .map_err(|e| VectorDBError::Filesystem(format!("Path strip failed: {}", e)))?
                 .to_path_buf(),
             offset: 0,
             size: json_data.len() as u64,
@@ -463,22 +447,22 @@ impl ColdStorageBackend {
 
     async fn read_node_json(&self, location: &StorageLocation) -> Result<StorableNode> {
         let file_path = self.storage_path.join(&location.file_path);
-        let json_data = fs::read_to_string(&file_path).await.map_err(|e| {
-            VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
-        })?;
+        let json_data = fs::read_to_string(&file_path)
+            .await
+            .map_err(|e| VectorDBError::Filesystem(e.to_string()))?;
 
         serde_json::from_str(&json_data)
-            .map_err(|e| VectorDBError::Storage(StorageError::Serialization(e.to_string())))
+            .map_err(|e| VectorDBError::Internal(format!("Serialization error: {}", e)))
     }
 
     async fn read_edge_json(&self, location: &StorageLocation) -> Result<StorableEdge> {
         let file_path = self.storage_path.join(&location.file_path);
-        let json_data = fs::read_to_string(&file_path).await.map_err(|e| {
-            VectorDBError::Storage(StorageError::DiskIO(std::io::Error::other(e.to_string())))
-        })?;
+        let json_data = fs::read_to_string(&file_path)
+            .await
+            .map_err(|e| VectorDBError::Filesystem(e.to_string()))?;
 
         serde_json::from_str(&json_data)
-            .map_err(|e| VectorDBError::Storage(StorageError::Serialization(e.to_string())))
+            .map_err(|e| VectorDBError::Internal(format!("Serialization error: {}", e)))
     }
 
     /// SST storage implementation (placeholder)

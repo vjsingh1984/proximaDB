@@ -59,7 +59,7 @@
 use crate::graph::EdgeId;
 use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALWriter;
 use memmap2::MmapMut;
-use proximadb_kernel::error::{ProximaDBError, StorageError};
+use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
@@ -71,9 +71,8 @@ use super::compaction::{CompactionConfig, CompactionManager, CompactionStats};
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
-/// Helper to convert IO errors to StorageError
 fn io_error(msg: String) -> ProximaDBError {
-    ProximaDBError::Storage(StorageError::DiskIO(std::io::Error::other(msg)))
+    ProximaDBError::Filesystem(msg)
 }
 
 /// Configuration for disk-based CSR storage

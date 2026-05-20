@@ -59,6 +59,7 @@
 pub mod adjacency_projection;
 pub mod canonical;
 pub mod engines;
+pub mod merge;
 pub mod rag;
 // Generic, engine-agnostic traversal utilities
 pub use engines::generic_traversal;

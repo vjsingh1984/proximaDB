@@ -349,14 +349,20 @@ impl super::GraphOperationsService {
         engine.get_node(id)
     }
 
-    /// Update a node
-    pub async fn update_node(&self, graph_id: &str, node: Node) -> Result<Arc<Node>> {
+    /// Update a node, applying ADR-012 merge semantics for label sets.
+    pub async fn update_node(&self, graph_id: &str, mut node: Node) -> Result<Arc<Node>> {
         if !self.graph_enabled() {
             return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
         let engine = self.get_or_create_graph_engine(graph_id).await?;
+
+        // ADR-012 Add-Wins label union: preserve labels from the existing node.
+        if let Ok(Some(existing)) = engine.get_node(&node.id) {
+            node.labels = crate::graph::merge::merge_labels(&existing.labels, &node.labels);
+        }
+
         self.enforce_schema_on_node(graph_id, &node).await?;
         self.enforce_unique_constraints_on_node(graph_id, &node)?;
         self.enforce_multi_unique_constraints_on_node(graph_id, &node)?;

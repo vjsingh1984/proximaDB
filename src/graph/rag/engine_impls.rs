@@ -9,7 +9,7 @@ use crate::graph::NodeId;
 use crate::graph::engines::GraphEngine;
 use crate::services::VectorOperationsService;
 use async_trait::async_trait;
-use proximadb_kernel::error::{ProximaDBError, StorageError};
+use proximadb_kernel::error::ProximaDBError;
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 
@@ -58,7 +58,7 @@ impl NodeRetriever for VectorNodeRetriever {
                 None, // No specific search config
             )
             .await
-            .map_err(|e| ProximaDBError::Storage(StorageError::SstEngine(e.to_string())))?;
+            .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
         Ok(search_results.into_iter().map(|r| r.oid).collect())
     }
@@ -113,7 +113,7 @@ impl SubgraphBuilder for KHopSubgraphBuilder {
             let neighbors = self
                 .engine
                 .get_outgoing_edges(&current_id, self.edge_type.as_deref())
-                .map_err(|e| ProximaDBError::Storage(StorageError::SstEngine(e.to_string())))?;
+                .map_err(|e| ProximaDBError::Internal(e.to_string()))?;
 
             for edge in neighbors {
                 let neighbor_id = edge.to_node_id.clone();
