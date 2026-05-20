@@ -82,7 +82,7 @@ pub fn create_v2_router() -> Router<AppState> {
         .route("/collections", get(collections::list_collections_v2))
         .route(
             "/collections/:collection_id",
-            get(collections::get_collection_v2),
+            get(collections::get_collection_v2).delete(collections::delete_collection_v2),
         )
         // Schema management - separate routes for GET and PUT
         .route(

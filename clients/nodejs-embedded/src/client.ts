@@ -253,7 +253,7 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
    * Delete a collection
    */
   async deleteCollection(name: string): Promise<void> {
-    const requestUrl = this.config.url + "/api/v1/collections/" + name;
+    const requestUrl = this.config.url + "/api/v2/collections/" + name;
     await this.delete<unknown>(requestUrl);
   }
 
@@ -261,7 +261,7 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
    * List all collections
    */
   async listCollections(): Promise<CollectionInfo[]> {
-    const requestUrl = this.config.url + "/api/v1/collections";
+    const requestUrl = this.config.url + "/api/v2/collections";
     const response = await this.get<{ collections: CollectionInfo[] }>(requestUrl);
     return response.collections;
   }

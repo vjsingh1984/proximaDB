@@ -1,0 +1,766 @@
+openapi: 3.1.0
+info:
+  title: ProximaDB REST API
+  version: 0.2.0
+  description: |
+    SDK-facing ProximaDB REST contract. This specification is v2-first and
+    centers on ProximaRecord, typed schemas, record search, and collection
+    lifecycle operations. Legacy v1 compatibility routes are intentionally not
+    part of this publishable SDK surface.
+servers:
+  - url: http://localhost:5678
+    description: Local ProximaDB server
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      tags: [Health]
+      operationId: getHealth
+      summary: Get server health.
+      security: []
+      responses:
+        "200":
+          description: Health status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: getLiveness
+      summary: Kubernetes liveness probe.
+      security: []
+      responses:
+        "200":
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeResponse"
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      summary: Kubernetes readiness probe.
+      security: []
+      responses:
+        "200":
+          description: Server is ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeResponse"
+  /api/v2/collections:
+    post:
+      tags: [Collections]
+      operationId: createCollection
+      summary: Create a collection with optional schema.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCollectionRequest"
+      responses:
+        "200":
+          description: Collection created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateCollectionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    get:
+      tags: [Collections]
+      operationId: listCollections
+      summary: List collections.
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+        - name: include_stats
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Collection page.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListCollectionsResponse"
+  /api/v2/collections/{collection_id}:
+    parameters:
+      - $ref: "#/components/parameters/CollectionId"
+    get:
+      tags: [Collections]
+      operationId: getCollection
+      summary: Get collection details.
+      responses:
+        "200":
+          description: Collection details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Collection"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Collections]
+      operationId: deleteCollection
+      summary: Delete a collection.
+      responses:
+        "200":
+          description: Collection deleted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteCollectionResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v2/collections/{collection_id}/schema:
+    parameters:
+      - $ref: "#/components/parameters/CollectionId"
+    get:
+      tags: [Schema]
+      operationId: getCollectionSchema
+      summary: Get collection schema.
+      responses:
+        "200":
+          description: Collection schema.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchemaResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Schema]
+      operationId: updateCollectionSchema
+      summary: Update collection schema.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSchemaRequest"
+      responses:
+        "200":
+          description: Schema updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateSchemaResponse"
+  /api/v2/collections/{collection_id}/records/batch:
+    parameters:
+      - $ref: "#/components/parameters/CollectionId"
+    post:
+      tags: [Records]
+      operationId: insertRecords
+      summary: Insert or upsert ProximaRecord batches.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InsertRecordsRequest"
+      responses:
+        "200":
+          description: Batch write result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InsertRecordsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v2/collections/{collection_id}/records/{record_id}:
+    parameters:
+      - $ref: "#/components/parameters/CollectionId"
+      - $ref: "#/components/parameters/RecordId"
+    get:
+      tags: [Records]
+      operationId: getRecord
+      summary: Get a record by ID.
+      parameters:
+        - name: include_vector
+          in: query
+          schema:
+            type: boolean
+            default: true
+        - name: include_text
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Record.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Records]
+      operationId: deleteRecord
+      summary: Delete a record by ID.
+      responses:
+        "200":
+          description: Delete accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteRecordResponse"
+  /api/v2/collections/{collection_id}/search:
+    parameters:
+      - $ref: "#/components/parameters/CollectionId"
+    post:
+      tags: [Search]
+      operationId: searchRecords
+      summary: Search records with vector similarity and typed filters.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
+      responses:
+        "200":
+          description: Search results.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    CollectionId:
+      name: collection_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    RecordId:
+      name: record_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 100
+    Offset:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+  responses:
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        status:
+          type: string
+        version:
+          type: string
+        uptime_seconds:
+          type: number
+    ProbeResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+    CreateCollectionRequest:
+      type: object
+      required: [name, dimension]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        dimension:
+          type: integer
+          minimum: 1
+        engine:
+          $ref: "#/components/schemas/StorageEngine"
+        distance_metric:
+          $ref: "#/components/schemas/DistanceMetric"
+        schema:
+          $ref: "#/components/schemas/SchemaDefinition"
+        enable_proxima_record:
+          type: boolean
+          default: true
+        initial_capacity:
+          type: integer
+          minimum: 0
+    CreateCollectionResponse:
+      type: object
+      required: [collection_id, name, dimension, engine, proxima_record_enabled, created_at]
+      properties:
+        collection_id:
+          type: string
+        name:
+          type: string
+        dimension:
+          type: integer
+        engine:
+          type: string
+        proxima_record_enabled:
+          type: boolean
+        schema_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+    ListCollectionsResponse:
+      type: object
+      required: [collections, total, limit, offset, has_more]
+      properties:
+        collections:
+          type: array
+          items:
+            $ref: "#/components/schemas/CollectionSummary"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        has_more:
+          type: boolean
+    CollectionSummary:
+      type: object
+      required: [collection_id, name, dimension, engine, proxima_record_enabled]
+      properties:
+        collection_id:
+          type: string
+        name:
+          type: string
+        dimension:
+          type: integer
+        engine:
+          type: string
+        proxima_record_enabled:
+          type: boolean
+        record_count:
+          type: integer
+          nullable: true
+    Collection:
+      allOf:
+        - $ref: "#/components/schemas/CollectionSummary"
+        - type: object
+          required: [distance_metric, stats, created_at]
+          properties:
+            distance_metric:
+              type: string
+            schema:
+              $ref: "#/components/schemas/SchemaDefinition"
+              nullable: true
+            stats:
+              $ref: "#/components/schemas/CollectionStats"
+            created_at:
+              type: string
+              format: date-time
+            updated_at:
+              type: string
+              format: date-time
+              nullable: true
+    DeleteCollectionResponse:
+      type: object
+      required: [success, collection_id]
+      properties:
+        success:
+          type: boolean
+        collection_id:
+          type: string
+    CollectionStats:
+      type: object
+      required: [record_count, storage_size_bytes, indexed_fields, text_field_count]
+      properties:
+        record_count:
+          type: integer
+        storage_size_bytes:
+          type: integer
+        indexed_fields:
+          type: integer
+        text_field_count:
+          type: integer
+    SchemaDefinition:
+      type: object
+      required: [columns]
+      properties:
+        columns:
+          type: array
+          items:
+            $ref: "#/components/schemas/ColumnDefinition"
+        enforcement:
+          type: string
+          enum: [strict, flexible, hybrid]
+          default: hybrid
+        allow_additional_fields:
+          type: boolean
+          default: true
+    ColumnDefinition:
+      type: object
+      required: [name, data_type]
+      properties:
+        name:
+          type: string
+        data_type:
+          type: string
+          enum:
+            - text
+            - text_large
+            - integer
+            - float
+            - decimal
+            - boolean
+            - timestamp
+            - timestamp_tz
+            - date
+            - time
+            - uuid
+            - binary
+            - json
+            - array_text
+            - array_integer
+            - array_float
+            - array_boolean
+            - map_string_string
+            - map_string_any
+            - geo_point
+            - vector
+        nullable:
+          type: boolean
+        indexed:
+          type: boolean
+        filterable:
+          type: boolean
+        max_length:
+          type: integer
+        precision:
+          type: integer
+        scale:
+          type: integer
+        vector_dimension:
+          type: integer
+    SchemaResponse:
+      type: object
+      required: [schema_id, schema_version, collection_id, schema, created_at]
+      properties:
+        schema_id:
+          type: string
+        schema_version:
+          type: string
+        collection_id:
+          type: string
+        schema:
+          $ref: "#/components/schemas/SchemaDefinition"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+        parent_schema_id:
+          type: string
+          nullable: true
+    UpdateSchemaRequest:
+      allOf:
+        - $ref: "#/components/schemas/SchemaDefinition"
+        - type: object
+          properties:
+            force:
+              type: boolean
+              default: false
+    UpdateSchemaResponse:
+      type: object
+      additionalProperties: true
+      required: [schema_id, schema_version, previous_schema_id, changes, warnings, updated_at]
+      properties:
+        schema_id:
+          type: string
+        schema_version:
+          type: string
+        previous_schema_id:
+          type: string
+        changes:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        warnings:
+          type: array
+          items:
+            type: string
+        updated_at:
+          type: string
+          format: date-time
+    InsertRecordsRequest:
+      type: object
+      required: [records]
+      properties:
+        records:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ProximaRecordInput"
+        validate_schema:
+          type: boolean
+          default: true
+        upsert:
+          type: boolean
+          default: false
+    ProximaRecordInput:
+      type: object
+      required: [vector]
+      properties:
+        id:
+          type: string
+        vector:
+          type: array
+          minItems: 1
+          items:
+            type: number
+            format: float
+        props:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ProximaValue"
+        text_fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/TextField"
+    ProximaValue:
+      oneOf:
+        - type: "null"
+        - type: boolean
+        - type: integer
+        - type: number
+        - type: string
+        - type: array
+          items:
+            $ref: "#/components/schemas/ProximaValue"
+        - type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ProximaValue"
+        - type: object
+          required: [type, value]
+          properties:
+            type:
+              type: string
+            value: true
+    TextField:
+      type: object
+      required: [name, content]
+      properties:
+        name:
+          type: string
+        content:
+          type: string
+        storage_hint:
+          type: string
+          enum: [inline, chunked, sidecar, adaptive]
+          default: adaptive
+    InsertRecordsResponse:
+      type: object
+      required: [inserted_count, failed_count, errors, inserted_ids]
+      properties:
+        inserted_count:
+          type: integer
+        failed_count:
+          type: integer
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/InsertError"
+        inserted_ids:
+          type: array
+          items:
+            type: string
+    InsertError:
+      type: object
+      required: [index, error]
+      properties:
+        index:
+          type: integer
+        id:
+          type: string
+          nullable: true
+        error:
+          type: string
+    RecordResponse:
+      type: object
+      required: [id, props]
+      properties:
+        id:
+          type: string
+        vector:
+          type: array
+          nullable: true
+          items:
+            type: number
+            format: float
+        props:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ProximaValue"
+        text_fields:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/TextFieldOutput"
+        version:
+          type: integer
+          nullable: true
+        timestamp:
+          type: integer
+          nullable: true
+    DeleteRecordResponse:
+      type: object
+      required: [success, id, processing_time_us]
+      properties:
+        success:
+          type: boolean
+        id:
+          type: string
+        processing_time_us:
+          type: integer
+    SearchRequest:
+      type: object
+      required: [vector, top_k]
+      properties:
+        vector:
+          type: array
+          minItems: 1
+          items:
+            type: number
+            format: float
+        top_k:
+          type: integer
+          minimum: 1
+        filters:
+          type: array
+          items:
+            $ref: "#/components/schemas/TypedFilter"
+        include_text:
+          type: boolean
+          default: false
+        include_vector:
+          type: boolean
+          default: false
+    TypedFilter:
+      type: object
+      required: [field, op, value]
+      properties:
+        field:
+          type: string
+        op:
+          type: string
+          enum: [eq, neq, gt, gte, lt, lte, contains, between, in, starts_with, ends_with]
+        value:
+          $ref: "#/components/schemas/ProximaValue"
+        value_upper:
+          $ref: "#/components/schemas/ProximaValue"
+    SearchResponse:
+      type: object
+      required: [results, latency_ms, request_id]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchResult"
+        total_matches:
+          type: integer
+          nullable: true
+        latency_ms:
+          type: integer
+        request_id:
+          type: string
+    SearchResult:
+      type: object
+      required: [id, score, props]
+      properties:
+        id:
+          type: string
+        score:
+          type: number
+          format: float
+        vector:
+          type: array
+          nullable: true
+          items:
+            type: number
+            format: float
+        props:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ProximaValue"
+        text_fields:
+          type: array
+          nullable: true
+          items:
+            $ref: "#/components/schemas/TextFieldOutput"
+    TextFieldOutput:
+      type: object
+      required: [name, content, truncated]
+      properties:
+        name:
+          type: string
+        content:
+          type: string
+        chunk_count:
+          type: integer
+          nullable: true
+        truncated:
+          type: boolean
+    StorageEngine:
+      type: string
+      enum: [auto, sst, helix, viper, swift, nova, raptor, tst]
+      default: auto
+    DistanceMetric:
+      type: string
+      enum: [cosine, euclidean, dot_product]
+      default: cosine
+    ErrorResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        error:
+          type: string
+        error_message:
+          type: string
+        code:
+          type: string

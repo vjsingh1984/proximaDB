@@ -20,13 +20,12 @@ import { FilterBuilder, filterToExpression } from "./filter";
  * Internal search request structure
  */
 interface SearchRequest {
-  collection: string;
   vector: number[];
-  topK: number;
+  top_k: number;
   filter?: string;
   searchMode?: string;
-  includeVectors: boolean;
-  includeMetadata: boolean;
+  include_vector: boolean;
+  include_text: boolean;
   timeoutMs?: number;
 }
 
@@ -52,7 +51,6 @@ export class SearchBuilder {
   private nprobeValue: number | null = null;
   private adaptiveThreshold: number | null = null;
   private includeVectorsFlag: boolean = false;
-  private includeMetadataFlag: boolean = true;
   private minScoreValue: number | null = null;
   private timeoutMsValue: number | null = null;
 
@@ -153,8 +151,7 @@ export class SearchBuilder {
   /**
    * Include metadata in results
    */
-  includeMetadata(include: boolean = true): SearchBuilder {
-    this.includeMetadataFlag = include;
+  includeMetadata(_include: boolean = true): SearchBuilder {
     return this;
   }
 
@@ -321,17 +318,16 @@ export class SearchBuilder {
     }
 
     const request: SearchRequest = {
-      collection: this.collectionName,
       vector: this.queryVector,
-      topK: this.k,
+      top_k: this.k,
       filter: this.buildFilter(),
       searchMode: this.buildSearchModeString(),
-      includeVectors: this.includeVectorsFlag,
-      includeMetadata: this.includeMetadataFlag,
+      include_vector: this.includeVectorsFlag,
+      include_text: false,
       timeoutMs: this.timeoutMsValue ?? undefined,
     };
 
-    const url = this.client.url() + "/api/v1/vectors/search";
+    const url = this.client.url() + `/api/v2/collections/${this.collectionName}/search`;
     const response = await this.client.post<{ results: SearchResult[] }>(url, request);
     
     let results = response.results;

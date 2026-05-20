@@ -39,7 +39,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, error, info};
 
-use crate::services::{WriteDurabilityRequirement, WriteLaneRouter, WriteIntent, WriteOperationKind};
 use crate::api_handlers::{
     RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichRecordDeleteBatchRequest,
     RichRecordGetRequest, RichSearchRequest,
@@ -47,6 +46,9 @@ use crate::api_handlers::{
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
+use crate::services::{
+    WriteDurabilityRequirement, WriteIntent, WriteLaneRouter, WriteOperationKind,
+};
 use proximadb_data_model::{ProximaValue, TimeUnit};
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
@@ -374,6 +376,12 @@ pub struct InsertRecordsRequest {
     pub records: Vec<ProximaRecordInput>,
     /// Whether to validate against collection schema (default: true)
     pub validate_schema: Option<bool>,
+    /// Whether existing records with the same ID should be replaced.
+    ///
+    /// The current durable record write path is idempotent/upsert-oriented; this
+    /// field is accepted so SDKs can expose explicit upsert intent without
+    /// leaving the OpenAPI contract.
+    pub upsert: Option<bool>,
 }
 
 /// Input format for ProximaRecord (JSON-friendly)
@@ -930,6 +938,9 @@ pub async fn insert_records(
         debug!("No schema validation preference provided, defaulting to true");
         true
     });
+    if request.upsert.unwrap_or(false) {
+        debug!("Record batch requested explicit upsert semantics");
+    }
     debug!(
         "Schema validation: {}",
         if validate_schema {

@@ -589,6 +589,15 @@ pub struct ListCollectionsV2Response {
     pub has_more: bool,
 }
 
+/// Response for deleting a collection through the v2 API.
+#[derive(Debug, Serialize)]
+pub struct DeleteCollectionV2Response {
+    /// Whether the delete request was accepted.
+    pub success: bool,
+    /// Deleted collection ID.
+    pub collection_id: String,
+}
+
 /// Summary of a collection for list operations
 #[derive(Debug, Serialize)]
 pub struct CollectionV2Summary {
@@ -707,6 +716,51 @@ pub async fn list_collections_v2(
             e
         ))),
     }
+}
+
+/// DELETE /api/v2/collections/{collection_id}
+///
+/// Delete a collection by ID/name. This v2 route keeps SDK lifecycle methods on
+/// the ProximaRecord-era API while delegating to the existing collection control
+/// plane.
+pub async fn delete_collection_v2(
+    Path(collection_id): Path<String>,
+    Extension(tenant): Extension<TenantContext>,
+    State(state): State<AppState>,
+) -> ApiResult<Json<DeleteCollectionV2Response>> {
+    info!("V2 API: Deleting collection '{}'", collection_id);
+
+    if collection_id.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
+    }
+
+    let request = CollectionRequest {
+        operation: CollectionOperation::CollectionDelete as i32,
+        collection_id: Some(collection_id.clone()),
+        collection_config: None,
+        query_params: Default::default(),
+        options: Default::default(),
+        migration_config: Default::default(),
+    };
+
+    state
+        .request_handlers
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                ApiError::CollectionNotFound(collection_id.clone())
+            } else {
+                ApiError::Internal(format!("Failed to delete collection: {}", e))
+            }
+        })?;
+
+    Ok(Json(DeleteCollectionV2Response {
+        success: true,
+        collection_id,
+    }))
 }
 
 #[cfg(test)]

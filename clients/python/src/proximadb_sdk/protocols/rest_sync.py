@@ -791,11 +791,31 @@ class ProximaDBClient:
         if config.description:
             config_data["description"] = config.description
 
-        response = self._make_request("POST", "/api/v1/collections", json=request_data)
+        v2_request_data = {
+            "name": name,
+            "dimension": config.dimension,
+            "engine": getattr(config.storage_engine, "value", config.storage_engine),
+            "distance_metric": getattr(
+                config.distance_metric, "value", config.distance_metric
+            ),
+            "enable_proxima_record": True,
+        }
+        response = self._make_request("POST", "/api/v2/collections", json=v2_request_data)
         response_data = response.json()
 
         # Handle unified API response format
-        if "collection" in response_data:
+        if "collection_id" in response_data:
+            return Collection(
+                id=response_data.get("collection_id", name),
+                config=CollectionConfig(
+                    name=response_data.get("name", name),
+                    dimension=response_data.get("dimension", config.dimension),
+                    distance_metric=v2_request_data.get("distance_metric") or "cosine",
+                    storage_engine=response_data.get("engine") or "auto",
+                ),
+                created_at=response_data.get("created_at"),
+            )
+        elif "collection" in response_data:
             coll_data = response_data["collection"]
             if not coll_data:
                 if "error" in response_data:
@@ -916,9 +936,9 @@ class ProximaDBClient:
         """Get collection metadata"""
         # Use the updated GET endpoint
         logger.debug(
-            f"Collection get request to GET /api/v1/collections/{collection_id}"
+            f"Collection get request to GET /api/v2/collections/{collection_id}"
         )
-        response = self._make_request("GET", f"/api/v1/collections/{collection_id}")
+        response = self._make_request("GET", f"/api/v2/collections/{collection_id}")
         response_data = response.json()
 
         # Check for error responses
@@ -1046,8 +1066,8 @@ class ProximaDBClient:
     def list_collections(self) -> List[Collection]:
         """List all collections"""
         # Use the updated GET endpoint
-        logger.debug(f"Collection list request to GET /api/v1/collections")
-        response = self._make_request("GET", "/api/v1/collections")
+        logger.debug(f"Collection list request to GET /api/v2/collections")
+        response = self._make_request("GET", "/api/v2/collections")
         response_data = response.json()
 
         # Server returns:
@@ -1152,9 +1172,9 @@ class ProximaDBClient:
         """Delete a collection"""
         # Use standard REST DELETE endpoint
         logger.debug(
-            f"Collection delete request to DELETE /api/v1/collections/{collection_id}"
+            f"Collection delete request to DELETE /api/v2/collections/{collection_id}"
         )
-        response = self._make_request("DELETE", f"/api/v1/collections/{collection_id}")
+        response = self._make_request("DELETE", f"/api/v2/collections/{collection_id}")
         return response.json().get("success", False)
 
     def get_collection_stats(self, collection_id: str) -> CollectionStats:
@@ -1520,42 +1540,17 @@ class ProximaDBClient:
                 vector = vector.astype(np.float32)
             vector = vector.tolist()
 
-        # Build metadata filter if provided
-        metadata_filter_obj = None
+        request_data = {
+            "vector": vector,
+            "top_k": top_k,
+            "include_vector": include_vectors,
+            "include_text": False,
+        }
         if metadata_filter:
-            conditions = [
-                FilterCondition(
-                    field_name=key, operation=FilterOperation.EQUALS, value=value
-                )
+            request_data["filters"] = [
+                {"field": key, "op": "eq", "value": value}
                 for key, value in metadata_filter.items()
             ]
-            metadata_filter_obj = MetadataFilter(
-                conditions=conditions, operator=FilterOperator.AND
-            )
-
-        # Create search query using model
-        search_query = SearchQuery(
-            vector=vector,
-            filters={},  # Always include filters field (required by proto)
-            id=None,
-            metadata_filter=metadata_filter_obj,
-        )
-
-        # Create search request using model (legacy/compat path)
-        search_request = VectorSearchRequest(
-            collection_id=collection_id,
-            queries=[search_query],
-            top_k=top_k,
-            distance_metric_override=None,  # Use collection default
-            search_parameters=None,  # Use defaults
-            include_fields=IncludeFields(
-                vector=include_vectors, metadata=include_metadata, score=True, rank=True
-            ),
-            search_optimization=None,  # Will be set below
-        )
-
-        # Convert model to dict for JSON serialization
-        request_data = search_request.model_dump(exclude_none=True)
 
         # Add search optimization if hints provided
         if search_hints:
@@ -1576,10 +1571,9 @@ class ProximaDBClient:
             if optimization:
                 request_data["search_optimization"] = optimization
 
-        # Use the standard /api/v1/search endpoint
         response = self._make_request(
             "POST",
-            "/api/v1/search",
+            f"/api/v2/collections/{collection_id}/search",
             json=request_data,
             timeout=timeout or self.config.timeout,
         )
@@ -2041,13 +2035,12 @@ class ProximaDBClient:
         """Get a single vector by ID"""
         self._auto_warmup(collection_id)
 
-        # Use new vector GET endpoint
         params = {
             "include_vector": include_vector,
-            "include_metadata": include_metadata,
+            "include_text": False,
         }
         response = self._make_request(
-            "GET", f"/api/v1/vectors/{collection_id}/{vector_id}", params=params
+            "GET", f"/api/v2/collections/{collection_id}/records/{vector_id}", params=params
         )
         data = response.json()
 
@@ -2109,61 +2102,25 @@ class ProximaDBClient:
         metadata: Optional[MetadataDict] = None,
     ) -> BatchResult:
         """Update an existing vector"""
-        update_data = {}
+        if vector is None:
+            raise ValueError("v2 record updates require a replacement vector")
 
         if vector is not None:
             if isinstance(vector, np.ndarray):
                 if vector.dtype != np.float32:
                     vector = vector.astype(np.float32)
                 vector = vector.tolist()
-            update_data["vector"] = vector
 
-        if metadata is not None:
-            update_data["metadata"] = metadata
-
-        response = self._make_request(
-            "PUT", f"/collections/{collection_id}/vectors/{vector_id}", json=update_data
-        )
-        # Convert response to BatchResult
-        resp_data = response.json()
-        logger.debug(f"Server response for batch operation: {resp_data}")
-        metrics_data = resp_data.get("metrics", {}) or {}
-        logger.debug(f"Metrics data extracted: {metrics_data}")
-
-        # Extract counts from vector_ids array (the actual list of inserted vectors)
-        vector_ids = resp_data.get("vector_ids", [])
-        total_count = len(vector_ids)
-        success_count = len(vector_ids)  # If we got vector_ids, they were successful
-        failed_count = 0  # Server would set error_code if there were failures
-
-        return BatchResult(
-            total=total_count,
-            success=success_count,
-            failed=failed_count,
-            errors=resp_data.get("errors", []),
-            duration_ms=resp_data.get("duration_ms", 0.0),
-            metrics=OperationMetrics(
-                total_processed=(
-                    metrics_data.get("total_processed")
-                    if metrics_data.get("total_processed") is not None
-                    else total_count
-                ),
-                successful_count=(
-                    metrics_data.get("successful_count")
-                    if metrics_data.get("successful_count") is not None
-                    else success_count
-                ),
-                failed_count=(
-                    metrics_data.get("failed_count")
-                    if metrics_data.get("failed_count") is not None
-                    else failed_count
-                ),
-                processing_time_us=(
-                    metrics_data.get("processing_time_us")
-                    if metrics_data.get("processing_time_us") is not None
-                    else int(resp_data.get("duration_ms", 0) * 1000)
-                ),
-            ),
+        return self.insert_records(
+            collection_id,
+            [
+                {
+                    "id": vector_id,
+                    "vector": vector or [],
+                    "props": metadata or {},
+                }
+            ],
+            upsert=True,
         )
 
     def close(self) -> None:

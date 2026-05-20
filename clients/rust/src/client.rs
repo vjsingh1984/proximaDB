@@ -221,7 +221,7 @@ impl ProximaClient {
     /// Delete a collection
     #[cfg(feature = "client")]
     pub async fn delete_collection(&self, name: &str) -> Result<()> {
-        let url = format!("{}/api/v1/collections/{}", self.inner.config.url, name);
+        let url = format!("{}/api/v2/collections/{}", self.inner.config.url, name);
         self.delete::<serde_json::Value>(&url).await?;
         Ok(())
     }
@@ -257,7 +257,7 @@ impl ProximaClient {
     /// List all collections
     #[cfg(feature = "client")]
     pub async fn list_collections(&self) -> Result<Vec<CollectionInfo>> {
-        let url = format!("{}/api/v1/collections", self.inner.config.url);
+        let url = format!("{}/api/v2/collections", self.inner.config.url);
         let response: ListCollectionsResponse = self.get(&url).await?;
         Ok(response.collections)
     }
@@ -366,16 +366,33 @@ pub struct HealthStatus {
 /// Collection information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionInfo {
+    /// Collection ID
+    #[serde(default)]
+    pub collection_id: Option<String>,
     /// Collection name
     pub name: String,
     /// Vector dimension
     pub dimension: u32,
     /// Number of vectors
-    #[serde(default)]
+    #[serde(default, alias = "record_count")]
     pub vector_count: u64,
     /// Storage engine type
     #[serde(default)]
     pub engine: Option<String>,
+    /// Nested v2 collection statistics.
+    #[serde(default)]
+    pub stats: Option<CollectionStats>,
+}
+
+/// v2 collection statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionStats {
+    /// Total number of records.
+    #[serde(default)]
+    pub record_count: u64,
+    /// Total storage size in bytes.
+    #[serde(default)]
+    pub storage_size_bytes: u64,
 }
 
 #[derive(Debug, Deserialize)]

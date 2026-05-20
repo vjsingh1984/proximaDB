@@ -34,15 +34,15 @@ import (
 type ErrorCode string
 
 const (
-	ErrCodeConnection       ErrorCode = "CONNECTION_ERROR"
-	ErrCodeTimeout          ErrorCode = "TIMEOUT"
-	ErrCodeNotFound         ErrorCode = "NOT_FOUND"
-	ErrCodeAlreadyExists    ErrorCode = "ALREADY_EXISTS"
-	ErrCodeInvalidArgument  ErrorCode = "INVALID_ARGUMENT"
+	ErrCodeConnection        ErrorCode = "CONNECTION_ERROR"
+	ErrCodeTimeout           ErrorCode = "TIMEOUT"
+	ErrCodeNotFound          ErrorCode = "NOT_FOUND"
+	ErrCodeAlreadyExists     ErrorCode = "ALREADY_EXISTS"
+	ErrCodeInvalidArgument   ErrorCode = "INVALID_ARGUMENT"
 	ErrCodeDimensionMismatch ErrorCode = "DIMENSION_MISMATCH"
-	ErrCodeRateLimited      ErrorCode = "RATE_LIMITED"
-	ErrCodeInternal         ErrorCode = "INTERNAL_ERROR"
-	ErrCodeUnavailable      ErrorCode = "UNAVAILABLE"
+	ErrCodeRateLimited       ErrorCode = "RATE_LIMITED"
+	ErrCodeInternal          ErrorCode = "INTERNAL_ERROR"
+	ErrCodeUnavailable       ErrorCode = "UNAVAILABLE"
 )
 
 // AdapterError represents an error from the REST adapter.
@@ -73,10 +73,10 @@ type TLSConfig struct {
 
 // Config holds the REST adapter configuration.
 type Config struct {
-	BaseURL    string
-	APIKey     string
-	Timeout    time.Duration
-	TLS        *TLSConfig
+	BaseURL string
+	APIKey  string
+	Timeout time.Duration
+	TLS     *TLSConfig
 }
 
 // Adapter implements the REST protocol for ProximaDB.
@@ -220,11 +220,11 @@ type VectorRecord struct {
 
 // SearchQuery represents a vector search query.
 type SearchQuery struct {
-	Vector          []float32    `json:"vector"`
-	TopK            int          `json:"top_k,omitempty"`
-	Filter          *Filter      `json:"filter,omitempty"`
-	IncludeVectors  bool         `json:"include_vectors,omitempty"`
-	IncludeMetadata bool         `json:"include_metadata,omitempty"`
+	Vector          []float32 `json:"vector"`
+	TopK            int       `json:"top_k,omitempty"`
+	Filter          *Filter   `json:"filter,omitempty"`
+	IncludeVectors  bool      `json:"include_vectors,omitempty"`
+	IncludeMetadata bool      `json:"include_metadata,omitempty"`
 }
 
 // Filter represents a metadata filter.
@@ -260,7 +260,7 @@ type HealthStatus struct {
 
 // CreateCollection creates a new vector collection.
 func (a *Adapter) CreateCollection(ctx context.Context, req *CreateCollectionRequest) (*CollectionInfo, error) {
-	url := fmt.Sprintf("%s/api/v1/collections", a.baseURL)
+	url := fmt.Sprintf("%s/api/v2/collections", a.baseURL)
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -271,43 +271,94 @@ func (a *Adapter) CreateCollection(ctx context.Context, req *CreateCollectionReq
 		}
 	}
 
-	var result CollectionInfo
-	if err := a.doRequest(ctx, http.MethodPost, url, body, &result); err != nil {
+	var response struct {
+		CollectionID         string `json:"collection_id"`
+		Name                 string `json:"name"`
+		Dimension            int    `json:"dimension"`
+		Engine               string `json:"engine"`
+		ProximaRecordEnabled bool   `json:"proxima_record_enabled"`
+		CreatedAt            string `json:"created_at"`
+	}
+	if err := a.doRequest(ctx, http.MethodPost, url, body, &response); err != nil {
 		return nil, err
 	}
 
-	return &result, nil
+	return &CollectionInfo{
+		Name:      response.Name,
+		Dimension: response.Dimension,
+		Metric:    req.Metric,
+		Engine:    response.Engine,
+		CreatedAt: parseTimeOrZero(response.CreatedAt),
+	}, nil
 }
 
 // ListCollections returns all collections.
 func (a *Adapter) ListCollections(ctx context.Context) ([]*CollectionInfo, error) {
-	url := fmt.Sprintf("%s/api/v1/collections", a.baseURL)
+	url := fmt.Sprintf("%s/api/v2/collections", a.baseURL)
 
 	var response struct {
-		Collections []*CollectionInfo `json:"collections"`
+		Collections []struct {
+			CollectionID         string `json:"collection_id"`
+			Name                 string `json:"name"`
+			Dimension            int    `json:"dimension"`
+			Engine               string `json:"engine"`
+			ProximaRecordEnabled bool   `json:"proxima_record_enabled"`
+			RecordCount          *int64 `json:"record_count,omitempty"`
+		} `json:"collections"`
 	}
 	if err := a.doRequest(ctx, http.MethodGet, url, nil, &response); err != nil {
 		return nil, err
 	}
 
-	return response.Collections, nil
+	collections := make([]*CollectionInfo, 0, len(response.Collections))
+	for _, item := range response.Collections {
+		count := int64(0)
+		if item.RecordCount != nil {
+			count = *item.RecordCount
+		}
+		collections = append(collections, &CollectionInfo{
+			Name:        firstNonEmpty(item.Name, item.CollectionID),
+			Dimension:   item.Dimension,
+			Engine:      item.Engine,
+			VectorCount: count,
+		})
+	}
+	return collections, nil
 }
 
 // GetCollection returns information about a specific collection.
 func (a *Adapter) GetCollection(ctx context.Context, name string) (*CollectionInfo, error) {
-	url := fmt.Sprintf("%s/api/v1/collections/%s", a.baseURL, name)
+	url := fmt.Sprintf("%s/api/v2/collections/%s", a.baseURL, url.PathEscape(name))
 
-	var result CollectionInfo
-	if err := a.doRequest(ctx, http.MethodGet, url, nil, &result); err != nil {
+	var response struct {
+		CollectionID   string `json:"collection_id"`
+		Name           string `json:"name"`
+		Dimension      int    `json:"dimension"`
+		Engine         string `json:"engine"`
+		DistanceMetric string `json:"distance_metric"`
+		CreatedAt      string `json:"created_at"`
+		Stats          struct {
+			RecordCount      int64 `json:"record_count"`
+			StorageSizeBytes int64 `json:"storage_size_bytes"`
+		} `json:"stats"`
+	}
+	if err := a.doRequest(ctx, http.MethodGet, url, nil, &response); err != nil {
 		return nil, err
 	}
 
-	return &result, nil
+	return &CollectionInfo{
+		Name:        firstNonEmpty(response.Name, response.CollectionID),
+		Dimension:   response.Dimension,
+		Metric:      response.DistanceMetric,
+		Engine:      response.Engine,
+		VectorCount: response.Stats.RecordCount,
+		CreatedAt:   parseTimeOrZero(response.CreatedAt),
+	}, nil
 }
 
 // DeleteCollection deletes a collection.
 func (a *Adapter) DeleteCollection(ctx context.Context, name string) error {
-	url := fmt.Sprintf("%s/api/v1/collections/%s", a.baseURL, name)
+	url := fmt.Sprintf("%s/api/v2/collections/%s", a.baseURL, url.PathEscape(name))
 	return a.doRequest(ctx, http.MethodDelete, url, nil, nil)
 }
 
@@ -362,11 +413,35 @@ func recordsToProximaRecords(records []*VectorRecord) []*ProximaRecord {
 	return result
 }
 
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func parseTimeOrZero(value string) time.Time {
+	if value == "" {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
+}
+
 // Search performs a vector similarity search.
 func (a *Adapter) Search(ctx context.Context, collection string, query *SearchQuery) (*SearchResponse, error) {
-	url := fmt.Sprintf("%s/api/v1/collections/%s/search", a.baseURL, collection)
+	url := fmt.Sprintf("%s/api/v2/collections/%s/search", a.baseURL, url.PathEscape(collection))
 
-	body, err := json.Marshal(query)
+	body, err := json.Marshal(map[string]interface{}{
+		"vector":         query.Vector,
+		"top_k":          query.TopK,
+		"include_vector": query.IncludeVectors,
+	})
 	if err != nil {
 		return nil, &AdapterError{
 			Code:    ErrCodeInvalidArgument,
@@ -385,50 +460,41 @@ func (a *Adapter) Search(ctx context.Context, collection string, query *SearchQu
 
 // Get retrieves vectors by their IDs.
 func (a *Adapter) Get(ctx context.Context, collection string, ids []string) ([]*VectorRecord, error) {
-	url := fmt.Sprintf("%s/api/v1/collections/%s/vectors/fetch", a.baseURL, collection)
-
-	body, err := json.Marshal(map[string]interface{}{
-		"ids": ids,
-	})
-	if err != nil {
-		return nil, &AdapterError{
-			Code:    ErrCodeInvalidArgument,
-			Message: "failed to marshal request",
-			Cause:   err,
+	vectors := make([]*VectorRecord, 0, len(ids))
+	for _, id := range ids {
+		requestURL := fmt.Sprintf("%s/api/v2/collections/%s/records/%s?include_vector=true&include_text=false", a.baseURL, url.PathEscape(collection), url.PathEscape(id))
+		var response struct {
+			ID     string                 `json:"id"`
+			Vector []float32              `json:"vector,omitempty"`
+			Props  map[string]interface{} `json:"props,omitempty"`
 		}
+		if err := a.doRequest(ctx, http.MethodGet, requestURL, nil, &response); err != nil {
+			return nil, err
+		}
+		vectors = append(vectors, &VectorRecord{
+			ID:       response.ID,
+			Vector:   response.Vector,
+			Metadata: response.Props,
+		})
 	}
 
-	var response struct {
-		Vectors []*VectorRecord `json:"vectors"`
-	}
-	if err := a.doRequest(ctx, http.MethodPost, url, body, &response); err != nil {
-		return nil, err
-	}
-
-	return response.Vectors, nil
+	return vectors, nil
 }
 
 // Delete removes vectors by their IDs.
 func (a *Adapter) Delete(ctx context.Context, collection string, ids []string) error {
-	url := fmt.Sprintf("%s/api/v1/collections/%s/vectors/delete", a.baseURL, collection)
-
-	body, err := json.Marshal(map[string]interface{}{
-		"ids": ids,
-	})
-	if err != nil {
-		return &AdapterError{
-			Code:    ErrCodeInvalidArgument,
-			Message: "failed to marshal request",
-			Cause:   err,
+	for _, id := range ids {
+		requestURL := fmt.Sprintf("%s/api/v2/collections/%s/records/%s", a.baseURL, url.PathEscape(collection), url.PathEscape(id))
+		if err := a.doRequest(ctx, http.MethodDelete, requestURL, nil, nil); err != nil {
+			return err
 		}
 	}
-
-	return a.doRequest(ctx, http.MethodPost, url, body, nil)
+	return nil
 }
 
 // Health checks the server health.
 func (a *Adapter) Health(ctx context.Context) (*HealthStatus, error) {
-	url := fmt.Sprintf("%s/api/v1/health", a.baseURL)
+	url := fmt.Sprintf("%s/health", a.baseURL)
 
 	var result HealthStatus
 	if err := a.doRequest(ctx, http.MethodGet, url, nil, &result); err != nil {

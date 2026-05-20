@@ -14,6 +14,7 @@ import requests
 from .exceptions import AuthenticationError, NetworkError, ProximaDBError
 from .models import (
     Collection,
+    CollectionConfig,
     DistanceMetric,
     SearchResult,
     StorageEngine,
@@ -208,21 +209,24 @@ class ProximaDBClientV1:
         payload = {
             "name": name,
             "dimension": dimension,
-            "distance_metric": distance_metric.upper(),
-            "storage_engine": storage_engine.upper(),
+            "distance_metric": distance_metric.lower(),
+            "engine": storage_engine.lower(),
+            "enable_proxima_record": True,
         }
 
-        url = urljoin(self.base_url, "/api/v1/collections")
+        url = urljoin(self.base_url, "/api/v2/collections")
         try:
             response = requests.post(url, json=payload, timeout=self.timeout)
             response.raise_for_status()
             data = response.json()
             return Collection(
-                id=data.get("id", ""),
-                name=data["name"],
-                dimension=data["dimension"],
-                distance_metric=DistanceMetric(data["distance_metric"].lower()),
-                storage_engine=StorageEngine(data["storage_engine"].lower()),
+                id=data.get("collection_id", data.get("id", name)),
+                config=CollectionConfig(
+                    name=data.get("name", name),
+                    dimension=data.get("dimension", dimension),
+                    distance_metric=DistanceMetric(distance_metric.lower()),
+                    storage_engine=StorageEngine(data.get("engine", storage_engine).lower()),
+                ),
             )
         except requests.RequestException as e:
             raise NetworkError(f"REST request failed: {e}")
@@ -254,7 +258,7 @@ class ProximaDBClientV1:
 
     def _get_collection_rest(self, name: str) -> Optional[Collection]:
         """Get collection via REST"""
-        url = urljoin(self.base_url, f"/api/v1/collections/{name}")
+        url = urljoin(self.base_url, f"/api/v2/collections/{name}")
         try:
             response = requests.get(url, timeout=self.timeout)
             if response.status_code == 404:
@@ -262,11 +266,13 @@ class ProximaDBClientV1:
             response.raise_for_status()
             data = response.json()
             return Collection(
-                id=data.get("id", ""),
-                name=data["name"],
-                dimension=data["dimension"],
-                distance_metric=DistanceMetric(data["distance_metric"].lower()),
-                storage_engine=StorageEngine(data["storage_engine"].lower()),
+                id=data.get("collection_id", data.get("id", name)),
+                config=CollectionConfig(
+                    name=data.get("name", name),
+                    dimension=data["dimension"],
+                    distance_metric=DistanceMetric(data["distance_metric"].lower()),
+                    storage_engine=StorageEngine(data["engine"].lower()),
+                ),
             )
         except requests.RequestException as e:
             raise NetworkError(f"REST request failed: {e}")
@@ -301,18 +307,22 @@ class ProximaDBClientV1:
 
     def _list_collections_rest(self) -> List[Collection]:
         """List collections via REST"""
-        url = urljoin(self.base_url, "/api/v1/collections")
+        url = urljoin(self.base_url, "/api/v2/collections")
         try:
             response = requests.get(url, timeout=self.timeout)
             response.raise_for_status()
             data = response.json()
             return [
                 Collection(
-                    id=col.get("id", ""),
-                    name=col["name"],
-                    dimension=col["dimension"],
-                    distance_metric=DistanceMetric(col["distance_metric"].lower()),
-                    storage_engine=StorageEngine(col["storage_engine"].lower()),
+                    id=col.get("collection_id", col.get("id", col["name"])),
+                    config=CollectionConfig(
+                        name=col["name"],
+                        dimension=col["dimension"],
+                        distance_metric=DistanceMetric(
+                            col.get("distance_metric", "cosine").lower()
+                        ),
+                        storage_engine=StorageEngine(col["engine"].lower()),
+                    ),
                 )
                 for col in data.get("collections", [])
             ]
@@ -540,14 +550,16 @@ class ProximaDBClientV1:
     ) -> SearchResult:
         """Search vectors via REST"""
         payload = {
-            "collection_id": collection_id,
             "vector": vector,
             "top_k": top_k,
         }
         if filters:
-            payload["filters"] = filters
+            payload["filters"] = [
+                {"field": key, "op": "eq", "value": value}
+                for key, value in filters.items()
+            ]
 
-        url = urljoin(self.base_url, "/api/v1/vectors/search")
+        url = urljoin(self.base_url, f"/api/v2/collections/{collection_id}/search")
         try:
             response = requests.post(url, json=payload, timeout=self.timeout)
             response.raise_for_status()
@@ -595,7 +607,10 @@ class ProximaDBClientV1:
         self, collection_id: str, vector_id: str
     ) -> Optional[VectorRecord]:
         """Get vector via REST"""
-        url = urljoin(self.base_url, f"/api/v1/vectors/{collection_id}/{vector_id}")
+        url = urljoin(
+            self.base_url,
+            f"/api/v2/collections/{collection_id}/records/{vector_id}?include_vector=true&include_text=false",
+        )
         try:
             response = requests.get(url, timeout=self.timeout)
             if response.status_code == 404:
@@ -603,12 +618,11 @@ class ProximaDBClientV1:
             response.raise_for_status()
             data = response.json()
 
-            if data.get("success") and data.get("results"):
-                result = data["results"][0]
+            if data.get("id"):
                 return VectorRecord(
-                    id=result["id"],
-                    vector=result.get("vector", []),
-                    metadata=result.get("metadata", {}),
+                    id=data["id"],
+                    vector=data.get("vector", []),
+                    metadata=data.get("props", {}),
                 )
             return None
         except requests.RequestException as e:
@@ -1354,12 +1368,14 @@ class ProximaDBClientV1:
     ) -> Dict[str, Any]:
         """Advanced vector search via REST"""
         payload = {
-            "collection_id": collection_id,
             "vector": vector,
             "top_k": top_k,
             "include_vector": include_vector,
-            "include_metadata": include_metadata,
-            "filters": filters or {},
+            "include_text": False,
+            "filters": [
+                {"field": key, "op": "eq", "value": value}
+                for key, value in (filters or {}).items()
+            ],
         }
 
         if accuracy_threshold is not None:
@@ -1370,7 +1386,7 @@ class ProximaDBClientV1:
 
         try:
             response = requests.post(
-                urljoin(self.base_url, "/api/v1/vectors/search/advanced"),
+                urljoin(self.base_url, f"/api/v2/collections/{collection_id}/search"),
                 json=payload,
                 timeout=self.timeout,
                 headers={"Content-Type": "application/json"},

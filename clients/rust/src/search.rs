@@ -414,7 +414,11 @@ impl<'a> SearchBuilder<'a> {
             timeout_ms: self.timeout_ms,
         };
 
-        let url = format!("{}/api/v1/vectors/search", client.url());
+        let url = format!(
+            "{}/api/v2/collections/{}/search",
+            client.url(),
+            request.collection
+        );
         let response: SearchResponse = client.post(&url, &request).await?;
 
         let mut results = response.results;
@@ -510,6 +514,7 @@ impl SearchResult {
 
 #[derive(Debug, Serialize)]
 struct SearchRequest {
+    #[serde(skip_serializing)]
     collection: String,
     vector: Vec<f32>,
     top_k: usize,

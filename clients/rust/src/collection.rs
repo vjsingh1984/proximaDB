@@ -211,7 +211,7 @@ impl<'a> CollectionBuilder<'a> {
             index_type: Some(self.index.as_str().to_string()),
         };
 
-        let url = format!("{}/api/v1/collections", client.url());
+        let url = format!("{}/api/v2/collections", client.url());
         let _response: CreateCollectionResponse = client.post(&url, &request).await?;
         Ok(())
     }
@@ -313,7 +313,7 @@ impl<'a> CollectionHandle<'a> {
     #[cfg(feature = "client")]
     pub async fn info(&self) -> Result<CollectionInfo> {
         let client = self.client.expect("Client reference required");
-        let url = format!("{}/api/v1/collections/{}", client.url(), self.name);
+        let url = format!("{}/api/v2/collections/{}", client.url(), self.name);
         client.get(&url).await
     }
 
@@ -321,7 +321,10 @@ impl<'a> CollectionHandle<'a> {
     #[cfg(feature = "client")]
     pub async fn count(&self) -> Result<u64> {
         let info = self.info().await?;
-        Ok(info.vector_count)
+        Ok(info
+            .stats
+            .as_ref()
+            .map_or(info.vector_count, |stats| stats.record_count))
     }
 
     /// Delete the collection
@@ -356,7 +359,7 @@ impl<'a> CollectionHandle<'a> {
     pub async fn delete_vector(&self, id: &str) -> Result<()> {
         let client = self.client.expect("Client reference required");
         let url = format!(
-            "{}/api/v1/collections/{}/vectors/{}",
+            "{}/api/v2/collections/{}/records/{}",
             client.url(),
             self.name,
             id
@@ -368,18 +371,12 @@ impl<'a> CollectionHandle<'a> {
     /// Delete multiple vectors by IDs
     #[cfg(feature = "client")]
     pub async fn delete_vectors(&self, ids: Vec<String>) -> Result<usize> {
-        let client = self.client.expect("Client reference required");
-        let request = DeleteVectorsRequest {
-            collection: self.name.clone(),
-            ids,
-        };
-        let url = format!(
-            "{}/api/v1/collections/{}/vectors/delete",
-            client.url(),
-            self.name
-        );
-        let response: DeleteVectorsResponse = client.post(&url, &request).await?;
-        Ok(response.deleted_count)
+        let mut deleted = 0usize;
+        for id in ids {
+            self.delete_vector(&id).await?;
+            deleted += 1;
+        }
+        Ok(deleted)
     }
 
     /// Get a vector by ID
@@ -388,7 +385,7 @@ impl<'a> CollectionHandle<'a> {
     pub async fn get_vector(&self, id: &str) -> Result<Option<VectorRecord>> {
         let client = self.client.expect("Client reference required");
         let url = format!(
-            "{}/api/v1/collections/{}/vectors/{}",
+            "{}/api/v2/collections/{}/records/{}",
             client.url(),
             self.name,
             id
@@ -503,24 +500,23 @@ impl<'a> UpdateBuilder<'a> {
             .client
             .ok_or_else(|| ProximaError::Internal("No client reference".to_string()))?;
 
-        let request = UpdateVectorRequest {
-            collection: self.collection.clone(),
-            id: self.id,
-            vector: self.vector,
-            metadata: if self.metadata.is_empty() {
-                None
-            } else {
-                Some(self.metadata)
-            },
-            replace_metadata: self.replace_metadata,
+        let request = ProximaRecordBatchRequest {
+            records: vec![ProximaRecord {
+                id: self.id,
+                vector: self.vector.unwrap_or_default(),
+                props: self.metadata,
+                source: None,
+            }],
+            validate_schema: true,
+            upsert: true,
         };
 
         let url = format!(
-            "{}/api/v1/collections/{}/vectors/update",
+            "{}/api/v2/collections/{}/records/batch",
             client.url(),
             self.collection
         );
-        let _response: UpdateVectorResponse = client.post(&url, &request).await?;
+        let _response: InsertResponse = client.post(&url, &request).await?;
         Ok(())
     }
 
@@ -544,12 +540,15 @@ impl<'a> UpdateBuilder<'a> {
 /// Collection information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionInfo {
+    /// Collection ID
+    #[serde(default)]
+    pub collection_id: Option<String>,
     /// Collection name
     pub name: String,
     /// Vector dimension
     pub dimension: u32,
     /// Number of vectors
-    #[serde(default)]
+    #[serde(default, alias = "record_count")]
     pub vector_count: u64,
     /// Storage engine
     #[serde(default)]
@@ -557,6 +556,20 @@ pub struct CollectionInfo {
     /// Disk usage in bytes
     #[serde(default)]
     pub disk_usage_bytes: Option<u64>,
+    /// Nested v2 collection statistics.
+    #[serde(default)]
+    pub stats: Option<CollectionStats>,
+}
+
+/// v2 collection statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionStats {
+    /// Total number of records.
+    #[serde(default)]
+    pub record_count: u64,
+    /// Total storage size in bytes.
+    #[serde(default)]
+    pub storage_size_bytes: u64,
 }
 
 /// Builder for insert operations
@@ -666,6 +679,7 @@ impl<'a> InsertBuilder<'a> {
                 .map(ProximaRecord::from_insert_record)
                 .collect(),
             validate_schema: true,
+            upsert: false,
         };
 
         let url = format!(
@@ -818,6 +832,7 @@ struct CreateCollectionRequest {
 #[derive(Debug, Deserialize)]
 struct CreateCollectionResponse {
     #[allow(dead_code)]
+    #[serde(default)]
     success: bool,
 }
 
@@ -825,6 +840,8 @@ struct CreateCollectionResponse {
 struct ProximaRecordBatchRequest {
     records: Vec<ProximaRecord>,
     validate_schema: bool,
+    #[serde(default)]
+    upsert: bool,
 }
 
 /// Canonical record payload with optional vector embedding and rich properties.
