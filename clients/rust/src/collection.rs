@@ -881,35 +881,6 @@ struct InsertResponse {
     inserted_count: usize,
 }
 
-#[derive(Debug, Serialize)]
-struct UpdateVectorRequest {
-    collection: String,
-    id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    vector: Option<Vec<f32>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    metadata: Option<HashMap<String, serde_json::Value>>,
-    #[serde(default)]
-    replace_metadata: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateVectorResponse {
-    #[allow(dead_code)]
-    success: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct DeleteVectorsRequest {
-    collection: String,
-    ids: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct DeleteVectorsResponse {
-    deleted_count: usize,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
