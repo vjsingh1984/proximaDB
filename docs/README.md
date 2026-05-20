@@ -125,14 +125,17 @@ JOIN LATERAL DOCUMENT_QUERY('reviews', 'product_id = "' || v.product_id || '"') 
 | [Operations](./04-operations/) | Production deployment | Setup |
 | [Concepts](./05-concepts/) | Deep dives | Learning |
 | [Internals](./06-internals/) | Contributors | Development |
+| [Architecture & Design](./12-design/README.adoc) | Current architecture blueprints and ADRs | Planning |
 
 ---
 
 ## Layout
 
-Release-facing documentation lives in the numbered tree above. Supporting images and logos live in `docs/assets/`; internal planning lives in `docs/_internal/`; retained historical reports live in `docs/_archive/`.
+Release-facing documentation lives in the numbered tree above. Current architecture blueprints live in `docs/12-design/`; supporting images and logos live in `docs/assets/`; internal planning lives in `docs/_internal/`; retained historical reports live in `docs/_archive/`.
 
 Do not add new one-off reports to the repository root or directly under `docs/`. Put current docs in the matching numbered section and move historical status reports into `docs/_archive/`.
+
+For future-shaping architecture work, start with `docs/12-design/README.adoc`.
 
 ---
 

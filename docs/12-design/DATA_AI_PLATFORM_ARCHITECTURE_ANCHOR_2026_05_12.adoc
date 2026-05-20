@@ -16,6 +16,14 @@ storage layers, workspace skeleton, and ADRs. This document anchors product shap
 competitive strategy, platform phases, ecosystem integrations, and the developer-to-enterprise
 path.
 
+Current implementation blueprints refine this anchor for active subsystems. For relational
+pgwire DML, legacy VectorOps routing, table-record execution, and compute-engine selection, use
+link:RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc[RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20].
+For the competitive OLTP/OLAP/HTAP/MPP route map, xCatalog planning knobs, and implementation
+sequence inspired by PostgreSQL/Oracle, Exadata/Netezza, Teradata/Redshift, Vertica/ClickHouse,
+Spark/Trino, Snowflake, and BigQuery, use
+link:COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc[COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20].
+
 == Executive Position
 
 ProximaDB should become the **context data and AI operating system**: one catalog, one policy
@@ -615,6 +623,51 @@ not provide as a coherent unit:
   or observability workloads into the same cost profile.
 * **Observability plus AI context**: logs, metrics, traces, profiles, agent traces, evaluations,
   prompts, tool calls, and retrieval evidence can be queried together under one policy model.
+
+== Success-Odds Anchor Trajectories
+
+The Hadoop, MPP appliance, lakehouse, and cloud warehouse history should refine ProximaDB's path in
+one direction: keep proven file/split/vectorized mechanics, but do not make them the product
+center. The durable product center is the control plane, semantic authority, policy boundary,
+developer workflow, and explainable router.
+
+Anchor trajectories:
+
+* **Semantic authority first**: xCatalog, `ProximaRecord`, `ProximaType`/`ProximaValue`, WAL,
+  MVCC/branch metadata, tenant/RLS, and retention are the product spine. Pgwire, REST/gRPC, Arrow
+  Flight, SDKs, Iceberg REST, Delta/Hudi adapters, and modal APIs are views over that spine.
+* **Managed-local simplicity before distributed ambition**: win the embedded/single-server
+  developer path before claiming warehouse-scale MPP. Local startup, pgwire compatibility,
+  predictable DDL/DML, Arrow export, Python ergonomics, and clear `EXPLAIN` output should feel
+  boring and reliable.
+* **HTAP/PAX as the native wedge**: use PAX row directories plus column stripes to show OLTP point
+  operations and OLAP scans over the same canonical records. This gives ProximaDB a native story
+  that is stronger than "just another Parquet reader" while still exporting to open formats.
+* **Open lakehouse as interoperability, not abdication**: Iceberg/Delta/Hudi/Parquet/ORC/CSV are
+  cataloged publications, imported snapshots, federated reads, or explicit external authorities.
+  They should never silently replace ProximaDB's hot record/log/catalog authority for
+  Proxima-owned assets.
+* **Compute routing over engine sprawl**: native Rust, DataFusion, Spark, Trino, Ray, and Flink are
+  routes selected by xCatalog metadata, stats, freshness, policy, and cost. Add route evidence,
+  rejection reasons, and benchmark gates before adding more engines.
+* **Policy and governance as a default path**: routes that cannot enforce tenant/RLS/masking before
+  data leaves the boundary must be rejected by default. This is a warehouse/cloud lesson as much as
+  a security requirement.
+* **Autonomous optimization only after observability**: auto-indexing, auto-projection, result
+  caching, workload queues, and route recommendations must be driven by cataloged workload
+  observations and benchmark gates, not static heuristics hidden inside handlers.
+* **Branchable AI/data workflows as differentiation**: Redshift, BigQuery, and Snowflake won by
+  removing operational work; ProximaDB's differentiator should be local-to-cloud continuity plus
+  branchable data, agent state, evaluations, lineage, and policy-managed context.
+
+Default path by phase:
+
+* Phase 1 should prove semantic authority, pgwire/embedded adoption, DML correctness,
+  predicate-aware vector search, and local Arrow/DataFusion scans.
+* Phase 2 should prove the same contracts survive multi-machine storage, connector sidecars,
+  branch manifests, and distributed compute delegation.
+* Phase 3 should add warehouse inheritance only where catalog, policy, statistics, workload
+  isolation, and route explanation are mature enough to make it operationally simple.
 
 == Competitive Gap Register
 

@@ -14,6 +14,9 @@ The distinction matters because a capability can be fully API-supported while it
 
 Mandate: `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`
 
+Current relational/pgwire DML and compute-routing implementation tracker:
+`docs/12-design/RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc`
+
 ---
 
 == Document Storage

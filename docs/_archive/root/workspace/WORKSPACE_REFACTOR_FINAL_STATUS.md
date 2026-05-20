@@ -154,7 +154,7 @@ The workspace refactor has achieved **all major goals** with substantial improve
 
 **Plus**:
 - CLAUDE.md updated with layering rules
-- docs/12-design/ADR-001-workspace-layering.md
+- docs/_archive/design/2026-05/ADR-001-workspace-layering.md
 
 ---
 

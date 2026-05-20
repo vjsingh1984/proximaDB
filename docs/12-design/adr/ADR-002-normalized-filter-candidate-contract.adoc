@@ -164,6 +164,43 @@ pub struct QueryBuildDiagnostics {
 
 **Invariant**: ANN execution is NEVER the final arbiter of filter correctness. Step 4 is mandatory unless `CandidateMode::IndexCovered`.
 
+== ANN Filtering Mode Selection
+
+The `CandidateMode` from ADR-002 determines *whether* the filter is pushed. A separate
+routing decision determines *how*: as a pre-filter, an inline (predicate-aware) HNSW
+traversal, or a post-filter over ANN results. This routing is formalized in ADR-011.
+
+The connection between the two ADRs:
+
+[source,text]
+----
+ADR-002: normalize → candidate set → residual predicate
+ADR-011: estimated_selectivity → PreFilter / Inline / PostFilter mode
+            ↓
+         CandidateMode is set by routing:
+           PreFilter  → CandidateMode::BitmapBacked (filter first, ANN over bitmap)
+           Inline     → CandidateMode::PartialIndex  (filter during traversal)
+           PostFilter → CandidateMode::IndexCovered  (ANN first, residual after)
+----
+
+`QueryBuildDiagnostics` is extended with:
+
+[source,rust]
+----
+pub struct QueryBuildDiagnostics {
+    pub pushed_predicates: Vec<String>,
+    pub residual_predicates: Vec<String>,
+    pub index_used: Option<String>,
+    pub estimated_selectivity: Option<f64>,
+    /// ANN routing mode selected for this query.
+    pub ann_filtering_mode: Option<AnnFilteringMode>,
+    /// Whether the routing mode was forced by a catalog policy override.
+    pub ann_mode_forced_by_policy: bool,
+}
+----
+
+See ADR-011 for the complete routing logic, selectivity thresholds, and EXPLAIN surface.
+
 == Consequences
 
 * One normalization layer per concern (not per backend)
@@ -171,6 +208,7 @@ pub struct QueryBuildDiagnostics {
 * Residual verification catches ANN recall gaps and index coverage gaps
 * Backend-specific filter support is declared via `CapabilityDescriptor` (ADR-001)
 * `QueryBuildDiagnostics` feeds into Explain (ADR-004)
+* ANN routing mode (PreFilter/Inline/PostFilter) is derived from selectivity and declared in ADR-011
 
 == Governs
 

@@ -15,7 +15,7 @@ This document defines the organization, canonical sources, and authoring convent
 - Architecture: `docs/05-concepts/architecture.adoc`
 - Strategic Roadmap: `docs/_internal/roadmap/STRATEGIC_ROADMAP.adoc`
 - Feature Dashboard: `docs/_internal/roadmap/MASTER_FEATURE_DASHBOARD.adoc`
-- Technical Debt: `docs/10-quality/TECHNICAL_DEBT.adoc` _(Markdown copy at `docs/10-quality/TECHNICAL_DEBT.md`)_
+- Technical Debt: `docs/10-quality/TECHNICAL_DEBT.adoc` _(Markdown copy archived at `docs/_archive/quality/2026-05/TECHNICAL_DEBT.md`)_
 - Use Case Catalog: `docs/11-usecases/USECASE_CATALOG.adoc`
 - ibkrtrading Dogfood: `docs/11-usecases/IBKRTRADING_DOGFOOD.adoc`
 - Design Patterns: `docs/12-design/DESIGN_PATTERNS.adoc`

@@ -14,6 +14,10 @@ The goal is for ProximaDB to be a first-class catalog authority that any open-fo
 (Spark, Trino, DuckDB, Flink, PyIceberg) can connect to without a custom connector, while supporting
 the full range from embedded SQLite-backed small datasets to petabyte-scale Parquet/Iceberg lakehouse.
 
+For the current SQL/pgwire DML, `CopyIntoPlan`, compute-router, and external delegated write path
+tracker, see
+link:RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc[RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20].
+
 Open-format catalog support is a facade over the broader xCatalog control plane. xCatalog is not
 only an Iceberg/Hive-style table catalog. It is the metadata authority for relational tables,
 vector/document collections, graphs, observability datasets, streams, features, model registry
@@ -83,6 +87,167 @@ The same asset can have multiple names or protocol views. For example, a vector 
 appear as a REST collection, a pgwire table, an Arrow Flight dataset, and an Iceberg table
 publication. Those are aliases/views over one catalog asset id, not separate metadata objects.
 
+== Open Table Authority Contract
+
+Iceberg, Delta, and Hudi are table metadata/transaction layers over immutable data files, usually
+Parquet, ORC, or Avro. They are not automatically ProximaDB's canonical durable model. Every
+open-table mapping must declare one authority mode and one commit owner.
+
+[cols="1,2,3,3"]
+|===
+| Mode | Commit owner | Allowed writes | Required xCatalog metadata
+
+| `ProximaAuthoritative`
+| ProximaDB WAL + `ProximaRecord`
+| Writes commit through `TableRecordStore`; open-table files/manifests are publications
+| source WAL range, publication snapshot, manifest/version id, freshness watermark, repair source,
+policy boundary
+
+| `ProjectionPublication`
+| ProximaDB projection publisher
+| Writes are indirect: canonical records first, publication after projection/update
+| source asset id, source snapshot/WAL range, projection freshness, publication location,
+manifest/version id, rebuild policy
+
+| `ImportedSnapshot`
+| Import job at a pinned external snapshot
+| ProximaDB may write imported canonical records after validation; external source remains unchanged
+| external snapshot id/version, import timestamp, schema mapping, lossy conversions, provenance,
+repair/reimport source
+
+| `FederatedRead`
+| External table/source
+| Read-only from ProximaDB's perspective
+| external catalog reference, snapshot semantics, refresh mode, type mapping, policy boundary,
+unsupported write reason
+
+| `ExternalAuthoritative`
+| External table format commit protocol
+| Writes use Iceberg/Delta/Hudi atomic commit semantics and register resulting snapshot in xCatalog
+| external commit protocol, snapshot/version id, isolation semantics, conflict behavior, policy
+boundary, repair source, refresh mode
+|===
+
+Format-specific adapter obligations:
+
+[cols="1,3"]
+|===
+| Format | Adapter must model
+
+| Iceberg
+| snapshot id, metadata file location, manifest list, manifests, data/delete files, partition spec,
+schema id, sequence numbers where used, equality/position delete handling, REST catalog namespace
+and table identifiers
+
+| Delta
+| table version, `_delta_log` commit files/checkpoints, add/remove file actions, protocol version,
+metadata/schema action, transaction/app ids where used, deletion vectors when supported, checkpoint
+loading and retention limits
+
+| Hudi
+| timeline instant, table type, base/log files, commit/delta-commit/compaction actions, record key,
+precombine field, partition path, incremental query boundary, cleaner/archival retention
+
+| Hive/Glue-style external table
+| database/table, storage descriptor, partition list, serde/input format, object location,
+schema/classifier source, partition refresh mode, and lack of ACID guarantees unless backed by a
+table format that supplies them
+|===
+
+== Props Auto-Promotion for Iceberg Federation
+
+The `props` column (PAX column ID 8, Iceberg type `map<string, binary>`) stores the
+user-defined properties map as msgpack. External engines (Spark, Trino, DuckDB) reading
+via Iceberg REST receive opaque binary values and cannot push predicates into document
+fields without deserializing msgpack client-side.
+
+**This is the primary limitation for document workloads accessed via Iceberg REST.**
+
+=== Auto-Promotion Mechanism
+
+`PropsAutoPromotionPolicy` (in `proximadb-catalog::lib.rs`) controls automatic promotion
+of high-frequency props keys to typed PAX user columns (IDs 100+) and corresponding
+Iceberg typed columns.
+
+When promotion is enabled and a key meets the frequency threshold:
+
+[source,text]
+----
+1. Background compaction job evaluates props key frequency across all PAX blocks.
+2. Keys meeting frequency_threshold (default 50 %) and min_record_count (default 10,000)
+   are promoted candidates.
+3. xCatalog registers a schema evolution (SchemaChange::AddColumn) for the new typed column.
+4. PAX compaction rewrites blocks, extracting the promoted key from the msgpack blob
+   into the new typed column stripe.
+5. Iceberg publication is updated with the new typed column in the next snapshot.
+6. Predicate pushdown becomes available for the promoted key in Spark/Trino immediately
+   after the snapshot is committed.
+----
+
+=== Manual Promotion
+
+[source,sql]
+----
+-- Explicitly promote a props key before frequency threshold is reached
+ALTER TABLE documents PROMOTE PROPS KEY (category TYPE text);
+ALTER TABLE events    PROMOTE PROPS KEY (user_id TYPE bigint);
+ALTER TABLE metrics   PROMOTE PROPS KEY (region TYPE text);
+----
+
+=== Promoted Column Naming Convention
+
+Promoted columns use the naming convention `props__<key>` (double underscore separator)
+to avoid collisions with user-defined columns and to signal their origin in the schema.
+The original key remains readable from the msgpack `props` blob during the compaction
+window for backwards compatibility.
+
+=== Iceberg Type Mapping for Promoted Keys
+
+[cols="2,2,2"]
+|===
+| Promoted ProximaType | Iceberg column type | Predicate pushdown in Spark/Trino
+
+| `String`  | `string`         | Yes — full equality, `LIKE`, `IN`
+| `Int64`   | `long`           | Yes — range, equality, `BETWEEN`
+| `Float64` | `double`         | Yes — range, equality
+| `Boolean` | `boolean`        | Yes — equality
+| `TimestampTz` | `timestamptz` | Yes — range, equality
+| `Json` (nested) | `string`   | No — stored as JSON string; UDF required
+| `ProximaValue::Map` (nested) | Not promotable | No
+|===
+
+See ADR-013 for the full type coercion matrix including non-promotable types.
+
+=== Enabling Auto-Promotion
+
+[source,sql]
+----
+-- Enable auto-promotion on an existing document table
+ALTER TABLE documents SET (
+  props_auto_promotion = 'enabled',
+  props_promotion_threshold = 0.4,     -- promote if key appears in 40 % of rows
+  props_promotion_max_columns = 50     -- promote up to 50 keys
+);
+
+-- Check promotion candidates (dry run)
+SELECT * FROM proximadb_catalog.props_promotion_candidates('documents');
+----
+
+Open-format guardrails:
+
+* Do not expose a Proxima-owned asset to external readers until the publication snapshot is
+  registered in xCatalog.
+* Do not treat external table metadata as fresh unless its refresh mode and snapshot id/version are
+  known.
+* Do not allow external compute writes to Proxima-owned assets unless the output returns through
+  `TableRecordStore` or a staged commit protocol that writes canonical records first.
+* Do not allow `ExternalAuthoritative` writes unless the adapter can surface conflict/isolation
+  errors from the table format.
+* Do not silently ignore delete files, deletion vectors, schema evolution, partition evolution, or
+  lossy type conversions. Unsupported semantics must reject the route or mark it experimental.
+* For tenant/RLS data, the adapter must prove predicates are enforced before data leaves the
+  ProximaDB boundary or mark the route unsupported.
+
 == Schema-On-Read And Schema-On-Write Positioning
 
 Open file/table formats are supported, but they do not replace the canonical record and catalog
@@ -137,7 +302,6 @@ Schema-on-write is the default for OLTP-style relational loads:
 ----
 CREATE TABLE orders (
   order_id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
   amount DECIMAL(18, 2),
   attrs JSON,
   embedding VECTOR(768)
@@ -148,6 +312,12 @@ SQL/pgwire `INSERT`/`COPY`, REST/gRPC `InsertRecords`, Arrow Flight batches, and
 pandas/Arrow/numpy loads all validate against the same xCatalog schema and write canonical
 `ProximaRecord`s. Relational constraints are enforced below protocol handlers and recovered through
 WAL/log/manifest.
+
+Tenant context for these tables is owned by xCatalog namespace/schema/table metadata plus the
+protocol/service session. Applications may add a business `tenant_id` column, but ProximaDB does not
+require one for logical tenancy. Internal layouts may materialize `__tenant_id`, `tenant_id_hash`,
+or segment/table tenant metadata only when needed for engine-level RLS, pruning, replay, CDC, or
+mixed-tenant physical storage.
 
 === Surface Rule
 
@@ -208,7 +378,7 @@ This mapping is the compatibility contract between ProximaDB and any external co
 | ProximaRecord field | Iceberg column | Iceberg type | Notes
 
 | `id` / `oid` | `id` | `string` required | partition candidate
-| `tenant_id` | `tenant_id` | `string` required | default partition column; drives RLS pushdown
+| internal tenant context | `tenant_id` | `string` optional/required by policy | exposed projection of xCatalog/session tenant context; partition/RLS pushdown when policy requires it
 | `created_at_ns` | `created_at` | `timestamptz` | nanoseconds ÷ 1000 → microseconds
 | `updated_at_ns` | `updated_at` | `timestamptz` |
 | `valid_from_ns` | `valid_from` | `timestamptz` optional | bi-temporal lower bound

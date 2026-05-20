@@ -57,6 +57,22 @@ For detailed roadmap, see link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategi
 
 ---
 
+== Current Architecture Blueprints
+
+|===
+| Doc | Purpose
+
+| link:12-design/README.adoc[Architecture and Design Index] | Canonical entry point for active architecture docs and archived design context
+| link:12-design/DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc[Data and AI Platform Anchor] | Product/platform architecture, roadmap shape, ecosystem direction
+| link:12-design/COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc[Competitive OLTP/OLAP/MPP Trajectory] | Competitive HLD/LLD route map for OLTP, OLAP, HTAP, MPP delegation, and xCatalog planner knobs
+| link:12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc[Stacked Durability and Modality Convergence] | Accepted mandate for record authority, modality facades, and projections
+| link:12-design/RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc[Relational Storage and Interoperability] | Relational/PAX/MVCC/open-format storage direction
+| link:12-design/RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc[Pgwire DML and Compute Blueprint] | Active HLD/LLD tracker for DML routing, legacy VectorOps compatibility, and compute execution
+| link:12-design/OPEN_FORMAT_CATALOG_2026_05_17.adoc[Open Format Catalog] | Iceberg REST, OLTP catalog backends, xCatalog ownership, external engines
+|===
+
+---
+
 == API References
 
 |===
@@ -97,7 +113,7 @@ For detailed roadmap, see link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategi
 |===
 | Doc | Purpose
 
-| link:10-quality/proximadb-strategic-analysis.adoc[Strategic Analysis] | Comprehensive gap analysis, competitive position, feature audit
+| link:10-quality/proximadb-strategic-analysis.adoc[Strategic Analysis] | Historical/current drift-check input for feature gaps and competitive position
 | link:10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] | TD-001 through TD-017 with priority, effort, phase alignment
 | link:10-quality/code-coverage-report.adoc[Code Coverage Report] | Module-level coverage analysis and TDD action plan
 |===

@@ -102,7 +102,7 @@ Successfully completed **major phases** of the workspace refactor, achieving sub
 - `FINAL_SUMMARY.md` - Executive summary
 - `DEPRECATED_TYPES.md` - Migration guide for deprecated types
 - `CLAUDE.md` - Updated with layering rules
-- `docs/12-design/ADR-001-workspace-layering.md` - Architecture decision record
+- `docs/_archive/design/2026-05/ADR-001-workspace-layering.md` - Historical architecture decision record
 
 ### Tooling
 - `scripts/check-layering.sh` - 4 validation checks

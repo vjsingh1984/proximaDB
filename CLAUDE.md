@@ -130,123 +130,31 @@ cargo llvm-cov --lib --html --output-dir coverage
 - Keep changes compatible with the distributed roadmap: explicit ownership, deterministic behavior, idempotent operations, well-bounded interfaces, and first-class observability are required. Hidden global coupling and one-off code paths are not acceptable tradeoffs for short-term speed.
 - Prefer composition over proliferation. Reuse canonical proto types, `core`/`services` abstractions, shared query/graph orchestration, and metadata infrastructure so behavior stays aligned across REST, gRPC, Arrow Flight, PostgreSQL wire, and future distributed execution.
 
-### Multi-Model Overhaul Mandate (Authoritative)
+### Architecture Mandates
 
-- Treat [roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc](roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc) as the authoritative specification for record format, type system, modality boundaries, query algebra, security placement, and cross-model design. It supersedes prior architecture review documents (`docs/MULTI_MODEL_ARCHITECTURE_REVIEW.md`, `docs/10-quality/MULTIMODEL_ARCHITECTURE_ANALYSIS.adoc`) for go-forward design decisions.
-- The ADRs in §12 of the spec are sticky decisions; do NOT relitigate them in isolated turns. If a turn proposes a deviation, surface the ADR id explicitly and justify the change against the convergent research in §2 and the gap analysis in §1.2.
-- Sticky design pillars ALL new code must respect:
-  - **One record envelope** (`ProximaRecord`, spec §3): every modality projects onto identity, variation, tenancy, time, provenance, props, refs, edge, embeddings, sequence, labels, extensions. Do not introduce parallel record shapes.
-  - **One scalar type system** (`ProximaType`/`ProximaValue`, spec §4): catalog, wire, storage, and pgwire must agree on Decimal, TimestampTz, Uuid, Json, Vector. No new oneof variants in legacy `SqlValue`.
-  - **Canonical model first across every surface**: new foundation, modality, storage, query, catalog, SDK, embedded, REST, gRPC, Arrow Flight, pgwire, and SQL-lowering contracts use `ProximaRecord` plus `ProximaType`/`ProximaValue`. Legacy v1 `VectorRecord`, `SqlValue`, `SqlObject`, and vector metadata maps are deprecated migration artifacts, not target public or internal API contracts.
-  - **Protocol adapters are not semantic authorities**: SQL/pgwire, REST, gRPC, Arrow Flight, Mongo-like document APIs, Gremlin/Cypher/PGQ graph APIs, Neptune/Titan-style compatibility, SDKs, and embedded helpers must lower into `ProximaValue`, `ProximaRecord`, xCatalog schema/variation metadata, or the shared logical plan. Do not let protocol request/response shapes define storage, type, RLS, WAL/recovery, or catalog semantics.
-  - **Cataloged schema modes**: strict relational tables, flexible document/graph/entity collections, schema-on-write variation registration, and schema-on-read projection behavior must be xCatalog/table capabilities. Insert/upsert paths across SQL, REST, gRPC, Arrow, and embedded mode share the same type validation and coercion before WAL/storage.
-  - **ADR-009 schema/API convergence**: schema-on-read external files/tables, schema-on-write OLTP loads, REST/gRPC, Arrow Flight, pgwire/SQL, SDKs, and embedded mode are surfaces over xCatalog plus `ProximaRecord`; breaking changes are acceptable when they remove vector-only API authority.
-  - **Three-layer storage** (spec §5): unified record (PAX) + topology (CSR/COO) + vector index (HNSW relationship table) behind one buffer pool.
-  - **One logical algebra** (spec §7): SQL/Cypher/AQL/UQL/PromQL/LogQL all compile to `Filter, Project, Sort, Limit, Aggregate, Union, Join, HybridTraverse, PatternMatch, CrossModelJoin, VectorTopK, ModulationOp, MatrixOp, SemanticJoin, ModelConvert`.
-  - **Engine-level RLS** (spec §8): `tenant_id`/`permitted_principals` are record fields, pushed into scan iterators. No application-layer-only tenant filtering.
-  - **Predicate-aware HNSW** (spec §6.1): γ-expanded ACORN construction + NaviX adaptive-local search + per-modality shards (HMGI) + PAX co-location of filter columns.
-- New work that touches records, types, indexes, query, storage, security, or distributed architecture MUST cite the relevant spec section and ADR ids in the PR description.
-- The Phase A-G roadmap (spec §11) is the sequencing contract. New TD entries and roadmap updates must reference Phase A/B/C/D/E/F/G/H or explain why the work falls outside.
-- Best-in-class engineering principles enforced via this mandate: scalable (disaggregated runtime per Bacchus, three-tier cache), maintainable (one envelope, one type system, ADR-tracked decisions), extensible (operators added once in the algebra, surface languages cheap, modality crates symmetric), and robust (engine-level RLS, atomic metadata+vector writes, subschema-checked schema evolution).
+Keep this section short; detailed rules live in the referenced docs.
 
-### Data and AI Platform Anchor
+- Use [docs/12-design/README.adoc](docs/12-design/README.adoc) as the architecture index.
+- New internal/durable contracts use `ProximaRecord` + `ProximaType`/`ProximaValue`; legacy `VectorRecord`, `SqlValue`, `SqlObject`, and protocol DTOs are edge adapters only.
+- Protocols and modalities are facades, not durable authorities. They lower into xCatalog, canonical records, shared algebra, and canonical WAL.
+- Durable authority stays in xCatalog + WAL/log/manifest + `ProximaRecord` + policy/RLS + version/time/provenance. PAX, LSM, columnar, ANN, JSON, graph topology, observability, Arrow/Parquet/Iceberg/Delta/Hudi are layouts, projections, adapters, or explicit external-authority modes.
+- OLTP/OLAP/HTAP/MPP route decisions must be cataloged and explainable with `authority_mode`, `workload_profile`, `storage_specialization`, `freshness_sla`, `compute_route`, `partitioning`, `isolation_profile`, and `policy_boundary`. Reject unsafe, stale, lossy, or policy-violating routes.
+- Router/multiplexer shape is a control-plane boundary: route once per plan/fragment/split, emit typed `RoutedExecutionPlan` plus unified `EXPLAIN`, then dispatch to leaf executors/readers without per-row route recomputation.
+- Generated code must not create hidden durable authority. New routes/readers/writers/projections/adapters must declare authority mode, policy boundary, freshness behavior/state, repair source, rejected-route reasons, and support maturity before default enablement.
+- Iceberg/Delta/Hudi/Parquet paths are open-format interoperability modes. Register them in xCatalog as publications, imports, federated reads, or explicit external-authoritative assets; do not treat table logs/files as Proxima-owned hot authority unless the canonical WAL/record path owns the commit.
+- Workspace changes follow the stable map `Foundation -> Contracts -> Modality Runtime -> Cross-Model Query Runtime -> Platform Runtime -> Apps/Bindings`; add crates only for real dependency or ownership payoff.
+- Before touching records/types/catalog/storage/WAL/query/RLS/open formats/pgwire/Arrow/workspace code, read the relevant docs below and cite doc/ADR ids in PRs.
 
-- Treat [docs/12-design/DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc](docs/12-design/DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc) as the product/platform anchor for competitive moat, xCatalog, pgwire compatibility, commodity compute routing, streaming integration, branchable state, agentic runtime, MLOps/MLflow/AutoML, Ray/Flink/Kafka/Kinesis support, and the phasewise developer-to-enterprise roadmap.
-- Use the platform anchor to decide product shape and sequencing. Use the multi-model overhaul spec to decide internal record/type/algebra/storage/security shape. If they appear to conflict, preserve the overhaul spec for internals and update the anchor rather than adding a third direction.
-- Platform changes involving pgwire, catalog, DataFusion/Spark/Trino/Ray/Flink adapters, Kafka/Kinesis/MQ connectors, MLflow/MLOps, branch/restore, or agent state must map to one of the anchor phases and name the affected plane in PRs.
+Architecture references:
 
-### Relational/Document/Graph Convergence Mandate
-
-- Treat [docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc](docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc) as the required design for document and graph storage evolution.
-- Before making or reviewing changes in records, storage, document, graph, vector, observability, query lowering, indexing, catalog, WAL/recovery, or workspace boundaries, read the convergence doc into the current session context and keep the mandate available for the turn. Do not rely on stale recall of the architecture decision.
-- `DocumentService`, graph services, Cypher/PGQ surfaces, document APIs, and SDK modality helpers are facades over canonical `ProximaRecord`/relational storage. They must not become independent durable systems with separate record envelopes, transaction semantics, WAL/recovery paths, tenant/RLS enforcement, or compaction rules.
-- Durable documents, graph nodes, graph edges, and relational rows converge on `ProximaRecord` plus `ProximaType`/`ProximaValue`. JSON path indexes, array indexes, full-text indexes, adjacency tables, CSR/COO topology, columnar variation projections, and HNSW indexes are rebuildable projections/access methods over canonical records.
-- New modality contracts must not fall back to legacy v1 `SqlValue`/`SqlObject` just because existing services still expose them. Convert legacy protocol/service shapes at the edge; keep the modality foundation on `ProximaRecord`/`ProximaValue` and v2-compatible rich datatypes.
-- The accepted trajectory is **stacked durability with adaptive projections**. Durable authority lives in `ProximaRecord`/`ProximaType`, xCatalog, WAL/log/manifest, tenant/RLS, version/time, provenance, and retention policy. Physical specialization is expected through LSM/PAX/columnar layouts, adjacency tables, CSR/COO, GraphAr-style lake projections, ANN fragments, time-series compression blocks, trace indexes, and event streams, but these are cataloged physical structures with freshness, rebuild, and benchmark evidence.
-- Do not interpret stacked durability as delegating ProximaDB's hot durable core to PostgreSQL, DuckDB, or another external RDBMS. The default is an internal `ProximaRecord`/xCatalog/WAL spine with relational semantics and specialized access methods. External databases and lakehouse tables are connectors, compatibility surfaces, control-plane options, analytical projections, or explicit external-authority modes only when an ADR/xCatalog entry documents ownership, snapshot/isolation, RLS, type mapping, write/refresh, repair source, and latency trade-offs.
-- Physical storage and external formats are fungible; semantic authority is not. LSM, row/record, PAX, columnar, Arrow, Parquet, Iceberg, Delta, Hudi, graph topology, vector, and observability formats are access methods, projections, or explicitly cataloged external authority modes. Do not let a format-specific path define its own record envelope, scalar type system, policy/RLS model, WAL/recovery semantics, or hidden catalog.
-- Relational rigor is optional by workload but real when enabled. Primary keys, unique indexes, secondary indexes, foreign keys, check constraints, materialized views, transaction/isolation profiles, and stricter schema evolution must be cataloged table capabilities enforced below REST/gRPC/Arrow Flight/PostgreSQL wire handlers and recovered through WAL/log/manifest.
-- Competitive platform gaps to close should remain aligned with the anchor: predicate-aware vector search, hybrid BM25+dense/sparse vector+graph+document+time retrieval, reranking, Arrow-native vectorized OLAP, xCatalog projection/freshness metadata, observability/SIEM records and projections, branchable AI/data state, and open table interoperability. Add these as shared algebra/catalog/storage capabilities, not isolated product-specific engines.
-- Do not frame future work as "generic row store vs separate durable engines." The research-backed tradeoff is one durable semantic spine plus specialized physical layouts and projections. New durable semantics require an accepted ADR proving canonical records plus projections cannot meet correctness or performance needs.
-- CSR is an adaptive graph topology projection for read-heavy traversal and graph algorithms, not the durable graph source of truth. Write-heavy graph workloads should use relational adjacency tables/indexes first; CSR materialization requires workload evidence and freshness/invalidation rules.
-- CEDAR, ORION, TITAN, and similar modality-specific engines must either be projection/access-method implementations over canonical records or temporary compatibility adapters with a retirement plan. Creating or extending a separate durable document/graph engine requires an accepted ADR and benchmark/correctness evidence that canonical records plus projections cannot satisfy the requirement.
-- Modality crates own facade semantics, operators, and projection/access-method families. `proximadb-document`, `proximadb-graph`, `proximadb-vector`, and `proximadb-observability` must depend on shared record/catalog/log/policy contracts and must not own hidden durable truth.
-
-### Workspace Skeleton Mandate
-
-- Treat [roadmap/techdebt/WORKSPACE_REFACTOR_PLAN_2026_05_07.adoc](roadmap/techdebt/WORKSPACE_REFACTOR_PLAN_2026_05_07.adoc) as the active source of truth for workspace shape, boundary validation, and migration trajectory.
-- The stable target skeleton is: `Foundation` → `Contracts` → `Modality Runtime` → `Cross-Model Query Runtime` → `Platform Runtime` → `Apps/Bindings`.
-- Optimize for cleaner boundaries, not more crates. New crates are justified only if they cut a heavy rebuild edge, remove concrete root/runtime coupling, or establish a stable reusable contract that multiple heavier crates will consume.
-- Keep compatibility shims thin and stable. Avoid adding fresh behavior to root re-export modules when the behavior can live behind an extracted crate.
-- Make boundary decisions across the whole product, including query, graph, vector, document, observability, storage-common, security, networking, distributed/cluster/consensus, catalog/control-plane, runtime helpers, embedded/runtime composition, and external integrations.
-
-### Workspace Layering Rules
-
-**Golden Rule**: Downward dependencies only. Higher layers may depend on lower layers, but lower layers must NEVER depend on higher layers.
-
-**Layer Hierarchy** (bottom to top):
-```
-┌─────────────────────────────────────────┐
-│  Apps/Bindings (CLI, SDKs, embedded)   │ ← Highest
-├─────────────────────────────────────────┤
-│  Platform Runtime (server, networking)  │
-├─────────────────────────────────────────┤
-│  Cross-Model Query Runtime (SQL, graph) │
-├─────────────────────────────────────────┤
-│  Modality Runtime (vector, graph, doc)  │
-├─────────────────────────────────────────┤
-│  Contracts (traits, proto definitions)  │
-├─────────────────────────────────────────┤
-│  Foundation (types, error, utils)       │ ← Lowest
-└─────────────────────────────────────────┘
-```
-
-**Forbidden Patterns**:
-- ❌ Foundation types importing from platform runtime (e.g., `use crate::network::*`)
-- ❌ Contracts depending on modality runtime implementations
-- ❌ Storage engines importing from query layer
-- ❌ Circular dependencies between any layers
-
-**Correct Patterns**:
-- ✅ Platform runtime imports from contracts and foundation
-- ✅ Modality runtime imports from contracts and foundation
-- ✅ Cross-model query runtime imports from modality runtime and contracts
-- ✅ Apps/bindings import from any layer (as needed)
-
-**Layering Violation Examples**:
-```rust
-// ❌ FORBIDDEN: Foundation importing from network
-use crate::network::rest::server;  // Wrong!
-
-// ❌ FORBIDDEN: Contracts importing from storage
-use crate::storage::engines::viper;  // Wrong!
-
-// ✅ CORRECT: Network importing from contracts
-use crate::proto::proximadb_v1;  // Correct
-
-// ✅ CORRECT: Storage importing from foundation
-use crate::core::types::ProximaType;  // Correct
-```
-
-**Code Review Checklist**:
-- [ ] No imports from higher layers in lower layer files
-- [ ] No circular dependencies between modules
-- [ ] Foundation types remain generic and reusable
-- [ ] No implementation details in contracts layer
-- [ ] No platform-specific code in modality runtime
-
-**Verification**: Run `scripts/check-layering.sh` to detect violations (Phase 5.2).
-
-### Document / Graph Durability Checklist (required for any PR touching document, graph, WAL, or recovery code)
-
-Before merging any change that writes document or graph data:
-- [ ] Does the change write through `CanonicalOperation::RecordUpsert` / `RecordDelete` in the canonical WAL?
-- [ ] If a new physical projection is added, does a `ProjectionDirective` variant exist so recovery can rebuild it?
-- [ ] If a legacy `DocumentOperation::InsertDocument` or `GraphOperation::CreateNode` path is touched, is it being migrated toward canonical WAL, not extended?
-- [ ] No new independent WAL or recovery semantics introduced for document/graph state (requires accepted ADR if so).
-- [ ] `docs/12-design/SUPPORTED_SURFACES.adoc` updated if projection status changed.
-
-Reference: `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`
+- [roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc](roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc) - record/type/algebra/storage/RLS internals and sticky ADRs.
+- [docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc](docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc) - stacked durability and modality convergence.
+- [docs/12-design/COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc](docs/12-design/COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc) - OLTP/OLAP/HTAP/MPP route-map and design knobs.
+- [docs/12-design/RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc](docs/12-design/RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc) - PAX/MVCC/open-format storage shape.
+- [docs/12-design/RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc](docs/12-design/RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc) - active pgwire DML and compute-routing tracker.
+- [docs/12-design/OPEN_FORMAT_CATALOG_2026_05_17.adoc](docs/12-design/OPEN_FORMAT_CATALOG_2026_05_17.adoc) - open table authority modes and catalog contracts.
+- [docs/12-design/adr/ADR-004-unified-explain-contract.adoc](docs/12-design/adr/ADR-004-unified-explain-contract.adoc) - unified EXPLAIN and route/write-plan explanation contract.
+- [roadmap/techdebt/WORKSPACE_REFACTOR_PLAN_2026_05_07.adoc](roadmap/techdebt/WORKSPACE_REFACTOR_PLAN_2026_05_07.adoc) - workspace boundaries.
 
 ### Code Quality Standards
 

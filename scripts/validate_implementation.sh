@@ -36,9 +36,9 @@ echo ""
 
 # Test 4: Verify documentation exists
 echo "📚 Test 4: Verifying documentation exists..."
-test -f "docs/feature_toggles.md" && echo "✅ Feature toggles documented (12KB)" || echo "❌ Feature toggles missing"
-test -f "docs/production-readiness.adoc" && echo "✅ Production readiness documented (12KB)" || echo "❌ Production readiness missing"
-test -f "docs/proto-regeneration-workflow.md" && echo "✅ Proto workflow documented" || echo "❌ Proto workflow missing"
+test -f "docs/10-quality/feature_toggles.md" && echo "✅ Feature toggles documented" || echo "❌ Feature toggles missing"
+test -f "docs/04-operations/production-readiness.adoc" && echo "✅ Production readiness documented" || echo "❌ Production readiness missing"
+test -f "docs/06-internals/workflows/proto-regeneration-workflow.md" && echo "✅ Proto workflow documented" || echo "❌ Proto workflow missing"
 echo ""
 
 # Test 5: Verify benchmarks exist

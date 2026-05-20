@@ -7,6 +7,10 @@ Status: Accepted architecture refinement +
 Date: 2026-05-19 +
 Scope: SQL/pgwire, relational DDL/DML, catalog tables, PAX/SST storage layouts, MVCC, open-format external tables, and future vector/document/graph/observability records
 
+Implementation blueprint and tracker: `docs/12-design/RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc`.
+Competitive OLTP/OLAP/HTAP/MPP route-map refinement:
+`docs/12-design/COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc`.
+
 == Decision
 
 ProximaDB relational storage MUST be shaped as a `ProximaRecord`/`ProximaType`/`ProximaValue`
@@ -188,6 +192,503 @@ AND branch/snapshot lineage includes the version
 
 This makes SQL updates/deletes, vector freshness, graph edge mutation, document replacement, and
 observability retention use one version model.
+
+=== Canonical Table-Record Write API
+
+SQL/pgwire, REST/gRPC record APIs, Arrow Flight batches, document/graph/vector facades, and embedded
+writers must lower DML into a canonical table-record write boundary before WAL/storage. They must
+not call `VectorOps` as the semantic owner of relational row writes.
+
+Frontend ownership split:
+
+[source,text]
+----
+SQL parser
+  -> Parsed DML / CopyIntoPlan syntax shape, no catalog routing
+
+DML analyzer / planner
+  -> resolves xCatalog source/target metadata
+  -> validates target capabilities and schema mapping
+  -> asks TableWriteRouter for candidate paths
+  -> returns RoutedExecutionPlan
+
+DML/write executor
+  -> executes selected path
+  -> commits through TableRecordStore or open-format commit protocol
+----
+
+The parser may create syntax-level `CopyIntoPlan` objects for convenience, but it must not decide
+native vs DataFusion vs Polars vs DuckDB vs external delegation. `DmlService` executes planned row
+DML and table-record writes; it must not become the optimizer.
+
+Target service shape:
+
+[source,rust]
+----
+TableRecordStore::write_mutations(
+    table_id,
+    Vec<TableRecordMutation { kind, record: ProximaRecord }>,
+    WriteContext { tenant, snapshot, actor, policy }
+)
+
+TableRecordStore::get_by_key(table_id, key, Snapshot)
+TableRecordStore::scan(table_id, projection, predicate, Snapshot)
+----
+
+Concrete contract shape:
+
+[source,rust]
+----
+enum TableRecordMutationKind {
+    Insert,
+    Upsert,
+    Update,
+    Delete,
+    OverwriteSnapshot,
+    ReplacePartitions,
+    Merge,
+}
+
+struct TableRecordMutation {
+    kind: TableRecordMutationKind,
+    record: ProximaRecord,
+    conflict_policy: ConflictPolicy,
+    expected_version: Option<u64>,
+}
+
+struct TableWriteContext {
+    tenant_id: Option<String>,
+    actor: Option<String>,
+    snapshot_id: Option<String>,
+    branch: Option<String>,
+    write_mode: WriteMode,
+    isolation: IsolationLevel,
+    rls_policy_id: Option<String>,
+    idempotency_key: Option<String>,
+}
+
+enum WriteMode {
+    Append,
+    InsertOnly,
+    Upsert,
+    OverwriteTable,
+    ReplacePartitions(Vec<PartitionKey>),
+    Merge,
+}
+----
+
+Rules:
+
+* `TableRecordStore` is the canonical service-layer contract for row/record mutation semantics.
+* DML routing is driven by xCatalog table metadata: workload profile, storage specialization,
+  authority mode, physical layout, and projection freshness.
+* `VectorOps` is a facade for vector-bearing records and ANN/search behavior. It may call the
+  table-record store after convergence, but SQL DML must not depend on vector-specific duplicate
+  checks, dimension validation, tombstone heuristics, or collection terminology.
+* During migration, `VectorOpsTableRecordStore` may adapt `TableRecordStore` calls into existing
+  `VectorOps::insert_records_with_tenant_context` and point lookup paths. This adapter is a
+  compatibility bridge, not an authority boundary.
+* `VectorAnn`, vector workload, and legacy SST/LSM-specialized tables may route through the
+  compatibility adapter until they are migrated. PAX/OLTP/OLAP/HTAP/generic relational tables route
+  through the canonical table-record branch.
+* Prior-version closure for `UPSERT`/`UPDATE` belongs in the table-record writer/WAL mutation
+  layer, because it is a record-version invariant shared by SQL, document, graph, vector, and
+  observability facades.
+* The eventual direct implementation writes `RecordMutation` entries to WAL and routes physical
+  layout decisions through xCatalog table metadata (`PAX`, `OLTP`, `OLAP`, `HTAP`, SST/LSM,
+  columnar, ANN, JSON, topology, observability, external table projection).
+* Bulk write operations are planned as table writes first, then split into WAL append, PAX block
+  construction, open-format commits, and projection refresh tasks.
+* A write is successful only after the authoritative layer records the catalog/snapshot/WAL commit.
+  Rebuildable projections may lag if xCatalog records their freshness watermark.
+
+=== INSERT SELECT, INSERT OVERWRITE, And Compute Engine Routing
+
+`INSERT INTO target SELECT ... FROM source` and `INSERT OVERWRITE target SELECT ... FROM source`
+are table-to-table data movement operations, not protocol-specific shortcuts. The SQL frontend
+must lower them into a logical copy/write plan:
+
+[source,text]
+----
+ReadPlan(source tables/external files/snapshots)
+  -> LogicalPlan(Filter/Project/Join/Aggregate/Vector/Graph/Document operators)
+  -> WritePlan(target table, mode: append | overwrite | replace_partitions | merge)
+  -> TableRecordStore or open-format writer
+----
+
+SQL support phases:
+
+[cols="1,2,2"]
+|===
+| Phase | Statements | Notes
+
+| P0
+| `INSERT INTO t VALUES (...)`, `UPSERT`, primary-key `UPDATE`, primary-key `DELETE`
+| Already lowered through catalog row validation and `TableRecordStore`.
+
+| P1
+| `INSERT INTO target SELECT ... FROM source`
+| Append/upsert from an internal table, external file, or open-table source. Requires source
+scan, projection, target validation, and batched table-record writes.
+
+| P2
+| `INSERT OVERWRITE target SELECT ...`
+| Snapshot replacement for full table or cataloged partitions. Requires atomic catalog commit and
+old snapshot retention.
+
+| P3
+| `CREATE TABLE target AS SELECT ...`, `CREATE TABLE target WITH (...) AS SELECT ...`
+| DDL plus write plan. Target schema is explicit or inferred from the source logical plan and then
+registered in xCatalog before data commit.
+
+| P4
+| `MERGE INTO target USING source ...`
+| Upsert/update/delete by join key with explicit conflict policy and prior-version closure.
+|===
+
+Write semantics:
+
+* `INSERT INTO ... SELECT` appends or upserts according to the target table capability and conflict
+  policy.
+* `INSERT OVERWRITE ... SELECT` creates a new target snapshot/version for the affected table or
+  partitions. For Proxima-authoritative tables this is a WAL/catalog transaction; for Iceberg,
+  Delta, Hudi, or external-authoritative tables it is delegated to that format's commit protocol
+  through an xCatalog ownership contract.
+* Overwrite must not physically erase old files/blocks before snapshot, branch, CDC, retention, and
+  recovery rules allow it.
+* Source and target type conversion goes through xCatalog `ProximaType`/`ProximaValue` mappings;
+  engine-native types are adapter details.
+* `INSERT OVERWRITE` against external-authoritative Iceberg/Delta/Hudi tables must use the external
+  table's atomic commit protocol. Against Proxima-authoritative tables it creates a ProximaDB
+  snapshot and marks prior versions invisible through MVCC/catalog metadata.
+* `INSERT OVERWRITE` against mutable OLTP tables is allowed only when the table capability permits
+  snapshot/table replacement. Default OLTP tables should reject full overwrite unless the statement
+  targets explicit partitions or a staging branch.
+
+Compute engine strategy:
+
+[cols="1,2,2"]
+|===
+| Engine | Primary role | Boundary
+
+| Native ProximaDB planner/writer
+| OLTP point writes, MVCC closure, WAL authority, PAX row-family writes, vector/document/graph
+mutation semantics
+| Always authoritative for Proxima-owned tables.
+
+| DataFusion
+| Default Rust SQL/Arrow execution engine for relational scans, joins, projections, aggregates,
+external Parquet/CSV/JSON/Arrow reads, and distributed query plans.
+| Execution engine only. It does not own ProximaDB WAL, catalog, RLS, or record semantics.
+
+| Polars
+| Fast local/pseudo-distributed dataframe execution for batch transforms, expression-heavy ETL, and
+single-node analytical materialization.
+| Optional execution backend selected by cost/profile. It is not the distributed SQL authority.
+
+| DuckDB
+| Compatibility/interop engine for DuckDB users, local analytics, SQL dialect fallback, and external
+format smoke/conformance.
+| Optional adapter. Do not make DuckDB the internal semantic owner of table writes.
+
+| Spark/Flink/Trino
+| External engines through Iceberg REST, Arrow Flight, JDBC/pgwire, and open-table formats.
+| Connectors/federated compute, not embedded hot-state authority.
+|===
+
+Cost-based routing should choose between native, DataFusion, Polars, DuckDB, or external engine
+delegation using:
+
+* target/source authority mode and format;
+* table size, partition count, and snapshot freshness;
+* workload profile (`OLTP`, `OLAP`, `HTAP`, vector/document/graph/observability);
+* operator coverage and pushdown ability;
+* write mode (`append`, `overwrite`, `merge`, `replace_partitions`);
+* distribution mode and available executors;
+* data movement cost across Arrow batches/files/network;
+* RLS/policy enforcement location;
+* expected latency, spill, memory, and retry behavior.
+
+The competitive trajectory makes these route inputs mandatory xCatalog/planner dimensions rather
+than informal engine hints:
+
+[cols="1,2,3"]
+|===
+| xCatalog / planner dimension | Required examples | Why it matters
+
+| `authority_mode`
+| Proxima-authoritative, external-authoritative, imported snapshot, exported projection,
+federated read
+| Prevents Spark/Trino/DuckDB/DataFusion from accidentally becoming write or recovery authority
+for Proxima-owned records.
+
+| `workload_profile`
+| OLTP, OLAP, HTAP, vector, document, graph, observability, event, mixed
+| Separates point-write correctness, selective HTAP, analytical scans, and modal access-method
+needs without adding protocol-specific behavior.
+
+| `storage_specialization`
+| PAX row-family, PAX OLTP, PAX OLAP, columnar analytics, vector ANN, document JSON, graph topology,
+observability time-series, external open table, legacy LSM
+| Selects physical access methods while preserving `ProximaRecord` as semantic authority.
+
+| `freshness_sla`
+| synchronous, bounded async, stale-ok, rebuild-on-demand
+| Makes projection freshness explicit for PAX stripes, ANN fragments, JSON indexes, graph topology,
+time rollups, and open-format manifests.
+
+| `compute_route`
+| native, DataFusion local/distributed, Spark, Trino, Ray, Flink, external delegated
+| Lets `EXPLAIN` show why execution stays native, moves to Arrow/DataFusion, or delegates to MPP.
+
+| `partitioning`
+| tenant, hash key, range key, time, vector model, graph locality, hot/cold tier
+| Controls pruning, skew, shuffle pressure, and distributed ownership.
+
+| `isolation_profile`
+| read committed, snapshot, serializable, event replay, external snapshot
+| Ties query visibility, overwrite semantics, branch behavior, and retries to explicit metadata.
+
+| `policy_boundary`
+| engine-enforced, connector-enforced, external-policy, unsupported
+| Rejects unsafe routes when tenant/RLS/masking cannot be enforced before data leaves ProximaDB.
+|===
+
+Default recommendation:
+
+* Use native `TableRecordStore` for OLTP DML and Proxima-owned mutation semantics.
+* Use DataFusion as the default Arrow SQL execution substrate, including distributed execution work.
+* Use Polars for local/pseudo-distributed dataframe-style transforms when it wins on cost and
+operator coverage.
+* Use DuckDB as an optional compatibility and conformance path, especially for external file/table
+interop, not as ProximaDB's internal store.
+* Do not build a Spark clone first. DataFusion already gives Rust-native SQL planning/execution and
+Arrow interoperability; add ProximaDB-specific distributed scheduling, catalog, WAL, vector/graph,
+and policy capabilities around it.
+
+Route rejection is part of the contract, not a best-effort warning. The planner must reject or mark
+unsupported any route where:
+
+* policy cannot be enforced inside the required boundary;
+* a stale projection is chosen for a current-snapshot query;
+* a full-table overwrite targets an OLTP table without snapshot/overwrite capability;
+* external compute would require a lossy `ProximaType` conversion not accepted by the query;
+* a delegated write cannot prove atomic commit or idempotent retry behavior.
+
+==== Execution Plan Contracts
+
+The SQL frontend should not directly call a compute engine. It should emit ProximaDB logical plan
+nodes that can be lowered into DataFusion, Polars, DuckDB, native record scans, or external engine
+delegation:
+
+[source,rust]
+----
+struct CopyIntoPlan {
+    source: ReadSource,
+    projection: LogicalProjection,
+    target: TableIdentifier,
+    write_mode: WriteMode,
+    conflict_policy: ConflictPolicy,
+    distribution: DistributionMode,
+}
+
+enum ReadSource {
+    CatalogTable(TableIdentifier, SnapshotRef),
+    ExternalLocation(ExternalFormat, String, Option<CatalogTableSchema>),
+    Query(Box<LogicalPlan>),
+    ArrowStream(FlightTicket),
+}
+
+enum ComputeBackend {
+    Native,
+    DataFusionLocal,
+    DataFusionDistributed,
+    PolarsLocal,
+    DuckDbCompat,
+    ExternalDelegated(ExternalEngine),
+}
+
+struct RoutedExecutionPlan {
+    backend: ComputeBackend,
+    read_plan: LogicalPlan,
+    write_plan: WritePlan,
+    estimated_cost: CostEstimate,
+    required_guards: Vec<ExecutionGuard>,
+}
+----
+
+Candidate path shape:
+
+[source,rust]
+----
+struct CandidateWritePath {
+    backend: ComputeBackend,
+    access_method: AccessMethodFamily,
+    supports_pushdown: PushdownCapabilities,
+    requires_recheck: Vec<Predicate>,
+    cost: CostEstimate,
+    guards: Vec<ExecutionGuard>,
+}
+
+struct AccessMethodCostHints {
+    row_lookup_cost: f64,
+    scan_setup_cost: f64,
+    sequential_scan_cost_per_mb: f64,
+    remote_read_cost_per_mb: f64,
+    write_amplification: f64,
+    compaction_debt: f64,
+    projection_lag_penalty: f64,
+}
+----
+
+Path generation order:
+
+1. Resolve xCatalog source and target metadata.
+2. Generate native paths for Proxima-authoritative record/PAX/SST/ANN/topology layouts.
+3. Generate DataFusion paths for Arrow-compatible scans, joins, aggregates, and distributed plans.
+4. Generate Polars paths for compatible local dataframe transforms.
+5. Generate DuckDB compatibility paths only when dialect/interop/file behavior requires it.
+6. Generate external-commit paths for external-authoritative open table formats.
+7. Reject paths that cannot enforce RLS, snapshot visibility, type mapping, or target write mode.
+8. Pick the lowest-cost valid path; retain the rejected path reasons for EXPLAIN.
+
+Execution guards:
+
+* xCatalog schema version and snapshot ID are pinned before execution starts.
+* RLS/tenant filters are pushed into source scans or applied by a trusted ProximaDB operator before
+  any data leaves the policy boundary.
+* Target write capabilities are checked before reading large source inputs.
+* Open-format writers must stage data and commit metadata atomically.
+* Retriable writes use idempotency keys and deterministic output file/segment naming where possible.
+* Partial writes are visible only after the authoritative commit marker is durable.
+
+==== Cost Router Policy
+
+The first cost router can be rule-based with cost annotations. It should become CBO over time as
+xCatalog statistics mature.
+
+Planner design is intentionally inspired by PostgreSQL's separation between lightweight candidate
+paths and executable plans, and by MariaDB's ability for storage engines to tune optimizer costs.
+ProximaDB extends both patterns for multi-format, multi-engine, and distributed data:
+
+* Candidate paths are cheap descriptors: native point write, PAX scan/write, DataFusion local,
+  DataFusion distributed, Polars local transform, DuckDB compatibility, external table commit,
+  vector ANN assisted path, graph topology assisted path, JSON/path index assisted path.
+* Executable plans are created only after the router chooses a path and all execution guards are
+  known.
+* Storage/access-method families expose cost hints through xCatalog rather than hidden engine
+  globals: row lookup cost, scan setup cost, write amplification, compaction pressure, projection
+  freshness, remote read cost, file/partition count, index selectivity, and policy enforcement
+  location.
+* External/open-format adapters are similar to foreign-table paths: they can advertise pushdown,
+  required rechecks, snapshot semantics, and commit capability without owning ProximaDB's internal
+  WAL or `ProximaRecord` semantics.
+* INSERT/UPDATE/DELETE/MERGE all flow into a write node analogous to a top-level modify node:
+  read/query subplans produce target rows or keys, and the write node performs catalog validation,
+  MVCC closure, constraint checks, and authoritative commit.
+
+Initial routing rules:
+
+[cols="1,2,2"]
+|===
+| Situation | Backend | Reason
+
+| Single-row or small primary-key DML into Proxima-authoritative tables
+| Native
+| Needs WAL/MVCC/constraint authority with low latency.
+
+| PAX/columnar/internal table scan plus SQL projection/filter/join/aggregate
+| DataFusionLocal or DataFusionDistributed
+| Arrow-native SQL execution and pushdown.
+
+| Large distributed scan/join, remote partitions, or cluster execution mode
+| DataFusionDistributed
+| DataFusion provides the Rust execution substrate; ProximaDB supplies scheduling, catalog,
+policy, vector/graph extensions, and storage connectors.
+
+| Single-node ETL/materialization with dataframe-heavy expressions and limited SQL semantics
+| PolarsLocal
+| Fast local vectorized transforms when operator coverage and type semantics are compatible.
+
+| DuckDB dialect compatibility, local file conformance, or user-requested DuckDB integration
+| DuckDbCompat
+| Compatibility surface and external analytics engine interop.
+
+| External-authoritative Iceberg/Delta/Hudi write
+| ExternalDelegated or DataFusion plus open-format writer
+| Must use the table format's commit protocol and xCatalog ownership contract.
+
+| Vector/graph/document hybrid query with Proxima-specific operators
+| Native plus DataFusion extension nodes
+| Keep modality semantics and indexes under ProximaDB authority while using Arrow execution where
+profitable.
+|===
+
+Cost metrics:
+
+* estimated rows, bytes, partitions, file count, and selectivity;
+* available min/max, bloom, zone-map, HNSW, JSON-path, full-text, graph-topology, and time indexes;
+* target write amplification and compaction cost;
+* shuffle/network cost and executor locality;
+* memory/spill estimate;
+* RLS and masking enforcement cost;
+* expected freshness lag for rebuildable projections;
+* engine startup/interop overhead.
+
+==== Engine Integration Boundaries
+
+DataFusion integration:
+
+* Implement ProximaDB table providers over xCatalog tables, external tables, and snapshots.
+* Implement execution plan nodes for native point lookup, PAX scan, vector top-k, graph pattern
+  expansion, JSON path access, observability time filters, and table-record writes.
+* Use DataFusion's distributed execution substrate where available, but keep ProximaDB responsible
+  for catalog, policy, WAL, snapshot, branch, and storage ownership.
+
+Polars integration:
+
+* Treat Polars as an optional local dataframe backend for staged Arrow batches.
+* Only route to Polars when the plan can be represented without losing `ProximaType`, RLS, or MVCC
+  semantics.
+* Do not expose Polars-specific semantics through pgwire.
+
+DuckDB integration:
+
+* Keep DuckDB as a connector/compatibility surface for users that want to query ProximaDB from
+  DuckDB or validate external file behavior.
+* A DuckDB execution path may be selected for local read-only or staged write compatibility, but
+  authoritative writes still commit through xCatalog plus `TableRecordStore` or the open-format
+  commit protocol.
+
+Spark/Flink/Trino integration:
+
+* Prefer external interoperability through Iceberg REST, Arrow Flight, pgwire/JDBC, and open-table
+  formats.
+* Do not embed these engines in the hot write path.
+* Publish ProximaDB snapshots/projections to them with explicit freshness and ownership metadata.
+
+==== Failure And Transaction Semantics
+
+For `INSERT INTO ... SELECT`:
+
+* Source snapshot is pinned before execution.
+* Target write batches may stream, but rows become visible only after the authoritative commit.
+* On failure before commit, staged files/segments are garbage-collected by manifest cleanup.
+* On retry, idempotency keys avoid duplicate append if the prior commit succeeded.
+
+For `INSERT OVERWRITE ... SELECT`:
+
+* Target creates a new snapshot/branch head.
+* Old versions remain available to readers pinned to previous snapshots.
+* Partition overwrite replaces only cataloged partition keys in the write plan.
+* Overwrite cannot bypass RLS, retention, CDC, or branch protection.
+
+For external tables:
+
+* External-authoritative tables use external transactions/commits and record the resulting snapshot
+  in xCatalog.
+* Proxima-authoritative projection publications write derived files and record freshness, but
+  repair source remains ProximaDB WAL/records.
 
 == Format Schema
 
@@ -391,7 +892,11 @@ The pgwire compatibility path should move in this order:
 3. Route `INSERT`, `UPSERT`, `UPDATE`, and `DELETE` through WAL plus record storage, with tombstone
    semantics for deletes.
 4. Route `SELECT` through shared logical plans and record/PAX scanners, then project PostgreSQL
-   wire row descriptions from catalog metadata.
+   wire row descriptions from catalog metadata. The pgwire smoke path now supports point SELECT and
+   full-table SELECT through `DmlService` plus `TableRecordStore::scan_records`; simple non-PK
+   `AND` predicates over comparisons, `IN`, `LIKE`, and `IS NULL` are evaluated as a pgwire
+   compatibility filter. OR predicates, joins, aggregates, and direct PAX-backed scans still need
+   the shared logical-plan path.
 5. Add PostgreSQL metadata views as compatibility projections over xCatalog, not as independent
    catalogs.
 6. Modernize SST/LSM entries to carry shared MVCC metadata before using them for mutable SQL tables.
@@ -502,7 +1007,8 @@ connector mapping, but they must canonicalize to `__proxima_deleted` and
 
 === Relational Mutation Contract
 
-SQL DML lowers into `RelationalMutationKind` plus a catalog-validated `CatalogRow`:
+SQL DML lowers into `RelationalMutationKind` plus a catalog-validated `CatalogRow`, then writes the
+result through `TableRecordStore`:
 
 [source,text]
 ----
@@ -558,7 +1064,7 @@ Rules:
 pgwire must expose PostgreSQL-like behavior while lowering immediately into shared contracts:
 
 * DDL creates/updates xCatalog schemas and storage-layout descriptors.
-* DML validates through `CatalogRow` and writes canonical mutations.
+* DML validates through `CatalogRow` and writes canonical mutations through `TableRecordStore`.
 * `information_schema` and `pg_catalog` compatibility views project from xCatalog.
 * SQLAlchemy reflection paths must not require a hidden PostgreSQL catalog.
 * Unsupported PostgreSQL features must fail deterministically with SQLSTATE-like errors, not panic.
@@ -653,8 +1159,41 @@ For source formats:
 * [x] Make PAX row-directory upper-bound visibility exclusive.
 * [x] Route pgwire DDL `WITH (...)` options into xCatalog workload/layout/open-table descriptors.
 * [x] Route pgwire DDL into xCatalog table assets with PAX/SST primary layout metadata.
-* [ ] Route pgwire DML into `CatalogRow` validation and canonical record mutation writes.
-* [ ] Replace vector-collection SQL shims with relational record-store APIs.
+* [x] Route pgwire INSERT/UPSERT into `CatalogRow` validation and explicit canonical mutation
+  record projection.
+* [x] Route pgwire primary-key DELETE into catalog-validated canonical tombstone records.
+* [x] Route pgwire UPDATE into `CatalogRow` validation and explicit canonical update mutation
+  record projection.
+* [x] Introduce a canonical `TableRecordStore` service boundary for pgwire DML.
+* [x] Route pgwire DML through xCatalog-selected `TableRecordStore` branches, with a
+  `VectorOpsTableRecordStore` compatibility adapter for legacy/vector-specialized tables.
+* [x] Lower pgwire parser output for `INSERT INTO ... SELECT` and `INSERT OVERWRITE ... SELECT`
+  into syntax-level `CopyIntoPlan` objects without giving the parser catalog/routing authority.
+* [x] Add a catalog-aware `DmlWritePlanner` boundary that validates resolved target columns and
+  routes table-to-table write plans through `TableWriteRouter`.
+* [x] Add the first rule-based compute/write router for native, DataFusion local/distributed, and
+  open-format external delegation candidates.
+* [x] Add a replaceable `TableWriteExecutor` boundary so DML depends on routed execution contracts,
+  not parser-specific or DataFusion-specific implementation details. The current executor is
+  planned-only and validates core execution guards before returning an explicit unsupported error.
+* [x] Add `TableRecordSourceReader` and `NativeTableWriteExecutor` so native routed writes can
+  consume canonical `ProximaRecord` batches and commit them through `TableRecordStore`.
+* [x] Route pgwire full-table SELECT smoke through `DmlService::scan_table_records` and
+  `TableRecordStore::scan_records`, using the VectorOps compatibility current-state scan until the
+  direct record/PAX scanner is the default.
+* [x] Route simple pgwire non-primary-key predicate SELECT smoke through the same scan path with
+  catalog-column `AND` comparison filtering.
+* [x] Extend pgwire scan predicate smoke for `IN` and `LIKE` compatibility filters.
+* [ ] Replace the `VectorOpsTableRecordStore` adapter with a direct WAL/table-record
+  implementation.
+* [ ] Close prior visible row versions for UPDATE/UPSERT in the table-record writer.
+* [ ] Wire production source readers for direct record/PAX catalog table scans, DataFusion query
+  output, Arrow Flight tickets, and external file/table scans into `TableRecordSourceReader`.
+* [ ] Execute DataFusion/open-format `CopyIntoPlan` routes by lowering source scans through
+  DataFusion/native readers and committing results through `TableRecordStore` or open-format commit
+  protocols.
+* [ ] Promote rule-based routing into statistics-backed CBO for native, DataFusion, Polars, DuckDB,
+  and open-format/external engine delegation.
 * [ ] Add external-table DDL parsing and xCatalog ownership descriptors.
 * [ ] Add BenchBase/TPC-H/TPC-DS conformance profiles over the canonical path.
 

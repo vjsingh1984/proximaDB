@@ -193,13 +193,19 @@ record versions. Freshness, recall, quantization, page size, cache policy, and r
 must be explicit catalog properties and benchmark dimensions.
 
 | Observability and time-series
-| `dapper_2010.txt`, `gorilla_vldb2015.txt`
+| `dapper_2010.txt`, `gorilla_vldb2015.txt`, `leco_2306.15374.txt`
 | Distributed tracing needs ubiquitous low-overhead instrumentation and sampled traces; time-series
 monitoring often values recent aggregate analysis over perfect individual-point fidelity and uses
-compression/retention tiers.
+compression/retention tiers. Gorilla (Pelkonen et al.) showed 10:1+ compression via delta-delta
+encoding across samples in the same time series — compression that is lost when each sample is an
+independent record without cross-sample correlation metadata.
 | Store logs, metric samples, spans, profiles, and service dependency edges as canonical records or
-retained aggregate records. Compression blocks, trace assembly indexes, correlation search, and
-rollups are projections governed by retention policy.
+retained aggregate records. For metric/counter series, the PAX block writer MUST sort by
+(series_key, timestamp_ns) and apply delta-delta + XOR encoding on value columns during compaction
+when `ObservabilityCompressionHint` is set on the table. This preserves the canonical record model
+while achieving Gorilla-class compression density in the PAX column stripes. See
+`proximadb-catalog::ObservabilityCompressionHint`. Compression blocks, trace assembly indexes,
+correlation search, and rollups remain Layer-2 projections governed by retention policy.
 
 | Append-only event pipelines
 | `kafka_2011.txt`
@@ -217,6 +223,95 @@ while preserving structural variation.
 `ProximaRecord` are the canonical schema/value spine; protocol shapes are views over it.
 |===
 
+=== May 2026 Research Update — Additional Evidence
+
+The following papers were reviewed in May 2026 and further validate or refine this mandate.
+They are included here to maintain a traceable evidence record for future reviewers.
+
+[cols="1,2,3,3"]
+|===
+| Area | Papers | Evidence signal | ProximaDB design implication
+
+| Graph compute on lakehouse
+| `graphlake_2603.03705.txt`
+| GraphLake (March 2026) implements a purpose-built graph compute engine entirely over a
+lakehouse substrate (Delta Lake / Iceberg). Demonstrates that graph performance is achievable
+without a separate durable graph store.
+| Directly validates the "graph as projection over canonical records" mandate. The GraphLake
+architecture maps to ProximaDB's Layer-2 CSR/COO topology cache over Layer-1 ProximaRecords.
+
+| Filtered vector search routing
+| `favor_2605.07770.txt`, `filtered_ann_survey_2602.11443.txt`,
+  `filtered_ann_planning_2602.17914.txt`, `sieve_2507.11907.txt`
+| Multiple 2025–2026 papers show that no single filter strategy (pre-filter, inline, post-filter)
+dominates across selectivity regimes. The optimal routing depends on selectivity, corpus size,
+and index freshness. `estimated_selectivity` is the dominant routing feature (arXiv:2602.17914).
+| FilterDiagnostics.estimated_selectivity (ADR-004) combined with `AnnFilteringPolicy` (catalog)
+drives routing between PreFilter / Inline / PostFilter modes. Formalized in ADR-011.
+
+| ANN index update freshness
+| `inplace_hnsw_updates_2502.13826.txt`, `fgim_2603.21710.txt`
+| In-place HNSW update algorithms with bounded rebuild time exist. FGIM demonstrates graph-index
+merging for ANN at scale.
+| AXIS incremental rebuild path should use in-place HNSW update (arXiv:2502.13826). RTO estimates
+in ADR-010 are grounded in FGIM benchmarks.
+
+| Data version control
+| `matrixone_vc_2604.03927.txt`
+| MatrixOne (April 2026) demonstrates practical data version control at DB level with snapshot
+branches. Does not address graph merge semantics.
+| Validates the branchable state feature. Graph merge semantics require CRDT policy (ADR-012).
+
+| Catalog scalability
+| `treecat_2503.02956.txt`
+| TreeCat (August 2025) proposes standalone catalog engines for large data systems and identifies
+catalog write amplification as a scaling bottleneck.
+| xCatalog must store block-level statistics in manifest files (not directly in catalog rows) to
+avoid per-block write amplification. Iceberg manifest model (ADR-007) is correct for this.
+
+| Workload-specific engines
+| `bespoke_olap_2603.02001.txt`
+| Bespoke OLAP (March 2026) shows synthesized workload-specific engines outperform generic
+engines. This is a counter-argument to universal record storage.
+| The convergence mandate is justified for correctness, governance, and operational simplicity.
+It requires an explicit performance acceptance criterion: ProximaRecord overhead must be ≤ 15 %
+vs. a native engine baseline for the primary workload class of each modality. This threshold
+must be validated by benchmarks before each modality's projection family reaches "supported" status.
+|===
+
+=== Performance Acceptance Criterion
+
+The universal ProximaRecord model incurs overhead relative to a purpose-built modality store.
+This overhead is acceptable if it is bounded and measured. The acceptance threshold is:
+
+[cols="1,2,2"]
+|===
+| Modality | Comparison baseline | Max acceptable overhead
+
+| Vector ANN (HNSW)
+| Milvus or Qdrant native HNSW on same hardware
+| ≤ 15 % latency overhead at P99 for top-1000 search over 10M vectors
+
+| Graph traversal (CSR BFS/DFS)
+| Neo4j Community Edition on same hardware
+| ≤ 25 % throughput overhead for 1-hop neighbor queries at 10k QPS
+
+| Document query (props filter)
+| MongoDB or DynamoDB on same hardware, schema-on-write indexed fields
+| ≤ 20 % throughput overhead for equality filter + sort on promoted props columns
+
+| Relational OLTP (point lookup)
+| PostgreSQL on same hardware
+| ≤ 10 % latency overhead at P99 for primary key lookup
+
+| Observability (metric write + query)
+| InfluxDB or VictoriaMetrics on same hardware
+| ≤ 20 % latency overhead at P99 for write; ≤ 15 % for range aggregate query
+|===
+
+A projection family that has not been benchmarked against its baseline MUST be marked
+`support_status: "experimental"` in the catalog and MUST NOT be the default execution path.
+
 === Refined architectural trajectory
 
 The evidence does not support a choice between "one generic row store" and "many isolated durable
@@ -226,11 +321,14 @@ engines." The best path is a stacked system:
    tenant/RLS, version/time/provenance.
 2. Physical specialization is aggressive: LSM, PAX, columnar, adjacency tables, CSR/COO,
    GraphAr-style lake projections, HNSW/IVF/PQ/DiskANN-style ANN fragments, Gorilla-style
-   time-series blocks, trace indexes, and event streams.
+   time-series blocks (via `ObservabilityCompressionHint`), trace indexes, and event streams.
 3. Semantics are added once: SQL, SQL/PGQ, Cypher/GQL, document filters, vector search,
    observability query, and agent/SKS APIs lower into shared algebra and policy-aware scans.
 4. Performance decisions are empirical: every projection family has workload thresholds,
-   freshness semantics, rebuild rules, and benchmarks before it becomes default behavior.
+   freshness semantics, rebuild RTO, and benchmarks before it becomes default behavior.
+   The performance acceptance criterion table above defines the benchmark gates.
+5. Rebuild time objectives are operational commitments: "rebuildable" means a cataloged RTO,
+   not an architectural aspiration. ADR-010 specifies the RTO per projection kind.
 
 The resulting target is "stacked durability with adaptive projections":
 
@@ -649,7 +747,10 @@ If event replay produces current entity/document/graph state, that state is a ma
 
 1. One durable record envelope: all documents, nodes, edges, and rows map to `ProximaRecord`.
 2. One scalar/composite type system: use `ProximaType`/`ProximaValue`; do not extend legacy `SqlValue` for new semantics.
-3. One transaction/RLS boundary: tenant and principal fields are enforced in scan/index iterators, not only in document or graph services.
+3. One transaction/RLS boundary: tenant and principal context is enforced in scan/index iterators,
+   not only in document or graph services. Tenant ownership is catalog/session authority first;
+   row/block tenant fields are internal system metadata only when mixed-tenant physical storage or
+   low-level pruning/replay requires them.
 4. Services are facades: `DocumentService` and graph services expose API semantics and planner semantics, but delegate durable reads/writes to canonical storage.
 5. Specialized structures are projections: JSON indexes, full-text indexes, adjacency indexes, CSR/COO, HNSW, and columnar layouts are rebuildable from canonical records.
 6. No new durable graph/document engine without ADR: a proposal must prove why relational/record storage plus adaptive projections cannot satisfy correctness and performance.
@@ -1091,7 +1192,9 @@ Tasks:
 ** `build_rls_filter(ctx)` builds `FilterExpression` for `tenant_id = v` AND/OR `permitted_principals IN [...]`.
 ** `push_rls_predicates(plan, ctx)` ANDs the RLS filter into every `Scan.filter` and `VectorTopK.predicate` at planning time (no post-hoc application-layer filtering).
 ** 7 tests: empty ctx is noop, non-Scan operators untouched, tenant+principals→And, existing filters preserved via And.
-** Per spec §8: `tenant_id`/`permitted_principals` are record fields pushed into scan iterators.
+** Per spec §8: tenant/principal context is pushed into scan iterators. `tenant_id` and
+   `permitted_principals` may be materialized as internal fields for mixed-tenant physical storage,
+   but dedicated-tenant tables/segments may enforce the same predicate from catalog/segment metadata.
 * [x] Align REST/gRPC/Arrow Flight/PostgreSQL wire behavior for document and graph result shapes.
 ** `UnifiedRecord::to_canonical_envelope()` in `results.rs` produces a stable `{ _id, _model, _score, <payload_key> }` shape for all modalities.
 ** `payload_key_for(model)` assigns `_data` for documents, `_node` for graph, `_vector` for vector, `_row` for relational — consumers can rely on these keys without branching on `_model`.
@@ -1193,12 +1296,29 @@ Acceptance:
 
 Goal: make REST, gRPC, Arrow Flight, PostgreSQL wire, SDK, and embedded ingestion/query surfaces converge on xCatalog + `ProximaRecord`/`ProximaValue` instead of legacy vector-shaped or `SqlValue`-centric internal contracts.
 
+Operational HLD/LLD tracker for this phase: `docs/12-design/RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc`.
+
 Tasks:
 
 * [x] Route SQL `INSERT` lowering through xCatalog row validation and canonical record construction.
-** `CatalogRow::validate_against_schema` validates required columns, unknown columns, nullability, and type compatibility before storage.
+** `CatalogRow::validate` validates required columns, unknown columns, nullability, and type compatibility before storage.
 ** `CatalogRow::to_proxima_record` projects validated rows to `ProximaRecord` with `ProximaValue` props and vector embeddings.
+** `CatalogRow::to_mutation_record` projects insert/upsert/update/delete intent into mutation-shaped canonical records.
 ** SQL DML insert paths build canonical records from `CatalogTableSchema` instead of treating `SqlValue` as the internal durable representation.
+* [x] Introduce a SQL-facing canonical table-record write boundary.
+** `TableRecordStore` is the service-layer contract for cataloged `ProximaRecord` mutations from SQL/pgwire and other facades.
+** DML chooses the active writer from xCatalog workload/storage specialization metadata so old vector/LSM-specialized tables and new PAX/relational tables can coexist during migration.
+** `VectorOpsTableRecordStore` is a temporary compatibility adapter only; `VectorOps` must not be the semantic owner of relational row DML.
+** Prior-version closure for `UPDATE`/`UPSERT` belongs in the table-record writer/WAL mutation layer, not in vector-specific operation code.
+* [x] Add the first SQL table-to-table write planning boundary over the canonical table-record model.
+** `INSERT INTO ... SELECT` and `INSERT OVERWRITE ... SELECT` now lower into syntax-level `CopyIntoPlan` values and then pass through catalog-aware `DmlWritePlanner` validation plus `TableWriteRouter` route selection.
+** `TableWriteExecutor` is the routed execution boundary for native/DataFusion/open-table commits; the first implementation is planned-only so pgwire/DML can depend on the stable contract before concrete scan/write paths land.
+** `NativeTableWriteExecutor` commits canonical `ProximaRecord` batches from `TableRecordSourceReader` through `TableRecordStore`; source scan adapters remain the next implementation step.
+** `CREATE TABLE AS SELECT` and `MERGE INTO` must reuse the same plan/request/router contracts instead of adding protocol-specific shortcuts.
+** DataFusion is the default Rust SQL/Arrow execution substrate for scans, joins, aggregates, external reads, and distributed execution. ProximaDB owns catalog, policy, WAL, snapshots, record mutation, vector/graph/document operators, and write commits.
+** Polars is an optional local/pseudo-distributed dataframe backend for compatible batch transforms. DuckDB is an optional compatibility/interop engine. Neither owns ProximaDB internal semantics.
+** The initial rule router chooses native, DataFusion local/distributed, or external-engine delegation from xCatalog authority, workload, format, policy boundary, and write mode; statistics-backed CBO will add Polars/DuckDB and richer cost inputs.
+** The router follows a PostgreSQL-like path-then-plan split and a MariaDB-like engine/access-method cost hook model, extended with ProximaDB guards for open-table commits, distributed execution, RLS, MVCC, vector indexes, graph topology, projection freshness, and branch/snapshot retention.
 * [x] Add catalog-backed Arrow relational schemas.
 ** `relational_schema_from_catalog(&CatalogTableSchema)` derives Arrow fields from xCatalog `CatalogDataType` and nullability.
 ** The Arrow multimodal facade re-exports document, graph, observability, relational, and catalog-backed schema builders through one stable module path.

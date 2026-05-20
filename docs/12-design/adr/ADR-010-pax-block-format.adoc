@@ -140,6 +140,111 @@ Block corruption triggers rebuild from Layer 0/1.
 * The Iceberg REST catalog server (ADR-007) returns synthetic snapshots whose manifest entries
   point to PAX block locations.
 
+== Rebuild RTO Estimates
+
+PAX blocks are Layer 2 (rebuildable projections). This section commits to concrete rebuild
+time objectives so that "rebuildable" is an operational guarantee, not an architectural claim.
+
+All estimates below are at read throughput of 500 MB/s (single NVMe SSD); scale
+proportionally for different storage tiers.
+
+[cols="2,2,2,3"]
+|===
+| Projection type | Rebuild seconds per 10 GB L1 data | Supports incremental rebuild | Notes
+
+| HNSW vector index
+| ≤ 45 s
+| Yes (WAL-checkpoint resume)
+| Grounded in FGIM (arXiv:2603.21710) graph-index merge benchmarks. Incremental path
+  uses in-place HNSW update (arXiv:2502.13826) from the last checkpoint WAL position.
+
+| CSR graph topology
+| ≤ 90 s
+| No (requires full sorted adjacency scan)
+| CSR requires reading all edge ProximaRecords sorted by source OID. Full L1 scan required.
+  Applications MUST NOT expect sub-minute CSR availability after a large edge batch import.
+
+| Columnar analytics projection (PAX → Parquet/Arrow)
+| ≤ 30 s
+| Yes (append from last manifest position)
+| Columnar projections are incremental: only blocks newer than the last Iceberg snapshot
+  need to be converted.
+
+| JSON path inverted index (Tantivy)
+| ≤ 60 s
+| Yes (WAL-checkpoint resume)
+| Depends on props density. Dense documents with many keys rebuild slower.
+
+| Time-series delta-delta compression block
+| ≤ 20 s
+| Yes (segment-append)
+| New samples append to the current series block without rewriting old blocks.
+|===
+
+=== Degraded Mode During Rebuild
+
+When a projection enters `RebuildRequired` state, the planner MUST route queries as follows:
+
+* **HNSW rebuild in progress**: fall back to full L1 scan with brute-force ANN (degraded recall,
+  O(n) latency). Emit `ExecutionMode::Degraded` in EXPLAIN. Acceptable for offline workloads;
+  reject for SLA-bound production queries if rebuild > `max_rebuild_wait_seconds`.
+* **CSR rebuild in progress**: graph traversal queries that require CSR adjacency MUST be
+  rejected with an error unless the planner can route via L1 edge record scans (slower).
+  Emit `ExecutionMode::Unsupported` for traversal operators.
+* **Columnar rebuild in progress**: analytical scans fall back to PAX row-directory scans
+  (slower but correct). Emit `ExecutionMode::Degraded`.
+
+The `RebuildRtoSpec` struct in `proximadb-catalog::lib.rs` carries these bounds per projection.
+Planners read `rebuild_rto.max_rebuild_wait_seconds` to decide when to reject vs. degrade.
+
+== ANN Freshness Gap
+
+Between a write committed to the WAL/L1 and that write propagating to the HNSW L2 index,
+there is a window during which vector searches may miss newly written records.
+
+The freshness gap is bounded by `CatalogProjection.max_lag_ms` (required for
+`ProjectionFreshness::BoundedLag` projections).
+
+[cols="1,2,3"]
+|===
+| Freshness mode | Expected lag | Recall impact
+
+| `Synchronous`
+| 0 ms (inline write path)
+| No recall gap. High write amplification: every insert updates the HNSW graph inline.
+
+| `BoundedLag` (recommended)
+| Declared in `max_lag_ms`; recommend ≤ 500 ms at P99 under ≤ 10k writes/s
+| Records written within the lag window may not appear in top-k results.
+  Acceptable for most recommendation and search workloads.
+
+| `Lazy`
+| Minutes to hours (background compaction cadence)
+| Significant recall gap on recently-written data. Suitable for batch-ingested collections
+  where search is not immediately required after write.
+
+| `Manual`
+| Until explicit `REFRESH INDEX` command
+| Used for read-only snapshot branches. Writes are not indexed until manual refresh.
+|===
+
+The lag bound MUST be declared in the catalog before the projection is eligible for use
+in production query plans. Projections with `max_lag_ms = None` and
+`freshness = BoundedLag` are rejected at plan-time with an error.
+
+== Props Opacity Limitation
+
+Column ID 8 (`props`) stores the user-defined properties map as a msgpack blob.
+This means:
+
+* Iceberg/Spark/Trino queries over `props` fields cannot use column-level predicate pruning.
+* Document queries that filter on `props` keys are full-block scans at the PAX level.
+
+**Mitigation**: Enable `PropsAutoPromotionPolicy` on document-heavy tables. High-frequency
+props keys are promoted to typed user-defined columns (IDs 100+) during compaction, making
+them available for block-level and column-level pruning. See ADR-013 for the promotion
+contract and Iceberg type coercion impact.
+
 == Consequences
 
 === Positive
@@ -147,6 +252,8 @@ Block corruption triggers rebuild from Layer 0/1.
 * Block-level pruning avoids most I/O for tenant-filtered or time-bounded queries.
 * Iceberg/Parquet compatibility: `BlockStats` maps directly to `DataFile` fields.
 * No tokio/axum dependency keeps rebuild times for block-format tests minimal.
+* Rebuild RTO estimates are now catalog-tracked (`RebuildRtoSpec`), making "rebuildable" an
+  operational guarantee with planner enforcement.
 
 === Negative / Trade-offs
 * PAX blocks are larger than pure row-store or pure columnar blocks for very small record sets
@@ -154,12 +261,17 @@ Block corruption triggers rebuild from Layer 0/1.
 * MVCC row directory requires a sort-on-flush step; write amplification for tiny blocks.
 * `ColumnMeta.min_val`/`max_val` are fixed-width 16-byte buffers; large-string predicate pruning
   falls back to bloom filter only.
+* `props` (column ID 8) is an opaque msgpack blob — no predicate pruning without auto-promotion.
+* CSR graph topology rebuild has no incremental path; large graph imports incur 90 s/10 GB
+  rebuild time before graph queries resume.
 
 === Mitigations
 * Minimum block size enforced at 2 MB (`engine_constants.rs`) — small record sets are buffered
   in-memory until the threshold is crossed.
 * Bloom filter support (`HAS_BLOOM` flag + `bloom_offset`/`bloom_len` in `ColumnMeta`) added as
   a future refinement path for string-column pruning (not yet populated in writer v1).
+* Props auto-promotion (`PropsAutoPromotionPolicy`) converts high-frequency props keys to typed
+  columns during compaction, enabling full predicate pushdown for promoted keys.
 
 == Implementation
 

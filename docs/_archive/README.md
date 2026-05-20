@@ -22,6 +22,9 @@ Archive buckets:
 | Directory | Contents |
 |---|---|
 | `hybrid-search/` | Historical hybrid-search implementation and status reports. |
+| `design/` | Superseded architecture, design, phase, and workspace refactor reports. |
+| `quality/` | Historical quality or architecture-analysis reports no longer used as active trackers. |
+| `operations/` | Historical readiness/status assessments superseded by active operations docs. |
 | `reviews/` | Architecture reviews and redesign reports retained for context. |
 | `restructure/` | Documentation and repository restructuring plans. |
 | `root/` | Historical files moved out of the repository root during release cleanup. |

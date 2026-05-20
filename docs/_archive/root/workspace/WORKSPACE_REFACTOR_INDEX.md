@@ -42,7 +42,7 @@
 
 ### Architecture
 5. **[CLAUDE.md](#CLAUDE-md)** - "Workspace Layering Rules" section
-6. **[docs/12-design/ADR-001-workspace-layering.md](#docs/12-design/ADR-001-workspace-layering.md)** - Architecture decision record
+6. **[docs/_archive/design/2026-05/ADR-001-workspace-layering.md](#docs_archive-design-2026-05-adr-001-workspace-layering-md)** - Historical architecture decision record
 
 ---
 

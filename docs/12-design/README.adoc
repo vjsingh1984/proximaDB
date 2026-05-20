@@ -1,0 +1,84 @@
+= ProximaDB Architecture And Design Index
+:toc:
+:toclevels: 2
+
+This directory holds current architectural decisions and active implementation blueprints.
+Historical phase reports, superseded visions, and one-off audits belong under `docs/_archive/`.
+
+== Canonical Architecture Path
+
+Read these in order for future-shaping architecture work:
+
+1. `DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc` +
+   Product/platform anchor for ProximaDB as a data and AI platform. Use for roadmap and ecosystem
+   shape.
+2. `COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc` +
+   Competitive architecture trajectory for OLTP, OLAP, HTAP, MPP, open compute routing, and the
+   implementation knobs that xCatalog and the planner must expose.
+3. `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` +
+   Accepted stacked-durability mandate for records, storage authority, modality facades, and
+   projection/access-method boundaries.
+4. `RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc` +
+   Relational/PAX/MVCC/open-format storage shape and pgwire interoperability direction.
+5. `RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc` +
+   Active HLD/LLD tracker for pgwire DML, legacy VectorOps routing, table-record execution, and
+   compute-engine routing.
+6. `OPEN_FORMAT_CATALOG_2026_05_17.adoc` +
+   Iceberg REST catalog, OLTP catalog backends, open-format compatibility, and xCatalog ownership
+   for external engines.
+7. `MULTIMODEL_TRAJECTORY_ALIGNMENT_2026_05_18.adoc` +
+   Execution guide for keeping new multimodel code aligned with `ProximaRecord` and
+   `ProximaValue`.
+
+== Stable Reference Docs
+
+* `DESIGN_PATTERNS.adoc` - general design patterns and implementation references.
+* `SUPPORTED_SURFACES.adoc` - supported API/projection status and retirement candidates.
+* `platform/CLOUD_HOSTED_SERVICE_DESIGN.adoc` - cloud service deployment/control-plane design.
+
+== ADRs
+
+Accepted ADRs live under `adr/`.
+
+* `adr/ADR-001-capability-registry.adoc`
+* `adr/ADR-002-normalized-filter-candidate-contract.adoc`
+* `adr/ADR-003-multimodel-plan-contract.adoc`
+* `adr/ADR-004-unified-explain-contract.adoc`
+* `adr/ADR-005-document-graph-query-extensions.adoc`
+* `adr/ADR-006-infrastructure-platform-decisions.adoc`
+* `adr/ADR-007-iceberg-rest-catalog-server.adoc`
+* `adr/ADR-008-oltp-catalog-backends.adoc`
+* `adr/ADR-009-schema-modes-and-proximarecord-surfaces.adoc`
+* `adr/ADR-010-pax-block-format.adoc` — PAX block format; rebuild RTO estimates added 2026-05-20.
+* `adr/ADR-011-filtered-ann-routing-modes.adoc` — Selectivity-based Pre/Inline/PostFilter ANN routing.
+* `adr/ADR-012-graph-branch-merge-semantics.adoc` — CRDT-based graph branch merge policies.
+* `adr/ADR-013-protocol-type-coercion-matrix.adoc` — Lossless and lossy type conversions per protocol.
+
+== Archived From This Directory
+
+The May 2026 cleanup moved superseded or progress-only documents to
+`docs/_archive/design/2026-05/`.
+
+Archived categories:
+
+* superseded platform vision replaced by the architecture anchor;
+* old module architecture guide replaced by repository guidelines and workspace refactor plan;
+* phase-specific quantization, gRPC, platform-runtime, and workspace-refactor progress reports;
+* historical workspace-layering ADR superseded operationally by
+  `roadmap/techdebt/WORKSPACE_REFACTOR_PLAN_2026_05_07.adoc`.
+
+== Maintenance Rules
+
+* Add new future-shaping architecture as either an ADR or an active blueprint with owner, scope,
+  status, and implementation tracker.
+* Do not add phase reports or one-off session summaries to this directory; archive them after they
+  are no longer the active tracker.
+* Keep protocol-specific behavior aligned with the canonical record/type/catalog/storage mandates.
+* LLM-generated or agent-generated code changes must cite the active blueprint they implement and
+  must not introduce new catalog, record, WAL, policy, or compute-routing authority outside the
+  canonical architecture path.
+* If generated code adds a route, reader, writer, projection, or external adapter, the owning doc
+  must name its authority mode, policy boundary, freshness behavior, repair source, and supported
+  maturity before the path is enabled by default.
+* When a blueprint is superseded, move it to `docs/_archive/design/<yyyy-mm>/` and update this
+  index.
