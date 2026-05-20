@@ -494,6 +494,60 @@ impl From<io::Error> for StorageError {
     }
 }
 
+impl From<proximadb_kernel::error::StorageError> for StorageError {
+    fn from(err: proximadb_kernel::error::StorageError) -> Self {
+        use proximadb_kernel::error::StorageError as KernelStorageError;
+
+        match err {
+            KernelStorageError::SstEngine(msg) => {
+                StorageError::new(StorageErrorKind::SstEngine, msg)
+            }
+            KernelStorageError::Mmap(msg) => {
+                StorageError::new(StorageErrorKind::Io, format!("MMAP: {}", msg))
+            }
+            KernelStorageError::DiskIO(io_err) => {
+                StorageError::with_source(StorageErrorKind::Io, io_err.to_string(), io_err)
+            }
+            KernelStorageError::Serialization(msg)
+            | KernelStorageError::SerializationError(msg) => StorageError::new(
+                StorageErrorKind::Internal,
+                format!("Serialization: {}", msg),
+            ),
+            KernelStorageError::Corruption(msg) => {
+                StorageError::new(StorageErrorKind::Corruption, msg)
+            }
+            KernelStorageError::AlreadyExists(msg) => StorageError::new(
+                StorageErrorKind::Conflict,
+                format!("Already exists: {}", msg),
+            ),
+            KernelStorageError::NotFound(msg) | KernelStorageError::KeyNotFound(msg) => {
+                StorageError::new(StorageErrorKind::NotFound, msg)
+            }
+            KernelStorageError::IndexError(msg) => {
+                StorageError::new(StorageErrorKind::IndexCorruption, msg)
+            }
+            KernelStorageError::WalError(msg) => {
+                StorageError::new(StorageErrorKind::WalCorruption, msg)
+            }
+            KernelStorageError::MetadataError(anyhow_err) => {
+                StorageError::new(StorageErrorKind::Internal, anyhow_err.to_string())
+            }
+            KernelStorageError::CollectionNotFound(id) => StorageError::new(
+                StorageErrorKind::NotFound,
+                format!("Collection not found: {}", id),
+            ),
+            KernelStorageError::InvalidDimension { expected, actual } => StorageError::new(
+                StorageErrorKind::InvalidConfiguration,
+                format!("Dimension mismatch: expected {}, got {}", expected, actual),
+            ),
+            KernelStorageError::TransactionCommitFailed(msg) => StorageError::new(
+                StorageErrorKind::Internal,
+                format!("Transaction commit failed: {}", msg),
+            ),
+        }
+    }
+}
+
 impl From<anyhow::Error> for StorageError {
     fn from(err: anyhow::Error) -> Self {
         // Try to extract the original error type
@@ -624,6 +678,24 @@ mod tests {
         let io_err = io::Error::new(io::ErrorKind::NotFound, "File missing");
         let storage_err: StorageError = io_err.into();
         assert_eq!(storage_err.kind, StorageErrorKind::NotFound);
+    }
+
+    #[test]
+    fn test_from_kernel_storage_error() {
+        let storage_err: StorageError =
+            proximadb_kernel::error::StorageError::WalError("sync failed".to_string()).into();
+        assert_eq!(storage_err.kind, StorageErrorKind::WalCorruption);
+        assert_eq!(storage_err.message, "sync failed");
+
+        let storage_err: StorageError =
+            proximadb_kernel::error::StorageError::CollectionNotFound("events".to_string()).into();
+        assert_eq!(storage_err.kind, StorageErrorKind::NotFound);
+        assert_eq!(storage_err.message, "Collection not found: events");
+
+        let storage_err: StorageError =
+            proximadb_kernel::error::StorageError::AlreadyExists("events".to_string()).into();
+        assert_eq!(storage_err.kind, StorageErrorKind::Conflict);
+        assert_eq!(storage_err.message, "Already exists: events");
     }
 
     #[test]

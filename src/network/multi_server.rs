@@ -65,7 +65,7 @@
 //! | REST | 840 QPS | 5-10ms | Web apps, simple queries |
 //! | gRPC | 1,770 QPS | 2-5ms | High-volume, streaming |
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -159,6 +159,60 @@ impl MultiServer {
             server_handles: Arc::new(Mutex::new(Vec::new())),
             llm_engine,
         }
+    }
+
+    async fn build_direct_pgwire_write_services(
+        &self,
+    ) -> Result<Option<crate::network::postgres::DirectPgwireWriteServices>> {
+        if !self.config.postgres_config.enable_direct_record_writes {
+            return Ok(None);
+        }
+
+        let wal_path = self
+            .config
+            .postgres_config
+            .direct_record_wal_path
+            .clone()
+            .unwrap_or_else(|| {
+                self.config
+                    .data_dir
+                    .join("pgwire")
+                    .join("canonical-records.wal")
+            });
+
+        let wal_appender = Arc::new(
+            crate::services::FramedTableWalAppender::open(&wal_path)
+                .await
+                .with_context(|| {
+                    format!(
+                        "opening pgwire direct canonical WAL at {}",
+                        wal_path.display()
+                    )
+                })?,
+        );
+        let record_storage = Arc::new(crate::services::MemtableRecordStorage::new());
+        let entries = wal_appender.read_entries().await.with_context(|| {
+            format!(
+                "reading pgwire direct canonical WAL at {}",
+                wal_path.display()
+            )
+        })?;
+        let summary = record_storage
+            .replay_wal_entries(entries)
+            .await
+            .context("replaying pgwire direct canonical WAL into record memtable")?;
+
+        info!(
+            "🐘 pgwire direct record writes enabled: WAL={}, replayed_upserts={}, replayed_deletes={}, current_records={}",
+            wal_path.display(),
+            summary.upserts_replayed,
+            summary.deletes_replayed,
+            record_storage.len()
+        );
+
+        Ok(Some(
+            crate::network::postgres::DirectPgwireWriteServices::new(record_storage, wal_appender),
+        ))
     }
 
     /// Start all configured servers
@@ -537,10 +591,11 @@ impl MultiServer {
             let document_service = Some(services.document_service.clone());
             let graph_service = Some(services.graph_service.clone());
             let observability_service = Some(services.observability_service.clone());
+            let direct_write_services = self.build_direct_pgwire_write_services().await?;
 
             let postgres_handle = tokio::spawn(async move {
                 use crate::network::postgres::PostgresServer;
-                let server = PostgresServer::new(
+                let mut server = PostgresServer::new(
                     pg_bind_addr,
                     collection_service,
                     vector_ops,
@@ -549,6 +604,9 @@ impl MultiServer {
                     graph_service,
                     observability_service,
                 );
+                if let Some(direct_write_services) = direct_write_services {
+                    server = server.with_direct_write_services(direct_write_services);
+                }
                 if let Err(e) = server.start().await {
                     tracing::error!("❌ PostgreSQL Server error: {}", e);
                 }
@@ -826,10 +884,11 @@ impl MultiServer {
 
             let pg_bind_addr = self.config.postgres_config.active_bind_address();
             let services = self.shared_services.clone();
+            let direct_write_services = self.build_direct_pgwire_write_services().await?;
             let postgres_handle = tokio::spawn(async move {
                 use crate::network::postgres::PostgresServer;
 
-                let server = PostgresServer::new(
+                let mut server = PostgresServer::new(
                     pg_bind_addr,
                     services.collection_service.clone(),
                     services.vector_operations_service.clone(),
@@ -838,6 +897,9 @@ impl MultiServer {
                     Some(services.graph_service.clone()),
                     Some(services.observability_service.clone()),
                 );
+                if let Some(direct_write_services) = direct_write_services {
+                    server = server.with_direct_write_services(direct_write_services);
+                }
 
                 if let Err(e) = server.start().await {
                     tracing::error!("❌ PostgreSQL Server error: {}", e);

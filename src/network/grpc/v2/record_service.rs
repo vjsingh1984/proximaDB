@@ -37,6 +37,7 @@ use crate::proto::proximadb_v2::{
     proxima_record_service_server::ProximaRecordServiceServer,
 };
 use crate::services::operations::BatchOperationResult;
+use crate::services::{WriteDurabilityRequirement, WriteLaneRouter, WriteIntent, WriteOperationKind};
 use proximadb_records::proto_v2::{
     proto_record_to_envelope, proxima_value_to_typed_value, typed_value_to_proxima,
 };
@@ -683,7 +684,6 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             .map(|record| record.id.clone())
             .collect();
         let rich_batch = self.convert_to_rich_batch(&batch)?;
-        // Clone records before moving rich_batch into the handler
         let pax_records = if self.segment_registry.is_some() {
             rich_batch.records.clone()
         } else {
@@ -691,13 +691,23 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
         let collection_id = rich_batch.collection_id.clone();
 
+        let intent = WriteIntent::new(&collection_id, WriteOperationKind::Insert)
+            .with_durability(WriteDurabilityRequirement::WalRequired)
+            .with_row_count_hint(record_ids.len() as u64);
+        let lane = WriteLaneRouter::new().route(&intent);
+        debug!(
+            collection_id = %collection_id,
+            write_lane = ?lane.lane,
+            guards = ?lane.required_guards,
+            "gRPC InsertRecords write-lane decision"
+        );
+
         match self
             .request_handlers
             .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
             Ok(result) => {
-                // Fire-and-forget PAX projection write after successful engine insert
                 if let Some(registry) = &self.segment_registry {
                     if !pax_records.is_empty() {
                         Self::spawn_pax_write(registry.clone(), collection_id, pax_records);
@@ -742,6 +752,17 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
         let collection_id = rich_batch.collection_id.clone();
 
+        let intent = WriteIntent::new(&collection_id, WriteOperationKind::Upsert)
+            .with_durability(WriteDurabilityRequirement::WalRequired)
+            .with_row_count_hint(record_ids.len() as u64);
+        let lane = WriteLaneRouter::new().route(&intent);
+        debug!(
+            collection_id = %collection_id,
+            write_lane = ?lane.lane,
+            guards = ?lane.required_guards,
+            "gRPC UpsertRecords write-lane decision"
+        );
+
         match self
             .request_handlers
             .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
@@ -785,6 +806,18 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             .map(|record| record.id.clone())
             .collect();
         let rich_batch = self.convert_to_rich_batch(&batch)?;
+        let collection_id = rich_batch.collection_id.clone();
+
+        let intent = WriteIntent::new(&collection_id, WriteOperationKind::Update)
+            .with_durability(WriteDurabilityRequirement::WalRequired)
+            .with_row_count_hint(record_ids.len() as u64);
+        let lane = WriteLaneRouter::new().route(&intent);
+        debug!(
+            collection_id = %collection_id,
+            write_lane = ?lane.lane,
+            guards = ?lane.required_guards,
+            "gRPC UpdateRecords write-lane decision"
+        );
 
         match self
             .request_handlers
@@ -830,6 +863,17 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                 "DeleteRecords requires record id at index {index}"
             )));
         }
+
+        let intent = WriteIntent::new(&batch.collection_id, WriteOperationKind::Delete)
+            .with_durability(WriteDurabilityRequirement::WalRequired)
+            .with_row_count_hint(record_ids.len() as u64);
+        let lane = WriteLaneRouter::new().route(&intent);
+        debug!(
+            collection_id = %batch.collection_id,
+            write_lane = ?lane.lane,
+            guards = ?lane.required_guards,
+            "gRPC DeleteRecords write-lane decision"
+        );
 
         match self
             .request_handlers
@@ -1066,6 +1110,19 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                 // Calculate queue wait time (time from receive to start processing)
                 let queue_wait_time = batch_receive_time.elapsed();
                 metrics.record_queue_wait(queue_wait_time);
+
+                // Route batch intent — individual records may carry per-record modes.
+                let stream_intent = WriteIntent::new(&batch.collection_id, WriteOperationKind::Upsert)
+                    .with_durability(WriteDurabilityRequirement::WalRequired)
+                    .with_row_count_hint(batch_size as u64);
+                let stream_lane = WriteLaneRouter::new().route(&stream_intent);
+                debug!(
+                    collection_id = %batch.collection_id,
+                    write_lane = ?stream_lane.lane,
+                    guards = ?stream_lane.required_guards,
+                    batch_size,
+                    "gRPC BatchWriteStream write-lane decision"
+                );
 
                 // Start processing timer
                 let processing_start = Instant::now();

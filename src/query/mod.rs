@@ -146,6 +146,8 @@ pub use unified_query_port_impl::UnifiedQueryPortImpl;
 pub mod rl_planner; // RL-based adaptive query planner
 pub mod semantic_analysis;
 pub mod sql_frontend;
+pub mod table_write_executor;
+pub mod table_write_plan;
 pub mod unified; // Multi-model query engine (vector, document, graph, observability)
 pub mod utils;
 pub mod validator; // Plan validation for capability checking

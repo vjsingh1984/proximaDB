@@ -73,10 +73,10 @@
 //!
 //! ```text
 //! Insert Flow:
-//! API → VectorOps → Memtable → EventLog → WAL
-//!                      ↓
-//!                   Storage
-//!                   (on flush)
+//! API → TableRecordStore → WAL
+//!         ↓              ↓
+//!   VectorOps adapter  Storage
+//!   (compat only)      (on flush)
 //!
 //! Search Flow:
 //! API → Search → Query Optimizer
@@ -167,6 +167,7 @@
 //! - Queue depths
 //! - Cache hit rates
 
+pub mod canonical_wal;
 pub mod catalog_introspection;
 pub mod collection;
 pub mod ddl;
@@ -174,12 +175,16 @@ pub mod dml;
 pub mod events;
 pub mod graph_collection;
 pub mod operations;
+pub mod record_memtable;
+pub mod record_store;
 pub mod schema;
 pub mod search;
 #[cfg(feature = "tenant_access")]
 pub mod tenant_access;
+pub mod write_intent;
 
 // Re-export main service types with cleaner names
+pub use canonical_wal::FramedTableWalAppender;
 pub use catalog_introspection::{CatalogIntrospectionResult, CatalogIntrospectionService};
 pub use collection::Collections;
 pub use ddl::{
@@ -192,7 +197,20 @@ pub use dml::{
 pub use events::EventLog;
 pub use graph_collection::GraphCollectionService;
 pub use operations::VectorOps;
+pub use record_memtable::MemtableRecordStorage;
+pub use record_store::{
+    CatalogRoutingTableRecordStore, DirectWalTableRecordStore, RecordStorageTableRecordStore,
+    TableRecordGetRequest, TableRecordGetResponse, TableRecordMutation, TableRecordMutationKind,
+    TableRecordScanRequest, TableRecordScanResponse, TableRecordStore, TableRecordStoreRoute,
+    TableRecordWriteResult, TableWalAppender, VectorOpsTableRecordStore,
+};
 pub use search::StreamingSearch;
+pub use write_intent::{
+    DEFAULT_BULK_BYTES_THRESHOLD, DEFAULT_BULK_ROW_THRESHOLD, ProjectionFreshnessRequirement,
+    RejectedWriteLane, WriteDurabilityRequirement, WriteGuard, WriteIntent,
+    WriteIsolationRequirement, WriteLane, WriteLaneDecision, WriteLaneRouter,
+    WriteLaneRouterConfig, WriteOperationKind,
+};
 
 // Legacy compatibility exports (will be removed)
 pub use collection::manager as collection_service;

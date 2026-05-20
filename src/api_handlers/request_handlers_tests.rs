@@ -8,7 +8,7 @@ mod tests {
     use super::super::request_handlers::*;
     use crate::proto::proximadb_v1::{
         CollectionConfig, CollectionOperation, CollectionRequest, IncludeFields, SearchQuery,
-        VectorBatchRequest, VectorOperation, VectorRecord, VectorSearchRequest,
+        VectorBatchRequest, VectorOperation, VectorSearchRequest,
     };
     use chrono::Utc;
     use std::collections::HashMap;
@@ -40,17 +40,51 @@ mod tests {
         }
     }
 
-    /// Helper to create test vector record
-    fn create_test_vector_record(id: &str, dimension: usize) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector: (0..dimension).map(|i| i as f32 * 0.1).collect(),
-            metadata: HashMap::new(),
-            timestamp: Some(Utc::now().timestamp()),
-            updated_at: Some(Utc::now().timestamp()),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+    /// Helper to create canonical test vector record.
+    fn create_test_vector_record(id: &str, dimension: usize) -> proximadb_records::ProximaRecord {
+        create_test_proxima_record(
+            id,
+            (0..dimension).map(|i| i as f32 * 0.1).collect(),
+            Utc::now().timestamp(),
+        )
+        .with_record_version(1)
+    }
+
+    fn create_test_proxima_record(
+        id: &str,
+        vector: Vec<f32>,
+        timestamp_ms: i64,
+    ) -> proximadb_records::ProximaRecord {
+        let timestamp_ns = timestamp_ms.saturating_mul(1_000_000);
+        let dim = vector.len() as u32;
+        proximadb_records::ProximaRecord {
+            oid: id.to_string(),
+            created_at_ns: timestamp_ns,
+            updated_at_ns: timestamp_ns,
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "dense_vector".to_string(),
+                dim,
+                values: vector,
+            }],
+            ..proximadb_records::ProximaRecord::default()
+        }
+    }
+
+    trait TestProximaRecordExt {
+        fn with_record_version(self, version: u64) -> proximadb_records::ProximaRecord;
+        fn with_valid_to_ms(self, expires_at_ms: i64) -> proximadb_records::ProximaRecord;
+    }
+
+    impl TestProximaRecordExt for proximadb_records::ProximaRecord {
+        fn with_record_version(mut self, version: u64) -> proximadb_records::ProximaRecord {
+            self.record_version = version;
+            self
+        }
+
+        fn with_valid_to_ms(mut self, expires_at_ms: i64) -> proximadb_records::ProximaRecord {
+            self.valid_to_ns = Some(expires_at_ms.saturating_mul(1_000_000));
+            self
         }
     }
 
@@ -106,11 +140,11 @@ mod tests {
         // Test vector record creation helper
         let record = create_test_vector_record("test_id", 128);
 
-        assert_eq!(record.id, "test_id");
-        assert_eq!(record.vector.len(), 128);
-        assert_eq!(record.version, Some(1));
-        assert!(record.timestamp.unwrap() > 0);
-        assert!(record.metadata.is_empty());
+        assert_eq!(record.oid, "test_id");
+        assert_eq!(record.embeddings[0].values.len(), 128);
+        assert_eq!(record.record_version, 1);
+        assert!(record.created_at_ns > 0);
+        assert!(record.props.is_empty());
     }
 
     #[test]
@@ -197,10 +231,13 @@ mod tests {
     #[test]
     fn test_vector_batch_request_structure() {
         // Test VectorBatchRequest structure
-        let vectors = vec![
+        let vectors: Vec<crate::proto::proximadb_v1::VectorRecord> = vec![
             create_test_vector_record("vec1", 128),
             create_test_vector_record("vec2", 128),
-        ];
+        ]
+        .into_iter()
+        .map(Into::into)
+        .collect();
 
         let request = VectorBatchRequest {
             collection_id: "test_collection".to_string(),
@@ -245,17 +282,12 @@ mod tests {
 
     #[test]
     fn test_vector_record_field_access() {
-        // Test accessing all fields of VectorRecord
-        let record = VectorRecord {
-            id: "test_id".to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata: HashMap::new(),
-            timestamp: Some(1234567890),
-            updated_at: Some(1234567890),
-            expires_at: Some(1234567999),
-            version: Some(2),
-            source: None,
-        };
+        // Test the v1 boundary projection from canonical ProximaRecord.
+        let record: crate::proto::proximadb_v1::VectorRecord =
+            create_test_proxima_record("test_id", vec![1.0, 2.0, 3.0], 1234567890)
+                .with_record_version(2)
+                .with_valid_to_ms(1234567999)
+                .into();
 
         assert_eq!(record.id, "test_id");
         assert_eq!(record.vector.len(), 3);
@@ -345,11 +377,14 @@ mod tests {
     #[test]
     fn test_vector_batch_with_different_dimensions() {
         // Test creating vectors with different dimensions
-        let vectors = vec![
+        let vectors: Vec<crate::proto::proximadb_v1::VectorRecord> = vec![
             create_test_vector_record("vec_64", 64),
             create_test_vector_record("vec_128", 128),
             create_test_vector_record("vec_256", 256),
-        ];
+        ]
+        .into_iter()
+        .map(Into::into)
+        .collect();
 
         assert_eq!(vectors[0].vector.len(), 64);
         assert_eq!(vectors[1].vector.len(), 128);
@@ -435,16 +470,13 @@ mod tests {
             -999999.0, // Very large negative
         ];
 
-        let record = VectorRecord {
-            id: "edge_case_vector".to_string(),
-            vector: edge_vector.clone(),
-            metadata: HashMap::new(),
-            timestamp: Some(Utc::now().timestamp()),
-            updated_at: Some(Utc::now().timestamp()),
-            expires_at: None,
-            version: Some(1),
-            source: None,
-        };
+        let record: crate::proto::proximadb_v1::VectorRecord = create_test_proxima_record(
+            "edge_case_vector",
+            edge_vector.clone(),
+            Utc::now().timestamp(),
+        )
+        .with_record_version(1)
+        .into();
 
         assert_eq!(record.vector.len(), 7);
         assert_eq!(record.vector[0], 0.0);
@@ -467,9 +499,14 @@ mod tests {
         ];
 
         for timeout in timeouts {
+            let vectors: Vec<crate::proto::proximadb_v1::VectorRecord> =
+                vec![create_test_vector_record("test", 64)]
+                    .into_iter()
+                    .map(Into::into)
+                    .collect();
             let _request = VectorBatchRequest {
                 collection_id: "timeout_test".to_string(),
-                vectors: vec![create_test_vector_record("test", 64)],
+                vectors,
             };
 
             // Remove timeout assertions as batch_timeout_ms field doesn't exist
@@ -495,7 +532,9 @@ mod tests {
             if let Some(count) = vectors_count {
                 for i in 0..count.min(10) {
                     // Limit to 10 for test performance
-                    vectors.push(create_test_vector_record(&format!("test_{}", i), 32));
+                    let record: crate::proto::proximadb_v1::VectorRecord =
+                        create_test_vector_record(&format!("test_{}", i), 32).into();
+                    vectors.push(record);
                 }
             }
 

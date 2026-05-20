@@ -276,6 +276,17 @@ impl ComputeBridge {
             ExecutionStep::CombinedFilterSearch { .. } => ComputeOperationType::VectorSearch,
             ExecutionStep::IndexLookup { .. } => ComputeOperationType::VectorSearch,
             ExecutionStep::BloomFilterCheck { .. } => ComputeOperationType::MetadataFilter,
+            ExecutionStep::VectorQuery { .. } => ComputeOperationType::VectorSearch,
+            ExecutionStep::GraphTraversal { .. } => ComputeOperationType::GraphTraversal,
+            ExecutionStep::Aggregate { .. } => ComputeOperationType::Aggregation,
+            ExecutionStep::Join { .. } => ComputeOperationType::Join,
+            ExecutionStep::Project { .. }
+            | ExecutionStep::Fusion { .. }
+            | ExecutionStep::Union { .. }
+            | ExecutionStep::SetUnion { .. }
+            | ExecutionStep::SetIntersect { .. }
+            | ExecutionStep::SetExcept { .. }
+            | ExecutionStep::CteMaterialization { .. } => ComputeOperationType::MetadataFilter,
         }
     }
 
@@ -287,6 +298,8 @@ impl ComputeBridge {
             ExecutionStep::CombinedFilterSearch { .. } => true,
             ExecutionStep::IndexLookup { .. } => true,
             ExecutionStep::BloomFilterCheck { .. } => true,
+            ExecutionStep::VectorQuery { .. } => true,
+            _ => false,
         }
     }
 
@@ -525,6 +538,23 @@ impl ComputeBridge {
                 // Bloom filter check is optimization hint, pass through input
                 input.ok_or_else(|| anyhow::anyhow!("BloomFilterCheck requires input node"))
             }
+            ExecutionStep::VectorQuery {
+                collection_id,
+                query_vector,
+                top_k,
+                filters: _,
+                distance_metric,
+            } => Ok(PlanNode::VectorScan {
+                collection: collection_id.clone(),
+                query_vector: query_vector
+                    .clone()
+                    .or_else(|| context.query_vector.clone())
+                    .unwrap_or_default(),
+                top_k: *top_k as u32,
+                filter: None,
+                distance_metric: Some(distance_metric.clone()),
+            }),
+            _ => input.ok_or_else(|| anyhow::anyhow!("Unsupported runtime execution step")),
         }
     }
 
@@ -894,11 +924,18 @@ mod tests {
 
     fn create_test_plan() -> UnifiedExecutionPlan {
         UnifiedExecutionPlan {
+            execution_strategy: crate::query::query_optimizer::ExecutionStrategy::VectorOnly,
             execution_steps: vec![ExecutionStep::VectorSearch {
                 execution_method: SearchExecutionMethod::DirectFP32,
                 quantization_strategy: None,
                 candidates: 100,
             }],
+            estimated_cost: 10.0,
+            optimizations: vec![],
+            performance_hints: vec![],
+            seeding_strategy: crate::query::query_optimizer::SeedingStrategy::None,
+            limit: None,
+            offset: None,
             resource_allocation: ResourceAllocation {
                 memory_budget_mb: 256,
                 cpu_cores: 4,
@@ -920,6 +957,7 @@ mod tests {
             fallback_strategies: vec![],
             rl_state: None,
             rl_action: None,
+            ann_filtering_mode: None,
         }
     }
 

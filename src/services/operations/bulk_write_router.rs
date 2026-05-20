@@ -18,11 +18,12 @@
 //!
 //! This module implements smart batch detection to decide whether to use:
 //! - **WAL path**: Standard WAL + memtable path for small batches (durability)
-//! - **Direct write path**: Bypass WAL + memtable for large batches (performance)
+//! - **Bulk lane**: Large-batch WAL-backed append today; future direct segment
+//!   commit only after durability proof is accepted
 //!
 //! ## Decision Logic
 //!
-//! A batch is routed to direct write if either:
+//! A batch is routed to the bulk lane if either:
 //! - Vector count >= `vector_threshold` (default: 500)
 //! - Estimated size >= `size_threshold_bytes` (default: 2MB)
 //!
@@ -36,9 +37,9 @@
 //! ## Example
 //!
 //! ```text
-//! 1K vectors @ 768D = ~3MB → Direct write
+//! 1K vectors @ 768D = ~3MB → Bulk lane
 //! 100 vectors @ 768D = ~300KB → WAL path
-//! 500 vectors @ 512D = ~2MB → Direct write (at threshold)
+//! 500 vectors @ 512D = ~2MB → Bulk lane (at threshold)
 //! ```
 
 use proximadb_records::ProximaRecord;
@@ -46,7 +47,11 @@ use proximadb_records::ProximaRecord;
 /// Result of bulk write route decision
 #[derive(Debug, Clone)]
 pub struct BulkWriteDecision {
-    /// Whether to use direct write (bypass WAL+memtable)
+    /// Whether to use the large-batch lane.
+    ///
+    /// Historical name retained for API compatibility. The current VectorOps
+    /// implementation still writes this lane through WAL for durability; a true
+    /// WAL-skipping direct segment commit requires an accepted durability proof.
     pub use_direct_write: bool,
     /// Reason for the decision
     pub reason: String,
@@ -59,9 +64,9 @@ pub struct BulkWriteDecision {
 /// Configuration for bulk write thresholds
 #[derive(Debug, Clone)]
 pub struct BulkWriteConfig {
-    /// Minimum vector count to trigger direct write (default: 500)
+    /// Minimum vector count to trigger the bulk lane (default: 500)
     pub vector_threshold: usize,
-    /// Minimum estimated size in bytes to trigger direct write (default: 2MB)
+    /// Minimum estimated size in bytes to trigger the bulk lane (default: 2MB)
     pub size_threshold_bytes: usize,
     /// Enable bulk write optimization (default: true)
     pub enabled: bool,
@@ -81,10 +86,10 @@ impl Default for BulkWriteConfig {
 ///
 /// Routes batch writes to either:
 /// - Standard WAL + memtable path (for small streaming batches)
-/// - Direct storage engine write (for large bulk batches)
+/// - Large-batch lane (currently WAL-backed; future direct segment commit)
 ///
-/// This optimization reduces I/O and memory usage for bulk inserts by
-/// bypassing the WAL + memtable double-write pattern.
+/// This optimization centralizes the threshold decision for bulk inserts. It
+/// does not by itself authorize skipping WAL.
 pub struct BulkWriteRouter {
     /// Configuration controlling batch size thresholds and routing behavior
     config: BulkWriteConfig,
@@ -118,7 +123,7 @@ impl BulkWriteRouter {
         self.config.enabled = enabled;
     }
 
-    /// Decide whether to use direct write for a batch of canonical records.
+    /// Decide whether to use the bulk lane for a batch of canonical records.
     ///
     /// Arrow Flight and catalog-aware writes should use this path so routing is
     /// based on the `ProximaRecord` envelope instead of downgrading through
@@ -237,7 +242,7 @@ impl BulkWriteRouter {
         vector_count * per_record_size
     }
 
-    /// Check if a batch of given size would trigger direct write
+    /// Check if a batch of given size would trigger the bulk lane.
     pub fn would_trigger_direct_write(&self, vector_count: usize, dimension: usize) -> bool {
         if !self.config.enabled {
             return false;

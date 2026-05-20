@@ -193,6 +193,28 @@ pub struct SqlColumnInfo {
     pub data_type: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CatalogRoutingQuery {
+    pub table_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TableWriteExplainRequest {
+    pub target_table: String,
+    pub source_table: Option<String>,
+    pub source_sql: Option<String>,
+    pub write_mode: Option<String>,
+    pub distribution: Option<String>,
+    pub target_columns: Option<Vec<String>>,
+    pub tenant_id: Option<String>,
+    pub actor: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub row_count_hint: Option<u64>,
+    pub estimated_bytes: Option<u64>,
+    pub requires_row_level_semantics: Option<bool>,
+    pub batch_local_constraints_sufficient: Option<bool>,
+}
+
 /// Execute SQL query handler
 ///
 /// Supports vector similarity queries like:
@@ -360,6 +382,229 @@ pub async fn execute_sql(
             error!("SQL query {} failed: {}", request_id, e);
             Err(ApiError::Internal(e.to_string()))
         }
+    }
+}
+
+/// Return table-level xCatalog routing metadata for REST clients.
+pub async fn get_catalog_table_routing(
+    State(state): State<AppState>,
+    Query(query): Query<CatalogRoutingQuery>,
+) -> ApiResult<Json<crate::services::CatalogIntrospectionResult>> {
+    let sql = match query.table_name.as_deref().map(str::trim) {
+        Some(table_name) if !table_name.is_empty() => format!(
+            "SELECT * FROM information_schema.table_routing WHERE table_name = '{}'",
+            table_name.replace('\'', "''")
+        ),
+        _ => "SELECT * FROM information_schema.table_routing".to_string(),
+    };
+
+    let result = crate::services::CatalogIntrospectionService::new(state.catalog_manager.clone())
+        .execute_select(&sql)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .unwrap_or_else(crate::services::CatalogIntrospectionResult::empty);
+
+    Ok(Json(result))
+}
+
+/// Explain table-write route selection without executing the write.
+pub async fn explain_table_write_route(
+    State(state): State<AppState>,
+    Json(request): Json<TableWriteExplainRequest>,
+) -> ApiResult<Json<crate::query::table_write_plan::TableWriteRouteExplanation>> {
+    use crate::query::table_write_plan::{
+        ConflictPolicy, CopyIntoPlan, DmlWritePlanRequest, DmlWritePlanner, WriteIntentOverrides,
+        WriteMode,
+    };
+
+    let target = logical_table_ref_from_name(&request.target_table)?;
+    let target_table_name = target.qualified_name();
+    let (catalog, table_id) = state
+        .catalog_manager
+        .resolve_table(&target_table_name)
+        .await
+        .map_err(|error| ApiError::NotFound(error.to_string()))?;
+    if !catalog
+        .table_exists(&table_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+    {
+        return Err(ApiError::NotFound(format!(
+            "Table '{}' does not exist",
+            target_table_name
+        )));
+    }
+    let target_schema = catalog
+        .get_table(&table_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let target_stats = catalog.get_statistics(&table_id).await.unwrap_or_default();
+    let (source, source_schema, source_stats) =
+        resolve_table_write_explain_source(&state, &request).await?;
+    let write_mode = parse_table_write_mode(request.write_mode.as_deref())?;
+    let distribution = parse_distribution_mode(request.distribution.as_deref())?;
+    let conflict_policy = if matches!(write_mode, WriteMode::Upsert | WriteMode::Merge) {
+        ConflictPolicy::Upsert
+    } else {
+        ConflictPolicy::Error
+    };
+    let plan = CopyIntoPlan {
+        source,
+        target,
+        write_mode,
+        conflict_policy,
+        distribution,
+    };
+    let write_intent_overrides = WriteIntentOverrides {
+        tenant_id: request.tenant_id.clone(),
+        actor: request.actor.clone(),
+        idempotency_key: request.idempotency_key.clone(),
+        row_count_hint: request.row_count_hint,
+        estimated_bytes: request.estimated_bytes,
+        requires_row_level_semantics: request.requires_row_level_semantics,
+        batch_local_constraints_sufficient: request.batch_local_constraints_sufficient,
+    };
+    let target_columns = request.target_columns.unwrap_or_default();
+    let routed = DmlWritePlanner::default()
+        .plan(DmlWritePlanRequest {
+            target_schema: &target_schema,
+            target_stats: Some(&target_stats),
+            source_schema: source_schema.as_ref(),
+            source_stats: source_stats.as_ref(),
+            write_intent_overrides: Some(&write_intent_overrides),
+            plan: &plan,
+            target_columns: &target_columns,
+        })
+        .map_err(|error| ApiError::InvalidArgument(error.to_string()))?;
+
+    Ok(Json(routed.route_explanation()))
+}
+
+async fn resolve_table_write_explain_source(
+    state: &AppState,
+    request: &TableWriteExplainRequest,
+) -> ApiResult<(
+    crate::query::table_write_plan::ReadSource,
+    Option<proximadb_catalog::CatalogTableSchema>,
+    Option<proximadb_catalog::CatalogTableStatistics>,
+)> {
+    use crate::query::table_write_plan::{ReadSource, SnapshotRef};
+
+    let source_table = request
+        .source_table
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let source_sql = request
+        .source_sql
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    match (source_table, source_sql) {
+        (Some(_), Some(_)) => Err(ApiError::InvalidArgument(
+            "Provide either source_table or source_sql, not both".to_string(),
+        )),
+        (None, None) => Err(ApiError::InvalidArgument(
+            "source_table or source_sql is required".to_string(),
+        )),
+        (Some(table_name), None) => {
+            let table = logical_table_ref_from_name(table_name)?;
+            let (catalog, table_id) = state
+                .catalog_manager
+                .resolve_table(&table.qualified_name())
+                .await
+                .map_err(|error| ApiError::NotFound(error.to_string()))?;
+            if !catalog
+                .table_exists(&table_id)
+                .await
+                .map_err(|error| ApiError::Internal(error.to_string()))?
+            {
+                return Err(ApiError::NotFound(format!(
+                    "Source table '{}' does not exist",
+                    table.qualified_name()
+                )));
+            }
+            let schema = catalog
+                .get_table(&table_id)
+                .await
+                .map_err(|error| ApiError::Internal(error.to_string()))?;
+            let stats = catalog.get_statistics(&table_id).await.unwrap_or_default();
+            Ok((
+                ReadSource::CatalogTable {
+                    table,
+                    snapshot: SnapshotRef::Latest,
+                },
+                Some(schema),
+                Some(stats),
+            ))
+        }
+        (None, Some(sql)) => Ok((ReadSource::QuerySql(sql.to_string()), None, None)),
+    }
+}
+
+fn logical_table_ref_from_name(
+    name: &str,
+) -> ApiResult<crate::query::table_write_plan::LogicalTableRef> {
+    let parts: Vec<_> = name
+        .split('.')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+    let Some(table_name) = parts.last() else {
+        return Err(ApiError::InvalidArgument(
+            "table name cannot be empty".to_string(),
+        ));
+    };
+    Ok(crate::query::table_write_plan::LogicalTableRef {
+        namespace: parts[..parts.len().saturating_sub(1)]
+            .iter()
+            .map(|part| (*part).to_string())
+            .collect(),
+        name: (*table_name).to_string(),
+    })
+}
+
+fn parse_table_write_mode(
+    mode: Option<&str>,
+) -> ApiResult<crate::query::table_write_plan::WriteMode> {
+    use crate::query::table_write_plan::WriteMode;
+
+    match mode
+        .unwrap_or("append")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "append" => Ok(WriteMode::Append),
+        "insert" | "insert_only" | "insert-only" => Ok(WriteMode::InsertOnly),
+        "upsert" => Ok(WriteMode::Upsert),
+        "overwrite" | "insert_overwrite" | "insert-overwrite" | "overwrite_table"
+        | "overwrite-table" => Ok(WriteMode::OverwriteTable),
+        "merge" => Ok(WriteMode::Merge),
+        other => Err(ApiError::InvalidArgument(format!(
+            "Unsupported table write mode '{}'",
+            other
+        ))),
+    }
+}
+
+fn parse_distribution_mode(
+    mode: Option<&str>,
+) -> ApiResult<crate::query::table_write_plan::DistributionMode> {
+    use crate::query::table_write_plan::DistributionMode;
+
+    match mode.unwrap_or("auto").trim().to_ascii_lowercase().as_str() {
+        "auto" => Ok(DistributionMode::Auto),
+        "local" | "local_only" | "local-only" => Ok(DistributionMode::LocalOnly),
+        "pseudo" | "pseudo_distributed" | "pseudo-distributed" => {
+            Ok(DistributionMode::PseudoDistributed)
+        }
+        "distributed" => Ok(DistributionMode::Distributed),
+        other => Err(ApiError::InvalidArgument(format!(
+            "Unsupported distribution mode '{}'",
+            other
+        ))),
     }
 }
 
@@ -624,6 +869,14 @@ pub fn create_router(state: AppState) -> axum::Router {
         )
         // SQL query execution (explain added conditionally below)
         .route("/api/v1/sql/execute", post(execute_sql))
+        .route(
+            "/api/v1/catalog/table_routing",
+            get(get_catalog_table_routing),
+        )
+        .route(
+            "/api/v1/catalog/table_write/explain",
+            post(explain_table_write_route),
+        )
         // Health check endpoints
         .route("/health", get(comprehensive_health_check))
         .route("/health/live", get(liveness_check))

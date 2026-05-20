@@ -680,7 +680,7 @@ pub enum ResolvedAuthorityMode {
 }
 
 /// Catalog-resolved object metadata carried through lowerers, optimizers, and EXPLAIN.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ResolvedObjectContext {
     /// Source name as referenced by the query.
     pub source: String,
@@ -749,7 +749,7 @@ pub struct ResolvedStorageLayoutContext {
 }
 
 /// Planner-visible rebuildable projection/access-method metadata.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ResolvedProjectionContext {
     pub name: String,
     pub kind: String,
@@ -760,6 +760,14 @@ pub struct ResolvedProjectionContext {
     pub rebuildable: bool,
     pub lossy: bool,
     pub support_status: String,
+    /// `ProjectionFreshnessState` variant name (e.g. "Fresh", "Stale", "RebuildRequired").
+    /// Surfaced in EXPLAIN so planners and operators can assess projection health.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness_state: Option<String>,
+    /// Rebuild rate from `RebuildRtoSpec` in seconds per 10 GiB of L1 data.
+    /// None means no RTO estimate has been cataloged for this projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebuild_rto_seconds_per_10gb: Option<f64>,
 }
 
 /// Execution priority

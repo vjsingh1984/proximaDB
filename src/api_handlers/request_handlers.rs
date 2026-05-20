@@ -2361,6 +2361,59 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    fn test_proxima_record(
+        oid: impl Into<String>,
+        vector: Vec<f32>,
+        timestamp_ms: i64,
+    ) -> proximadb_records::ProximaRecord {
+        let timestamp_ns = timestamp_ms.saturating_mul(1_000_000);
+        let dim = vector.len() as u32;
+        proximadb_records::ProximaRecord {
+            oid: oid.into(),
+            created_at_ns: timestamp_ns,
+            updated_at_ns: timestamp_ns,
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "dense_vector".to_string(),
+                dim,
+                values: vector,
+            }],
+            ..proximadb_records::ProximaRecord::default()
+        }
+    }
+
+    trait TestProximaRecordExt {
+        fn record_version(self, version: u64) -> proximadb_records::ProximaRecord;
+        fn origin(self, origin: impl Into<String>) -> proximadb_records::ProximaRecord;
+        fn metadata(
+            self,
+            metadata: std::collections::HashMap<String, proximadb_data_model::ProximaValue>,
+        ) -> proximadb_records::ProximaRecord;
+    }
+
+    impl TestProximaRecordExt for proximadb_records::ProximaRecord {
+        fn record_version(mut self, version: u64) -> proximadb_records::ProximaRecord {
+            self.record_version = version;
+            self
+        }
+
+        fn origin(mut self, origin: impl Into<String>) -> proximadb_records::ProximaRecord {
+            self.origin = Some(origin.into());
+            self
+        }
+
+        fn metadata(
+            mut self,
+            metadata: std::collections::HashMap<String, proximadb_data_model::ProximaValue>,
+        ) -> proximadb_records::ProximaRecord {
+            self.props = metadata
+                .into_iter()
+                .map(|(key, value)| (key, proximadb_records::ProximaTreeNode::Value(value)))
+                .collect();
+            self
+        }
+    }
+
     // ==================== CollectionIdCache Tests ====================
 
     #[test]
@@ -2811,33 +2864,16 @@ mod tests {
 
     #[test]
     fn test_vector_batch_request_construction() {
-        use crate::proto::proximadb_v1::{VectorBatchRequest, VectorRecord};
+        use crate::proto::proximadb_v1::VectorBatchRequest;
 
-        let vector1 = VectorRecord {
-            id: "vec_1".to_string(),
-            vector: vec![0.1, 0.2, 0.3, 0.4],
-            metadata: Default::default(),
-            timestamp: Some(1234567890),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: None,
-        };
-
-        let vector2 = VectorRecord {
-            id: "vec_2".to_string(),
-            vector: vec![0.5, 0.6, 0.7, 0.8],
-            metadata: Default::default(),
-            timestamp: Some(1234567891),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: None,
-        };
+        let vector1 =
+            test_proxima_record("vec_1", vec![0.1, 0.2, 0.3, 0.4], 1234567890).record_version(1);
+        let vector2 =
+            test_proxima_record("vec_2", vec![0.5, 0.6, 0.7, 0.8], 1234567891).record_version(1);
 
         let request = VectorBatchRequest {
             collection_id: "test_collection".to_string(),
-            vectors: vec![vector1, vector2],
+            vectors: vec![vector1.into(), vector2.into()],
         };
 
         assert_eq!(request.collection_id, "test_collection");
@@ -2925,38 +2961,26 @@ mod tests {
 
     #[test]
     fn test_vector_record_with_metadata() {
-        use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value::Value};
-
         let mut metadata = std::collections::HashMap::new();
         metadata.insert(
             "category".to_string(),
-            SqlValue {
-                value: Some(Value::StringValue("electronics".to_string())),
-            },
+            proximadb_data_model::ProximaValue::String("electronics".to_string()),
         );
         metadata.insert(
             "price".to_string(),
-            SqlValue {
-                value: Some(Value::NumberValue(99.99)),
-            },
+            proximadb_data_model::ProximaValue::Float64(99.99),
         );
         metadata.insert(
             "in_stock".to_string(),
-            SqlValue {
-                value: Some(Value::BoolValue(true)),
-            },
+            proximadb_data_model::ProximaValue::Boolean(true),
         );
 
-        let record = VectorRecord {
-            id: "product_1".to_string(),
-            vector: vec![0.1, 0.2, 0.3],
-            metadata,
-            timestamp: Some(1234567890),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: Some("product_catalog".to_string()),
-        };
+        let record: crate::proto::proximadb_v1::VectorRecord =
+            test_proxima_record("product_1", vec![0.1, 0.2, 0.3], 1234567890)
+                .record_version(1)
+                .origin("product_catalog")
+                .metadata(metadata)
+                .into();
 
         assert_eq!(record.metadata.len(), 3);
         assert!(record.metadata.contains_key("category"));
@@ -3125,28 +3149,20 @@ mod tests {
 
     #[test]
     fn test_unicode_in_metadata() {
-        use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value::Value};
-
         let mut metadata = std::collections::HashMap::new();
         metadata.insert(
             "description".to_string(),
-            SqlValue {
-                value: Some(Value::StringValue("Unicode test".to_string())),
-            },
+            proximadb_data_model::ProximaValue::String("Unicode test".to_string()),
         );
         metadata.insert(
             "emoji".to_string(),
-            SqlValue {
-                value: Some(Value::StringValue("Test data".to_string())),
-            },
+            proximadb_data_model::ProximaValue::String("Test data".to_string()),
         );
 
-        let record = VectorRecord {
-            id: "unicode_test".to_string(),
-            vector: vec![0.1, 0.2],
-            metadata,
-            ..Default::default()
-        };
+        let record: crate::proto::proximadb_v1::VectorRecord =
+            test_proxima_record("unicode_test", vec![0.1, 0.2], 0)
+                .metadata(metadata)
+                .into();
 
         assert_eq!(record.metadata.len(), 2);
     }

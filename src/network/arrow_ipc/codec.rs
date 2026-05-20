@@ -52,6 +52,25 @@ pub enum FlightWriteOperation {
     Delete,
 }
 
+impl From<FlightWriteOperation> for crate::services::WriteOperationKind {
+    fn from(op: FlightWriteOperation) -> Self {
+        match op {
+            FlightWriteOperation::Upsert => Self::Upsert,
+            FlightWriteOperation::Insert => Self::Insert,
+            FlightWriteOperation::Delete => Self::Delete,
+        }
+    }
+}
+
+impl From<WriteMode> for crate::services::WriteDurabilityRequirement {
+    fn from(mode: WriteMode) -> Self {
+        match mode {
+            WriteMode::WAL => Self::WalRequired,
+            WriteMode::Direct => Self::DirectCommitAllowed,
+        }
+    }
+}
+
 impl FlightWriteOperation {
     pub fn from_token(token: &str) -> Option<Self> {
         let token = token.trim().to_ascii_lowercase();

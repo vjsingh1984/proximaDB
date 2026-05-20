@@ -39,6 +39,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, error, info};
 
+use crate::services::{WriteDurabilityRequirement, WriteLaneRouter, WriteIntent, WriteOperationKind};
 use crate::api_handlers::{
     RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichRecordDeleteBatchRequest,
     RichRecordGetRequest, RichSearchRequest,
@@ -1015,6 +1016,17 @@ pub async fn insert_records(
         records: rich_records,
     };
 
+    let intent = WriteIntent::new(&collection, WriteOperationKind::Insert)
+        .with_durability(WriteDurabilityRequirement::WalRequired)
+        .with_row_count_hint(inserted_ids.len() as u64);
+    let lane = WriteLaneRouter::new().route(&intent);
+    debug!(
+        collection_id = %collection,
+        write_lane = ?lane.lane,
+        guards = ?lane.required_guards,
+        "REST v2 insert_records write-lane decision"
+    );
+
     match state
         .request_handlers
         .handle_record_batch_for_tenant(batch_request, Some(&tenant.tenant_id))
@@ -1530,6 +1542,17 @@ pub async fn delete_record_v2(
             "Record ID is required".to_string(),
         ));
     }
+
+    let intent = WriteIntent::new(&collection_id, WriteOperationKind::Delete)
+        .with_durability(WriteDurabilityRequirement::WalRequired)
+        .with_row_count_hint(1);
+    let lane = WriteLaneRouter::new().route(&intent);
+    debug!(
+        collection_id = %collection_id,
+        write_lane = ?lane.lane,
+        guards = ?lane.required_guards,
+        "REST v2 delete_record write-lane decision"
+    );
 
     match state
         .request_handlers

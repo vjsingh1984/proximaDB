@@ -118,6 +118,11 @@ fn resolved_projection_from_catalog(projection: &CatalogProjection) -> ResolvedP
         rebuildable: projection.rebuildable,
         lossy: projection.lossy,
         support_status: projection.support_status.clone(),
+        freshness_state: Some(format!("{:?}", projection.freshness_state)),
+        rebuild_rto_seconds_per_10gb: projection
+            .rebuild_rto
+            .as_ref()
+            .map(|rto| rto.rebuild_seconds_per_10gb),
     }
 }
 

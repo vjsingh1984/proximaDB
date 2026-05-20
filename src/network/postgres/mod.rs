@@ -28,9 +28,34 @@ use self::session::SessionManager;
 use crate::catalog::CatalogManager;
 use crate::graph::GraphService;
 use crate::observability::ObservabilityService;
-use crate::services::CollectionService;
 use crate::services::VectorOperationsService;
+use crate::services::{CollectionService, TableWalAppender};
 use crate::storage::document::DocumentService;
+use proximadb_records::RecordStorage;
+
+/// Optional canonical write dependencies for PostgreSQL wire DML.
+///
+/// When present, catalog-routed relational tables can write through
+/// `DmlService::with_direct_record_storage`; legacy vector-specialized tables
+/// continue to use the compatibility route selected by xCatalog.
+#[derive(Clone)]
+pub struct DirectPgwireWriteServices {
+    record_storage: Arc<dyn RecordStorage>,
+    wal_appender: Arc<dyn TableWalAppender>,
+}
+
+impl DirectPgwireWriteServices {
+    /// Build direct pgwire write dependencies.
+    pub fn new(
+        record_storage: Arc<dyn RecordStorage>,
+        wal_appender: Arc<dyn TableWalAppender>,
+    ) -> Self {
+        Self {
+            record_storage,
+            wal_appender,
+        }
+    }
+}
 
 /// PostgreSQL-compatible server
 pub struct PostgresServer {
@@ -50,6 +75,8 @@ pub struct PostgresServer {
     graph_service: Option<Arc<GraphService>>,
     /// Observability service for logs/metrics/traces
     observability_service: Option<Arc<ObservabilityService>>,
+    /// Optional canonical record/WAL writer for relational pgwire DML.
+    direct_write_services: Option<DirectPgwireWriteServices>,
     /// Whether the server is running
     running: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -74,8 +101,27 @@ impl PostgresServer {
             document_service,
             graph_service,
             observability_service,
+            direct_write_services: None,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Enable direct canonical record/WAL writes for catalog-routed relational
+    /// pgwire DML while preserving legacy vector compatibility routing.
+    pub fn with_direct_record_writes(
+        mut self,
+        record_storage: Arc<dyn RecordStorage>,
+        wal_appender: Arc<dyn TableWalAppender>,
+    ) -> Self {
+        self.direct_write_services =
+            Some(DirectPgwireWriteServices::new(record_storage, wal_appender));
+        self
+    }
+
+    /// Enable direct canonical record/WAL writes with prebuilt dependencies.
+    pub fn with_direct_write_services(mut self, services: DirectPgwireWriteServices) -> Self {
+        self.direct_write_services = Some(services);
+        self
     }
 
     /// Start the PostgreSQL server
@@ -97,6 +143,7 @@ impl PostgresServer {
                     let document_service = self.document_service.clone();
                     let graph_service = self.graph_service.clone();
                     let observability_service = self.observability_service.clone();
+                    let direct_write_services = self.direct_write_services.clone();
 
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_connection(
@@ -109,6 +156,7 @@ impl PostgresServer {
                             document_service,
                             graph_service,
                             observability_service,
+                            direct_write_services,
                         )
                         .await
                         {
@@ -143,13 +191,14 @@ impl PostgresServer {
         document_service: Option<Arc<DocumentService>>,
         graph_service: Option<Arc<GraphService>>,
         observability_service: Option<Arc<ObservabilityService>>,
+        direct_write_services: Option<DirectPgwireWriteServices>,
     ) -> Result<()> {
         // Create session
         let session = session_manager.create_session(addr).await?;
         let session_id = session.id.clone();
 
         // Create protocol handler
-        let mut protocol = PostgresProtocol::new(
+        let protocol = PostgresProtocol::new(
             stream,
             session,
             collection_service,
@@ -157,8 +206,16 @@ impl PostgresServer {
             document_service,
             graph_service,
             observability_service,
-        )
-        .with_catalog_manager(catalog_manager);
+        );
+        let mut protocol = if let Some(direct_write_services) = direct_write_services {
+            protocol.with_direct_catalog_manager(
+                catalog_manager,
+                direct_write_services.record_storage,
+                direct_write_services.wal_appender,
+            )
+        } else {
+            protocol.with_catalog_manager(catalog_manager)
+        };
 
         // Run protocol loop
         match protocol.run().await {

@@ -11,40 +11,42 @@ mod tests {
 
     use crate::compute::distance_computation::DistanceMetric;
     use crate::core::Config;
-    use crate::proto::proximadb_v1::VectorRecord as ProtoVectorRecord;
     use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::engines::sst::SstEngine;
     use crate::storage::persistence::write_ahead_log::WALConfig;
-    use proximadb_records::{EmbeddingCell, ProximaRecord};
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
     /// Create test vector record with customizable properties
     fn create_test_vector_record(
         id: &str,
         vector: Vec<f32>,
         metadata: Vec<(&str, &str)>,
-    ) -> ProtoVectorRecord {
-        ProtoVectorRecord {
-            id: id.to_string(),
-            vector,
-            metadata: {
-                let mut map = std::collections::HashMap::new();
-                for (k, v) in metadata {
-                    map.insert(
+    ) -> ProximaRecord {
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default();
+
+        ProximaRecord {
+            oid: id.to_string(),
+            local_id: Some(id.to_string()),
+            record_version: 1,
+            created_at_ns: now_ns,
+            updated_at_ns: now_ns,
+            props: metadata
+                .into_iter()
+                .map(|(k, v)| {
+                    (
                         k.to_string(),
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                v.to_string(),
-                            )),
-                        },
-                    );
-                }
-                map
-            },
-            timestamp: Some(chrono::Utc::now().timestamp()),
-            updated_at: Some(chrono::Utc::now().timestamp()),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+                        ProximaTreeNode::Value(ProximaValue::String(v.to_string())),
+                    )
+                })
+                .collect(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "vector".to_string(),
+                dim: vector.len() as u32,
+                values: vector,
+            }],
+            ..Default::default()
         }
     }
 
@@ -151,7 +153,8 @@ mod tests {
         let vector = vec![1.0, 2.0, 3.0, 4.0];
         let metadata = vec![("key1", "value1"), ("key2", "value2")];
 
-        let proto_record = create_test_vector_record("test_id", vector.clone(), metadata);
+        let canonical_record = create_test_vector_record("test_id", vector.clone(), metadata);
+        let proto_record: crate::proto::proximadb_v1::VectorRecord = (&canonical_record).into();
         assert_eq!(proto_record.id, "test_id".to_string());
         assert_eq!(proto_record.vector, vector);
         assert_eq!(proto_record.metadata.len(), 2);
@@ -195,12 +198,15 @@ mod tests {
         ];
 
         let record = create_test_vector_record("meta_test", vec![1.0, 2.0], metadata_pairs);
-        assert_eq!(record.metadata.len(), 3);
+        assert_eq!(record.props.len(), 3);
 
         // Check metadata structure
-        for (key, value) in &record.metadata {
+        for (key, value) in &record.props {
             assert!(!key.is_empty());
-            assert!(value.value.is_some());
+            assert!(matches!(
+                value,
+                ProximaTreeNode::Value(ProximaValue::String(_))
+            ));
         }
     }
 
@@ -208,17 +214,16 @@ mod tests {
     async fn test_timestamp_fields() {
         let record = create_test_vector_record("time_test", vec![1.0], vec![]);
 
-        assert!(record.timestamp.unwrap() > 0);
-        assert!(record.updated_at.is_some());
-        assert!(record.updated_at.unwrap() > 0);
-        assert_eq!(record.version, Some(1));
+        assert!(record.created_at_ns > 0);
+        assert!(record.updated_at_ns > 0);
+        assert_eq!(record.record_version, 1);
     }
 
     #[tokio::test]
     async fn test_empty_metadata() {
         let record_with_empty_meta =
             create_test_vector_record("empty_meta", vec![1.0, 2.0], vec![]);
-        assert_eq!(record_with_empty_meta.metadata.len(), 0);
+        assert_eq!(record_with_empty_meta.props.len(), 0);
 
         let core_record = create_core_test_vector("empty_core", vec![1.0, 2.0]);
         assert_eq!(core_record.props.len(), 0);

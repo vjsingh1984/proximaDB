@@ -3,10 +3,10 @@
 use anyhow::{Result, anyhow};
 use sqlparser::ast::{
     BinaryOperator, ConflictTarget, CreateTableOptions, Cte as SqlCte, Expr as SqlExpr,
-    FunctionArg, FunctionArgExpr, Join as SqlJoin, JoinConstraint, JoinOperator, OnConflictAction,
-    OnInsert, OrderByExpr as SqlOrderByExpr, Query as SqlQuery, Select as SqlSelect, SelectItem,
-    SetExpr, SetOperator as SqlSetOperator, SqlOption, Statement, TableFactor, TableWithJoins,
-    UnaryOperator, Value, With as SqlWith,
+    FunctionArg, FunctionArgExpr, GroupByExpr, Join as SqlJoin, JoinConstraint, JoinOperator,
+    OnConflictAction, OnInsert, OrderByExpr as SqlOrderByExpr, Query as SqlQuery,
+    Select as SqlSelect, SelectItem, SetExpr, SetOperator as SqlSetOperator, SqlOption, Statement,
+    TableFactor, TableWithJoins, UnaryOperator, Value, With as SqlWith,
 };
 use sqlparser::ast::{CreateIndex, IndexOption};
 use sqlparser::dialect::GenericDialect;
@@ -17,6 +17,11 @@ use std::collections::HashMap;
 use crate::services::dml::{
     ComparisonOperator as DmlComparisonOperator, Condition, DmlStatement, LogicalOperator,
     SqlValueLiteral, WhereClause,
+};
+
+use crate::query::table_write_plan::{
+    ConflictPolicy, CopyIntoPlan, DistributionMode, LogicalTableRef, ReadSource, SnapshotRef,
+    WriteMode,
 };
 
 use crate::query::ast::{
@@ -1008,11 +1013,43 @@ impl SqlFrontendParser {
             .map(|c| unquote_identifier_text(&c.to_string()))
             .collect();
 
-        // Get values from source
-        let values = match &insert.source {
-            Some(source) => self.extract_values_from_source(source)?,
-            None => return Err(anyhow!("INSERT requires VALUES clause")),
+        let Some(source) = &insert.source else {
+            return Err(anyhow!("INSERT requires VALUES or SELECT source"));
         };
+
+        if !matches!(&*source.body, SetExpr::Values(_)) {
+            if insert.on.is_some() {
+                return Err(anyhow!(
+                    "INSERT ... SELECT with ON CONFLICT is not supported yet"
+                ));
+            }
+            let target = LogicalTableRef::new(table_name.clone());
+            let source = self
+                .simple_catalog_table_source(source)
+                .unwrap_or_else(|| ReadSource::QuerySql(source.to_string()));
+            let plan = CopyIntoPlan {
+                source,
+                target,
+                write_mode: if insert.overwrite {
+                    WriteMode::OverwriteTable
+                } else {
+                    WriteMode::Append
+                },
+                conflict_policy: if insert.overwrite {
+                    ConflictPolicy::Upsert
+                } else {
+                    ConflictPolicy::Error
+                },
+                distribution: DistributionMode::Auto,
+            };
+            return if insert.overwrite {
+                Ok(DmlStatement::InsertOverwrite { plan, columns })
+            } else {
+                Ok(DmlStatement::InsertSelect { plan, columns })
+            };
+        }
+
+        let values = self.extract_values_from_source(source)?;
 
         if let Some(on_insert) = &insert.on {
             let (conflict_columns, update_assignments) =
@@ -1050,6 +1087,87 @@ impl SqlFrontendParser {
                 .collect(),
             _ => Err(anyhow!("INSERT source must be VALUES clause")),
         }
+    }
+
+    fn simple_catalog_table_source(&self, source: &SqlQuery) -> Option<ReadSource> {
+        if source.with.is_some()
+            || source.order_by.is_some()
+            || source.limit_clause.is_some()
+            || source.fetch.is_some()
+            || !source.locks.is_empty()
+            || source.for_clause.is_some()
+            || source.settings.is_some()
+            || source.format_clause.is_some()
+            || !source.pipe_operators.is_empty()
+        {
+            return None;
+        }
+
+        let SetExpr::Select(select) = &*source.body else {
+            return None;
+        };
+        if select.distinct.is_some()
+            || select.top.is_some()
+            || select.into.is_some()
+            || select.prewhere.is_some()
+            || select.selection.is_some()
+            || select.having.is_some()
+            || select.qualify.is_some()
+            || select.connect_by.is_some()
+            || !select.lateral_views.is_empty()
+            || !select.cluster_by.is_empty()
+            || !select.distribute_by.is_empty()
+            || !select.sort_by.is_empty()
+            || !select.named_window.is_empty()
+            || select.value_table_mode.is_some()
+        {
+            return None;
+        }
+        if !matches!(&select.group_by, GroupByExpr::Expressions(exprs, modifiers) if exprs.is_empty() && modifiers.is_empty())
+        {
+            return None;
+        }
+        if !matches!(select.projection.as_slice(), [SelectItem::Wildcard(_)]) {
+            return None;
+        }
+
+        let [from] = select.from.as_slice() else {
+            return None;
+        };
+        if !from.joins.is_empty() {
+            return None;
+        }
+        let TableFactor::Table {
+            name,
+            alias: None,
+            args: None,
+            with_hints,
+            version: None,
+            with_ordinality: false,
+            partitions,
+            json_path: None,
+            sample: None,
+            index_hints,
+        } = &from.relation
+        else {
+            return None;
+        };
+        if !with_hints.is_empty() || !partitions.is_empty() || !index_hints.is_empty() {
+            return None;
+        }
+
+        let mut parts = unquote_object_name(&name.to_string())
+            .split('.')
+            .map(|part| part.to_string())
+            .collect::<Vec<_>>();
+        let table_name = parts.pop()?;
+        Some(ReadSource::CatalogTable {
+            table: LogicalTableRef {
+                namespace: parts,
+                name: table_name,
+            },
+            snapshot: SnapshotRef::Latest,
+        })
     }
 
     fn convert_insert_conflict_clause(
@@ -1808,6 +1926,91 @@ mod tests {
     }
 
     #[test]
+    fn parse_dml_insert_select_lowers_to_copy_plan() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml(
+                "INSERT INTO facts (id, payload)
+                 SELECT id, payload FROM staging WHERE tenant_id = 'acme';",
+            )
+            .expect("expected dml parse to succeed")
+            .expect("expected insert-select dml");
+
+        match statement {
+            DmlStatement::InsertSelect { plan, columns } => {
+                assert_eq!(columns, vec!["id", "payload"]);
+                assert_eq!(plan.target.name, "facts");
+                assert!(matches!(
+                    plan.write_mode,
+                    crate::query::table_write_plan::WriteMode::Append
+                ));
+                match plan.source {
+                    crate::query::table_write_plan::ReadSource::QuerySql(sql) => {
+                        assert!(sql.contains("SELECT id, payload FROM staging"));
+                    }
+                    other => panic!("expected query source, got {other:?}"),
+                }
+            }
+            other => panic!("expected insert-select statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dml_simple_insert_select_star_lowers_to_catalog_table_source() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml("INSERT INTO facts SELECT * FROM staging;")
+            .expect("expected dml parse to succeed")
+            .expect("expected insert-select dml");
+
+        match statement {
+            DmlStatement::InsertSelect { plan, columns } => {
+                assert!(columns.is_empty());
+                assert_eq!(plan.target.name, "facts");
+                match plan.source {
+                    crate::query::table_write_plan::ReadSource::CatalogTable {
+                        table,
+                        snapshot,
+                    } => {
+                        assert_eq!(table.name, "staging");
+                        assert!(table.namespace.is_empty());
+                        assert!(matches!(
+                            snapshot,
+                            crate::query::table_write_plan::SnapshotRef::Latest
+                        ));
+                    }
+                    other => panic!("expected catalog-table source, got {other:?}"),
+                }
+            }
+            other => panic!("expected insert-select statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dml_insert_overwrite_select_lowers_to_overwrite_plan() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml("INSERT OVERWRITE facts SELECT * FROM staging;")
+            .expect("expected dml parse to succeed")
+            .expect("expected insert-overwrite dml");
+
+        match statement {
+            DmlStatement::InsertOverwrite { plan, columns } => {
+                assert!(columns.is_empty());
+                assert_eq!(plan.target.name, "facts");
+                assert!(matches!(
+                    plan.write_mode,
+                    crate::query::table_write_plan::WriteMode::OverwriteTable
+                ));
+            }
+            other => panic!("expected insert-overwrite statement, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parse_dml_update_supports_quoted_catalog_names_jsonb_and_vector_literal() {
         let parser = SqlFrontendParser::new();
 
@@ -2050,6 +2253,136 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn parse_ddl_promote_props_key_basic_types() {
+        let parser = SqlFrontendParser::new();
+
+        let cases: &[(&str, &str, &str)] = &[
+            (
+                "ALTER TABLE events PROMOTE PROPS KEY user_id TYPE BIGINT",
+                "user_id",
+                "BigInt",
+            ),
+            (
+                "ALTER TABLE events PROMOTE PROPS KEY label TYPE TEXT;",
+                "label",
+                "Text",
+            ),
+            (
+                "ALTER TABLE logs PROMOTE PROPS KEY score TYPE FLOAT",
+                "score",
+                "Float",
+            ),
+            (
+                "ALTER TABLE docs PROMOTE PROPS KEY meta TYPE JSONB",
+                "meta",
+                "Jsonb",
+            ),
+        ];
+
+        for (sql, expected_key, expected_type_fragment) in cases {
+            let result = parser
+                .parse_ddl(sql)
+                .unwrap_or_else(|e| panic!("parse failed for `{sql}`: {e}"));
+
+            let stmt = result.expect("expected DdlStatement");
+            match stmt {
+                crate::services::ddl::DdlStatement::AlterTable { table_name: _, changes } => {
+                    assert_eq!(changes.len(), 1, "expected exactly one change");
+                    match &changes[0] {
+                        crate::services::ddl::AlterTableChange::PromotePropsKey {
+                            key,
+                            column_type,
+                            comment,
+                        } => {
+                            assert_eq!(key, expected_key, "key mismatch for `{sql}`");
+                            assert!(
+                                format!("{:?}", column_type).contains(expected_type_fragment),
+                                "type mismatch for `{sql}`: got {:?}",
+                                column_type
+                            );
+                            assert!(comment.is_none());
+                        }
+                        other => panic!("expected PromotePropsKey, got {:?}", other),
+                    }
+                }
+                other => panic!("expected AlterTable, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_ddl_set_table_option_props_auto_promotion() {
+        let parser = SqlFrontendParser::new();
+
+        let cases = [
+            (
+                "ALTER TABLE events SET (props_auto_promotion = 'enabled')",
+                "events",
+                "props_auto_promotion",
+                "enabled",
+            ),
+            (
+                "ALTER TABLE logs SET (props_auto_promotion = 'disabled');",
+                "logs",
+                "props_auto_promotion",
+                "disabled",
+            ),
+        ];
+
+        for (sql, expected_table, expected_key, expected_value) in cases {
+            let stmt = parser
+                .parse_ddl(sql)
+                .unwrap_or_else(|e| panic!("parse failed for `{sql}`: {e}"))
+                .expect("expected DdlStatement");
+
+            match stmt {
+                crate::services::ddl::DdlStatement::AlterTable { table_name, changes } => {
+                    assert_eq!(table_name, expected_table, "table mismatch for `{sql}`");
+                    assert_eq!(changes.len(), 1, "expected one change for `{sql}`");
+                    match &changes[0] {
+                        crate::services::ddl::AlterTableChange::SetTableOption { key, value } => {
+                            assert_eq!(key, expected_key, "key mismatch for `{sql}`");
+                            assert_eq!(value, expected_value, "value mismatch for `{sql}`");
+                        }
+                        other => panic!("expected SetTableOption, got {:?}", other),
+                    }
+                }
+                other => panic!("expected AlterTable, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_ddl_promote_props_key_varchar() {
+        let parser = SqlFrontendParser::new();
+        let sql = "ALTER TABLE users PROMOTE PROPS KEY email TYPE VARCHAR(255);";
+        let stmt = parser.parse_ddl(sql).unwrap().unwrap();
+        match stmt {
+            crate::services::ddl::DdlStatement::AlterTable { changes, .. } => {
+                match &changes[0] {
+                    crate::services::ddl::AlterTableChange::PromotePropsKey {
+                        key,
+                        column_type,
+                        ..
+                    } => {
+                        assert_eq!(key, "email");
+                        assert!(
+                            matches!(
+                                column_type,
+                                crate::services::ddl::SqlDataType::Varchar { .. }
+                            ),
+                            "expected Varchar, got {:?}",
+                            column_type
+                        );
+                    }
+                    other => panic!("expected PromotePropsKey, got {:?}", other),
+                }
+            }
+            other => panic!("expected AlterTable, got {:?}", other),
+        }
+    }
 }
 
 // ========================
@@ -2064,6 +2397,12 @@ use crate::services::ddl::{
 impl SqlFrontendParser {
     /// Parse SQL text and return a DDL statement if it's CREATE/ALTER/DROP
     pub fn parse_ddl(&self, sql: &str) -> Result<Option<DdlStatement>> {
+        // Pre-parse: intercept ProximaDB-specific DDL that sqlparser does not understand.
+        // Pattern: ALTER TABLE <name> PROMOTE PROPS KEY <key> TYPE <type>[;]
+        if let Some(result) = self.try_parse_promote_props_key(sql)? {
+            return Ok(Some(result));
+        }
+
         let statements = Parser::parse_sql(&self.dialect, sql)
             .map_err(|e| anyhow!("SQL parsing failed: {}", e))?;
 
@@ -2080,6 +2419,71 @@ impl SqlFrontendParser {
 
         let statement = &statements[0];
         self.try_convert_ddl(statement)
+    }
+
+    /// Intercept `ALTER TABLE <name> PROMOTE PROPS KEY <key> TYPE <type>` before sqlparser.
+    /// Returns `Ok(Some(...))` when the pattern matches, `Ok(None)` when it does not.
+    fn try_parse_promote_props_key(&self, sql: &str) -> Result<Option<DdlStatement>> {
+        // Normalise: collapse whitespace, strip trailing semicolon.
+        let normalised = sql.trim().trim_end_matches(';').trim();
+        let upper = normalised.to_uppercase();
+
+        // Fast path: skip anything that is not an ALTER TABLE … PROMOTE … statement.
+        if !upper.contains("PROMOTE") {
+            return Ok(None);
+        }
+
+        // Tokenise by whitespace for a simple hand-rolled parse.
+        // Expected token sequence (case-insensitive):
+        //   ALTER TABLE <name> PROMOTE PROPS KEY <key> TYPE <type…>
+        let tokens: Vec<&str> = normalised.split_whitespace().collect();
+
+        // Need at least 9 tokens: ALTER TABLE name PROMOTE PROPS KEY key TYPE type
+        if tokens.len() < 9 {
+            return Ok(None);
+        }
+
+        let t = |i: usize| tokens.get(i).map(|s| s.to_uppercase());
+
+        if t(0).as_deref() != Some("ALTER")
+            || t(1).as_deref() != Some("TABLE")
+            || t(3).as_deref() != Some("PROMOTE")
+            || t(4).as_deref() != Some("PROPS")
+            || t(5).as_deref() != Some("KEY")
+            || t(7).as_deref() != Some("TYPE")
+        {
+            return Ok(None);
+        }
+
+        let table_name = unquote_object_name(tokens[2]);
+        let key = tokens[6].to_string();
+        // Remaining tokens after TYPE form the type string (e.g. "VARCHAR(255)").
+        let type_str = tokens[8..].join(" ");
+
+        // Parse the type via a dummy CREATE TABLE so we reuse convert_data_type.
+        let dummy_sql = format!("CREATE TABLE _proxima_dummy (x {type_str});");
+        let dummy_stmts = Parser::parse_sql(&self.dialect, &dummy_sql)
+            .map_err(|e| anyhow!("Invalid type '{}' in PROMOTE PROPS KEY: {}", type_str, e))?;
+
+        let column_type = match dummy_stmts.first() {
+            Some(Statement::CreateTable(ct)) => {
+                let col = ct
+                    .columns
+                    .first()
+                    .ok_or_else(|| anyhow!("Internal: dummy table has no columns"))?;
+                self.convert_data_type(&col.data_type)?
+            }
+            _ => return Err(anyhow!("Internal: dummy CREATE TABLE parse failed")),
+        };
+
+        Ok(Some(DdlStatement::AlterTable {
+            table_name,
+            changes: vec![AlterTableChange::PromotePropsKey {
+                key,
+                column_type,
+                comment: None,
+            }],
+        }))
     }
 
     /// Try to convert a statement to DDL, returning None for non-DDL statements
@@ -2239,6 +2643,30 @@ impl SqlFrontendParser {
                                             position: ColumnPosition::First,
                                         });
                                     }
+                                }
+                            }
+                        }
+                        AlterTableOperation::SetOptionsParens { options } => {
+                            // ALTER TABLE <name> SET (key = 'value', ...)
+                            use sqlparser::ast::SqlOption as SqlOpt;
+                            for opt in options {
+                                if let SqlOpt::KeyValue { key, value } = opt {
+                                    let value_str = match value {
+                                        sqlparser::ast::Expr::Value(v) => {
+                                            match &v.value {
+                                                sqlparser::ast::Value::SingleQuotedString(s)
+                                                | sqlparser::ast::Value::DoubleQuotedString(s) => {
+                                                    s.clone()
+                                                }
+                                                other => format!("{other}"),
+                                            }
+                                        }
+                                        other => format!("{other}"),
+                                    };
+                                    changes.push(AlterTableChange::SetTableOption {
+                                        key: key.to_string(),
+                                        value: value_str,
+                                    });
                                 }
                             }
                         }

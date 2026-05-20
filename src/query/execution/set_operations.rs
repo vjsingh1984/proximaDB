@@ -53,19 +53,19 @@ impl SetOperationPlanner for crate::query::execution::planner::ExecutionPlanner 
 
         // Plan the main query that references CTEs
         let main_plan = self.create_plan(query)?;
-        operations.extend(main_plan.operations);
+        operations.extend(main_plan.execution_steps);
         total_cost += main_plan.estimated_cost;
 
-        Ok(ExecutionPlan {
-            execution_strategy: ExecutionStrategy::Relational,
+        Ok(ExecutionPlan::runtime(
+            ExecutionStrategy::Relational,
             operations,
-            estimated_cost: total_cost,
-            optimizations: vec!["CTE materialization".to_string()],
-            performance_hints: vec!["CTEs materialized before main query".to_string()],
-            seeding_strategy: SeedingStrategy::None,
-            limit: main_plan.limit,
-            offset: main_plan.offset,
-        })
+            total_cost,
+            vec!["CTE materialization".to_string()],
+            vec!["CTEs materialized before main query".to_string()],
+            SeedingStrategy::None,
+            main_plan.limit,
+            main_plan.offset,
+        ))
     }
 
     /// Plan set operations (UNION, INTERSECT, EXCEPT)
@@ -85,10 +85,10 @@ impl SetOperationPlanner for crate::query::execution::planner::ExecutionPlanner 
         let mut operations = Vec::new();
 
         // Add operations for left query
-        operations.extend(left_plan.operations);
+        operations.extend(left_plan.execution_steps);
 
         // Add operations for right query
-        operations.extend(right_plan.operations);
+        operations.extend(right_plan.execution_steps);
 
         // Add set operation
         let set_operation = match op {
@@ -113,16 +113,16 @@ impl SetOperationPlanner for crate::query::execution::planner::ExecutionPlanner 
 
         let total_cost = left_plan.estimated_cost + right_plan.estimated_cost + 100.0; // Set operation cost
 
-        Ok(ExecutionPlan {
-            execution_strategy: ExecutionStrategy::Relational,
+        Ok(ExecutionPlan::runtime(
+            ExecutionStrategy::Relational,
             operations,
-            estimated_cost: total_cost,
-            optimizations: vec![format!("Set operation: {:?}", op)],
-            performance_hints: vec!["Set operations may require result buffering".to_string()],
-            seeding_strategy: SeedingStrategy::None,
-            limit: None, // Set operations typically don't preserve limits
-            offset: None,
-        })
+            total_cost,
+            vec![format!("Set operation: {:?}", op)],
+            vec!["Set operations may require result buffering".to_string()],
+            SeedingStrategy::None,
+            None,
+            None,
+        ))
     }
 }
 

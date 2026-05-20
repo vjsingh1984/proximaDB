@@ -364,6 +364,14 @@ pub struct ProjectionExplanation {
     pub rebuildable: bool,
     pub lossy: bool,
     pub support_status: String,
+    /// `ProjectionFreshnessState` variant name. Absent when the catalog entry
+    /// predates the freshness-state field or the projection is external-authoritative.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness_state: Option<String>,
+    /// Rebuild rate from `RebuildRtoSpec` in seconds per 10 GiB. Absent when
+    /// no RTO estimate has been benchmarked or cataloged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebuild_rto_seconds_per_10gb: Option<f64>,
 }
 
 impl From<&CatalogProjection> for ProjectionExplanation {
@@ -378,6 +386,11 @@ impl From<&CatalogProjection> for ProjectionExplanation {
             rebuildable: projection.rebuildable,
             lossy: projection.lossy,
             support_status: projection.support_status.clone(),
+            freshness_state: Some(format!("{:?}", projection.freshness_state)),
+            rebuild_rto_seconds_per_10gb: projection
+                .rebuild_rto
+                .as_ref()
+                .map(|rto| rto.rebuild_seconds_per_10gb),
         }
     }
 }
@@ -394,6 +407,8 @@ impl From<&ResolvedProjectionContext> for ProjectionExplanation {
             rebuildable: projection.rebuildable,
             lossy: projection.lossy,
             support_status: projection.support_status.clone(),
+            freshness_state: projection.freshness_state.clone(),
+            rebuild_rto_seconds_per_10gb: projection.rebuild_rto_seconds_per_10gb,
         }
     }
 }
@@ -447,6 +462,29 @@ pub struct VectorHints {
     pub quantization_level: Option<String>,
     pub estimated_io_cost: Option<f64>,
     pub estimated_compute_cost: Option<f64>,
+    /// ADR-011 ANN filtering mode chosen by the planner: "PreFilter", "Inline", or "PostFilter".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ann_filtering_mode: Option<String>,
+    /// Why the planner chose this mode (selectivity estimate, policy override, degradation).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ann_mode_reason: Option<String>,
+}
+
+impl From<&crate::services::operations::vectors::SearchPlanHints> for VectorHints {
+    fn from(h: &crate::services::operations::vectors::SearchPlanHints) -> Self {
+        Self {
+            cache_hit: h.cache_hit,
+            pruned_files: h.pruned_files,
+            ef_search: h.ef_search,
+            nprobe: h.nprobe,
+            candidates: h.candidates,
+            progressive_stages: h.progressive_stages.clone(),
+            recall_estimates: h.recall_estimates.clone(),
+            ann_filtering_mode: h.ann_filtering_mode.clone(),
+            // index_type, quantization_level, estimated_*_cost populated by engine layer
+            ..Default::default()
+        }
+    }
 }
 
 /// Graph-side hints from graph query planning and execution
@@ -1765,6 +1803,8 @@ mod tests {
             rebuildable: true,
             lossy: false,
             support_status: "experimental".to_string(),
+            freshness_state: Some("Fresh".to_string()),
+            rebuild_rto_seconds_per_10gb: Some(45.0),
         });
 
         let mut context = PlanContext::default();

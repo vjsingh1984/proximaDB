@@ -21,18 +21,24 @@ use tracing::{debug, info, warn};
 use super::session::Session;
 use super::translator::QueryTranslator;
 use super::types::{FieldDescription, PgType};
-use crate::catalog::{CatalogColumn, CatalogDataType, CatalogManager, CatalogTableSchema};
+use crate::catalog::{CatalogDataType, CatalogManager};
 use crate::graph::GraphService;
 use crate::network::arrow_ipc::ArrowProtoCodec;
 use crate::observability::ObservabilityService;
 use crate::query::multimodal_router::{self, DataModel};
 use crate::query::sql_frontend::SqlFrontendParser;
+use crate::query::table_write_plan::WriteIntentOverrides;
 use crate::services::CollectionService;
 use crate::services::VectorOperationsService;
-use crate::services::operations::vectors::RichRecordGetRequest;
-use crate::services::{DdlService, DmlService};
+use crate::services::dml::{
+    RelationalSelectPredicateCondition as SelectPredicateCondition,
+    RelationalSelectPredicateInput as SelectPredicate,
+    RelationalSelectPredicateOperator as SelectPredicateOperator,
+};
+use crate::services::{DdlService, DmlService, TableWalAppender};
 use crate::storage::document::DocumentService;
 use proximadb_data_model::ProximaValue;
+use proximadb_records::RecordStorage;
 
 /// PostgreSQL protocol handler
 pub struct PostgresProtocol {
@@ -311,12 +317,73 @@ impl PostgresProtocol {
         }
     }
 
+    /// Create a new protocol handler whose SQL DML service writes through the
+    /// canonical record/WAL path for catalog-routed relational tables.
+    ///
+    /// Legacy vector-specialized tables still route through `VectorOps` via
+    /// `DmlService::with_direct_record_storage`; this constructor only opts the
+    /// protocol into the modern canonical branch when xCatalog selects it.
+    pub fn with_direct_catalog_services(
+        stream: TcpStream,
+        session: Session,
+        collection_service: Arc<CollectionService>,
+        vector_ops: Arc<VectorOperationsService>,
+        catalog_manager: Arc<CatalogManager>,
+        record_storage: Arc<dyn RecordStorage>,
+        wal_appender: Arc<dyn TableWalAppender>,
+    ) -> Self {
+        let ddl_service = Arc::new(DdlService::new(catalog_manager.clone()));
+        let dml_service = Arc::new(DmlService::with_direct_record_storage(
+            catalog_manager.clone(),
+            vector_ops.clone(),
+            record_storage,
+            wal_appender,
+        ));
+
+        Self {
+            stream,
+            session: Arc::new(RwLock::new(session)),
+            collection_service,
+            vector_ops,
+            translator: QueryTranslator::new(),
+            read_buffer: BytesMut::with_capacity(8192),
+            write_buffer: BytesMut::with_capacity(8192),
+            prepared_statements: HashMap::new(),
+            portals: HashMap::new(),
+            ddl_service: Some(ddl_service),
+            catalog_manager: Some(catalog_manager),
+            dml_service: Some(dml_service),
+            document_service: None,
+            graph_service: None,
+            observability_service: None,
+        }
+    }
+
     /// Attach catalog-backed DDL/DML services to an existing protocol handler.
     pub fn with_catalog_manager(mut self, catalog_manager: Arc<CatalogManager>) -> Self {
         self.ddl_service = Some(Arc::new(DdlService::new(catalog_manager.clone())));
         self.dml_service = Some(Arc::new(DmlService::new(
             catalog_manager.clone(),
             self.vector_ops.clone(),
+        )));
+        self.catalog_manager = Some(catalog_manager);
+        self
+    }
+
+    /// Attach catalog-backed DDL/DML services with direct canonical
+    /// record/WAL writes enabled for catalog-routed relational tables.
+    pub fn with_direct_catalog_manager(
+        mut self,
+        catalog_manager: Arc<CatalogManager>,
+        record_storage: Arc<dyn RecordStorage>,
+        wal_appender: Arc<dyn TableWalAppender>,
+    ) -> Self {
+        self.ddl_service = Some(Arc::new(DdlService::new(catalog_manager.clone())));
+        self.dml_service = Some(Arc::new(DmlService::with_direct_record_storage(
+            catalog_manager.clone(),
+            self.vector_ops.clone(),
+            record_storage,
+            wal_appender,
         )));
         self.catalog_manager = Some(catalog_manager);
         self
@@ -459,6 +526,18 @@ impl PostgresProtocol {
         let query = self.parse_cstring(body)?;
         debug!("Received query: {}", query);
 
+        if Self::is_set_statement(&query) {
+            match self.execute_set_parameter(&query).await {
+                Ok(()) => {}
+                Err(e) => {
+                    self.send_error("ERROR", "42601", &format!("SET failed: {}", e))
+                        .await?;
+                }
+            }
+            self.send_ready_for_query('I').await?;
+            return Ok(());
+        }
+
         // Translate query to ProximaDB format
         match self.translator.translate(&query) {
             Ok(result) => {
@@ -475,6 +554,62 @@ impl PostgresProtocol {
         self.send_ready_for_query('I').await?;
 
         Ok(())
+    }
+
+    fn is_set_statement(query: &str) -> bool {
+        query.trim_start().to_ascii_uppercase().starts_with("SET ")
+    }
+
+    async fn execute_set_parameter(&mut self, query: &str) -> Result<()> {
+        let (name, value) = Self::parse_set_parameter(query)?;
+        {
+            let mut session = self.session.write().await;
+            session.set_parameter(&name, &value);
+        }
+        self.send_command_complete("SET").await
+    }
+
+    fn parse_set_parameter(query: &str) -> Result<(String, String)> {
+        let trimmed = query.trim().trim_end_matches(';').trim();
+        let rest = trimmed
+            .get(3..)
+            .ok_or_else(|| anyhow!("missing SET parameter"))?
+            .trim_start();
+        let rest = rest
+            .strip_prefix("SESSION ")
+            .or_else(|| rest.strip_prefix("session "))
+            .unwrap_or(rest)
+            .trim_start();
+        let rest = rest
+            .strip_prefix("LOCAL ")
+            .or_else(|| rest.strip_prefix("local "))
+            .unwrap_or(rest)
+            .trim_start();
+
+        let (name, value) = if let Some(eq_index) = rest.find('=') {
+            (&rest[..eq_index], &rest[eq_index + 1..])
+        } else {
+            let upper = rest.to_ascii_uppercase();
+            let Some(to_index) = upper.find(" TO ") else {
+                return Err(anyhow!("expected SET name = value or SET name TO value"));
+            };
+            (&rest[..to_index], &rest[to_index + " TO ".len()..])
+        };
+
+        let name = name.trim().trim_matches('"').to_ascii_lowercase();
+        if name.is_empty() {
+            return Err(anyhow!("missing SET parameter name"));
+        }
+
+        Ok((name, Self::strip_set_value_literal(value)))
+    }
+
+    fn strip_set_value_literal(value: &str) -> String {
+        let value = value.trim().trim_end_matches(';').trim();
+        if value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'') {
+            return value[1..value.len() - 1].replace("''", "'");
+        }
+        value.trim_matches('"').to_string()
     }
 
     /// Execute a translated query
@@ -533,6 +668,10 @@ impl PostgresProtocol {
                     .send_single_value_result("setting", "read committed")
                     .await;
             }
+        }
+
+        if upper.starts_with("EXPLAIN") {
+            return self.execute_explain(query).await;
         }
 
         if crate::services::CatalogIntrospectionService::is_catalog_query(query) {
@@ -763,6 +902,195 @@ impl PostgresProtocol {
         self.send_command_complete("SELECT 0").await
     }
 
+    async fn execute_explain(&mut self, query: &str) -> Result<()> {
+        let inner_query = match Self::extract_explain_inner_query(query) {
+            Ok(inner_query) => inner_query,
+            Err(error) => {
+                return self
+                    .send_error("ERROR", "0A000", &format!("EXPLAIN failed: {}", error))
+                    .await;
+            }
+        };
+
+        if !inner_query
+            .trim_start()
+            .to_ascii_uppercase()
+            .starts_with("INSERT")
+        {
+            return self
+                .send_error(
+                    "ERROR",
+                    "0A000",
+                    "EXPLAIN currently supports table-write INSERT ... SELECT routing only",
+                )
+                .await;
+        }
+
+        let Some(dml_service) = self.dml_service.clone() else {
+            return self
+                .send_error(
+                    "ERROR",
+                    "0A000",
+                    "Catalog-backed DML service is required for table-write EXPLAIN",
+                )
+                .await;
+        };
+
+        let parser = SqlFrontendParser::new();
+        let statement = match parser.parse_dml(inner_query) {
+            Ok(Some(statement)) => statement,
+            Ok(None) => {
+                return self
+                    .send_error("ERROR", "42601", "Invalid table-write EXPLAIN statement")
+                    .await;
+            }
+            Err(error) => {
+                return self
+                    .send_error("ERROR", "42601", &format!("Parse error: {}", error))
+                    .await;
+            }
+        };
+
+        let write_intent_overrides = self.write_intent_overrides_from_session().await;
+        match dml_service
+            .explain_table_write_with_overrides(statement, Some(&write_intent_overrides))
+            .await
+        {
+            Ok(explanation) => {
+                let json = serde_json::to_string_pretty(&explanation)?;
+                let fields = vec![FieldDescription::new("QUERY PLAN", PgType::Jsonb)];
+                self.send_row_description(&fields).await?;
+                self.send_data_row(&[&json]).await?;
+                self.send_command_complete("EXPLAIN").await
+            }
+            Err(error) => {
+                warn!("DmlService EXPLAIN failed: {}", error);
+                self.send_error("ERROR", "0A000", &format!("Explain failed: {}", error))
+                    .await
+            }
+        }
+    }
+
+    async fn write_intent_overrides_from_session(&self) -> WriteIntentOverrides {
+        let session = self.session.read().await;
+        Self::write_intent_overrides_from_params(&session.parameters)
+    }
+
+    fn write_intent_overrides_from_params(
+        params: &HashMap<String, String>,
+    ) -> WriteIntentOverrides {
+        let normalized: HashMap<String, String> = params
+            .iter()
+            .map(|(key, value)| (key.to_ascii_lowercase(), value.clone()))
+            .collect();
+
+        let string_param = |names: &[&str]| -> Option<String> {
+            names
+                .iter()
+                .find_map(|name| normalized.get(*name).cloned())
+                .filter(|value| !value.is_empty())
+        };
+        let u64_param = |names: &[&str]| -> Option<u64> {
+            string_param(names).and_then(|value| value.replace('_', "").parse::<u64>().ok())
+        };
+        let bool_param = |names: &[&str]| -> Option<bool> {
+            string_param(names).and_then(|value| Self::parse_bool_parameter(&value))
+        };
+
+        WriteIntentOverrides {
+            tenant_id: string_param(&["proximadb.write.tenant_id", "proximadb.write_tenant_id"]),
+            actor: string_param(&["proximadb.write.actor", "proximadb.write_actor"]),
+            idempotency_key: string_param(&[
+                "proximadb.write.idempotency_key",
+                "proximadb.write_idempotency_key",
+            ]),
+            row_count_hint: u64_param(&[
+                "proximadb.write.row_count_hint",
+                "proximadb.write_row_count_hint",
+            ]),
+            estimated_bytes: u64_param(&[
+                "proximadb.write.estimated_bytes",
+                "proximadb.write_estimated_bytes",
+            ]),
+            requires_row_level_semantics: bool_param(&[
+                "proximadb.write.requires_row_level_semantics",
+                "proximadb.write_requires_row_level_semantics",
+            ]),
+            batch_local_constraints_sufficient: bool_param(&[
+                "proximadb.write.batch_local_constraints_sufficient",
+                "proximadb.write_batch_local_constraints_sufficient",
+            ]),
+        }
+    }
+
+    fn parse_bool_parameter(value: &str) -> Option<bool> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "on" | "true" | "yes" => Some(true),
+            "0" | "off" | "false" | "no" => Some(false),
+            _ => None,
+        }
+    }
+
+    fn extract_explain_inner_query(query: &str) -> Result<&str> {
+        let trimmed = query.trim();
+        let upper = trimmed.to_ascii_uppercase();
+        if !upper.starts_with("EXPLAIN") {
+            return Err(anyhow!("statement is not EXPLAIN"));
+        }
+
+        let mut rest = trimmed["EXPLAIN".len()..].trim_start();
+        let rest_upper = rest.to_ascii_uppercase();
+        if rest_upper.starts_with("ANALYZE") {
+            return Err(anyhow!(
+                "EXPLAIN ANALYZE would execute the write and is not supported"
+            ));
+        }
+
+        if rest.starts_with('(') {
+            let mut depth = 0usize;
+            let mut end = None;
+            for (index, ch) in rest.char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            end = Some(index);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(end_index) = end else {
+                return Err(anyhow!("unterminated EXPLAIN option list"));
+            };
+            let options = &rest[1..end_index];
+            if options.to_ascii_uppercase().contains("ANALYZE") {
+                return Err(anyhow!(
+                    "EXPLAIN ANALYZE would execute the write and is not supported"
+                ));
+            }
+            rest = rest[end_index + 1..].trim_start();
+        }
+
+        let rest_upper = rest.to_ascii_uppercase();
+        for keyword in ["VERBOSE", "COSTS", "BUFFERS", "TIMING", "SUMMARY"] {
+            if rest_upper == keyword || rest_upper.starts_with(&format!("{keyword} ")) {
+                return Err(anyhow!(
+                    "EXPLAIN option '{}' must use parenthesized syntax",
+                    keyword
+                ));
+            }
+        }
+
+        if rest.is_empty() {
+            return Err(anyhow!("EXPLAIN requires an inner statement"));
+        }
+
+        Ok(rest)
+    }
+
     /// Extract table name from query
     fn extract_table_name(&self, query: &str) -> Option<String> {
         // Simple extraction: look for FROM <table>
@@ -888,74 +1216,264 @@ impl PostgresProtocol {
         Some((Self::clean_identifier(column), value))
     }
 
-    fn extract_selected_columns(query: &str, schema: &CatalogTableSchema) -> Vec<CatalogColumn> {
+    fn extract_selected_column_names(query: &str) -> Vec<String> {
         let upper = query.to_ascii_uppercase();
         let Some(select_pos) = upper.find("SELECT ") else {
-            return schema.columns.clone();
+            return Vec::new();
         };
         let Some(from_pos) = upper.find(" FROM ") else {
-            return schema.columns.clone();
+            return Vec::new();
         };
 
         let projection = query[select_pos + 7..from_pos].trim();
         if projection == "*" {
-            return schema.columns.clone();
+            return Vec::new();
         }
 
-        let mut columns = Vec::new();
-        for requested in projection.split(',') {
-            let column_name = requested
-                .split_whitespace()
-                .next()
-                .map(Self::clean_identifier)
-                .unwrap_or_default();
-            if let Some(column) = schema
-                .columns
-                .iter()
-                .find(|column| column.name.eq_ignore_ascii_case(&column_name))
-            {
-                columns.push(column.clone());
+        projection
+            .split(',')
+            .filter_map(|requested| {
+                let column_name = requested
+                    .split_whitespace()
+                    .next()
+                    .map(Self::clean_identifier)
+                    .unwrap_or_default();
+                (!column_name.is_empty() && column_name != "*").then_some(column_name)
+            })
+            .collect()
+    }
+
+    fn extract_select_where_predicates(query: &str) -> Option<Vec<SelectPredicate>> {
+        let predicate = Self::extract_select_where_clause(query)?;
+        if Self::find_keyword_outside_literals(predicate, " OR ").is_some() {
+            return None;
+        }
+
+        let mut predicates = Vec::new();
+        for part in Self::split_and_predicates(predicate) {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
             }
+            predicates.push(Self::parse_select_predicate(part)?);
         }
 
-        if columns.is_empty() {
-            schema.columns.clone()
+        Some(predicates)
+    }
+
+    fn parse_select_predicate(predicate: &str) -> Option<SelectPredicate> {
+        if let Some((left, right)) = Self::split_keyword_predicate(predicate, " IS NOT NULL") {
+            if !right.trim().is_empty() {
+                return None;
+            }
+            return Some(SelectPredicate {
+                column_name: Self::predicate_column_name(left)?,
+                condition: SelectPredicateCondition::IsNull { negated: true },
+            });
+        }
+        if let Some((left, right)) = Self::split_keyword_predicate(predicate, " IS NULL") {
+            if !right.trim().is_empty() {
+                return None;
+            }
+            return Some(SelectPredicate {
+                column_name: Self::predicate_column_name(left)?,
+                condition: SelectPredicateCondition::IsNull { negated: false },
+            });
+        }
+        if let Some((left, right)) = Self::split_keyword_predicate(predicate, " NOT LIKE ") {
+            return Some(SelectPredicate {
+                column_name: Self::predicate_column_name(left)?,
+                condition: SelectPredicateCondition::Like {
+                    pattern: Self::strip_sql_literal(right),
+                    negated: true,
+                },
+            });
+        }
+        if let Some((left, right)) = Self::split_keyword_predicate(predicate, " LIKE ") {
+            return Some(SelectPredicate {
+                column_name: Self::predicate_column_name(left)?,
+                condition: SelectPredicateCondition::Like {
+                    pattern: Self::strip_sql_literal(right),
+                    negated: false,
+                },
+            });
+        }
+        if let Some((left, right)) = Self::split_keyword_predicate(predicate, " NOT IN ") {
+            return Some(SelectPredicate {
+                column_name: Self::predicate_column_name(left)?,
+                condition: SelectPredicateCondition::In {
+                    literals: Self::parse_sql_literal_list(right)?,
+                    negated: true,
+                },
+            });
+        }
+        if let Some((left, right)) = Self::split_keyword_predicate(predicate, " IN ") {
+            return Some(SelectPredicate {
+                column_name: Self::predicate_column_name(left)?,
+                condition: SelectPredicateCondition::In {
+                    literals: Self::parse_sql_literal_list(right)?,
+                    negated: false,
+                },
+            });
+        }
+
+        let (left, operator, right) = Self::split_comparison_predicate(predicate)?;
+        Some(SelectPredicate {
+            column_name: Self::predicate_column_name(left)?,
+            condition: SelectPredicateCondition::Comparison {
+                operator,
+                literal: Self::strip_sql_literal(right),
+            },
+        })
+    }
+
+    fn predicate_column_name(left: &str) -> Option<String> {
+        let column_name = Self::clean_identifier(left);
+        if column_name.is_empty() {
+            None
         } else {
-            columns
+            Some(column_name)
         }
     }
 
-    fn extract_primary_key_filter(query: &str, primary_key: &str) -> Option<String> {
+    fn extract_select_where_clause(query: &str) -> Option<&str> {
         let upper = query.to_ascii_uppercase();
         let where_pos = upper.find(" WHERE ")?;
         let mut predicate = query[where_pos + 7..].trim();
         for terminator in [" ORDER BY ", " GROUP BY ", " LIMIT ", " OFFSET "] {
-            if let Some(pos) = predicate.to_ascii_uppercase().find(terminator) {
+            if let Some(pos) = Self::find_keyword_outside_literals(predicate, terminator) {
                 predicate = predicate[..pos].trim();
             }
         }
+        Some(predicate.trim_end_matches(';').trim())
+    }
 
-        for part in predicate.split(" AND ") {
-            let Some((left, right)) = part.split_once('=') else {
-                continue;
+    fn split_and_predicates(predicate: &str) -> Vec<&str> {
+        let mut parts = Vec::new();
+        let mut remaining = predicate;
+        loop {
+            let Some(index) = Self::find_keyword_outside_literals(remaining, " AND ") else {
+                parts.push(remaining);
+                break;
             };
-            let column = Self::clean_identifier(left.trim());
-            if !column.eq_ignore_ascii_case(primary_key) {
+            parts.push(&remaining[..index]);
+            remaining = &remaining[index + " AND ".len()..];
+        }
+        parts
+    }
+
+    fn split_keyword_predicate<'a>(
+        predicate: &'a str,
+        keyword: &str,
+    ) -> Option<(&'a str, &'a str)> {
+        let index = Self::find_keyword_outside_literals(predicate, keyword)?;
+        let left = predicate[..index].trim();
+        let right = predicate[index + keyword.len()..].trim();
+        if left.is_empty() {
+            return None;
+        }
+        Some((left, right))
+    }
+
+    fn find_keyword_outside_literals(haystack: &str, keyword: &str) -> Option<usize> {
+        let mut in_single_quote = false;
+        let mut chars = haystack.char_indices().peekable();
+        while let Some((index, ch)) = chars.next() {
+            if ch == '\'' {
+                if in_single_quote && chars.peek().is_some_and(|(_, next)| *next == '\'') {
+                    chars.next();
+                } else {
+                    in_single_quote = !in_single_quote;
+                }
                 continue;
             }
-            let value = right
-                .trim()
-                .trim_end_matches(';')
-                .trim()
-                .trim_matches('\'')
-                .trim_matches('"')
-                .to_string();
-            if !value.is_empty() {
-                return Some(value);
+            if !in_single_quote
+                && haystack[index..].len() >= keyword.len()
+                && haystack[index..index + keyword.len()].eq_ignore_ascii_case(keyword)
+            {
+                return Some(index);
             }
         }
-
         None
+    }
+
+    fn split_comparison_predicate(
+        predicate: &str,
+    ) -> Option<(&str, SelectPredicateOperator, &str)> {
+        for (token, operator) in [
+            ("<>", SelectPredicateOperator::NotEqual),
+            ("!=", SelectPredicateOperator::NotEqual),
+            (">=", SelectPredicateOperator::GreaterThanOrEqual),
+            ("<=", SelectPredicateOperator::LessThanOrEqual),
+            ("=", SelectPredicateOperator::Equal),
+            (">", SelectPredicateOperator::GreaterThan),
+            ("<", SelectPredicateOperator::LessThan),
+        ] {
+            if let Some(index) = predicate.find(token) {
+                let left = predicate[..index].trim();
+                let right = predicate[index + token.len()..].trim();
+                if !left.is_empty() && !right.is_empty() {
+                    return Some((left, operator, right));
+                }
+            }
+        }
+        None
+    }
+
+    fn strip_sql_literal(literal: &str) -> String {
+        let literal = literal.trim().trim_end_matches(';').trim();
+        if literal.len() >= 2 && literal.starts_with('\'') && literal.ends_with('\'') {
+            return literal[1..literal.len() - 1].replace("''", "'");
+        }
+        literal.trim_matches('"').to_string()
+    }
+
+    fn parse_sql_literal_list(literal_list: &str) -> Option<Vec<String>> {
+        let literal_list = literal_list
+            .trim()
+            .trim_end_matches(';')
+            .trim()
+            .strip_prefix('(')?
+            .strip_suffix(')')?;
+        let mut literals = Vec::new();
+        let mut part_start = 0usize;
+        let mut in_single_quote = false;
+        let mut chars = literal_list.char_indices().peekable();
+        while let Some((index, ch)) = chars.next() {
+            if ch == '\'' {
+                if in_single_quote && chars.peek().is_some_and(|(_, next)| *next == '\'') {
+                    chars.next();
+                } else {
+                    in_single_quote = !in_single_quote;
+                }
+                continue;
+            }
+            if ch == ',' && !in_single_quote {
+                let literal = literal_list[part_start..index].trim();
+                if literal.is_empty() {
+                    return None;
+                }
+                literals.push(Self::strip_sql_literal(literal));
+                part_start = index + ch.len_utf8();
+            }
+        }
+        let literal = literal_list[part_start..].trim();
+        if literal.is_empty() || in_single_quote {
+            return None;
+        }
+        literals.push(Self::strip_sql_literal(literal));
+        Some(literals)
+    }
+
+    fn extract_select_limit(query: &str) -> Option<usize> {
+        let upper = query.to_ascii_uppercase();
+        let limit_pos = upper.rfind(" LIMIT ")?;
+        let after_limit = query[limit_pos + " LIMIT ".len()..]
+            .trim()
+            .trim_end_matches(';')
+            .trim();
+        let token = after_limit.split_whitespace().next()?;
+        token.parse::<usize>().ok()
     }
 
     fn clean_identifier(identifier: &str) -> String {
@@ -1020,24 +1538,36 @@ impl PostgresProtocol {
     }
 
     /// Execute a relational query against a cataloged table.
-    ///
-    /// This supports the psql/JDBC smoke path for point reads via primary key. Wider scans still
-    /// need the relational execution engine/table-scan path rather than protocol-local logic.
     async fn execute_relational_query(&mut self, query: &str, table_name: &str) -> Result<()> {
         debug!("Executing relational query on table: {}", table_name);
 
-        let Some(catalog_manager) = self.catalog_manager.clone() else {
-            return self.send_empty_result().await;
-        };
-        let Ok((catalog, table_id)) = catalog_manager.resolve_table(table_name).await else {
-            return self.send_empty_result().await;
-        };
-        let Ok(schema) = catalog.get_table(&table_id).await else {
-            return self.send_empty_result().await;
+        let projection_column_names = Self::extract_selected_column_names(query);
+        let predicates = if query.to_ascii_uppercase().contains(" WHERE ") {
+            let Some(predicates) = Self::extract_select_where_predicates(query) else {
+                self.send_command_complete("SELECT 0").await?;
+                return Ok(());
+            };
+            predicates
+        } else {
+            Vec::new()
         };
 
-        let selected_columns = Self::extract_selected_columns(query, &schema);
-        let fields = selected_columns
+        let Some(dml_service) = self.dml_service.clone() else {
+            self.send_command_complete("SELECT 0").await?;
+            return Ok(());
+        };
+
+        let limit = Self::extract_select_limit(query);
+        let result = dml_service
+            .select_table_records_with_projection(
+                table_name,
+                &projection_column_names,
+                limit,
+                &predicates,
+            )
+            .await?;
+        let fields = result
+            .selected_columns
             .iter()
             .map(|column| {
                 FieldDescription::new(
@@ -1048,53 +1578,19 @@ impl PostgresProtocol {
             .collect::<Vec<_>>();
         self.send_row_description(&fields).await?;
 
-        let Some(primary_key) = schema.primary_key.first() else {
-            self.send_command_complete("SELECT 0").await?;
-            return Ok(());
-        };
-        let Some(record_id) = Self::extract_primary_key_filter(query, primary_key) else {
-            self.send_command_complete("SELECT 0").await?;
-            return Ok(());
-        };
+        let mut rows_sent = 0usize;
+        for row in result.rows {
+            let values = row.iter().map(proxima_value_to_pg_text).collect::<Vec<_>>();
+            let refs = values.iter().map(String::as_str).collect::<Vec<_>>();
+            self.send_data_row(&refs).await?;
+            rows_sent += 1;
+            if limit.is_some_and(|limit| rows_sent >= limit) {
+                break;
+            }
+        }
 
-        let record = self
-            .vector_ops
-            .get_record_with_tenant_context(
-                RichRecordGetRequest {
-                    collection_id: table_id.name.clone(),
-                    record_id,
-                    include_vector: true,
-                    include_props: true,
-                },
-                None,
-            )
-            .await?;
-
-        let Some(record) = record else {
-            self.send_command_complete("SELECT 0").await?;
-            return Ok(());
-        };
-
-        let values = selected_columns
-            .iter()
-            .map(|column| {
-                record
-                    .props
-                    .get(&column.name)
-                    .map(proxima_value_to_pg_text)
-                    .or_else(|| {
-                        if &column.name == primary_key {
-                            Some(record.id.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or_default()
-            })
-            .collect::<Vec<_>>();
-        let refs = values.iter().map(String::as_str).collect::<Vec<_>>();
-        self.send_data_row(&refs).await?;
-        self.send_command_complete("SELECT 1").await
+        self.send_command_complete(&format!("SELECT {}", rows_sent))
+            .await
     }
 
     /// Execute a document store query
@@ -3022,7 +3518,9 @@ impl PostgresProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::{CatalogColumn, CatalogDataType, CatalogTableSchema};
     use crate::query::multimodal_router;
+    use proximadb_records::{ProximaRecord, ProximaTreeNode};
 
     #[test]
     fn test_frontend_message() {
@@ -3387,6 +3885,266 @@ mod tests {
         assert_eq!(
             detect("COPY my_table FROM STDIN WITH (HEADER true)"),
             CopyFormat::Text
+        );
+    }
+
+    #[test]
+    fn test_extract_explain_inner_query_for_table_write() {
+        let inner = PostgresProtocol::extract_explain_inner_query(
+            "EXPLAIN (FORMAT JSON) INSERT INTO facts SELECT * FROM staging;",
+        )
+        .expect("explain should parse");
+
+        assert_eq!(inner, "INSERT INTO facts SELECT * FROM staging;");
+    }
+
+    #[test]
+    fn test_extract_explain_inner_query_rejects_analyze() {
+        let err = PostgresProtocol::extract_explain_inner_query(
+            "EXPLAIN (ANALYZE, FORMAT JSON) INSERT INTO facts SELECT * FROM staging;",
+        )
+        .expect_err("analyze should be rejected");
+
+        assert!(err.to_string().contains("would execute the write"));
+    }
+
+    #[test]
+    fn test_parse_set_parameter_for_write_intent_hint() {
+        let (name, value) = PostgresProtocol::parse_set_parameter(
+            "SET proximadb.write.row_count_hint = '100_000';",
+        )
+        .expect("SET should parse");
+
+        assert_eq!(name, "proximadb.write.row_count_hint");
+        assert_eq!(value, "100_000");
+    }
+
+    #[test]
+    fn test_parse_set_parameter_supports_to_syntax() {
+        let (name, value) = PostgresProtocol::parse_set_parameter(
+            "SET proximadb.write.batch_local_constraints_sufficient TO on;",
+        )
+        .expect("SET TO should parse");
+
+        assert_eq!(name, "proximadb.write.batch_local_constraints_sufficient");
+        assert_eq!(value, "on");
+    }
+
+    #[test]
+    fn test_write_intent_overrides_from_session_parameters() {
+        let params = std::collections::HashMap::from([
+            (
+                "proximadb.write.tenant_id".to_string(),
+                "tenant-a".to_string(),
+            ),
+            ("proximadb.write.actor".to_string(), "benchbase".to_string()),
+            (
+                "proximadb.write.row_count_hint".to_string(),
+                "100_000".to_string(),
+            ),
+            (
+                "proximadb.write.estimated_bytes".to_string(),
+                "4096".to_string(),
+            ),
+            (
+                "proximadb.write.requires_row_level_semantics".to_string(),
+                "off".to_string(),
+            ),
+            (
+                "proximadb.write.batch_local_constraints_sufficient".to_string(),
+                "true".to_string(),
+            ),
+        ]);
+
+        let overrides = PostgresProtocol::write_intent_overrides_from_params(&params);
+
+        assert_eq!(overrides.tenant_id.as_deref(), Some("tenant-a"));
+        assert_eq!(overrides.actor.as_deref(), Some("benchbase"));
+        assert_eq!(overrides.row_count_hint, Some(100_000));
+        assert_eq!(overrides.estimated_bytes, Some(4096));
+        assert_eq!(overrides.requires_row_level_semantics, Some(false));
+        assert_eq!(overrides.batch_local_constraints_sufficient, Some(true));
+    }
+
+    #[test]
+    fn test_extract_select_limit_for_relational_scan() {
+        assert_eq!(
+            PostgresProtocol::extract_select_limit("SELECT * FROM t LIMIT 25;"),
+            Some(25)
+        );
+        assert_eq!(
+            PostgresProtocol::extract_select_limit("SELECT * FROM t ORDER BY id"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_extract_selected_column_names_for_relational_select() {
+        assert!(
+            PostgresProtocol::extract_selected_column_names("SELECT * FROM customers").is_empty()
+        );
+        assert_eq!(
+            PostgresProtocol::extract_selected_column_names(
+                "SELECT c_id, customers.c_name AS name FROM customers WHERE c_id = 1"
+            ),
+            vec!["c_id".to_string(), "c_name".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_extract_select_where_predicates_for_relational_scan() {
+        let predicates = PostgresProtocol::extract_select_where_predicates(
+            "SELECT * FROM customers WHERE c_name = 'alice updated' AND c_active = true LIMIT 1;",
+        )
+        .expect("simple AND predicates should parse");
+
+        assert_eq!(predicates.len(), 2);
+        assert_eq!(predicates[0].column_name, "c_name");
+        match &predicates[0].condition {
+            SelectPredicateCondition::Comparison { operator, literal } => {
+                assert_eq!(*operator, SelectPredicateOperator::Equal);
+                assert_eq!(literal, "alice updated");
+            }
+            other => panic!("unexpected predicate: {other:?}"),
+        }
+        assert_eq!(predicates[1].column_name, "c_active");
+        match &predicates[1].condition {
+            SelectPredicateCondition::Comparison { literal, .. } => {
+                assert_eq!(literal, "true");
+            }
+            other => panic!("unexpected predicate: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_extract_select_where_in_like_and_null_predicates() {
+        let predicates = PostgresProtocol::extract_select_where_predicates(
+            "SELECT * FROM customers WHERE c_id IN (1, 2) AND c_name LIKE 'alice%' AND c_notes IS NULL;",
+        )
+        .expect("IN, LIKE, and IS NULL predicates should parse");
+
+        assert_eq!(predicates.len(), 3);
+        match &predicates[0].condition {
+            SelectPredicateCondition::In { literals, negated } => {
+                assert!(!negated);
+                assert_eq!(literals, &vec!["1".to_string(), "2".to_string()]);
+            }
+            other => panic!("unexpected predicate: {other:?}"),
+        }
+        match &predicates[1].condition {
+            SelectPredicateCondition::Like { pattern, negated } => {
+                assert!(!negated);
+                assert_eq!(pattern, "alice%");
+            }
+            other => panic!("unexpected predicate: {other:?}"),
+        }
+        match &predicates[2].condition {
+            SelectPredicateCondition::IsNull { negated } => assert!(!negated),
+            other => panic!("unexpected predicate: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_record_matches_relational_scan_predicates() {
+        let record = ProximaRecord {
+            oid: "1".to_string(),
+            props: proximadb_records::ProximaTree::from([
+                (
+                    "name".to_string(),
+                    ProximaTreeNode::Value(ProximaValue::String("alice".to_string())),
+                ),
+                (
+                    "balance".to_string(),
+                    ProximaTreeNode::Value(ProximaValue::Decimal("75.25".to_string())),
+                ),
+                (
+                    "active".to_string(),
+                    ProximaTreeNode::Value(ProximaValue::Boolean(true)),
+                ),
+            ]),
+            ..Default::default()
+        };
+        let schema = CatalogTableSchema::new("customers")
+            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int32))
+            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String))
+            .with_column(CatalogColumn::new(3, "balance", CatalogDataType::Decimal))
+            .with_column(CatalogColumn::new(4, "active", CatalogDataType::Boolean))
+            .with_primary_key(vec!["id".to_string()]);
+        let predicates = vec![
+            SelectPredicate {
+                column_name: "name".to_string(),
+                condition: SelectPredicateCondition::Comparison {
+                    operator: SelectPredicateOperator::Equal,
+                    literal: "alice".to_string(),
+                },
+            },
+            SelectPredicate {
+                column_name: "balance".to_string(),
+                condition: SelectPredicateCondition::Comparison {
+                    operator: SelectPredicateOperator::GreaterThanOrEqual,
+                    literal: "75.00".to_string(),
+                },
+            },
+            SelectPredicate {
+                column_name: "active".to_string(),
+                condition: SelectPredicateCondition::Comparison {
+                    operator: SelectPredicateOperator::Equal,
+                    literal: "true".to_string(),
+                },
+            },
+        ];
+
+        assert!(
+            DmlService::record_matches_select_predicate_inputs(&record, &schema, &predicates)
+                .expect("predicates should resolve")
+        );
+    }
+
+    #[test]
+    fn test_record_matches_in_like_and_null_relational_scan_predicates() {
+        let record = ProximaRecord {
+            oid: "1".to_string(),
+            props: proximadb_records::ProximaTree::from([
+                (
+                    "name".to_string(),
+                    ProximaTreeNode::Value(ProximaValue::String("alice updated".to_string())),
+                ),
+                (
+                    "active".to_string(),
+                    ProximaTreeNode::Value(ProximaValue::Boolean(true)),
+                ),
+            ]),
+            ..Default::default()
+        };
+        let schema = CatalogTableSchema::new("customers")
+            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int32))
+            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String))
+            .with_column(CatalogColumn::new(3, "notes", CatalogDataType::String))
+            .with_primary_key(vec!["id".to_string()]);
+        let predicates = vec![
+            SelectPredicate {
+                column_name: "id".to_string(),
+                condition: SelectPredicateCondition::In {
+                    literals: vec!["1".to_string(), "2".to_string()],
+                    negated: false,
+                },
+            },
+            SelectPredicate {
+                column_name: "name".to_string(),
+                condition: SelectPredicateCondition::Like {
+                    pattern: "alice%".to_string(),
+                    negated: false,
+                },
+            },
+            SelectPredicate {
+                column_name: "notes".to_string(),
+                condition: SelectPredicateCondition::IsNull { negated: false },
+            },
+        ];
+
+        assert!(
+            DmlService::record_matches_select_predicate_inputs(&record, &schema, &predicates)
+                .expect("predicates should resolve")
         );
     }
 

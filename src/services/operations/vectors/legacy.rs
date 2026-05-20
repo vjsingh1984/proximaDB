@@ -64,7 +64,7 @@ use crate::query::query_optimizer::{
 
 // Import from sibling submodules
 use super::config::{SearchPlanHints, UnifiedSearchConfig};
-use super::hybrid::build_axis_hybrid_query;
+use super::hybrid::{build_axis_hybrid_query, build_axis_hybrid_query_with_mode};
 use super::search::executor::proto_results_to_vector_records;
 use super::search::pipeline::default_progressive_stages;
 use super::validation::{
@@ -483,8 +483,9 @@ pub struct VectorOperationsService {
     /// Optional RBAC enforcer for role-based access control
     rbac_enforcer: Option<Arc<crate::storage::tenant::EnhancedRBACManager>>,
 
-    /// Bulk write router for intelligent write path selection
-    /// Routes large batches to direct storage write, bypassing WAL+memtable
+    /// Bulk write router for intelligent write path selection.
+    /// Routes large batches to the WAL-backed bulk lane until direct
+    /// segment/manifest commit has an accepted durability proof.
     bulk_write_router: BulkWriteRouter,
 
     /// Security validation for metadata fields
@@ -701,6 +702,47 @@ impl VectorOperationsService {
         )
         .await
         .map(|record| record.map(vector_record_to_rich_result))
+    }
+
+    /// Scan current visible canonical records from the VectorOps-backed WAL/memtable path.
+    ///
+    /// This is a compatibility bridge for cataloged table scans while the direct
+    /// PAX/record-storage scan path becomes the default for relational tables.
+    pub async fn scan_records_with_tenant_context(
+        &self,
+        collection_id: &str,
+        limit: Option<usize>,
+        include_vector: bool,
+        include_props: bool,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<Vec<ProximaRecord>> {
+        self.validate_tenant_collection_access(collection_id, tenant_context)
+            .await?;
+
+        let mut records = self
+            .wal_manager
+            .get_collection_vectors(collection_id)
+            .await?;
+        if let Some(tenant_context) = tenant_context {
+            records.retain(|record| {
+                record.tenant_id.is_empty() || record.tenant_id == tenant_context.tenant_id
+            });
+        }
+        if !include_vector {
+            for record in &mut records {
+                record.embeddings.clear();
+            }
+        }
+        if !include_props {
+            for record in &mut records {
+                record.props.clear();
+            }
+        }
+        if let Some(limit) = limit {
+            records.truncate(limit);
+        }
+
+        Ok(records)
     }
 
     /// Delete canonical rich records by writing tombstones.
@@ -1109,7 +1151,7 @@ impl VectorOperationsService {
         self
     }
 
-    /// Check if a batch should use direct write (bypass WAL+memtable)
+    /// Check if a batch should use the large-batch write lane.
     ///
     /// Returns true if:
     /// - Vector count >= threshold (default: 500)
@@ -1122,13 +1164,14 @@ impl VectorOperationsService {
             .should_use_direct_write_records(records)
     }
 
-    /// Bulk write operation - bypasses WAL+memtable for large batches
+    /// Bulk write operation for large batches.
     ///
-    /// This method writes vectors directly to storage using FlushCoordinator,
-    /// bypassing the WAL and memtable for better performance on large batches.
+    /// The router identifies bulk-friendly batches, but the current
+    /// implementation still writes through WAL for durability. A future direct
+    /// segment/manifest commit path may skip WAL only after it provides
+    /// equivalent crash recovery, idempotency, and repair semantics.
     ///
-    /// **Important**: ACK is returned only AFTER flush completes (not after WAL write).
-    /// This provides durability through the storage engine's own persistence mechanism.
+    /// **Important**: ACK is returned only after the WAL write is durable.
     ///
     /// ## When to use
     /// - Large bulk imports (≥500 vectors OR ≥2MB estimated size)
@@ -1137,7 +1180,7 @@ impl VectorOperationsService {
     ///
     /// ## When NOT to use
     /// - Small streaming batches (use standard WAL path)
-    /// - When immediate durability via WAL is required
+    /// - When row-level direct-commit semantics are requested; use WAL/MVCC
     pub async fn bulk_write(
         &self,
         collection_id: &str,
@@ -1156,7 +1199,7 @@ impl VectorOperationsService {
             vector_count,
             decision.estimated_size_bytes,
             if decision.use_direct_write {
-                "DIRECT"
+                "BULK_WAL"
             } else {
                 "WAL"
             }
@@ -1171,15 +1214,16 @@ impl VectorOperationsService {
             return self.insert_vectors_via_wal(collection_id, vectors).await;
         }
 
-        // Direct write path: flush vectors directly to storage engine, bypassing WAL
-        // This is optimal for large batches where WAL overhead is unnecessary
+        // Large-batch path. It remains WAL-backed until direct segment commit
+        // has an accepted durability proof.
         info!(
-            "🚀 Using direct write path for bulk batch: {} vectors (reason: {})",
+            "🚀 Using WAL-backed bulk path for batch: {} vectors (reason: {})",
             vector_count, decision.reason
         );
 
-        // Write vectors via WAL for durability. Direct engine bypass deferred
-        // until WAL-skip safety analysis is complete (risk: data loss on crash).
+        // Write vectors via WAL for durability. A WAL-skipping engine path
+        // remains deferred because it needs atomic segment+manifest commit,
+        // replay or repair semantics, and idempotency.
         let vectors_arc = Arc::new(vectors.clone());
 
         match self
@@ -1196,7 +1240,7 @@ impl VectorOperationsService {
                 };
 
                 info!(
-                    "✅ Bulk write completed: {} vectors in {:?} ({} vectors/sec)",
+                    "✅ WAL-backed bulk write completed: {} vectors in {:?} ({} vectors/sec)",
                     vector_count, duration, vectors_per_sec
                 );
 
@@ -1208,7 +1252,7 @@ impl VectorOperationsService {
                         failed_count: 0,
                         updated_count: 0,
                         processing_time_us: duration.as_micros() as i64,
-                        wal_write_time_us: 0, // Direct write bypasses WAL
+                        wal_write_time_us: duration.as_micros() as i64,
                         index_update_time_us: 0,
                     },
                 ))
@@ -1484,7 +1528,7 @@ impl VectorOperationsService {
             decision.vector_count,
             decision.estimated_size_bytes,
             if decision.use_direct_write {
-                "BULK/DIRECT"
+                "BULK_WAL"
             } else {
                 "WAL"
             }
@@ -2012,6 +2056,13 @@ impl VectorOperationsService {
                         estimated_selectivity * 100.0
                     );
                 }
+                _ => {
+                    tracing::debug!(
+                        "  [Step {}] Runtime query step: {}",
+                        idx + 1,
+                        step.describe()
+                    );
+                }
             }
         }
 
@@ -2089,6 +2140,27 @@ impl VectorOperationsService {
                 "pq".into(),
                 "full".into(),
             ]);
+        }
+
+        // Run the optimizer on the EXPLAIN path (non-hot) to surface ADR-011 filtering mode.
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let search_params = crate::query::query_optimizer::SearchParams {
+            top_k: Some(k),
+            ..Default::default()
+        };
+        let query_vectors = vec![query_vector.clone()];
+        let explain_context = UnifiedQueryContext {
+            collection: collection.clone(),
+            search_params: Some(&search_params),
+            filter_params: None,
+            optimization_goal: cfg.optimization_goal,
+            available_files: Vec::new(),
+            total_vectors: 0,
+            total_columns: 0,
+            query_vectors: Some(&query_vectors),
+        };
+        if let Ok(plan) = self.query_optimizer.optimize_query(explain_context).await {
+            hints.ann_filtering_mode = plan.ann_filtering_mode.clone();
         }
 
         // Execute the search
@@ -2278,6 +2350,27 @@ impl VectorOperationsService {
             ]);
         }
 
+        // Run the optimizer on the EXPLAIN path (non-hot) to surface ADR-011 filtering mode.
+        let collection = self.get_or_load_collection(collection_id).await?;
+        let search_params = crate::query::query_optimizer::SearchParams {
+            top_k: Some(k),
+            ..Default::default()
+        };
+        let query_vectors = vec![query_vector.clone()];
+        let explain_context = UnifiedQueryContext {
+            collection: collection.clone(),
+            search_params: Some(&search_params),
+            filter_params: None,
+            optimization_goal: cfg.optimization_goal,
+            available_files: Vec::new(),
+            total_vectors: 0,
+            total_columns: 0,
+            query_vectors: Some(&query_vectors),
+        };
+        if let Ok(plan) = self.query_optimizer.optimize_query(explain_context).await {
+            hints.ann_filtering_mode = plan.ann_filtering_mode.clone();
+        }
+
         // Run v1 unified search
         let results = self
             .unified_search_v1(collection_id, query_vector, k, filter, config)
@@ -2299,6 +2392,16 @@ impl VectorOperationsService {
             "🔍 execute_unified_plan received filter: {:?}",
             filter.as_ref().map(|f| format!("{:?}", f))
         );
+
+        // Resolve ADR-011 filtering mode from the plan's ann_filtering_mode string.
+        let ann_mode = match plan.ann_filtering_mode.as_deref() {
+            Some("Inline") => crate::index::axis::management::manager::AnnFilteringMode::Inline,
+            Some("PreFilter") => {
+                crate::index::axis::management::manager::AnnFilteringMode::PreFilter
+            }
+            _ => crate::index::axis::management::manager::AnnFilteringMode::PostFilter,
+        };
+
         let mut results: Vec<crate::core::search::results::OptimizedSearchRecord> = Vec::new();
         let mut intermediate_results: Option<
             Vec<crate::core::search::results::OptimizedSearchRecord>,
@@ -2332,20 +2435,22 @@ impl VectorOperationsService {
                             .await?;
                     }
 
-                    // Execute search with filter-aware optimization using unified two-stage search
+                    // Execute search with ADR-011 filtering mode threaded through.
                     tracing::debug!(
-                        "🔍 About to call execute_two_stage_search with filter: {:?}",
+                        "🔍 About to call execute_two_stage_search_with_mode (mode={:?}) with filter: {:?}",
+                        ann_mode,
                         filter.as_ref().map(|f| format!("{:?}", f))
                     );
                     results = self
-                        .execute_two_stage_search(
+                        .execute_two_stage_search_with_mode(
                             collection_id,
                             search_method,
-                            None, // No quantization strategy for filtered search
+                            None,
                             top_k,
                             query_vector.clone(),
                             filter.clone(),
                             search_mode.clone(),
+                            ann_mode,
                         )
                         .await?;
                 }
@@ -2387,14 +2492,15 @@ impl VectorOperationsService {
                     );
 
                     let search_results = self
-                        .execute_two_stage_search(
+                        .execute_two_stage_search_with_mode(
                             collection_id,
                             execution_method,
                             quantization_strategy,
                             candidates,
                             query_vector.clone(),
-                            filter.clone(), // Pass the filter from execute_unified_plan parameter
+                            filter.clone(),
                             search_mode.clone(),
+                            ann_mode,
                         )
                         .await?;
 
@@ -2440,6 +2546,12 @@ impl VectorOperationsService {
                         .await?;
 
                     intermediate_results = Some(bloom_filtered);
+                }
+                _ => {
+                    tracing::debug!(
+                        "Skipping non-vector optimizer step in vector search path: {}",
+                        step.describe()
+                    );
                 }
             }
         }
@@ -2527,6 +2639,30 @@ impl VectorOperationsService {
         filter: Option<FilterExpression>,
         search_mode: crate::core::search::SearchMode,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
+        self.execute_two_stage_search_with_mode(
+            collection_id,
+            method,
+            _quantization,
+            candidates,
+            query_vector,
+            filter,
+            search_mode,
+            crate::index::axis::management::manager::AnnFilteringMode::default(),
+        )
+        .await
+    }
+
+    async fn execute_two_stage_search_with_mode(
+        &self,
+        collection_id: &str,
+        method: crate::query::query_optimizer::SearchExecutionMethod,
+        _quantization: Option<crate::query::query_optimizer::QuantizationStrategy>,
+        candidates: usize,
+        query_vector: Vec<f32>,
+        filter: Option<FilterExpression>,
+        search_mode: crate::core::search::SearchMode,
+        ann_filtering_mode: crate::index::axis::management::manager::AnnFilteringMode,
+    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         debug!(
             "TWO-STAGE search: collection={}, method={:?}, filter={}",
             collection_id,
@@ -2611,37 +2747,39 @@ impl VectorOperationsService {
             "🔍 Stage 2: Searching AXIS HNSW index for {}",
             collection_id
         );
-        let axis_optimized_results =
-            match build_axis_hybrid_query(collection_id, &axis_search_params) {
-                Ok(hybrid_query) => match self.axis_index_manager.query(hybrid_query).await {
-                    Ok(result) => {
-                        let records: Vec<crate::core::search::results::OptimizedSearchRecord> =
-                            result
-                                .results
-                                .into_iter()
-                                .map(|r| {
-                                    crate::core::search::results::OptimizedSearchRecord::new(
-                                        r.vector_id,
-                                        r.similarity,
-                                    )
-                                })
-                                .collect();
-                        debug!("Stage 2 complete: {} AXIS HNSW results", records.len());
-                        records
-                    }
-                    Err(e) => {
-                        debug!("Stage 2 AXIS search failed: {}", e);
-                        Vec::new()
-                    }
-                },
+        let axis_optimized_results = match build_axis_hybrid_query_with_mode(
+            collection_id,
+            &axis_search_params,
+            ann_filtering_mode,
+        ) {
+            Ok(hybrid_query) => match self.axis_index_manager.query(hybrid_query).await {
+                Ok(result) => {
+                    let records: Vec<crate::core::search::results::OptimizedSearchRecord> = result
+                        .results
+                        .into_iter()
+                        .map(|r| {
+                            crate::core::search::results::OptimizedSearchRecord::new(
+                                r.vector_id,
+                                r.similarity,
+                            )
+                        })
+                        .collect();
+                    debug!("Stage 2 complete: {} AXIS HNSW results", records.len());
+                    records
+                }
                 Err(e) => {
-                    warn!(
-                        "Stage 2 AXIS search skipped for collection {}: {}",
-                        collection_id, e
-                    );
+                    debug!("Stage 2 AXIS search failed: {}", e);
                     Vec::new()
                 }
-            };
+            },
+            Err(e) => {
+                warn!(
+                    "Stage 2 AXIS search skipped for collection {}: {}",
+                    collection_id, e
+                );
+                Vec::new()
+            }
+        };
 
         // Stage 3: Storage engine search - ONLY if we need more results
         // Skip if WAL + AXIS already have enough high-quality results

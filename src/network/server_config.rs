@@ -10,6 +10,7 @@
 //! with no I/O or service dependencies.
 
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
@@ -139,6 +140,15 @@ pub struct PostgresServerConfig {
 
     /// Statement cache size per connection
     pub statement_cache_size: usize,
+
+    /// Enable canonical record/WAL writes for catalog-routed relational DML over
+    /// pgwire. Defaults on; retirement gates 1–5 are satisfied. Disable only
+    /// when falling back to legacy VectorOps-only path for debugging.
+    pub enable_direct_record_writes: bool,
+
+    /// Optional framed canonical WAL path for pgwire direct record writes.
+    /// Defaults to `<server.data_dir>/pgwire/canonical-records.wal`.
+    pub direct_record_wal_path: Option<PathBuf>,
 }
 
 impl Default for PostgresServerConfig {
@@ -152,6 +162,8 @@ impl Default for PostgresServerConfig {
             max_connections: 100,
             idle_timeout_secs: 3600,
             statement_cache_size: 100,
+            enable_direct_record_writes: true,
+            direct_record_wal_path: None,
         }
     }
 }
@@ -673,6 +685,8 @@ mod tests {
         assert_eq!(config.postgres_config.port, 5433);
         assert!(config.postgres_config.enable_postgres);
         assert_eq!(config.postgres_config.max_connections, 100);
+        assert!(config.postgres_config.enable_direct_record_writes);
+        assert!(config.postgres_config.direct_record_wal_path.is_none());
 
         // TLS defaults
         assert!(!config.tls_config.enabled);

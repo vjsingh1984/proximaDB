@@ -572,44 +572,38 @@ impl ProximaFlightService {
             }
         }
 
-        // Route based on write mode
-        let result = match write_mode {
-            WriteMode::WAL => {
-                // Use standard WAL-backed insertion (reuses existing path)
-                let request = RichRecordBatchRequest {
-                    collection_id: collection_id.clone(),
-                    records,
-                };
-                if operation == FlightWriteOperation::Insert {
-                    self.request_handlers
-                        .handle_record_insert_batch_for_tenant(request, tenant_id.as_deref())
-                        .await?
-                } else {
-                    self.request_handlers
-                        .handle_record_batch_for_tenant(request, tenant_id.as_deref())
-                        .await?
-                }
-            }
-            WriteMode::Direct => {
-                // Direct engine write (future enhancement)
-                // For now, fall back to WAL mode
-                warn!(
-                    collection_id = %collection_id,
-                    "Direct write mode not yet implemented, using WAL"
-                );
-                let request = RichRecordBatchRequest {
-                    collection_id: collection_id.clone(),
-                    records,
-                };
-                if operation == FlightWriteOperation::Insert {
-                    self.request_handlers
-                        .handle_record_insert_batch_for_tenant(request, tenant_id.as_deref())
-                        .await?
-                } else {
-                    self.request_handlers
-                        .handle_record_batch_for_tenant(request, tenant_id.as_deref())
-                        .await?
-                }
+        // Build shared WriteIntent so all Flight operations route through the
+        // canonical lane contract (ADR-009/ADR-010/blueprint).
+        let op_kind = crate::services::WriteOperationKind::from(operation);
+        let durability = crate::services::WriteDurabilityRequirement::from(write_mode);
+        let intent = crate::services::WriteIntent::new(&collection_id, op_kind)
+            .with_durability(durability)
+            .with_row_count_hint(records.len() as u64);
+        let lane_decision = crate::services::WriteLaneRouter::new().route(&intent);
+
+        debug!(
+            collection_id = %collection_id,
+            operation = ?op_kind,
+            write_lane = ?lane_decision.lane,
+            guards = ?lane_decision.required_guards,
+            "Arrow Flight write-lane decision"
+        );
+
+        // Route to WAL-current-state or bulk-append based on lane decision.
+        // BulkAppendCommit defers to WAL while direct-commit is not yet wired.
+        let result = {
+            let request = RichRecordBatchRequest {
+                collection_id: collection_id.clone(),
+                records,
+            };
+            if operation == FlightWriteOperation::Insert {
+                self.request_handlers
+                    .handle_record_insert_batch_for_tenant(request, tenant_id.as_deref())
+                    .await?
+            } else {
+                self.request_handlers
+                    .handle_record_batch_for_tenant(request, tenant_id.as_deref())
+                    .await?
             }
         };
 
@@ -1984,6 +1978,20 @@ impl ProximaFlightService {
 
         let batches = ArrowProtoCodec::flight_data_stream_to_batches(&flight_messages)
             .map_err(|e| TonicStatus::internal(format!("Failed to parse batches: {}", e)))?;
+
+        // Resolve write lane once for the full exchange stream: DoExchange always
+        // uses WAL durability because streaming batches require per-row ordering.
+        let op_kind = crate::services::WriteOperationKind::from(operation);
+        let exchange_intent = crate::services::WriteIntent::new(&collection_id, op_kind)
+            .with_durability(crate::services::WriteDurabilityRequirement::WalRequired)
+            .with_row_count_hint(batches.len() as u64);
+        let exchange_lane = crate::services::WriteLaneRouter::new().route(&exchange_intent);
+        debug!(
+            collection_id = %collection_id,
+            operation = ?op_kind,
+            write_lane = ?exchange_lane.lane,
+            "Arrow Flight DoExchange write-lane decision"
+        );
 
         for batch in batches {
             let batch_rows = batch.num_rows();

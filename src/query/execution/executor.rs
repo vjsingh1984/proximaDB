@@ -205,9 +205,9 @@ impl QueryExecutor {
         let mut all_rows = Vec::new();
         let mut buffers: Vec<Vec<QueryRow>> = Vec::new();
 
-        for operation in &plan.operations {
+        for operation in &plan.execution_steps {
             match operation {
-                ExecutionOperation::VectorSearch {
+                ExecutionOperation::VectorQuery {
                     collection_id,
                     query_vector,
                     filters,
@@ -353,7 +353,11 @@ impl QueryExecutor {
             rows: final_rows,
             total_found,
             execution_time_ms: execution_time,
-            operations_performed: plan.operations.iter().map(|op| op.describe()).collect(),
+            operations_performed: plan
+                .execution_steps
+                .iter()
+                .map(|op| op.describe())
+                .collect(),
             cache_hits: 0,
             performance_metrics,
         })
@@ -366,7 +370,7 @@ impl QueryExecutor {
         let mut all_rows = Vec::new();
         let mut buffers: Vec<Vec<QueryRow>> = Vec::new();
 
-        for operation in &plan.operations {
+        for operation in &plan.execution_steps {
             match operation {
                 ExecutionOperation::GraphTraversal {
                     start_nodes,
@@ -449,7 +453,11 @@ impl QueryExecutor {
             rows: final_rows,
             total_found,
             execution_time_ms: execution_time,
-            operations_performed: plan.operations.iter().map(|op| op.describe()).collect(),
+            operations_performed: plan
+                .execution_steps
+                .iter()
+                .map(|op| op.describe())
+                .collect(),
             cache_hits: 0, // Deferred: Implement graph caching
             performance_metrics,
         })
@@ -469,9 +477,9 @@ impl QueryExecutor {
             Vec<String>,
             Vec<String>,
         )> = None;
-        for op in &plan.operations {
+        for op in &plan.execution_steps {
             match op {
-                ExecutionOperation::VectorSearch { .. } => vector_ops.push(op.clone()),
+                ExecutionOperation::VectorQuery { .. } => vector_ops.push(op.clone()),
                 ExecutionOperation::GraphTraversal { .. } => graph_ops.push(op.clone()),
                 ExecutionOperation::Fusion { strategy, weights } => {
                     fusion_strategy = Some((strategy.clone(), weights.clone()))
@@ -695,13 +703,17 @@ impl QueryExecutor {
             rows: fused_results,
             total_found,
             execution_time_ms: execution_time,
-            operations_performed: plan.operations.iter().map(|op| op.describe()).collect(),
+            operations_performed: plan
+                .execution_steps
+                .iter()
+                .map(|op| op.describe())
+                .collect(),
             cache_hits: 0,
             performance_metrics,
         };
 
         // Post-fusion aggregate if requested
-        for op in &plan.operations {
+        for op in &plan.execution_steps {
             if let ExecutionOperation::Aggregate {
                 group_keys,
                 aggs,
@@ -1440,7 +1452,7 @@ impl QueryExecutor {
     ) -> Result<Vec<QueryRow>> {
         #[cfg(test)]
         {
-            if let ExecutionOperation::VectorSearch { collection_id, .. } = operation {
+            if let ExecutionOperation::VectorQuery { collection_id, .. } = operation {
                 if let Some(map) = TEST_VECTOR_RESULTS.get() {
                     if let Some(guard) = map.lock().ok() {
                         if let Some(rows) = guard.get(collection_id) {
@@ -1450,7 +1462,7 @@ impl QueryExecutor {
                 }
             }
         }
-        if let ExecutionOperation::VectorSearch {
+        if let ExecutionOperation::VectorQuery {
             collection_id,
             query_vector,
             filters,
@@ -1836,9 +1848,9 @@ mod executor_tests {
         }
 
         // Create execution plan with metadata filtering
-        let plan = ExecutionPlan {
-            execution_strategy: ExecutionStrategy::VectorOnly,
-            operations: vec![ExecutionOperation::VectorSearch {
+        let plan = ExecutionPlan::runtime(
+            ExecutionStrategy::VectorOnly,
+            vec![ExecutionOperation::VectorQuery {
                 collection_id: "test_collection".to_string(),
                 query_vector: Some(vec![0.1, 0.2, 0.3]),
                 filters: Some(FilterExpression::Comparison {
@@ -1849,13 +1861,13 @@ mod executor_tests {
                 top_k: 10,
                 distance_metric: "cosine".to_string(),
             }],
-            estimated_cost: 2.5,
-            optimizations: vec!["HashMap metadata filtering".to_string()],
-            performance_hints: vec![],
-            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
-            limit: None,
-            offset: None,
-        };
+            2.5,
+            vec!["HashMap metadata filtering".to_string()],
+            vec![],
+            crate::query::execution::SeedingStrategy::Average,
+            None,
+            None,
+        );
 
         let result = executor
             .execute_vector_plan(plan)
@@ -1894,10 +1906,10 @@ mod executor_tests {
         }
 
         // Create hybrid execution plan
-        let plan = ExecutionPlan {
-            execution_strategy: ExecutionStrategy::Hybrid,
-            operations: vec![
-                ExecutionOperation::VectorSearch {
+        let plan = ExecutionPlan::runtime(
+            ExecutionStrategy::Hybrid,
+            vec![
+                ExecutionOperation::VectorQuery {
                     collection_id: "test_collection".to_string(),
                     query_vector: Some(vec![0.1, 0.2, 0.3]),
                     filters: None,
@@ -1919,13 +1931,13 @@ mod executor_tests {
                     weights: vec![0.6, 0.4],
                 },
             ],
-            estimated_cost: 5.0,
-            optimizations: vec!["RRF fusion algorithm".to_string()],
-            performance_hints: vec![],
-            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
-            limit: None,
-            offset: None,
-        };
+            5.0,
+            vec!["RRF fusion algorithm".to_string()],
+            vec![],
+            crate::query::execution::SeedingStrategy::Average,
+            None,
+            None,
+        );
 
         let result = executor
             .execute_hybrid_plan(plan)
@@ -1968,9 +1980,9 @@ mod executor_tests {
         }
 
         // Create query with multiple metadata filters
-        let plan = ExecutionPlan {
-            execution_strategy: ExecutionStrategy::VectorOnly,
-            operations: vec![ExecutionOperation::VectorSearch {
+        let plan = ExecutionPlan::runtime(
+            ExecutionStrategy::VectorOnly,
+            vec![ExecutionOperation::VectorQuery {
                 collection_id: "test_collection".to_string(),
                 query_vector: Some(vec![0.1, 0.2, 0.3]),
                 filters: Some(FilterExpression::And(vec![
@@ -1988,13 +2000,13 @@ mod executor_tests {
                 top_k: 100,
                 distance_metric: "cosine".to_string(),
             }],
-            estimated_cost: 3.0,
-            optimizations: vec!["HashMap filtering".to_string()],
-            performance_hints: vec![],
-            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
-            limit: None,
-            offset: None,
-        };
+            3.0,
+            vec!["HashMap filtering".to_string()],
+            vec![],
+            crate::query::execution::SeedingStrategy::Average,
+            None,
+            None,
+        );
 
         let start = std::time::Instant::now();
         let result = executor
@@ -2181,10 +2193,10 @@ mod executor_tests {
         }
 
         // Build plan: VectorSearch then GraphTraversal with empty seeds (to be seeded)
-        let plan = ExecutionPlan {
-            execution_strategy: ExecutionStrategy::Hybrid,
-            operations: vec![
-                ExecutionOperation::VectorSearch {
+        let plan = ExecutionPlan::runtime(
+            ExecutionStrategy::Hybrid,
+            vec![
+                ExecutionOperation::VectorQuery {
                     collection_id: "c1".to_string(),
                     query_vector: None,
                     filters: None,
@@ -2200,13 +2212,13 @@ mod executor_tests {
                     vector_target_collection: Some("c1".to_string()),
                 },
             ],
-            estimated_cost: 0.0,
-            optimizations: vec![],
-            performance_hints: vec![],
-            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
-            limit: None,
-            offset: None,
-        };
+            0.0,
+            vec![],
+            vec![],
+            crate::query::execution::SeedingStrategy::Average,
+            None,
+            None,
+        );
 
         let executor = QueryExecutor::new_for_tests(graph_service);
 

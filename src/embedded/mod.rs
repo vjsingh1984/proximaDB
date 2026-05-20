@@ -4127,13 +4127,7 @@ impl EmbeddedProximaDB {
         &self,
         statement: &crate::services::DmlStatement,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let table_name = match statement {
-            crate::services::DmlStatement::Insert { table_name, .. }
-            | crate::services::DmlStatement::Update { table_name, .. }
-            | crate::services::DmlStatement::Delete { table_name, .. }
-            | crate::services::DmlStatement::Upsert { table_name, .. } => table_name,
-        };
-        self.ensure_vector_backing_collection_for_table(table_name)
+        self.ensure_vector_backing_collection_for_table(statement.target_table_name())
     }
 
     fn ensure_vector_backing_collection_for_table(
