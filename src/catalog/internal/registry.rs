@@ -104,9 +104,10 @@ impl InternalSchemaRegistry {
 
         let object_schema = ObjectSchema::from_table_schema(&schema);
 
-        let object =
+        let mut object =
             CatalogObject::new(catalog, namespace, &identifier.name, ObjectType::RdbmsTable)
                 .with_schema(object_schema, SchemaEnforcementMode::Strict);
+        object.properties = schema.properties.clone();
 
         self.register(object).await
     }

@@ -347,6 +347,57 @@ pub fn apply_evolution(
                         .retain(|idx| &idx.name != constraint_name);
                 }
             }
+            SchemaChange::PromotePropsKey {
+                key,
+                column_type,
+                comment,
+            } => {
+                // Promoted column name: `props__<key>` (double underscore).
+                let col_name = format!("props__{}", key);
+                if new_schema.columns.iter().any(|c| c.name == col_name) {
+                    return Err(anyhow!(
+                        "Props key '{}' is already promoted to column '{}'",
+                        key,
+                        col_name
+                    ));
+                }
+                // Promoted columns start at ID 100 to distinguish them from
+                // canonical system columns (ID 1–9) and user columns (ID 10+).
+                let promoted_id = new_schema
+                    .columns
+                    .iter()
+                    .filter(|c| c.id >= 100)
+                    .map(|c| c.id)
+                    .max()
+                    .unwrap_or(99)
+                    + 1;
+                let mut col = CatalogColumn::new(promoted_id, &col_name, *column_type);
+                col.nullable = true;
+                col.comment = comment.clone();
+                col.properties
+                    .insert("promoted_from_props".to_string(), key.clone());
+                new_schema.columns.push(col);
+
+                // Record the promotion so the compaction writer knows which
+                // msgpack keys to route into the new typed column.
+                new_schema
+                    .props_auto_promotion
+                    .promoted_keys
+                    .insert(key.clone(), col_name);
+            }
+            SchemaChange::SetTableOption { key, value } => {
+                match key.to_lowercase().as_str() {
+                    "props_auto_promotion" => {
+                        new_schema.props_auto_promotion.enabled =
+                            matches!(value.to_lowercase().as_str(), "enabled" | "true" | "1");
+                    }
+                    _ => {
+                        // Unknown options are stored as table properties so
+                        // they round-trip without data loss.
+                        new_schema.properties.insert(key.clone(), value.clone());
+                    }
+                }
+            }
         }
     }
 

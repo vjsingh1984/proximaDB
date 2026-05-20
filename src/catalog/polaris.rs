@@ -18,13 +18,13 @@ use tracing::{debug, info, warn};
 
 use super::TableIdentifier;
 use super::cache::CatalogCache;
-use super::schema::{apply_evolution, validate_schema};
 use super::traits::{Catalog, CatalogHealth, LakehouseExtension, TableFormat};
 use super::types::{
     CatalogColumn, CatalogDataType, CatalogIndex, CatalogNamespace, CatalogPartitionSpec,
     CatalogSchemaEvolution, CatalogSortOrder, CatalogTableSchema, CatalogTableStatistics,
 };
 use crate::proto::proximadb_v1::PolarisCatalogConfig;
+use proximadb_catalog::schema::{apply_evolution, validate_schema};
 
 /// Apache Polaris catalog implementation
 ///

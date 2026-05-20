@@ -253,6 +253,18 @@ pub enum AlterTableChange {
         /// Name of the constraint to remove.
         constraint_name: String,
     },
+    /// PROMOTE PROPS KEY key TYPE type — promote a high-frequency props key to a typed column.
+    /// The column is named `props__<key>` and stored in the next available ID ≥ 100.
+    PromotePropsKey {
+        key: String,
+        column_type: SqlDataType,
+        comment: Option<String>,
+    },
+    /// SET (key = 'value') — table-level option, e.g. `props_auto_promotion = 'enabled'`.
+    SetTableOption {
+        key: String,
+        value: String,
+    },
 }
 
 /// Column position for ALTER TABLE ... MODIFY
@@ -898,10 +910,12 @@ impl DdlService {
             "storage_specialization".to_string(),
             specialization.as_str().to_string(),
         );
+        normalize_route_knob_properties(schema);
 
         schema.storage_layouts = vec![primary_layout_for_specialization(specialization, profile)];
 
         add_specialty_projection_layouts(schema, has_json, has_vector);
+        apply_projection_freshness_options(schema);
         add_open_table_layouts(schema)?;
 
         Ok(())
@@ -1110,6 +1124,21 @@ impl DdlService {
                 AlterTableChange::DropConstraint { constraint_name } => {
                     SchemaChange::DropConstraint { constraint_name }
                 }
+                AlterTableChange::PromotePropsKey {
+                    key,
+                    column_type,
+                    comment,
+                } => {
+                    let (catalog_type, _) = self.sql_to_catalog_type(&column_type)?;
+                    SchemaChange::PromotePropsKey {
+                        key,
+                        column_type: catalog_type,
+                        comment,
+                    }
+                }
+                AlterTableChange::SetTableOption { key, value } => {
+                    SchemaChange::SetTableOption { key, value }
+                }
             };
             schema_changes.push(catalog_change);
         }
@@ -1293,9 +1322,16 @@ fn add_specialty_projection_layouts(
             physical_format: CatalogPhysicalFormat::ProximaBlock,
             rebuild_source: "primary".to_string(),
             freshness: ProjectionFreshness::BoundedLag,
+            freshness_state: Default::default(),
             max_lag_ms: Some(1_000),
+            source_range: None,
+            last_included_position: None,
+            rebuild_rto: Some(proximadb_catalog::RebuildRtoSpec::hnsw_benchmarked()),
             rebuildable: true,
+            invalidation_policy: Some("mark-stale".to_string()),
+            policy_boundary: Some("engine-enforced".to_string()),
             lossy: true,
+            benchmark_gate: Some("hybrid-vector-smoke".to_string()),
             support_status: "experimental".to_string(),
             properties: HashMap::new(),
         });
@@ -1320,9 +1356,16 @@ fn add_specialty_projection_layouts(
             physical_format: CatalogPhysicalFormat::ProximaBlock,
             rebuild_source: "primary".to_string(),
             freshness: ProjectionFreshness::Lazy,
+            freshness_state: Default::default(),
             max_lag_ms: None,
+            source_range: None,
+            last_included_position: None,
+            rebuild_rto: None,
             rebuildable: true,
+            invalidation_policy: Some("mark-stale".to_string()),
+            policy_boundary: Some("engine-enforced".to_string()),
             lossy: false,
+            benchmark_gate: Some("json-path-smoke".to_string()),
             support_status: "experimental".to_string(),
             properties: HashMap::new(),
         });
@@ -1351,6 +1394,82 @@ fn add_specialty_projection_layouts(
     }
 }
 
+fn normalize_route_knob_properties(schema: &mut CatalogTableSchema) {
+    if let Some(route) = first_property(
+        schema,
+        &["compute_route", "preferred_compute_route", "compute"],
+    ) {
+        schema
+            .properties
+            .insert("compute_route".to_string(), canonical_option_value(&route));
+    }
+
+    if let Some(partitioning) = first_property(
+        schema,
+        &["partitioning", "partition_key", "distribution_key"],
+    ) {
+        schema
+            .properties
+            .insert("partitioning".to_string(), partitioning);
+    }
+
+    if let Some(isolation) = first_property(
+        schema,
+        &["isolation_profile", "isolation", "transaction_profile"],
+    ) {
+        schema
+            .properties
+            .insert("isolation_profile".to_string(), isolation.clone());
+        if schema.relational_capabilities.transaction_profile.is_none() {
+            schema.relational_capabilities.transaction_profile = Some(isolation);
+        }
+    }
+
+    if let Some(freshness) = first_property(
+        schema,
+        &["freshness_sla", "projection_freshness", "freshness"],
+    ) {
+        schema
+            .properties
+            .insert("freshness_sla".to_string(), freshness);
+    }
+
+    if let Some(policy_boundary) =
+        first_property(schema, &["policy_boundary", "rls_boundary", "policy"])
+    {
+        schema
+            .properties
+            .insert("policy_boundary".to_string(), policy_boundary);
+    }
+
+    if let Some(authority) = first_property(schema, &["authority_mode", "authority", "ownership"])
+        .and_then(|value| parse_authority_mode(&value))
+    {
+        schema.properties.insert(
+            "authority_mode".to_string(),
+            authority.ownership_mode_name().to_string(),
+        );
+    }
+}
+
+fn apply_projection_freshness_options(schema: &mut CatalogTableSchema) {
+    let Some(freshness) = first_property(schema, &["projection_freshness", "freshness"]) else {
+        return;
+    };
+    let Some(freshness) = parse_projection_freshness(&freshness) else {
+        return;
+    };
+    let max_lag_ms = first_property(schema, &["projection_max_lag_ms", "max_lag_ms"])
+        .and_then(|value| value.parse::<i64>().ok());
+
+    for projection in &mut schema.projections {
+        projection.freshness = freshness;
+        if max_lag_ms.is_some() {
+            projection.max_lag_ms = max_lag_ms;
+        }
+    }
+}
+
 fn add_open_table_layouts(schema: &mut CatalogTableSchema) -> Result<()> {
     let Some(format) = schema
         .properties
@@ -1374,6 +1493,7 @@ fn add_open_table_layouts(schema: &mut CatalogTableSchema) -> Result<()> {
         .properties
         .get("ownership")
         .or_else(|| schema.properties.get("authority"))
+        .or_else(|| schema.properties.get("authority_mode"))
         .and_then(|value| parse_authority_mode(value))
         .unwrap_or(CatalogAuthorityMode::ProjectionPublication);
 
@@ -1465,17 +1585,47 @@ fn parse_physical_format(value: &str) -> Option<CatalogPhysicalFormat> {
 
 fn parse_authority_mode(value: &str) -> Option<CatalogAuthorityMode> {
     match value.trim().to_ascii_lowercase().as_str() {
-        "proxima" | "proximadb" | "internal" | "canonical" | "proxima_authoritative" => {
-            Some(CatalogAuthorityMode::ProximaAuthoritative)
+        "proxima"
+        | "proximadb"
+        | "internal"
+        | "canonical"
+        | "proxima_authoritative"
+        | "proximaauthoritative" => Some(CatalogAuthorityMode::ProximaAuthoritative),
+        "projection"
+        | "publication"
+        | "projection_publication"
+        | "projectionpublication"
+        | "export" => Some(CatalogAuthorityMode::ProjectionPublication),
+        "import" | "imported" | "imported_snapshot" | "importedsnapshot" => {
+            Some(CatalogAuthorityMode::ImportedSnapshot)
         }
-        "projection" | "publication" | "projection_publication" | "export" => {
-            Some(CatalogAuthorityMode::ProjectionPublication)
+        "external" | "external_authoritative" | "externalauthoritative" => {
+            Some(CatalogAuthorityMode::ExternalAuthoritative)
         }
-        "import" | "imported" | "imported_snapshot" => Some(CatalogAuthorityMode::ImportedSnapshot),
-        "external" | "external_authoritative" => Some(CatalogAuthorityMode::ExternalAuthoritative),
-        "federated" | "federated_read" => Some(CatalogAuthorityMode::FederatedRead),
+        "federated" | "federated_read" | "federatedread" => {
+            Some(CatalogAuthorityMode::FederatedRead)
+        }
         _ => None,
     }
+}
+
+fn parse_projection_freshness(value: &str) -> Option<ProjectionFreshness> {
+    match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+        "sync" | "synchronous" => Some(ProjectionFreshness::Synchronous),
+        "bounded" | "bounded_lag" | "boundedlag" => Some(ProjectionFreshness::BoundedLag),
+        "lazy" | "async" | "asynchronous" => Some(ProjectionFreshness::Lazy),
+        "manual" | "explicit" => Some(ProjectionFreshness::Manual),
+        _ => None,
+    }
+}
+
+fn first_property(schema: &CatalogTableSchema, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| schema.properties.get(*key).cloned())
+}
+
+fn canonical_option_value(value: &str) -> String {
+    value.trim().to_ascii_lowercase().replace('_', "-")
 }
 
 #[cfg(test)]
@@ -1677,6 +1827,13 @@ mod tests {
                 ) WITH (
                     workload = 'htap',
                     layout = 'pax',
+                    compute_route = 'datafusion-local',
+                    partitioning = 'tenant_id,bucket',
+                    isolation = 'snapshot-isolation',
+                    freshness_sla = '5s',
+                    projection_freshness = 'bounded_lag',
+                    projection_max_lag_ms = 250,
+                    policy_boundary = 'engine-enforced',
                     open_table_format = 'iceberg',
                     ownership = 'projection',
                     location = 's3://warehouse/facts',
@@ -1698,6 +1855,29 @@ mod tests {
         assert_eq!(
             schema.storage_specialization,
             CatalogStorageSpecialization::PaxRowFamily
+        );
+        assert_eq!(
+            schema.properties.get("compute_route").map(String::as_str),
+            Some("datafusion-local")
+        );
+        assert_eq!(
+            schema.properties.get("partitioning").map(String::as_str),
+            Some("tenant_id,bucket")
+        );
+        assert_eq!(
+            schema
+                .relational_capabilities
+                .transaction_profile
+                .as_deref(),
+            Some("snapshot-isolation")
+        );
+        assert_eq!(
+            schema.properties.get("freshness_sla").map(String::as_str),
+            Some("5s")
+        );
+        assert_eq!(
+            schema.properties.get("policy_boundary").map(String::as_str),
+            Some("engine-enforced")
         );
         assert!(
             schema
@@ -1725,6 +1905,11 @@ mod tests {
                 && layout.authority == CatalogAuthorityMode::ProjectionPublication
                 && layout.physical_format == CatalogPhysicalFormat::Iceberg
                 && layout.location.as_deref() == Some("s3://warehouse/facts")
+        }));
+        assert!(schema.projections.iter().any(|projection| {
+            projection.name == "vector_ann"
+                && projection.freshness == ProjectionFreshness::BoundedLag
+                && projection.max_lag_ms == Some(250)
         }));
     }
 

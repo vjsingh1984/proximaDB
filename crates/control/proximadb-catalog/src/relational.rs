@@ -193,6 +193,52 @@ impl CatalogRow {
         Ok(values)
     }
 
+    /// Validate primary-key-only values for point UPDATE/DELETE mutation paths.
+    ///
+    /// Unlike full row validation, this allows non-key required columns to be
+    /// absent because the mutation targets an existing row version.
+    pub fn validate_primary_key(
+        schema: &CatalogTableSchema,
+        values: HashMap<String, ProximaValue>,
+    ) -> Result<Self> {
+        let primary_key = effective_primary_key(schema);
+        if primary_key.is_empty() {
+            return Err(anyhow!(
+                "Table '{}' has no primary key for key-only mutation",
+                schema.name
+            ));
+        }
+
+        let mut projected = HashMap::new();
+        for key_column in primary_key {
+            let column = schema
+                .columns
+                .iter()
+                .find(|column| column.name == key_column)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Primary key column '{}' not found in table '{}'",
+                        key_column,
+                        schema.name
+                    )
+                })?;
+            let value = values.get(key_column).ok_or_else(|| {
+                anyhow!(
+                    "Missing primary key column '{}' for table '{}'",
+                    key_column,
+                    schema.name
+                )
+            })?;
+            validate_column_value(schema, column, value)?;
+            projected.insert(key_column.to_string(), value.clone());
+        }
+
+        Ok(Self {
+            table: schema.name.clone(),
+            values: projected,
+        })
+    }
+
     /// Stable logical row key derived from primary-key values.
     pub fn primary_key_string(&self, schema: &CatalogTableSchema) -> Result<Option<String>> {
         let pk_values = self.primary_key_values(schema)?;
@@ -273,10 +319,21 @@ impl CatalogRow {
         kind: RelationalMutationKind,
         mut options: RelationalRecordOptions,
     ) -> Result<ProximaRecord> {
+        let (default_method, default_origin) = match kind {
+            RelationalMutationKind::Insert => ("sql_insert", "insert"),
+            RelationalMutationKind::Upsert => ("sql_upsert", "upsert"),
+            RelationalMutationKind::Update => ("sql_update", "update"),
+            RelationalMutationKind::Delete => ("sql_delete", "delete"),
+        };
+        if options.method.as_deref() == Some("relational_row") || options.method.is_none() {
+            options.method = Some(default_method.to_string());
+        }
+        options
+            .origin
+            .get_or_insert_with(|| default_origin.to_string());
+
         if matches!(kind, RelationalMutationKind::Delete) {
             options.include_vector_embeddings = false;
-            options.method = Some("sql_delete".to_string());
-            options.origin = Some("delete".to_string());
             options.valid_to_ns.get_or_insert(0);
         }
 
@@ -603,6 +660,38 @@ mod tests {
     }
 
     #[test]
+    fn mutation_projection_marks_insert_and_upsert_distinctly() {
+        let mut values = HashMap::new();
+        values.insert("id".to_string(), ProximaValue::Int64(42));
+        values.insert(
+            "email".to_string(),
+            ProximaValue::String("a@example.com".to_string()),
+        );
+
+        let row = CatalogRow::validate(&users_schema(), values, &RelationalWriteProfile::oltp())
+            .expect("row should validate");
+        let insert = row
+            .to_mutation_record(
+                &users_schema(),
+                RelationalMutationKind::Insert,
+                RelationalRecordOptions::default(),
+            )
+            .expect("insert should project");
+        let upsert = row
+            .to_mutation_record(
+                &users_schema(),
+                RelationalMutationKind::Upsert,
+                RelationalRecordOptions::default(),
+            )
+            .expect("upsert should project");
+
+        assert_eq!(insert.method.as_deref(), Some("sql_insert"));
+        assert_eq!(insert.origin.as_deref(), Some("insert"));
+        assert_eq!(upsert.method.as_deref(), Some("sql_upsert"));
+        assert_eq!(upsert.origin.as_deref(), Some("upsert"));
+    }
+
+    #[test]
     fn rejects_unknown_columns_for_schema_on_write() {
         let mut values = HashMap::new();
         values.insert("id".to_string(), ProximaValue::Int64(42));
@@ -625,6 +714,19 @@ mod tests {
         let err = CatalogRow::validate(&users_schema(), values, &RelationalWriteProfile::oltp())
             .expect_err("missing required column should fail");
         assert!(err.to_string().contains("Missing required column 'email'"));
+    }
+
+    #[test]
+    fn validates_primary_key_only_row_for_delete() {
+        let mut values = HashMap::new();
+        values.insert("id".to_string(), ProximaValue::Int64(42));
+
+        let row = CatalogRow::validate_primary_key(&users_schema(), values)
+            .expect("primary key should validate");
+        assert_eq!(
+            row.primary_key_string(&users_schema()).unwrap(),
+            Some("42".to_string())
+        );
     }
 
     #[test]

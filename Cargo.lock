@@ -6050,9 +6050,12 @@ dependencies = [
 name = "proximadb-config"
 version = "0.2.0"
 dependencies = [
+ "anyhow",
  "chrono",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]

@@ -38,7 +38,8 @@ pub mod registry;
 use anyhow::Result;
 use arrow_schema::{Field as ArrowField, Schema as ArrowSchema};
 use proximadb_catalog::{
-    CatalogColumn, CatalogIndex, CatalogProjection, CatalogStorageLayout, CatalogTableSchema,
+    CatalogColumn, CatalogIndex, CatalogProjection, CatalogStorageLayout,
+    CatalogStorageSpecialization, CatalogTableSchema, CatalogWorkloadProfile,
     RelationalCapabilities,
 };
 use serde::{Deserialize, Serialize};
@@ -198,6 +199,15 @@ pub struct ObjectSchema {
     /// Optional relational integrity and transaction capabilities.
     #[serde(default)]
     pub relational_capabilities: RelationalCapabilities,
+    /// Intended workload profile for routing/planning.
+    #[serde(default)]
+    pub workload_profile: CatalogWorkloadProfile,
+    /// Primary physical/access-method specialization for routing/planning.
+    #[serde(default)]
+    pub storage_specialization: CatalogStorageSpecialization,
+    /// Table-level catalog properties, including route knobs.
+    #[serde(default)]
+    pub properties: HashMap<String, String>,
     /// Model-specific properties
     pub model_properties: ModelProperties,
 }
@@ -212,6 +222,9 @@ impl Default for ObjectSchema {
             storage_layouts: Vec::new(),
             projections: Vec::new(),
             relational_capabilities: RelationalCapabilities::default(),
+            workload_profile: CatalogWorkloadProfile::default(),
+            storage_specialization: CatalogStorageSpecialization::default(),
+            properties: HashMap::new(),
             model_properties: ModelProperties::None,
         }
     }
@@ -228,6 +241,9 @@ impl ObjectSchema {
             storage_layouts: schema.storage_layouts.clone(),
             projections: schema.projections.clone(),
             relational_capabilities: schema.relational_capabilities.clone(),
+            workload_profile: schema.workload_profile,
+            storage_specialization: schema.storage_specialization,
+            properties: schema.properties.clone(),
             model_properties: ModelProperties::Rdbms(RdbmsProperties::default()),
         }
     }

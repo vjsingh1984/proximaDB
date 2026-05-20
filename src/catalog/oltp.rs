@@ -44,6 +44,7 @@ use super::types::{
     CatalogColumn, CatalogDataType, CatalogIndex, CatalogNamespace, CatalogPartitionSpec,
     CatalogSchemaEvolution, CatalogSortOrder, CatalogTableSchema, CatalogTableStatistics,
 };
+use proximadb_catalog::schema::apply_evolution;
 
 /// OLTP catalog backend type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -817,7 +818,7 @@ impl Catalog for OltpCatalog {
             .get_mut(&key)
             .ok_or_else(|| anyhow!("Table '{}' not found", key))?;
 
-        super::schema::apply_evolution(schema, &evolution)?;
+        apply_evolution(schema, &evolution)?;
         Ok(schema.clone())
     }
 

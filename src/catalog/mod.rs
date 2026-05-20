@@ -23,9 +23,6 @@ pub mod traits;
 // Metadata cache
 pub mod cache;
 
-// Schema utilities (builders, evolution, validation)
-pub mod schema;
-
 // Partition pruning for query optimization
 pub mod partition_pruning;
 

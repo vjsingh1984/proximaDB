@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use serde::Serialize;
 
 use crate::catalog::{
     CatalogDataType, CatalogIndexType, CatalogManager, CatalogTableSchema, TableIdentifier,
 };
 
 /// Tabular catalog metadata for SQL-compatible introspection surfaces.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CatalogIntrospectionResult {
     pub columns: Vec<String>,
     pub column_types: Vec<String>,
@@ -43,8 +44,11 @@ impl CatalogIntrospectionService {
         normalized.contains(" from xcatalog.tables")
             || normalized.contains(" from xcatalog.columns")
             || normalized.contains(" from xcatalog.indexes")
+            || normalized.contains(" from xcatalog.table_routing")
             || normalized.contains(" from information_schema.tables")
             || normalized.contains(" from information_schema.columns")
+            || normalized.contains(" from information_schema.table_routing")
+            || normalized.contains("proximadb_catalog.props_promotion_candidates")
             || (normalized.contains("pg_catalog.pg_class")
                 && normalized.contains("pg_catalog.pg_namespace"))
             || (normalized.contains("pg_catalog.pg_attribute")
@@ -68,6 +72,19 @@ impl CatalogIntrospectionService {
         }
         if normalized.contains(" from xcatalog.indexes") {
             return Ok(Some(self.indexes(table_filter.as_deref()).await?));
+        }
+        if normalized.contains(" from xcatalog.table_routing")
+            || normalized.contains(" from information_schema.table_routing")
+        {
+            return Ok(Some(self.table_routing(table_filter.as_deref()).await?));
+        }
+        if normalized.contains("proximadb_catalog.props_promotion_candidates") {
+            let table_filter = extract_string_filter(sql, "table_name")
+                .or_else(|| extract_function_arg(sql, "props_promotion_candidates"));
+            return Ok(Some(
+                self.props_promotion_candidates(table_filter.as_deref())
+                    .await?,
+            ));
         }
         if normalized.contains("pg_catalog.pg_index") {
             return Ok(Some(self.jdbc_indexes(None).await?));
@@ -296,6 +313,82 @@ impl CatalogIntrospectionService {
         })
     }
 
+    async fn table_routing(
+        &self,
+        table_filter: Option<&str>,
+    ) -> Result<CatalogIntrospectionResult> {
+        let mut rows = Vec::new();
+
+        for (catalog_name, table_id, schema) in self.cataloged_tables().await? {
+            if !matches_filter(&table_id.name, table_filter) {
+                continue;
+            }
+            let primary_layout = primary_layout(&schema);
+            rows.push(vec![
+                catalog_name,
+                namespace_name(&table_id),
+                table_id.name,
+                primary_layout
+                    .map(|layout| layout.authority.ownership_mode_name().to_string())
+                    .unwrap_or_else(|| "ProximaAuthoritative".to_string()),
+                schema.workload_profile.as_str().to_string(),
+                schema.storage_specialization.as_str().to_string(),
+                primary_layout
+                    .map(|layout| format!("{:?}", layout.physical_format))
+                    .unwrap_or_default(),
+                property_value(&schema, &["compute_route", "preferred_compute_route"])
+                    .unwrap_or_default(),
+                property_value(
+                    &schema,
+                    &["partitioning", "partition_key", "distribution_key"],
+                )
+                .unwrap_or_default(),
+                schema
+                    .relational_capabilities
+                    .transaction_profile
+                    .clone()
+                    .or_else(|| property_value(&schema, &["isolation_profile", "isolation"]))
+                    .unwrap_or_default(),
+                property_value(&schema, &["freshness_sla", "projection_freshness"])
+                    .unwrap_or_default(),
+                policy_boundary(&schema),
+            ]);
+        }
+
+        rows.sort();
+        Ok(CatalogIntrospectionResult {
+            columns: vec![
+                "table_catalog".to_string(),
+                "table_schema".to_string(),
+                "table_name".to_string(),
+                "authority_mode".to_string(),
+                "workload_profile".to_string(),
+                "storage_specialization".to_string(),
+                "primary_format".to_string(),
+                "compute_route".to_string(),
+                "partitioning".to_string(),
+                "isolation_profile".to_string(),
+                "freshness_sla".to_string(),
+                "policy_boundary".to_string(),
+            ],
+            column_types: vec![
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+            ],
+            rows,
+        })
+    }
+
     async fn jdbc_tables(&self, table_filter: Option<&str>) -> Result<CatalogIntrospectionResult> {
         let mut rows = Vec::new();
 
@@ -498,6 +591,78 @@ impl CatalogIntrospectionService {
         })
     }
 
+    /// Return props promotion state for all tables (or a single table when `table_filter` is set).
+    ///
+    /// Columns: table_name, props_key, promoted_column, promotion_enabled,
+    ///          frequency_threshold, min_record_count, status
+    async fn props_promotion_candidates(
+        &self,
+        table_filter: Option<&str>,
+    ) -> Result<CatalogIntrospectionResult> {
+        let mut rows: Vec<Vec<String>> = Vec::new();
+
+        for (_catalog_name, table_id, schema) in self.cataloged_tables().await? {
+            if !matches_filter(&table_id.name, table_filter) {
+                continue;
+            }
+
+            let policy = &schema.props_auto_promotion;
+            let enabled_str = if policy.enabled { "true" } else { "false" };
+            let threshold_str = format!("{:.2}", policy.frequency_threshold);
+            let min_count_str = policy.min_record_count.to_string();
+
+            // Rows for already-promoted keys.
+            for (key, col_name) in &policy.promoted_keys {
+                rows.push(vec![
+                    table_id.name.clone(),
+                    key.clone(),
+                    col_name.clone(),
+                    enabled_str.to_string(),
+                    threshold_str.clone(),
+                    min_count_str.clone(),
+                    "promoted".to_string(),
+                ]);
+            }
+
+            // If auto-promotion is enabled and no keys are promoted yet, emit one
+            // summary row so the table is visible even before any promotions.
+            if policy.enabled && policy.promoted_keys.is_empty() {
+                rows.push(vec![
+                    table_id.name.clone(),
+                    String::new(),
+                    String::new(),
+                    enabled_str.to_string(),
+                    threshold_str.clone(),
+                    min_count_str.clone(),
+                    "no_candidates_yet".to_string(),
+                ]);
+            }
+        }
+
+        rows.sort();
+        Ok(CatalogIntrospectionResult {
+            columns: vec![
+                "table_name".to_string(),
+                "props_key".to_string(),
+                "promoted_column".to_string(),
+                "promotion_enabled".to_string(),
+                "frequency_threshold".to_string(),
+                "min_record_count".to_string(),
+                "status".to_string(),
+            ],
+            column_types: vec![
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "boolean".to_string(),
+                "float8".to_string(),
+                "int8".to_string(),
+                "text".to_string(),
+            ],
+            rows,
+        })
+    }
+
     async fn cataloged_tables(&self) -> Result<Vec<(String, TableIdentifier, CatalogTableSchema)>> {
         let mut tables = Vec::new();
 
@@ -531,8 +696,56 @@ fn extract_string_filter(sql: &str, column: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
+/// Extract the first single-quoted string argument from a function call.
+/// e.g. `SELECT * FROM proximadb_catalog.props_promotion_candidates('events')` → `Some("events")`
+fn extract_function_arg(sql: &str, fn_name: &str) -> Option<String> {
+    let lower = sql.to_lowercase();
+    let needle = format!("{}('", fn_name.to_lowercase());
+    let start = lower.find(&needle)? + needle.len();
+    let rest = &sql[start..];
+    let end = rest.find('\'')?;
+    Some(rest[..end].to_string())
+}
+
 fn matches_filter(value: &str, filter: Option<&str>) -> bool {
     filter.is_none_or(|filter| value.eq_ignore_ascii_case(filter))
+}
+
+fn primary_layout(schema: &CatalogTableSchema) -> Option<&crate::catalog::CatalogStorageLayout> {
+    schema
+        .storage_layouts
+        .iter()
+        .rev()
+        .find(|layout| layout.name == "primary")
+        .or_else(|| schema.storage_layouts.first())
+}
+
+fn property_value(schema: &CatalogTableSchema, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| schema.properties.get(*key).cloned())
+}
+
+fn policy_boundary(schema: &CatalogTableSchema) -> String {
+    if let Some(boundary) = property_value(schema, &["policy_boundary", "rls_boundary"]) {
+        return boundary;
+    }
+
+    match primary_layout(schema) {
+        Some(layout) if layout.policy_enforced_in_proxima => "engine-enforced".to_string(),
+        Some(layout) if layout.authority.is_external_authoritative() => {
+            "external-policy".to_string()
+        }
+        Some(layout)
+            if matches!(
+                layout.authority,
+                crate::catalog::CatalogAuthorityMode::FederatedRead
+            ) =>
+        {
+            "connector-enforced".to_string()
+        }
+        Some(_) => "unsupported".to_string(),
+        None => "engine-enforced".to_string(),
+    }
 }
 
 fn namespace_name(table_id: &TableIdentifier) -> String {
@@ -695,9 +908,15 @@ mod tests {
                     PRIMARY KEY (record_id)
                 ) WITH (
                     storage_engine = 'SST',
+                    workload = 'htap',
                     layout = 'hybrid',
                     xcatalog_namespace = 'agentic.langgraph',
-                    schema_kind = 'agentic_mixed'
+                    schema_kind = 'agentic_mixed',
+                    compute_route = 'datafusion-local',
+                    partitioning = 'tenant_id,bucket',
+                    isolation = 'snapshot-isolation',
+                    freshness_sla = '5s',
+                    policy_boundary = 'engine-enforced'
                 );",
             )
             .expect("parse table")
@@ -763,5 +982,90 @@ mod tests {
                 .iter()
                 .any(|row| row[3] == "idx_embedding" && row[4] == "hnsw")
         );
+
+        let routing = introspection
+            .execute_select(
+                "SELECT * FROM information_schema.table_routing WHERE table_name = 'agent_store'",
+            )
+            .await
+            .expect("routing query")
+            .expect("routing result");
+        assert_eq!(routing.rows.len(), 1);
+        assert_eq!(routing.rows[0][2], "agent_store");
+        assert_eq!(routing.rows[0][3], "ProximaAuthoritative");
+        assert_eq!(routing.rows[0][4], "htap");
+        assert_eq!(routing.rows[0][5], "pax_row_family");
+        assert_eq!(routing.rows[0][7], "datafusion-local");
+        assert_eq!(routing.rows[0][8], "tenant_id,bucket");
+        assert_eq!(routing.rows[0][9], "snapshot-isolation");
+        assert_eq!(routing.rows[0][10], "5s");
+        assert_eq!(routing.rows[0][11], "engine-enforced");
+    }
+
+    #[tokio::test]
+    async fn test_props_promotion_candidates_reflects_promoted_keys() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("namespace");
+
+        let parser = SqlFrontendParser::new();
+        let create = parser
+            .parse_ddl("CREATE TABLE events (id TEXT NOT NULL, payload JSONB, PRIMARY KEY (id))")
+            .expect("parse")
+            .expect("ddl");
+        ddl.execute(create).await.expect("create table");
+
+        // Enable auto-promotion
+        let set_opt = parser
+            .parse_ddl("ALTER TABLE events SET (props_auto_promotion = 'enabled')")
+            .expect("parse set option")
+            .expect("ddl");
+        ddl.execute(set_opt).await.expect("set option");
+
+        // Promote a key
+        let promote = parser
+            .parse_ddl("ALTER TABLE events PROMOTE PROPS KEY user_id TYPE BIGINT")
+            .expect("parse promote")
+            .expect("ddl");
+        ddl.execute(promote).await.expect("promote key");
+
+        let introspection = CatalogIntrospectionService::new(manager.clone());
+
+        // Query via function-call form
+        let result = introspection
+            .execute_select(
+                "SELECT * FROM proximadb_catalog.props_promotion_candidates('events')",
+            )
+            .await
+            .expect("query")
+            .expect("result");
+
+        assert_eq!(
+            result.columns,
+            ["table_name", "props_key", "promoted_column", "promotion_enabled",
+             "frequency_threshold", "min_record_count", "status"]
+        );
+
+        let promoted = result
+            .rows
+            .iter()
+            .find(|r| r[1] == "user_id")
+            .expect("expected user_id row");
+        assert_eq!(promoted[0], "events");
+        assert_eq!(promoted[2], "props__user_id");
+        assert_eq!(promoted[3], "true");
+        assert_eq!(promoted[6], "promoted");
     }
 }

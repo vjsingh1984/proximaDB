@@ -60,12 +60,12 @@ use crate::proto::proximadb_v1::GlueCatalogConfig;
 
 use super::TableIdentifier;
 use super::cache::CatalogCache;
-use super::schema::{apply_evolution, validate_schema};
 use super::traits::{Catalog, CatalogHealth};
 use super::types::{
     CatalogColumn, CatalogDataType, CatalogIndex, CatalogNamespace, CatalogSchemaEvolution,
     CatalogTableSchema, CatalogTableStatistics,
 };
+use proximadb_catalog::schema::{apply_evolution, validate_schema};
 
 /// AWS Glue catalog implementation
 ///

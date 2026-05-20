@@ -11,6 +11,7 @@
 use arrow_schema::DataType as ArrowDataType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 pub mod cache;
 pub mod oltp;
@@ -344,6 +345,22 @@ pub struct CatalogTableSchema {
     /// Primary storage specialization selected for this table/profile.
     #[serde(default)]
     pub storage_specialization: CatalogStorageSpecialization,
+    /// ANN filtering routing policy. Controls selectivity thresholds for
+    /// pre-filter vs. inline vs. post-filter mode selection. Applies to all
+    /// vector ANN projections registered for this table.
+    #[serde(default)]
+    pub ann_filtering_policy: AnnFilteringPolicy,
+    /// Props auto-promotion policy. Controls whether high-frequency msgpack
+    /// props keys are promoted to typed PAX columns during compaction.
+    /// Must be enabled for document tables to benefit from column-level pruning
+    /// and Iceberg/Spark predicate pushdown into props fields.
+    #[serde(default)]
+    pub props_auto_promotion: PropsAutoPromotionPolicy,
+    /// Observability compression hint. Applies to tables with
+    /// `CatalogWorkloadProfile::Observability`. Instructs the PAX block writer
+    /// to sort by series key + timestamp and apply delta-delta/XOR encoding.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub observability_compression: Option<ObservabilityCompressionHint>,
     /// Schema version
     pub schema_version: i32,
     /// Table properties
@@ -373,6 +390,9 @@ impl Default for CatalogTableSchema {
             relational_capabilities: RelationalCapabilities::default(),
             workload_profile: CatalogWorkloadProfile::default(),
             storage_specialization: CatalogStorageSpecialization::default(),
+            ann_filtering_policy: AnnFilteringPolicy::default(),
+            props_auto_promotion: PropsAutoPromotionPolicy::default(),
+            observability_compression: None,
             schema_version: 1,
             properties: HashMap::new(),
             location: None,
@@ -439,6 +459,24 @@ impl CatalogTableSchema {
         specialization: CatalogStorageSpecialization,
     ) -> Self {
         self.storage_specialization = specialization;
+        self
+    }
+
+    /// Set the ANN filtering routing policy.
+    pub fn with_ann_filtering_policy(mut self, policy: AnnFilteringPolicy) -> Self {
+        self.ann_filtering_policy = policy;
+        self
+    }
+
+    /// Enable props auto-promotion for document-heavy tables.
+    pub fn with_props_auto_promotion(mut self, policy: PropsAutoPromotionPolicy) -> Self {
+        self.props_auto_promotion = policy;
+        self
+    }
+
+    /// Set observability compression hint for time-series/metrics tables.
+    pub fn with_observability_compression(mut self, hint: ObservabilityCompressionHint) -> Self {
+        self.observability_compression = Some(hint);
         self
     }
 }
@@ -772,6 +810,24 @@ pub enum ProjectionFreshness {
     Manual,
 }
 
+/// Runtime freshness state for a rebuildable projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ProjectionFreshnessState {
+    /// Projection includes all committed records required by its freshness SLA.
+    #[default]
+    Fresh,
+    /// Projection update is in progress.
+    Updating,
+    /// Projection is known to lag canonical WAL/record state.
+    Stale,
+    /// Projection cannot be incrementally repaired and must be rebuilt.
+    RebuildRequired,
+    /// External table/publication snapshot has been registered in xCatalog.
+    ExternalSnapshotRegistered,
+    /// Physical projection is not usable.
+    Unavailable,
+}
+
 /// Projection or access-method family cataloged below xCatalog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum CatalogProjectionKind {
@@ -876,6 +932,7 @@ impl CatalogStorageLayout {
             physical_format: format,
             write_mode: CatalogWriteMode::ExternalRefresh,
             location: Some(location.into()),
+            snapshot_semantics: Some("external-latest".to_string()),
             policy_enforced_in_proxima: false,
             ..Default::default()
         }
@@ -978,12 +1035,38 @@ pub struct CatalogProjection {
     pub rebuild_source: String,
     /// Freshness semantics.
     pub freshness: ProjectionFreshness,
-    /// Optional maximum accepted lag in milliseconds for bounded-lag projections.
+    /// Runtime freshness state used by planners and EXPLAIN.
+    #[serde(default)]
+    pub freshness_state: ProjectionFreshnessState,
+    /// Maximum accepted lag in milliseconds for bounded-lag projections.
+    /// Required when freshness == BoundedLag. None means "no bound declared"
+    /// which the planner treats as Stale-OK. For ANN freshness, this directly
+    /// impacts recall: new records not yet in the HNSW index are missed results.
     pub max_lag_ms: Option<i64>,
+    /// Source WAL range, snapshot, or manifest used by this projection.
+    #[serde(default)]
+    pub source_range: Option<String>,
+    /// Last commit, snapshot, or manifest included by this projection.
+    #[serde(default)]
+    pub last_included_position: Option<String>,
     /// Whether the projection can be rebuilt without data loss.
     pub rebuildable: bool,
+    /// Quantitative rebuild time objective. None = unverified / not benchmarked.
+    /// Planners should reject routing through this projection for latency-sensitive
+    /// queries if an active rebuild has exceeded `rto.max_rebuild_wait_seconds`.
+    #[serde(default)]
+    pub rebuild_rto: Option<RebuildRtoSpec>,
+    /// Invalidation policy, e.g. synchronous, enqueue, mark-stale, rebuild-required.
+    #[serde(default)]
+    pub invalidation_policy: Option<String>,
+    /// Policy/RLS boundary for this projection.
+    #[serde(default)]
+    pub policy_boundary: Option<String>,
     /// Whether using this projection can change recall or ranking quality.
     pub lossy: bool,
+    /// Benchmark or smoke gate required before supported/default use.
+    #[serde(default)]
+    pub benchmark_gate: Option<String>,
     /// Human-readable support status: experimental, beta, supported, deprecated.
     pub support_status: String,
     /// Additional implementation-specific metadata.
@@ -1003,12 +1086,503 @@ impl CatalogProjection {
             physical_format: CatalogPhysicalFormat::ProximaBlock,
             rebuild_source: rebuild_source.into(),
             freshness: ProjectionFreshness::Lazy,
+            freshness_state: ProjectionFreshnessState::Fresh,
             max_lag_ms: None,
+            source_range: None,
+            last_included_position: None,
             rebuildable: true,
+            rebuild_rto: None,
+            invalidation_policy: Some("mark-stale".to_string()),
+            policy_boundary: Some("engine-enforced".to_string()),
             lossy: false,
+            benchmark_gate: None,
             support_status: "experimental".to_string(),
             properties: HashMap::new(),
         }
+    }
+
+    /// Declare bounded-lag freshness for planner and EXPLAIN decisions.
+    pub fn with_bounded_lag(mut self, max_lag_ms: i64) -> Self {
+        self.freshness = ProjectionFreshness::BoundedLag;
+        self.max_lag_ms = Some(max_lag_ms);
+        self
+    }
+
+    /// Attach a quantitative rebuild RTO specification.
+    /// Without this, planners must treat the projection as having an
+    /// unknown rebuild duration and may refuse to use it in SLA-critical paths.
+    pub fn with_rebuild_rto(mut self, rto: RebuildRtoSpec) -> Self {
+        self.rebuild_rto = Some(rto);
+        self
+    }
+
+    /// Update runtime freshness state.
+    pub fn with_freshness_state(mut self, state: ProjectionFreshnessState) -> Self {
+        self.freshness_state = state;
+        self
+    }
+
+    /// Record projection lineage used for repair and freshness checks.
+    pub fn with_lineage(
+        mut self,
+        source_range: impl Into<String>,
+        last_included_position: impl Into<String>,
+    ) -> Self {
+        self.source_range = Some(source_range.into());
+        self.last_included_position = Some(last_included_position.into());
+        self
+    }
+
+    /// Record policy boundary and benchmark gate metadata.
+    pub fn with_policy_and_gate(
+        mut self,
+        policy_boundary: impl Into<String>,
+        benchmark_gate: impl Into<String>,
+    ) -> Self {
+        self.policy_boundary = Some(policy_boundary.into());
+        self.benchmark_gate = Some(benchmark_gate.into());
+        self
+    }
+}
+
+// ─── ANN Filtering ───────────────────────────────────────────────────────────
+
+/// Selectivity-based routing mode for approximate nearest-neighbor (ANN) queries
+/// that carry scalar filter predicates. Determined by the planner from catalog
+/// statistics and exposed in EXPLAIN output (ADR-004 FilterDiagnostics).
+///
+/// Literature basis: FAVOR (arXiv:2605.07770), Filtered ANN Survey
+/// (arXiv:2602.11443), Learning-based Filtered-ANN planning (arXiv:2602.17914).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum AnnFilteringMode {
+    /// Run the scalar filter first, then ANN over the surviving candidate set.
+    /// Correct when selectivity is very low (< `pre_filter_threshold`).
+    /// Avoids expensive ANN traversal over the full corpus.
+    PreFilter,
+    /// Interleave scalar predicate evaluation during HNSW/IVF graph traversal.
+    /// Correct for moderate selectivity (`pre_filter_threshold`..`post_filter_threshold`).
+    /// Requires predicate-aware graph index support (AXIS primitive).
+    #[default]
+    Inline,
+    /// Run ANN first for a larger candidate set, then filter results.
+    /// Correct when selectivity is high (> `post_filter_threshold`) so that
+    /// nearly all ANN neighbors survive the filter anyway.
+    PostFilter,
+}
+
+impl AnnFilteringMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PreFilter => "pre_filter",
+            Self::Inline => "inline",
+            Self::PostFilter => "post_filter",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "pre_filter" | "prefilter" | "pre" => Some(Self::PreFilter),
+            "inline" | "intra_filter" | "intra" => Some(Self::Inline),
+            "post_filter" | "postfilter" | "post" => Some(Self::PostFilter),
+            _ => None,
+        }
+    }
+}
+
+/// Catalog-level policy controlling how the planner selects `AnnFilteringMode`.
+///
+/// Thresholds are selectivity fractions in [0.0, 1.0] where lower = fewer
+/// records pass the filter.  The planner reads `estimated_selectivity` from
+/// `FilterDiagnostics` (ADR-004) and routes as follows:
+///
+/// ```text
+/// selectivity < pre_filter_threshold   → PreFilter
+/// selectivity > post_filter_threshold  → PostFilter
+/// otherwise                            → Inline
+/// ```
+///
+/// Defaults are empirically grounded in the FAVOR paper (2605.07770) and the
+/// Filtered ANN Survey (2602.11443):
+///   pre_filter_threshold  = 0.05  (< 5 % of corpus passes filter → pre-filter)
+///   post_filter_threshold = 0.50  (> 50 % passes filter → post-filter)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnnFilteringPolicy {
+    /// Selectivity below which PreFilter is preferred. Default 0.05.
+    pub pre_filter_threshold: f64,
+    /// Selectivity above which PostFilter is preferred. Default 0.50.
+    pub post_filter_threshold: f64,
+    /// Override: force a specific mode regardless of selectivity.
+    pub force_mode: Option<AnnFilteringMode>,
+    /// Minimum candidate oversample factor used in PostFilter mode to compensate
+    /// for filter rejection. Default 2.0 (fetch 2× top-k before filtering).
+    pub post_filter_oversample_factor: f64,
+}
+
+impl Default for AnnFilteringPolicy {
+    fn default() -> Self {
+        Self {
+            pre_filter_threshold: 0.05,
+            post_filter_threshold: 0.50,
+            force_mode: None,
+            post_filter_oversample_factor: 2.0,
+        }
+    }
+}
+
+impl AnnFilteringPolicy {
+    /// Determine the routing mode from an estimated selectivity fraction.
+    pub fn routing_mode(&self, estimated_selectivity: f64) -> AnnFilteringMode {
+        if let Some(forced) = self.force_mode {
+            return forced;
+        }
+        if estimated_selectivity < self.pre_filter_threshold {
+            AnnFilteringMode::PreFilter
+        } else if estimated_selectivity > self.post_filter_threshold {
+            AnnFilteringMode::PostFilter
+        } else {
+            AnnFilteringMode::Inline
+        }
+    }
+
+    /// Effective top-k to request from ANN in PostFilter mode (before scalar filtering).
+    pub fn effective_top_k_for_post_filter(&self, top_k: usize) -> usize {
+        ((top_k as f64) * self.post_filter_oversample_factor).ceil() as usize
+    }
+}
+
+// ─── Projection Rebuild RTO ───────────────────────────────────────────────────
+
+/// Quantitative rebuild time objective for a rebuildable L2 projection.
+///
+/// These bounds are operational commitments, not aspirational. A missing RTO
+/// means the projection has not been benchmarked and MUST NOT be relied upon
+/// for latency-sensitive query paths after a rebuild event.
+///
+/// Background: ADR-010 mandates that PAX blocks are Layer 2 (rebuildable
+/// projections). Without an RTO bound, "rebuildable" is an architectural
+/// claim, not an operational guarantee.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RebuildRtoSpec {
+    /// Estimated rebuild duration in seconds per 10 GB of L1 (ProximaRecord) data.
+    /// Planner uses this to estimate total rebuild time from `size_bytes`.
+    pub rebuild_seconds_per_10gb: f64,
+    /// Whether queries fall back to full L1 scans while this projection rebuilds.
+    /// If false, queries on this projection are rejected or degrade to `Unavailable`.
+    pub degraded_scan_during_rebuild: bool,
+    /// Maximum tolerated rebuild lag at which point queries must route around this
+    /// projection. If the rebuild has been running longer than this, the planner
+    /// marks the projection `Unavailable` for planning purposes.
+    pub max_rebuild_wait_seconds: f64,
+    /// Whether this projection supports incremental rebuild from a WAL checkpoint
+    /// (faster) or requires a full L1 scan (slower).
+    pub supports_incremental_rebuild: bool,
+    pub estimate_source: RebuildEstimateSource,
+}
+
+const BYTES_PER_10_GIB: f64 = 10.0 * 1024.0 * 1024.0 * 1024.0;
+
+impl Default for RebuildRtoSpec {
+    fn default() -> Self {
+        Self {
+            rebuild_seconds_per_10gb: 60.0,
+            degraded_scan_during_rebuild: true,
+            max_rebuild_wait_seconds: 300.0,
+            supports_incremental_rebuild: false,
+            estimate_source: RebuildEstimateSource::Unverified,
+        }
+    }
+}
+
+impl RebuildRtoSpec {
+    /// Estimate total rebuild duration in seconds given a projected data volume.
+    pub fn estimated_rebuild_seconds(&self, size_bytes: u64) -> f64 {
+        let size_gb = (size_bytes as f64) / BYTES_PER_10_GIB;
+        size_gb * self.rebuild_seconds_per_10gb
+    }
+
+    /// Return an RTO spec for a benchmarked HNSW projection over L1 PAX blocks.
+    /// Grounded in FGIM (arXiv:2603.21710) graph-index merge benchmarks.
+    pub fn hnsw_benchmarked() -> Self {
+        Self {
+            rebuild_seconds_per_10gb: 45.0,
+            degraded_scan_during_rebuild: true,
+            max_rebuild_wait_seconds: 600.0,
+            supports_incremental_rebuild: true,
+            estimate_source: RebuildEstimateSource::Benchmarked,
+        }
+    }
+
+    /// Return an RTO spec for a CSR graph topology projection.
+    /// CSR rebuild requires a full sorted adjacency scan from L1 edge records.
+    pub fn csr_estimated() -> Self {
+        Self {
+            rebuild_seconds_per_10gb: 90.0,
+            degraded_scan_during_rebuild: false,
+            max_rebuild_wait_seconds: 900.0,
+            supports_incremental_rebuild: false,
+            estimate_source: RebuildEstimateSource::Estimated,
+        }
+    }
+
+    /// Return an RTO spec for a columnar analytics projection (PAX → Parquet).
+    pub fn columnar_estimated() -> Self {
+        Self {
+            rebuild_seconds_per_10gb: 30.0,
+            degraded_scan_during_rebuild: true,
+            max_rebuild_wait_seconds: 300.0,
+            supports_incremental_rebuild: true,
+            estimate_source: RebuildEstimateSource::Estimated,
+        }
+    }
+}
+
+// ─── Props Auto-Promotion ─────────────────────────────────────────────────────
+
+/// When props auto-promotion is evaluated: during background compaction or only
+/// on explicit DDL (`ALTER TABLE ... PROMOTE PROPS KEY`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum PropsEvaluationCadence {
+    /// Evaluate promotion candidates automatically during compaction.
+    #[default]
+    Compaction,
+    /// Only promote when the operator issues an explicit DDL command.
+    Explicit,
+}
+
+impl PropsEvaluationCadence {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Compaction => "compaction",
+            Self::Explicit => "explicit",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "compaction" | "auto" => Some(Self::Compaction),
+            "explicit" | "manual" | "ddl" => Some(Self::Explicit),
+            _ => None,
+        }
+    }
+}
+
+/// Source of a `RebuildRtoSpec` estimate, distinguishing measured from assumed values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum RebuildEstimateSource {
+    /// Measured in a controlled benchmark against this deployment's hardware.
+    Benchmarked,
+    /// Derived from published benchmarks or analogous system measurements.
+    Estimated,
+    /// No measurement; the value is a placeholder that must not be used for SLA commitments.
+    #[default]
+    Unverified,
+}
+
+impl RebuildEstimateSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Benchmarked => "benchmarked",
+            Self::Estimated => "estimated",
+            Self::Unverified => "unverified",
+        }
+    }
+}
+
+/// Policy for automatically promoting high-frequency document props keys to
+/// typed PAX/Iceberg columns. Without promotion, props are stored as opaque
+/// msgpack blobs (column ID 8) and cannot be pruned at column or block level,
+/// making document queries over `props` effectively full-block scans.
+///
+/// Promotion creates a new user-defined column (IDs 100+) and reindexes the
+/// promoted key into that column during the next compaction cycle.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PropsAutoPromotionPolicy {
+    pub enabled: bool,
+    /// Fraction of records that must contain a key before it is promoted.
+    /// Default 0.50 — key must appear in ≥ 50 % of records.
+    pub frequency_threshold: f64,
+    /// Minimum number of records required before promotion eligibility is evaluated.
+    /// Prevents premature promotion on sparse datasets. Default 10_000.
+    pub min_record_count: u64,
+    /// Maximum number of auto-promoted props columns per table. Default 32.
+    pub max_promoted_columns: u32,
+    /// When promotion candidates are evaluated.
+    pub evaluation_cadence: PropsEvaluationCadence,
+    /// `CatalogDataType` variants eligible for promotion. Keys whose observed
+    /// values do not match an eligible type are retained in the msgpack blob.
+    pub eligible_types: Vec<CatalogDataType>,
+    /// Keys that have already been promoted, mapping props key → `props__<key>` column name.
+    /// Written by `SchemaChange::PromotePropsKey` and read by the compaction writer
+    /// to know which msgpack keys to route into typed columns.
+    #[serde(default)]
+    pub promoted_keys: HashMap<String, String>,
+}
+
+impl Default for PropsAutoPromotionPolicy {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            frequency_threshold: 0.50,
+            min_record_count: 10_000,
+            max_promoted_columns: 32,
+            evaluation_cadence: PropsEvaluationCadence::Compaction,
+            eligible_types: vec![
+                CatalogDataType::String,
+                CatalogDataType::Int64,
+                CatalogDataType::Float64,
+                CatalogDataType::Boolean,
+                CatalogDataType::TimestampTz,
+            ],
+            promoted_keys: HashMap::new(),
+        }
+    }
+}
+
+impl PropsAutoPromotionPolicy {
+    /// Return the default policy for document-heavy tables.
+    /// Enables promotion with standard thresholds.
+    pub fn document_default() -> Self {
+        Self {
+            enabled: true,
+            ..Default::default()
+        }
+    }
+}
+
+// ─── Observability Compression Hint ──────────────────────────────────────────
+
+/// Compression strategy hint for observability / time-series ProximaRecords.
+///
+/// A ProximaRecord per metric sample loses Gorilla-style (Pelkonen et al.,
+/// VLDB 2015) cross-sample compression. This hint instructs the storage layer
+/// to apply series-aware compression during compaction when PAX blocks are
+/// written for observability tables.
+///
+/// The hint does NOT change the semantic record model — each write remains a
+/// canonical ProximaRecord. Compression is applied by the PAX block writer
+/// when sorting by (series_key_column, timestamp_column) and encoding the
+/// resulting column stripe with delta-delta + varint encoding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservabilityCompressionHint {
+    /// Column name that identifies the time-series key (e.g., metric name + labels hash).
+    pub series_key_column: String,
+    /// Column name of the timestamp in nanoseconds (usually `__proxima_created_at_ns`).
+    pub timestamp_ns_column: String,
+    /// Column name of the numeric value to delta-delta encode.
+    pub value_column: String,
+    /// Target block sort order: sort by (series_key, timestamp_ns) before encoding.
+    pub sort_by_series_key: bool,
+    /// Delta-delta bit width for timestamp encoding. 0 = auto-select.
+    pub timestamp_delta_bits: u8,
+    /// Gorilla-style XOR encoding for float value column.
+    pub xor_float_encoding: bool,
+}
+
+impl Default for ObservabilityCompressionHint {
+    fn default() -> Self {
+        Self {
+            // "series_key" is the conventional user-defined column; operator must
+            // set this to the actual metric-name+labels hash column for the table.
+            series_key_column: "series_key".to_string(),
+            timestamp_ns_column: "__proxima_created_at_ns".to_string(),
+            value_column: "value".to_string(),
+            sort_by_series_key: true,
+            timestamp_delta_bits: 0,
+            xor_float_encoding: true,
+        }
+    }
+}
+
+// ─── Protocol Type Coercion ───────────────────────────────────────────────────
+
+/// Lossy conversion descriptor for a single ProximaType when exposed through
+/// a specific protocol. Used by planners and EXPLAIN to surface type fidelity
+/// warnings before data is written to or read from an external protocol surface.
+///
+/// See ADR-013 for the full coercion matrix across pgwire, Arrow Flight,
+/// Iceberg REST, and REST/gRPC.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtocolTypeCoercionNote {
+    /// The ProximaType field or type name being coerced.
+    pub proxima_type: String,
+    /// Target protocol surface: "pgwire", "arrow_flight", "iceberg_rest", "rest_grpc".
+    pub protocol: String,
+    /// The wire type used in the protocol.
+    pub wire_type: String,
+    /// Whether the conversion is lossless.
+    pub lossless: bool,
+    /// Description of what information is lost or altered.
+    pub loss_description: Option<String>,
+}
+
+impl ProtocolTypeCoercionNote {
+    /// Standard coercion table entries grounded in ADR-007 and ADR-013.
+    ///
+    /// Returns a reference to a process-lifetime static; do not call this per-query
+    /// once wired into EXPLAIN — clone the slice once at plan construction time.
+    pub fn standard_notes() -> &'static [Self] {
+        static NOTES: OnceLock<Vec<ProtocolTypeCoercionNote>> = OnceLock::new();
+        NOTES.get_or_init(|| {
+            vec![
+                Self {
+                    proxima_type: "ProximaValue::Map(string, ProximaValue)".to_string(),
+                    protocol: "iceberg_rest".to_string(),
+                    wire_type: "map<string, binary> (msgpack)".to_string(),
+                    lossless: false,
+                    loss_description: Some(
+                        "Spark/Trino cannot push predicates into msgpack binary; \
+                         use props auto-promotion (PropsAutoPromotionPolicy) to \
+                         promote high-frequency keys to typed columns."
+                            .to_string(),
+                    ),
+                },
+                Self {
+                    proxima_type: "Embedding([f32; dim])".to_string(),
+                    protocol: "iceberg_rest".to_string(),
+                    wire_type: "list<float> (dimension in table properties)".to_string(),
+                    lossless: false,
+                    loss_description: Some(
+                        "Iceberg list<float> does not carry fixed dimension. \
+                         Dimension is stored in table property 'proximadb.dim_<model_id>'. \
+                         Clients must read the property to validate vector dimensions."
+                            .to_string(),
+                    ),
+                },
+                Self {
+                    proxima_type: "Embedding([f32; dim])".to_string(),
+                    protocol: "pgwire".to_string(),
+                    wire_type: "float4[] (pgvector compatible)".to_string(),
+                    lossless: true,
+                    loss_description: None,
+                },
+                Self {
+                    proxima_type: "Embedding([f32; dim])".to_string(),
+                    protocol: "arrow_flight".to_string(),
+                    wire_type: "FixedSizeList<float32>[dim]".to_string(),
+                    lossless: true,
+                    loss_description: None,
+                },
+                Self {
+                    proxima_type: "ProximaValue::Variant".to_string(),
+                    protocol: "iceberg_rest".to_string(),
+                    wire_type: "binary (not representable as Iceberg column)".to_string(),
+                    lossless: false,
+                    loss_description: Some(
+                        "Iceberg does not have a union/variant type. \
+                         Variant values serialize as opaque binary. \
+                         Use a typed column instead."
+                            .to_string(),
+                    ),
+                },
+                Self {
+                    proxima_type: "Edge { source, target, edge_type, weight }".to_string(),
+                    protocol: "pgwire".to_string(),
+                    wire_type: "4 separate nullable columns (no native graph type)".to_string(),
+                    lossless: true,
+                    loss_description: None,
+                },
+            ]
+        })
     }
 }
 
@@ -1307,6 +1881,30 @@ pub enum SchemaChange {
         /// Name of the constraint to drop
         constraint_name: String,
     },
+    /// Promote a high-frequency props key to a typed PAX/Iceberg column.
+    ///
+    /// The promoted column name follows the `props__<key>` convention (double
+    /// underscore) so it is distinguishable from user-defined schema columns.
+    /// The storage layer re-routes the key from the msgpack blob (column ID 8)
+    /// into the new typed column during the next compaction cycle.
+    PromotePropsKey {
+        /// The key inside the `props` msgpack blob to promote.
+        key: String,
+        /// Target catalog data type for the promoted column.
+        column_type: CatalogDataType,
+        /// Optional human-readable description for the new column.
+        comment: Option<String>,
+    },
+    /// Set a table-level option (ALTER TABLE … SET (key = 'value')).
+    ///
+    /// Recognised option keys:
+    /// - `props_auto_promotion`: `'enabled'` / `'disabled'`
+    SetTableOption {
+        /// Option name (case-insensitive).
+        key: String,
+        /// Option value.
+        value: String,
+    },
 }
 
 /// Column constraint types
@@ -1493,6 +2091,10 @@ mod tests {
         assert_eq!(layout.physical_format, CatalogPhysicalFormat::Iceberg);
         assert_eq!(layout.write_mode, CatalogWriteMode::ExternalRefresh);
         assert_eq!(layout.location.as_deref(), Some("s3://warehouse/orders"));
+        assert_eq!(
+            layout.snapshot_semantics.as_deref(),
+            Some("external-latest")
+        );
         assert!(!layout.policy_enforced_in_proxima);
     }
 
@@ -1502,11 +2104,30 @@ mod tests {
             "orders_hnsw",
             CatalogProjectionKind::VectorAnn,
             "orders.primary",
-        );
+        )
+        .with_bounded_lag(5_000)
+        .with_freshness_state(ProjectionFreshnessState::Stale)
+        .with_lineage("wal:100-200", "commit:180")
+        .with_policy_and_gate("engine-enforced", "hybrid-vector-smoke");
 
         assert_eq!(projection.kind, CatalogProjectionKind::VectorAnn);
         assert_eq!(projection.rebuild_source, "orders.primary");
-        assert_eq!(projection.freshness, ProjectionFreshness::Lazy);
+        assert_eq!(projection.freshness, ProjectionFreshness::BoundedLag);
+        assert_eq!(projection.freshness_state, ProjectionFreshnessState::Stale);
+        assert_eq!(projection.max_lag_ms, Some(5_000));
+        assert_eq!(projection.source_range.as_deref(), Some("wal:100-200"));
+        assert_eq!(
+            projection.last_included_position.as_deref(),
+            Some("commit:180")
+        );
+        assert_eq!(
+            projection.policy_boundary.as_deref(),
+            Some("engine-enforced")
+        );
+        assert_eq!(
+            projection.benchmark_gate.as_deref(),
+            Some("hybrid-vector-smoke")
+        );
         assert!(projection.rebuildable);
         assert!(!projection.lossy);
     }

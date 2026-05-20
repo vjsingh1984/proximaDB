@@ -13,6 +13,7 @@
 //! - `information_schema.graphs`
 //! - `information_schema.document_collections`
 //! - `information_schema.observability_streams`
+//! - `information_schema.table_routing`
 //!
 //! ## PostgreSQL Compatibility
 //!
@@ -101,6 +102,8 @@ pub enum InformationSchemaView {
     Projections,
     /// ProximaDB: optional relational capability metadata
     RelationalCapabilities,
+    /// ProximaDB: table-level routing and workload metadata
+    TableRouting,
 }
 
 impl InformationSchemaView {
@@ -120,6 +123,7 @@ impl InformationSchemaView {
             InformationSchemaView::StorageLayouts => "storage_layouts",
             InformationSchemaView::Projections => "projections",
             InformationSchemaView::RelationalCapabilities => "relational_capabilities",
+            InformationSchemaView::TableRouting => "table_routing",
         }
     }
 
@@ -134,6 +138,7 @@ impl InformationSchemaView {
                 | InformationSchemaView::StorageLayouts
                 | InformationSchemaView::Projections
                 | InformationSchemaView::RelationalCapabilities
+                | InformationSchemaView::TableRouting
         )
     }
 }
@@ -826,6 +831,101 @@ impl ProjectionRow {
     }
 }
 
+/// Row in information_schema.table_routing (ProximaDB extension)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableRoutingRow {
+    /// Catalog that contains the object.
+    pub table_catalog: String,
+    /// Schema that contains the object.
+    pub table_schema: String,
+    /// Object/table/collection name.
+    pub table_name: String,
+    /// Source-of-truth authority mode for the primary layout.
+    pub authority_mode: String,
+    /// Workload profile selected by DDL/catalog metadata.
+    pub workload_profile: String,
+    /// Primary storage specialization selected by DDL/catalog metadata.
+    pub storage_specialization: String,
+    /// Primary physical format for the table.
+    pub primary_format: Option<String>,
+    /// Preferred compute route, if cataloged.
+    pub compute_route: Option<String>,
+    /// Partitioning or distribution key, if cataloged.
+    pub partitioning: Option<String>,
+    /// Transaction/isolation profile, if cataloged.
+    pub isolation_profile: Option<String>,
+    /// Freshness SLA for projections/publications, if cataloged.
+    pub freshness_sla: Option<String>,
+    /// Policy/RLS enforcement boundary.
+    pub policy_boundary: String,
+}
+
+impl TableRoutingRow {
+    /// Create a routing row from a catalog object.
+    pub fn from_object(obj: &CatalogObject) -> Self {
+        let primary_layout = obj
+            .schema
+            .storage_layouts
+            .iter()
+            .rev()
+            .find(|layout| layout.name == "primary")
+            .or_else(|| obj.schema.storage_layouts.first());
+
+        let policy_boundary = property_value(obj, &["policy_boundary", "rls_boundary"])
+            .unwrap_or_else(|| match primary_layout {
+                Some(layout) if layout.policy_enforced_in_proxima => "engine-enforced".to_string(),
+                Some(layout) if layout.authority.is_external_authoritative() => {
+                    "external-policy".to_string()
+                }
+                Some(layout)
+                    if matches!(
+                        layout.authority,
+                        proximadb_catalog::CatalogAuthorityMode::FederatedRead
+                    ) =>
+                {
+                    "connector-enforced".to_string()
+                }
+                Some(_) => "unsupported".to_string(),
+                None => "engine-enforced".to_string(),
+            });
+
+        Self {
+            table_catalog: obj.catalog.clone(),
+            table_schema: obj.namespace.join("."),
+            table_name: obj.name.clone(),
+            authority_mode: primary_layout
+                .map(|layout| layout.authority.ownership_mode_name().to_string())
+                .unwrap_or_else(|| "ProximaAuthoritative".to_string()),
+            workload_profile: obj.schema.workload_profile.as_str().to_string(),
+            storage_specialization: obj.schema.storage_specialization.as_str().to_string(),
+            primary_format: primary_layout.map(|layout| format!("{:?}", layout.physical_format)),
+            compute_route: property_value(obj, &["compute_route", "preferred_compute_route"]),
+            partitioning: property_value(
+                obj,
+                &["partitioning", "partition_key", "distribution_key"],
+            ),
+            isolation_profile: obj
+                .schema
+                .relational_capabilities
+                .transaction_profile
+                .clone()
+                .or_else(|| property_value(obj, &["isolation_profile", "isolation"])),
+            freshness_sla: property_value(obj, &["freshness_sla", "projection_freshness"]),
+            policy_boundary,
+        }
+    }
+}
+
+fn property_value(obj: &CatalogObject, keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        obj.schema
+            .properties
+            .get(*key)
+            .or_else(|| obj.properties.get(*key))
+            .cloned()
+    })
+}
+
 /// Row in information_schema.relational_capabilities (ProximaDB extension)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RelationalCapabilityRow {
@@ -1043,6 +1143,15 @@ impl InformationSchema {
             .collect()
     }
 
+    /// Get table-level routing metadata for all objects.
+    pub async fn table_routing(&self) -> Vec<TableRoutingRow> {
+        let objects = self.registry.list_all().await;
+        objects
+            .iter()
+            .map(|o| TableRoutingRow::from_object(o))
+            .collect()
+    }
+
     /// Query a specific view
     pub async fn query(&self, view: InformationSchemaView) -> InformationSchemaResult {
         match view {
@@ -1105,6 +1214,9 @@ impl InformationSchema {
                     self.relational_capabilities().await,
                 )
             }
+            InformationSchemaView::TableRouting => {
+                InformationSchemaResult::TableRouting(self.table_routing().await)
+            }
         }
     }
 }
@@ -1157,6 +1269,8 @@ pub enum InformationSchemaResult {
     Projections(Vec<ProjectionRow>),
     /// Rows from `information_schema.relational_capabilities` (ProximaDB extension)
     RelationalCapabilities(Vec<RelationalCapabilityRow>),
+    /// Rows from `information_schema.table_routing` (ProximaDB extension)
+    TableRouting(Vec<TableRoutingRow>),
 }
 
 impl InformationSchemaResult {
@@ -1176,6 +1290,7 @@ impl InformationSchemaResult {
             InformationSchemaResult::StorageLayouts(rows) => rows.len(),
             InformationSchemaResult::Projections(rows) => rows.len(),
             InformationSchemaResult::RelationalCapabilities(rows) => rows.len(),
+            InformationSchemaResult::TableRouting(rows) => rows.len(),
         }
     }
 }
@@ -1187,7 +1302,8 @@ mod tests {
     use crate::catalog::internal::InternalSchemaRegistry;
     use proximadb_catalog::{
         CatalogProjection, CatalogProjectionKind, CatalogStorageLayout, CatalogStorageLayoutKind,
-        CatalogTableSchema, RelationalCapabilities,
+        CatalogStorageSpecialization, CatalogTableSchema, CatalogWorkloadProfile,
+        RelationalCapabilities,
     };
 
     #[tokio::test]
@@ -1337,7 +1453,9 @@ mod tests {
     async fn test_information_schema_storage_authority_views() {
         let registry = Arc::new(InternalSchemaRegistry::new());
         let table = TableIdentifier::new(vec![], "docs".to_string());
-        let schema = CatalogTableSchema::new("docs")
+        let mut schema = CatalogTableSchema::new("docs")
+            .with_workload_profile(CatalogWorkloadProfile::Olap)
+            .with_storage_specialization(CatalogStorageSpecialization::ColumnarAnalytics)
             .with_storage_layout(CatalogStorageLayout::internal(
                 "pax_hot",
                 CatalogStorageLayoutKind::Pax,
@@ -1349,8 +1467,22 @@ mod tests {
             ))
             .with_relational_capabilities(RelationalCapabilities {
                 primary_key: vec!["id".to_string()],
+                transaction_profile: Some("snapshot-isolation".to_string()),
                 ..Default::default()
             });
+        schema.storage_layouts[0] = CatalogStorageLayout::proxima_authoritative_pax("primary");
+        schema
+            .properties
+            .insert("compute_route".to_string(), "datafusion-local".to_string());
+        schema
+            .properties
+            .insert("partitioning".to_string(), "tenant_id,bucket".to_string());
+        schema
+            .properties
+            .insert("freshness_sla".to_string(), "5s".to_string());
+        schema
+            .properties
+            .insert("policy_boundary".to_string(), "engine-enforced".to_string());
 
         registry
             .create_table(&table, schema)
@@ -1379,11 +1511,32 @@ mod tests {
         assert!(capabilities[0].has_enforced_semantics);
         assert_eq!(capabilities[0].primary_key, vec!["id"]);
 
+        let routing = info_schema.table_routing().await;
+        assert_eq!(routing.len(), 1);
+        assert_eq!(routing[0].authority_mode, "ProximaAuthoritative");
+        assert_eq!(routing[0].workload_profile, "olap");
+        assert_eq!(routing[0].storage_specialization, "columnar_analytics");
+        assert_eq!(
+            routing[0].compute_route.as_deref(),
+            Some("datafusion-local")
+        );
+        assert_eq!(routing[0].partitioning.as_deref(), Some("tenant_id,bucket"));
+        assert_eq!(
+            routing[0].isolation_profile.as_deref(),
+            Some("snapshot-isolation")
+        );
+        assert_eq!(routing[0].freshness_sla.as_deref(), Some("5s"));
+        assert_eq!(routing[0].policy_boundary, "engine-enforced");
+
         let result = info_schema
             .query(InformationSchemaView::StorageLayouts)
             .await;
         assert_eq!(result.row_count(), 2);
         assert!(InformationSchemaView::StorageLayouts.is_extension());
+
+        let result = info_schema.query(InformationSchemaView::TableRouting).await;
+        assert_eq!(result.row_count(), 1);
+        assert!(InformationSchemaView::TableRouting.is_extension());
     }
 
     #[test]
@@ -1397,6 +1550,7 @@ mod tests {
             InformationSchemaView::StorageLayouts.name(),
             "storage_layouts"
         );
+        assert_eq!(InformationSchemaView::TableRouting.name(), "table_routing");
         assert!(InformationSchemaView::VectorCollections.is_extension());
         assert!(!InformationSchemaView::Tables.is_extension());
     }

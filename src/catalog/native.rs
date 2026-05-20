@@ -58,12 +58,12 @@ use crate::proto::proximadb_v1::NativeCatalogConfig;
 
 use super::TableIdentifier;
 use super::cache::CatalogCache;
-use super::schema::{apply_evolution, validate_schema};
 use super::traits::{Catalog, CatalogHealth};
 use super::types::{
     CatalogIndex, CatalogNamespace, CatalogPartitionSpec, CatalogSchemaEvolution, CatalogSortOrder,
     CatalogTableSchema, CatalogTableStatistics,
 };
+use proximadb_catalog::schema::{apply_evolution, validate_schema};
 
 /// Native ProximaDB catalog
 ///
