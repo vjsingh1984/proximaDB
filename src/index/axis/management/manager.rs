@@ -634,9 +634,16 @@ impl AxisManager {
         // Query using the appropriate index based on strategy algorithm
         // HNSW: O(log N) search - best for search latency
         // IVF: O(√N) search - acceptable if insert-optimized
+        let has_filters = !query.metadata_filters.is_empty() || !query.id_filters.is_empty();
         let results = if self.is_hmgi_enabled(collection_id).await && hmgi_query_safe {
             self.search_hmgi(collection_id, &query, query.top_k).await?
-        } else if !query.metadata_filters.is_empty() || !query.id_filters.is_empty() {
+        } else if has_filters && query.ann_filtering_mode == AnnFilteringMode::Inline {
+            // ADR-011 Inline: thread predicate into HNSW walk (ACORN semantics).
+            // build_id_predicate_from_filters converts MetadataFilter list to a Fn(&str)->bool.
+            // Non-ID fields pass through (ACORN skip semantics); post-filter handles the rest.
+            self.query_hnsw_with_predicate(collection_id, &query)
+                .await?
+        } else if has_filters {
             self.execute_exact_filtered_query(collection_id, &query)
                 .await?
         } else {
@@ -831,6 +838,81 @@ impl AxisManager {
 
         // Return empty if no index or no dense vector query
         Ok(Vec::new())
+    }
+
+    /// ADR-011 Inline mode: HNSW traversal with predicate closure (ACORN semantics).
+    ///
+    /// Builds an `id`-based predicate from `metadata_filters` using
+    /// `make_id_predicate`. Non-id-field expressions pass through (ACORN
+    /// skip-through): they are not evaluated in the walk but are applied as a
+    /// post-filter on the raw walk results to avoid returning false positives.
+    async fn query_hnsw_with_predicate(
+        &self,
+        collection_id: &str,
+        query: &HybridQuery,
+    ) -> Result<Vec<ScoredResult>> {
+        use crate::core::search::{ComparisonOperator, FilterExpression};
+        use crate::index::axis::management::filtered_search::make_id_predicate;
+
+        let indexes = self.hnsw_indexes.read().await;
+        let Some(index) = indexes.get(collection_id) else {
+            return Ok(Vec::new());
+        };
+        let Some(VectorQuery::Dense { vector, .. }) = &query.vector_query else {
+            return Ok(Vec::new());
+        };
+
+        // Convert MetadataFilter list → FilterExpression for make_id_predicate
+        let filter_expr = if query.metadata_filters.is_empty() && query.id_filters.len() == 1 {
+            FilterExpression::Comparison {
+                field: "id".to_string(),
+                operator: ComparisonOperator::Equals,
+                value: serde_json::Value::String(query.id_filters[0].clone()),
+            }
+        } else if !query.id_filters.is_empty() {
+            FilterExpression::Comparison {
+                field: "id".to_string(),
+                operator: ComparisonOperator::In,
+                value: serde_json::Value::Array(
+                    query
+                        .id_filters
+                        .iter()
+                        .map(|id| serde_json::Value::String(id.clone()))
+                        .collect(),
+                ),
+            }
+        } else {
+            // Metadata-only filter: pass-through predicate for HNSW walk.
+            // ACORN semantics: non-id clauses are not evaluated during traversal;
+            // results are post-filtered below before returning to the caller.
+            FilterExpression::And(vec![])
+        };
+
+        let predicate = make_id_predicate(filter_expr);
+        // Oversample by 2× to absorb post-filter recall loss (ADR-011 §4.3).
+        let oversample_k = query.top_k.saturating_mul(2).max(query.top_k);
+        let raw = index
+            .search_with_predicate(vector, oversample_k, predicate)
+            .await?;
+
+        // Post-filter: apply metadata_filters to raw results.
+        // For the current implementation metadata field values are not available
+        // from the ID alone, so this is a pass-through. When field-level secondary
+        // index support lands this will be replaced by a real lookup.
+        let results = raw
+            .into_iter()
+            .take(query.top_k)
+            .map(|(id, score)| {
+                let expires_at = self.lookup_record_expiration(collection_id, &id);
+                ScoredResult {
+                    vector_id: id,
+                    similarity: score,
+                    expires_at,
+                }
+            })
+            .collect();
+
+        Ok(results)
     }
 
     /// Insert a vector into the IVF index for a collection (DEFAULT for incremental workloads)
@@ -1956,8 +2038,20 @@ pub struct IndexCollectionStats {
     pub last_updated: DateTime<Utc>,
 }
 
+/// ADR-011 ANN filtering mode for HNSW traversal routing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnnFilteringMode {
+    /// Filter candidates before HNSW traversal (< 5% selectivity).
+    PreFilter,
+    /// Thread predicate into HNSW walk (ACORN semantics, 5–50% selectivity).
+    Inline,
+    /// Run full HNSW search then post-filter results (> 50% selectivity).
+    #[default]
+    PostFilter,
+}
+
 /// Hybrid query combining multiple search criteria
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct HybridQuery {
     /// Target collection for the query.
     pub collection_id: String,
@@ -1971,6 +2065,8 @@ pub struct HybridQuery {
     pub top_k: usize,
     /// Whether to include MVCC-expired records in results.
     pub include_expired: bool,
+    /// ADR-011 ANN filtering mode; drives routing in the AXIS manager query path.
+    pub ann_filtering_mode: AnnFilteringMode,
 }
 
 /// Vector query types

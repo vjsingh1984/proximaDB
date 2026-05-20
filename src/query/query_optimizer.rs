@@ -294,8 +294,29 @@ pub struct IndexStrategy {
 /// Unified execution plan - the ultimate output of optimization
 #[derive(Debug, Clone)]
 pub struct UnifiedExecutionPlan {
+    /// Strategy for executing this query plan.
+    pub execution_strategy: ExecutionStrategy,
+
     /// Ordered execution steps (merged from both systems)
     pub execution_steps: Vec<ExecutionStep>,
+
+    /// Estimated total cost of the plan.
+    pub estimated_cost: f64,
+
+    /// Optimizations applied while building the plan.
+    pub optimizations: Vec<String>,
+
+    /// Performance hints for the executor.
+    pub performance_hints: Vec<String>,
+
+    /// Seeding strategy for hybrid graph/vector plans.
+    pub seeding_strategy: SeedingStrategy,
+
+    /// Optional result limit.
+    pub limit: Option<usize>,
+
+    /// Optional result offset.
+    pub offset: Option<usize>,
 
     /// Resource allocation
     pub resource_allocation: ResourceAllocation,
@@ -314,6 +335,152 @@ pub struct UnifiedExecutionPlan {
 
     /// RL action selected for this plan (for feedback loop)
     pub rl_action: Option<crate::query::rl_planner::ExecutionAction>,
+
+    /// ADR-011 ANN filtering mode chosen for this plan ("PreFilter", "Inline", "PostFilter").
+    /// Absent when the plan has no vector+filter combination.
+    pub ann_filtering_mode: Option<String>,
+}
+
+impl UnifiedExecutionPlan {
+    /// Construct a runtime execution plan using conservative resource defaults.
+    pub fn runtime(
+        execution_strategy: ExecutionStrategy,
+        execution_steps: Vec<ExecutionStep>,
+        estimated_cost: f64,
+        optimizations: Vec<String>,
+        performance_hints: Vec<String>,
+        seeding_strategy: SeedingStrategy,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> Self {
+        Self {
+            execution_strategy,
+            execution_steps,
+            estimated_cost,
+            optimizations,
+            performance_hints,
+            seeding_strategy,
+            limit,
+            offset,
+            resource_allocation: ResourceAllocation::default(),
+            performance_estimate: UnifiedPerformanceEstimate::from_cost(estimated_cost),
+            parallelism: ParallelismConfig::default(),
+            fallback_strategies: vec![],
+            rl_state: None,
+            rl_action: None,
+            ann_filtering_mode: None,
+        }
+    }
+
+    /// Infer a broad strategy from the step mix.
+    pub fn infer_execution_strategy(steps: &[ExecutionStep]) -> ExecutionStrategy {
+        let has_vector = steps.iter().any(ExecutionStep::is_vector_runtime_step);
+        let has_graph = steps.iter().any(ExecutionStep::is_graph_runtime_step);
+
+        if has_vector && has_graph {
+            ExecutionStrategy::Hybrid
+        } else if has_graph {
+            ExecutionStrategy::GraphOnly
+        } else if has_vector {
+            ExecutionStrategy::VectorOnly
+        } else {
+            ExecutionStrategy::Relational
+        }
+    }
+}
+
+/// Execution strategy determined by query analysis.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, Default)]
+pub enum ExecutionStrategy {
+    /// Vector-only queries (similarity search, metadata filtering).
+    VectorOnly,
+    /// Graph-only queries (traversal, pathfinding).
+    GraphOnly,
+    /// Hybrid queries (vector + graph with fusion).
+    Hybrid,
+    /// Traditional relational queries.
+    #[default]
+    Relational,
+}
+
+/// Seeding strategy for hybrid graph/vector paths.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub enum SeedingStrategy {
+    /// Average seed embeddings into a single query vector.
+    #[default]
+    Average,
+    /// Run per-seed vector queries and fuse.
+    PerSeed,
+    /// Disable graph/vector seeding.
+    None,
+}
+
+/// Fusion strategies for hybrid queries.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum FusionStrategy {
+    /// Simple additive score combination.
+    Additive,
+    /// Multiplicative score combination.
+    Multiplicative,
+    /// Reciprocal Rank Fusion.
+    ReciprocalRankFusion {
+        /// RRF constant k parameter.
+        k: f64,
+    },
+    /// Adaptive semantic fusion with learning.
+    AdaptiveSemanticFusion {
+        /// Learning rate for adaptive weight adjustment.
+        learning_rate: f64,
+    },
+}
+
+/// Projection transformations for result formatting.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum ProjectionTransform {
+    /// Extract metadata field with HashMap optimization.
+    ExtractMetadata {
+        /// Metadata field name to extract.
+        field: String,
+    },
+    /// Calculate similarity score.
+    SimilarityScore,
+    /// Format timestamp.
+    FormatTimestamp,
+}
+
+/// Aggregate specification.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AggregateSpec {
+    /// Output alias for this aggregate.
+    pub alias: String,
+    /// Aggregate function to apply.
+    pub func: AggregateFunc,
+    /// Field to aggregate.
+    pub field: String,
+}
+
+/// Aggregate function type.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum AggregateFunc {
+    /// Count of rows.
+    Count,
+    /// Sum of values.
+    Sum,
+    /// Average of values.
+    Avg,
+    /// Minimum value.
+    Min,
+    /// Maximum value.
+    Max,
+}
+
+/// Type of join operation.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum JoinKind {
+    /// Inner join.
+    Inner,
+    /// Left outer join.
+    Left,
 }
 
 /// Execution steps that combine search and filter operations
@@ -366,6 +533,207 @@ pub enum ExecutionStep {
         /// Expected false positive rate of the bloom filter
         expected_false_positive_rate: f64,
     },
+
+    /// Runtime vector search operation with query context.
+    VectorQuery {
+        /// Collection to search.
+        collection_id: String,
+        /// Query vector for similarity search.
+        query_vector: Option<Vec<f32>>,
+        /// Optional metadata filter expression.
+        filters: Option<FilterExpression>,
+        /// Number of nearest neighbors to return.
+        top_k: usize,
+        /// Distance metric to use.
+        distance_metric: String,
+    },
+
+    /// Runtime graph traversal operation.
+    GraphTraversal {
+        /// Graph identifier.
+        graph_id: String,
+        /// Starting node IDs for traversal.
+        start_nodes: Vec<String>,
+        /// Edge types to traverse.
+        edge_types: Vec<String>,
+        /// Maximum traversal depth.
+        max_depth: u32,
+        /// Optional filter expression for traversal.
+        filters: Option<FilterExpression>,
+        /// Optional vector target collection for seeded SIMILAR after traversal.
+        vector_target_collection: Option<String>,
+    },
+
+    /// Fusion operation for hybrid results.
+    Fusion {
+        /// Fusion strategy to use.
+        strategy: FusionStrategy,
+        /// Weights for each input source.
+        weights: Vec<f64>,
+    },
+
+    /// Projection and result formatting.
+    Project {
+        /// Column names to project.
+        columns: Vec<String>,
+        /// Transformations to apply.
+        transformations: Vec<ProjectionTransform>,
+    },
+
+    /// Aggregate + HAVING operation.
+    Aggregate {
+        /// Columns to group by.
+        group_keys: Vec<String>,
+        /// Aggregate specifications.
+        aggs: Vec<AggregateSpec>,
+        /// Optional HAVING filter.
+        having: Option<FilterExpression>,
+    },
+
+    /// Join operation.
+    Join {
+        /// Type of join.
+        kind: JoinKind,
+        /// Left join key columns.
+        left_keys: Vec<String>,
+        /// Right join key columns.
+        right_keys: Vec<String>,
+        /// Left table alias.
+        left_alias: String,
+        /// Right table alias.
+        right_alias: String,
+    },
+
+    /// UNION operation for combining results.
+    Union {
+        /// Whether to include all rows.
+        all: bool,
+    },
+
+    /// Set UNION operation with explicit left/right references.
+    SetUnion {
+        /// Left result set reference.
+        left_results: String,
+        /// Right result set reference.
+        right_results: String,
+        /// Whether to deduplicate results.
+        distinct: bool,
+    },
+
+    /// Set INTERSECT operation.
+    SetIntersect {
+        /// Left result set reference.
+        left_results: String,
+        /// Right result set reference.
+        right_results: String,
+        /// Whether to deduplicate results.
+        distinct: bool,
+    },
+
+    /// Set EXCEPT operation.
+    SetExcept {
+        /// Left result set reference.
+        left_results: String,
+        /// Right result set reference.
+        right_results: String,
+        /// Whether to deduplicate results.
+        distinct: bool,
+    },
+
+    /// CTE materialization operation.
+    CteMaterialization {
+        /// Name of the CTE to materialize.
+        cte_name: String,
+        /// Execution plan for the CTE.
+        query_plan: Box<UnifiedExecutionPlan>,
+    },
+}
+
+impl ExecutionStep {
+    /// Describe step for EXPLAIN output.
+    pub fn describe(&self) -> String {
+        match self {
+            ExecutionStep::MetadataFilter { conditions, .. } => {
+                format!("Metadata Filter (conditions: {})", conditions.len())
+            }
+            ExecutionStep::VectorSearch { candidates, .. } => {
+                format!("Vector Search (candidates: {})", candidates)
+            }
+            ExecutionStep::CombinedFilterSearch { .. } => "Combined Filter Search".to_string(),
+            ExecutionStep::IndexLookup { .. } => "Index Lookup".to_string(),
+            ExecutionStep::BloomFilterCheck {
+                expected_false_positive_rate,
+                ..
+            } => format!(
+                "Bloom Filter Check (expected FPR: {:.4})",
+                expected_false_positive_rate
+            ),
+            ExecutionStep::VectorQuery {
+                collection_id,
+                top_k,
+                ..
+            } => format!(
+                "Vector Search on collection {} (top_k: {})",
+                collection_id, top_k
+            ),
+            ExecutionStep::GraphTraversal {
+                graph_id,
+                max_depth,
+                edge_types,
+                ..
+            } => format!(
+                "Graph Traversal on {} (depth: {}, edges: {:?})",
+                graph_id, max_depth, edge_types
+            ),
+            ExecutionStep::Fusion { strategy, .. } => {
+                format!("Hybrid Fusion ({:?})", strategy)
+            }
+            ExecutionStep::Project { columns, .. } => {
+                format!("Project (columns: {})", columns.len())
+            }
+            ExecutionStep::Aggregate {
+                group_keys, aggs, ..
+            } => format!(
+                "Aggregate (groups: {}, aggs: {})",
+                group_keys.len(),
+                aggs.len()
+            ),
+            ExecutionStep::Join {
+                kind, left_keys, ..
+            } => format!("Join ({:?}) keys:{}", kind, left_keys.len()),
+            ExecutionStep::Union { all } => {
+                format!("Union ({})", if *all { "ALL" } else { "DISTINCT" })
+            }
+            ExecutionStep::SetUnion { distinct, .. } => {
+                format!("Set Union ({})", if *distinct { "DISTINCT" } else { "ALL" })
+            }
+            ExecutionStep::SetIntersect { distinct, .. } => {
+                format!(
+                    "Set Intersect ({})",
+                    if *distinct { "DISTINCT" } else { "ALL" }
+                )
+            }
+            ExecutionStep::SetExcept { distinct, .. } => {
+                format!(
+                    "Set Except ({})",
+                    if *distinct { "DISTINCT" } else { "ALL" }
+                )
+            }
+            ExecutionStep::CteMaterialization { cte_name, .. } => {
+                format!("CTE Materialization ({})", cte_name)
+            }
+        }
+    }
+
+    /// Whether this is a runtime vector-oriented step.
+    pub fn is_vector_runtime_step(&self) -> bool {
+        matches!(self, ExecutionStep::VectorQuery { .. })
+    }
+
+    /// Whether this is a runtime graph-oriented step.
+    pub fn is_graph_runtime_step(&self) -> bool {
+        matches!(self, ExecutionStep::GraphTraversal { .. })
+    }
 }
 
 // ================================================================================
@@ -523,7 +891,7 @@ impl UnifiedQueryOptimizer {
         let (rl_state, rl_action) = self.get_rl_optimized_action(&context).await;
 
         // Step 4: Optimize execution order (KEY CONSOLIDATION POINT)
-        let execution_steps =
+        let (execution_steps, ann_filtering_mode) =
             self.optimize_execution_order(&cost_analysis, &query_analysis, &context)?;
 
         // Step 5: Configure resources
@@ -541,6 +909,13 @@ impl UnifiedQueryOptimizer {
 
         // Step 9: Build initial plan with RL context for feedback loop
         let mut plan = UnifiedExecutionPlan {
+            execution_strategy: UnifiedExecutionPlan::infer_execution_strategy(&execution_steps),
+            estimated_cost: performance_estimate.estimated_latency_ms as f64,
+            optimizations: vec!["unified-query-optimizer".to_string()],
+            performance_hints: vec![],
+            seeding_strategy: SeedingStrategy::None,
+            limit: None,
+            offset: None,
             execution_steps,
             resource_allocation,
             performance_estimate,
@@ -548,6 +923,7 @@ impl UnifiedQueryOptimizer {
             fallback_strategies,
             rl_state: rl_state.clone(),
             rl_action: rl_action.clone(),
+            ann_filtering_mode,
         };
 
         // Step 10: Apply RL-selected action to modify the plan if available
@@ -583,9 +959,12 @@ impl UnifiedQueryOptimizer {
             && rl_planner.is_enabled()
         {
             let state = rl_planner.extract_state(context);
-            let action = rl_planner.select_action(&state).await;
+            // Hot path: use deterministic expected-value exploitation only.
+            // Thompson Sampling exploration runs exclusively in the background
+            // batch-update cycle and must never add stochastic latency here.
+            let action = rl_planner.exploit_best_action(&state).await;
             trace!(
-                "🎯 RL planner selected action for collection {}: {}",
+                "RL cost hint applied for collection {}: {}",
                 context.collection.id,
                 action.describe()
             );
@@ -644,13 +1023,17 @@ impl UnifiedQueryOptimizer {
     }
 
     /// Optimize execution order - CORE CONSOLIDATION LOGIC
+    ///
+    /// Returns the ordered execution steps plus the ADR-011 ANN filtering mode string
+    /// chosen for the plan (None when there is no combined vector+filter query).
     fn optimize_execution_order(
         &self,
         cost_analysis: &CostAnalysis,
         query_analysis: &QueryAnalysis,
         context: &UnifiedQueryContext<'_>,
-    ) -> Result<Vec<ExecutionStep>> {
+    ) -> Result<(Vec<ExecutionStep>, Option<String>)> {
         let mut steps = Vec::new();
+        let mut ann_filtering_mode: Option<String> = None;
 
         // Determine optimal execution strategy based on costs
         match (
@@ -658,20 +1041,26 @@ impl UnifiedQueryOptimizer {
             query_analysis.has_vector_search,
         ) {
             (true, true) => {
-                // COMBINED OPTIMIZATION - Key innovation!
+                // ADR-011: PreFilter < 5%, Inline 5–50%, PostFilter > 50%.
                 let filter_selectivity = cost_analysis.filter_selectivity.unwrap_or(1.0);
                 let search_cost = cost_analysis.search_cost.unwrap_or(0.0);
 
-                if filter_selectivity < 0.1 && search_cost > 100.0 {
-                    // High selectivity filter first
+                // Derive ADR-011 mode; expose for EXPLAIN via UnifiedExecutionPlan.
+                let ann_mode =
+                    crate::core::search::hybrid::HybridExecutionStrategy::from_selectivity(
+                        filter_selectivity,
+                    );
+                ann_filtering_mode = Some(ann_mode.as_explain_str().to_string());
+
+                if filter_selectivity < 0.05 && search_cost > 100.0 {
                     trace!(
-                        "Strategy: Filter-first (selectivity={:.2})",
+                        "ANN strategy: PreFilter (selectivity={:.3})",
                         filter_selectivity
                     );
                     steps.push(ExecutionStep::MetadataFilter {
                         conditions: self.extract_filter_conditions(cost_analysis)?,
                         execution_method: self.select_filter_execution_method(cost_analysis)?,
-                        estimated_selectivity: cost_analysis.filter_selectivity.unwrap_or(1.0),
+                        estimated_selectivity: filter_selectivity,
                         estimated_cost: cost_analysis.filter_cost.unwrap_or(0.0),
                     });
                     steps.push(ExecutionStep::VectorSearch {
@@ -680,24 +1069,30 @@ impl UnifiedQueryOptimizer {
                         quantization_strategy: self.select_quantization_strategy(cost_analysis),
                         candidates: query_analysis.top_k * 10,
                     });
-                } else if filter_selectivity > 0.5 && search_cost < 10.0 {
-                    // Low selectivity filter - search first
-                    trace!("Strategy: Search-first (filter selectivity too low)");
+                } else if filter_selectivity > 0.50 {
+                    trace!(
+                        "ANN strategy: PostFilter (selectivity={:.3})",
+                        filter_selectivity
+                    );
                     steps.push(ExecutionStep::VectorSearch {
                         execution_method: self
                             .select_search_method(cost_analysis, query_analysis)?,
                         quantization_strategy: self.select_quantization_strategy(cost_analysis),
-                        candidates: query_analysis.top_k * 10,
+                        // Oversample by 2× per ADR-011 PostFilter spec.
+                        candidates: query_analysis.top_k * 20,
                     });
                     steps.push(ExecutionStep::MetadataFilter {
                         conditions: self.extract_filter_conditions(cost_analysis)?,
                         execution_method: self.select_filter_execution_method(cost_analysis)?,
-                        estimated_selectivity: cost_analysis.filter_selectivity.unwrap_or(1.0),
+                        estimated_selectivity: filter_selectivity,
                         estimated_cost: cost_analysis.filter_cost.unwrap_or(0.0),
                     });
                 } else {
-                    // COMBINED EXECUTION - Optimal for most cases
-                    trace!("Strategy: Combined filter+search execution");
+                    // Inline mode: predicate is threaded into the HNSW walk.
+                    trace!(
+                        "ANN strategy: Inline (selectivity={:.3})",
+                        filter_selectivity
+                    );
                     steps.push(ExecutionStep::CombinedFilterSearch {
                         filter_pushdown: self.plan_filter_pushdown(cost_analysis)?,
                         search_method: self.select_search_method(cost_analysis, query_analysis)?,
@@ -769,7 +1164,7 @@ impl UnifiedQueryOptimizer {
             );
         }
 
-        Ok(steps)
+        Ok((steps, ann_filtering_mode))
     }
 
     /// Plan filter pushdown operations (NEW - cross-system optimization)
@@ -1178,6 +1573,16 @@ pub struct ResourceAllocation {
     pub io_threads: usize,
 }
 
+impl Default for ResourceAllocation {
+    fn default() -> Self {
+        Self {
+            memory_budget_mb: 512,
+            cpu_cores: 2,
+            io_threads: 2,
+        }
+    }
+}
+
 /// Unified performance estimate
 #[derive(Debug, Clone)]
 pub struct UnifiedPerformanceEstimate {
@@ -1193,6 +1598,32 @@ pub struct UnifiedPerformanceEstimate {
     pub estimated_precision: f32,
 }
 
+impl UnifiedPerformanceEstimate {
+    /// Build a conservative estimate from a simple scalar plan cost.
+    pub fn from_cost(cost: f64) -> Self {
+        let estimated_latency_ms = cost.max(1.0).min(u32::MAX as f64) as u32;
+        Self {
+            estimated_latency_ms,
+            estimated_memory_mb: 512,
+            estimated_io_ops: estimated_latency_ms as usize,
+            estimated_recall: 1.0,
+            estimated_precision: 1.0,
+        }
+    }
+}
+
+impl Default for UnifiedPerformanceEstimate {
+    fn default() -> Self {
+        Self {
+            estimated_latency_ms: 1,
+            estimated_memory_mb: 512,
+            estimated_io_ops: 1,
+            estimated_recall: 1.0,
+            estimated_precision: 1.0,
+        }
+    }
+}
+
 /// Parallelism configuration
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct ParallelismConfig {
@@ -1204,6 +1635,17 @@ pub struct ParallelismConfig {
     pub filter_parallelism: usize,
     /// Whether to use SIMD instructions for distance computation
     pub use_simd: bool,
+}
+
+impl Default for ParallelismConfig {
+    fn default() -> Self {
+        Self {
+            file_parallelism: 1,
+            vector_parallelism: 1,
+            filter_parallelism: 1,
+            use_simd: false,
+        }
+    }
 }
 
 /// Fallback strategies
@@ -1998,6 +2440,7 @@ impl UnifiedQueryOptimizer {
                     // Bloom filters are very lightweight
                     memory_budget_mb += 16;
                 }
+                _ => {}
             }
         }
 
@@ -2102,6 +2545,7 @@ impl UnifiedQueryOptimizer {
                 ExecutionStep::BloomFilterCheck { .. } => {
                     total_latency_ms += 0.1;
                 }
+                _ => {}
             }
         }
 
@@ -2214,6 +2658,13 @@ impl UnifiedQueryOptimizer {
                     threshold_mb: memory_threshold,
                 },
                 fallback_plan: Box::new(UnifiedExecutionPlan {
+                    execution_strategy: ExecutionStrategy::Relational,
+                    estimated_cost: 1000.0,
+                    optimizations: vec!["memory-pressure-fallback".to_string()],
+                    performance_hints: vec!["Switch to streaming metadata scan".to_string()],
+                    seeding_strategy: SeedingStrategy::None,
+                    limit: None,
+                    offset: None,
                     execution_steps: vec![ExecutionStep::MetadataFilter {
                         conditions: vec![],
                         execution_method: FilterExecutionMethod::SequentialScan,
@@ -2241,6 +2692,7 @@ impl UnifiedQueryOptimizer {
                     fallback_strategies: vec![],
                     rl_state: None,
                     rl_action: None,
+                    ann_filtering_mode: None,
                 }),
             });
         }
@@ -2249,6 +2701,13 @@ impl UnifiedQueryOptimizer {
         fallbacks.push(FallbackStrategy {
             trigger_condition: TriggerCondition::LatencyExceeded { threshold_ms: 1000 },
             fallback_plan: Box::new(UnifiedExecutionPlan {
+                execution_strategy: ExecutionStrategy::VectorOnly,
+                estimated_cost: 50.0,
+                optimizations: vec!["latency-fallback".to_string()],
+                performance_hints: vec!["Use quantized-only vector search".to_string()],
+                seeding_strategy: SeedingStrategy::None,
+                limit: None,
+                offset: None,
                 execution_steps: vec![ExecutionStep::VectorSearch {
                     execution_method: SearchExecutionMethod::QuantizedOnly {
                         quantization_type: QuantizationType::Binary,
@@ -2281,6 +2740,7 @@ impl UnifiedQueryOptimizer {
                 fallback_strategies: vec![],
                 rl_state: None,
                 rl_action: None,
+                ann_filtering_mode: None,
             }),
         });
 

@@ -409,7 +409,30 @@ async fn resolve_source_context(
         format!("{:?}", source.model).to_lowercase(),
     )
     .with_alias(source.alias);
-    resolve_catalog_authority_context(catalog_manager, authority_source).await
+    let ctx = resolve_catalog_authority_context(catalog_manager, authority_source).await?;
+
+    // ADR-004 / stacked-durability: reject routes to Unavailable projections; warn on RebuildRequired.
+    for proj in &ctx.projections {
+        match proj.freshness_state.as_deref() {
+            Some("Unavailable") => {
+                return Err(anyhow::anyhow!(
+                    "Projection '{}' is Unavailable; read route rejected. \
+                     Wait for rebuild or fall back to canonical ProximaRecord storage.",
+                    proj.name
+                ));
+            }
+            Some("RebuildRequired") => {
+                tracing::warn!(
+                    projection = %proj.name,
+                    "Projection freshness state is RebuildRequired; results may be stale. \
+                     Consider triggering a rebuild or falling back to canonical storage."
+                );
+            }
+            _ => {}
+        }
+    }
+
+    Ok(ctx)
 }
 
 /// Facade request structure

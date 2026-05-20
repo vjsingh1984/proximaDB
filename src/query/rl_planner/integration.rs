@@ -196,6 +196,13 @@ impl RLPlannerIntegration {
     }
 
     /// Select action based on current state
+    /// Deterministic exploitation: returns the arm with the highest expected value (α/(α+β)).
+    /// This is the hot-path method; Thompson Sampling exploration is excluded here.
+    pub async fn exploit_best_action(&self, state: &PlannerState) -> ExecutionAction {
+        let planner = self.planner.read().await;
+        planner.exploit_best_action(state).await
+    }
+
     pub async fn select_action(&self, state: &PlannerState) -> ExecutionAction {
         let planner = self.planner.read().await;
         planner.select_action(state).await

@@ -234,28 +234,72 @@ pub use specialized::{BitmapFilterCache, IndexNodeCache, MetadataStore, QueryCac
 pub use metrics_integration::{CacheMetricsCollector, CacheMetricsConfig, CachePerformanceMetrics};
 pub use warming::{CacheWarmer, CacheWarmingConfig, WarmingStrategy};
 
-// Implement CacheValue for VectorRecord to enable caching
-impl CacheValue for crate::proto::proximadb_v1::VectorRecord {
+// Implement CacheValue for canonical records to enable caching below protocol adapters.
+impl CacheValue for proximadb_records::ProximaRecord {
     fn size_bytes(&self) -> usize {
         // Calculate approximate size in bytes
         let mut size = std::mem::size_of::<Self>();
 
         // Add size of string fields
-        size += self.id.len();
-        if let Some(ref source) = self.source {
-            size += source.len();
+        size += self.oid.len();
+        if let Some(ref local_id) = self.local_id {
+            size += local_id.len();
+        }
+        if let Some(ref variation_id) = self.variation_id {
+            size += variation_id.len();
+        }
+        size += self.tenant_id.len();
+        for principal in &self.permitted_principals {
+            size += principal.len();
+        }
+        if let Some(ref policy_id) = self.rls_policy_id {
+            size += policy_id.len();
+        }
+        if let Some(ref origin) = self.origin {
+            size += origin.len();
+        }
+        if let Some(ref actor) = self.actor {
+            size += actor.len();
+        }
+        if let Some(ref method) = self.method {
+            size += method.len();
         }
 
-        // Add size of vector data (f32 = 4 bytes each)
-        size += self.vector.len() * 4;
+        // Add size of embedding data (f32 = 4 bytes each)
+        for embedding in &self.embeddings {
+            size += embedding.model_id.len();
+            size += embedding.modality.len();
+            size += embedding.values.len() * 4;
+        }
 
-        // quantized_vector removed - internalized in storage
-
-        // Add size of metadata (approximate)
-        for key in self.metadata.keys() {
+        // Add size of properties (approximate)
+        for key in self.props.keys() {
             size += key.len();
-            // Approximate size of SqlValue
-            size += 64; // Conservative estimate for SqlValue
+            // Approximate size of ProximaTreeNode / ProximaValue.
+            size += 96;
+        }
+
+        for reference in &self.refs {
+            match reference {
+                proximadb_records::TypedRef::ForeignKey { table, id } => {
+                    size += table.len() + id.len();
+                }
+                proximadb_records::TypedRef::GraphEdge { edge_id, .. } => {
+                    size += edge_id.len();
+                }
+                proximadb_records::TypedRef::Embedding { model_id } => {
+                    size += model_id.len();
+                }
+            }
+        }
+
+        if let Some(sequence) = &self.sequence {
+            size += sequence.tokens.len() * std::mem::size_of::<u32>();
+            size += sequence.model_id.len();
+        }
+
+        for label in self.labels.iter() {
+            size += label.len();
         }
 
         size

@@ -29,6 +29,19 @@ pub fn build_axis_hybrid_query(
     collection_id: &str,
     search_params: &crate::core::search::SearchParams,
 ) -> Result<crate::index::axis::management::manager::HybridQuery> {
+    build_axis_hybrid_query_with_mode(
+        collection_id,
+        search_params,
+        crate::index::axis::management::manager::AnnFilteringMode::default(),
+    )
+}
+
+/// Like `build_axis_hybrid_query` but with an explicit ADR-011 filtering mode.
+pub fn build_axis_hybrid_query_with_mode(
+    collection_id: &str,
+    search_params: &crate::core::search::SearchParams,
+    ann_filtering_mode: crate::index::axis::management::manager::AnnFilteringMode,
+) -> Result<crate::index::axis::management::manager::HybridQuery> {
     use crate::core::search::{ComparisonOperator, FilterExpression};
     use crate::index::axis::management::manager::{
         FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
@@ -145,6 +158,7 @@ pub fn build_axis_hybrid_query(
         id_filters,
         top_k: search_params.top_k.unwrap_or(10),
         include_expired: search_params.include_expired.unwrap_or(false),
+        ann_filtering_mode,
     })
 }
 

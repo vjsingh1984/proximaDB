@@ -28,10 +28,10 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::infrastructure::tier_policy_engine::InfrastructureTier;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::sst::readers::sst_query_engine::UnifiedSstableReader;
 use crate::storage::engines::sst::writer::SstableWriter;
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
+use proximadb_records::ProximaRecord;
 // Temporarily disabled due to arrow-arith compilation conflicts - DEFERRED: Re-enable when resolved
 // use crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader;
 // use crate::storage::engines::viper::flush::ViperFlushOperation; // Deferred: Import correct flush module
@@ -165,7 +165,7 @@ impl TierDataMovement {
         ids: &[String],
         tier: &InfrastructureTier,
         format: &TierDataFormat,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         match format {
             TierDataFormat::Bincode => {
                 // Read from memory tier using bincode deserialization
@@ -185,22 +185,22 @@ impl TierDataMovement {
     /// Write vectors to a tier using its native format
     async fn write_to_tier(
         &self,
-        vectors: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         tier: &InfrastructureTier,
         format: &TierDataFormat,
     ) -> Result<usize> {
         match format {
             TierDataFormat::Bincode => {
                 // Write to memory tier using bincode serialization
-                self.write_to_memory_tier(vectors, tier).await
+                self.write_to_memory_tier(records, tier).await
             }
             TierDataFormat::SST => {
                 // Write to SST format using SSTable writer
-                self.write_to_sst_tier(vectors, tier).await
+                self.write_to_sst_tier(records, tier).await
             }
             TierDataFormat::VIPER => {
                 // Write to VIPER format using Parquet writer
-                self.write_to_viper_tier(vectors, tier).await
+                self.write_to_viper_tier(records, tier).await
             }
         }
     }
@@ -210,7 +210,7 @@ impl TierDataMovement {
         &self,
         ids: &[String],
         _tier: &InfrastructureTier,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         debug!(
             "Reading {} vectors from memory tier using bincode",
             ids.len()
@@ -226,18 +226,18 @@ impl TierDataMovement {
     /// Write to memory tier (bincode format)
     async fn write_to_memory_tier(
         &self,
-        vectors: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         _tier: &InfrastructureTier,
     ) -> Result<usize> {
         debug!(
-            "Writing {} vectors to memory tier using bincode",
-            vectors.len()
+            "Writing {} records to memory tier using bincode",
+            records.len()
         );
 
-        // Serialize vectors using bincode
+        // Serialize canonical records using bincode.
         let mut total_bytes = 0;
-        for vector in &vectors {
-            let serialized = bincode::serialize(vector)?;
+        for record in &records {
+            let serialized = bincode::serialize(record)?;
             total_bytes += serialized.len();
             // In production, store in memory cache
         }
@@ -250,7 +250,7 @@ impl TierDataMovement {
         &self,
         ids: &[String],
         tier: &InfrastructureTier,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         let path = self.get_tier_path(tier)?;
         debug!("Reading {} vectors from SST at {}", ids.len(), path);
 
@@ -274,29 +274,29 @@ impl TierDataMovement {
             "sst".to_string(),
         ));
         let reader = UnifiedSstableReader::new(filesystem, unified_fs, self.collection_id.clone());
-        let mut vectors = Vec::new();
+        let mut records = Vec::new();
 
         // SSTable reader reads individual vectors
         // Note: We're using a dummy SST file path for each vector since SSTable reader
         // expects file paths, not directory paths
         let sst_file = format!("{}/data.sstable", path);
         for id in ids {
-            if let Some(vector) = reader.vector(&sst_file, id).await? {
-                vectors.push(vector.into());
+            if let Some(record) = reader.vector(&sst_file, id).await? {
+                records.push(record);
             }
         }
 
-        Ok(vectors)
+        Ok(records)
     }
 
     /// Write to SST tier
     async fn write_to_sst_tier(
         &self,
-        vectors: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         tier: &InfrastructureTier,
     ) -> Result<usize> {
         let path = self.get_tier_path(tier)?;
-        debug!("Writing {} vectors to SST at {}", vectors.len(), path);
+        debug!("Writing {} records to SST at {}", records.len(), path);
 
         // Use SSTable writer to store vectors
         let config = crate::storage::persistence::filesystem::FilesystemConfig {
@@ -310,20 +310,24 @@ impl TierDataMovement {
         );
         let writer = SstableWriter::new(&path, 4096, filesystem);
 
-        // Pass vectors directly without any ID manipulation or deduplication
+        // Pass records through without any ID manipulation or deduplication.
         // Collection service handles ID validation when needed
         let mut total_bytes = 0;
-        let records: Vec<VectorRecord> = vectors
+        let vector_records: Vec<crate::proto::proximadb_v1::VectorRecord> = records
             .iter()
-            .map(|vector| {
-                total_bytes += vector.vector.len() * 4; // f32 is 4 bytes
-                vector.clone()
+            .map(|record| {
+                total_bytes += record
+                    .embeddings
+                    .first()
+                    .map(|embedding| embedding.values.len() * 4)
+                    .unwrap_or_default();
+                record.into()
             })
             .collect();
 
         // Write records using streaming approach for production consistency
-        let record_count = records.len();
-        let sorted_records_iter = records.into_iter();
+        let record_count = vector_records.len();
+        let sorted_records_iter = vector_records.into_iter();
         writer
             .write_sorted_records(sorted_records_iter, record_count)
             .await?;
@@ -335,7 +339,7 @@ impl TierDataMovement {
         &self,
         ids: &[String],
         tier: &InfrastructureTier,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         let path = self.get_tier_path(tier)?;
         debug!("Reading {} vectors from VIPER at {}", ids.len(), path);
 
@@ -351,7 +355,7 @@ impl TierDataMovement {
         );
         // Deferred: Re-enable when UnifiedParquetReader is available
         // let reader = UnifiedParquetReader::new(filesystem);
-        let vectors = Vec::new();
+        let records = Vec::new();
 
         // Deferred: Implement VIPER reading when UnifiedParquetReader is restored
         // let all_vectors = reader.read_all_vectors(&path, &["id", "vector", "metadata_info"]).await?;
@@ -363,23 +367,23 @@ impl TierDataMovement {
         //     }
         // }
 
-        Ok(vectors)
+        Ok(records)
     }
 
     /// Write to VIPER tier
     async fn write_to_viper_tier(
         &self,
-        vectors: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         tier: &InfrastructureTier,
     ) -> Result<usize> {
         let path = self.get_tier_path(tier)?;
-        debug!("Writing {} vectors to VIPER at {}", vectors.len(), path);
+        debug!("Writing {} records to VIPER at {}", records.len(), path);
 
         // Deferred: Use VIPER flush operation to write Parquet
         // In production, this would use the VIPER writer
         // For now, estimate bytes written
         let bytes_per_vector = 1024; // Rough estimate
-        let total_bytes = vectors.len() * bytes_per_vector;
+        let total_bytes = records.len() * bytes_per_vector;
 
         Ok(total_bytes)
     }

@@ -106,7 +106,7 @@ impl LowLatencyExecutor {
         let mut result = QueryResult::default();
 
         // Simulate streaming by processing in batches
-        for operation in &plan.operations {
+        for operation in &plan.execution_steps {
             match self.execute_operation_streaming(operation).await {
                 Ok(batch) => {
                     result.rows.extend(batch);
@@ -134,7 +134,7 @@ impl LowLatencyExecutor {
 
         let mut result = QueryResult::default();
 
-        for operation in &plan.operations {
+        for operation in &plan.execution_steps {
             match self.execute_operation(operation).await {
                 Ok(batch) => result.rows.extend(batch),
                 Err(e) => return Err(e),
@@ -202,7 +202,7 @@ impl LowLatencyExecutor {
         hasher.write_u64(plan.estimated_cost.to_bits());
 
         // Hash operations by converting to string representation
-        for op in &plan.operations {
+        for op in &plan.execution_steps {
             // Use operation description for hashing
             let desc = op.describe();
             desc.hash(&mut hasher);

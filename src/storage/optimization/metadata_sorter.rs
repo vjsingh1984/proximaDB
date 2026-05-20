@@ -14,7 +14,9 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::{FilterableColumnSpec, VectorRecord};
+use crate::proto::proximadb_v1::FilterableColumnSpec;
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{ProximaRecord, ProximaTreeNode};
 
 /// Configuration for metadata-based sorting
 #[derive(Debug, Clone)]
@@ -52,7 +54,7 @@ pub struct SortingStats {
     pub sort_time_us: u64,
 }
 
-/// Metadata-aware sorter for vector records
+/// Metadata-aware sorter for canonical records.
 pub struct MetadataSorter {
     config: MetadataSortConfig,
 }
@@ -86,11 +88,11 @@ impl MetadataSorter {
         Self::new(config)
     }
 
-    /// Sort vector records for optimal encoding
+    /// Sort canonical records for optimal encoding.
     pub fn sort_for_encoding(
         &self,
-        mut records: Vec<VectorRecord>,
-    ) -> Result<(Vec<VectorRecord>, SortingStats)> {
+        mut records: Vec<ProximaRecord>,
+    ) -> Result<(Vec<ProximaRecord>, SortingStats)> {
         let start_time = std::time::Instant::now();
         let original_count = records.len();
 
@@ -122,8 +124,8 @@ impl MetadataSorter {
 
             // Secondary sort: vector ID for stable ordering
             if self.config.stable_sort_by_id {
-                let a_id = a.id.as_str();
-                let b_id = b.id.as_str();
+                let a_id = a.oid.as_str();
+                let b_id = b.oid.as_str();
                 a_id.cmp(b_id)
             } else {
                 std::cmp::Ordering::Equal
@@ -144,40 +146,45 @@ impl MetadataSorter {
     }
 
     /// Extract metadata value for sorting (handles different data types)
-    fn extract_metadata_value(&self, record: &VectorRecord, key: &str) -> SortableValue {
-        // Find the metadata item in the HashMap
-        if let Some(sql_value) = record.metadata.get(key)
-            && let Some(value) = &sql_value.value
-        {
-            match value {
-                crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
-                    return SortableValue::from_string(s);
-                }
-                crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
-                    // Check if it's an integer
-                    if n.fract() == 0.0 && *n >= i64::MIN as f64 && *n <= i64::MAX as f64 {
-                        return SortableValue::Number(*n as i64);
-                    } else {
-                        // Store floats as string for consistent ordering
-                        return SortableValue::Float(n.to_string());
-                    }
-                }
-                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
-                    // Convert bool to string for sorting
-                    return SortableValue::String(b.to_string());
-                }
-                _ => {
-                    return SortableValue::Null;
-                }
-            }
+    fn extract_metadata_value(&self, record: &ProximaRecord, key: &str) -> SortableValue {
+        if let Some(ProximaTreeNode::Value(value)) = record.props.get(key) {
+            return Self::sortable_proxima_value(value);
         }
 
         // Default value if key not found
         SortableValue::Null
     }
 
+    fn sortable_proxima_value(value: &ProximaValue) -> SortableValue {
+        match value {
+            ProximaValue::String(s) | ProximaValue::Symbol(s) | ProximaValue::Decimal(s) => {
+                SortableValue::from_string(s)
+            }
+            ProximaValue::Boolean(b) => SortableValue::String(b.to_string()),
+            ProximaValue::Int8(n) => SortableValue::Number(*n as i64),
+            ProximaValue::Int16(n) => SortableValue::Number(*n as i64),
+            ProximaValue::Int32(n) => SortableValue::Number(*n as i64),
+            ProximaValue::Int64(n) => SortableValue::Number(*n),
+            ProximaValue::UInt8(n) => SortableValue::Number(*n as i64),
+            ProximaValue::UInt16(n) => SortableValue::Number(*n as i64),
+            ProximaValue::UInt32(n) => SortableValue::Number(*n as i64),
+            ProximaValue::UInt64(n) => {
+                if let Ok(value) = i64::try_from(*n) {
+                    SortableValue::Number(value)
+                } else {
+                    SortableValue::Float(n.to_string())
+                }
+            }
+            ProximaValue::Float16(n) | ProximaValue::Float32(n) => {
+                SortableValue::from_f64(*n as f64)
+            }
+            ProximaValue::Float64(n) => SortableValue::from_f64(*n),
+            _ => SortableValue::Null,
+        }
+    }
+
     /// Analyze metadata distribution for compression estimation
-    fn analyze_metadata_distribution(&self, records: &[VectorRecord], stats: &mut SortingStats) {
+    fn analyze_metadata_distribution(&self, records: &[ProximaRecord], stats: &mut SortingStats) {
         for sort_key in &self.config.primary_sort_keys {
             let mut distinct_values = std::collections::HashSet::new();
 
@@ -206,7 +213,7 @@ impl MetadataSorter {
     /// Estimate compression improvement from sorting
     fn estimate_compression_improvement(
         &self,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         stats: &SortingStats,
     ) -> f64 {
         if records.is_empty() || self.config.primary_sort_keys.is_empty() {
@@ -280,6 +287,14 @@ impl Ord for SortableValue {
 }
 
 impl SortableValue {
+    fn from_f64(value: f64) -> Self {
+        if value.fract() == 0.0 && value >= i64::MIN as f64 && value <= i64::MAX as f64 {
+            Self::Number(value as i64)
+        } else {
+            Self::Float(value.to_string())
+        }
+    }
+
     /// Parse a string into the appropriate SortableValue type
     ///
     /// Attempts to parse as integer first, then float, then falls back
@@ -385,37 +400,22 @@ impl Default for SortConfigBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::SqlValue;
-    // Import removed - using HashMap metadata now
 
-    fn create_test_record(id: &str, category: &str, priority: &str) -> VectorRecord {
-        let mut metadata = std::collections::HashMap::new();
-        metadata.insert(
+    fn create_test_record(id: &str, category: &str, priority: &str) -> ProximaRecord {
+        let mut props = std::collections::HashMap::new();
+        props.insert(
             "category".to_string(),
-            SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    category.to_string(),
-                )),
-            },
+            ProximaTreeNode::Value(ProximaValue::String(category.to_string())),
         );
-        metadata.insert(
+        props.insert(
             "priority".to_string(),
-            SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    priority.to_string(),
-                )),
-            },
+            ProximaTreeNode::Value(ProximaValue::String(priority.to_string())),
         );
 
-        VectorRecord {
-            id: id.to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata,
-            timestamp: Some(chrono::Utc::now().timestamp()),
-            updated_at: Some(chrono::Utc::now().timestamp()),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+        ProximaRecord {
+            oid: id.to_string(),
+            props,
+            ..Default::default()
         }
     }
 
@@ -438,10 +438,10 @@ mod tests {
         let (sorted_records, stats) = sorter.sort_for_encoding(records).unwrap();
 
         // Should be sorted by category first, then priority, then ID
-        assert_eq!(sorted_records[0].id, "2"); // A, high
-        assert_eq!(sorted_records[1].id, "1"); // A, low
-        assert_eq!(sorted_records[2].id, "3"); // B, high
-        assert_eq!(sorted_records[3].id, "4"); // B, low
+        assert_eq!(sorted_records[0].oid, "2"); // A, high
+        assert_eq!(sorted_records[1].oid, "1"); // A, low
+        assert_eq!(sorted_records[2].oid, "3"); // B, high
+        assert_eq!(sorted_records[3].oid, "4"); // B, low
 
         assert_eq!(stats.records_sorted, 4);
         assert_eq!(stats.sort_keys_used, vec!["category", "priority"]);

@@ -153,23 +153,9 @@ impl MvccResolver {
         // Same version — earliest creation timestamp wins
         r1.created_at_ns <= r2.created_at_ns
     }
-
-    /// Backward-compat: resolve a `Vec<VectorRecord>` by converting at the boundary.
-    ///
-    /// Callers in SST compaction and similar storage paths that still hold
-    /// `VectorRecord` can use this until they migrate to `ProximaRecord`.
-    pub fn resolve_vector_batch(
-        &self,
-        records: Vec<crate::proto::proximadb_v1::VectorRecord>,
-    ) -> Vec<crate::proto::proximadb_v1::VectorRecord> {
-        use proximadb_records::conversions::proxima_record_to_vector;
-        let proxima: Vec<ProximaRecord> = records.iter().map(ProximaRecord::from).collect();
-        let resolved = self.resolve_batch(proxima);
-        resolved.iter().map(proxima_record_to_vector).collect()
-    }
 }
 
-/// Treat `record_version == 0` as version 1 (legacy VectorRecord compatibility).
+/// Treat `record_version == 0` as version 1 for historical stored records.
 #[inline]
 fn effective_version(r: &ProximaRecord) -> u64 {
     if r.record_version == 0 {

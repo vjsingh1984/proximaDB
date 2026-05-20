@@ -159,12 +159,13 @@ impl SstEngine {
                 collection_id: collection_id.to_string(),
                 vector_query: Some(VectorQuery::Dense {
                     vector: query_vector.to_vec(),
-                    similarity_threshold: 0.0, // Return all results up to k
+                    similarity_threshold: 0.0,
                 }),
                 metadata_filters: axis_filters,
                 id_filters: Vec::new(),
                 top_k: k,
                 include_expired: false,
+                ..Default::default()
             };
 
             // Execute AXIS query (HNSW or IVF based on index type)

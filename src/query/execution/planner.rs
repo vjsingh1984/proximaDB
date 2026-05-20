@@ -150,16 +150,16 @@ impl ExecutionPlanner {
         // 3. Estimate cost
         let estimated_cost = self.cost_model.estimate(&operations);
 
-        Ok(ExecutionPlan {
-            execution_strategy: strategy,
+        Ok(ExecutionPlan::runtime(
+            strategy,
             operations,
             estimated_cost,
-            optimizations: self.identify_optimizations(select),
-            performance_hints: self.generate_hints(select),
-            seeding_strategy: self.seeding_strategy.clone(),
-            limit: select.limit.map(|l| l as usize),
-            offset: select.offset.map(|o| o as usize),
-        })
+            self.identify_optimizations(select),
+            self.generate_hints(select),
+            self.seeding_strategy.clone(),
+            select.limit.map(|l| l as usize),
+            select.offset.map(|o| o as usize),
+        ))
     }
 
     fn detect_strategy(&self, select: &crate::query::ast::Select) -> ExecutionStrategy {
@@ -210,7 +210,7 @@ impl ExecutionPlanner {
             }
         }
 
-        Ok(ExecutionOperation::VectorSearch {
+        Ok(ExecutionOperation::VectorQuery {
             collection_id,
             query_vector,
             filters: None, // AST Expr → FilterExpression conversion deferred (TD-048)
@@ -295,16 +295,16 @@ impl ExecutionPlanner {
     }
 
     fn plan_union(&self, _left: &Query, _right: &Query, all: bool) -> Result<ExecutionPlan> {
-        Ok(ExecutionPlan {
-            execution_strategy: ExecutionStrategy::Relational,
-            operations: vec![ExecutionOperation::Union { all }],
-            estimated_cost: 100.0,
-            optimizations: vec![],
-            performance_hints: vec![],
-            seeding_strategy: SeedingStrategy::None,
-            limit: None,
-            offset: None,
-        })
+        Ok(ExecutionPlan::runtime(
+            ExecutionStrategy::Relational,
+            vec![ExecutionOperation::Union { all }],
+            100.0,
+            vec![],
+            vec![],
+            SeedingStrategy::None,
+            None,
+            None,
+        ))
     }
 
     fn parse_vector_literal(&self, s: &str) -> Result<Vec<f32>> {
@@ -349,7 +349,7 @@ impl CostModel {
 
     fn cost_for_op(&self, op: &ExecutionOperation) -> f64 {
         match op {
-            ExecutionOperation::VectorSearch { top_k, .. } => *top_k as f64 * 0.1,
+            ExecutionOperation::VectorQuery { top_k, .. } => *top_k as f64 * 0.1,
             ExecutionOperation::GraphTraversal { max_depth, .. } => (*max_depth as f64).powi(2),
             ExecutionOperation::Project { columns, .. } => columns.len() as f64 * 0.01,
             _ => 1.0,

@@ -539,7 +539,7 @@ impl DocumentService {
 
     /// Flush documents from a collection to persistent storage (SST engine)
     ///
-    /// This method converts in-memory documents to VectorRecords and flushes them
+    /// This method converts in-memory documents to ProximaRecords and flushes them
     /// to the underlying storage engine for cold tier persistence.
     ///
     /// Documents are stored with:
@@ -623,7 +623,7 @@ impl DocumentService {
         })
     }
 
-    /// Convert a DocumentRecord to VectorRecord for storage engine persistence
+    /// Convert a DocumentRecord to ProximaRecord for storage engine persistence.
     fn document_to_proxima_record(
         &self,
         doc: &DocumentRecord,
@@ -683,7 +683,7 @@ impl DocumentService {
     /// - Uses ColdTierRetriever trait for storage access (DIP)
     /// - Can be extended for different storage backends (OCP)
     ///
-    /// Documents are stored as VectorRecords with metadata:
+    /// Documents are stored as ProximaRecords with properties:
     /// - `_type`: "document"
     /// - `_collection`: collection name
     /// - `_document`: serialized JSON content
@@ -731,80 +731,6 @@ impl DocumentService {
                 Ok(Vec::new())
             }
         }
-    }
-
-    /// Convert a VectorRecord back to DocumentRecord
-    #[allow(dead_code)]
-    fn vector_record_to_document(
-        &self,
-        record: &crate::proto::proximadb_v1::VectorRecord,
-    ) -> Option<DocumentRecord> {
-        use crate::proto::proximadb_v1::sql_value::Value;
-
-        // Check if this is a document record
-        let type_value = record.metadata.get("_type")?;
-        if let Some(Value::StringValue(t)) = &type_value.value {
-            if t != "document" {
-                return None;
-            }
-        } else {
-            return None;
-        }
-
-        // Get collection
-        let collection = record.metadata.get("_collection")?;
-        let collection_name = if let Some(Value::StringValue(c)) = &collection.value {
-            c.clone()
-        } else {
-            return None;
-        };
-
-        // Get document JSON
-        let doc_value = record.metadata.get("_document")?;
-        let doc_json = if let Some(Value::StringValue(j)) = &doc_value.value {
-            j.clone()
-        } else {
-            return None;
-        };
-
-        // Deserialize document
-        let document: SqlObject = match serde_json::from_str(&doc_json) {
-            Ok(d) => d,
-            Err(e) => {
-                warn!("Failed to deserialize document from storage: {}", e);
-                return None;
-            }
-        };
-
-        // Extract original ID (remove collection prefix)
-        let original_id = record
-            .id
-            .strip_prefix(&format!("{}::", collection_name))
-            .unwrap_or(&record.id)
-            .to_string();
-
-        // Get version
-        let version = record
-            .metadata
-            .get("_version")
-            .and_then(|v| {
-                if let Some(Value::Int64Value(i)) = &v.value {
-                    Some(*i as u64)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(0);
-
-        Some(DocumentRecord {
-            id: original_id,
-            document,
-            collection_id: collection_name,
-            version,
-            updated_at_ns: record.updated_at.unwrap_or(0) * 1_000_000, // Convert ms to ns
-            schema_id: None,
-            document_type: None,
-        })
     }
 
     /// Flush all collections to storage

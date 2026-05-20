@@ -1520,6 +1520,7 @@ impl UnifiedStorageEngine for NovaEngine {
                 id_filters: Vec::new(),
                 top_k: k,
                 include_expired: false,
+                ..Default::default()
             };
 
             // Execute AXIS query (HNSW or IVF based on index type)

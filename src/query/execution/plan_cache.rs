@@ -361,16 +361,16 @@ mod tests {
     use crate::query::execution::ExecutionStrategy;
 
     fn make_plan() -> ExecutionPlan {
-        ExecutionPlan {
-            execution_strategy: ExecutionStrategy::VectorOnly,
-            operations: vec![],
-            estimated_cost: 0.0,
-            optimizations: vec![],
-            performance_hints: vec![],
-            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
-            limit: None,
-            offset: None,
-        }
+        ExecutionPlan::runtime(
+            ExecutionStrategy::VectorOnly,
+            vec![],
+            0.0,
+            vec![],
+            vec![],
+            crate::query::execution::SeedingStrategy::Average,
+            None,
+            None,
+        )
     }
 
     #[test]

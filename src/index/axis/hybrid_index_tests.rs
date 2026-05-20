@@ -11,7 +11,7 @@
 mod tests {
     use crate::index::axis::management::manager::AxisManager;
     use crate::index::axis::management::manager::{
-        FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
+        AnnFilteringMode, FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
     };
     use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
     use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
@@ -107,6 +107,7 @@ mod tests {
             id_filters: vec![],
             top_k: 2,
             include_expired: false,
+            ann_filtering_mode: AnnFilteringMode::PostFilter,
         };
 
         let result = manager.query(query).await.unwrap();
@@ -150,6 +151,7 @@ mod tests {
             id_filters: vec![],
             top_k: 10,
             include_expired: false,
+            ann_filtering_mode: AnnFilteringMode::PostFilter,
         };
 
         // Verify both indexes are used

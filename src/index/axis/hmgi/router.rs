@@ -389,6 +389,7 @@ mod tests {
             id_filters: vec![],
             top_k: 10,
             include_expired: false,
+            ..Default::default()
         }
     }
 
@@ -436,6 +437,7 @@ mod tests {
             id_filters: vec![],
             top_k: 10,
             include_expired: false,
+            ..Default::default()
         };
 
         let filter = router.extract_modality_filter(&query);
@@ -455,6 +457,7 @@ mod tests {
             id_filters: vec![],
             top_k: 10,
             include_expired: false,
+            ..Default::default()
         };
 
         let filter = router.extract_modality_filter(&query);
@@ -499,6 +502,7 @@ mod tests {
             id_filters: vec![],
             top_k: 10,
             include_expired: false,
+            ..Default::default()
         };
 
         let routed = router
@@ -594,6 +598,7 @@ mod tests {
             id_filters: vec![],
             top_k: 10,
             include_expired: false,
+            ..Default::default()
         };
 
         let count_all = router

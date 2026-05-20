@@ -26,6 +26,7 @@ use crate::storage::transaction_coordinator::{
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::columnar_schema::ColumnarSchema;
 use crate::storage::optimization::{MetadataSorter, SortingStats};
+use proximadb_records::ProximaRecord;
 
 use super::viper_meta_collector::{ViperCollectorConfig, ViperMetadataCollector};
 
@@ -994,7 +995,10 @@ impl Flush {
             MetadataSorter::from_filterable_specs(filterable_columns.as_deref().unwrap_or(&[]));
 
         // Sort records for optimal encoding
-        let (sorted_records, stats) = sorter.sort_for_encoding(records.to_vec())?;
+        let canonical_records: Vec<ProximaRecord> =
+            records.iter().map(ProximaRecord::from).collect();
+        let (sorted_records, stats) = sorter.sort_for_encoding(canonical_records)?;
+        let sorted_records = sorted_records.into_iter().map(VectorRecord::from).collect();
 
         debug!(
             "🎯 VIPER: Sorted {} records by {} filterable keys for Parquet optimization",

@@ -35,6 +35,7 @@ use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingF
 use crate::storage::transaction_coordinator::{
     StagingConfig, TransactionCoordinator, TransactionStageType,
 };
+use proximadb_records::ProximaRecord;
 // Quantization now handled by unified compute module
 // Import unified level-based compaction framework
 use crate::storage::common::compaction_utils::{
@@ -793,7 +794,8 @@ impl Compaction {
             }
         });
 
-        // OPTIMIZED: Merge-deduplicate VectorRecords directly
+        // OPTIMIZED: Merge-deduplicate legacy SST records directly, then lower
+        // through canonical ProximaRecord for MVCC resolution.
         let mut merged_vector_records: Vec<VectorRecord> = Vec::new();
         let mut last_id = String::new();
 
@@ -818,7 +820,15 @@ impl Compaction {
         );
 
         let resolver = MvccResolver::new();
-        let resolved_records = resolver.resolve_vector_batch(merged_vector_records);
+        let canonical_records: Vec<ProximaRecord> = merged_vector_records
+            .iter()
+            .map(ProximaRecord::from)
+            .collect();
+        let resolved_records: Vec<VectorRecord> = resolver
+            .resolve_batch(canonical_records)
+            .into_iter()
+            .map(VectorRecord::from)
+            .collect();
         info!(
             "🔍 UNIFIED COMPACTION: MVCC resolution: {} records after resolution",
             resolved_records.len()
@@ -1726,7 +1736,11 @@ impl Compaction {
         // 1. Sequential access patterns in SSTable blocks
         // 2. Better compression ratios in block-based storage
         // 3. Improved bloom filter effectiveness
-        let (sorted_records, sort_stats) = sorter.sort_for_encoding(vector_records)?;
+        let canonical_records: Vec<ProximaRecord> =
+            vector_records.iter().map(ProximaRecord::from).collect();
+        let (sorted_records, sort_stats) = sorter.sort_for_encoding(canonical_records)?;
+        let sorted_records: Vec<VectorRecord> =
+            sorted_records.into_iter().map(VectorRecord::from).collect();
 
         debug!(
             "✅ LSM compaction sorting complete: {} records sorted for optimal SSTable encoding",

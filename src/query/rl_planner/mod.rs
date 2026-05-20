@@ -168,6 +168,17 @@ impl RLPlanner {
         self.config.enabled
     }
 
+    /// Return the best action by deterministic expected-value exploitation (α/(α+β) per arm).
+    ///
+    /// This is the **hot-path method**. Thompson Sampling stochastic exploration is
+    /// intentionally excluded here; it only runs during the background `batch_update` cycle
+    /// so that exploration variance never adds latency to live queries (CAKE arXiv:2602.04181,
+    /// Scheduling Decisions arXiv:2501.16256).
+    pub async fn exploit_best_action(&self, state: &PlannerState) -> ExecutionAction {
+        let bandit = self.bandit.read().await;
+        bandit.exploit_best_action(state)
+    }
+
     /// Select optimal action for given state
     pub async fn select_action(&self, state: &PlannerState) -> ExecutionAction {
         let bandit = self.bandit.read().await;

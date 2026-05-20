@@ -47,8 +47,9 @@ use crate::core::search::FilterExpression;
 use crate::core::search::filter_contract::{CandidateSet, FilterContract, MetadataLookup};
 use crate::index::axis::management::manager::HybridQuery as AxisHybridQuery;
 
-const DEFAULT_FILTER_FIRST_MAX_SELECTIVITY: f64 = 0.1;
-const DEFAULT_VECTOR_FIRST_MIN_SELECTIVITY: f64 = 0.5;
+/// Selectivity below which filter-first (PreFilter) is used. ADR-011: 5%.
+const DEFAULT_FILTER_FIRST_MAX_SELECTIVITY: f64 = 0.05;
+const DEFAULT_VECTOR_FIRST_MIN_SELECTIVITY: f64 = 0.50;
 
 /// Selectivity thresholds for automatic hybrid execution strategy selection.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -90,33 +91,44 @@ impl HybridStrategyPolicy {
     }
 }
 
-/// Execution strategy for hybrid queries
+/// Execution strategy for hybrid queries.
+///
+/// Variants map to the three ADR-011 ANN filtering modes:
+/// - `FilterFirst`  → PreFilter  (selectivity < 5%)
+/// - `Inline`       → Inline ANN (5–50%): predicate is passed into the HNSW graph walk
+/// - `VectorFirst`  → PostFilter (> 50%): oversample ANN then apply predicate to results
+///
+/// `Parallel` is retained for backward compatibility; new code should use `Inline`
+/// for the moderate-selectivity range.  `Auto` delegates to `from_selectivity_with_policy`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HybridExecutionStrategy {
-    /// Filter-first strategy: Apply filters before vector search
-    ///
-    /// Best for highly selective filters (selectivity < 10%)
+    /// Apply the predicate to build a candidate set, then ANN-search within it.
+    /// Avoids vector comparisons on non-matching records entirely (ADR-011 PreFilter).
     FilterFirst,
 
-    /// Vector-first strategy: Perform vector search, then filter results
-    ///
-    /// Best for low-selectivity filters (selectivity > 50%)
+    /// Pass the predicate into the HNSW graph walk (ACORN semantics, ADR-011 Inline).
+    /// Correct for 5–50% selectivity; degrades gracefully when the candidate set
+    /// shrinks below `ef_construction * 4` by falling back to FilterFirst.
+    Inline,
+
+    /// ANN-search with `top_k * oversample_factor` candidates, then post-filter.
+    /// Used when the predicate is not selective enough to prune the search space
+    /// (ADR-011 PostFilter, selectivity > 50%).
     VectorFirst,
 
-    /// Parallel strategy: Execute filters and vector search in parallel
-    ///
-    /// Best for moderate selectivity (10-50%)
+    /// Legacy: run filter generation and vector search concurrently.
+    /// Prefer `Inline` for new code in the moderate-selectivity range.
     Parallel,
 
-    /// Automatic strategy selection based on filter selectivity
+    /// Automatic strategy selection based on filter selectivity.
     Auto,
 }
 
 impl HybridExecutionStrategy {
-    /// Select the optimal strategy based on filter selectivity
+    /// Select the optimal strategy based on filter selectivity using ADR-011 thresholds.
     pub fn from_selectivity(selectivity: f64) -> Self {
         Self::from_selectivity_with_policy(selectivity, HybridStrategyPolicy::default())
-            .unwrap_or(HybridExecutionStrategy::Parallel)
+            .unwrap_or(HybridExecutionStrategy::Inline)
     }
 
     /// Select the optimal strategy using explicit, validated policy thresholds.
@@ -130,14 +142,22 @@ impl HybridExecutionStrategy {
         }
 
         if selectivity < policy.filter_first_max_selectivity {
-            // Highly selective: filter first to reduce vector search space
             Ok(HybridExecutionStrategy::FilterFirst)
         } else if selectivity > policy.vector_first_min_selectivity {
-            // Low selectivity: vector search first, then filter
             Ok(HybridExecutionStrategy::VectorFirst)
         } else {
-            // Moderate selectivity: parallel execution
-            Ok(HybridExecutionStrategy::Parallel)
+            Ok(HybridExecutionStrategy::Inline)
+        }
+    }
+
+    /// Return the ADR-011 mode name for EXPLAIN output.
+    pub fn as_explain_str(self) -> &'static str {
+        match self {
+            Self::FilterFirst => "PreFilter",
+            Self::Inline => "Inline",
+            Self::VectorFirst => "PostFilter",
+            Self::Parallel => "Parallel",
+            Self::Auto => "Auto",
         }
     }
 }
@@ -210,12 +230,15 @@ impl HybridQuery {
             HybridExecutionStrategy::FilterFirst => {
                 self.execute_filter_first(metadata_lookup).await?
             }
+            // Inline: predicate is threaded into the HNSW walk. The query layer is
+            // responsible for passing a predicate_fn to the index; here we fall through
+            // to execute_parallel as the placeholder until HNSW predicate API is wired.
+            HybridExecutionStrategy::Inline => self.execute_parallel(metadata_lookup).await?,
             HybridExecutionStrategy::VectorFirst => {
                 self.execute_vector_first(metadata_lookup).await?
             }
             HybridExecutionStrategy::Parallel => self.execute_parallel(metadata_lookup).await?,
             HybridExecutionStrategy::Auto => {
-                // Should have been resolved above
                 return Err(anyhow::anyhow!("Auto strategy should have been resolved"));
             }
         };
@@ -533,6 +556,12 @@ impl Default for HybridQueryBuilder {
 /// Convert HybridQuery to AXIS HybridQuery for compatibility
 impl From<HybridQuery> for AxisHybridQuery {
     fn from(query: HybridQuery) -> Self {
+        use crate::index::axis::management::manager::AnnFilteringMode;
+        let ann_filtering_mode = match query.strategy {
+            HybridExecutionStrategy::FilterFirst => AnnFilteringMode::PreFilter,
+            HybridExecutionStrategy::Inline => AnnFilteringMode::Inline,
+            _ => AnnFilteringMode::PostFilter,
+        };
         AxisHybridQuery {
             collection_id: query.collection_id,
             vector_query: Some(
@@ -541,10 +570,11 @@ impl From<HybridQuery> for AxisHybridQuery {
                     similarity_threshold: query.similarity_threshold,
                 },
             ),
-            metadata_filters: Vec::new(), // Would convert from filter contract
+            metadata_filters: Vec::new(),
             id_filters: Vec::new(),
             top_k: query.top_k,
             include_expired: query.include_expired,
+            ann_filtering_mode,
         }
     }
 }
@@ -556,22 +586,28 @@ mod tests {
 
     #[test]
     fn test_strategy_selection_from_selectivity() {
-        // Highly selective filter → filter-first
+        // < 5%: PreFilter (ADR-011)
         assert_eq!(
-            HybridExecutionStrategy::from_selectivity(0.05),
+            HybridExecutionStrategy::from_selectivity(0.03),
             HybridExecutionStrategy::FilterFirst
         );
 
-        // Low selectivity filter → vector-first
+        // 5–50%: Inline HNSW walk (ADR-011)
         assert_eq!(
-            HybridExecutionStrategy::from_selectivity(0.7),
-            HybridExecutionStrategy::VectorFirst
+            HybridExecutionStrategy::from_selectivity(0.30),
+            HybridExecutionStrategy::Inline
         );
 
-        // Moderate selectivity → parallel
+        // boundary: exactly 5% → Inline (not < 0.05)
         assert_eq!(
-            HybridExecutionStrategy::from_selectivity(0.3),
-            HybridExecutionStrategy::Parallel
+            HybridExecutionStrategy::from_selectivity(0.05),
+            HybridExecutionStrategy::Inline
+        );
+
+        // > 50%: PostFilter (ADR-011)
+        assert_eq!(
+            HybridExecutionStrategy::from_selectivity(0.70),
+            HybridExecutionStrategy::VectorFirst
         );
     }
 
@@ -587,11 +623,11 @@ mod tests {
             HybridExecutionStrategy::FilterFirst
         );
         assert_eq!(
-            HybridExecutionStrategy::from_selectivity_with_policy(0.6, policy).unwrap(),
-            HybridExecutionStrategy::Parallel
+            HybridExecutionStrategy::from_selectivity_with_policy(0.60, policy).unwrap(),
+            HybridExecutionStrategy::Inline
         );
         assert_eq!(
-            HybridExecutionStrategy::from_selectivity_with_policy(0.9, policy).unwrap(),
+            HybridExecutionStrategy::from_selectivity_with_policy(0.90, policy).unwrap(),
             HybridExecutionStrategy::VectorFirst
         );
     }

@@ -1603,6 +1603,7 @@ impl UnifiedStorageEngine for SwiftEngine {
                     id_filters: Vec::new(),
                     top_k,
                     include_expired: false,
+                    ..Default::default()
                 };
 
                 // Execute AXIS query (HNSW or IVF based on index type)

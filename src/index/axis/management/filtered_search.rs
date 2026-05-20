@@ -440,16 +440,19 @@ impl AxisManager {
             // - Filter is highly selective (< 10%)
             // - Collection is large (> 100K vectors)
             // - top_k is small relative to collection
-            let filter_first = selectivity < 0.1
-                && collection_size > 100_000
-                && (top_k as f64) < (collection_size as f64) * 0.01;
+            // ADR-011 thresholds: PreFilter < 5%, Inline 5–50%, PostFilter > 50%.
+            // Collection size and top_k influence whether a border-case PreFilter
+            // candidate set is large enough to be worth materialising.
+            let candidate_set_worthwhile =
+                collection_size > 100_000 && (top_k as f64) < (collection_size as f64) * 0.01;
+            let pre_filter = selectivity < 0.05 && candidate_set_worthwhile;
 
-            if filter_first {
+            if pre_filter {
                 Ok(HybridExecutionStrategy::FilterFirst)
-            } else if selectivity > 0.5 {
+            } else if selectivity > 0.50 {
                 Ok(HybridExecutionStrategy::VectorFirst)
             } else {
-                Ok(HybridExecutionStrategy::Parallel)
+                Ok(HybridExecutionStrategy::Inline)
             }
         } else {
             // No filter, use vector-first (standard search)
@@ -610,23 +613,25 @@ mod tests {
 
     #[test]
     fn test_strategy_selection_from_selectivity() {
-        // Test strategy selection logic
-        let highly_selective = 0.05; // 5% selectivity
-        let moderate_selectivity = 0.3; // 30% selectivity
-        let low_selectivity = 0.7; // 70% selectivity
+        // ADR-011 thresholds: < 5% → PreFilter, 5–50% → Inline, > 50% → PostFilter.
+        // 5% is at the boundary and falls into the Inline range (not < 0.05).
+        assert_eq!(
+            HybridExecutionStrategy::from_selectivity(0.05),
+            HybridExecutionStrategy::Inline
+        );
 
         assert_eq!(
-            HybridExecutionStrategy::from_selectivity(highly_selective),
+            HybridExecutionStrategy::from_selectivity(0.03),
             HybridExecutionStrategy::FilterFirst
         );
 
         assert_eq!(
-            HybridExecutionStrategy::from_selectivity(moderate_selectivity),
-            HybridExecutionStrategy::Parallel
+            HybridExecutionStrategy::from_selectivity(0.30),
+            HybridExecutionStrategy::Inline
         );
 
         assert_eq!(
-            HybridExecutionStrategy::from_selectivity(low_selectivity),
+            HybridExecutionStrategy::from_selectivity(0.70),
             HybridExecutionStrategy::VectorFirst
         );
     }

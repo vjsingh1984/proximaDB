@@ -55,6 +55,8 @@ pub struct SearchPlanHints {
     pub progressive_stages: Option<Vec<String>>,
     /// Estimated recall at each progressive stage, if available.
     pub recall_estimates: Option<Vec<f32>>,
+    /// ADR-011 ANN filtering mode chosen by the planner ("PreFilter", "Inline", "PostFilter").
+    pub ann_filtering_mode: Option<String>,
 }
 
 #[cfg(test)]
