@@ -12,7 +12,7 @@ use anyhow::{Result, anyhow};
 
 use crate::{
     CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogSchemaEvolution,
-    CatalogTableSchema, ColumnConstraint, SchemaChange,
+    CatalogTableSchema, ColumnConstraint, SchemaChange, system_columns,
 };
 
 /// Validate a schema for internal consistency.
@@ -29,6 +29,12 @@ pub fn validate_schema(schema: &CatalogTableSchema) -> Result<()> {
     for col in &schema.columns {
         if col.name.is_empty() {
             return Err(anyhow!("Column name cannot be empty"));
+        }
+        if system_columns::is_reserved_column_name(&col.name) {
+            return Err(anyhow!(
+                "Column name '{}' is reserved for ProximaDB system metadata",
+                col.name
+            ));
         }
         if !seen.insert(&col.name) {
             return Err(anyhow!("Duplicate column name: {}", col.name));
@@ -61,6 +67,46 @@ pub fn validate_schema(schema: &CatalogTableSchema) -> Result<()> {
             return Err(anyhow!(
                 "Vector column '{}' must have 'dimension' property",
                 col.name
+            ));
+        }
+    }
+
+    validate_storage_contract(schema)?;
+
+    Ok(())
+}
+
+fn validate_storage_contract(schema: &CatalogTableSchema) -> Result<()> {
+    for layout in &schema.storage_layouts {
+        if layout.requires_external_contract() {
+            if layout.location.as_deref().unwrap_or_default().is_empty() {
+                return Err(anyhow!(
+                    "External layout '{}' for table '{}' must declare a location",
+                    layout.name,
+                    schema.name
+                ));
+            }
+            if layout
+                .snapshot_semantics
+                .as_deref()
+                .unwrap_or_default()
+                .is_empty()
+            {
+                return Err(anyhow!(
+                    "External layout '{}' for table '{}' must declare snapshot semantics",
+                    layout.name,
+                    schema.name
+                ));
+            }
+        }
+    }
+
+    for projection in &schema.projections {
+        if projection.rebuildable && projection.rebuild_source.is_empty() {
+            return Err(anyhow!(
+                "Projection '{}' for table '{}' must declare a rebuild source",
+                projection.name,
+                schema.name
             ));
         }
     }
@@ -355,7 +401,10 @@ pub fn sql_type_name(data_type: CatalogDataType) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CatalogColumn, CatalogDataType, CatalogTableSchema};
+    use crate::{
+        CatalogColumn, CatalogDataType, CatalogPhysicalFormat, CatalogStorageLayout,
+        CatalogTableSchema,
+    };
 
     fn base_schema() -> CatalogTableSchema {
         CatalogTableSchema::new("t")
@@ -366,6 +415,27 @@ mod tests {
     #[test]
     fn validate_ok() {
         let schema = base_schema();
+        assert!(validate_schema(&schema).is_ok());
+    }
+
+    #[test]
+    fn rejects_reserved_system_column_names() {
+        let schema = base_schema().with_column(CatalogColumn::new(
+            3,
+            "__proxima_deleted",
+            CatalogDataType::Boolean,
+        ));
+        let err = validate_schema(&schema).expect_err("reserved column should fail");
+        assert!(err.to_string().contains("reserved"));
+    }
+
+    #[test]
+    fn validates_external_layout_contract() {
+        let schema = base_schema().with_storage_layout(CatalogStorageLayout::federated_read(
+            "raw",
+            CatalogPhysicalFormat::Parquet,
+            "s3://bucket/raw/",
+        ));
         assert!(validate_schema(&schema).is_ok());
     }
 

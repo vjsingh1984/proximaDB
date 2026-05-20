@@ -16,6 +16,7 @@ pub mod cache;
 pub mod oltp;
 pub mod relational;
 pub mod schema;
+pub mod system_columns;
 
 /// Namespace metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -337,6 +338,12 @@ pub struct CatalogTableSchema {
     /// Optional relational integrity and transaction capabilities.
     #[serde(default)]
     pub relational_capabilities: RelationalCapabilities,
+    /// Intended workload profile for layout/query planning.
+    #[serde(default)]
+    pub workload_profile: CatalogWorkloadProfile,
+    /// Primary storage specialization selected for this table/profile.
+    #[serde(default)]
+    pub storage_specialization: CatalogStorageSpecialization,
     /// Schema version
     pub schema_version: i32,
     /// Table properties
@@ -364,6 +371,8 @@ impl Default for CatalogTableSchema {
             storage_layouts: vec![CatalogStorageLayout::default()],
             projections: Vec::new(),
             relational_capabilities: RelationalCapabilities::default(),
+            workload_profile: CatalogWorkloadProfile::default(),
+            storage_specialization: CatalogStorageSpecialization::default(),
             schema_version: 1,
             properties: HashMap::new(),
             location: None,
@@ -415,6 +424,21 @@ impl CatalogTableSchema {
     /// Set optional relational capability metadata.
     pub fn with_relational_capabilities(mut self, capabilities: RelationalCapabilities) -> Self {
         self.relational_capabilities = capabilities;
+        self
+    }
+
+    /// Set the intended workload profile.
+    pub fn with_workload_profile(mut self, profile: CatalogWorkloadProfile) -> Self {
+        self.workload_profile = profile;
+        self
+    }
+
+    /// Set the primary storage specialization.
+    pub fn with_storage_specialization(
+        mut self,
+        specialization: CatalogStorageSpecialization,
+    ) -> Self {
+        self.storage_specialization = specialization;
         self
     }
 }
@@ -476,20 +500,186 @@ pub enum CatalogIndexType {
     Pq,
 }
 
+/// Workload profile used by xCatalog, pgwire DDL, and planners.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CatalogWorkloadProfile {
+    /// Row-oriented point reads/writes and transactional DML.
+    Oltp,
+    /// Scan-heavy analytical reads and external/open-table publication.
+    Olap,
+    /// Hybrid transactional/analytical processing over the same record model.
+    #[default]
+    Htap,
+    /// Vector-heavy workload with ANN projections.
+    Vector,
+    /// Document-heavy workload with JSON/path projections.
+    Document,
+    /// Graph-heavy workload with adjacency/topology projections.
+    Graph,
+    /// Observability/time-series workload.
+    Observability,
+    /// Mixed multimodal table/profile.
+    Mixed,
+}
+
+impl CatalogWorkloadProfile {
+    /// Parse common SQL/catalog option spellings.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "oltp" | "transactional" | "row" => Some(Self::Oltp),
+            "olap" | "analytic" | "analytics" | "analytical" | "columnar" => Some(Self::Olap),
+            "htap" | "hybrid" | "pax" => Some(Self::Htap),
+            "vector" | "ann" => Some(Self::Vector),
+            "document" | "json" | "jsonb" => Some(Self::Document),
+            "graph" | "pgq" | "cypher" => Some(Self::Graph),
+            "observability" | "time_series" | "timeseries" | "metrics" | "traces" => {
+                Some(Self::Observability)
+            }
+            "mixed" | "multimodal" => Some(Self::Mixed),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Oltp => "oltp",
+            Self::Olap => "olap",
+            Self::Htap => "htap",
+            Self::Vector => "vector",
+            Self::Document => "document",
+            Self::Graph => "graph",
+            Self::Observability => "observability",
+            Self::Mixed => "mixed",
+        }
+    }
+}
+
+/// Primary storage specialization. Specialization is a physical/access-method
+/// hint, not a separate semantic authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum CatalogStorageSpecialization {
+    /// Generic durable relational record layout.
+    GenericRelational,
+    /// PAX row-family with row directory plus column stripes.
+    #[default]
+    PaxRowFamily,
+    /// PAX OLTP mode, row-directory optimized.
+    PaxOltp,
+    /// PAX OLAP mode, column-stripe optimized.
+    PaxOlap,
+    /// SST/LSM write-optimized family.
+    LsmWriteOptimized,
+    /// Columnar analytics family.
+    ColumnarAnalytics,
+    /// Vector ANN specialty projection family.
+    VectorAnn,
+    /// Document JSON/path specialty projection family.
+    DocumentJson,
+    /// Graph adjacency/topology specialty projection family.
+    GraphTopology,
+    /// Observability/time-series specialty projection family.
+    ObservabilityTimeSeries,
+    /// External/open-table mapping.
+    ExternalOpenTable,
+}
+
+impl CatalogStorageSpecialization {
+    /// Parse SQL/catalog layout or specialization option values.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "generic" | "relational" | "row" | "rowrecord" | "row_record" => {
+                Some(Self::GenericRelational)
+            }
+            "pax" | "hybrid" | "htap" | "pax_row_family" => Some(Self::PaxRowFamily),
+            "oltp" | "pax_oltp" | "rowdir" | "row_directory" => Some(Self::PaxOltp),
+            "olap" | "pax_olap" => Some(Self::PaxOlap),
+            "sst" | "lsm" | "lsm_record" => Some(Self::LsmWriteOptimized),
+            "columnar" | "column" | "analytics" => Some(Self::ColumnarAnalytics),
+            "vector" | "ann" | "hnsw" | "ivf" | "pq" => Some(Self::VectorAnn),
+            "document" | "json" | "jsonb" => Some(Self::DocumentJson),
+            "graph" | "adjacency" | "csr" | "coo" => Some(Self::GraphTopology),
+            "observability" | "time_series" | "timeseries" => Some(Self::ObservabilityTimeSeries),
+            "external" | "open_table" | "opentable" | "lakehouse" => Some(Self::ExternalOpenTable),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::GenericRelational => "generic_relational",
+            Self::PaxRowFamily => "pax_row_family",
+            Self::PaxOltp => "pax_oltp",
+            Self::PaxOlap => "pax_olap",
+            Self::LsmWriteOptimized => "lsm_write_optimized",
+            Self::ColumnarAnalytics => "columnar_analytics",
+            Self::VectorAnn => "vector_ann",
+            Self::DocumentJson => "document_json",
+            Self::GraphTopology => "graph_topology",
+            Self::ObservabilityTimeSeries => "observability_time_series",
+            Self::ExternalOpenTable => "external_open_table",
+        }
+    }
+}
+
 /// Source-of-truth mode for a cataloged table, stream, projection, or external format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum CatalogAuthorityMode {
     /// ProximaRecord plus WAL/log/manifest own durable truth.
     #[default]
     InternalCanonical,
+    /// Explicit name for ProximaDB WAL + ProximaRecord authority.
+    ProximaAuthoritative,
     /// An external table/source owns durable truth; ProximaDB maps and governs access.
     ExternalAuthoritative,
     /// Point-in-time import from an external source.
     ImportedSnapshot,
     /// Publication generated from canonical records.
     ExportedPublication,
+    /// Explicit name for a publication generated from canonical records.
+    ProjectionPublication,
     /// Rebuildable structure derived from canonical records or events.
     RebuildableProjection,
+    /// Read-only federation over an external source without importing record authority.
+    FederatedRead,
+}
+
+impl CatalogAuthorityMode {
+    /// Returns true when ProximaDB WAL + ProximaRecord storage own durable truth.
+    pub fn is_proxima_authoritative(self) -> bool {
+        matches!(
+            self,
+            CatalogAuthorityMode::InternalCanonical | CatalogAuthorityMode::ProximaAuthoritative
+        )
+    }
+
+    /// Returns true when durable truth is outside ProximaDB's canonical record store.
+    pub fn is_external_authoritative(self) -> bool {
+        matches!(self, CatalogAuthorityMode::ExternalAuthoritative)
+    }
+
+    /// Returns true when the layout/projection is rebuildable from another source.
+    pub fn is_rebuildable_or_publication(self) -> bool {
+        matches!(
+            self,
+            CatalogAuthorityMode::ExportedPublication
+                | CatalogAuthorityMode::ProjectionPublication
+                | CatalogAuthorityMode::RebuildableProjection
+        )
+    }
+
+    /// Stable xCatalog ownership-mode string used by adapters and docs.
+    pub fn ownership_mode_name(self) -> &'static str {
+        match self {
+            CatalogAuthorityMode::InternalCanonical
+            | CatalogAuthorityMode::ProximaAuthoritative => "ProximaAuthoritative",
+            CatalogAuthorityMode::ExternalAuthoritative => "ExternalAuthoritative",
+            CatalogAuthorityMode::ImportedSnapshot => "ImportedSnapshot",
+            CatalogAuthorityMode::ExportedPublication
+            | CatalogAuthorityMode::ProjectionPublication => "ProjectionPublication",
+            CatalogAuthorityMode::RebuildableProjection => "RebuildableProjection",
+            CatalogAuthorityMode::FederatedRead => "FederatedRead",
+        }
+    }
 }
 
 /// Physical layout family selected for a cataloged object.
@@ -526,6 +716,14 @@ pub enum CatalogPhysicalFormat {
     Sst,
     /// Apache Arrow in-memory or IPC format.
     Arrow,
+    /// Delimited text, usually comma-separated values.
+    Csv,
+    /// JSON or JSON Lines.
+    Json,
+    /// XML documents or rows.
+    Xml,
+    /// Apache Avro object container or schema-registry payloads.
+    Avro,
     /// Apache Parquet file format.
     Parquet,
     /// Apache ORC file format.
@@ -645,7 +843,22 @@ impl CatalogStorageLayout {
     pub fn internal(name: impl Into<String>, layout_kind: CatalogStorageLayoutKind) -> Self {
         Self {
             name: name.into(),
+            authority: CatalogAuthorityMode::ProximaAuthoritative,
             layout_kind,
+            ..Default::default()
+        }
+    }
+
+    /// Create the recommended ProximaDB-authoritative PAX relational layout.
+    pub fn proxima_authoritative_pax(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            authority: CatalogAuthorityMode::ProximaAuthoritative,
+            layout_kind: CatalogStorageLayoutKind::Pax,
+            physical_format: CatalogPhysicalFormat::ProximaBlock,
+            write_mode: CatalogWriteMode::Mutable,
+            snapshot_semantics: Some("mvcc".to_string()),
+            policy_enforced_in_proxima: true,
             ..Default::default()
         }
     }
@@ -666,6 +879,89 @@ impl CatalogStorageLayout {
             policy_enforced_in_proxima: false,
             ..Default::default()
         }
+    }
+
+    /// Create a rebuildable external/open-format publication from ProximaDB-owned records.
+    pub fn projection_publication(
+        name: impl Into<String>,
+        format: CatalogPhysicalFormat,
+        location: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            authority: CatalogAuthorityMode::ProjectionPublication,
+            layout_kind: CatalogStorageLayoutKind::ExternalTable,
+            physical_format: format,
+            write_mode: CatalogWriteMode::CopyOnWrite,
+            location: Some(location.into()),
+            snapshot_semantics: Some("published-snapshot".to_string()),
+            policy_enforced_in_proxima: true,
+            ..Default::default()
+        }
+    }
+
+    /// Create a rebuildable internal specialty projection/access-method layout.
+    pub fn specialty_projection(
+        name: impl Into<String>,
+        layout_kind: CatalogStorageLayoutKind,
+        physical_format: CatalogPhysicalFormat,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            authority: CatalogAuthorityMode::RebuildableProjection,
+            layout_kind,
+            physical_format,
+            write_mode: CatalogWriteMode::ReadOnly,
+            snapshot_semantics: Some("rebuildable-projection".to_string()),
+            policy_enforced_in_proxima: true,
+            ..Default::default()
+        }
+    }
+
+    /// Create a point-in-time imported snapshot. ProximaDB owns records after import.
+    pub fn imported_snapshot(
+        name: impl Into<String>,
+        format: CatalogPhysicalFormat,
+        location: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            authority: CatalogAuthorityMode::ImportedSnapshot,
+            layout_kind: CatalogStorageLayoutKind::ExternalTable,
+            physical_format: format,
+            write_mode: CatalogWriteMode::ReadOnly,
+            location: Some(location.into()),
+            snapshot_semantics: Some("imported-snapshot".to_string()),
+            policy_enforced_in_proxima: true,
+            ..Default::default()
+        }
+    }
+
+    /// Create a federated read mapping without importing or owning record state.
+    pub fn federated_read(
+        name: impl Into<String>,
+        format: CatalogPhysicalFormat,
+        location: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            authority: CatalogAuthorityMode::FederatedRead,
+            layout_kind: CatalogStorageLayoutKind::ExternalTable,
+            physical_format: format,
+            write_mode: CatalogWriteMode::ReadOnly,
+            location: Some(location.into()),
+            snapshot_semantics: Some("external-snapshot".to_string()),
+            policy_enforced_in_proxima: false,
+            ..Default::default()
+        }
+    }
+
+    /// Whether this layout needs an explicit external ownership/policy contract.
+    pub fn requires_external_contract(&self) -> bool {
+        matches!(
+            self.authority,
+            CatalogAuthorityMode::ExternalAuthoritative | CatalogAuthorityMode::FederatedRead
+        )
     }
 }
 

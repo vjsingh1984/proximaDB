@@ -63,7 +63,7 @@ impl RowEntry {
 
     /// True if this row is visible at snapshot time `at_ns`.
     pub fn visible_at(&self, at_ns: i64) -> bool {
-        !self.is_deleted() && self.valid_from_ns <= at_ns && self.valid_to_ns >= at_ns
+        !self.is_deleted() && self.valid_from_ns <= at_ns && at_ns < self.valid_to_ns
     }
 
     pub fn to_bytes(self) -> [u8; ROW_ENTRY_SIZE] {
@@ -202,6 +202,14 @@ mod tests {
         assert_eq!(e2.row_index, 7);
         assert!(e2.visible_at(150));
         assert!(!e2.visible_at(50));
+    }
+
+    #[test]
+    fn row_entry_valid_to_is_exclusive() {
+        let mut e = RowEntry::new(1, 100, 0);
+        e.valid_to_ns = 200;
+        assert!(e.visible_at(199));
+        assert!(!e.visible_at(200));
     }
 
     #[test]

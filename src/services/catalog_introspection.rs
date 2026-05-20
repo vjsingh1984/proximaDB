@@ -72,11 +72,35 @@ impl CatalogIntrospectionService {
         if normalized.contains("pg_catalog.pg_index") {
             return Ok(Some(self.jdbc_indexes(None).await?));
         }
+        if normalized.contains("pg_catalog.pg_attribute")
+            && normalized.contains("pg_catalog.pg_class")
+            && normalized.contains("attname")
+        {
+            let relname_filter = extract_string_filter(sql, "c.relname")
+                .or_else(|| extract_string_filter(sql, "ct.relname"))
+                .or_else(|| extract_string_filter(sql, "pg_class.relname"))
+                .or(table_filter);
+            return Ok(Some(
+                self.sqlalchemy_columns(relname_filter.as_deref()).await?,
+            ));
+        }
         if normalized.contains("pg_catalog.pg_attribute") && normalized.contains("column_name") {
             let relname_filter = extract_string_filter(sql, "c.relname")
                 .or_else(|| extract_string_filter(sql, "ct.relname"))
                 .or(table_filter);
             return Ok(Some(self.jdbc_columns(relname_filter.as_deref()).await?));
+        }
+        if normalized.contains("pg_catalog.pg_class")
+            && normalized.contains("pg_catalog.pg_namespace")
+            && normalized.contains("relname")
+        {
+            let relname_filter = extract_string_filter(sql, "c.relname")
+                .or_else(|| extract_string_filter(sql, "pg_class.relname"))
+                .or(table_filter);
+            return Ok(Some(
+                self.sqlalchemy_table_names(relname_filter.as_deref())
+                    .await?,
+            ));
         }
         if normalized.contains("pg_catalog.pg_class")
             && normalized.contains("pg_catalog.pg_namespace")
@@ -179,7 +203,7 @@ impl CatalogIntrospectionService {
                         .properties
                         .get("dimension")
                         .cloned()
-                        .unwrap_or_default(),
+                        .unwrap_or_else(|| "0".to_string()),
                     if schema.primary_key.contains(&column.name) {
                         "YES"
                     } else {
@@ -350,6 +374,77 @@ impl CatalogIntrospectionService {
         })
     }
 
+    async fn sqlalchemy_table_names(
+        &self,
+        table_filter: Option<&str>,
+    ) -> Result<CatalogIntrospectionResult> {
+        let mut rows = Vec::new();
+
+        for (_catalog_name, table_id, _schema) in self.cataloged_tables().await? {
+            if !matches_filter(&table_id.name, table_filter) {
+                continue;
+            }
+            rows.push(vec![table_id.name]);
+        }
+
+        rows.sort();
+        Ok(CatalogIntrospectionResult {
+            columns: vec!["relname".to_string()],
+            column_types: vec!["text".to_string()],
+            rows,
+        })
+    }
+
+    async fn sqlalchemy_columns(
+        &self,
+        table_filter: Option<&str>,
+    ) -> Result<CatalogIntrospectionResult> {
+        let mut rows = Vec::new();
+
+        for (_catalog_name, table_id, schema) in self.cataloged_tables().await? {
+            if !matches_filter(&table_id.name, table_filter) {
+                continue;
+            }
+            for column in &schema.columns {
+                rows.push(vec![
+                    column.name.clone(),
+                    postgres_format_type(column.data_type, &column.properties).to_string(),
+                    column.default_value.clone().unwrap_or_default(),
+                    (!column.nullable).to_string(),
+                    table_id.name.clone(),
+                    column.comment.clone().unwrap_or_default(),
+                    String::new(),
+                    String::new(),
+                ]);
+            }
+        }
+
+        rows.sort();
+        Ok(CatalogIntrospectionResult {
+            columns: vec![
+                "name".to_string(),
+                "format_type".to_string(),
+                "default".to_string(),
+                "not_null".to_string(),
+                "table_name".to_string(),
+                "comment".to_string(),
+                "generated".to_string(),
+                "identity_options".to_string(),
+            ],
+            column_types: vec![
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "bool".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+            ],
+            rows,
+        })
+    }
+
     async fn jdbc_indexes(&self, table_filter: Option<&str>) -> Result<CatalogIntrospectionResult> {
         let mut rows = Vec::new();
 
@@ -488,6 +583,36 @@ fn catalog_type_name(
         CatalogDataType::Timestamp => "timestamp",
         CatalogDataType::TimestampTz => "timestamptz",
         CatalogDataType::Decimal => "decimal",
+        CatalogDataType::Uuid => "uuid",
+        CatalogDataType::Json => match properties.get("json_encoding").map(String::as_str) {
+            Some("jsonb") => "jsonb",
+            _ => "json",
+        },
+        CatalogDataType::Vector => "vector",
+        CatalogDataType::SparseVector => "sparse_vector",
+        CatalogDataType::BinaryVector => "binary_vector",
+    }
+}
+
+fn postgres_format_type(
+    data_type: CatalogDataType,
+    properties: &std::collections::HashMap<String, String>,
+) -> &'static str {
+    match data_type {
+        CatalogDataType::Boolean => "boolean",
+        CatalogDataType::Int8 => "smallint",
+        CatalogDataType::Int16 => "smallint",
+        CatalogDataType::Int32 => "integer",
+        CatalogDataType::Int64 => "bigint",
+        CatalogDataType::Float32 => "real",
+        CatalogDataType::Float64 => "double precision",
+        CatalogDataType::String => "character varying",
+        CatalogDataType::Binary => "bytea",
+        CatalogDataType::Date => "date",
+        CatalogDataType::Time => "time without time zone",
+        CatalogDataType::Timestamp => "timestamp without time zone",
+        CatalogDataType::TimestampTz => "timestamp with time zone",
+        CatalogDataType::Decimal => "numeric",
         CatalogDataType::Uuid => "uuid",
         CatalogDataType::Json => match properties.get("json_encoding").map(String::as_str) {
             Some("jsonb") => "jsonb",

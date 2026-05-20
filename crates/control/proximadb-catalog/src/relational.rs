@@ -84,6 +84,12 @@ pub struct RelationalRecordOptions {
     pub created_at_ns: Option<i64>,
     /// Override updated timestamp in nanoseconds.
     pub updated_at_ns: Option<i64>,
+    /// Override valid-from timestamp for MVCC/bi-temporal visibility.
+    pub valid_from_ns: Option<i64>,
+    /// Override valid-to timestamp for MVCC/bi-temporal visibility.
+    pub valid_to_ns: Option<i64>,
+    /// Explicit record version for OCC/CDC ordering.
+    pub record_version: Option<u64>,
     /// Also project vector columns into `EmbeddingCell`s.
     pub include_vector_embeddings: bool,
 }
@@ -97,9 +103,21 @@ impl Default for RelationalRecordOptions {
             actor: None,
             created_at_ns: None,
             updated_at_ns: None,
+            valid_from_ns: None,
+            valid_to_ns: None,
+            record_version: None,
             include_vector_embeddings: true,
         }
     }
+}
+
+/// Relational mutation kind lowered below SQL/pgwire into canonical records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RelationalMutationKind {
+    Insert,
+    Upsert,
+    Update,
+    Delete,
 }
 
 impl CatalogRow {
@@ -234,7 +252,38 @@ impl CatalogRow {
         if let Some(updated_at_ns) = options.updated_at_ns.or(options.created_at_ns) {
             record.updated_at_ns = updated_at_ns;
         }
+        record.valid_from_ns = options.valid_from_ns;
+        record.valid_to_ns = options.valid_to_ns;
+        if let Some(record_version) = options.record_version {
+            record.record_version = record_version;
+        }
 
+        Ok(record)
+    }
+
+    /// Project this row into a canonical record for a relational mutation.
+    ///
+    /// DELETE creates a tombstone-shaped record: same identity, current
+    /// timestamp, `valid_to_ns = Some(0)` for legacy-compatible tombstone
+    /// detection, and no embeddings. Future storage layers may additionally
+    /// close the previous visible version at the snapshot timestamp.
+    pub fn to_mutation_record(
+        &self,
+        schema: &CatalogTableSchema,
+        kind: RelationalMutationKind,
+        mut options: RelationalRecordOptions,
+    ) -> Result<ProximaRecord> {
+        if matches!(kind, RelationalMutationKind::Delete) {
+            options.include_vector_embeddings = false;
+            options.method = Some("sql_delete".to_string());
+            options.origin = Some("delete".to_string());
+            options.valid_to_ns.get_or_insert(0);
+        }
+
+        let mut record = self.to_proxima_record(schema, &options)?;
+        if matches!(kind, RelationalMutationKind::Delete) {
+            record.embeddings.clear();
+        }
         Ok(record)
     }
 
@@ -519,9 +568,38 @@ mod tests {
         assert_eq!(record.method.as_deref(), Some("sql_dml"));
         assert_eq!(record.created_at_ns, 123);
         assert_eq!(record.updated_at_ns, 123);
+        assert_eq!(record.valid_from_ns, None);
         assert_eq!(record.embeddings.len(), 1);
         assert_eq!(record.embeddings[0].dim, 2);
         assert!(record.props.contains_key("email"));
+    }
+
+    #[test]
+    fn delete_mutation_projects_to_tombstone_record() {
+        let mut values = HashMap::new();
+        values.insert("id".to_string(), ProximaValue::Int64(42));
+        values.insert(
+            "email".to_string(),
+            ProximaValue::String("a@example.com".to_string()),
+        );
+
+        let row = CatalogRow::validate(&users_schema(), values, &RelationalWriteProfile::oltp())
+            .expect("row should validate");
+        let record = row
+            .to_mutation_record(
+                &users_schema(),
+                RelationalMutationKind::Delete,
+                RelationalRecordOptions {
+                    updated_at_ns: Some(456),
+                    ..Default::default()
+                },
+            )
+            .expect("delete should project");
+
+        assert_eq!(record.oid, "42");
+        assert_eq!(record.valid_to_ns, Some(0));
+        assert_eq!(record.origin.as_deref(), Some("delete"));
+        assert!(record.embeddings.is_empty());
     }
 
     #[test]

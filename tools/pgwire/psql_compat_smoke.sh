@@ -29,8 +29,8 @@ known_gap() {
   local sql="$2"
   echo "== known gap: $label"
   if "${PSQL[@]}" -c "$sql"; then
-    echo "UNEXPECTED PASS: $label"
-    pass=$((pass + 1))
+    echo "SEMANTIC GAP STILL PRESENT: $label"
+    gap=$((gap + 1))
   else
     echo "EXPECTED GAP: $label"
     gap=$((gap + 1))

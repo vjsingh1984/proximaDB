@@ -306,6 +306,50 @@ impl Default for ProximaRecord {
 }
 
 impl ProximaRecord {
+    /// Returns true when this record is a tombstone marker at `snapshot_time_ns`.
+    ///
+    /// Legacy vector paths encode delete tombstones as records with no embeddings
+    /// and `valid_to_ns <= snapshot_time_ns`. Relational paths should converge on
+    /// the same visibility rule while storage compaction eventually closes older
+    /// versions and removes obsolete tombstones after retention.
+    pub fn is_tombstone_at(&self, snapshot_time_ns: i64) -> bool {
+        self.valid_to_ns
+            .is_some_and(|valid_to_ns| valid_to_ns <= snapshot_time_ns)
+            && self.embeddings.is_empty()
+            && self.origin.as_deref() == Some("delete")
+    }
+
+    /// Returns true when this record is visible at `snapshot_time_ns`.
+    ///
+    /// `valid_to_ns` is exclusive: a row with `valid_to_ns == snapshot_time_ns`
+    /// has already been closed for that snapshot.
+    pub fn is_visible_at(&self, snapshot_time_ns: i64) -> bool {
+        if self.is_tombstone_at(snapshot_time_ns) {
+            return false;
+        }
+
+        let valid_from_ok = self
+            .valid_from_ns
+            .is_none_or(|valid_from_ns| valid_from_ns <= snapshot_time_ns);
+        let valid_to_ok = self
+            .valid_to_ns
+            .is_none_or(|valid_to_ns| snapshot_time_ns < valid_to_ns);
+        valid_from_ok && valid_to_ok
+    }
+
+    /// Construct a canonical tombstone marker for a logical record id.
+    pub fn tombstone(oid: impl Into<String>, timestamp_ns: i64) -> Self {
+        Self {
+            oid: oid.into(),
+            created_at_ns: timestamp_ns,
+            updated_at_ns: timestamp_ns,
+            valid_to_ns: Some(0),
+            origin: Some("delete".to_string()),
+            method: Some("tombstone".to_string()),
+            ..Self::default()
+        }
+    }
+
     /// Check whether a given principal is permitted to access this record.
     ///
     /// Returns `true` if `permitted_principals` is empty (open access) OR if
@@ -452,6 +496,28 @@ mod tests {
         r.tenant_id = "acme".to_string();
         assert!(r.matches_tenant("acme"));
         assert!(!r.matches_tenant("other"));
+    }
+
+    #[test]
+    fn test_mvcc_visibility_uses_exclusive_valid_to() {
+        let r = ProximaRecord {
+            valid_from_ns: Some(100),
+            valid_to_ns: Some(200),
+            ..ProximaRecord::default()
+        };
+
+        assert!(!r.is_visible_at(99));
+        assert!(r.is_visible_at(100));
+        assert!(r.is_visible_at(199));
+        assert!(!r.is_visible_at(200));
+    }
+
+    #[test]
+    fn test_tombstone_is_not_visible() {
+        let r = ProximaRecord::tombstone("row-1", 500);
+        assert_eq!(r.oid, "row-1");
+        assert!(r.is_tombstone_at(500));
+        assert!(!r.is_visible_at(500));
     }
 
     #[test]

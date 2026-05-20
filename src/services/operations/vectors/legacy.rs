@@ -728,9 +728,12 @@ impl VectorOperationsService {
         }
 
         let result = self
-            .insert_vectors_via_batch_pipeline(collection_id, tombstones)
+            .insert_vectors_via_wal(collection_id, tombstones)
             .await?;
-        let total_processed = result.entries_written.max(0);
+        if !result.success {
+            return Ok(result);
+        }
+        let total_processed = result.metrics.total_processed.max(0);
         let processing_time_us = start.elapsed().as_micros() as i64;
 
         Ok(BatchOperationResult::success(
@@ -741,7 +744,7 @@ impl VectorOperationsService {
                 failed_count: 0,
                 updated_count: 0,
                 processing_time_us,
-                wal_write_time_us: result.duration_micros,
+                wal_write_time_us: result.metrics.wal_write_time_us,
                 index_update_time_us: 0,
             },
         ))

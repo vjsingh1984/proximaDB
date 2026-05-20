@@ -123,11 +123,16 @@ fn resolved_projection_from_catalog(projection: &CatalogProjection) -> ResolvedP
 
 fn resolved_authority(authority: CatalogAuthorityMode) -> ResolvedAuthorityMode {
     match authority {
-        CatalogAuthorityMode::InternalCanonical => ResolvedAuthorityMode::InternalCanonical,
+        CatalogAuthorityMode::InternalCanonical | CatalogAuthorityMode::ProximaAuthoritative => {
+            ResolvedAuthorityMode::InternalCanonical
+        }
         CatalogAuthorityMode::ExternalAuthoritative => ResolvedAuthorityMode::ExternalAuthoritative,
         CatalogAuthorityMode::ImportedSnapshot => ResolvedAuthorityMode::ImportedSnapshot,
-        CatalogAuthorityMode::ExportedPublication => ResolvedAuthorityMode::ExportedPublication,
+        CatalogAuthorityMode::ExportedPublication | CatalogAuthorityMode::ProjectionPublication => {
+            ResolvedAuthorityMode::ExportedPublication
+        }
         CatalogAuthorityMode::RebuildableProjection => ResolvedAuthorityMode::RebuildableProjection,
+        CatalogAuthorityMode::FederatedRead => ResolvedAuthorityMode::ExternalAuthoritative,
     }
 }
 
@@ -142,7 +147,7 @@ fn fallback_behavior_for_schema(schema: &CatalogTableSchema) -> String {
     if schema
         .storage_layouts
         .iter()
-        .any(|layout| layout.authority == CatalogAuthorityMode::ExternalAuthoritative)
+        .any(|layout| layout.authority.is_external_authoritative())
     {
         "apply Proxima policy boundary, then read external authoritative source".to_string()
     } else if schema.projections.is_empty() {

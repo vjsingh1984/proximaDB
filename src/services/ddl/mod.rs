@@ -12,8 +12,11 @@ use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use proximadb_catalog::{
-    CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogSchemaEvolution,
-    CatalogTableSchema, ColumnConstraint, RelationalCapabilities, SchemaChange,
+    CatalogAuthorityMode, CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType,
+    CatalogPhysicalFormat, CatalogProjection, CatalogProjectionKind, CatalogSchemaEvolution,
+    CatalogStorageLayout, CatalogStorageLayoutKind, CatalogStorageSpecialization,
+    CatalogTableSchema, CatalogWorkloadProfile, ColumnConstraint, ProjectionFreshness,
+    RelationalCapabilities, SchemaChange,
 };
 use tracing::info;
 
@@ -858,7 +861,50 @@ impl DdlService {
                 (false, false) => "relational".to_string(),
             });
 
+        self.apply_storage_profile(&mut schema, has_json, has_vector)?;
+
         Ok(schema)
+    }
+
+    fn apply_storage_profile(
+        &self,
+        schema: &mut CatalogTableSchema,
+        has_json: bool,
+        has_vector: bool,
+    ) -> Result<()> {
+        let profile = schema
+            .properties
+            .get("workload")
+            .or_else(|| schema.properties.get("workload_profile"))
+            .or_else(|| schema.properties.get("profile"))
+            .and_then(|value| CatalogWorkloadProfile::parse(value))
+            .unwrap_or_else(|| infer_workload_profile(has_json, has_vector));
+
+        let specialization = schema
+            .properties
+            .get("layout")
+            .or_else(|| schema.properties.get("storage_layout"))
+            .or_else(|| schema.properties.get("specialization"))
+            .or_else(|| schema.properties.get("storage_engine"))
+            .and_then(|value| CatalogStorageSpecialization::parse(value))
+            .unwrap_or_else(|| default_specialization_for_workload(profile, has_json, has_vector));
+
+        schema.workload_profile = profile;
+        schema.storage_specialization = specialization;
+        schema
+            .properties
+            .insert("workload_profile".to_string(), profile.as_str().to_string());
+        schema.properties.insert(
+            "storage_specialization".to_string(),
+            specialization.as_str().to_string(),
+        );
+
+        schema.storage_layouts = vec![primary_layout_for_specialization(specialization, profile)];
+
+        add_specialty_projection_layouts(schema, has_json, has_vector);
+        add_open_table_layouts(schema)?;
+
+        Ok(())
     }
 
     fn build_relational_capabilities(
@@ -1118,6 +1164,320 @@ impl DdlService {
     }
 }
 
+fn infer_workload_profile(has_json: bool, has_vector: bool) -> CatalogWorkloadProfile {
+    match (has_json, has_vector) {
+        (true, true) => CatalogWorkloadProfile::Mixed,
+        (false, true) => CatalogWorkloadProfile::Vector,
+        (true, false) => CatalogWorkloadProfile::Document,
+        (false, false) => CatalogWorkloadProfile::Htap,
+    }
+}
+
+fn default_specialization_for_workload(
+    profile: CatalogWorkloadProfile,
+    has_json: bool,
+    has_vector: bool,
+) -> CatalogStorageSpecialization {
+    match profile {
+        CatalogWorkloadProfile::Oltp => CatalogStorageSpecialization::PaxOltp,
+        CatalogWorkloadProfile::Olap => CatalogStorageSpecialization::PaxOlap,
+        CatalogWorkloadProfile::Htap | CatalogWorkloadProfile::Mixed => {
+            CatalogStorageSpecialization::PaxRowFamily
+        }
+        CatalogWorkloadProfile::Vector if has_vector => CatalogStorageSpecialization::VectorAnn,
+        CatalogWorkloadProfile::Document if has_json => CatalogStorageSpecialization::DocumentJson,
+        CatalogWorkloadProfile::Graph => CatalogStorageSpecialization::GraphTopology,
+        CatalogWorkloadProfile::Observability => {
+            CatalogStorageSpecialization::ObservabilityTimeSeries
+        }
+        CatalogWorkloadProfile::Vector | CatalogWorkloadProfile::Document => {
+            CatalogStorageSpecialization::PaxRowFamily
+        }
+    }
+}
+
+fn primary_layout_for_specialization(
+    specialization: CatalogStorageSpecialization,
+    profile: CatalogWorkloadProfile,
+) -> CatalogStorageLayout {
+    let mut layout = match specialization {
+        CatalogStorageSpecialization::PaxOltp => {
+            CatalogStorageLayout::proxima_authoritative_pax("primary")
+        }
+        CatalogStorageSpecialization::PaxOlap => {
+            CatalogStorageLayout::proxima_authoritative_pax("primary")
+        }
+        CatalogStorageSpecialization::LsmWriteOptimized => {
+            CatalogStorageLayout::internal("primary", CatalogStorageLayoutKind::LsmRecord)
+        }
+        CatalogStorageSpecialization::ColumnarAnalytics => {
+            CatalogStorageLayout::internal("primary", CatalogStorageLayoutKind::Columnar)
+        }
+        CatalogStorageSpecialization::ExternalOpenTable => CatalogStorageLayout {
+            name: "primary".to_string(),
+            authority: CatalogAuthorityMode::FederatedRead,
+            layout_kind: CatalogStorageLayoutKind::ExternalTable,
+            physical_format: CatalogPhysicalFormat::External("unknown".to_string()),
+            write_mode: proximadb_catalog::CatalogWriteMode::ReadOnly,
+            snapshot_semantics: Some("external-snapshot".to_string()),
+            policy_enforced_in_proxima: false,
+            ..Default::default()
+        },
+        CatalogStorageSpecialization::GenericRelational
+        | CatalogStorageSpecialization::PaxRowFamily
+        | CatalogStorageSpecialization::VectorAnn
+        | CatalogStorageSpecialization::DocumentJson
+        | CatalogStorageSpecialization::GraphTopology
+        | CatalogStorageSpecialization::ObservabilityTimeSeries => {
+            CatalogStorageLayout::proxima_authoritative_pax("primary")
+        }
+    };
+
+    match specialization {
+        CatalogStorageSpecialization::PaxOltp => {
+            layout.properties.insert("pax_mode".into(), "Oltp".into());
+        }
+        CatalogStorageSpecialization::PaxOlap => {
+            layout.properties.insert("pax_mode".into(), "Olap".into());
+        }
+        CatalogStorageSpecialization::PaxRowFamily
+        | CatalogStorageSpecialization::VectorAnn
+        | CatalogStorageSpecialization::DocumentJson
+        | CatalogStorageSpecialization::GraphTopology
+        | CatalogStorageSpecialization::ObservabilityTimeSeries
+        | CatalogStorageSpecialization::GenericRelational => {
+            layout.properties.insert("pax_mode".into(), "Pax".into());
+        }
+        CatalogStorageSpecialization::LsmWriteOptimized => {
+            layout.physical_format = CatalogPhysicalFormat::Sst;
+            layout.snapshot_semantics = Some("mvcc-lsm".to_string());
+        }
+        CatalogStorageSpecialization::ColumnarAnalytics => {
+            layout.physical_format = CatalogPhysicalFormat::ProximaBlock;
+            layout.snapshot_semantics = Some("mvcc-columnar".to_string());
+        }
+        CatalogStorageSpecialization::ExternalOpenTable => {}
+    }
+
+    layout
+        .properties
+        .insert("workload_profile".into(), profile.as_str().into());
+    layout.properties.insert(
+        "storage_specialization".into(),
+        specialization.as_str().into(),
+    );
+    layout
+}
+
+fn add_specialty_projection_layouts(
+    schema: &mut CatalogTableSchema,
+    has_json: bool,
+    has_vector: bool,
+) {
+    if has_vector
+        || matches!(
+            schema.storage_specialization,
+            CatalogStorageSpecialization::VectorAnn
+        )
+    {
+        schema
+            .storage_layouts
+            .push(CatalogStorageLayout::specialty_projection(
+                "vector_ann",
+                CatalogStorageLayoutKind::VectorAnn,
+                CatalogPhysicalFormat::ProximaBlock,
+            ));
+        schema.projections.push(CatalogProjection {
+            name: "vector_ann".to_string(),
+            kind: CatalogProjectionKind::VectorAnn,
+            physical_format: CatalogPhysicalFormat::ProximaBlock,
+            rebuild_source: "primary".to_string(),
+            freshness: ProjectionFreshness::BoundedLag,
+            max_lag_ms: Some(1_000),
+            rebuildable: true,
+            lossy: true,
+            support_status: "experimental".to_string(),
+            properties: HashMap::new(),
+        });
+    }
+
+    if has_json
+        || matches!(
+            schema.storage_specialization,
+            CatalogStorageSpecialization::DocumentJson
+        )
+    {
+        schema
+            .storage_layouts
+            .push(CatalogStorageLayout::specialty_projection(
+                "json_path",
+                CatalogStorageLayoutKind::Columnar,
+                CatalogPhysicalFormat::ProximaBlock,
+            ));
+        schema.projections.push(CatalogProjection {
+            name: "json_path".to_string(),
+            kind: CatalogProjectionKind::JsonPath,
+            physical_format: CatalogPhysicalFormat::ProximaBlock,
+            rebuild_source: "primary".to_string(),
+            freshness: ProjectionFreshness::Lazy,
+            max_lag_ms: None,
+            rebuildable: true,
+            lossy: false,
+            support_status: "experimental".to_string(),
+            properties: HashMap::new(),
+        });
+    }
+
+    match schema.storage_specialization {
+        CatalogStorageSpecialization::GraphTopology => {
+            schema
+                .storage_layouts
+                .push(CatalogStorageLayout::specialty_projection(
+                    "graph_topology",
+                    CatalogStorageLayoutKind::GraphTopology,
+                    CatalogPhysicalFormat::GraphAr,
+                ));
+        }
+        CatalogStorageSpecialization::ObservabilityTimeSeries => {
+            schema
+                .storage_layouts
+                .push(CatalogStorageLayout::specialty_projection(
+                    "time_series",
+                    CatalogStorageLayoutKind::TimeSeriesBlock,
+                    CatalogPhysicalFormat::ProximaBlock,
+                ));
+        }
+        _ => {}
+    }
+}
+
+fn add_open_table_layouts(schema: &mut CatalogTableSchema) -> Result<()> {
+    let Some(format) = schema
+        .properties
+        .get("open_table_format")
+        .or_else(|| schema.properties.get("table_format"))
+        .or_else(|| schema.properties.get("format"))
+        .and_then(|value| parse_physical_format(value))
+    else {
+        return Ok(());
+    };
+
+    let location = schema
+        .properties
+        .get("location")
+        .or_else(|| schema.properties.get("external_location"))
+        .or_else(|| schema.properties.get("path"))
+        .cloned()
+        .unwrap_or_default();
+
+    let ownership = schema
+        .properties
+        .get("ownership")
+        .or_else(|| schema.properties.get("authority"))
+        .and_then(|value| parse_authority_mode(value))
+        .unwrap_or(CatalogAuthorityMode::ProjectionPublication);
+
+    let mut layout = match ownership {
+        CatalogAuthorityMode::ExternalAuthoritative => {
+            if location.is_empty() {
+                return Err(anyhow!(
+                    "External authoritative table '{}' requires LOCATION or external_location",
+                    schema.name
+                ));
+            }
+            CatalogStorageLayout::external_authoritative("external", format, location)
+        }
+        CatalogAuthorityMode::ImportedSnapshot => {
+            if location.is_empty() {
+                return Err(anyhow!(
+                    "Imported snapshot table '{}' requires LOCATION or external_location",
+                    schema.name
+                ));
+            }
+            CatalogStorageLayout::imported_snapshot("imported_snapshot", format, location)
+        }
+        CatalogAuthorityMode::FederatedRead => {
+            if location.is_empty() {
+                return Err(anyhow!(
+                    "Federated table '{}' requires LOCATION or external_location",
+                    schema.name
+                ));
+            }
+            CatalogStorageLayout::federated_read("federated", format, location)
+        }
+        CatalogAuthorityMode::InternalCanonical
+        | CatalogAuthorityMode::ProximaAuthoritative
+        | CatalogAuthorityMode::ExportedPublication
+        | CatalogAuthorityMode::ProjectionPublication
+        | CatalogAuthorityMode::RebuildableProjection => {
+            let publication_location = if location.is_empty() {
+                format!("proximadb://{}/publications/open_table", schema.name)
+            } else {
+                location
+            };
+            CatalogStorageLayout::projection_publication("open_table", format, publication_location)
+        }
+    };
+
+    if let Some(snapshot) = schema
+        .properties
+        .get("snapshot_semantics")
+        .or_else(|| schema.properties.get("snapshot"))
+    {
+        layout.snapshot_semantics = Some(snapshot.clone());
+    }
+    if let Some(refresh) = schema
+        .properties
+        .get("refresh")
+        .or_else(|| schema.properties.get("refresh_mode"))
+    {
+        layout.properties.insert("refresh".into(), refresh.clone());
+    }
+    if let Some(schema_mode) = schema.properties.get("schema_mode") {
+        layout
+            .properties
+            .insert("schema_mode".into(), schema_mode.clone());
+    }
+
+    schema.storage_layouts.push(layout);
+    Ok(())
+}
+
+fn parse_physical_format(value: &str) -> Option<CatalogPhysicalFormat> {
+    Some(match value.trim().to_ascii_lowercase().as_str() {
+        "proximablock" | "proxima_block" | "pax" => CatalogPhysicalFormat::ProximaBlock,
+        "sst" | "lsm" => CatalogPhysicalFormat::Sst,
+        "arrow" | "arrow_ipc" => CatalogPhysicalFormat::Arrow,
+        "csv" => CatalogPhysicalFormat::Csv,
+        "json" | "jsonl" | "jsonlines" => CatalogPhysicalFormat::Json,
+        "xml" => CatalogPhysicalFormat::Xml,
+        "avro" => CatalogPhysicalFormat::Avro,
+        "parquet" => CatalogPhysicalFormat::Parquet,
+        "orc" => CatalogPhysicalFormat::Orc,
+        "iceberg" => CatalogPhysicalFormat::Iceberg,
+        "delta" | "deltalake" => CatalogPhysicalFormat::Delta,
+        "hudi" => CatalogPhysicalFormat::Hudi,
+        "graphar" => CatalogPhysicalFormat::GraphAr,
+        other if !other.is_empty() => CatalogPhysicalFormat::External(other.to_string()),
+        _ => return None,
+    })
+}
+
+fn parse_authority_mode(value: &str) -> Option<CatalogAuthorityMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "proxima" | "proximadb" | "internal" | "canonical" | "proxima_authoritative" => {
+            Some(CatalogAuthorityMode::ProximaAuthoritative)
+        }
+        "projection" | "publication" | "projection_publication" | "export" => {
+            Some(CatalogAuthorityMode::ProjectionPublication)
+        }
+        "import" | "imported" | "imported_snapshot" => Some(CatalogAuthorityMode::ImportedSnapshot),
+        "external" | "external_authoritative" => Some(CatalogAuthorityMode::ExternalAuthoritative),
+        "federated" | "federated_read" => Some(CatalogAuthorityMode::FederatedRead),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1293,6 +1653,131 @@ mod tests {
             indexes
                 .iter()
                 .any(|index| index.index_type == CatalogIndexType::Hnsw)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_pgwire_table_options_shape_oltp_olap_htap_and_open_table_layouts() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let service = DdlService::new(manager.clone());
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let create_table = parser
+            .parse_ddl(
+                "CREATE TABLE facts (
+                    id BIGINT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL,
+                    payload JSONB,
+                    embedding VECTOR(4)
+                ) WITH (
+                    workload = 'htap',
+                    layout = 'pax',
+                    open_table_format = 'iceberg',
+                    ownership = 'projection',
+                    location = 's3://warehouse/facts',
+                    refresh = 'manual'
+                );",
+            )
+            .expect("parse create table")
+            .expect("ddl statement");
+
+        service
+            .execute(create_table)
+            .await
+            .expect("execute create table");
+
+        let (catalog, table_id) = manager.resolve_table("facts").await.expect("resolve table");
+        let schema = catalog.get_table(&table_id).await.expect("get schema");
+
+        assert_eq!(schema.workload_profile, CatalogWorkloadProfile::Htap);
+        assert_eq!(
+            schema.storage_specialization,
+            CatalogStorageSpecialization::PaxRowFamily
+        );
+        assert!(
+            schema
+                .storage_layouts
+                .iter()
+                .any(|layout| layout.name == "primary"
+                    && layout.layout_kind == CatalogStorageLayoutKind::Pax)
+        );
+        assert!(
+            schema
+                .storage_layouts
+                .iter()
+                .any(|layout| layout.name == "vector_ann"
+                    && layout.layout_kind == CatalogStorageLayoutKind::VectorAnn)
+        );
+        assert!(
+            schema
+                .storage_layouts
+                .iter()
+                .any(|layout| layout.name == "json_path"
+                    && layout.layout_kind == CatalogStorageLayoutKind::Columnar)
+        );
+        assert!(schema.storage_layouts.iter().any(|layout| {
+            layout.name == "open_table"
+                && layout.authority == CatalogAuthorityMode::ProjectionPublication
+                && layout.physical_format == CatalogPhysicalFormat::Iceberg
+                && layout.location.as_deref() == Some("s3://warehouse/facts")
+        }));
+    }
+
+    #[tokio::test]
+    async fn test_pgwire_options_can_select_sst_for_legacy_vector_specialty() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let service = DdlService::new(manager.clone());
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let create_table = parser
+            .parse_ddl(
+                "CREATE TABLE vec_sst (
+                    id TEXT PRIMARY KEY,
+                    embedding VECTOR(8)
+                ) WITH (
+                    workload = 'vector',
+                    storage_engine = 'sst'
+                );",
+            )
+            .expect("parse create table")
+            .expect("ddl statement");
+
+        service
+            .execute(create_table)
+            .await
+            .expect("execute create table");
+
+        let (catalog, table_id) = manager
+            .resolve_table("vec_sst")
+            .await
+            .expect("resolve table");
+        let schema = catalog.get_table(&table_id).await.expect("get schema");
+
+        assert_eq!(schema.workload_profile, CatalogWorkloadProfile::Vector);
+        assert_eq!(
+            schema.storage_specialization,
+            CatalogStorageSpecialization::LsmWriteOptimized
+        );
+        assert!(schema.storage_layouts.iter().any(|layout| {
+            layout.name == "primary"
+                && layout.layout_kind == CatalogStorageLayoutKind::LsmRecord
+                && layout.physical_format == CatalogPhysicalFormat::Sst
+        }));
+        assert!(
+            schema
+                .storage_layouts
+                .iter()
+                .any(|layout| layout.name == "vector_ann")
         );
     }
 }

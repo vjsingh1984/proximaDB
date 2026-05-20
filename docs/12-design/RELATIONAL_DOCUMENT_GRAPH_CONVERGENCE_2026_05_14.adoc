@@ -256,6 +256,13 @@ Logical surfaces:
 This keeps ProximaDB competitive with specialized databases without inheriting their worst
 maintenance property: separate durable semantics for every modality.
 
+For the concrete relational row-format, MVCC, internal-column, pgwire, SST/PAX, and external-table
+interoperability shape, use
+`docs/12-design/RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc`. That refinement
+adopts PAX row-family layouts over `ProximaRecord` as the target relational path, keeps SST/LSM as
+write-optimized access methods that must carry shared MVCC metadata, and reserves SQL-visible
+internal columns under the `__proxima_*` prefix.
+
 === xCatalog And CollectionService Boundary
 
 Collection metadata and catalog metadata are not separate sources of truth. A collection, table,

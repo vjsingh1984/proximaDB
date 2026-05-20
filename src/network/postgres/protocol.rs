@@ -486,7 +486,15 @@ impl PostgresProtocol {
             return self
                 .send_single_value_result(
                     "server_version",
-                    "ProximaDB 0.2.0 (PostgreSQL 16.0 compatible)",
+                    "PostgreSQL 16.0 (ProximaDB 0.2.0 pgwire compatible)",
+                )
+                .await;
+        }
+        if upper.contains("VERSION()") {
+            return self
+                .send_single_value_result(
+                    "version",
+                    "PostgreSQL 16.0 (ProximaDB 0.2.0 pgwire compatible)",
                 )
                 .await;
         }
@@ -575,6 +583,12 @@ impl PostgresProtocol {
                 match parser.parse_ddl(query) {
                     Ok(Some(statement)) => match ddl_service.execute(statement).await {
                         Ok(result) => {
+                            if upper.starts_with("CREATE TABLE")
+                                && let Some(table_name) = self.extract_create_table_name(query)
+                            {
+                                self.ensure_relational_backing_collection(&table_name)
+                                    .await?;
+                            }
                             let tag = if upper.starts_with("CREATE TABLE") {
                                 "CREATE TABLE"
                             } else if upper.starts_with("CREATE INDEX") {
@@ -652,6 +666,54 @@ impl PostgresProtocol {
 
         // Handle other commands
         self.send_command_complete("OK").await
+    }
+
+    fn extract_create_table_name(&self, query: &str) -> Option<String> {
+        let upper = query.to_ascii_uppercase();
+        let table_pos = upper.find("CREATE TABLE")?;
+        let after_table = query[table_pos + "CREATE TABLE".len()..].trim_start();
+        let after_table = after_table
+            .strip_prefix("IF NOT EXISTS")
+            .map(str::trim_start)
+            .unwrap_or(after_table);
+        let table_end = after_table
+            .find(|c: char| c.is_whitespace() || c == '(' || c == ';')
+            .unwrap_or(after_table.len());
+        let table_name = Self::clean_identifier(&after_table[..table_end]);
+        (!table_name.is_empty()).then_some(table_name.to_lowercase())
+    }
+
+    async fn ensure_relational_backing_collection(&self, table_name: &str) -> Result<()> {
+        use crate::proto::proximadb_v1::{CollectionConfig, StorageEngine};
+
+        let config = CollectionConfig {
+            name: table_name.to_string(),
+            dimension: 0,
+            storage_engine: Some(StorageEngine::Sst as i32),
+            description: Some(format!(
+                "Relational table backing collection: {}",
+                table_name
+            )),
+            ..Default::default()
+        };
+
+        match self.collection_service.create_collection(&config).await {
+            Ok(_) => {
+                debug!(
+                    "Created relational backing collection '{}' via PostgreSQL",
+                    table_name
+                );
+                Ok(())
+            }
+            Err(e) if e.to_string().contains("already exists") => Ok(()),
+            Err(e) => {
+                warn!(
+                    "Failed to create relational backing collection '{}': {}",
+                    table_name, e
+                );
+                Err(e)
+            }
+        }
     }
 
     /// Send a single value result (for SHOW commands)

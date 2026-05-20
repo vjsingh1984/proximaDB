@@ -123,6 +123,12 @@ project rows into `ProximaRecord`/`ProximaValue` before planning. For key/value 
 to identity, partition, or an indexed column; the value maps to `Map`, `Json`, `Struct`, `Binary`, or
 a declared `ProximaType`.
 
+The ownership modes, SQL-visible internal columns, MVCC expectations, PAX/SST layout guidance, and
+external-table interoperability contract are refined in
+`docs/12-design/RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc`. Open-format
+adapters must follow that document when deciding whether an asset is ProximaDB-authoritative, a
+projection publication, an imported snapshot, an external authority, or a federated read.
+
 === Schema-On-Write Tables
 
 Schema-on-write is the default for OLTP-style relational loads:
