@@ -143,6 +143,7 @@ pub mod query_optimizer;
 pub mod query_router; // Query routing (Issue #46, SB-16)
 pub mod unified_query_port_impl; // Root-crate implementation of UnifiedQueryPort
 pub use unified_query_port_impl::UnifiedQueryPortImpl;
+pub mod repair; // LLD §9 — repair controller primitives (SURE-RAG aggregator + decision)
 pub mod rl_planner; // RL-based adaptive query planner
 pub mod semantic_analysis;
 pub mod sql_frontend;
