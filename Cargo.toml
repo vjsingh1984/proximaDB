@@ -196,6 +196,7 @@ proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expre
 proximadb-document = { path = "crates/modalities/proximadb-document" }
 proximadb-graph = { path = "crates/modalities/proximadb-graph" }
 proximadb-observability = { path = "crates/modalities/proximadb-observability" }
+proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
 proximadb-vector = { path = "crates/modalities/proximadb-vector" }
 proximadb-graph-arrow = { path = "crates/query/proximadb-graph-arrow" }
 proximadb-graph-query = { path = "crates/query/proximadb-graph-query" }

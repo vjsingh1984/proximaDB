@@ -19,7 +19,12 @@ use arrow_flight::{
 };
 use arrow_schema::Schema;
 use futures::{Stream, stream};
-use proximadb_records::ProximaRecord;
+use proximadb_embedding::{
+    EmbeddingService,
+    scheduler::IngestMode,
+    service::{EmbedBatch, EmbedRecord},
+};
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -458,6 +463,96 @@ impl ProximaFlightService {
         }
     }
 
+    /// Phase 1 native-embedding dispatch.
+    ///
+    /// Walks `records` and identifies those with empty `embeddings` (the Flight
+    /// text-only schema variant). Extracts text from the `text` property (or
+    /// falls back to `body` / `title` when those are present), batches by
+    /// tenant, and calls [`EmbeddingService::embed_sync`]. Populates the
+    /// resulting vectors back onto each record as the default modality cell.
+    ///
+    /// Records with non-empty `embeddings` pass through unchanged. If the
+    /// embedding singleton hasn't been initialized (defensive), we leave the
+    /// records as-is and let the existing catalog validation reject them —
+    /// no silent data loss.
+    async fn embed_text_only_records(
+        records: &mut [ProximaRecord],
+        tenant_id: Option<&str>,
+    ) -> Result<()> {
+        // Find indices that need embedding.
+        let to_embed: Vec<usize> = records
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.embeddings.is_empty())
+            .map(|(i, _)| i)
+            .collect();
+
+        if to_embed.is_empty() {
+            return Ok(());
+        }
+
+        // Singleton may be absent in unit tests that don't call
+        // EmbeddingService::initialize(); silently no-op in that case.
+        let Some(service) = EmbeddingService::try_global() else {
+            warn!(
+                count = to_embed.len(),
+                "embedding singleton not initialized — leaving records without vectors"
+            );
+            return Ok(());
+        };
+
+        let mut batch_records: Vec<EmbedRecord> = Vec::with_capacity(to_embed.len());
+        for &idx in &to_embed {
+            let rec = &records[idx];
+            let text = Self::extract_record_text(rec).unwrap_or_default();
+            batch_records.push(EmbedRecord {
+                id: rec.oid.clone(),
+                text,
+                tenant_id: tenant_id
+                    .map(str::to_string)
+                    .unwrap_or_else(|| rec.tenant_id.clone()),
+            });
+        }
+
+        let batch = EmbedBatch {
+            records: batch_records,
+            mode: IngestMode::Async,
+        };
+        let result = service
+            .embed_sync(batch)
+            .await
+            .map_err(|e| anyhow::anyhow!("embedding dispatch failed: {}", e))?;
+
+        // Defensive: vectors.len() must match to_embed.len() per the contract.
+        if result.vectors.len() != to_embed.len() {
+            anyhow::bail!(
+                "embedding returned {} vectors for {} records",
+                result.vectors.len(),
+                to_embed.len()
+            );
+        }
+
+        let dim = result.route.dimension() as u32;
+        for (slot, vector) in to_embed.iter().zip(result.vectors.into_iter()) {
+            records[*slot].embeddings.push(EmbeddingCell {
+                model_id: "native".to_string(),
+                modality: "dense_vector".to_string(),
+                dim,
+                values: vector,
+            });
+        }
+        Ok(())
+    }
+
+    fn extract_record_text(record: &ProximaRecord) -> Option<String> {
+        for key in ["text", "body", "title"] {
+            if let Some(ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(s))) = record.props.get(key) {
+                return Some(s.clone());
+            }
+        }
+        None
+    }
+
     async fn records_for_write_batches(
         catalog_manager: Option<&Arc<CatalogManager>>,
         table_fqn: Option<&str>,
@@ -502,7 +597,7 @@ impl ProximaFlightService {
         // Convert Arrow batches to canonical ProximaRecord envelopes so rich
         // scalar fields and modality columns survive the Flight boundary.
         // Relational/table descriptors additionally validate through xCatalog.
-        let (records, catalog_result) = Self::records_for_write_batches(
+        let (mut records, catalog_result) = Self::records_for_write_batches(
             self.catalog_manager.as_ref(),
             table_fqn.as_deref(),
             operation,
@@ -510,6 +605,19 @@ impl ProximaFlightService {
             &batches,
         )
         .await?;
+
+        // Phase 1 native-embedding intercept (Approach A inline).
+        //
+        // When the Flight client sent a text-only schema variant (vector column
+        // absent), records arrive with empty `embeddings`. Dispatch them through
+        // the EmbeddingService singleton — same process, Arc-shared model, two-tier
+        // priority scheduler — and populate the vector before WAL/index commit.
+        // Records that already carry an embedding bypass embedding entirely.
+        //
+        // Approach B (true async via WAL pending_embed flag + background drainer)
+        // is wired by adding a header-driven branch here; the WAL field and
+        // catalog nullable variant are already in place.
+        Self::embed_text_only_records(&mut records, tenant_id.as_deref()).await?;
 
         info!(
             collection_id = %collection_id,
