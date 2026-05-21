@@ -509,3 +509,213 @@ impl StorageFormat {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fp32_bytes(values: &[f32]) -> Vec<u8> {
+        values
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn converter_creation_preserves_empty_statistics_and_debug_shape() {
+        let converter = FormatConverter::new().await.unwrap();
+
+        assert_eq!(converter.get_statistics().total_conversions, 0);
+        assert!(format!("{converter:?}").contains("FormatConverter"));
+
+        let pool = Arc::new(VectorMemoryPool::new());
+        let converter = FormatConverter::with_memory_pool(pool).await.unwrap();
+        assert_eq!(converter.get_statistics().conversions_per_format.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn int8_conversion_handles_raw_bytes_and_fp32_input() {
+        let converter = FormatConverter::new().await.unwrap();
+
+        assert_eq!(
+            converter.to_int8(&[1, 255, 128]).await.unwrap(),
+            vec![1, -1, -128]
+        );
+
+        let converted = converter
+            .to_int8(&fp32_bytes(&[-1.0, 0.0, 1.0]))
+            .await
+            .unwrap();
+        assert_eq!(converted.len(), 3);
+        assert!(converted[0] <= converted[1]);
+        assert!(converted[1] <= converted[2]);
+    }
+
+    #[tokio::test]
+    async fn pq_and_binary_conversions_validate_fp32_input_and_emit_compact_codes() {
+        let converter = FormatConverter::new().await.unwrap();
+        let data = fp32_bytes(&[-1.0, -0.5, 0.5, 1.0]);
+
+        assert_eq!(converter.to_pq(&data, 2, 4).await.unwrap().len(), 2);
+        assert_eq!(converter.to_binary(&data).await.unwrap(), vec![0b0000_1100]);
+
+        assert!(matches!(
+            converter.to_pq(&[1, 2, 3], 2, 4).await.unwrap_err(),
+            ConversionError::InvalidParameters(message)
+                if message == "PQ conversion requires FP32 input data"
+        ));
+        assert!(matches!(
+            converter.to_binary(&[1, 2, 3]).await.unwrap_err(),
+            ConversionError::InvalidParameters(message)
+                if message == "Binary conversion requires FP32 input data"
+        ));
+        assert!(matches!(
+            converter.to_pq(&data, 3, 4).await.unwrap_err(),
+            ConversionError::InvalidParameters(message)
+                if message.contains("not divisible by segments")
+        ));
+    }
+
+    #[tokio::test]
+    async fn storage_format_conversion_covers_identity_quantization_and_rejection() {
+        let converter = FormatConverter::new().await.unwrap();
+        let data = fp32_bytes(&[-1.0, 0.0, 1.0, 2.0]);
+
+        assert_eq!(
+            converter
+                .convert_storage_format(&data, &StorageFormat::FP32, &StorageFormat::FP32)
+                .await
+                .unwrap(),
+            data
+        );
+
+        let int8 = converter
+            .convert_storage_format(
+                &data,
+                &StorageFormat::FP32,
+                &StorageFormat::QuantizedINT8 {
+                    scale: 0.5,
+                    zero_point: 0,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(int8.len(), 4);
+
+        let restored = converter
+            .convert_storage_format(
+                &int8,
+                &StorageFormat::QuantizedINT8 {
+                    scale: 0.5,
+                    zero_point: 0,
+                },
+                &StorageFormat::FP32,
+            )
+            .await
+            .unwrap();
+        assert_eq!(restored.len(), data.len());
+
+        assert!(matches!(
+            converter
+                .convert_storage_format(&data, &StorageFormat::Binary, &StorageFormat::FP16)
+                .await
+                .unwrap_err(),
+            ConversionError::UnsupportedConversion { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn compression_round_trips_supported_identity_codecs_and_rejects_custom_decompress() {
+        let converter = FormatConverter::new().await.unwrap();
+        let data = b"payload bytes";
+        let formats = [
+            CompressionFormat::None,
+            CompressionFormat::ZSTD { level: 3 },
+            CompressionFormat::LZ4,
+            CompressionFormat::Snappy,
+        ];
+
+        for format in formats {
+            let compressed = converter.compress_data(data, &format).await.unwrap();
+            assert_eq!(compressed, data);
+            assert_eq!(
+                converter
+                    .decompress_data(&compressed, &format)
+                    .await
+                    .unwrap(),
+                data
+            );
+
+            let mut output = vec![1, 2, 3];
+            let written = converter
+                .compress_data_into(data, &format, &mut output)
+                .await
+                .unwrap();
+            assert_eq!(written, data.len());
+            assert_eq!(output, data);
+        }
+
+        let mut parameters = HashMap::new();
+        parameters.insert("level".to_string(), "fast".to_string());
+        let custom = CompressionFormat::Custom {
+            algorithm: "external".to_string(),
+            parameters,
+        };
+        assert_eq!(converter.compress_data(data, &custom).await.unwrap(), data);
+        assert!(matches!(
+            converter.decompress_data(data, &custom).await.unwrap_err(),
+            ConversionError::CompressionError(message)
+                if message.contains("Unsupported compression algorithm")
+        ));
+    }
+
+    #[test]
+    fn fp32_byte_helpers_validate_alignment_and_round_trip_values() {
+        let converter = futures::executor::block_on(FormatConverter::new()).unwrap();
+        let values = vec![-1.0, 0.25, 42.0];
+        let bytes = converter.fp32_to_bytes(&values).unwrap();
+
+        assert_eq!(converter.bytes_to_fp32(&bytes).unwrap(), values);
+        assert!(matches!(
+            converter.bytes_to_fp32(&[1, 2, 3]).unwrap_err(),
+            ConversionError::DataSizeMismatch {
+                expected: 0,
+                actual: 3
+            }
+        ));
+    }
+
+    #[test]
+    fn storage_format_size_and_hardware_acceleration_policy_is_stable() {
+        assert_eq!(StorageFormat::FP32.data_size_per_vector(9), 36);
+        assert_eq!(StorageFormat::FP16.data_size_per_vector(9), 18);
+        assert_eq!(
+            StorageFormat::QuantizedINT8 {
+                scale: 1.0,
+                zero_point: 0
+            }
+            .data_size_per_vector(9),
+            9
+        );
+        assert_eq!(
+            StorageFormat::QuantizedPQ {
+                segments: 3,
+                bits: 8
+            }
+            .data_size_per_vector(9),
+            3
+        );
+        assert_eq!(StorageFormat::Binary.data_size_per_vector(9), 2);
+
+        assert!(StorageFormat::FP32.supports_hardware_acceleration());
+        assert!(StorageFormat::Binary.supports_hardware_acceleration());
+        assert!(!StorageFormat::FP16.supports_hardware_acceleration());
+        assert!(
+            !StorageFormat::Custom {
+                format_name: "external".to_string(),
+                metadata: HashMap::new(),
+            }
+            .supports_hardware_acceleration()
+        );
+    }
+}

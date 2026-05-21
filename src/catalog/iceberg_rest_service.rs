@@ -35,9 +35,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-use crate::catalog::{
-    CatalogDataType, CatalogManager, CatalogTableSchema, TableIdentifier,
-};
+use crate::catalog::{CatalogDataType, CatalogManager, CatalogTableSchema, TableIdentifier};
 
 // ============================================================================
 // Iceberg REST API types — serialized exactly per spec

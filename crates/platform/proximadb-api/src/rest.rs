@@ -64,3 +64,44 @@ impl Default for RestApiHandler {
 }
 
 // TODO: Move REST handlers from src/network/rest and src/api_handlers
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn rest_request_carries_path_method_headers_and_optional_body() {
+        let request = RestRequest {
+            path: "/v1/collections".to_string(),
+            method: "POST".to_string(),
+            body: Some(json!({"name": "c1"})),
+            headers: vec![("tenant-id".to_string(), "tenant-a".to_string())],
+        };
+
+        assert_eq!(request.path, "/v1/collections");
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.body, Some(json!({"name": "c1"})));
+        assert_eq!(
+            request.headers,
+            vec![("tenant-id".to_string(), "tenant-a".to_string())]
+        );
+    }
+
+    #[test]
+    fn rest_response_serializes_status_and_json_body() {
+        let response = RestResponse {
+            status: 202,
+            body: json!({"accepted": true}),
+        };
+
+        let json = serde_json::to_value(response).unwrap();
+        assert_eq!(json, json!({"status": 202, "body": {"accepted": true}}));
+    }
+
+    #[test]
+    fn rest_handler_default_matches_new() {
+        let _from_new = RestApiHandler::new();
+        let _from_default = RestApiHandler::default();
+    }
+}

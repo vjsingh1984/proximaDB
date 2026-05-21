@@ -154,3 +154,124 @@ impl SstRecord {
         Ok(serde_json::from_slice(data)?)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaTreeNode};
+
+    fn canonical_record() -> ProximaRecord {
+        ProximaRecord {
+            oid: "row-1".to_string(),
+            created_at_ns: 12_345_000_000,
+            embeddings: vec![EmbeddingCell {
+                model_id: "model-a".to_string(),
+                modality: "text".to_string(),
+                values: vec![1.0, 2.0, 3.0],
+                dim: 3,
+            }],
+            props: [
+                (
+                    "category".to_string(),
+                    ProximaTreeNode::Value(ProximaValue::String("books".to_string())),
+                ),
+                (
+                    "price".to_string(),
+                    ProximaTreeNode::Value(ProximaValue::Float64(12.5)),
+                ),
+                (
+                    "active".to_string(),
+                    ProximaTreeNode::Value(ProximaValue::Boolean(true)),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn from_proxima_record_projects_identity_vector_metadata_and_time() {
+        let record = SstRecord::from_proxima_record(canonical_record(), 42, 3);
+
+        assert_eq!(record.id, "row-1");
+        assert_eq!(record.vector, Some(vec![1.0, 2.0, 3.0]));
+        assert_eq!(record.sequence_number, 42);
+        assert_eq!(record.level, 3);
+        assert!(!record.is_tombstone);
+        assert_eq!(record.timestamp, 12_345);
+
+        let metadata = record
+            .metadata
+            .as_ref()
+            .and_then(|v| v.as_object())
+            .unwrap();
+        assert_eq!(metadata["category"], serde_json::json!("books"));
+        assert_eq!(metadata["price"], serde_json::json!(12.5));
+        assert_eq!(metadata["active"], serde_json::json!(true));
+    }
+
+    #[test]
+    fn from_proxima_record_handles_missing_embedding_and_negative_time() {
+        let record = ProximaRecord {
+            oid: "row-empty".to_string(),
+            created_at_ns: -99,
+            ..Default::default()
+        };
+
+        let sst = SstRecord::from_proxima_record(record, 7, 0);
+        assert_eq!(sst.id, "row-empty");
+        assert_eq!(sst.vector, None);
+        assert_eq!(sst.metadata, None);
+        assert_eq!(sst.timestamp, 0);
+        assert_eq!(sst.sequence_number, 7);
+    }
+
+    #[test]
+    fn tombstone_and_search_result_projection_are_stable() {
+        let tombstone = SstRecord::tombstone("delete-me".to_string(), 99, 2);
+        assert_eq!(tombstone.id, "delete-me");
+        assert!(tombstone.is_tombstone);
+        assert_eq!(tombstone.vector, None);
+        assert_eq!(tombstone.sequence_number, 99);
+        assert_eq!(tombstone.level, 2);
+
+        let record = SstRecord::from_proxima_record(canonical_record(), 42, 3);
+        let result = record.to_optimized_search_result(0.75);
+        assert_eq!(result.id, "row-1");
+        assert_eq!(result.score, 0.75);
+        assert_eq!(result.timestamp, Some(12_345));
+        assert_eq!(result.version, Some(42));
+        assert_eq!(
+            result.vector.as_ref().map(|vector| vector.as_slice()),
+            Some(&[1.0, 2.0, 3.0][..])
+        );
+        assert_eq!(
+            result.metadata.get("category"),
+            Some(&ProximaValue::String("books".to_string()))
+        );
+        assert_eq!(
+            result.metadata.get("price"),
+            Some(&ProximaValue::Float64(12.5))
+        );
+        assert_eq!(
+            result.metadata.get("active"),
+            Some(&ProximaValue::Boolean(true))
+        );
+    }
+
+    #[test]
+    fn serialize_round_trip_preserves_compatibility_shape() {
+        let record = SstRecord::from_proxima_record(canonical_record(), 42, 3);
+        let bytes = record.serialize().unwrap();
+        let decoded = SstRecord::deserialize(&bytes).unwrap();
+
+        assert_eq!(decoded.id, record.id);
+        assert_eq!(decoded.vector, record.vector);
+        assert_eq!(decoded.metadata, record.metadata);
+        assert_eq!(decoded.sequence_number, record.sequence_number);
+        assert_eq!(decoded.level, record.level);
+        assert_eq!(decoded.timestamp, record.timestamp);
+    }
+}

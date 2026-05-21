@@ -198,3 +198,105 @@ impl Default for CollectionStrategyConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn indexing_algorithm_round_trips_to_proto_family() {
+        assert_eq!(
+            IndexingAlgorithm::HNSW {
+                m: 32,
+                ef_construction: 400,
+                ef_search: 100,
+            }
+            .to_proto_type(),
+            ProtoIndexingAlgorithm::Hnsw
+        );
+        assert_eq!(
+            IndexingAlgorithm::IVF {
+                nlist: 256,
+                nprobe: 8,
+            }
+            .to_proto_type(),
+            ProtoIndexingAlgorithm::Ivf
+        );
+        assert_eq!(
+            IndexingAlgorithm::PQ { m: 16, nbits: 6 }.to_proto_type(),
+            ProtoIndexingAlgorithm::Pq
+        );
+        assert_eq!(
+            IndexingAlgorithm::Flat.to_proto_type(),
+            ProtoIndexingAlgorithm::Flat
+        );
+    }
+
+    #[test]
+    fn indexing_algorithm_from_proto_uses_stable_defaults() {
+        match IndexingAlgorithm::from_proto_type(ProtoIndexingAlgorithm::Hnsw) {
+            IndexingAlgorithm::HNSW {
+                m,
+                ef_construction,
+                ef_search,
+            } => {
+                assert_eq!(m, 16);
+                assert_eq!(ef_construction, 200);
+                assert_eq!(ef_search, 50);
+            }
+            other => panic!("expected HNSW defaults, got {other:?}"),
+        }
+
+        match IndexingAlgorithm::from_proto_type(ProtoIndexingAlgorithm::Ivf) {
+            IndexingAlgorithm::IVF { nlist, nprobe } => {
+                assert_eq!(nlist, 100);
+                assert_eq!(nprobe, 1);
+            }
+            other => panic!("expected IVF defaults, got {other:?}"),
+        }
+
+        match IndexingAlgorithm::from_proto_type(ProtoIndexingAlgorithm::Pq) {
+            IndexingAlgorithm::PQ { m, nbits } => {
+                assert_eq!(m, 8);
+                assert_eq!(nbits, 8);
+            }
+            other => panic!("expected PQ defaults, got {other:?}"),
+        }
+
+        assert!(matches!(
+            IndexingAlgorithm::from_proto_type(ProtoIndexingAlgorithm::Flat),
+            IndexingAlgorithm::Flat
+        ));
+    }
+
+    #[test]
+    fn collection_strategy_default_matches_realtime_sst_profile() {
+        let config = CollectionStrategyConfig::default();
+
+        assert!(matches!(
+            config.indexing_config.algorithm,
+            IndexingAlgorithm::HNSW {
+                m: 16,
+                ef_construction: 200,
+                ef_search: 50,
+            }
+        ));
+        assert!(config.indexing_config.parameters.is_empty());
+
+        assert_eq!(config.storage_config.engine_type, ProtoStorageEngine::Sst);
+        assert!(config.storage_config.parameters.is_empty());
+
+        assert_eq!(
+            config.search_config.distance_metric,
+            ProtoDistanceMetric::Cosine
+        );
+        assert!(config.search_config.enable_optimization);
+        assert!(config.search_config.parameters.is_empty());
+
+        assert_eq!(config.performance_config.memory_limit_mb, 1024);
+        assert!(config.performance_config.enable_simd);
+        assert!(!config.performance_config.enable_gpu);
+        assert_eq!(config.performance_config.batch_config.batch_size, 1000);
+        assert_eq!(config.performance_config.batch_config.batch_timeout_ms, 100);
+    }
+}

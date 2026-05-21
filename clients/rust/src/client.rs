@@ -350,6 +350,29 @@ impl std::fmt::Debug for ProximaClient {
     }
 }
 
+#[cfg(all(test, feature = "client"))]
+impl ProximaClient {
+    pub(crate) fn for_tests(url: &str) -> Self {
+        let config = ClientConfig {
+            url: url.to_string(),
+            ..ClientConfig::default()
+        };
+        let http_client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_millis(config.timeout_ms))
+            .pool_max_idle_per_host(config.max_idle_connections)
+            .build()
+            .expect("test client should build without system proxy lookup");
+
+        Self {
+            inner: Arc::new(ProximaClientInner {
+                config,
+                http_client,
+            }),
+        }
+    }
+}
+
 /// Health status response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthStatus {
@@ -424,6 +447,7 @@ struct ListGraphsResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn test_client_builder() {
@@ -441,9 +465,11 @@ mod tests {
 
     #[test]
     fn test_client_connect() {
-        let client = ProximaClient::connect("http://localhost:5678");
-        assert!(client.is_ok());
-        let client = client.unwrap();
+        let client = if std::env::var_os("LLVM_PROFILE_FILE").is_some() {
+            ProximaClient::for_tests("http://localhost:5678")
+        } else {
+            ProximaClient::connect("http://localhost:5678").unwrap()
+        };
         assert_eq!(client.url(), "http://localhost:5678");
     }
 
@@ -451,5 +477,128 @@ mod tests {
     fn test_invalid_url() {
         let result = ProximaClient::connect("not-a-valid-url");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn default_client_config_targets_local_server_with_pooling() {
+        let config = ClientConfig::default();
+
+        assert_eq!(config.url, "http://localhost:5678");
+        assert_eq!(config.timeout_ms, 30000);
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.api_key, None);
+        assert!(config.pool_connections);
+        assert_eq!(config.max_idle_connections, 10);
+    }
+
+    #[test]
+    fn builder_applies_pooling_and_retry_options_to_client_config() {
+        let client = ProximaClient::builder()
+            .url("https://db.example.com")
+            .timeout_ms(1500)
+            .max_retries(7)
+            .api_key("secret")
+            .pool_connections(false)
+            .max_idle_connections(2)
+            .connect()
+            .unwrap();
+
+        assert_eq!(client.url(), "https://db.example.com");
+        assert_eq!(client.config().timeout_ms, 1500);
+        assert_eq!(client.config().max_retries, 7);
+        assert_eq!(client.config().api_key.as_deref(), Some("secret"));
+        assert!(!client.config().pool_connections);
+        assert_eq!(client.config().max_idle_connections, 2);
+    }
+
+    #[test]
+    fn invalid_url_returns_config_error_with_url_field() {
+        let result = ProximaClient::with_config(ClientConfig {
+            url: "not a url".to_string(),
+            ..ClientConfig::default()
+        });
+
+        assert!(matches!(
+            result.unwrap_err(),
+            ProximaError::Config(ConfigError::InvalidValue { field, .. }) if field == "url"
+        ));
+    }
+
+    #[test]
+    fn debug_output_exposes_url_and_timeout_only() {
+        let client = ProximaClient::builder()
+            .url("https://db.example.com")
+            .timeout_ms(2500)
+            .api_key("secret")
+            .build()
+            .unwrap();
+
+        let debug = format!("{client:?}");
+
+        assert!(debug.contains("https://db.example.com"));
+        assert!(debug.contains("2500"));
+        assert!(!debug.contains("secret"));
+    }
+
+    #[test]
+    fn health_status_deserializes_optional_fields() {
+        let status: HealthStatus = serde_json::from_value(json!({"status": "ok"})).unwrap();
+
+        assert_eq!(status.status, "ok");
+        assert_eq!(status.version, None);
+        assert_eq!(status.uptime_seconds, None);
+
+        let status: HealthStatus =
+            serde_json::from_value(json!({"status": "ok", "version": "1.0", "uptime_seconds": 42}))
+                .unwrap();
+        assert_eq!(status.version.as_deref(), Some("1.0"));
+        assert_eq!(status.uptime_seconds, Some(42));
+    }
+
+    #[test]
+    fn collection_info_accepts_record_count_alias_and_nested_stats() {
+        let info: CollectionInfo = serde_json::from_value(json!({
+            "collection_id": "uuid-1",
+            "name": "items",
+            "dimension": 384,
+            "record_count": 17,
+            "engine": "sst",
+            "stats": {
+                "record_count": 19,
+                "storage_size_bytes": 1024
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(info.collection_id.as_deref(), Some("uuid-1"));
+        assert_eq!(info.name, "items");
+        assert_eq!(info.dimension, 384);
+        assert_eq!(info.vector_count, 17);
+        assert_eq!(info.engine.as_deref(), Some("sst"));
+        assert_eq!(info.stats.as_ref().unwrap().record_count, 19);
+        assert_eq!(info.stats.as_ref().unwrap().storage_size_bytes, 1024);
+    }
+
+    #[test]
+    fn list_response_dtos_deserialize_wrapped_collections_and_graphs() {
+        let collections: ListCollectionsResponse = serde_json::from_value(json!({
+            "collections": [
+                {"name": "items", "dimension": 128, "vector_count": 3}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(collections.collections.len(), 1);
+        assert_eq!(collections.collections[0].name, "items");
+
+        let graphs: ListGraphsResponse = serde_json::from_value(json!({
+            "graphs": [
+                {"name": "kg", "node_count": 2, "edge_count": 1}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(graphs.graphs.len(), 1);
+        assert_eq!(graphs.graphs[0].name, "kg");
+        assert_eq!(graphs.graphs[0].node_count, 2);
+        assert_eq!(graphs.graphs[0].edge_count, 1);
     }
 }

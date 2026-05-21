@@ -258,3 +258,140 @@ impl EngineCompactionConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_default_thresholds(engine: StorageEngineType, threshold_factor: usize) {
+        let config = EngineCompactionConfig::for_engine(engine);
+        assert_eq!(
+            config.get_compaction_threshold(),
+            config.base.l0_file_threshold * threshold_factor
+        );
+    }
+
+    #[test]
+    fn default_engine_specific_configs_capture_expected_policy_knobs() {
+        let sst = SstCompactionConfig::default();
+        assert!(sst.merge_bloom_filters);
+        assert!(sst.use_three_stage_filter);
+        assert_eq!(sst.block_size_kb, 64);
+        assert_eq!(sst.max_l0_file_size_mb, 64);
+
+        let viper = ViperCompactionConfig::default();
+        assert!(viper.columnar_optimization);
+        assert!(viper.dictionary_encoding);
+        assert_eq!(viper.row_group_size, 100_000);
+        assert_eq!(viper.compression_codec, "zstd");
+
+        let nova = NovaCompactionConfig::default();
+        assert!(nova.hierarchical_compaction);
+        assert!(nova.use_zone_maps);
+        assert_eq!(nova.quantization_level, "pq8");
+        assert_eq!(nova.streaming_buffer_mb, 64);
+
+        let swift = SwiftCompactionConfig::default();
+        assert_eq!(swift.superblock_size_mb, 128);
+        assert!(swift.use_hierarchical_blocks);
+        assert!(swift.optimize_id_index);
+        assert!(swift.enable_progressive_search);
+
+        let helix = HelixCompactionConfig::default();
+        assert_eq!(helix.memory_optimization_level, "aggressive");
+        assert!(helix.use_proximaencoder);
+        assert_eq!(helix.tree_rebalance_threshold, 0.7);
+        assert!(helix.cache_warmup);
+
+        let raptor = RaptorCompactionConfig::default();
+        assert!(raptor.adaptive_pxk);
+        assert!(raptor.optimize_matrix_layout);
+        assert!(raptor.smart_rowgroup_sizing);
+        assert!(raptor.use_artus_bloom);
+        assert_eq!(raptor.max_matrix_dimension, 4096);
+    }
+
+    #[test]
+    fn for_engine_selects_the_expected_variant() {
+        assert!(matches!(
+            EngineCompactionConfig::for_engine(StorageEngineType::SST).engine_specific,
+            EngineSpecificConfig::SST(_)
+        ));
+        assert!(matches!(
+            EngineCompactionConfig::for_engine(StorageEngineType::VIPER).engine_specific,
+            EngineSpecificConfig::VIPER(_)
+        ));
+        assert!(matches!(
+            EngineCompactionConfig::for_engine(StorageEngineType::NOVA).engine_specific,
+            EngineSpecificConfig::NOVA(_)
+        ));
+        assert!(matches!(
+            EngineCompactionConfig::for_engine(StorageEngineType::SWIFT).engine_specific,
+            EngineSpecificConfig::SWIFT(_)
+        ));
+        assert!(matches!(
+            EngineCompactionConfig::for_engine(StorageEngineType::HELIX).engine_specific,
+            EngineSpecificConfig::HELIX(_)
+        ));
+        assert!(matches!(
+            EngineCompactionConfig::for_engine(StorageEngineType::RAPTOR).engine_specific,
+            EngineSpecificConfig::RAPTOR(_)
+        ));
+        assert!(matches!(
+            EngineCompactionConfig::for_engine(StorageEngineType::TST).engine_specific,
+            EngineSpecificConfig::VIPER(_)
+        ));
+    }
+
+    #[test]
+    fn compaction_threshold_policy_matches_engine_profiles() {
+        assert_default_thresholds(StorageEngineType::SST, 1);
+        assert_default_thresholds(StorageEngineType::SWIFT, 1);
+        assert_default_thresholds(StorageEngineType::RAPTOR, 1);
+
+        let viper = EngineCompactionConfig::for_engine(StorageEngineType::VIPER);
+        assert_eq!(
+            viper.get_compaction_threshold(),
+            viper.base.l0_file_threshold / 2
+        );
+
+        let nova = EngineCompactionConfig::for_engine(StorageEngineType::NOVA);
+        assert_eq!(
+            nova.get_compaction_threshold(),
+            nova.base.l0_file_threshold / 2
+        );
+
+        let helix = EngineCompactionConfig::for_engine(StorageEngineType::HELIX);
+        assert_eq!(
+            helix.get_compaction_threshold(),
+            helix.base.l0_file_threshold * 2
+        );
+    }
+
+    #[test]
+    fn size_threshold_policy_matches_engine_profiles() {
+        let sst = EngineCompactionConfig::for_engine(StorageEngineType::SST);
+        assert_eq!(sst.get_size_threshold_mb(), 64 * sst.base.l0_file_threshold);
+
+        let viper = EngineCompactionConfig::for_engine(StorageEngineType::VIPER);
+        assert_eq!(
+            viper.get_size_threshold_mb(),
+            viper.base.l0_size_threshold_mb
+        );
+
+        let nova = EngineCompactionConfig::for_engine(StorageEngineType::NOVA);
+        assert_eq!(
+            nova.get_size_threshold_mb(),
+            nova.base.l0_size_threshold_mb * 2
+        );
+
+        let swift = EngineCompactionConfig::for_engine(StorageEngineType::SWIFT);
+        assert_eq!(swift.get_size_threshold_mb(), 128);
+
+        let helix = EngineCompactionConfig::for_engine(StorageEngineType::HELIX);
+        assert_eq!(
+            helix.get_size_threshold_mb(),
+            helix.base.l0_size_threshold_mb / 2
+        );
+    }
+}

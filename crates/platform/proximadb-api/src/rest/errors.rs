@@ -76,3 +76,93 @@ impl From<anyhow::Error> for RestError {
         RestError::Internal(e.to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hyper::body::to_bytes;
+    use serde_json::Value;
+
+    async fn response_parts(error: RestError) -> (StatusCode, Value) {
+        let response = error.into_response();
+        let status = response.status();
+        let body = to_bytes(response.into_body()).await.unwrap();
+        let json = serde_json::from_slice(&body).unwrap();
+        (status, json)
+    }
+
+    #[tokio::test]
+    async fn rest_error_variants_map_to_status_type_message_and_code() {
+        let cases = [
+            (
+                RestError::CollectionNotFound("c1".to_string()),
+                StatusCode::NOT_FOUND,
+                "collection_not_found",
+                "Collection not found: c1",
+            ),
+            (
+                RestError::InvalidArgument("bad field".to_string()),
+                StatusCode::BAD_REQUEST,
+                "invalid_argument",
+                "Invalid argument: bad field",
+            ),
+            (
+                RestError::Internal("boom".to_string()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal_error",
+                "Internal error: boom",
+            ),
+            (
+                RestError::NotFound("row".to_string()),
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "Not found: row",
+            ),
+            (
+                RestError::AlreadyExists("collection".to_string()),
+                StatusCode::CONFLICT,
+                "already_exists",
+                "Already exists: collection",
+            ),
+            (
+                RestError::Conflict("write-write".to_string()),
+                StatusCode::CONFLICT,
+                "conflict",
+                "Conflict: write-write",
+            ),
+            (
+                RestError::NotImplemented("feature".to_string()),
+                StatusCode::NOT_IMPLEMENTED,
+                "not_implemented",
+                "Not implemented: feature",
+            ),
+            (
+                RestError::Unauthorized("missing token".to_string()),
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                "Unauthorized: missing token",
+            ),
+            (
+                RestError::ResourceExhausted("quota".to_string()),
+                StatusCode::TOO_MANY_REQUESTS,
+                "resource_exhausted",
+                "Resource exhausted: quota",
+            ),
+        ];
+
+        for (error, expected_status, expected_type, expected_message) in cases {
+            let (status, body) = response_parts(error).await;
+            assert_eq!(status, expected_status);
+            assert_eq!(body["error"]["type"], expected_type);
+            assert_eq!(body["error"]["message"], expected_message);
+            assert_eq!(body["error"]["code"], expected_status.as_u16());
+        }
+    }
+
+    #[test]
+    fn anyhow_errors_lower_to_internal_rest_errors() {
+        let error = RestError::from(anyhow::anyhow!("disk unavailable"));
+
+        assert!(matches!(error, RestError::Internal(message) if message == "disk unavailable"));
+    }
+}

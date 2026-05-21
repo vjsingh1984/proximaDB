@@ -56,3 +56,41 @@ impl std::str::FromStr for StorageEngineType {
         Self::from_name(s).ok_or_else(|| format!("Unknown storage engine type: {}", s))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    #[test]
+    fn every_engine_round_trips_through_name_display_and_parser() {
+        let cases = [
+            (StorageEngineType::SST, "SST"),
+            (StorageEngineType::VIPER, "VIPER"),
+            (StorageEngineType::NOVA, "NOVA"),
+            (StorageEngineType::RAPTOR, "RAPTOR"),
+            (StorageEngineType::SWIFT, "SWIFT"),
+            (StorageEngineType::HELIX, "HELIX"),
+            (StorageEngineType::TST, "TST"),
+        ];
+
+        for (engine, name) in cases {
+            assert_eq!(engine.as_str(), name);
+            assert_eq!(engine.to_string(), name);
+            assert_eq!(StorageEngineType::from_name(name), Some(engine));
+            assert_eq!(
+                StorageEngineType::from_name(&name.to_lowercase()),
+                Some(engine)
+            );
+            assert_eq!(StorageEngineType::from_str(name).unwrap(), engine);
+        }
+    }
+
+    #[test]
+    fn unknown_engine_names_are_rejected_with_context() {
+        assert_eq!(StorageEngineType::from_name("unknown"), None);
+
+        let err = StorageEngineType::from_str("unknown").unwrap_err();
+        assert!(err.contains("Unknown storage engine type: unknown"));
+    }
+}

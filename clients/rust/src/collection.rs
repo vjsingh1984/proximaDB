@@ -884,6 +884,8 @@ struct InsertResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::ProximaClient;
+    use serde_json::json;
 
     #[test]
     fn test_storage_engine_parse() {
@@ -901,5 +903,239 @@ mod tests {
         assert_eq!(StorageEngine::Sst.as_str(), "sst");
         assert_eq!(StorageEngine::Helix.as_str(), "helix");
         assert_eq!(StorageEngine::Tst.as_str(), "tst");
+    }
+
+    #[test]
+    fn all_storage_engines_parse_case_insensitively_and_serialize_lowercase() {
+        let cases = [
+            (StorageEngine::Sst, "sst"),
+            (StorageEngine::Helix, "helix"),
+            (StorageEngine::Viper, "viper"),
+            (StorageEngine::Swift, "swift"),
+            (StorageEngine::Nova, "nova"),
+            (StorageEngine::Raptor, "raptor"),
+            (StorageEngine::Tst, "tst"),
+        ];
+
+        for (engine, name) in cases {
+            assert_eq!(engine.as_str(), name);
+            assert_eq!(
+                name.to_uppercase().parse::<StorageEngine>().unwrap(),
+                engine
+            );
+            assert_eq!(serde_json::to_value(engine).unwrap(), json!(name));
+        }
+    }
+
+    #[test]
+    fn index_types_and_metrics_serialize_as_api_names() {
+        assert_eq!(IndexType::Hnsw.as_str(), "hnsw");
+        assert_eq!(IndexType::Ivf.as_str(), "ivf");
+        assert_eq!(IndexType::Lsh.as_str(), "lsh");
+        assert_eq!(IndexType::Flat.as_str(), "flat");
+
+        assert_eq!(
+            serde_json::to_value(IndexType::Flat).unwrap(),
+            json!("flat")
+        );
+        assert_eq!(
+            serde_json::to_value(DistanceMetric::Cosine).unwrap(),
+            json!("cosine")
+        );
+    }
+
+    #[test]
+    fn collection_builder_records_fluent_configuration_before_execute() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let builder = CollectionBuilder::new(&client, "items")
+            .dimension(384)
+            .engine_str("viper")
+            .unwrap()
+            .index(IndexType::Flat)
+            .metric(DistanceMetric::DotProduct);
+
+        assert_eq!(builder.name, "items");
+        assert_eq!(builder.dimension, Some(384));
+        assert_eq!(builder.engine, StorageEngine::Viper);
+        assert_eq!(builder.index, IndexType::Flat);
+        assert_eq!(builder.metric, DistanceMetric::DotProduct);
+    }
+
+    #[tokio::test]
+    async fn collection_builder_validates_dimension_before_network_call() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let result = CollectionBuilder::new(&client, "items").execute().await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            ProximaError::Collection(CollectionError::InvalidConfig { reason })
+                if reason == "dimension is required"
+        ));
+    }
+
+    #[test]
+    fn collection_handle_exposes_name_and_creates_child_builders() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let handle = CollectionHandle::new(&client, "items");
+
+        assert_eq!(handle.name(), "items");
+        let _search = handle.search();
+        assert_eq!(handle.insert().collection, "items");
+        assert_eq!(handle.update("vec_1").collection, "items");
+    }
+
+    #[test]
+    fn insert_batch_rejects_mismatched_ids_and_vectors() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let result = InsertBuilder::new_client(&client, "items")
+            .batch(vec!["a".to_string(), "b".to_string()], vec![vec![1.0]]);
+
+        match result {
+            Err(ProximaError::Vector(VectorError::BatchSizeMismatch { ids: 2, vectors: 1 })) => {}
+            Err(other) => panic!("unexpected error: {other:?}"),
+            Ok(_) => panic!("mismatched batch should fail"),
+        }
+    }
+
+    #[test]
+    fn insert_batch_attaches_per_record_metadata() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let batch = InsertBuilder::new_client(&client, "items")
+            .batch(
+                vec!["a".to_string(), "b".to_string()],
+                vec![vec![1.0], vec![2.0]],
+            )
+            .unwrap()
+            .with_metadata(vec![
+                HashMap::from([("category".to_string(), json!("alpha"))]),
+                HashMap::from([("category".to_string(), json!("beta"))]),
+            ])
+            .unwrap();
+
+        assert_eq!(batch.builder.records.len(), 2);
+        assert_eq!(
+            batch.builder.records[0].metadata["category"],
+            json!("alpha")
+        );
+        assert_eq!(batch.builder.records[1].metadata["category"], json!("beta"));
+    }
+
+    #[test]
+    fn insert_batch_rejects_mismatched_metadata_count() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let batch = InsertBuilder::new_client(&client, "items")
+            .batch(vec!["a".to_string()], vec![vec![1.0]])
+            .unwrap();
+
+        match batch.with_metadata(Vec::new()) {
+            Err(ProximaError::Vector(VectorError::BatchSizeMismatch { ids: 1, vectors: 0 })) => {}
+            Err(other) => panic!("unexpected error: {other:?}"),
+            Ok(_) => panic!("mismatched metadata count should fail"),
+        }
+    }
+
+    #[tokio::test]
+    async fn insert_single_record_validates_vector_before_network_call() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let result = InsertBuilder::new_client(&client, "items")
+            .id("vec_1")
+            .execute()
+            .await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            ProximaError::Vector(VectorError::InvalidFormat { reason })
+                if reason == "vector is required"
+        ));
+    }
+
+    #[tokio::test]
+    async fn empty_insert_builder_returns_zero_without_network_call() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let response = InsertBuilder::new_client(&client, "items")
+            .execute_internal()
+            .await
+            .unwrap();
+
+        assert_eq!(response.inserted_count, 0);
+    }
+
+    #[test]
+    fn update_builder_merges_object_metadata_and_tracks_replace_flag() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let builder = UpdateBuilder::new_client(&client, "items", "vec_1")
+            .vector(&[1.0, 2.0])
+            .metadata(json!({"category": "tech"}))
+            .metadata(json!("ignored"))
+            .meta("source", "sdk")
+            .replace_metadata(true);
+
+        assert_eq!(builder.collection, "items");
+        assert_eq!(builder.id, "vec_1");
+        assert_eq!(builder.vector, Some(vec![1.0, 2.0]));
+        assert_eq!(builder.metadata["category"], json!("tech"));
+        assert_eq!(builder.metadata["source"], json!("sdk"));
+        assert!(builder.replace_metadata);
+    }
+
+    #[test]
+    fn proxima_record_uses_props_alias_and_skips_empty_optional_fields() {
+        let record: ProximaRecord = serde_json::from_value(json!({
+            "id": "vec_1",
+            "vector": [1.0, 2.0],
+            "metadata": {"category": "tech"},
+            "source": "doc"
+        }))
+        .unwrap();
+
+        assert_eq!(record.id, "vec_1");
+        assert_eq!(record.vector, vec![1.0, 2.0]);
+        assert_eq!(record.props["category"], json!("tech"));
+        assert_eq!(record.source.as_deref(), Some("doc"));
+
+        let serialized = serde_json::to_value(ProximaRecord {
+            id: "vec_2".to_string(),
+            vector: Vec::new(),
+            props: HashMap::new(),
+            source: None,
+        })
+        .unwrap();
+        assert_eq!(serialized, json!({"id": "vec_2"}));
+    }
+
+    #[test]
+    fn request_and_response_dtos_use_expected_api_field_names() {
+        let create = CreateCollectionRequest {
+            name: "items".to_string(),
+            dimension: 384,
+            engine: Some("sst".to_string()),
+            index_type: Some("hnsw".to_string()),
+        };
+        assert_eq!(
+            serde_json::to_value(create).unwrap(),
+            json!({
+                "name": "items",
+                "dimension": 384,
+                "engine": "sst",
+                "index_type": "hnsw"
+            })
+        );
+
+        let response: InsertResponse = serde_json::from_value(json!({"success_count": 7})).unwrap();
+        assert_eq!(response.inserted_count, 7);
+
+        let info: CollectionInfo = serde_json::from_value(json!({
+            "collection_id": "uuid-1",
+            "name": "items",
+            "dimension": 384,
+            "record_count": 9,
+            "engine": "sst",
+            "disk_usage_bytes": 2048,
+            "stats": {"record_count": 11, "storage_size_bytes": 4096}
+        }))
+        .unwrap();
+        assert_eq!(info.collection_id.as_deref(), Some("uuid-1"));
+        assert_eq!(info.vector_count, 9);
+        assert_eq!(info.stats.as_ref().unwrap().record_count, 11);
     }
 }

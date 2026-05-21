@@ -46,3 +46,35 @@ impl Default for GrpcApiHandler {
 }
 
 // TODO: Move gRPC handlers from src/network/grpc
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grpc_request_carries_method_and_metadata() {
+        let request = GrpcRequest {
+            method: "proximadb.v1.Vector/Search".to_string(),
+            metadata: vec![("tenant-id".to_string(), "tenant-a".to_string())],
+        };
+
+        assert_eq!(request.method, "proximadb.v1.Vector/Search");
+        assert_eq!(
+            request.metadata,
+            vec![("tenant-id".to_string(), "tenant-a".to_string())]
+        );
+    }
+
+    #[test]
+    fn grpc_response_wraps_inner_payload() {
+        let response = GrpcResponse { inner: 42 };
+
+        assert_eq!(response.inner, 42);
+    }
+
+    #[test]
+    fn grpc_handler_default_matches_new() {
+        let _from_new = GrpcApiHandler::new();
+        let _from_default = GrpcApiHandler::default();
+    }
+}

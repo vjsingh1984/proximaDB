@@ -1540,10 +1540,12 @@ mod tests {
 
         assert!(matches!(decision.scheme, ProximaScheme::Dictionary));
         assert!(decision.expected_ratio >= 2.0);
-        assert!(!decision
-            .rejected_candidates
-            .iter()
-            .any(|candidate| candidate.reason == RejectionReason::HotPathDecodeBudget));
+        assert!(
+            !decision
+                .rejected_candidates
+                .iter()
+                .any(|candidate| candidate.reason == RejectionReason::HotPathDecodeBudget)
+        );
     }
 
     #[test]
@@ -1589,9 +1591,11 @@ mod tests {
 
         assert!(matches!(decision.scheme, ProximaScheme::Raw));
         assert_eq!(decision.expected_ratio, 1.0);
-        assert!(decision
-            .rejected_candidates
-            .iter()
-            .any(|candidate| candidate.reason == RejectionReason::CompressionTargetMiss));
+        assert!(
+            decision
+                .rejected_candidates
+                .iter()
+                .any(|candidate| candidate.reason == RejectionReason::CompressionTargetMiss)
+        );
     }
 }

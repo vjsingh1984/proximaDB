@@ -103,3 +103,98 @@ impl ColumnProjection {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::datatypes::{DataType, Field};
+    use parquet::basic::{Repetition, Type as PhysicalType};
+    use std::sync::Arc;
+
+    fn parquet_schema() -> Type {
+        let id = Type::primitive_type_builder("id", PhysicalType::BYTE_ARRAY)
+            .with_repetition(Repetition::REQUIRED)
+            .build()
+            .unwrap();
+        let score = Type::primitive_type_builder("score", PhysicalType::FLOAT)
+            .with_repetition(Repetition::OPTIONAL)
+            .build()
+            .unwrap();
+        let tenant = Type::primitive_type_builder("tenant", PhysicalType::BYTE_ARRAY)
+            .with_repetition(Repetition::OPTIONAL)
+            .build()
+            .unwrap();
+
+        Type::group_type_builder("schema")
+            .with_fields(vec![Arc::new(id), Arc::new(score), Arc::new(tenant)])
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn projection_builder_finds_requested_parquet_column_indices() {
+        let schema = parquet_schema();
+        let projection = ProjectionBuilder::new()
+            .add_column("tenant".to_string())
+            .add_column("id".to_string());
+
+        assert_eq!(projection.get_column_indices(&schema).unwrap(), vec![0, 2]);
+    }
+
+    #[test]
+    fn projection_builder_accepts_all_columns_and_unknown_names() {
+        let schema = parquet_schema();
+
+        ProjectionBuilder::new()
+            .all_columns()
+            .build_mask(&schema)
+            .expect("all-column mask should build");
+
+        let indices = ProjectionBuilder::new()
+            .add_columns(vec!["missing".to_string(), "score".to_string()])
+            .get_column_indices(&schema)
+            .unwrap();
+        assert_eq!(indices, vec![1]);
+    }
+
+    #[test]
+    fn column_projection_validates_required_columns_only() {
+        let schema = Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("score", DataType::Float32, true),
+        ]);
+
+        ColumnProjection::new(vec!["id".to_string()], vec!["missing_optional".to_string()])
+            .validate(&schema)
+            .expect("missing optional columns are not required for validation");
+
+        let err = ColumnProjection::new(vec!["missing_required".to_string()], vec![])
+            .validate(&schema)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Required column 'missing_required' not found"));
+    }
+
+    #[test]
+    fn column_projection_lists_columns_and_deduplicates_by_role() {
+        let projection = ColumnProjection::new(
+            vec!["id".to_string(), "id".to_string(), "score".to_string()],
+            vec![
+                "tenant".to_string(),
+                "tenant".to_string(),
+                "score".to_string(),
+            ],
+        )
+        .optimize();
+
+        assert_eq!(
+            projection.all_columns(),
+            vec![
+                "id".to_string(),
+                "score".to_string(),
+                "tenant".to_string(),
+                "score".to_string()
+            ]
+        );
+    }
+}

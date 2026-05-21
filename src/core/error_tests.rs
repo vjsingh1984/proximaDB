@@ -208,4 +208,95 @@ mod tests {
         let storage_err = StorageError::MetadataError(anyhow_err);
         assert!(storage_err.to_string().contains("Metadata error"));
     }
+
+    #[test]
+    fn test_protocol_error_to_core_error_conversion() {
+        use crate::core::errors::ProximaDBError;
+
+        let err: ProximaDBError = ProtocolError::invalid_argument_field("bad id", "id").into();
+        assert!(matches!(err, ProximaDBError::InvalidInput(msg) if msg == "bad id"));
+
+        let err: ProximaDBError = ProtocolError::not_found("collection", "c1").into();
+        assert!(matches!(
+            err,
+            ProximaDBError::NotFound { resource_type, id }
+                if resource_type == "collection" && id == "c1"
+        ));
+
+        let err: ProximaDBError = ProtocolError::already_exists("index", "idx1").into();
+        assert!(matches!(
+            err,
+            ProximaDBError::AlreadyExists { resource_type, id }
+                if resource_type == "index" && id == "idx1"
+        ));
+
+        let err: ProximaDBError = ProtocolError::internal("panic boundary").into();
+        assert!(matches!(err, ProximaDBError::Internal(msg) if msg == "panic boundary"));
+
+        let err: ProximaDBError = ProtocolError::permission_denied("drop table").into();
+        assert!(matches!(err, ProximaDBError::PermissionDenied(action) if action == "drop table"));
+
+        let err: ProximaDBError = ProtocolError::timeout("scan", 2_500).into();
+        assert!(matches!(err, ProximaDBError::Timeout(seconds) if seconds == 2));
+
+        let err: ProximaDBError = ProtocolError::resource_exhausted("too many splits").into();
+        assert!(matches!(
+            err,
+            ProximaDBError::CapacityExceeded { message } if message == "too many splits"
+        ));
+
+        let err: ProximaDBError = ProtocolError::precondition_failed("version mismatch").into();
+        assert!(matches!(err, ProximaDBError::InvalidInput(msg) if msg == "version mismatch"));
+    }
+
+    #[test]
+    fn test_vector_db_error_to_core_error_conversion() {
+        use crate::core::errors::ProximaDBError;
+
+        let err: ProximaDBError = VectorDBError::Config("missing wal_dir".to_string()).into();
+        assert!(matches!(err, ProximaDBError::Internal(msg) if msg == "Config: missing wal_dir"));
+
+        let err: ProximaDBError = VectorDBError::Filesystem("permission denied".to_string()).into();
+        assert!(matches!(err, ProximaDBError::Io(msg) if msg == "permission denied"));
+
+        let err: ProximaDBError =
+            VectorDBError::NotImplemented("tiered graph planner".to_string()).into();
+        assert!(matches!(
+            err,
+            ProximaDBError::Internal(msg) if msg == "Not implemented: tiered graph planner"
+        ));
+
+        let err: ProximaDBError = VectorDBError::Quantization("bad codebook".to_string()).into();
+        assert!(matches!(err, ProximaDBError::Quantization(msg) if msg == "bad codebook"));
+
+        let err: ProximaDBError = VectorDBError::InvalidInput("bad dimension".to_string()).into();
+        assert!(matches!(err, ProximaDBError::InvalidInput(msg) if msg == "bad dimension"));
+
+        let err: ProximaDBError = VectorDBError::TransactionConflict {
+            transaction: "tx1".to_string(),
+            conflicting_with: "tx2".to_string(),
+        }
+        .into();
+        assert!(matches!(
+            err,
+            ProximaDBError::TransactionConflict { transaction, conflicting_with }
+                if transaction == "tx1" && conflicting_with == "tx2"
+        ));
+
+        let err: ProximaDBError = VectorDBError::LockTimeout {
+            resource: "catalog/table".to_string(),
+        }
+        .into();
+        assert!(
+            matches!(err, ProximaDBError::LockTimeout { resource } if resource == "catalog/table")
+        );
+
+        let err: ProximaDBError = VectorDBError::SavepointNotFound {
+            name: "before_flush".to_string(),
+        }
+        .into();
+        assert!(
+            matches!(err, ProximaDBError::SavepointNotFound { name } if name == "before_flush")
+        );
+    }
 }

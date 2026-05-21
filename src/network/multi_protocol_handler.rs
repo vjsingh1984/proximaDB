@@ -1689,5 +1689,4 @@ mod tests {
         let back = sql_value_to_json(&sql_val);
         assert_eq!(json_val, back);
     }
-
 }

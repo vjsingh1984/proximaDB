@@ -45,3 +45,22 @@ impl RestAppState {
         Self { handlers }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tenant_context_preserves_supplied_tenant_id() {
+        let tenant = TenantContext::new("tenant-a");
+
+        assert_eq!(tenant.tenant_id, "tenant-a");
+    }
+
+    #[test]
+    fn default_tenant_context_uses_default_authority_scope() {
+        let tenant = TenantContext::default_tenant();
+
+        assert_eq!(tenant.tenant_id, "default");
+    }
+}

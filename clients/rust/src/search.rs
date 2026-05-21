@@ -538,6 +538,9 @@ struct SearchResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::ProximaClient;
+    use serde_json::json;
+    use std::collections::HashMap;
 
     #[test]
     fn test_search_mode_as_str() {
@@ -567,5 +570,128 @@ mod tests {
         assert_eq!(result.get_meta("category"), Some("tech"));
         assert_eq!(result.get_meta("source"), Some("api"));
         assert_eq!(result.get_meta("missing"), None);
+    }
+
+    #[test]
+    fn search_builder_chain_sets_request_shape_without_network() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let builder = SearchBuilder::new_client(&client, "products")
+            .vector(&[0.1, 0.2, 0.3])
+            .top_k(25)
+            .filter("category = 'books'")
+            .approximate_with_nprobe(8)
+            .include_vectors(true)
+            .include_metadata(false)
+            .min_score(0.8)
+            .timeout_secs(3);
+
+        assert_eq!(builder.collection, "products");
+        assert_eq!(builder.vector, Some(vec![0.1, 0.2, 0.3]));
+        assert_eq!(builder.top_k, 25);
+        assert_eq!(
+            builder.build_filter().as_deref(),
+            Some("category = 'books'")
+        );
+        assert_eq!(builder.mode.as_str(), "approximate:8");
+        assert!(builder.include_vectors);
+        assert!(!builder.include_metadata);
+        assert_eq!(builder.min_score, Some(0.8));
+        assert_eq!(builder.timeout_ms, Some(3000));
+    }
+
+    #[test]
+    fn fluent_filter_builder_takes_precedence_over_raw_filter_string() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let builder = SearchBuilder::new_client(&client, "products")
+            .filter("raw_filter")
+            .filter_eq("category", "tech")
+            .filter_ne("status", "draft")
+            .filter_gt("rating", 3)
+            .filter_gte("price", 10)
+            .filter_lt("price", 100)
+            .filter_lte("discount", 50)
+            .filter_range("year", 2020, 2024)
+            .filter_in("tag", vec!["ai", "db"])
+            .filter_contains("title", "vector")
+            .filter_exists("thumbnail");
+
+        let expression = builder.build_filter().unwrap();
+
+        assert!(expression.contains("category = 'tech'"));
+        assert!(expression.contains("status != 'draft'"));
+        assert!(expression.contains("rating > 3"));
+        assert!(expression.contains("price >= 10"));
+        assert!(expression.contains("price < 100"));
+        assert!(expression.contains("discount <= 50"));
+        assert!(expression.contains("year >= 2020"));
+        assert!(expression.contains("year <= 2024"));
+        assert!(expression.contains("tag IN ['ai', 'db']"));
+        assert!(expression.contains("title CONTAINS 'vector'"));
+        assert!(expression.contains("thumbnail EXISTS"));
+        assert!(!expression.contains("raw_filter"));
+    }
+
+    #[test]
+    fn mode_helpers_cover_exact_approximate_adaptive_and_limit_alias() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+
+        let exact = SearchBuilder::new_client(&client, "items")
+            .approximate()
+            .exact();
+        assert_eq!(exact.mode, SearchMode::Exact);
+
+        let approximate = SearchBuilder::new_client(&client, "items").approximate();
+        assert_eq!(approximate.mode, SearchMode::Approximate { nprobe: None });
+
+        let adaptive = SearchBuilder::new_client(&client, "items")
+            .adaptive(50_000)
+            .limit(99);
+        assert_eq!(adaptive.mode, SearchMode::Adaptive { threshold: 50_000 });
+        assert_eq!(adaptive.top_k, 99);
+    }
+
+    #[test]
+    fn search_request_serialization_omits_collection_and_empty_optionals() {
+        let request = SearchRequest {
+            collection: "items".to_string(),
+            vector: vec![1.0, 2.0],
+            top_k: 10,
+            filter: None,
+            search_mode: Some("exact".to_string()),
+            include_vectors: false,
+            include_metadata: true,
+            timeout_ms: None,
+        };
+
+        let value = serde_json::to_value(request).unwrap();
+
+        assert_eq!(
+            value,
+            json!({
+                "vector": [1.0, 2.0],
+                "top_k": 10,
+                "search_mode": "exact",
+                "include_vectors": false,
+                "include_metadata": true
+            })
+        );
+    }
+
+    #[test]
+    fn search_response_and_result_metadata_round_trip() {
+        let result = SearchResult::new("vec_1", 0.91).with_metadata(HashMap::from([(
+            "category".to_string(),
+            "tech".to_string(),
+        )]));
+        let response = SearchResponse {
+            results: vec![result.clone()],
+        };
+        let encoded = serde_json::to_value(&response.results).unwrap();
+        let decoded: Vec<SearchResult> = serde_json::from_value(encoded).unwrap();
+
+        assert_eq!(decoded[0].id, result.id);
+        assert_eq!(decoded[0].score, result.score);
+        assert_eq!(decoded[0].get_meta("category"), Some("tech"));
+        assert_eq!(decoded[0].vector, None);
     }
 }

@@ -656,6 +656,8 @@ struct TraversalRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::ProximaClient;
+    use serde_json::json;
 
     #[test]
     fn test_graph_node_builder() {
@@ -689,5 +691,228 @@ mod tests {
     fn test_traversal_direction() {
         let dir = TraversalDirection::default();
         assert_eq!(dir, TraversalDirection::Outgoing);
+    }
+
+    #[test]
+    fn graph_node_serialization_skips_absent_vector_and_defaults_fields() {
+        let node: GraphNode = serde_json::from_value(json!({"id": "n1"})).unwrap();
+        assert_eq!(node.id, "n1");
+        assert_eq!(node.label, None);
+        assert!(node.properties.is_empty());
+        assert_eq!(node.vector, None);
+
+        let serialized = serde_json::to_value(GraphNode::new("n2")).unwrap();
+        assert_eq!(
+            serialized,
+            json!({"id": "n2", "label": null, "properties": {}})
+        );
+
+        let with_vector = GraphNode::new("n3").with_vector(vec![0.1, 0.2]);
+        assert_eq!(with_vector.vector, Some(vec![0.1, 0.2]));
+    }
+
+    #[test]
+    fn graph_edge_serialization_skips_absent_weight_and_defaults_properties() {
+        let edge: GraphEdge = serde_json::from_value(json!({
+            "source": "a",
+            "target": "b",
+            "relationship": "KNOWS"
+        }))
+        .unwrap();
+
+        assert_eq!(edge.source, "a");
+        assert_eq!(edge.target, "b");
+        assert_eq!(edge.relationship, "KNOWS");
+        assert!(edge.properties.is_empty());
+        assert_eq!(edge.weight, None);
+
+        let serialized = serde_json::to_value(edge).unwrap();
+        assert_eq!(
+            serialized,
+            json!({"source": "a", "target": "b", "relationship": "KNOWS", "properties": {}})
+        );
+    }
+
+    #[test]
+    fn traversal_direction_serializes_as_lowercase_api_value() {
+        assert_eq!(
+            serde_json::to_value(TraversalDirection::Outgoing).unwrap(),
+            json!("outgoing")
+        );
+        assert_eq!(
+            serde_json::to_value(TraversalDirection::Incoming).unwrap(),
+            json!("incoming")
+        );
+        assert_eq!(
+            serde_json::to_value(TraversalDirection::Both).unwrap(),
+            json!("both")
+        );
+    }
+
+    #[test]
+    fn graph_handle_and_builders_record_fluent_state() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let handle = GraphHandle::new(&client, "knowledge");
+
+        assert_eq!(handle.name(), "knowledge");
+
+        let node = handle
+            .add_node()
+            .id("person_1")
+            .label("Person")
+            .property("name", "Alice")
+            .vector(&[0.1, 0.2]);
+        assert_eq!(node.id.as_deref(), Some("person_1"));
+        assert_eq!(node.label.as_deref(), Some("Person"));
+        assert_eq!(node.properties["name"], json!("Alice"));
+        assert_eq!(node.vector, Some(vec![0.1, 0.2]));
+
+        let edge = handle
+            .add_edge()
+            .from("person_1")
+            .to("person_2")
+            .relationship("KNOWS")
+            .property("since", 2020)
+            .weight(0.5);
+        assert_eq!(edge.source.as_deref(), Some("person_1"));
+        assert_eq!(edge.target.as_deref(), Some("person_2"));
+        assert_eq!(edge.relationship.as_deref(), Some("KNOWS"));
+        assert_eq!(edge.properties["since"], json!(2020));
+        assert_eq!(edge.weight, Some(0.5));
+
+        let traversal = handle
+            .traverse()
+            .start("person_1")
+            .relationship("KNOWS")
+            .relationships(vec!["LIKES".to_string()])
+            .incoming()
+            .outgoing()
+            .both()
+            .direction(TraversalDirection::Incoming)
+            .max_depth(4)
+            .limit(25)
+            .filter("age > 30");
+        assert_eq!(traversal.start_node.as_deref(), Some("person_1"));
+        assert_eq!(
+            traversal.relationships,
+            vec!["KNOWS".to_string(), "LIKES".to_string()]
+        );
+        assert_eq!(traversal.direction, TraversalDirection::Incoming);
+        assert_eq!(traversal.max_depth, 4);
+        assert_eq!(traversal.limit, 25);
+        assert_eq!(traversal.filter.as_deref(), Some("age > 30"));
+    }
+
+    #[tokio::test]
+    async fn node_edge_and_traversal_builders_validate_required_fields_before_network() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let handle = GraphHandle::new(&client, "knowledge");
+
+        let node_error = handle.add_node().execute().await.unwrap_err();
+        assert!(
+            matches!(node_error, ProximaError::Internal(message) if message == "Node ID is required")
+        );
+
+        let edge_error = handle.add_edge().execute().await.unwrap_err();
+        assert!(
+            matches!(edge_error, ProximaError::Internal(message) if message == "Source node ID is required")
+        );
+
+        let edge_error = handle.add_edge().from("a").execute().await.unwrap_err();
+        assert!(
+            matches!(edge_error, ProximaError::Internal(message) if message == "Target node ID is required")
+        );
+
+        let edge_error = handle
+            .add_edge()
+            .from("a")
+            .to("b")
+            .execute()
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(edge_error, ProximaError::Internal(message) if message == "Relationship type is required")
+        );
+
+        let traversal_error = handle.traverse().execute().await.unwrap_err();
+        assert!(
+            matches!(traversal_error, ProximaError::Internal(message) if message == "Start node is required for traversal")
+        );
+    }
+
+    #[test]
+    fn graph_request_response_dtos_match_api_shape() {
+        let create = CreateGraphRequest {
+            name: "knowledge".to_string(),
+            description: Some("domain graph".to_string()),
+        };
+        assert_eq!(
+            serde_json::to_value(create).unwrap(),
+            json!({"name": "knowledge", "description": "domain graph"})
+        );
+
+        let node_request = AddNodesRequest {
+            graph: "knowledge".to_string(),
+            nodes: vec![GraphNode::new("n1").with_label("Person")],
+        };
+        assert_eq!(node_request.graph, "knowledge");
+        assert_eq!(node_request.nodes[0].id, "n1");
+
+        let edge_request = AddEdgesRequest {
+            graph: "knowledge".to_string(),
+            edges: vec![GraphEdge::new("a", "b", "KNOWS")],
+        };
+        assert_eq!(edge_request.graph, "knowledge");
+        assert_eq!(edge_request.edges[0].relationship, "KNOWS");
+
+        let traversal = TraversalRequest {
+            graph: "knowledge".to_string(),
+            start_node: "n1".to_string(),
+            relationships: None,
+            direction: TraversalDirection::Both,
+            max_depth: 3,
+            limit: 10,
+            filter: None,
+        };
+        assert_eq!(
+            serde_json::to_value(traversal).unwrap(),
+            json!({
+                "graph": "knowledge",
+                "start_node": "n1",
+                "direction": "both",
+                "max_depth": 3,
+                "limit": 10
+            })
+        );
+
+        let created: CreateGraphResponse =
+            serde_json::from_value(json!({"success": true})).unwrap();
+        assert!(created.success);
+        let nodes: AddNodesResponse = serde_json::from_value(json!({"added_count": 2})).unwrap();
+        assert_eq!(nodes.added_count, 2);
+        let edges: AddEdgesResponse = serde_json::from_value(json!({"added_count": 1})).unwrap();
+        assert_eq!(edges.added_count, 1);
+    }
+
+    #[test]
+    fn traversal_result_deserializes_default_paths() {
+        let result: TraversalResult = serde_json::from_value(json!({
+            "nodes": [{"id": "n1"}],
+            "edges": []
+        }))
+        .unwrap();
+
+        assert_eq!(result.nodes.len(), 1);
+        assert!(result.edges.is_empty());
+        assert!(result.paths.is_empty());
+    }
+
+    #[test]
+    fn graph_builder_records_name_and_description() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let builder = GraphBuilder::new(&client, "knowledge").description("domain graph");
+
+        assert_eq!(builder.name, "knowledge");
+        assert_eq!(builder.description.as_deref(), Some("domain graph"));
     }
 }

@@ -89,3 +89,35 @@ impl Default for MetadataCollectionConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow_array::RecordBatch;
+    use arrow_schema::Schema;
+    use std::sync::Arc;
+
+    #[test]
+    fn noop_collector_accepts_write_lifecycle_and_emits_no_sidecar() {
+        let mut collector = NoOpCollector;
+        let batch = RecordBatch::new_empty(Arc::new(Schema::empty()));
+
+        collector.on_row_group_start(3).unwrap();
+        collector.on_batch_write(&batch, 3, 1).unwrap();
+        collector.finalize(4).unwrap();
+
+        assert_eq!(collector.serialize_metadata().unwrap(), Vec::<u8>::new());
+        assert_eq!(collector.sidecar_extension(), "");
+    }
+
+    #[test]
+    fn default_metadata_collection_config_enables_engine_sidecar_statistics() {
+        let config = MetadataCollectionConfig::default();
+
+        assert!(config.compute_superblocks);
+        assert_eq!(config.row_groups_per_superblock, 10);
+        assert!(config.compute_vector_stats);
+        assert!(config.track_quantization_stats);
+        assert_eq!(config.stats_sample_rate, 1.0);
+    }
+}

@@ -350,3 +350,157 @@ impl CacheConfig {
         config.to_file(path)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_cache_config_is_valid_and_budgeted_by_cache_type() {
+        let config = CacheConfig::default();
+
+        config.validate().unwrap();
+        assert!(config.global.enabled);
+        assert_eq!(config.total_memory_bytes(), 1024 * 1024 * 1024);
+        let total = config.total_memory_bytes();
+        assert_eq!(
+            config.get_cache_memory_bytes("vector_data"),
+            total * 40 / 100
+        );
+        assert_eq!(
+            config.get_cache_memory_bytes("query_result"),
+            total * 30 / 100
+        );
+        assert_eq!(
+            config.get_cache_memory_bytes("filter_bitmap"),
+            total * 15 / 100
+        );
+        assert_eq!(
+            config.get_cache_memory_bytes("index_structure"),
+            total * 10 / 100
+        );
+        assert_eq!(
+            config.get_cache_memory_bytes("metadata_info"),
+            total * 5 / 100
+        );
+        assert_eq!(config.get_cache_memory_bytes("unknown"), 0);
+    }
+
+    #[test]
+    fn default_cache_subconfigs_capture_expected_production_policy() {
+        let config = CacheConfig::default();
+
+        assert!(matches!(
+            config.global.default_eviction_policy,
+            EvictionPolicy::ARC
+        ));
+        assert!(config.global.enable_tiered_storage);
+        assert!(config.vector_data.enable_similarity_prefetch);
+        assert_eq!(config.vector_data.similarity_prefetch_radius, 0.9);
+        assert!(config.query_result.enable_normalization);
+        assert!(config.query_result.enable_subquery_cache);
+        assert!(config.filter_bitmap.enable_decomposition);
+        assert!(config.index_structure.cache_hot_nodes);
+        assert_eq!(
+            config.metadata.cache_types,
+            vec!["collection".to_string(), "schema".to_string()]
+        );
+        assert!(config.coordination.enable_memory_rebalancing);
+        assert!(config.monitoring.enable_metrics);
+        assert_eq!(config.monitoring.alert_thresholds.max_cascade_size, 1000);
+    }
+
+    #[test]
+    fn validation_rejects_invalid_memory_budget_and_thresholds() {
+        let mut config = CacheConfig::default();
+        config.metadata.memory_percentage = 6;
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("Memory percentages must sum to 100, got 101")
+        );
+
+        let mut config = CacheConfig::default();
+        config.monitoring.alert_thresholds.min_hit_rate = -0.01;
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid min_hit_rate threshold")
+        );
+
+        let mut config = CacheConfig::default();
+        config.monitoring.alert_thresholds.min_hit_rate = 1.01;
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid min_hit_rate threshold")
+        );
+
+        let mut config = CacheConfig::default();
+        config.monitoring.trace_sampling_rate = -0.01;
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid trace_sampling_rate")
+        );
+
+        let mut config = CacheConfig::default();
+        config.monitoring.trace_sampling_rate = 1.01;
+        assert!(
+            config
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("Invalid trace_sampling_rate")
+        );
+    }
+
+    #[test]
+    fn cache_config_round_trips_through_toml_file() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let path = file.path().to_str().unwrap();
+
+        let mut config = CacheConfig::default();
+        config.global.total_memory_mb = 2048;
+        config.global.l2_storage_path = Some("/var/lib/proximadb/cache-l2".to_string());
+        config.monitoring.metrics_endpoint = Some("http://127.0.0.1:9090/metrics".to_string());
+
+        config.to_file(path).unwrap();
+        let restored = CacheConfig::from_file(path).unwrap();
+
+        assert_eq!(restored.global.total_memory_mb, 2048);
+        assert_eq!(
+            restored.global.l2_storage_path.as_deref(),
+            Some("/var/lib/proximadb/cache-l2")
+        );
+        assert_eq!(
+            restored.monitoring.metrics_endpoint.as_deref(),
+            Some("http://127.0.0.1:9090/metrics")
+        );
+        assert!(matches!(
+            restored.global.default_eviction_policy,
+            EvictionPolicy::ARC
+        ));
+    }
+
+    #[test]
+    fn example_config_writer_creates_a_valid_default_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.toml");
+        let path = path.to_str().unwrap();
+
+        CacheConfig::create_example_config(path).unwrap();
+        let restored = CacheConfig::from_file(path).unwrap();
+
+        restored.validate().unwrap();
+        assert_eq!(restored.global.total_memory_mb, 1024);
+    }
+}

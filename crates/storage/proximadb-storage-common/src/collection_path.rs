@@ -22,3 +22,37 @@ fn base62_7(mut v: u64) -> String {
     }
     String::from_utf8_lossy(&buf).to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slug_for_is_stable_url_safe_and_fixed_width() {
+        let first = slug_for("tenant-a/collection-01");
+        let second = slug_for("tenant-a/collection-01");
+
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 7);
+        assert!(first.bytes().all(|b| b.is_ascii_alphanumeric()));
+    }
+
+    #[test]
+    fn slug_for_distinguishes_different_collection_ids() {
+        assert_ne!(
+            slug_for("tenant-a/collection-01"),
+            slug_for("tenant-a/collection-02")
+        );
+    }
+
+    #[test]
+    fn base62_encoder_pads_and_uses_expected_alphabet_boundaries() {
+        assert_eq!(base62_7(0), "0000000");
+        assert_eq!(base62_7(9), "0000009");
+        assert_eq!(base62_7(10), "000000A");
+        assert_eq!(base62_7(35), "000000Z");
+        assert_eq!(base62_7(36), "000000a");
+        assert_eq!(base62_7(61), "000000z");
+        assert_eq!(base62_7(62), "0000010");
+    }
+}

@@ -42,3 +42,50 @@ impl CorsMiddleware {
 }
 
 // TODO: Move CORS logic from src/network/middleware/cors.rs
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_cors_config_is_permissive_without_credentials() {
+        let config = CorsConfig::default();
+
+        assert_eq!(config.allowed_origins, vec!["*".to_string()]);
+        assert_eq!(
+            config.allowed_methods,
+            vec![
+                "GET".to_string(),
+                "POST".to_string(),
+                "PUT".to_string(),
+                "DELETE".to_string()
+            ]
+        );
+        assert_eq!(config.allowed_headers, vec!["*".to_string()]);
+        assert!(!config.allow_credentials);
+        assert_eq!(config.max_age, Some(86400));
+    }
+
+    #[test]
+    fn cors_middleware_preserves_supplied_policy() {
+        let middleware = CorsMiddleware::new(CorsConfig {
+            allowed_origins: vec!["https://example.com".to_string()],
+            allowed_methods: vec!["GET".to_string()],
+            allowed_headers: vec!["authorization".to_string()],
+            allow_credentials: true,
+            max_age: None,
+        });
+
+        assert_eq!(
+            middleware.config.allowed_origins,
+            vec!["https://example.com".to_string()]
+        );
+        assert_eq!(middleware.config.allowed_methods, vec!["GET".to_string()]);
+        assert_eq!(
+            middleware.config.allowed_headers,
+            vec!["authorization".to_string()]
+        );
+        assert!(middleware.config.allow_credentials);
+        assert_eq!(middleware.config.max_age, None);
+    }
+}

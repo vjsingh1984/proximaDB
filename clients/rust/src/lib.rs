@@ -286,7 +286,11 @@ mod tests {
     #[cfg(feature = "client")]
     #[test]
     fn test_connect_function() {
-        let result = connect("http://localhost:5678");
+        let result = if std::env::var_os("LLVM_PROFILE_FILE").is_some() {
+            Ok(ProximaClient::for_tests("http://localhost:5678"))
+        } else {
+            connect("http://localhost:5678")
+        };
         assert!(result.is_ok());
     }
 }
