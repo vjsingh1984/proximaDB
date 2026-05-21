@@ -30,7 +30,6 @@ mod tests {
     use std::sync::Arc;
 
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::engines::sst::{
         SstConfig,
         blocks::SstRecord,
@@ -41,6 +40,7 @@ mod tests {
     };
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::traits::{StorageQueryContext, UnifiedStorageEngine};
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
 
     /// Test that the core module properly initializes the engine
     #[tokio::test]
@@ -98,19 +98,21 @@ mod tests {
     /// Test blocks module structures
     #[tokio::test]
     async fn test_blocks_module_structures() {
-        // Test SstRecord creation from VectorRecord
-        let vector_record = VectorRecord {
-            id: "test_id".to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(12345),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
+        // Test SstRecord creation from the canonical record envelope.
+        let record = ProximaRecord {
+            oid: "test_id".to_string(),
+            created_at_ns: 12_345_000_000,
+            updated_at_ns: 12_345_000_000,
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "vector".to_string(),
+                values: vec![1.0, 2.0, 3.0],
+                dim: 3,
+            }],
+            ..Default::default()
         };
 
-        let sst_record = SstRecord::from_vector_record(vector_record, 100, 1);
+        let sst_record = SstRecord::from_proxima_record(record, 100, 1);
         assert_eq!(sst_record.id, "test_id");
         assert_eq!(sst_record.sequence_number, 100);
         assert_eq!(sst_record.level, 1);

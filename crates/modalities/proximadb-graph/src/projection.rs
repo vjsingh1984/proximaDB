@@ -86,12 +86,14 @@ pub enum TopologyDirection {
 }
 
 /// Exact compression used for topology arrays.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TopologyCompression {
     /// Plain fixed-width u64 neighbor ids.
     RawU64,
     /// Sorted neighbor ids stored as monotonic gaps with varint coding.
     GapVarint,
+    /// Projection mixes exact compressed lists with raw list fallbacks.
+    MixedExact,
     /// Future patched frame-of-reference or Simple8b family.
     PatchedInteger,
     /// Future Elias-Fano family for very large monotonic lists.

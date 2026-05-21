@@ -7,13 +7,14 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use proximadb_catalog::{
-    CatalogAuthorityMode, CatalogPhysicalFormat, CatalogProjection, CatalogStorageLayout,
-    CatalogTableSchema,
+    CatalogAuthorityMode, CatalogCompressionRejectedCandidate, CatalogCompressionStatsProfile,
+    CatalogPhysicalFormat, CatalogProjection, CatalogStorageLayout, CatalogTableSchema,
 };
 
 use crate::catalog::{CatalogManager, TableIdentifier};
 use crate::query::multimodal::plan::{
-    ResolvedAuthorityMode, ResolvedObjectContext, ResolvedProjectionContext,
+    ResolvedAuthorityMode, ResolvedCompressionRejectedCandidateContext,
+    ResolvedCompressionStatsProfileContext, ResolvedObjectContext, ResolvedProjectionContext,
     ResolvedStorageLayoutContext,
 };
 
@@ -56,6 +57,11 @@ pub fn resolved_object_from_catalog_schema(
         .iter()
         .map(resolved_projection_from_catalog)
         .collect();
+    let compression_stats_profiles: Vec<_> = schema
+        .compression_stats_profiles
+        .iter()
+        .map(resolved_compression_profile_from_catalog)
+        .collect();
     let authority = storage_layouts
         .iter()
         .find(|layout| layout.name == "primary")
@@ -76,6 +82,7 @@ pub fn resolved_object_from_catalog_schema(
         authority,
         storage_layouts,
         projections,
+        compression_stats_profiles,
         external_policy_boundary,
         fallback_behavior: fallback_behavior_for_schema(schema),
     }
@@ -126,6 +133,39 @@ fn resolved_projection_from_catalog(projection: &CatalogProjection) -> ResolvedP
     }
 }
 
+fn resolved_compression_profile_from_catalog(
+    profile: &CatalogCompressionStatsProfile,
+) -> ResolvedCompressionStatsProfileContext {
+    ResolvedCompressionStatsProfileContext {
+        profile_id: profile.profile_id.clone(),
+        layout_name: profile.layout_name.clone(),
+        projection_id: profile.projection_id.clone(),
+        selected_scheme: profile.selected_scheme.clone(),
+        raw_bytes: profile.raw_bytes,
+        encoded_bytes: profile.encoded_bytes,
+        value_count: profile.value_count,
+        measured_ratio: profile.measured_ratio,
+        exact_reconstruction: profile.exact_reconstruction,
+        encode_cpu_ms_per_block: profile.encode_cpu_ms_per_block,
+        decode_ns_per_value: profile.decode_ns_per_value,
+        rejected_candidates: profile
+            .rejected_candidates
+            .iter()
+            .map(resolved_rejected_candidate_from_catalog)
+            .collect(),
+    }
+}
+
+fn resolved_rejected_candidate_from_catalog(
+    candidate: &CatalogCompressionRejectedCandidate,
+) -> ResolvedCompressionRejectedCandidateContext {
+    ResolvedCompressionRejectedCandidateContext {
+        scheme: candidate.scheme.clone(),
+        reason: candidate.reason.clone(),
+        expected_ratio: candidate.expected_ratio,
+    }
+}
+
 fn resolved_authority(authority: CatalogAuthorityMode) -> ResolvedAuthorityMode {
     match authority {
         CatalogAuthorityMode::InternalCanonical | CatalogAuthorityMode::ProximaAuthoritative => {
@@ -165,7 +205,10 @@ fn fallback_behavior_for_schema(schema: &CatalogTableSchema) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_catalog::{CatalogPhysicalFormat, CatalogStorageLayout, CatalogTableSchema};
+    use proximadb_catalog::{
+        CatalogCompressionStatsProfile, CatalogPhysicalFormat, CatalogStorageLayout,
+        CatalogTableSchema,
+    };
 
     #[test]
     fn test_resolved_object_preserves_external_policy_boundary() {
@@ -189,5 +232,35 @@ mod tests {
         );
         assert!(object.requires_policy_boundary());
         assert_eq!(object.storage_layouts[0].physical_format, "Iceberg");
+    }
+
+    #[test]
+    fn test_resolved_object_preserves_compression_stats_profiles() {
+        let table_id = TableIdentifier::new(vec!["default".to_string()], "vectors".to_string());
+        let schema = CatalogTableSchema::new("vectors").with_compression_stats_profile(
+            CatalogCompressionStatsProfile::new(
+                "bench/vector/base_xor",
+                "VectorBaseXorEntropy",
+                1024,
+                256,
+                128,
+                true,
+            )
+            .with_layout_name("pax_vector_spatial")
+            .with_projection_id("embedding_exact"),
+        );
+
+        let object = resolved_object_from_catalog_schema(
+            AuthoritySource::new("vectors", "vector"),
+            &table_id,
+            &schema,
+        );
+
+        assert_eq!(object.compression_stats_profiles.len(), 1);
+        assert_eq!(
+            object.compression_stats_profiles[0].selected_scheme,
+            "VectorBaseXorEntropy"
+        );
+        assert_eq!(object.compression_stats_profiles[0].measured_ratio, 4.0);
     }
 }

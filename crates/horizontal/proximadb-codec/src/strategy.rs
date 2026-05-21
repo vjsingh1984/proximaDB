@@ -27,10 +27,12 @@
 //! let scheme = strategy.select(&analysis, &context);
 //! ```
 
+use serde::{Deserialize, Serialize};
+
 use super::types::{ProximaScheme, TypeId};
 
 /// Semantic authority mode for data being encoded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum AuthorityMode {
     /// Canonical ProximaRecord payload; exact reconstruction is required.
     #[default]
@@ -42,7 +44,7 @@ pub enum AuthorityMode {
 }
 
 /// Loss policy accepted for this encoding decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum LossPolicy {
     /// Only byte-exact reconstruction is allowed.
     #[default]
@@ -54,7 +56,7 @@ pub enum LossPolicy {
 }
 
 /// Workload profile used for CPU-vs-I/O tradeoffs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum WorkloadProfile {
     /// Point-heavy OLTP access.
     Oltp,
@@ -72,7 +74,7 @@ pub enum WorkloadProfile {
 }
 
 /// Storage specialization for the column or projection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum StorageSpecialization {
     /// General record/table data.
     #[default]
@@ -92,7 +94,7 @@ pub enum StorageSpecialization {
 }
 
 /// Expected access temperature for a block or stripe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum AccessTemperature {
     /// Frequently read or latency-sensitive data.
     Hot,
@@ -104,7 +106,7 @@ pub enum AccessTemperature {
 }
 
 /// Random access granularity required by readers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum RandomAccessGranularity {
     /// Entire stripe/block decode is acceptable.
     #[default]
@@ -120,7 +122,7 @@ pub enum RandomAccessGranularity {
 /// Tells the codec whether a column value is being written for a single-row
 /// OLTP path, a full column stripe in an OLAP block, or the combined PAX layout
 /// where both row directory and column stripes are present.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum BlockContext {
     /// Single-row OLTP point write — optimise for fast encode/decode latency.
     OltpRow,
@@ -132,7 +134,7 @@ pub enum BlockContext {
 }
 
 /// Data domain identifier for context-aware selection
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum DataDomain {
     /// Machine learning embeddings (typically F32, high entropy)
     MlEmbeddings,
@@ -148,7 +150,7 @@ pub enum DataDomain {
 }
 
 /// High-level modality of a column or projection payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum ColumnModality {
     /// Generic scalar column.
     #[default]
@@ -168,7 +170,7 @@ pub enum ColumnModality {
 }
 
 /// Physical ordering already applied or intended for the data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum PhysicalOrdering {
     /// No useful order known.
     #[default]
@@ -188,7 +190,7 @@ pub enum PhysicalOrdering {
 }
 
 /// Coarse sortedness/correlation hint for a stripe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Sortedness {
     /// No ordering guarantee.
     #[default]
@@ -200,7 +202,7 @@ pub enum Sortedness {
 }
 
 /// Scope for dictionaries and learned/base parameters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum DictionaryScope {
     /// No dictionary or external parameter scope.
     #[default]
@@ -214,11 +216,11 @@ pub enum DictionaryScope {
 }
 
 /// Identifier for correlated columns/stripes that should be optimized together.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CorrelationGroupId(pub u32);
 
 /// Vector-specific layout hint.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VectorLayoutHint {
     /// Embedding dimension, if known.
     pub dimension: Option<u16>,
@@ -242,7 +244,7 @@ impl Default for VectorLayoutHint {
 }
 
 /// Graph-specific layout hint.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct GraphLayoutHint {
     /// Edge label or topology family, if known.
     pub edge_label: Option<String>,
@@ -253,7 +255,7 @@ pub struct GraphLayoutHint {
 }
 
 /// JSON/document-specific layout hint.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct JsonLayoutHint {
     /// Stable shape id for common structural variants.
     pub shape_id: Option<u32>,
@@ -264,7 +266,7 @@ pub struct JsonLayoutHint {
 }
 
 /// Layout hints supplied to codec selection.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayoutHints {
     /// Column/projection modality.
     pub modality: ColumnModality,
@@ -331,7 +333,7 @@ impl LayoutHints {
 }
 
 /// Canonical profile for one codec-selection decision.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompressionProfile {
     /// Semantic authority mode.
     pub authority_mode: AuthorityMode,
@@ -445,7 +447,7 @@ impl CompressionProfile {
 }
 
 /// Parameter metadata attached to a decision.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodecParameters {
     /// Scope for any external parameters.
     pub dictionary_scope: DictionaryScope,
@@ -466,7 +468,7 @@ impl Default for CodecParameters {
 }
 
 /// Why a codec candidate was rejected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RejectionReason {
     /// Candidate is lossy but exact reconstruction was required.
     LossyRejected,
@@ -479,7 +481,7 @@ pub enum RejectionReason {
 }
 
 /// Rejected codec candidate with reason.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RejectedCodecCandidate {
     /// Rejected scheme.
     pub scheme: ProximaScheme,
@@ -490,7 +492,7 @@ pub struct RejectedCodecCandidate {
 }
 
 /// Explainable codec-selection result.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CodecDecision {
     /// Selected scheme.
     pub scheme: ProximaScheme,

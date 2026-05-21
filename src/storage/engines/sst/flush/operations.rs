@@ -23,12 +23,12 @@ use anyhow::{Context, Result};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::sst::SstEngine;
 use crate::storage::engines::sst::writer::SstableWriter;
 use crate::storage::transaction_coordinator::{
     StagingConfig, TransactionStageType, TransactionalOperationMetadata,
 };
+use proximadb_records::ProximaRecord;
 
 /// Low-level flush operations
 pub struct FlushOperations {
@@ -44,7 +44,7 @@ impl FlushOperations {
     /// Write vectors to SSTable using atomic operations
     pub async fn write_vectors_atomic(
         &self,
-        vectors: Vec<(String, VectorRecord)>,
+        vectors: Vec<(String, ProximaRecord)>,
         staging_url: &str,
         filename: &str,
     ) -> Result<(u64, u64)> {
@@ -68,12 +68,12 @@ impl FlushOperations {
         let mut bytes_written = 0u64;
         let mut entries_written = 0u64;
 
-        // Write vectors to SSTable
+        // Write canonical records to SSTable
         for (key, vector_record) in vectors {
-            // Serialize vector record
+            // Serialize canonical record
             let record_bytes = self
-                .serialize_vector_record(&vector_record)
-                .context("Failed to serialize vector record")?;
+                .serialize_proxima_record(&vector_record)
+                .context("Failed to serialize canonical record")?;
 
             // Write key-value pair to SSTable
             self.write_record_to_sstable(&writer, &key, &record_bytes)
@@ -144,10 +144,10 @@ impl FlushOperations {
             .context("Failed to abort atomic flush operation")
     }
 
-    /// Serialize vector record to bytes
-    fn serialize_vector_record(&self, record: &VectorRecord) -> Result<Vec<u8>> {
+    /// Serialize canonical record to bytes
+    fn serialize_proxima_record(&self, record: &ProximaRecord) -> Result<Vec<u8>> {
         // Use efficient serialization format
-        serde_json::to_vec(record).context("Failed to serialize vector record")
+        serde_json::to_vec(record).context("Failed to serialize canonical record")
     }
 
     /// Write record to SSTable (simplified implementation)
@@ -199,7 +199,7 @@ impl FlushOperations {
     /// Validate flush preconditions
     pub fn validate_flush_preconditions(
         &self,
-        vectors: &[(String, VectorRecord)],
+        vectors: &[(String, ProximaRecord)],
         storage_url: &str,
     ) -> Result<()> {
         if vectors.is_empty() {
@@ -216,7 +216,11 @@ impl FlushOperations {
                 return Err(anyhow::anyhow!("Vector key cannot be empty"));
             }
 
-            if record.vector.is_empty() {
+            if record
+                .embeddings
+                .first()
+                .is_none_or(|embedding| embedding.values.is_empty())
+            {
                 return Err(anyhow::anyhow!("Vector values cannot be empty"));
             }
         }
@@ -232,6 +236,7 @@ mod tests {
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::sst::SstConfig;
     use crate::storage::persistence::filesystem::FilesystemFactory;
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
     #[tokio::test]
     async fn test_validate_flush_preconditions() {
         let engine = create_test_engine().await;
@@ -286,16 +291,18 @@ mod tests {
             .unwrap()
     }
 
-    fn create_test_vector(id: &str, vector: Vec<f32>) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector,
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(12345),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
+    fn create_test_vector(id: &str, vector: Vec<f32>) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.to_string(),
+            created_at_ns: 12_345_000_000,
+            updated_at_ns: 12_345_000_000,
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "vector".to_string(),
+                dim: vector.len() as u32,
+                values: vector,
+            }],
+            ..Default::default()
         }
     }
 }

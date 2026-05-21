@@ -554,22 +554,28 @@ impl FederatedExecutor {
         }
 
         if let Some(vector_ops) = &self.vector_operations_service {
+            let collection_id = if let Some(collection_service) = &self.collection_service {
+                collection_service
+                    .collection(collection)
+                    .await?
+                    .map(|resolved| resolved.id)
+                    .unwrap_or_else(|| collection.to_string())
+            } else {
+                collection.to_string()
+            };
+
             let request = crate::proto::proximadb_v1::VectorSearchRequest {
-                collection_id: collection.to_string(),
+                collection_id,
                 queries: vec![crate::proto::proximadb_v1::SearchQuery {
                     vector: query_vector,
                     filters: std::collections::HashMap::new(),
                     advanced_filter: None,
                 }],
                 top_k: top_k as u32,
-                include_fields: Some(crate::proto::proximadb_v1::IncludeFields {
-                    vector: false,
-                    metadata: false,
-                    score: true,
-                    rank: false,
-                    source: false,
-                    source_options: Default::default(),
-                }),
+                // Match the v2 record-search default path. Supplying
+                // include_fields with both vector and metadata disabled can
+                // bypass WAL-visible rows in the legacy compatibility search.
+                include_fields: None,
                 search_params: None,
                 distance_metric_override: None,
                 search_optimization: None,

@@ -20,6 +20,9 @@ use crate::catalog::CatalogManager;
 use crate::query::authority_context::{AuthoritySource, resolve_catalog_authority_context};
 use crate::query::explain::StorageAuthorityExplanation;
 use crate::query::multimodal::plan::PlanContext;
+use crate::query::unified::uql::{
+    ComparisonOperator, Condition, SelectStatement, UQLParser, UQLStatement, Value,
+};
 use crate::query::{
     ParameterValue, PreparedStatementCache, PreparedStatementConfig, PreparedStatementError,
     QueryFacadeAdapter,
@@ -100,6 +103,280 @@ fn proxima_values_to_params(values: Option<Vec<ProximaValue>>) -> Vec<ParameterV
         .iter()
         .map(proxima_value_to_param)
         .collect()
+}
+
+fn proxima_value_to_f32_vector(value: &ProximaValue) -> Option<Vec<f32>> {
+    match value {
+        ProximaValue::DenseVector(values) => Some(values.clone()),
+        ProximaValue::Array(values) => values
+            .iter()
+            .map(|value| match value {
+                ProximaValue::Float16(v) | ProximaValue::Float32(v) => Some(*v),
+                ProximaValue::Float64(v) => Some(*v as f32),
+                ProximaValue::Int8(v) => Some(*v as f32),
+                ProximaValue::Int16(v) => Some(*v as f32),
+                ProximaValue::Int32(v) => Some(*v as f32),
+                ProximaValue::Int64(v) => Some(*v as f32),
+                ProximaValue::UInt8(v) => Some(*v as f32),
+                ProximaValue::UInt16(v) => Some(*v as f32),
+                ProximaValue::UInt32(v) => Some(*v as f32),
+                ProximaValue::UInt64(v) => Some(*v as f32),
+                _ => None,
+            })
+            .collect(),
+        _ => None,
+    }
+}
+
+fn sql_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+fn proxima_value_to_sql_literal(value: &ProximaValue) -> Result<String> {
+    match value {
+        ProximaValue::String(value) | ProximaValue::Symbol(value) => Ok(sql_quote(value)),
+        ProximaValue::Int8(value) => Ok(value.to_string()),
+        ProximaValue::Int16(value) => Ok(value.to_string()),
+        ProximaValue::Int32(value) => Ok(value.to_string()),
+        ProximaValue::Int64(value) => Ok(value.to_string()),
+        ProximaValue::UInt8(value) => Ok(value.to_string()),
+        ProximaValue::UInt16(value) => Ok(value.to_string()),
+        ProximaValue::UInt32(value) => Ok(value.to_string()),
+        ProximaValue::UInt64(value) => Ok(value.to_string()),
+        ProximaValue::Float16(value) | ProximaValue::Float32(value) => Ok(value.to_string()),
+        ProximaValue::Float64(value) => Ok(value.to_string()),
+        ProximaValue::Boolean(value) => Ok(if *value { "TRUE" } else { "FALSE" }.to_string()),
+        ProximaValue::DenseVector(values) => Ok(sql_quote(&serde_json::to_string(values)?)),
+        ProximaValue::Array(values) => {
+            if let Some(vector) = proxima_value_to_f32_vector(value) {
+                Ok(sql_quote(&serde_json::to_string(&vector)?))
+            } else {
+                Ok(sql_quote(&serde_json::to_string(&proxima_value_to_json(
+                    &ProximaValue::Array(values.clone()),
+                ))?))
+            }
+        }
+        ProximaValue::Json(value) | ProximaValue::Jsonb(value) => {
+            Ok(sql_quote(&serde_json::to_string(value)?))
+        }
+        ProximaValue::Map(_) | ProximaValue::Struct(_) => Ok(sql_quote(&serde_json::to_string(
+            &proxima_value_to_json(value),
+        )?)),
+        ProximaValue::Null => Ok("NULL".to_string()),
+        other => Ok(sql_quote(&format!("{other:?}"))),
+    }
+}
+
+fn bind_federated_sql_parameters(query: &str, parameters: &[ProximaValue]) -> Result<String> {
+    if parameters.is_empty() {
+        return Ok(query.to_string());
+    }
+
+    let mut bound = String::with_capacity(query.len());
+    let mut chars = query.chars().peekable();
+    let mut in_single_quote = false;
+    let mut param_index = 0usize;
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' => {
+                bound.push(ch);
+                if in_single_quote && chars.peek() == Some(&'\'') {
+                    if let Some(escaped) = chars.next() {
+                        bound.push(escaped);
+                    }
+                } else {
+                    in_single_quote = !in_single_quote;
+                }
+            }
+            '?' if !in_single_quote => {
+                let value = parameters.get(param_index).ok_or_else(|| {
+                    anyhow!(
+                        "federated query has more placeholders than provided parameters: missing parameter {}",
+                        param_index + 1
+                    )
+                })?;
+                bound.push_str(&proxima_value_to_sql_literal(value)?);
+                param_index += 1;
+            }
+            _ => bound.push(ch),
+        }
+    }
+
+    if param_index != parameters.len() {
+        return Err(anyhow!(
+            "federated query received {} parameters but only used {} placeholders",
+            parameters.len(),
+            param_index
+        ));
+    }
+
+    Ok(bound)
+}
+
+fn value_to_filter_literal(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(format!("\"{}\"", value.replace('"', "\\\""))),
+        Value::Integer(value) => Some(value.to_string()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Boolean(value) => Some(value.to_string()),
+        Value::Null => Some("null".to_string()),
+        _ => None,
+    }
+}
+
+fn comparison_operator_to_filter(operator: &ComparisonOperator) -> Option<&'static str> {
+    match operator {
+        ComparisonOperator::Eq => Some("="),
+        ComparisonOperator::Ne => Some("!="),
+        ComparisonOperator::Lt => Some("<"),
+        ComparisonOperator::Lte => Some("<="),
+        ComparisonOperator::Gt => Some(">"),
+        ComparisonOperator::Gte => Some(">="),
+        ComparisonOperator::Like | ComparisonOperator::Contains => Some("CONTAINS"),
+        _ => None,
+    }
+}
+
+fn document_filter_from_select(select: &SelectStatement) -> Result<String> {
+    let Some(where_clause) = &select.where_clause else {
+        return Ok(String::new());
+    };
+
+    if where_clause.logic != crate::query::unified::uql::LogicOperator::And {
+        return Err(anyhow!(
+            "UQL document lowering currently supports AND filters only"
+        ));
+    }
+
+    let mut parts = Vec::new();
+    for condition in &where_clause.conditions {
+        match condition {
+            Condition::JsonPath {
+                path,
+                operator,
+                value,
+            }
+            | Condition::Comparison {
+                field: path,
+                operator,
+                value,
+            } => {
+                let op = comparison_operator_to_filter(operator).ok_or_else(|| {
+                    anyhow!(
+                        "UQL document lowering does not support operator {:?}",
+                        operator
+                    )
+                })?;
+                let value = value_to_filter_literal(value).ok_or_else(|| {
+                    anyhow!("UQL document lowering only supports scalar filter values")
+                })?;
+                let field = path.strip_prefix("$.").unwrap_or(path);
+                parts.push(format!("{field} {op} {value}"));
+            }
+            other => {
+                return Err(anyhow!(
+                    "UQL document lowering does not support condition {:?}",
+                    other
+                ));
+            }
+        }
+    }
+
+    Ok(parts.join(" AND "))
+}
+
+fn uql_to_federated_sql(
+    query: &str,
+    parameters: &[ProximaValue],
+    request_limit: Option<u32>,
+) -> Result<Option<String>> {
+    let mut parser = UQLParser::new();
+    let statement = match parser.parse(query) {
+        Ok(statement) => statement,
+        Err(_) => return Ok(None),
+    };
+
+    let select = match statement {
+        UQLStatement::Select(select) => select,
+        UQLStatement::Explain(inner) => match *inner {
+            UQLStatement::Select(select) => select,
+            _ => {
+                return Err(anyhow!(
+                    "UQL EXPLAIN lowering currently supports SELECT statements only"
+                ));
+            }
+        },
+        UQLStatement::MultiModal(_) => {
+            return Err(anyhow!(
+                "UQL MULTIMODAL lowering is not yet wired to FederatedQueryContext"
+            ));
+        }
+    };
+
+    let limit = request_limit.or(select.limit).unwrap_or(10);
+    match select.from.model {
+        proximadb_data_model::DataModel::Vector => {
+            let query_param = select
+                .where_clause
+                .as_ref()
+                .and_then(|where_clause| {
+                    where_clause
+                        .conditions
+                        .iter()
+                        .find_map(|condition| match condition {
+                            Condition::VectorSimilar { query_param, .. }
+                            | Condition::VectorDistance { query_param, .. } => Some(*query_param),
+                            _ => None,
+                        })
+                })
+                .ok_or_else(|| {
+                    anyhow!(
+                        "UQL vector queries require VECTOR_SIMILAR(...) or VECTOR_DISTANCE(...)"
+                    )
+                })?;
+            let vector = parameters
+                .get(query_param)
+                .and_then(proxima_value_to_f32_vector)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "UQL vector query parameter ${} must be a numeric vector",
+                        query_param + 1
+                    )
+                })?;
+            if vector.is_empty() {
+                return Err(anyhow!("UQL vector query parameter cannot be empty"));
+            }
+            let vector_json = serde_json::to_string(&vector)?;
+            Ok(Some(format!(
+                "SELECT * FROM VECTOR_SEARCH({}, {}, {})",
+                sql_quote(&select.from.collection),
+                sql_quote(&vector_json),
+                limit
+            )))
+        }
+        proximadb_data_model::DataModel::Document => {
+            let filter = document_filter_from_select(&select)?;
+            Ok(Some(format!(
+                "SELECT * FROM DOCUMENT_QUERY({}, {}) LIMIT {}",
+                sql_quote(&select.from.collection),
+                sql_quote(&filter),
+                limit
+            )))
+        }
+        proximadb_data_model::DataModel::Observability => Ok(Some(format!(
+            "SELECT * FROM LOGS({}) LIMIT {}",
+            sql_quote(&select.from.collection),
+            limit
+        ))),
+        proximadb_data_model::DataModel::Graph => Err(anyhow!(
+            "UQL graph SELECT lowering requires GRAPH_QUERY(...) support; use federated GRAPH_QUERY SQL for now"
+        )),
+        other => Err(anyhow!(
+            "UQL lowering does not support data model {:?} through the federated executor",
+            other
+        )),
+    }
 }
 
 // ── Port implementation ───────────────────────────────────────────────────────
@@ -289,12 +566,16 @@ impl UnifiedQueryPort for UnifiedQueryPortImpl {
             "execute_unified_query: {}",
             query.chars().take(120).collect::<String>()
         );
-        // Parameters are interpolated by the caller or passed inline in the SQL string;
-        // QueryFacadeAdapter::federated_query accepts a fully-formed SQL/query string.
-        let _ = proxima_values_to_params(parameters); // reserved for future parameterised execution
+        let parameters = parameters.unwrap_or_default();
+        let federated_query = match uql_to_federated_sql(&query, &parameters, limit)
+            .with_context(|| format!("UQL lowering failed for query '{}'", query))?
+        {
+            Some(lowered) => lowered,
+            None => bind_federated_sql_parameters(&query, &parameters)?,
+        };
         let result = self
             .adapter
-            .federated_query(&query)
+            .federated_query(&federated_query)
             .await
             .context("federated_query failed")?;
         Self::result_to_json(result, limit)
@@ -335,7 +616,8 @@ impl UnifiedQueryPort for UnifiedQueryPortImpl {
         if query.trim().is_empty() {
             return Err(anyhow!("query cannot be empty"));
         }
-        let _ = proxima_values_to_params(parameters);
+        let parameters = parameters.unwrap_or_default();
+        let query = bind_federated_sql_parameters(&query, &parameters)?;
         debug!(
             "execute_federated_query: {}",
             query.chars().take(120).collect::<String>()
@@ -571,6 +853,124 @@ mod tests {
             proxima_value_to_param(&value),
             ParameterValue::Json(_)
         ));
+    }
+
+    #[test]
+    fn test_uql_vector_select_lowers_to_federated_vector_search() {
+        let sql = uql_to_federated_sql(
+            "SELECT * FROM vectors.products WHERE VECTOR_SIMILAR(embedding, ?, 0.8) LIMIT 7",
+            &[ProximaValue::Array(vec![
+                ProximaValue::Float64(0.1),
+                ProximaValue::Float64(0.2),
+                ProximaValue::Float64(0.3),
+            ])],
+            None,
+        )
+        .expect("lowering should succeed")
+        .expect("query should lower");
+
+        assert_eq!(
+            sql,
+            "SELECT * FROM VECTOR_SEARCH('products', '[0.1,0.2,0.3]', 7)"
+        );
+    }
+
+    #[test]
+    fn test_uql_vector_select_uses_request_limit_override() {
+        let sql = uql_to_federated_sql(
+            "SELECT * FROM vectors.products WHERE VECTOR_SIMILAR(embedding, ?, 0.8) LIMIT 7",
+            &[ProximaValue::DenseVector(vec![0.1, 0.2])],
+            Some(3),
+        )
+        .expect("lowering should succeed")
+        .expect("query should lower");
+
+        assert_eq!(
+            sql,
+            "SELECT * FROM VECTOR_SEARCH('products', '[0.1,0.2]', 3)"
+        );
+    }
+
+    #[test]
+    fn test_uql_document_select_lowers_to_document_query() {
+        let sql = uql_to_federated_sql(
+            "SELECT * FROM docs.orders WHERE $.status = 'pending' LIMIT 5",
+            &[],
+            None,
+        )
+        .expect("lowering should succeed")
+        .expect("query should lower");
+
+        assert_eq!(
+            sql,
+            "SELECT * FROM DOCUMENT_QUERY('orders', 'status = \"pending\"') LIMIT 5"
+        );
+    }
+
+    #[test]
+    fn test_non_uql_query_is_left_for_federated_sql() {
+        assert!(
+            uql_to_federated_sql(
+                "SELECT * FROM VECTOR_SEARCH('products', '[0.1]', 10)",
+                &[],
+                None
+            )
+            .expect("non-UQL parse errors should not fail")
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn test_bind_federated_sql_parameters_vector_and_limit() {
+        let sql = bind_federated_sql_parameters(
+            "SELECT * FROM VECTOR_SEARCH('products', ?, ?)",
+            &[
+                ProximaValue::DenseVector(vec![0.1, 0.2, 0.3]),
+                ProximaValue::Int64(5),
+            ],
+        )
+        .expect("parameters should bind");
+
+        assert_eq!(
+            sql,
+            "SELECT * FROM VECTOR_SEARCH('products', '[0.1,0.2,0.3]', 5)"
+        );
+    }
+
+    #[test]
+    fn test_bind_federated_sql_parameters_ignores_question_marks_in_strings() {
+        let sql = bind_federated_sql_parameters(
+            "SELECT * FROM DOCUMENT_QUERY('docs', 'title = \"why?\" AND status = ?') WHERE id = ?",
+            &[ProximaValue::String("doc-1".to_string())],
+        )
+        .expect("only the placeholder outside the quoted filter should bind");
+
+        assert_eq!(
+            sql,
+            "SELECT * FROM DOCUMENT_QUERY('docs', 'title = \"why?\" AND status = ?') WHERE id = 'doc-1'"
+        );
+    }
+
+    #[test]
+    fn test_bind_federated_sql_parameters_rejects_missing_parameter() {
+        let error = bind_federated_sql_parameters(
+            "SELECT * FROM VECTOR_SEARCH('products', ?, ?)",
+            &[ProximaValue::DenseVector(vec![0.1])],
+        )
+        .expect_err("missing placeholder parameter should fail");
+
+        assert!(error.to_string().contains("missing parameter 2"));
+    }
+
+    #[test]
+    fn test_bind_federated_sql_parameters_rejects_unused_parameter() {
+        let error = bind_federated_sql_parameters(
+            "SELECT * FROM VECTOR_SEARCH('products', '[0.1]', 1)",
+            &[ProximaValue::Int64(1)],
+        )
+        .expect_err("unused parameter should fail");
+
+        assert!(error.to_string().contains("only used 0 placeholders"));
     }
 
     #[test]

@@ -9,6 +9,7 @@
 //!
 //! - **`record`** - Canonical `ProximaRecord` mapping and storage contracts
 //! - **`projection`** - Rebuildable projection contracts over canonical records
+//! - **`structural_projection`** - JSON shape/path projection profiling
 //! - **`query`** - Document query expressions (JSON path filters, full-text search)
 //! - **`index`** - Full-text indexing/projection contracts (Tantivy-based)
 //!
@@ -36,6 +37,7 @@
 pub mod projection;
 pub mod query;
 pub mod record;
+pub mod structural_projection;
 
 // Re-export common types for convenience
 pub use projection::{
@@ -47,6 +49,12 @@ pub use query::{DocumentQueryExpr, DocumentSort, PathFilter};
 pub use record::{
     CanonicalDocument, CanonicalDocumentStore, DOCUMENT_COLLECTION_PROP, DOCUMENT_RECORD_LABEL,
     DOCUMENT_TYPE_PROP, DocumentRecordKey, DocumentRecordMetadata, canonical_document_from_record,
+};
+pub use structural_projection::{
+    JsonLeafKind, JsonPathStats, JsonPresenceSummary, JsonShapeId, JsonShapeStats,
+    JsonStructuralProfile, JsonStructuralProjection, JsonStructuralProjectionMetadata,
+    JsonStructuralProjectionOptions, JsonTypedPathStripe, build_structural_projection,
+    build_structural_projection_with_options, profile_props,
 };
 
 // TODO: Move these from src/storage/document and src/schema/document

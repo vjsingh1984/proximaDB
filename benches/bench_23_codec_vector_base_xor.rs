@@ -4,9 +4,14 @@
 //! `cargo bench --bench bench_23_codec_vector_base_xor`
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use proximadb_codec::functions::{
-    vector_base_xor_decode_f32_vectors, vector_base_xor_encode_f32_vectors_with_profile,
-    vector_base_xor_profile_f32_vectors,
+use proximadb_codec::{
+    AccessTemperature, AuthorityMode, ColumnModality, CompressionBenchmarkRecord,
+    CompressionProfile, CompressionStatsProfile, LayoutHints, LossPolicy, PhysicalOrdering,
+    StorageSpecialization, WorkloadProfile,
+    functions::{
+        vector_base_xor_decode_f32_vectors, vector_base_xor_encode_f32_vectors_with_profile,
+        vector_base_xor_profile_f32_vectors,
+    },
 };
 use std::time::Duration;
 
@@ -45,6 +50,24 @@ fn bench_vector_base_xor(c: &mut Criterion) {
             profile.zero_words,
             profile.literal_words,
             !profile.should_use(MIN_SELECTION_RATIO)
+        );
+        let record = CompressionBenchmarkRecord::new(
+            "bench_23_codec_vector_base_xor",
+            dataset.name,
+            CompressionStatsProfile::from_measured_codec(
+                format!("bench_23_codec_vector_base_xor/{}", dataset.name),
+                vector_exact_profile(),
+                vector_spatial_layout(profile.dimension),
+                "VectorBaseXorEntropy",
+                true,
+                profile.raw_bytes as u64,
+                profile.encoded_bytes as u64,
+                (profile.rows * profile.dimension) as u64,
+            ),
+        );
+        eprintln!(
+            "PCX_PROFILE_JSON {}",
+            serde_json::to_string(&record).expect("profile JSON should serialize")
         );
     }
 
@@ -118,6 +141,28 @@ fn representative_datasets() -> Vec<VectorDataset> {
             rows: normalized_random_rows(ROWS, DIMENSION),
         },
     ]
+}
+
+fn vector_exact_profile() -> CompressionProfile {
+    CompressionProfile {
+        authority_mode: AuthorityMode::CanonicalRecord,
+        loss_policy: LossPolicy::ExactOnly,
+        workload_profile: WorkloadProfile::AnnRerank,
+        storage_specialization: StorageSpecialization::VectorExact,
+        hotness: AccessTemperature::Warm,
+        target_compression_ratio: Some(MIN_SELECTION_RATIO as f32),
+        ..CompressionProfile::default()
+    }
+}
+
+fn vector_spatial_layout(dimension: usize) -> LayoutHints {
+    let mut hints = LayoutHints::vector_spatial();
+    hints.modality = ColumnModality::VectorExact;
+    hints.physical_ordering = PhysicalOrdering::VectorSpatial;
+    if let Some(vector_layout) = hints.vector_layout.as_mut() {
+        vector_layout.dimension = u16::try_from(dimension).ok();
+    }
+    hints
 }
 
 fn co_located_identical_rows(rows: usize, dimension: usize) -> Vec<Vec<f32>> {

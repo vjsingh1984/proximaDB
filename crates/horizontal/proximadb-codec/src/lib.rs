@@ -12,12 +12,17 @@
 
 pub mod analysis;
 pub mod baseline;
+pub mod profiling;
 pub mod simd_analysis;
 pub mod strategy;
 pub mod types;
 
 // Top-level re-exports
 pub use baseline::functions;
+pub use profiling::{
+    CompressionBenchmarkRecord, CompressionExplainFields, CompressionStatsProfile,
+    CompressionStatsRejectedCandidate,
+};
 pub use simd_analysis::{simd_min_max_f32, simd_zero_count_f32};
 pub use strategy::{
     AccessTemperature, AuthorityMode, BlockContext, CodecDecision, CodecParameters,

@@ -17,6 +17,7 @@ use crate::network::rest::v1::handlers::AppState;
 pub enum QueryLanguage {
     Uql,
     Aql,
+    Federated,
 }
 
 #[derive(Debug, Deserialize)]
@@ -88,19 +89,33 @@ pub async fn execute_query(
         .as_ref()
         .ok_or_else(|| ApiError::Internal("Unified query port is not configured".to_string()))?;
 
-    query_port
-        .execute_unified_query(
-            request.query,
-            json_to_proxima_values(request.parameters),
-            request.collection,
-            request.limit,
-        )
-        .await
-        .map(Json)
-        .map_err(|error| {
-            error!("v2 query execution failed: {}", error);
-            ApiError::Internal(format!("Query execution failed: {}", error))
-        })
+    let result = match request.language {
+        QueryLanguage::Uql => {
+            query_port
+                .execute_unified_query(
+                    request.query,
+                    json_to_proxima_values(request.parameters),
+                    request.collection,
+                    request.limit,
+                )
+                .await
+        }
+        QueryLanguage::Federated => {
+            query_port
+                .execute_federated_query(request.query, json_to_proxima_values(request.parameters))
+                .await
+        }
+        QueryLanguage::Aql => {
+            return Err(ApiError::InvalidArgument(
+                "AQL text execution is not yet exposed on /api/v2/query; submit UQL or federated SQL extensions".to_string(),
+            ));
+        }
+    };
+
+    result.map(Json).map_err(|error| {
+        error!("v2 query execution failed: {}", error);
+        ApiError::Internal(format!("Query execution failed: {}", error))
+    })
 }
 
 /// POST /api/v2/query/explain
@@ -154,5 +169,16 @@ mod tests {
 
         assert_eq!(request.language, QueryLanguage::Aql);
         assert!(request.collection.is_none());
+    }
+
+    #[test]
+    fn parses_federated_request() {
+        let request: QueryRequest = serde_json::from_value(serde_json::json!({
+            "language": "federated",
+            "query": "SELECT * FROM VECTOR_SEARCH('items', '[0.1,0.2]', 10)"
+        }))
+        .expect("request should parse");
+
+        assert_eq!(request.language, QueryLanguage::Federated);
     }
 }

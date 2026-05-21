@@ -3016,7 +3016,7 @@ class ProximaDBClient:
         collection: Optional[str] = None,
         limit: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Execute an AQL or UQL query through the OpenAPI v2 query surface."""
+        """Execute an AQL, UQL, or federated SQL-extension query."""
         payload: Dict[str, Any] = {"language": language, "query": query}
         if parameters is not None:
             payload["parameters"] = parameters
@@ -3072,6 +3072,23 @@ class ProximaDBClient:
         return self.execute_query(
             query,
             language="aql",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def execute_federated(
+        self,
+        query: str,
+        *,
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute federated SQL extensions through the OpenAPI v2 query surface."""
+        return self.execute_query(
+            query,
+            language="federated",
             parameters=parameters,
             collection=collection,
             limit=limit,

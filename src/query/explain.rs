@@ -26,12 +26,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use proximadb_catalog::{
-    CatalogPhysicalFormat, CatalogProjection, CatalogStorageLayout, CatalogTableSchema,
-    RelationalCapabilities,
+    CatalogCompressionRejectedCandidate, CatalogCompressionStatsProfile, CatalogPhysicalFormat,
+    CatalogProjection, CatalogStorageLayout, CatalogTableSchema, RelationalCapabilities,
 };
 
 use crate::query::multimodal::plan::{
-    PlanContext, ResolvedObjectContext, ResolvedProjectionContext, ResolvedStorageLayoutContext,
+    PlanContext, ResolvedCompressionRejectedCandidateContext,
+    ResolvedCompressionStatsProfileContext, ResolvedObjectContext, ResolvedProjectionContext,
+    ResolvedStorageLayoutContext,
 };
 // TODO: Move to proximadb-graph crate
 // For now, use local definitions
@@ -182,6 +184,9 @@ pub struct StorageAuthorityExplanation {
     pub projections: Vec<ProjectionExplanation>,
     /// Optional relational integrity and transaction capabilities.
     pub relational_capabilities: RelationalCapabilityExplanation,
+    /// Cataloged codec/layout profiling records available to the planner.
+    #[serde(default)]
+    pub compression_profiles: Vec<CompressionProfileExplanation>,
     /// Fallback behavior when a preferred projection is stale, missing, or lossy.
     pub fallback_behavior: String,
 }
@@ -205,12 +210,19 @@ impl StorageAuthorityExplanation {
             .flat_map(|object| object.projections.iter())
             .map(ProjectionExplanation::from)
             .collect();
+        let compression_profiles = context
+            .resolved_objects
+            .iter()
+            .flat_map(|object| object.compression_stats_profiles.iter())
+            .map(CompressionProfileExplanation::from)
+            .collect();
         let fallback_behavior = fallback_behavior_from_resolved_objects(&context.resolved_objects);
 
         Some(Self {
             layouts,
             projections,
             relational_capabilities: RelationalCapabilityExplanation::default(),
+            compression_profiles,
             fallback_behavior,
         })
     }
@@ -229,6 +241,11 @@ impl StorageAuthorityExplanation {
                 .map(ProjectionExplanation::from)
                 .collect(),
             relational_capabilities: RelationalCapabilityExplanation::default(),
+            compression_profiles: object
+                .compression_stats_profiles
+                .iter()
+                .map(CompressionProfileExplanation::from)
+                .collect(),
             fallback_behavior: object.fallback_behavior.clone(),
         }
     }
@@ -238,6 +255,7 @@ impl StorageAuthorityExplanation {
         Self::from_catalog_metadata(
             &schema.storage_layouts,
             &schema.projections,
+            &schema.compression_stats_profiles,
             &schema.relational_capabilities,
         )
     }
@@ -246,6 +264,7 @@ impl StorageAuthorityExplanation {
     pub fn from_catalog_metadata(
         layouts: &[CatalogStorageLayout],
         projections: &[CatalogProjection],
+        compression_profiles: &[CatalogCompressionStatsProfile],
         relational_capabilities: &RelationalCapabilities,
     ) -> Self {
         let fallback_behavior = if projections.iter().any(|projection| !projection.rebuildable) {
@@ -269,6 +288,10 @@ impl StorageAuthorityExplanation {
                 .map(ProjectionExplanation::from)
                 .collect(),
             relational_capabilities: RelationalCapabilityExplanation::from(relational_capabilities),
+            compression_profiles: compression_profiles
+                .iter()
+                .map(CompressionProfileExplanation::from)
+                .collect(),
             fallback_behavior,
         }
     }
@@ -372,6 +395,110 @@ pub struct ProjectionExplanation {
     /// no RTO estimate has been benchmarked or cataloged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rebuild_rto_seconds_per_10gb: Option<f64>,
+}
+
+/// Codec/layout profiling feedback row for EXPLAIN output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompressionProfileExplanation {
+    pub profile_id: String,
+    pub layout_name: Option<String>,
+    pub projection_id: Option<String>,
+    pub selected_scheme: String,
+    pub raw_bytes: u64,
+    pub encoded_bytes: u64,
+    pub value_count: u64,
+    pub measured_ratio: f64,
+    pub exact_reconstruction: bool,
+    pub encode_cpu_ms_per_block: Option<f64>,
+    pub decode_ns_per_value: Option<f64>,
+    #[serde(default)]
+    pub rejected_candidates: Vec<CompressionRejectedCandidateExplanation>,
+}
+
+impl CompressionProfileExplanation {
+    pub fn bytes_per_value(&self) -> f64 {
+        if self.value_count == 0 {
+            0.0
+        } else {
+            self.encoded_bytes as f64 / self.value_count as f64
+        }
+    }
+}
+
+impl From<&CatalogCompressionStatsProfile> for CompressionProfileExplanation {
+    fn from(profile: &CatalogCompressionStatsProfile) -> Self {
+        Self {
+            profile_id: profile.profile_id.clone(),
+            layout_name: profile.layout_name.clone(),
+            projection_id: profile.projection_id.clone(),
+            selected_scheme: profile.selected_scheme.clone(),
+            raw_bytes: profile.raw_bytes,
+            encoded_bytes: profile.encoded_bytes,
+            value_count: profile.value_count,
+            measured_ratio: profile.measured_ratio,
+            exact_reconstruction: profile.exact_reconstruction,
+            encode_cpu_ms_per_block: profile.encode_cpu_ms_per_block,
+            decode_ns_per_value: profile.decode_ns_per_value,
+            rejected_candidates: profile
+                .rejected_candidates
+                .iter()
+                .map(CompressionRejectedCandidateExplanation::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<&ResolvedCompressionStatsProfileContext> for CompressionProfileExplanation {
+    fn from(profile: &ResolvedCompressionStatsProfileContext) -> Self {
+        Self {
+            profile_id: profile.profile_id.clone(),
+            layout_name: profile.layout_name.clone(),
+            projection_id: profile.projection_id.clone(),
+            selected_scheme: profile.selected_scheme.clone(),
+            raw_bytes: profile.raw_bytes,
+            encoded_bytes: profile.encoded_bytes,
+            value_count: profile.value_count,
+            measured_ratio: profile.measured_ratio,
+            exact_reconstruction: profile.exact_reconstruction,
+            encode_cpu_ms_per_block: profile.encode_cpu_ms_per_block,
+            decode_ns_per_value: profile.decode_ns_per_value,
+            rejected_candidates: profile
+                .rejected_candidates
+                .iter()
+                .map(CompressionRejectedCandidateExplanation::from)
+                .collect(),
+        }
+    }
+}
+
+/// Rejected codec candidate surfaced in EXPLAIN.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompressionRejectedCandidateExplanation {
+    pub scheme: String,
+    pub reason: String,
+    pub expected_ratio: Option<f32>,
+}
+
+impl From<&CatalogCompressionRejectedCandidate> for CompressionRejectedCandidateExplanation {
+    fn from(candidate: &CatalogCompressionRejectedCandidate) -> Self {
+        Self {
+            scheme: candidate.scheme.clone(),
+            reason: candidate.reason.clone(),
+            expected_ratio: candidate.expected_ratio,
+        }
+    }
+}
+
+impl From<&ResolvedCompressionRejectedCandidateContext>
+    for CompressionRejectedCandidateExplanation
+{
+    fn from(candidate: &ResolvedCompressionRejectedCandidateContext) -> Self {
+        Self {
+            scheme: candidate.scheme.clone(),
+            reason: candidate.reason.clone(),
+            expected_ratio: candidate.expected_ratio,
+        }
+    }
 }
 
 impl From<&CatalogProjection> for ProjectionExplanation {
@@ -1541,8 +1668,9 @@ pub enum WarningSeverity {
 mod tests {
     use super::*;
     use proximadb_catalog::{
-        CatalogPhysicalFormat, CatalogProjection, CatalogProjectionKind, CatalogStorageLayout,
-        CatalogStorageLayoutKind, CatalogTableSchema, RelationalCapabilities,
+        CatalogCompressionRejectedCandidate, CatalogCompressionStatsProfile, CatalogPhysicalFormat,
+        CatalogProjection, CatalogProjectionKind, CatalogStorageLayout, CatalogStorageLayoutKind,
+        CatalogTableSchema, RelationalCapabilities,
     };
 
     #[test]
@@ -1755,6 +1883,18 @@ mod tests {
             ))
             .with_storage_layout(parquet_lake)
             .with_projection(vector_projection)
+            .with_compression_stats_profile(
+                CatalogCompressionStatsProfile::new(
+                    "bench/vector/base_xor",
+                    "VectorBaseXorEntropy",
+                    1024,
+                    256,
+                    128,
+                    true,
+                )
+                .with_layout_name("pax_hot")
+                .with_projection_id("semantic_ann"),
+            )
             .with_relational_capabilities(RelationalCapabilities {
                 primary_key: vec!["event_id".to_string()],
                 transaction_profile: Some("mvcc".to_string()),
@@ -1765,6 +1905,12 @@ mod tests {
 
         assert_eq!(authority.layouts.len(), 3);
         assert_eq!(authority.projections.len(), 1);
+        assert_eq!(authority.compression_profiles.len(), 1);
+        assert_eq!(
+            authority.compression_profiles[0].selected_scheme,
+            "VectorBaseXorEntropy"
+        );
+        assert_eq!(authority.compression_profiles[0].bytes_per_value(), 2.0);
         assert!(!authority.policy_safe_inside_proxima());
         assert!(authority.fallback_behavior.contains("canonical records"));
         assert!(authority.relational_capabilities.has_enforced_semantics);
@@ -1806,6 +1952,22 @@ mod tests {
             freshness_state: Some("Fresh".to_string()),
             rebuild_rto_seconds_per_10gb: Some(45.0),
         });
+        object.compression_stats_profiles.push(
+            crate::query::multimodal::plan::ResolvedCompressionStatsProfileContext {
+                profile_id: "bench/vector/base_xor".to_string(),
+                layout_name: Some("pax_hot".to_string()),
+                projection_id: Some("vectors_hnsw".to_string()),
+                selected_scheme: "VectorBaseXorEntropy".to_string(),
+                raw_bytes: 1024,
+                encoded_bytes: 256,
+                value_count: 128,
+                measured_ratio: 4.0,
+                exact_reconstruction: true,
+                encode_cpu_ms_per_block: None,
+                decode_ns_per_value: Some(12.0),
+                rejected_candidates: Vec::new(),
+            },
+        );
 
         let mut context = PlanContext::default();
         context.resolved_objects.push(object);
@@ -1816,7 +1978,40 @@ mod tests {
         assert_eq!(authority.layouts.len(), 1);
         assert_eq!(authority.layouts[0].layout_kind, "Pax");
         assert_eq!(authority.projections[0].kind, "VectorAnn");
+        assert_eq!(authority.compression_profiles[0].measured_ratio, 4.0);
+        assert!(authority.compression_profiles[0].exact_reconstruction);
         assert!(authority.policy_safe_inside_proxima());
+    }
+
+    #[test]
+    fn test_explain_compression_profiles_preserve_rejected_candidates() {
+        let mut profile = CatalogCompressionStatsProfile::new(
+            "bench/json/path_dictionary",
+            "Dictionary",
+            4096,
+            1024,
+            256,
+            true,
+        )
+        .with_layout_name("json_shape_order")
+        .with_projection_id("json_paths");
+        profile
+            .rejected_candidates
+            .push(CatalogCompressionRejectedCandidate {
+                scheme: "Raw".to_string(),
+                reason: "CompressionTargetMiss".to_string(),
+                expected_ratio: Some(1.0),
+            });
+
+        let explanation = CompressionProfileExplanation::from(&profile);
+
+        assert_eq!(explanation.profile_id, "bench/json/path_dictionary");
+        assert_eq!(explanation.measured_ratio, 4.0);
+        assert_eq!(explanation.rejected_candidates.len(), 1);
+        assert_eq!(
+            explanation.rejected_candidates[0].reason,
+            "CompressionTargetMiss"
+        );
     }
 
     #[test]

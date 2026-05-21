@@ -101,9 +101,14 @@ def test_rest_adapter_query_methods_delegate_to_openapi_client():
         collection="items",
         limit=5,
     )
+    federated = adapter.execute_federated(
+        "SELECT * FROM VECTOR_SEARCH('items', ?, ?)",
+        parameters=[[0.1], 5],
+    )
     plan = adapter.explain_query("SEARCH items RETURN id", language="uql")
 
     assert result == {"records": [{"id": "r1"}], "total_count": 1}
+    assert federated == {"records": [{"id": "r1"}], "total_count": 1}
     assert plan == {"plan": {"root": "scan"}}
     assert client.calls == [
         (
@@ -114,6 +119,16 @@ def test_rest_adapter_query_methods_delegate_to_openapi_client():
                 "parameters": {"tenant": "acme"},
                 "collection": "items",
                 "limit": 5,
+            },
+        ),
+        (
+            "execute_query",
+            "SELECT * FROM VECTOR_SEARCH('items', ?, ?)",
+            {
+                "language": "federated",
+                "parameters": [[0.1], 5],
+                "collection": None,
+                "limit": None,
             },
         ),
         (

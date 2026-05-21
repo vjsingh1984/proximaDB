@@ -361,6 +361,10 @@ pub struct CatalogTableSchema {
     /// to sort by series key + timestamp and apply delta-delta/XOR encoding.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observability_compression: Option<ObservabilityCompressionHint>,
+    /// Machine-readable codec/layout profiling feedback for PAX, projection,
+    /// and open-format planners.
+    #[serde(default)]
+    pub compression_stats_profiles: Vec<CatalogCompressionStatsProfile>,
     /// Schema version
     pub schema_version: i32,
     /// Table properties
@@ -393,6 +397,7 @@ impl Default for CatalogTableSchema {
             ann_filtering_policy: AnnFilteringPolicy::default(),
             props_auto_promotion: PropsAutoPromotionPolicy::default(),
             observability_compression: None,
+            compression_stats_profiles: Vec::new(),
             schema_version: 1,
             properties: HashMap::new(),
             location: None,
@@ -478,6 +483,114 @@ impl CatalogTableSchema {
     pub fn with_observability_compression(mut self, hint: ObservabilityCompressionHint) -> Self {
         self.observability_compression = Some(hint);
         self
+    }
+
+    /// Add codec/layout profiling feedback for planners and EXPLAIN.
+    pub fn with_compression_stats_profile(
+        mut self,
+        profile: CatalogCompressionStatsProfile,
+    ) -> Self {
+        self.compression_stats_profiles.push(profile);
+        self
+    }
+}
+
+/// xCatalog feedback record for one measured compression/layout profile.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CatalogCompressionStatsProfile {
+    /// Stable profile id referenced by PAX metadata, projections, and EXPLAIN fixtures.
+    pub profile_id: String,
+    /// Optional cataloged layout that produced this profile.
+    pub layout_name: Option<String>,
+    /// Optional projection/access-method that produced this profile.
+    pub projection_id: Option<String>,
+    /// Selected codec or pilot codec family.
+    pub selected_scheme: String,
+    /// Raw input bytes measured by the profiler.
+    pub raw_bytes: u64,
+    /// Encoded payload bytes measured by the profiler.
+    pub encoded_bytes: u64,
+    /// Number of logical values covered by this profile.
+    pub value_count: u64,
+    /// Measured raw/encoded ratio.
+    pub measured_ratio: f64,
+    /// Whether exact visible values can be reconstructed from the encoded payload.
+    pub exact_reconstruction: bool,
+    /// Measured encode CPU per block, if known.
+    pub encode_cpu_ms_per_block: Option<f64>,
+    /// Measured decode cost per logical value, if known.
+    pub decode_ns_per_value: Option<f64>,
+    /// Rejected alternatives and reasons.
+    #[serde(default)]
+    pub rejected_candidates: Vec<CatalogCompressionRejectedCandidate>,
+    /// Extension fields for benchmark or engine-specific metadata.
+    #[serde(default)]
+    pub properties: HashMap<String, String>,
+}
+
+impl CatalogCompressionStatsProfile {
+    pub fn new(
+        profile_id: impl Into<String>,
+        selected_scheme: impl Into<String>,
+        raw_bytes: u64,
+        encoded_bytes: u64,
+        value_count: u64,
+        exact_reconstruction: bool,
+    ) -> Self {
+        Self {
+            profile_id: profile_id.into(),
+            layout_name: None,
+            projection_id: None,
+            selected_scheme: selected_scheme.into(),
+            raw_bytes,
+            encoded_bytes,
+            value_count,
+            measured_ratio: measured_ratio(raw_bytes, encoded_bytes),
+            exact_reconstruction,
+            encode_cpu_ms_per_block: None,
+            decode_ns_per_value: None,
+            rejected_candidates: Vec::new(),
+            properties: HashMap::new(),
+        }
+    }
+
+    pub fn with_layout_name(mut self, layout_name: impl Into<String>) -> Self {
+        self.layout_name = Some(layout_name.into());
+        self
+    }
+
+    pub fn with_projection_id(mut self, projection_id: impl Into<String>) -> Self {
+        self.projection_id = Some(projection_id.into());
+        self
+    }
+
+    pub fn with_decode_ns_per_value(mut self, decode_ns_per_value: f64) -> Self {
+        self.decode_ns_per_value = Some(decode_ns_per_value);
+        self
+    }
+
+    pub fn bytes_per_value(&self) -> f64 {
+        if self.value_count == 0 {
+            0.0
+        } else {
+            self.encoded_bytes as f64 / self.value_count as f64
+        }
+    }
+}
+
+/// xCatalog rejected codec candidate recorded from profiling.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CatalogCompressionRejectedCandidate {
+    pub scheme: String,
+    pub reason: String,
+    pub expected_ratio: Option<f32>,
+}
+
+fn measured_ratio(raw_bytes: u64, encoded_bytes: u64) -> f64 {
+    if raw_bytes == 0 || encoded_bytes == 0 {
+        0.0
+    } else {
+        raw_bytes as f64 / encoded_bytes as f64
     }
 }
 
@@ -2167,6 +2280,38 @@ mod tests {
         assert_eq!(schema.projections.len(), 1);
         assert_eq!(schema.projections[0].kind, CatalogProjectionKind::FullText);
         assert!(schema.relational_capabilities.has_enforced_semantics());
+    }
+
+    #[test]
+    fn test_table_schema_persists_compression_stats_profiles() {
+        let profile = CatalogCompressionStatsProfile::new(
+            "bench_23/vector/base_xor",
+            "VectorBaseXorEntropy",
+            1_024,
+            256,
+            128,
+            true,
+        )
+        .with_layout_name("pax_vector_spatial")
+        .with_projection_id("embedding_exact")
+        .with_decode_ns_per_value(42.0);
+
+        let schema =
+            CatalogTableSchema::new("vectors").with_compression_stats_profile(profile.clone());
+
+        assert_eq!(profile.measured_ratio, 4.0);
+        assert_eq!(profile.bytes_per_value(), 2.0);
+        assert_eq!(schema.compression_stats_profiles.len(), 1);
+        assert_eq!(
+            schema.compression_stats_profiles[0]
+                .projection_id
+                .as_deref(),
+            Some("embedding_exact")
+        );
+
+        let encoded = serde_json::to_string(&schema).unwrap();
+        let decoded: CatalogTableSchema = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded.compression_stats_profiles[0], profile);
     }
 }
 

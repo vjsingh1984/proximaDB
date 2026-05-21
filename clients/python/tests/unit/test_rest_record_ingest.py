@@ -167,6 +167,23 @@ def test_execute_aql_and_explain_use_openapi_v2_query_surface():
     }
 
 
+def test_execute_federated_uses_openapi_v2_query_surface():
+    client = make_client()
+    client._make_request = Mock(return_value=JsonResponse({"records": []}))
+
+    client.execute_federated(
+        "SELECT * FROM VECTOR_SEARCH('items', ?, ?)",
+        parameters=[[0.1], 5],
+    )
+
+    assert client._make_request.call_args.args == ("POST", "/api/v2/query")
+    assert client._make_request.call_args.kwargs["json"] == {
+        "language": "federated",
+        "query": "SELECT * FROM VECTOR_SEARCH('items', ?, ?)",
+        "parameters": [[0.1], 5],
+    }
+
+
 def test_models_v2_proximarecord_normalizes_typed_fields():
     client = make_client()
     client._make_request = Mock(

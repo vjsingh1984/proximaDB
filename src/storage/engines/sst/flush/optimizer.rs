@@ -23,7 +23,7 @@ use anyhow::Result;
 use std::collections::BinaryHeap;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Flush optimizer for improving flush performance
 pub struct FlushOptimizer;
@@ -40,9 +40,9 @@ impl FlushOptimizer {
     /// which is more efficient than single O(n log n) sort when k << n.
     pub async fn optimize_multi_batch_sort(
         &self,
-        vector_records: Vec<VectorRecord>,
+        vector_records: Vec<ProximaRecord>,
         batch_ids: &[String],
-    ) -> Result<Vec<(String, VectorRecord)>> {
+    ) -> Result<Vec<(String, ProximaRecord)>> {
         let record_count = vector_records.len();
         let batch_count = batch_ids.len();
 
@@ -68,16 +68,16 @@ impl FlushOptimizer {
     /// Simple sorting for small datasets
     async fn simple_sort(
         &self,
-        vector_records: Vec<VectorRecord>,
-    ) -> Result<Vec<(String, VectorRecord)>> {
+        vector_records: Vec<ProximaRecord>,
+    ) -> Result<Vec<(String, ProximaRecord)>> {
         let mut sorted_records = Vec::with_capacity(vector_records.len());
 
         // Collect all records into Vec
         for (sequence_number, vector) in vector_records.into_iter().enumerate() {
-            let vector_id = if vector.id.is_empty() {
+            let vector_id = if vector.oid.is_empty() {
                 "".to_string()
             } else {
-                vector.id.clone()
+                vector.oid.clone()
             };
 
             // Handle append-only vectors (empty/null IDs) specially
@@ -87,10 +87,10 @@ impl FlushOptimizer {
                 vector_id
             };
 
-            // Use VectorRecord directly (no conversion overhead)
+            // Keep the optimizer on the canonical record envelope.
             let mut vector_record = vector;
-            // Store sequence_number in version field
-            vector_record.version = Some(sequence_number as u32);
+            // Preserve the legacy sequence marker in the canonical version field.
+            vector_record.record_version = sequence_number as u64;
 
             sorted_records.push((key, vector_record));
         }
@@ -103,9 +103,9 @@ impl FlushOptimizer {
     /// Multi-batch sorting with k-way merge
     async fn multi_batch_sort(
         &self,
-        vector_records: Vec<VectorRecord>,
+        vector_records: Vec<ProximaRecord>,
         batch_count: usize,
-    ) -> Result<Vec<(String, VectorRecord)>> {
+    ) -> Result<Vec<(String, ProximaRecord)>> {
         let record_count = vector_records.len();
 
         // Group vectors by their order (simulating batch grouping)
@@ -117,10 +117,10 @@ impl FlushOptimizer {
 
             for (local_idx, vector) in batch_chunk.iter().enumerate() {
                 let sequence_number = batch_idx * batch_size + local_idx;
-                let vector_id = if vector.id.is_empty() {
+                let vector_id = if vector.oid.is_empty() {
                     "".to_string()
                 } else {
-                    vector.id.clone()
+                    vector.oid.clone()
                 };
 
                 let key = if vector_id.is_empty() {
@@ -129,10 +129,10 @@ impl FlushOptimizer {
                     vector_id
                 };
 
-                // Use VectorRecord directly (no conversion overhead)
+                // Keep the optimizer on the canonical record envelope.
                 let mut vector_record = vector.clone();
-                // Store sequence_number in version field
-                vector_record.version = Some(sequence_number as u32);
+                // Preserve the legacy sequence marker in the canonical version field.
+                vector_record.record_version = sequence_number as u64;
 
                 batch_records.push((key, vector_record));
             }
@@ -149,12 +149,12 @@ impl FlushOptimizer {
     /// Perform k-way merge of sorted batch iterators
     async fn k_way_merge(
         &self,
-        mut sorted_batches: Vec<std::vec::IntoIter<(String, VectorRecord)>>,
-    ) -> Result<Vec<(String, VectorRecord)>> {
+        mut sorted_batches: Vec<std::vec::IntoIter<(String, ProximaRecord)>>,
+    ) -> Result<Vec<(String, ProximaRecord)>> {
         #[derive(Clone)]
         struct HeapItem {
             key: String,
-            record: VectorRecord,
+            record: ProximaRecord,
             batch_idx: usize,
         }
 
@@ -238,6 +238,7 @@ impl Default for FlushOptimizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_records::EmbeddingCell;
     #[tokio::test]
     async fn test_simple_sort() {
         let optimizer = FlushOptimizer::new();
@@ -290,16 +291,18 @@ mod tests {
         assert!(large_improvement <= 0.25); // Should be capped
     }
 
-    fn create_test_vector(id: &str, vector: Vec<f32>) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector,
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(12345),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
+    fn create_test_vector(id: &str, vector: Vec<f32>) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.to_string(),
+            created_at_ns: 12_345_000_000,
+            updated_at_ns: 12_345_000_000,
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "vector".to_string(),
+                dim: vector.len() as u32,
+                values: vector,
+            }],
+            ..Default::default()
         }
     }
 }

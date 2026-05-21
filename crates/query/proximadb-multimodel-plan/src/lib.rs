@@ -696,6 +696,9 @@ pub struct ResolvedObjectContext {
     pub storage_layouts: Vec<ResolvedStorageLayoutContext>,
     /// Rebuildable projections/access methods cataloged for the object.
     pub projections: Vec<ResolvedProjectionContext>,
+    /// Measured codec/layout profiling feedback cataloged for this object.
+    #[serde(default)]
+    pub compression_stats_profiles: Vec<ResolvedCompressionStatsProfileContext>,
     /// Whether the plan crosses an external policy/RLS boundary.
     pub external_policy_boundary: bool,
     /// Planner-visible fallback behavior if a projection or external mapping is unavailable.
@@ -716,6 +719,7 @@ impl ResolvedObjectContext {
             authority: ResolvedAuthorityMode::InternalCanonical,
             storage_layouts: Vec::new(),
             projections: Vec::new(),
+            compression_stats_profiles: Vec::new(),
             external_policy_boundary: false,
             fallback_behavior: "read canonical ProximaRecord storage".to_string(),
         }
@@ -768,6 +772,32 @@ pub struct ResolvedProjectionContext {
     /// None means no RTO estimate has been cataloged for this projection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rebuild_rto_seconds_per_10gb: Option<f64>,
+}
+
+/// Planner-visible compression/layout profile feedback from xCatalog.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResolvedCompressionStatsProfileContext {
+    pub profile_id: String,
+    pub layout_name: Option<String>,
+    pub projection_id: Option<String>,
+    pub selected_scheme: String,
+    pub raw_bytes: u64,
+    pub encoded_bytes: u64,
+    pub value_count: u64,
+    pub measured_ratio: f64,
+    pub exact_reconstruction: bool,
+    pub encode_cpu_ms_per_block: Option<f64>,
+    pub decode_ns_per_value: Option<f64>,
+    #[serde(default)]
+    pub rejected_candidates: Vec<ResolvedCompressionRejectedCandidateContext>,
+}
+
+/// Planner-visible rejected codec candidate.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ResolvedCompressionRejectedCandidateContext {
+    pub scheme: String,
+    pub reason: String,
+    pub expected_ratio: Option<f32>,
 }
 
 /// Execution priority
@@ -1227,6 +1257,39 @@ mod tests {
 
         assert!(resolved.is_external_authority());
         assert!(resolved.requires_policy_boundary());
+    }
+
+    #[test]
+    fn test_plan_context_carries_compression_stats_profiles() {
+        let mut resolved =
+            ResolvedObjectContext::internal_canonical("vectors", "vector", "default.vectors");
+        resolved
+            .compression_stats_profiles
+            .push(ResolvedCompressionStatsProfileContext {
+                profile_id: "bench/vector/base_xor".to_string(),
+                layout_name: Some("pax_vector_spatial".to_string()),
+                projection_id: Some("embedding_exact".to_string()),
+                selected_scheme: "VectorBaseXorEntropy".to_string(),
+                raw_bytes: 1024,
+                encoded_bytes: 256,
+                value_count: 128,
+                measured_ratio: 4.0,
+                exact_reconstruction: true,
+                encode_cpu_ms_per_block: Some(0.9),
+                decode_ns_per_value: Some(12.0),
+                rejected_candidates: vec![ResolvedCompressionRejectedCandidateContext {
+                    scheme: "Raw".to_string(),
+                    reason: "CompressionTargetMiss".to_string(),
+                    expected_ratio: Some(1.0),
+                }],
+            });
+
+        assert_eq!(resolved.compression_stats_profiles.len(), 1);
+        assert!(resolved.compression_stats_profiles[0].exact_reconstruction);
+        assert_eq!(
+            resolved.compression_stats_profiles[0].rejected_candidates[0].scheme,
+            "Raw"
+        );
     }
 
     #[test]

@@ -3478,6 +3478,23 @@ class ProximaDBClient:
             limit=limit,
         )
 
+    def execute_federated(
+        self,
+        query: str,
+        *,
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute federated SQL extensions through the OpenAPI v2 REST surface."""
+        return self.execute_query(
+            query,
+            language="federated",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
     def create_observability_namespace(
         self,
         name: str,

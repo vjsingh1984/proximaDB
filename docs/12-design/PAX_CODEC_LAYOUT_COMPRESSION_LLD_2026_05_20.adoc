@@ -376,6 +376,19 @@ Routing rules:
 * Use compressed CSR/CSC when topology epoch is fresh and queries are read-heavy.
 * EXPLAIN must show topology epoch, vertex ordering, compression scheme, freshness, and fallback.
 
+Current pilot:
+
+* `proximadb-graph::topology_codec` provides the first exact sorted-neighbor codec for CSR/CSC
+  projections. It selects `GapVarint` for non-decreasing neighbor ids when the measured ratio clears
+  the configured threshold, otherwise it stores `RawU64` and records a fallback reason.
+* `GraphTopologyProjectionMetadata` records topology epoch, direction, vertex ordering, compression,
+  edge-label split, raw/encoded bytes, and fallback reason. The projection descriptor remains
+  rebuildable and never write-authoritative.
+* `EncodedTopologyProjection` aggregates encoded adjacency lists into a CSR/CSC-style snapshot and
+  exposes exact neighbor reads. Focused traversal tests compare raw and compressed snapshots.
+* ORION live traversal still reads raw in-memory CSR arrays until the compressed projection is
+  cataloged, persisted, and freshness-gated.
+
 == LLD: JSON And Document Structural Stripes
 
 Column ID 8 `props` remains an exact fallback envelope. Document-heavy tables should gain a
@@ -403,6 +416,18 @@ Promotion rules:
   compression benefit.
 * JSON path predicates should use typed leaf stripes when fresh; otherwise they fall back to props
   blob scan.
+
+Current pilot:
+
+* `proximadb-document::structural_projection` profiles canonical `ProximaTree` props batches and
+  emits deterministic `shape_id` assignments from sorted structural signatures.
+* The projection builder selects frequent, stable non-null scalar paths into row-aligned typed
+  stripes and records frequent arrays/objects/maps/structs as presence summaries for pruning.
+* Mixed-type paths are rejected by default when type stability is required. Missing values and
+  explicit `ProximaValue::Null` remain distinguishable inside typed stripes.
+* The projection metadata always records `props` as the exact fallback envelope and keeps
+  `exact_fallback_required = true`; live PAX storage still writes column 8 msgpack props until the
+  path dictionary, catalog freshness, and read-time fallback rules are wired.
 
 == LLD: Profiling And Cost Model
 
@@ -433,6 +458,28 @@ Catalog feedback:
 * The planner reads stats to decide whether a projection is eligible for default use.
 * EXPLAIN includes selected scheme, ratio estimate, decode estimate, layout, freshness, and fallback
   reason.
+
+Current pilot:
+
+* `proximadb-codec::profiling` defines serializable `CompressionStatsProfile`,
+  `CompressionBenchmarkRecord`, rejected-candidate records, and EXPLAIN-facing compression fields.
+  The records preserve `CompressionProfile`, `LayoutHints`, selected scheme, expected/measured
+  ratio, exactness, raw/encoded bytes, value count, CPU/decode hints, and rejected alternatives.
+* `benches/bench_23_codec_vector_base_xor.rs` now emits one `PCX_PROFILE_JSON` line per benchmark
+  dataset so codec benchmark output can be captured by catalog-ingestion or CI tooling without
+  scraping Criterion's human-oriented text.
+* xCatalog `CatalogTableSchema` now carries `compression_stats_profiles` with compact
+  `CatalogCompressionStatsProfile` records for table, layout, or projection feedback. The catalog
+  type is storage/runtime agnostic and keeps codec names and rejection reasons as strings so
+  experimental schemes can be recorded before they become durable `ProximaScheme` variants.
+* Unified plan context now carries resolved compression profiles from xCatalog into
+  `ResolvedObjectContext`. `StorageAuthorityExplanation` exposes them under
+  `storage_authority.compression_profiles` with selected scheme, layout/projection id, raw and
+  encoded bytes, measured ratio, exactness, encode/decode hints, bytes per value, and rejected
+  codec candidates.
+* These records are evidence only. Runtime codec selection and EXPLAIN routing must still verify
+  freshness, loss policy, authority mode, policy boundary, and decode budget before relying on a
+  stored profile.
 
 == Progress Tracker
 
@@ -470,32 +517,33 @@ Catalog feedback:
   validated in block-format tests.
 
 | PCX-005
-| In progress
+| Done
 | Pilot lossless vector co-location and exact base-XOR entropy codec.
 | Benchmark shows ratio, decode cost, and fallback behavior on representative embedding sets;
   exact f32 bit reconstruction is tested.
 
 | PCX-006
-| Not started
+| Done
 | Introduce compressed graph CSR/CSC projection options.
 | Graph projection metadata records topology epoch, vertex order, codec, and fallback; traversal
   tests pass on raw and compressed projections.
 
 | PCX-007
-| Not started
+| Done
 | Add JSON shape/path structural stripe projection.
 | Frequent JSON paths are typed, prunable, and exact-roundtrip safe with msgpack fallback.
 
 | PCX-008
-| Not started
+| Done
 | Add profiling harness and xCatalog feedback records.
 | Benchmarks emit machine-readable stats consumed by codec selection tests and EXPLAIN fixtures.
 
 | PCX-009
-| Not started
+| Done
 | Expose compression/layout decisions in unified EXPLAIN.
-| Plans show codec, layout, compression ratio estimate, decode estimate, freshness, loss policy,
-  and rejected-route or rejected-codec reasons.
+| Plans show codec, layout/projection id, measured compression ratio, encode/decode hints,
+  exactness, and rejected-codec reasons through `storage_authority.compression_profiles`; freshness,
+  loss policy, authority mode, and policy boundary remain eligibility checks before runtime use.
 
 | PCX-010
 | Not started

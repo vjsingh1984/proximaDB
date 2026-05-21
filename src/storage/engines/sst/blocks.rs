@@ -18,27 +18,31 @@
 //!
 //! ## Status: Deprecated for Production Use
 //!
-//! Production code uses `VectorRecord` directly. This module is kept only for
-//! test compatibility. See `blocks_archive.rs` for full legacy type history.
+//! Production code uses `ProximaRecord` and ProximaBlocks directly. This module
+//! is kept only for test compatibility. See `blocks_archive.rs` for full legacy
+//! type history.
 //!
 //! ## Migration Note (TD-001)
 //! Block types (ProximaDataBlock, ProximaBlockMetadata, etc.) have been migrated to:
 //! - `storage::engines::core::formats::proximablocks`
 //!
 //! ## Future Work
-//! Migrate tests in `tests/sst/` to use VectorRecord directly, then archive this module.
+//! Migrate tests in `tests/sst/` to use canonical storage blocks directly, then
+//! archive this module.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::proto::proximadb_v1::VectorRecord;
+use crate::core::search::sql_value_filter::proxima_tree_to_json_map;
+use proximadb_records::ProximaRecord;
 
 /// SST record representation with LSM-tree metadata
 ///
 /// ## Deprecation Notice
-/// Production code has been optimized to use `VectorRecord` directly.
-/// This type is only used in tests and will be archived once tests are updated.
+/// Production code has been optimized to use `ProximaRecord`/ProximaBlocks
+/// directly. This type is only used in tests and will be archived once tests
+/// are updated.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SstRecord {
     /// Unique identifier
@@ -58,39 +62,31 @@ pub struct SstRecord {
 }
 
 impl SstRecord {
-    /// Create from VectorRecord
-    pub fn from_vector_record(record: VectorRecord, sequence_number: u64, level: u8) -> Self {
-        let metadata_json = if !record.metadata.is_empty() {
-            let mut json_map = serde_json::Map::new();
-            for (key, sql_value) in record.metadata {
-                let json_value = match sql_value.value {
-                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
-                        serde_json::Value::String(s)
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => {
-                        serde_json::Number::from_f64(f)
-                            .map_or(serde_json::Value::Null, serde_json::Value::Number)
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
-                        serde_json::Value::Bool(b)
-                    }
-                    _ => serde_json::Value::Null,
-                };
-                json_map.insert(key, json_value);
-            }
-            Some(serde_json::Value::Object(json_map))
+    /// Create from the canonical record envelope.
+    pub fn from_proxima_record(record: ProximaRecord, sequence_number: u64, level: u8) -> Self {
+        let metadata_json = if !record.props.is_empty() {
+            Some(serde_json::Value::Object(
+                proxima_tree_to_json_map(&record.props)
+                    .into_iter()
+                    .collect(),
+            ))
         } else {
             None
         };
 
+        let vector = record
+            .embeddings
+            .first()
+            .map(|embedding| embedding.values.clone());
+
         SstRecord {
-            id: record.id.clone(),
-            vector: Some(record.vector.clone()),
+            id: record.oid,
+            vector,
             metadata: metadata_json,
             sequence_number,
             level,
             is_tombstone: false,
-            timestamp: record.timestamp.unwrap_or(0) as u64,
+            timestamp: (record.created_at_ns / 1_000_000).max(0) as u64,
         }
     }
 
