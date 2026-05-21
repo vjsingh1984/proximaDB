@@ -32,6 +32,72 @@ message CollectionConfig {
   // Dual-use embedding configuration (TD-051)
   // When true, indicates the same embedding is used for retrieval AND context.
   optional bool enable_dual_use_embeddings = 24;
+
+  // Native server-side embedding configuration (in-process via proximadb-embedding).
+  // When set, Arrow Flight DoPut MAY omit the vector column; the server selects
+  // an embedding model from `embedding_config.route`, runs inference in-process,
+  // and writes the resulting vector. Records that still carry a populated vector
+  // bypass embedding and are written as-is.
+  optional EmbeddingConfig embedding_config = 25;
+}
+
+// Tier-aware embedding route. Resolved per-collection or per-tenant via the
+// tenant registry. Mirrors `proximadb_embedding::config::EmbedRoute`.
+enum EmbeddingRoute {
+  EMBEDDING_ROUTE_UNSPECIFIED = 0;
+  EMBEDDING_ROUTE_BGE_SMALL = 1;       // 384-dim, in-process — Free/Starter/Standard tiers
+  EMBEDDING_ROUTE_BGE_LARGE = 2;       // 1024-dim, in-process — Pro/Business tiers
+  EMBEDDING_ROUTE_BGE_M3 = 3;          // 1024-dim multilingual, in-process — Enterprise default
+  EMBEDDING_ROUTE_AZURE_OPENAI = 4;    // External API — Enterprise + Premium add-on
+  EMBEDDING_ROUTE_BYO = 5;             // Customer-supplied endpoint — Enterprise BYO
+}
+
+// Per-collection server-side embedding configuration. When set on a CollectionConfig,
+// Arrow Flight DoPut accepts records without a vector column; the server populates
+// it via the configured embedding route before WAL append.
+message EmbeddingConfig {
+  // Embedding model + transport selection.
+  EmbeddingRoute route = 1;
+
+  // Optional override for the chunker. Server-side chunking is enabled per-collection.
+  optional ChunkConfig chunk = 2;
+
+  // BYO endpoint metadata (only when route == EMBEDDING_ROUTE_BYO).
+  optional ByoEndpoint byo_endpoint = 3;
+}
+
+message ChunkConfig {
+  uint32 size_tokens = 1;     // Default: 256
+  float overlap_pct = 2;      // Default: 0.10
+  ChunkStrategy strategy = 3; // Default: PARAGRAPH
+}
+
+enum ChunkStrategy {
+  CHUNK_STRATEGY_UNSPECIFIED = 0;
+  CHUNK_STRATEGY_FIXED_WINDOW = 1;
+  CHUNK_STRATEGY_SLIDING_WINDOW = 2;
+  CHUNK_STRATEGY_PARAGRAPH = 3;
+  CHUNK_STRATEGY_HEADING = 4;
+}
+
+message ByoEndpoint {
+  string url = 1;
+  ByoAuth auth = 2;
+  uint32 declared_dim = 3;
+  uint32 batch_size = 4;     // Default: 32
+  uint64 timeout_ms = 5;     // Default: 10000
+}
+
+message ByoAuth {
+  oneof method {
+    string bearer_secret_ref = 1;   // Azure Key Vault / Secrets Manager ref
+    MtlsCert mtls = 2;
+  }
+}
+
+message MtlsCert {
+  string cert_ref = 1;
+  string key_ref = 2;
 }
 
 message CollectionStats {
