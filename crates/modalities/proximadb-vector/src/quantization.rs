@@ -20,6 +20,8 @@ pub mod hardware_accelerated;
 pub mod internal_types;
 pub mod product;
 pub mod scalar;
+/// 2-bit Sign-Magnitude quantizer (QuIVer, arXiv 2605.02171). 16:1 vs float32.
+pub mod sign_magnitude;
 pub mod smart_defaults;
 
 use serde::{Deserialize, Serialize};

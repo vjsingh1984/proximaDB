@@ -54,6 +54,10 @@ pub use tenant_tier::{
     TenantTierStore, Tier,
 };
 
+// Recall probe gate — gating logic for the quantized route default-on (LLD §5).
+pub mod recall_probe;
+pub use recall_probe::{ProbeConfig, ProbeOutcome, ProbeScope, ProbeState, RecallProbeGate};
+
 // Feature-gated implementations
 #[cfg(feature = "delta-lake")]
 pub mod delta;
