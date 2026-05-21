@@ -34,6 +34,55 @@ use tokio::sync::RwLock;
 
 use super::node_registry::{NodeHealth, NodeInfo, NodeRole};
 use super::shard::{PartitionConfig, PartitionStrategy, ShardId};
+use crate::catalog::tenant_tier::Tier;
+
+/// Hard-cap violation emitted by `RouteContext::check_tenant_caps`.
+///
+/// Carries the structured fields the gateway needs to render an explainable
+/// 429 (matches the AnvaiOps `BudgetExceeded.explain()` shape so the
+/// customer-facing payload is identical regardless of which side rejected).
+#[derive(Debug, Clone)]
+pub struct TenantBudgetExceeded {
+    /// Which ceiling tripped (e.g. "scan_budget_gb_hard", "ef_search_cap").
+    pub which: &'static str,
+    /// Hard-cap value from the tenant tier.
+    pub limit: f64,
+    /// Caller-requested value that exceeded the cap.
+    pub requested: f64,
+    /// Tenant the request was attributed to.
+    pub tenant_id: String,
+    /// Resolved tenant tier — surfaced in the trace and in metrics labels.
+    pub tier: Tier,
+}
+
+impl std::fmt::Display for TenantBudgetExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "tenant {} ({:?}) exceeded {}: requested={} > limit={}",
+            self.tenant_id, self.tier, self.which, self.requested, self.limit
+        )
+    }
+}
+
+impl std::error::Error for TenantBudgetExceeded {}
+
+impl TenantBudgetExceeded {
+    /// Serialise to the same JSON shape the AnvaiOps gateway emits — keeps
+    /// the customer-facing 429 payload identical whether the soft or hard
+    /// cap tripped.
+    pub fn to_explain_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "error":     "budget_exceeded",
+            "which":     self.which,
+            "limit":     self.limit,
+            "requested": self.requested,
+            "tenant_id": self.tenant_id,
+            "tier":      self.tier.prometheus_label(),
+            "hint":      "Lower scan_budget_gb / ef_search or upgrade tier.",
+        })
+    }
+}
 
 /// Configuration for the routing service
 #[derive(Debug, Clone)]
@@ -151,6 +200,18 @@ pub struct RouteContext {
 
     /// Optional request trace ID for distributed tracing
     pub trace_id: Option<String>,
+
+    /// Caller-requested scan budget in GB (LLD §1 request contract).
+    /// The router enforces the **hard** cap from `anvaiops_tenant_tier` and
+    /// rejects with `RouteError::BudgetExceeded` if this exceeds the cap.
+    /// `None` means "no soft cap from the gateway" — the tier default applies.
+    #[serde(default)]
+    pub requested_scan_gb: Option<f64>,
+
+    /// Caller-requested ef_search / beam width. Same enforcement story as
+    /// `requested_scan_gb`: hard-capped against the tier ceiling.
+    #[serde(default)]
+    pub requested_ef_search: Option<u32>,
 }
 
 impl RouteContext {
@@ -193,6 +254,60 @@ impl RouteContext {
     pub fn with_trace_id(mut self, trace_id: impl Into<String>) -> Self {
         self.trace_id = Some(trace_id.into());
         self
+    }
+
+    /// Set the requested scan budget for hard-cap enforcement against the
+    /// tenant tier ceiling.
+    pub fn with_requested_scan_gb(mut self, gb: f64) -> Self {
+        self.requested_scan_gb = Some(gb);
+        self
+    }
+
+    /// Set the requested ef_search for hard-cap enforcement.
+    pub fn with_requested_ef_search(mut self, ef: u32) -> Self {
+        self.requested_ef_search = Some(ef);
+        self
+    }
+
+    /// Apply the tenant-tier hard caps to this route context.
+    ///
+    /// Returns a structured budget-exceeded error when the request exceeds
+    /// either the scan budget or the ef_search ceiling. Callers turn that
+    /// into a `failure_class = BudgetExhausted` trace plus a 429 response
+    /// at the gateway boundary.
+    ///
+    /// Single-source-of-truth note: budget defaults must match the
+    /// `crate::catalog::tenant_tier::Tier::default_*` constants so the soft
+    /// cap (gateway, Python) and hard cap (router, Rust) never disagree.
+    pub fn check_tenant_caps(
+        &self,
+        record: &crate::catalog::tenant_tier::TenantTierRecord,
+    ) -> std::result::Result<(), TenantBudgetExceeded> {
+        if let Some(requested) = self.requested_scan_gb {
+            let limit = record.effective_scan_budget_gb();
+            if requested > limit {
+                return Err(TenantBudgetExceeded {
+                    which: "scan_budget_gb_hard",
+                    limit,
+                    requested,
+                    tenant_id: record.tenant_id.clone(),
+                    tier: record.tier,
+                });
+            }
+        }
+        if let Some(requested_ef) = self.requested_ef_search {
+            let limit = record.effective_ef_search_cap();
+            if requested_ef > limit {
+                return Err(TenantBudgetExceeded {
+                    which: "ef_search_cap",
+                    limit: f64::from(limit),
+                    requested: f64::from(requested_ef),
+                    tenant_id: record.tenant_id.clone(),
+                    tier: record.tier,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Extract the effective partition key based on context and strategy

@@ -1195,6 +1195,12 @@ pub struct TypedSearchResponse {
     pub latency_ms: u64,
     /// Request ID for tracing
     pub request_id: String,
+    /// SearchPlanTrace (LLD §10) — the per-query telemetry envelope that the
+    /// AnvaiOps gateway consumes for KRU billing and planner-v2 training.
+    /// Phase 0 emits a stub trace populated from request_id + latency; later
+    /// phases fill in the per-stage counters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_plan_trace: Option<crate::observability::search_plan_trace::SearchPlanTrace>,
 }
 
 /// POST /api/v2/collections/{collection}/search
@@ -1355,11 +1361,26 @@ pub async fn search_with_typed_filters(
                 .collect::<Result<_, ApiError>>()?;
 
             let total_matches = resp.total_found as u64;
+
+            // Build the Phase-0 SearchPlanTrace. Most fields are zero-stubbed
+            // and will be populated by later phases (planner v1 fills
+            // estimated/actual selectivity, AXIS fills block_fill_pct, etc.).
+            // The shape is the LLD §10 contract — gateway depends on it.
+            let mut trace = crate::observability::search_plan_trace::SearchPlanTrace::new(
+                request_id.clone(),
+                tenant.tenant_id.clone(),
+                collection.clone(),
+            );
+            trace.latency_ms = latency_ms as f64;
+            trace.candidate_count = results.len() as u32;
+            trace.rerank_count = results.len() as u32;
+
             let response = TypedSearchResponse {
                 results: results.clone(),
                 total_matches: Some(total_matches),
                 latency_ms,
                 request_id: request_id.clone(),
+                search_plan_trace: Some(trace),
             };
 
             info!(
@@ -2847,6 +2868,7 @@ mod tests {
             total_matches: Some(100),
             latency_ms: 5,
             request_id: "req-123".to_string(),
+            search_plan_trace: None,
         };
 
         let search_json =

@@ -71,6 +71,9 @@ pub mod audit;
 pub mod ingestion;
 /// Query engine for logs, metrics, and traces with PromQL support.
 pub mod query;
+/// SearchPlanTrace — per-query telemetry envelope feeding KRU billing and the
+/// learned planner v2 (LLD §10).
+pub mod search_plan_trace;
 /// Time-partitioned storage for observability data with WAL durability.
 pub mod storage;
 

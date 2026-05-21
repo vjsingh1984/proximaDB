@@ -21,6 +21,89 @@ pub trait CacheKey: Hash + Eq + Clone + Send + Sync + Debug + 'static {}
 impl CacheKey for String {}
 impl CacheKey for u64 {}
 
+/// Tenant-scoped cache key — enforces the LLD's multi-tenant cache isolation
+/// invariant: every cache entry must be addressable only with the tenant +
+/// collection that produced it.
+///
+/// Caches that hold tenant-derived data (result, vector, plan, hot block,
+/// batch group — see LLD §6) MUST key on this wrapper rather than on the raw
+/// inner key. Caches that hold only tenant-agnostic global data (e.g. the
+/// embedding-model byte cache) are exempt.
+///
+/// # Why a wrapper rather than rewriting every call site
+///
+/// `Hash`/`Eq` derive over the prefix tuple makes "no tenant prefix" a type
+/// error rather than a code-review hazard. Existing callers migrate at their
+/// own pace; new code must use this type.
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub struct TenantScopedKey<K>
+where
+    K: CacheKey,
+{
+    /// Tenant identifier — required, never empty.
+    pub tenant_id: String,
+    /// Collection name within the tenant's namespace — required.
+    pub collection: String,
+    /// Inner key (query digest, block id, vector id, etc.).
+    pub key: K,
+}
+
+impl<K: CacheKey> TenantScopedKey<K> {
+    /// Build a tenant-scoped cache key. Empty tenant_id or collection name is
+    /// rejected at construction so a misuse fails fast instead of silently
+    /// producing a cross-tenant key.
+    pub fn new(tenant_id: impl Into<String>, collection: impl Into<String>, key: K) -> Self {
+        let tenant_id = tenant_id.into();
+        let collection = collection.into();
+        debug_assert!(!tenant_id.is_empty(), "tenant_id must not be empty");
+        debug_assert!(!collection.is_empty(), "collection must not be empty");
+        Self {
+            tenant_id,
+            collection,
+            key,
+        }
+    }
+}
+
+impl<K: CacheKey> CacheKey for TenantScopedKey<K> {}
+
+#[cfg(test)]
+mod tenant_scoped_key_tests {
+    use super::*;
+
+    #[test]
+    fn different_tenants_produce_distinct_keys() {
+        let a = TenantScopedKey::new("tenant-a", "knowledge", "q-1".to_string());
+        let b = TenantScopedKey::new("tenant-b", "knowledge", "q-1".to_string());
+        assert_ne!(a, b);
+        // And they hash differently — guarded so cross-tenant cache collisions
+        // are impossible by construction.
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher;
+        let mut ha = DefaultHasher::new();
+        let mut hb = DefaultHasher::new();
+        a.hash(&mut ha);
+        b.hash(&mut hb);
+        assert_ne!(ha.finish(), hb.finish());
+    }
+
+    #[test]
+    fn different_collections_in_same_tenant_are_distinct() {
+        let a = TenantScopedKey::new("t", "kb-a", 7u64);
+        let b = TenantScopedKey::new("t", "kb-b", 7u64);
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    #[should_panic(expected = "tenant_id must not be empty")]
+    fn empty_tenant_panics_in_debug() {
+        // Debug-only assertion; in release builds the key would be malformed
+        // but still typed, so the higher-level audit guardrail (CDC sink) is
+        // the second line of defense.
+        let _ = TenantScopedKey::new("", "kb", "k".to_string());
+    }
+}
+
 /// Base trait for cache values
 ///
 /// Any type stored in the cache must implement this trait, which requires

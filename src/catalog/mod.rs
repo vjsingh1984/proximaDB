@@ -47,6 +47,13 @@ pub mod oltp;
 // Catalog federation (unified view across internal and external catalogs)
 pub mod federation;
 
+// Tenant tier store — per-tenant policy + budget + feature flags (LLD §3, §4).
+pub mod tenant_tier;
+pub use tenant_tier::{
+    BudgetDecision, CachedTenantTierStore, FeatureFlags, InMemoryTenantTierStore, TenantTierRecord,
+    TenantTierStore, Tier,
+};
+
 // Feature-gated implementations
 #[cfg(feature = "delta-lake")]
 pub mod delta;

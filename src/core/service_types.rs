@@ -333,7 +333,14 @@ pub struct SearchMetadata {
 }
 
 /// Index performance statistics
-#[derive(Debug, Clone)]
+///
+/// Per-query counters emitted by the search runtime. Anchors the KRU billing
+/// signal and the planner v2 training inputs (see `SearchPlanTrace` for the
+/// per-query envelope that wraps this).
+///
+/// All new fields default to zero so unimplemented features can stub-emit
+/// without changing the JSON shape consumed by AnvaiOps's `ScanStats`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct IndexStats {
     /// Total vectors in the index
     pub total_vectors: i64,
@@ -351,6 +358,32 @@ pub struct IndexStats {
     pub cache_hits: i64,
     /// Index cache misses during search
     pub cache_misses: i64,
+
+    // ── LLD trace-spine counters (Phase 0 additions; stub-zero until later phases)
+    /// Average per-block fill (0.0–1.0). Target rises above 0.30 once the
+    /// block-aware AXIS runtime lands; baseline is <0.15 per arXiv 2603.01779.
+    #[serde(default)]
+    pub block_fill_pct: f64,
+    /// Graph nodes routed through in memory without an SSD read because their
+    /// predicate failed (GateANN graph tunneling, arXiv 2603.21466). 0 until
+    /// tunneling is wired in Phase 3.
+    #[serde(default)]
+    pub tunneled_nodes: i64,
+    /// Candidates traversed in the quantized (2-bit/BQ) metric space (QuIVer
+    /// arXiv 2605.02171). 0 until the quantized route is enabled in Phase 4.
+    #[serde(default)]
+    pub quantized_hops: i64,
+    /// Record-level buffer-pool hits (VeloANN arXiv 2602.22805). Compared
+    /// against `page_hits` to validate the record-level cache wins.
+    #[serde(default)]
+    pub record_hits: i64,
+    /// Page-level cache hits, retained for comparison against `record_hits`.
+    #[serde(default)]
+    pub page_hits: i64,
+    /// Whether a catapult shortcut edge was used to pick the entry node
+    /// (CatapultDB arXiv 2603.02164). False until catapults land in Phase 7.
+    #[serde(default)]
+    pub catapult_used: bool,
 }
 
 /// Search debug information
