@@ -216,6 +216,8 @@ pub mod server;
 /// Service layer — collection management, vector operations, event log
 #[allow(missing_docs)]
 pub mod services;
+/// Async ingest scheduler with P0–P4 priority lanes (LLD §7).
+pub mod ingest;
 /// Storage engine layer — 6 engines, WAL, filesystem, cache, memtable, metadata
 #[allow(missing_docs)]
 pub mod storage;

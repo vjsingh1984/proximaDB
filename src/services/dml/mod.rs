@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use proximadb_catalog::{
     CatalogColumn, CatalogDataType, CatalogStorageLayout, CatalogTableSchema,
     CatalogTableStatistics,
@@ -689,6 +689,21 @@ impl DmlService {
     ) -> Result<TableWriteRouteExplanation> {
         self.explain_table_write_with_overrides(statement, None)
             .await
+    }
+
+    /// Plan the write and then execute it, returning the route explanation enriched with actual
+    /// wall-clock time and rows written. Used for `EXPLAIN ANALYZE <DML>`.
+    pub async fn explain_analyze_table_write(
+        &self,
+        statement: DmlStatement,
+    ) -> Result<TableWriteRouteExplanation> {
+        let mut explanation = self.explain_table_write(statement.clone()).await?;
+        let t0 = std::time::Instant::now();
+        let result = self.execute(statement).await?;
+        let elapsed_us = t0.elapsed().as_micros() as u64;
+        explanation.execution_elapsed_us = Some(elapsed_us);
+        explanation.execution_rows_written = Some(result.rows_affected);
+        Ok(explanation)
     }
 
     /// Explain table-to-table write routing with protocol/session write intent hints.
@@ -1403,6 +1418,12 @@ impl DmlService {
             records.push(record);
         }
 
+        // Compute per-column min/max and NDV from the canonical record props before moving records
+        // into mutations. Only orderable types (String, integers) tracked for min/max; floats and
+        // booleans are additionally included in the NDV pass.
+        let column_minmax = Self::compute_column_minmax_from_records(&records);
+        let column_ndv = Self::compute_column_ndv_from_records(&records);
+
         // Insert canonical records through the table-record boundary. The current
         // implementation may adapt to legacy vector paths behind that trait.
         let num_records = records.len();
@@ -1435,6 +1456,8 @@ impl DmlService {
             .await;
         self.bump_column_null_counts(table_name, columns, &null_counts_per_column)
             .await;
+        self.bump_column_minmax(table_name, column_minmax).await;
+        self.bump_column_ndv(table_name, column_ndv).await;
 
         Ok(
             DmlResult::success(num_records as u64, format!("Inserted {} rows", num_records))
@@ -1750,6 +1773,186 @@ impl DmlService {
         if let Err(e) = catalog.update_statistics(&table_id, stats).await {
             warn!(table = %table_name, error = %e, "Failed to update column-null statistics after INSERT");
         }
+    }
+
+    /// Convert a `ProximaValue` to a lexicographically sortable string for min/max tracking.
+    /// Returns `None` for types without natural total order (Null, Float, Binary, Vector, etc.).
+    fn value_to_minmax_string(value: &ProximaValue) -> Option<String> {
+        match value {
+            // Integers: zero-padded with explicit sign for correct lex order.
+            ProximaValue::Int8(v) => Some(format!("{:+020}", *v as i64)),
+            ProximaValue::Int16(v) => Some(format!("{:+020}", *v as i64)),
+            ProximaValue::Int32(v) => Some(format!("{:+020}", *v as i64)),
+            ProximaValue::Int64(v) => Some(format!("{:+020}", v)),
+            // Strings: use directly (lexicographic order is natural for text columns).
+            ProximaValue::String(s) => Some(s.clone()),
+            // Dates/timestamps stored in ISO 8601 are naturally sortable.
+            ProximaValue::Date(d) => Some(format!("{d}")),
+            // Floats, Null, Binary, Vector, Struct, etc.: skip.
+            _ => None,
+        }
+    }
+
+    /// Compute per-column min/max sortable strings from a record batch before the records
+    /// are consumed. Returns a map of column → (min_string, max_string).
+    fn compute_column_minmax_from_records(
+        records: &[ProximaRecord],
+    ) -> HashMap<String, (String, String)> {
+        let mut minmax: HashMap<String, (String, String)> = HashMap::new();
+        for record in records {
+            for (col, node) in record.props.iter() {
+                let ProximaTreeNode::Value(val) = node else {
+                    continue;
+                };
+                let Some(s) = Self::value_to_minmax_string(val) else {
+                    continue;
+                };
+                match minmax.get_mut(col) {
+                    Some((min, max)) => {
+                        if s < *min {
+                            *min = s.clone();
+                        }
+                        if s > *max {
+                            *max = s;
+                        }
+                    }
+                    None => {
+                        minmax.insert(col.clone(), (s.clone(), s));
+                    }
+                }
+            }
+        }
+        minmax
+    }
+
+    /// Merge per-column batch min/max into `CatalogTableStatistics.column_stats[col].min_value`
+    /// / `max_value`. Errors are non-fatal (logged as warnings).
+    async fn bump_column_minmax(
+        &self,
+        table_name: &str,
+        column_minmax: HashMap<String, (String, String)>,
+    ) {
+        if column_minmax.is_empty() {
+            return;
+        }
+        let Ok((catalog, table_id)) = self.catalog_manager.resolve_table(table_name).await else {
+            return;
+        };
+        let mut stats = catalog.get_statistics(&table_id).await.unwrap_or_default();
+        for (col, (batch_min, batch_max)) in column_minmax {
+            let col_stats = stats.column_stats.entry(col).or_default();
+            col_stats.min_value = Some(match col_stats.min_value.take() {
+                Some(existing) if existing <= batch_min => existing,
+                _ => batch_min,
+            });
+            col_stats.max_value = Some(match col_stats.max_value.take() {
+                Some(existing) if existing >= batch_max => existing,
+                _ => batch_max,
+            });
+        }
+        if let Err(e) = catalog.update_statistics(&table_id, stats).await {
+            warn!(table = %table_name, error = %e, "Failed to update column min/max statistics after INSERT");
+        }
+    }
+
+    /// Convert a `ProximaValue` to a string key suitable for distinct-value counting.
+    /// Covers a wider set than `value_to_minmax_string` (includes Float, Bool).
+    fn value_to_ndv_key(value: &ProximaValue) -> Option<String> {
+        match value {
+            ProximaValue::Int8(v) => Some(format!("{v}")),
+            ProximaValue::Int16(v) => Some(format!("{v}")),
+            ProximaValue::Int32(v) => Some(format!("{v}")),
+            ProximaValue::Int64(v) => Some(format!("{v}")),
+            ProximaValue::Float32(v) => Some(format!("{v}")),
+            ProximaValue::Float64(v) => Some(format!("{v}")),
+            ProximaValue::String(s) => Some(s.clone()),
+            ProximaValue::Boolean(b) => Some(if *b { "1" } else { "0" }.to_string()),
+            ProximaValue::Date(d) => Some(format!("{d}")),
+            _ => None,
+        }
+    }
+
+    /// Count distinct values per column in a batch.
+    /// Returns a map of column → distinct count within this batch.
+    fn compute_column_ndv_from_records(records: &[ProximaRecord]) -> HashMap<String, u64> {
+        let mut seen: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+        for record in records {
+            for (col, node) in record.props.iter() {
+                let ProximaTreeNode::Value(val) = node else {
+                    continue;
+                };
+                let Some(key) = Self::value_to_ndv_key(val) else {
+                    continue;
+                };
+                seen.entry(col.clone()).or_default().insert(key);
+            }
+        }
+        seen.into_iter().map(|(col, set)| (col, set.len() as u64)).collect()
+    }
+
+    /// Merge per-column distinct counts from a batch into `CatalogColumnStatistics.distinct_count`.
+    ///
+    /// Uses an additive estimate (assumes no overlap between batches), capped at the current
+    /// table row count. This matches how simple columnar stats systems seed NDV before ANALYZE.
+    /// Errors are non-fatal (logged as warnings).
+    async fn bump_column_ndv(&self, table_name: &str, ndv_per_column: HashMap<String, u64>) {
+        if ndv_per_column.is_empty() {
+            return;
+        }
+        let Ok((catalog, table_id)) = self.catalog_manager.resolve_table(table_name).await else {
+            return;
+        };
+        let mut stats = catalog.get_statistics(&table_id).await.unwrap_or_default();
+        let row_count_cap = stats.row_count.max(1);
+        for (col, batch_ndv) in ndv_per_column {
+            let col_stats = stats.column_stats.entry(col).or_default();
+            let new_ndv = col_stats.distinct_count.unwrap_or(0).saturating_add(batch_ndv);
+            col_stats.distinct_count = Some(new_ndv.min(row_count_cap));
+        }
+        if let Err(e) = catalog.update_statistics(&table_id, stats).await {
+            warn!(table = %table_name, error = %e, "Failed to update column NDV statistics after INSERT");
+        }
+    }
+
+    /// Validate a batch of `ProximaRecord`s against the xCatalog schema for `collection_name`.
+    ///
+    /// Designed for fast-lane REST/gRPC/Arrow Flight writes that arrive as pre-built records
+    /// rather than SQL literals. Silently skips validation if the collection is not registered
+    /// as a relational table (non-relational collections remain unrestricted). Returns `Err`
+    /// containing the column constraint violation message on the first failing record.
+    pub async fn validate_record_batch_against_schema(
+        &self,
+        collection_name: &str,
+        records: &[ProximaRecord],
+    ) -> Result<()> {
+        let Ok((catalog, table_id)) = self.catalog_manager.resolve_table(collection_name).await
+        else {
+            return Ok(());
+        };
+        let Ok(table_schema) = catalog.get_table(&table_id).await else {
+            return Ok(());
+        };
+        let profile = RelationalWriteProfile::fast_lane();
+        for record in records {
+            let values: HashMap<String, ProximaValue> = record
+                .props
+                .iter()
+                .filter_map(|(k, node)| {
+                    if let proximadb_records::ProximaTreeNode::Value(v) = node {
+                        Some((k.clone(), v.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            CatalogRow::validate(&table_schema, values, &profile).with_context(|| {
+                format!(
+                    "record '{}' violates schema '{}'",
+                    record.oid, collection_name
+                )
+            })?;
+        }
+        Ok(())
     }
 
     /// Build a canonical ProximaRecord from catalog schema and SQL literals.
@@ -2347,21 +2550,50 @@ impl DmlService {
                 SqlValueLiteral::Null if column.nullable => Ok(ProximaValue::Null),
                 _ => Err(anyhow!("Column '{}' expects boolean", column_name)),
             },
-            CatalogDataType::Int8 => self
-                .literal_to_i64(val)
-                .map(|v| ProximaValue::Int8(v as i8)),
-            CatalogDataType::Int16 => self
-                .literal_to_i64(val)
-                .map(|v| ProximaValue::Int16(v as i16)),
-            CatalogDataType::Int32 => self
-                .literal_to_i64(val)
-                .map(|v| ProximaValue::Int32(v as i32)),
-            CatalogDataType::Int64 => self.literal_to_i64(val).map(ProximaValue::Int64),
-            CatalogDataType::Float32 => self
-                .literal_to_f64(val)
-                .map(|v| ProximaValue::Float32(v as f32)),
-            CatalogDataType::Float64 => self.literal_to_f64(val).map(ProximaValue::Float64),
+            CatalogDataType::Int8 => {
+                if matches!(val, SqlValueLiteral::Null) && column.nullable {
+                    return Ok(ProximaValue::Null);
+                }
+                self.literal_to_i64(val)
+                    .map(|v| ProximaValue::Int8(v as i8))
+            }
+            CatalogDataType::Int16 => {
+                if matches!(val, SqlValueLiteral::Null) && column.nullable {
+                    return Ok(ProximaValue::Null);
+                }
+                self.literal_to_i64(val)
+                    .map(|v| ProximaValue::Int16(v as i16))
+            }
+            CatalogDataType::Int32 => {
+                if matches!(val, SqlValueLiteral::Null) && column.nullable {
+                    return Ok(ProximaValue::Null);
+                }
+                self.literal_to_i64(val)
+                    .map(|v| ProximaValue::Int32(v as i32))
+            }
+            CatalogDataType::Int64 => {
+                if matches!(val, SqlValueLiteral::Null) && column.nullable {
+                    return Ok(ProximaValue::Null);
+                }
+                self.literal_to_i64(val).map(ProximaValue::Int64)
+            }
+            CatalogDataType::Float32 => {
+                if matches!(val, SqlValueLiteral::Null) && column.nullable {
+                    return Ok(ProximaValue::Null);
+                }
+                self.literal_to_f64(val)
+                    .map(|v| ProximaValue::Float32(v as f32))
+            }
+            CatalogDataType::Float64 => {
+                if matches!(val, SqlValueLiteral::Null) && column.nullable {
+                    return Ok(ProximaValue::Null);
+                }
+                self.literal_to_f64(val).map(ProximaValue::Float64)
+            }
             CatalogDataType::String | CatalogDataType::Uuid => {
+                if matches!(val, SqlValueLiteral::Null) && column.nullable {
+                    return Ok(ProximaValue::Null);
+                }
                 self.literal_to_string(val).map(ProximaValue::String)
             }
             CatalogDataType::Json => {
@@ -2391,12 +2623,21 @@ impl DmlService {
                 SqlValueLiteral::Null if column.nullable => Ok(ProximaValue::Null),
                 _ => Err(anyhow!("Column '{}' expects binary", column_name)),
             },
-            CatalogDataType::Date => self
-                .literal_to_i64(val)
-                .map(|value| ProximaValue::Date(value as i32)),
-            CatalogDataType::Time => self.literal_to_i64(val).map(|value| {
-                ProximaValue::Time(value, proximadb_data_model::TimeUnit::Millisecond)
-            }),
+            CatalogDataType::Date => {
+                if matches!(val, SqlValueLiteral::Null) && column.nullable {
+                    return Ok(ProximaValue::Null);
+                }
+                self.literal_to_i64(val)
+                    .map(|value| ProximaValue::Date(value as i32))
+            }
+            CatalogDataType::Time => {
+                if matches!(val, SqlValueLiteral::Null) && column.nullable {
+                    return Ok(ProximaValue::Null);
+                }
+                self.literal_to_i64(val).map(|value| {
+                    ProximaValue::Time(value, proximadb_data_model::TimeUnit::Millisecond)
+                })
+            }
             CatalogDataType::Timestamp => self.literal_to_timestamp(val).map(|value| {
                 value
                     .map(|timestamp| {
@@ -2417,7 +2658,12 @@ impl DmlService {
                     })
                     .unwrap_or(ProximaValue::Null)
             }),
-            CatalogDataType::Decimal => self.literal_to_string(val).map(ProximaValue::Decimal),
+            CatalogDataType::Decimal => {
+                if matches!(val, SqlValueLiteral::Null) && column.nullable {
+                    return Ok(ProximaValue::Null);
+                }
+                self.literal_to_string(val).map(ProximaValue::Decimal)
+            }
             CatalogDataType::SparseVector => Err(anyhow!(
                 "Sparse vector DML literal lowering is not implemented for column '{}'",
                 column_name
@@ -3615,6 +3861,525 @@ mod tests {
         );
     }
 
+    /// T9: After INSERT with NULL in nullable columns, `scan_table_records` returns rows with
+    /// `ProximaValue::Null` for those fields, and projection produces empty string for NULL values.
+    #[tokio::test]
+    async fn insert_nullable_values_are_scannable_and_project_null_correctly() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("scan-null.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl("CREATE TABLE scan_null_tbl (id TEXT NOT NULL, tag TEXT, rating FLOAT, PRIMARY KEY (id));")
+            .expect("parse ddl")
+            .expect("ddl");
+        DdlService::new(manager.clone())
+            .execute(ddl_stmt)
+            .await
+            .expect("create table");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(DirectWalTableRecordStore::new(
+                Arc::new(MemtableRecordStorage::new()),
+                Arc::new(
+                    FramedTableWalAppender::open(&wal_path)
+                        .await
+                        .expect("open WAL"),
+                ),
+            )),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        for sql in [
+            "INSERT INTO scan_null_tbl (id, tag, rating) VALUES ('x1', NULL, 9.5);",
+            "INSERT INTO scan_null_tbl (id, tag, rating) VALUES ('x2', 'beta', NULL);",
+        ] {
+            let stmt = parser.parse_dml(sql).expect("parse").expect("dml");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        let (_schema, records) = dml
+            .scan_table_records("scan_null_tbl", None)
+            .await
+            .expect("scan");
+        assert_eq!(records.len(), 2, "two rows scanned");
+
+        let find = |oid: &str| {
+            records
+                .iter()
+                .find(|r| r.oid == oid)
+                .unwrap_or_else(|| panic!("row {oid} not found"))
+        };
+        let prop_value = |record: &ProximaRecord, col: &str| -> Option<ProximaValue> {
+            match record.props.get(col) {
+                Some(proximadb_records::ProximaTreeNode::Value(v)) => Some(v.clone()),
+                _ => None,
+            }
+        };
+        let r_x1 = find("x1");
+        assert_eq!(
+            prop_value(r_x1, "tag"),
+            Some(ProximaValue::Null),
+            "x1.tag should be Null"
+        );
+        let r_x2 = find("x2");
+        assert_eq!(
+            prop_value(r_x2, "rating"),
+            Some(ProximaValue::Null),
+            "x2.rating should be Null"
+        );
+
+        // Projection: NULL columns surface as ProximaValue::Null in SELECT output.
+        let result = dml
+            .select_table_records_with_projection(
+                "scan_null_tbl",
+                &["id".to_string(), "tag".to_string(), "rating".to_string()],
+                None,
+                &[],
+            )
+            .await
+            .expect("select");
+        let x1_id = ProximaValue::String("x1".to_string());
+        let x2_id = ProximaValue::String("x2".to_string());
+        let row_x1 = result
+            .rows
+            .iter()
+            .find(|r| r.first() == Some(&x1_id))
+            .expect("x1 row in projection");
+        // columns order: id, tag, rating → indices 0, 1, 2
+        assert_eq!(
+            row_x1.get(1),
+            Some(&ProximaValue::Null),
+            "x1.tag projects as Null"
+        );
+        let row_x2 = result
+            .rows
+            .iter()
+            .find(|r| r.first() == Some(&x2_id))
+            .expect("x2 row in projection");
+        assert_eq!(
+            row_x2.get(2),
+            Some(&ProximaValue::Null),
+            "x2.rating projects as Null"
+        );
+    }
+
+    /// T9: `IS NULL` and `IS NOT NULL` predicates correctly filter rows with `ProximaValue::Null`
+    /// versus non-null values in `scan_table_records_with_predicates`.
+    #[tokio::test]
+    async fn is_null_predicate_filters_nullable_column_rows() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("predicate-null.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE null_pred_tbl (id TEXT NOT NULL, label TEXT, PRIMARY KEY (id));",
+            )
+            .expect("parse ddl")
+            .expect("ddl");
+        DdlService::new(manager.clone())
+            .execute(ddl_stmt)
+            .await
+            .expect("create table");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(DirectWalTableRecordStore::new(
+                Arc::new(MemtableRecordStorage::new()),
+                Arc::new(
+                    FramedTableWalAppender::open(&wal_path)
+                        .await
+                        .expect("open WAL"),
+                ),
+            )),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        for sql in [
+            "INSERT INTO null_pred_tbl (id, label) VALUES ('p1', NULL);",
+            "INSERT INTO null_pred_tbl (id, label) VALUES ('p2', 'hello');",
+            "INSERT INTO null_pred_tbl (id, label) VALUES ('p3', NULL);",
+        ] {
+            let stmt = parser.parse_dml(sql).expect("parse").expect("dml");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        // IS NULL: should return p1 and p3 only.
+        let is_null_predicate = RelationalSelectPredicateInput {
+            column_name: "label".to_string(),
+            condition: RelationalSelectPredicateCondition::IsNull { negated: false },
+        };
+        let (_schema, null_rows) = dml
+            .scan_table_records_with_predicates("null_pred_tbl", None, &[is_null_predicate])
+            .await
+            .expect("scan IS NULL");
+        let null_oids: Vec<&str> = null_rows.iter().map(|r| r.oid.as_str()).collect();
+        assert!(null_oids.contains(&"p1"), "p1 must match IS NULL");
+        assert!(null_oids.contains(&"p3"), "p3 must match IS NULL");
+        assert!(!null_oids.contains(&"p2"), "p2 must not match IS NULL");
+
+        // IS NOT NULL: should return only p2.
+        let is_not_null_predicate = RelationalSelectPredicateInput {
+            column_name: "label".to_string(),
+            condition: RelationalSelectPredicateCondition::IsNull { negated: true },
+        };
+        let (_schema, not_null_rows) = dml
+            .scan_table_records_with_predicates("null_pred_tbl", None, &[is_not_null_predicate])
+            .await
+            .expect("scan IS NOT NULL");
+        let not_null_oids: Vec<&str> = not_null_rows.iter().map(|r| r.oid.as_str()).collect();
+        assert!(not_null_oids.contains(&"p2"), "p2 must match IS NOT NULL");
+        assert!(
+            !not_null_oids.contains(&"p1"),
+            "p1 must not match IS NOT NULL"
+        );
+        assert!(
+            !not_null_oids.contains(&"p3"),
+            "p3 must not match IS NOT NULL"
+        );
+    }
+
+    /// T4: NOT IN predicate via `scan_table_records_with_predicates` excludes rows whose
+    /// column value appears in the exclusion set; IN includes only rows whose value is in the set.
+    #[tokio::test]
+    async fn in_and_not_in_predicates_filter_correctly() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("in-pred.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl("CREATE TABLE in_pred_tbl (id TEXT NOT NULL, status TEXT NOT NULL, PRIMARY KEY (id));")
+            .expect("parse ddl")
+            .expect("ddl");
+        DdlService::new(manager.clone())
+            .execute(ddl_stmt)
+            .await
+            .expect("create table");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(DirectWalTableRecordStore::new(
+                Arc::new(MemtableRecordStorage::new()),
+                Arc::new(
+                    FramedTableWalAppender::open(&wal_path)
+                        .await
+                        .expect("open WAL"),
+                ),
+            )),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        for sql in [
+            "INSERT INTO in_pred_tbl (id, status) VALUES ('i1', 'active');",
+            "INSERT INTO in_pred_tbl (id, status) VALUES ('i2', 'inactive');",
+            "INSERT INTO in_pred_tbl (id, status) VALUES ('i3', 'pending');",
+            "INSERT INTO in_pred_tbl (id, status) VALUES ('i4', 'active');",
+        ] {
+            let stmt = parser.parse_dml(sql).expect("parse").expect("dml");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        // IN ('active', 'pending'): should return i1, i3, i4.
+        let in_predicate = RelationalSelectPredicateInput {
+            column_name: "status".to_string(),
+            condition: RelationalSelectPredicateCondition::In {
+                literals: vec!["active".to_string(), "pending".to_string()],
+                negated: false,
+            },
+        };
+        let (_schema, in_rows) = dml
+            .scan_table_records_with_predicates("in_pred_tbl", None, &[in_predicate])
+            .await
+            .expect("scan IN");
+        let in_oids: Vec<&str> = in_rows.iter().map(|r| r.oid.as_str()).collect();
+        assert!(in_oids.contains(&"i1"), "i1 (active) matches IN");
+        assert!(in_oids.contains(&"i3"), "i3 (pending) matches IN");
+        assert!(in_oids.contains(&"i4"), "i4 (active) matches IN");
+        assert!(!in_oids.contains(&"i2"), "i2 (inactive) excluded from IN");
+
+        // NOT IN ('active'): should return i2 and i3.
+        let not_in_predicate = RelationalSelectPredicateInput {
+            column_name: "status".to_string(),
+            condition: RelationalSelectPredicateCondition::In {
+                literals: vec!["active".to_string()],
+                negated: true,
+            },
+        };
+        let (_schema, not_in_rows) = dml
+            .scan_table_records_with_predicates("in_pred_tbl", None, &[not_in_predicate])
+            .await
+            .expect("scan NOT IN");
+        let not_in_oids: Vec<&str> = not_in_rows.iter().map(|r| r.oid.as_str()).collect();
+        assert!(
+            not_in_oids.contains(&"i2"),
+            "i2 (inactive) matches NOT IN ('active')"
+        );
+        assert!(
+            not_in_oids.contains(&"i3"),
+            "i3 (pending) matches NOT IN ('active')"
+        );
+        assert!(
+            !not_in_oids.contains(&"i1"),
+            "i1 (active) excluded by NOT IN"
+        );
+        assert!(
+            !not_in_oids.contains(&"i4"),
+            "i4 (active) excluded by NOT IN"
+        );
+    }
+
+    /// T4: LIKE and NOT LIKE predicates filter rows correctly via `scan_table_records_with_predicates`.
+    #[tokio::test]
+    async fn like_predicate_filters_correctly() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("like-pred.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE like_tbl (id TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY (id));",
+            )
+            .expect("parse ddl")
+            .expect("ddl");
+        DdlService::new(manager.clone())
+            .execute(ddl_stmt)
+            .await
+            .expect("create table");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(DirectWalTableRecordStore::new(
+                Arc::new(MemtableRecordStorage::new()),
+                Arc::new(
+                    FramedTableWalAppender::open(&wal_path)
+                        .await
+                        .expect("open WAL"),
+                ),
+            )),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        for sql in [
+            "INSERT INTO like_tbl (id, name) VALUES ('l1', 'alice_admin');",
+            "INSERT INTO like_tbl (id, name) VALUES ('l2', 'bob_user');",
+            "INSERT INTO like_tbl (id, name) VALUES ('l3', 'alice_user');",
+            "INSERT INTO like_tbl (id, name) VALUES ('l4', 'charlie');",
+        ] {
+            let stmt = parser.parse_dml(sql).expect("parse").expect("dml");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        // LIKE 'alice%': should return l1 and l3.
+        let like_predicate = RelationalSelectPredicateInput {
+            column_name: "name".to_string(),
+            condition: RelationalSelectPredicateCondition::Like {
+                pattern: "alice%".to_string(),
+                negated: false,
+            },
+        };
+        let (_schema, like_rows) = dml
+            .scan_table_records_with_predicates("like_tbl", None, &[like_predicate])
+            .await
+            .expect("scan LIKE");
+        let like_oids: Vec<&str> = like_rows.iter().map(|r| r.oid.as_str()).collect();
+        assert!(
+            like_oids.contains(&"l1"),
+            "l1 (alice_admin) matches LIKE 'alice%'"
+        );
+        assert!(
+            like_oids.contains(&"l3"),
+            "l3 (alice_user) matches LIKE 'alice%'"
+        );
+        assert!(!like_oids.contains(&"l2"), "l2 (bob_user) excluded");
+        assert!(!like_oids.contains(&"l4"), "l4 (charlie) excluded");
+
+        // NOT LIKE 'alice%': should return l2 and l4.
+        let not_like_predicate = RelationalSelectPredicateInput {
+            column_name: "name".to_string(),
+            condition: RelationalSelectPredicateCondition::Like {
+                pattern: "alice%".to_string(),
+                negated: true,
+            },
+        };
+        let (_schema, not_like_rows) = dml
+            .scan_table_records_with_predicates("like_tbl", None, &[not_like_predicate])
+            .await
+            .expect("scan NOT LIKE");
+        let not_like_oids: Vec<&str> = not_like_rows.iter().map(|r| r.oid.as_str()).collect();
+        assert!(
+            not_like_oids.contains(&"l2"),
+            "l2 (bob_user) matches NOT LIKE 'alice%'"
+        );
+        assert!(
+            not_like_oids.contains(&"l4"),
+            "l4 (charlie) matches NOT LIKE 'alice%'"
+        );
+        assert!(!not_like_oids.contains(&"l1"), "l1 excluded by NOT LIKE");
+        assert!(!not_like_oids.contains(&"l3"), "l3 excluded by NOT LIKE");
+    }
+
+    /// T9: UPDATE SET col = NULL on a nullable column succeeds and the column reads back as
+    /// `ProximaValue::Null`; UPDATE SET col = NULL on a NOT NULL column is rejected.
+    #[tokio::test]
+    async fn update_nullable_column_to_null_succeeds() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("update-null.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl("CREATE TABLE upd_null_tbl (id TEXT NOT NULL, note TEXT, score FLOAT NOT NULL, PRIMARY KEY (id));")
+            .expect("parse ddl")
+            .expect("ddl");
+        DdlService::new(manager.clone())
+            .execute(ddl_stmt)
+            .await
+            .expect("create table");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(DirectWalTableRecordStore::new(
+                Arc::new(MemtableRecordStorage::new()),
+                Arc::new(
+                    FramedTableWalAppender::open(&wal_path)
+                        .await
+                        .expect("open WAL"),
+                ),
+            )),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        let insert_stmt = parser
+            .parse_dml("INSERT INTO upd_null_tbl (id, note, score) VALUES ('u1', 'initial', 1.5);")
+            .expect("parse")
+            .expect("dml");
+        dml.execute(insert_stmt).await.expect("insert");
+
+        // UPDATE nullable column to NULL — should succeed.
+        let upd_stmt = parser
+            .parse_dml("UPDATE upd_null_tbl SET note = NULL WHERE id = 'u1';")
+            .expect("parse update")
+            .expect("dml");
+        dml.execute(upd_stmt)
+            .await
+            .expect("UPDATE note=NULL should succeed for nullable column");
+
+        let prop_val = |record: &ProximaRecord, col: &str| -> Option<ProximaValue> {
+            match record.props.get(col) {
+                Some(proximadb_records::ProximaTreeNode::Value(v)) => Some(v.clone()),
+                _ => None,
+            }
+        };
+
+        let (_schema, rows) = dml
+            .scan_table_records("upd_null_tbl", None)
+            .await
+            .expect("scan");
+        let u1 = rows.iter().find(|r| r.oid == "u1").expect("u1 row");
+        assert_eq!(
+            prop_val(u1, "note"),
+            Some(ProximaValue::Null),
+            "note should be Null after UPDATE SET note=NULL"
+        );
+
+        // UPDATE NOT NULL column to NULL — should be rejected.
+        let bad_upd_stmt = parser
+            .parse_dml("UPDATE upd_null_tbl SET score = NULL WHERE id = 'u1';")
+            .expect("parse bad update")
+            .expect("dml");
+        let err = dml.execute(bad_upd_stmt).await;
+        assert!(
+            err.is_err(),
+            "UPDATE score=NULL should fail for NOT NULL column"
+        );
+        let err_msg = err.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("cannot be NULL") || err_msg.contains("not nullable"),
+            "error should mention NULL constraint: {err_msg}"
+        );
+    }
+
     /// CREATE TABLE via `DdlService` appears in `information_schema.tables` and `columns`,
     /// and `DmlService` can resolve the table metadata immediately after DDL. Covers T9
     /// DDL metadata round-trip: catalog write → introspection read → DML resolve.
@@ -3719,5 +4484,404 @@ mod tests {
             .await
             .expect("explain table write must succeed for DDL-created table");
         assert_eq!(explanation.target_table, "meta_test");
+    }
+
+    /// T15: `validate_record_batch_against_schema` passes for conforming records and returns `Err`
+    /// when a NOT NULL column receives `ProximaValue::Null` in a fast-lane (non-SQL) batch write.
+    #[tokio::test]
+    async fn fast_lane_schema_validation_rejects_null_for_not_null_column() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("fast-lane-schema.wal");
+
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE fast_lane_tbl (id TEXT NOT NULL, label TEXT, score FLOAT NOT NULL, PRIMARY KEY (id));",
+            )
+            .expect("parse ddl")
+            .expect("ddl");
+        DdlService::new(manager.clone())
+            .execute(ddl_stmt)
+            .await
+            .expect("create table");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(DirectWalTableRecordStore::new(
+                Arc::new(MemtableRecordStorage::new()),
+                Arc::new(
+                    FramedTableWalAppender::open(&wal_path)
+                        .await
+                        .expect("open WAL"),
+                ),
+            )),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        // Conforming record: id=text, score=float, label=null (nullable).
+        let ok_record = ProximaRecord {
+            oid: "v1".to_string(),
+            props: proximadb_records::ProximaTree::from([
+                (
+                    "id".to_string(),
+                    ProximaTreeNode::Value(ProximaValue::String("v1".to_string())),
+                ),
+                (
+                    "score".to_string(),
+                    ProximaTreeNode::Value(ProximaValue::Float32(3.14)),
+                ),
+                (
+                    "label".to_string(),
+                    ProximaTreeNode::Value(ProximaValue::Null),
+                ),
+            ]),
+            ..Default::default()
+        };
+        dml.validate_record_batch_against_schema("fast_lane_tbl", &[ok_record])
+            .await
+            .expect("conforming record must pass schema validation");
+
+        // Violating record: score is NOT NULL but receives Null.
+        let bad_record = ProximaRecord {
+            oid: "v2".to_string(),
+            props: proximadb_records::ProximaTree::from([
+                (
+                    "id".to_string(),
+                    ProximaTreeNode::Value(ProximaValue::String("v2".to_string())),
+                ),
+                (
+                    "score".to_string(),
+                    ProximaTreeNode::Value(ProximaValue::Null),
+                ),
+            ]),
+            ..Default::default()
+        };
+        let err = dml
+            .validate_record_batch_against_schema("fast_lane_tbl", &[bad_record])
+            .await;
+        assert!(
+            err.is_err(),
+            "NOT NULL column with Null must fail fast-lane validation"
+        );
+        let err_val = err.unwrap_err();
+        let chain: String = err_val
+            .chain()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join(": ");
+        assert!(
+            chain.contains("not nullable") || chain.contains("cannot be NULL"),
+            "error chain should name the constraint: {chain}"
+        );
+    }
+
+    /// T15: `validate_record_batch_against_schema` silently passes when the collection is not
+    /// registered as a relational table (non-relational / vector-only collections stay open).
+    #[tokio::test]
+    async fn fast_lane_schema_validation_skips_non_relational_collections() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("fast-lane-skip.wal");
+
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(DirectWalTableRecordStore::new(
+                Arc::new(MemtableRecordStorage::new()),
+                Arc::new(
+                    FramedTableWalAppender::open(&wal_path)
+                        .await
+                        .expect("open WAL"),
+                ),
+            )),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        // "unknown_collection" is not in xCatalog — validation must silently pass.
+        let any_record = ProximaRecord {
+            oid: "x1".to_string(),
+            props: proximadb_records::ProximaTree::from([(
+                "score".to_string(),
+                ProximaTreeNode::Value(ProximaValue::Null),
+            )]),
+            ..Default::default()
+        };
+        dml.validate_record_batch_against_schema("unknown_collection", &[any_record])
+            .await
+            .expect("non-relational collection must skip schema validation");
+    }
+
+    /// T11: `explain_analyze_table_write` executes the write and returns the route explanation
+    /// enriched with `execution_elapsed_us` and `execution_rows_written`.
+    #[tokio::test]
+    async fn explain_analyze_executes_write_and_returns_execution_stats() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("explain-analyze.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl("CREATE TABLE analyze_tbl (id TEXT NOT NULL, val INTEGER NOT NULL, PRIMARY KEY (id));")
+            .expect("parse ddl")
+            .expect("ddl");
+        DdlService::new(manager.clone())
+            .execute(ddl_stmt)
+            .await
+            .expect("create table");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(DirectWalTableRecordStore::new(
+                Arc::new(MemtableRecordStorage::new()),
+                Arc::new(
+                    FramedTableWalAppender::open(&wal_path)
+                        .await
+                        .expect("open WAL"),
+                ),
+            )),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        let stmt = parser
+            .parse_dml("INSERT INTO analyze_tbl (id, val) VALUES ('a1', 42), ('a2', 99);")
+            .expect("parse")
+            .expect("dml");
+        let explanation = dml
+            .explain_analyze_table_write(stmt)
+            .await
+            .expect("explain analyze must succeed");
+
+        assert_eq!(explanation.target_table, "analyze_tbl");
+        assert!(
+            explanation.execution_elapsed_us.is_some(),
+            "elapsed_us must be populated by EXPLAIN ANALYZE"
+        );
+        assert_eq!(
+            explanation.execution_rows_written,
+            Some(2),
+            "rows_written must reflect the 2 inserted rows"
+        );
+    }
+
+    /// T8: After INSERT, `column_stats[col].min_value` and `max_value` are updated to the
+    /// lexicographic min/max of the inserted values for String and integer columns.
+    #[tokio::test]
+    async fn insert_updates_column_min_max_statistics() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("minmax-stats.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE minmax_tbl (id TEXT NOT NULL, name TEXT NOT NULL, score INTEGER NOT NULL, PRIMARY KEY (id));",
+            )
+            .expect("parse ddl")
+            .expect("ddl");
+        DdlService::new(manager.clone())
+            .execute(ddl_stmt)
+            .await
+            .expect("create table");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(DirectWalTableRecordStore::new(
+                Arc::new(MemtableRecordStorage::new()),
+                Arc::new(
+                    FramedTableWalAppender::open(&wal_path)
+                        .await
+                        .expect("open WAL"),
+                ),
+            )),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        for sql in [
+            "INSERT INTO minmax_tbl (id, name, score) VALUES ('r1', 'charlie', 30);",
+            "INSERT INTO minmax_tbl (id, name, score) VALUES ('r2', 'alice', 10);",
+            "INSERT INTO minmax_tbl (id, name, score) VALUES ('r3', 'bob', 20);",
+        ] {
+            let stmt = parser.parse_dml(sql).expect("parse").expect("dml");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        let (catalog, table_id) = manager.resolve_table("minmax_tbl").await.expect("resolve");
+        let stats = catalog.get_statistics(&table_id).await.unwrap_or_default();
+
+        // name is a TEXT column: min = 'alice', max = 'charlie'
+        let name_stats = stats.column_stats.get("name").expect("name col stats");
+        assert_eq!(
+            name_stats.min_value.as_deref(),
+            Some("alice"),
+            "name min should be 'alice'"
+        );
+        assert_eq!(
+            name_stats.max_value.as_deref(),
+            Some("charlie"),
+            "name max should be 'charlie'"
+        );
+
+        // score is an INTEGER column: min = +000000000000000000010, max = +000000000000000000030
+        let score_stats = stats.column_stats.get("score").expect("score col stats");
+        assert!(
+            score_stats.min_value.is_some(),
+            "score min must be populated"
+        );
+        assert!(
+            score_stats.max_value.is_some(),
+            "score max must be populated"
+        );
+        // The sortable min/max string for integer 10 sorts before 30.
+        assert!(
+            score_stats.min_value < score_stats.max_value,
+            "score min must sort before max: min={:?} max={:?}",
+            score_stats.min_value,
+            score_stats.max_value
+        );
+    }
+
+    #[tokio::test]
+    async fn insert_updates_column_ndv_statistics() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("ndv-stats.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE ndv_tbl (id TEXT NOT NULL, category TEXT NOT NULL, PRIMARY KEY (id));",
+            )
+            .expect("parse ddl")
+            .expect("ddl");
+        DdlService::new(manager.clone())
+            .execute(ddl_stmt)
+            .await
+            .expect("create table");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(DirectWalTableRecordStore::new(
+                Arc::new(MemtableRecordStorage::new()),
+                Arc::new(
+                    FramedTableWalAppender::open(&wal_path)
+                        .await
+                        .expect("open WAL"),
+                ),
+            )),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        // Insert 4 rows: 3 distinct categories ('a', 'b', 'c'), 4 distinct ids.
+        for sql in [
+            "INSERT INTO ndv_tbl (id, category) VALUES ('r1', 'a');",
+            "INSERT INTO ndv_tbl (id, category) VALUES ('r2', 'b');",
+            "INSERT INTO ndv_tbl (id, category) VALUES ('r3', 'c');",
+            "INSERT INTO ndv_tbl (id, category) VALUES ('r4', 'a');",
+        ] {
+            let stmt = parser.parse_dml(sql).expect("parse").expect("dml");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        let (catalog, table_id) = manager.resolve_table("ndv_tbl").await.expect("resolve");
+        let stats = catalog.get_statistics(&table_id).await.unwrap_or_default();
+
+        // Verify row count (sanity check for the cap logic)
+        assert_eq!(stats.row_count, 4, "row count must be 4");
+
+        // id has 4 distinct values across the 4 single-row batches → additive estimate = 4
+        let id_ndv = stats
+            .column_stats
+            .get("id")
+            .and_then(|s| s.distinct_count)
+            .expect("id distinct_count must be populated");
+        assert!(id_ndv >= 1, "id NDV must be at least 1, got {id_ndv}");
+        assert!(
+            id_ndv <= stats.row_count,
+            "id NDV ({id_ndv}) must not exceed row count ({})",
+            stats.row_count
+        );
+
+        // category has values within each single-row batch → additive estimate = 4 (one per batch),
+        // capped at row_count = 4.
+        let cat_ndv = stats
+            .column_stats
+            .get("category")
+            .and_then(|s| s.distinct_count)
+            .expect("category distinct_count must be populated");
+        assert!(cat_ndv >= 1, "category NDV must be at least 1, got {cat_ndv}");
+        assert!(
+            cat_ndv <= stats.row_count,
+            "category NDV ({cat_ndv}) must not exceed row count ({})",
+            stats.row_count
+        );
     }
 }
