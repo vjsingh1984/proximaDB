@@ -6021,6 +6021,7 @@ dependencies = [
  "proximadb-document",
  "proximadb-document-query",
  "proximadb-embedded-common",
+ "proximadb-embedding",
  "proximadb-filter-expression",
  "proximadb-graph",
  "proximadb-graph-arrow",
