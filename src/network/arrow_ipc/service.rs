@@ -385,45 +385,6 @@ impl ProximaFlightService {
         Ok((exchange_type, collection_id, operation))
     }
 
-    /// Convert serde_json::Value to SqlValue for metadata
-    fn json_to_sql_value(value: &serde_json::Value) -> crate::proto::proximadb_v1::SqlValue {
-        use crate::proto::proximadb_v1::sql_value::Value;
-
-        let inner = match value {
-            serde_json::Value::String(s) => Some(Value::StringValue(s.clone())),
-            serde_json::Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    Some(Value::Int64Value(i))
-                } else if let Some(f) = n.as_f64() {
-                    Some(Value::NumberValue(f))
-                } else {
-                    Some(Value::StringValue(n.to_string()))
-                }
-            }
-            serde_json::Value::Bool(b) => Some(Value::BoolValue(*b)),
-            serde_json::Value::Null => Some(Value::NullValue(0)),
-            serde_json::Value::Array(arr) => {
-                // Convert array to SqlArray
-                let sql_array = crate::proto::proximadb_v1::SqlArray {
-                    values: arr.iter().map(Self::json_to_sql_value).collect(),
-                };
-                Some(Value::ArrayValue(sql_array))
-            }
-            serde_json::Value::Object(obj) => {
-                // Convert object to SqlObject
-                let sql_object = crate::proto::proximadb_v1::SqlObject {
-                    fields: obj
-                        .iter()
-                        .map(|(k, v)| (k.clone(), Self::json_to_sql_value(v)))
-                        .collect(),
-                };
-                Some(Value::ObjectValue(sql_object))
-            }
-        };
-
-        crate::proto::proximadb_v1::SqlValue { value: inner }
-    }
-
     /// Handle Arrow file export (DoGet with arrow_file ticket)
     async fn handle_arrow_file_export(
         &self,

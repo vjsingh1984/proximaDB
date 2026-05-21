@@ -41,10 +41,10 @@ use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Json, Response},
-    routing::{delete, get, head, post},
+    routing::{get, post},
 };
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::catalog::CatalogManager;
 use crate::catalog::iceberg_rest_service::{
@@ -168,11 +168,6 @@ fn parse_namespace(raw: &str) -> Vec<String> {
     } else {
         vec![raw.to_string()]
     }
-}
-
-/// Encode namespace levels for use in URLs (unit separator 0x1F per spec).
-fn encode_namespace(levels: &[String]) -> String {
-    levels.join("\x1f")
 }
 
 /// Convert an `anyhow::Error` to an appropriate Iceberg JSON error response.

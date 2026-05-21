@@ -580,17 +580,6 @@ fn sql_value_to_string(v: &proximadb_v1::SqlValue) -> String {
     }
 }
 
-fn score_from_metadata(metadata: &HashMap<String, proximadb_v1::SqlValue>) -> f64 {
-    metadata
-        .get("score")
-        .and_then(|v| v.value.as_ref())
-        .and_then(|v| match v {
-            proximadb_v1::sql_value::Value::NumberValue(f) => Some(*f),
-            _ => None,
-        })
-        .unwrap_or(0.0)
-}
-
 fn score_from_props(props: &proximadb_records::ProximaTree) -> f64 {
     props
         .get("score")
@@ -1701,16 +1690,4 @@ mod tests {
         assert_eq!(json_val, back);
     }
 
-    #[test]
-    fn score_from_metadata_preserves_number_value_precision() {
-        let mut metadata = HashMap::new();
-        metadata.insert(
-            "score".to_string(),
-            proximadb_v1::SqlValue {
-                value: Some(proximadb_v1::sql_value::Value::NumberValue(0.1234567890123)),
-            },
-        );
-
-        assert_eq!(score_from_metadata(&metadata), 0.1234567890123);
-    }
 }
