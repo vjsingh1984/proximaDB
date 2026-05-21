@@ -77,20 +77,10 @@ pub mod zero_copy_reader_integration;
 /// Re-exported here for backward compatibility with storage layer imports.
 pub use crate::compute::proximacodec;
 
-/// OBSOLETE: Old encoder/decoder modules - replaced by proximacodec
+/// OBSOLETE: old encoder/decoder modules were removed in PCX-010.
 ///
-/// The old proximaencoder and unified_proxima_simd modules have been moved to .obsolete
-/// to force all remaining call sites to migrate to the new ProximaCodec API.
-///
-/// Migration: Replace `ProximaEncoder`/`ProximaDecoder` with `ProximaCodec::global()`
-/// See: src/storage/engines/core/ops/proximacodec/
-///
-/// Modules are kept as .obsolete for reference but not compiled:
-///
-/// - proximaencoder.obsolete/
-/// - unified_proxima_simd.obsolete/
-// pub mod proximaencoder;  // OBSOLETE - use proximacodec instead
-// pub mod unified_proxima_simd;  // OBSOLETE - use proximacodec instead
+/// Migration: replace `ProximaEncoder`/`ProximaDecoder` with
+/// `ProximaCodec::global()` or the canonical `proximadb-codec` strategy API.
 // SIMD configuration system for fine-tuning optimization behavior
 pub mod simd_config;
 

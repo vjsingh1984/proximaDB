@@ -19,8 +19,8 @@
 //! ## Status: Deprecated for Production Use
 //!
 //! Production code uses `ProximaRecord` and ProximaBlocks directly. This module
-//! is kept only for test compatibility. See `blocks_archive.rs` for full legacy
-//! type history.
+//! is kept only for test compatibility. Legacy block-type history is recoverable
+//! from git; the uncompiled `blocks_archive.rs` file was removed in PCX-010.
 //!
 //! ## Migration Note (TD-001)
 //! Block types (ProximaDataBlock, ProximaBlockMetadata, etc.) have been migrated to:

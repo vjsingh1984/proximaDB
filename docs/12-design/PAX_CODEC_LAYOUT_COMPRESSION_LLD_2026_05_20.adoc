@@ -496,6 +496,10 @@ Current pilot:
 * Compute-facing `analysis`, `strategy`, `types`, and `simd_analysis` remain compatibility adapters
   until all storage, benchmark, and test imports move to `proximadb-codec` or an explicit compute
   runtime routing API.
+* Archive-only and prototype files that were not module-reachable have been removed:
+  `src/storage/engines/sst/blocks_archive.rs`,
+  `src/compute/proximacodec/archive/README.md`, and uncompiled
+  `src/storage/engines/core/ops/proxima_encoding_*` design sketches.
 
 == Progress Tracker
 
