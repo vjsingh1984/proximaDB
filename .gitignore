@@ -28,6 +28,10 @@
 *-bench
 *-bench.exe
 
+# Workspace benchmark application source
+!apps/proximadb-bench/
+!apps/proximadb-bench/**
+
 # Python client artifacts
 __pycache__/
 *.py[cod]
