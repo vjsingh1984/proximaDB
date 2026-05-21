@@ -540,37 +540,6 @@ fn extract_collection_id_from_path(path: &str) -> Result<String> {
     }
 }
 
-/// Convert SqlValue to serde_json::Value
-fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> Option<serde_json::Value> {
-    use crate::proto::proximadb_v1::sql_value::Value;
-
-    value.value.as_ref().map(|v| match v {
-        Value::StringValue(s) => serde_json::Value::String(s.clone()),
-        Value::NumberValue(n) => serde_json::Number::from_f64(*n)
-            .map_or(serde_json::Value::Null, serde_json::Value::Number),
-        Value::BoolValue(b) => serde_json::Value::Bool(*b),
-        Value::Int64Value(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
-        Value::NullValue(_) => serde_json::Value::Null,
-        Value::BytesValue(b) => serde_json::Value::String(base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            b,
-        )),
-        Value::ArrayValue(arr) => {
-            let items: Vec<serde_json::Value> =
-                arr.values.iter().filter_map(sql_value_to_json).collect();
-            serde_json::Value::Array(items)
-        }
-        Value::ObjectValue(obj) => {
-            let map: serde_json::Map<String, serde_json::Value> = obj
-                .fields
-                .iter()
-                .filter_map(|(k, v)| sql_value_to_json(v).map(|val| (k.clone(), val)))
-                .collect();
-            serde_json::Value::Object(map)
-        }
-    })
-}
-
 // ============================================================================
 // Concrete Adapter Types for Each Engine
 // ============================================================================
@@ -673,54 +642,5 @@ mod tests {
 
         // Test short path error
         assert!(extract_collection_id_from_path("collection").is_err());
-    }
-
-    #[test]
-    fn test_sql_value_to_json_string() {
-        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
-
-        let value = SqlValue {
-            value: Some(Value::StringValue("test".to_string())),
-        };
-
-        let json = sql_value_to_json(&value);
-        assert_eq!(json, Some(serde_json::Value::String("test".to_string())));
-    }
-
-    #[test]
-    fn test_sql_value_to_json_number() {
-        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
-
-        let value = SqlValue {
-            value: Some(Value::NumberValue(42.5)),
-        };
-
-        let json = sql_value_to_json(&value);
-        assert!(json.is_some());
-        assert_eq!(json.unwrap().as_f64(), Some(42.5));
-    }
-
-    #[test]
-    fn test_sql_value_to_json_bool() {
-        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
-
-        let value = SqlValue {
-            value: Some(Value::BoolValue(true)),
-        };
-
-        let json = sql_value_to_json(&value);
-        assert_eq!(json, Some(serde_json::Value::Bool(true)));
-    }
-
-    #[test]
-    fn test_sql_value_to_json_null() {
-        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
-
-        let value = SqlValue {
-            value: Some(Value::NullValue(0)),
-        };
-
-        let json = sql_value_to_json(&value);
-        assert_eq!(json, Some(serde_json::Value::Null));
     }
 }

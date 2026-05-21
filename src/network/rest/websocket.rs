@@ -86,7 +86,6 @@ use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
-use crate::proto::proximadb_v1::{SqlValue, sql_value};
 use crate::streaming::{
     BackpressureLevel, SessionConfig, StreamConfig, StreamCoordinator, StreamId,
 };
@@ -98,38 +97,6 @@ fn safe_serialize<T: Serialize>(msg: &T) -> Option<String> {
         Err(e) => {
             error!(error = %e, "Failed to serialize message to JSON");
             None
-        }
-    }
-}
-
-/// Convert JSON value to SqlValue
-fn json_to_sql_value(v: &serde_json::Value) -> SqlValue {
-    match v {
-        serde_json::Value::String(s) => SqlValue {
-            value: Some(sql_value::Value::StringValue(s.clone())),
-        },
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                SqlValue {
-                    value: Some(sql_value::Value::Int64Value(i)),
-                }
-            } else if let Some(f) = n.as_f64() {
-                SqlValue {
-                    value: Some(sql_value::Value::NumberValue(f)),
-                }
-            } else {
-                SqlValue { value: None }
-            }
-        }
-        serde_json::Value::Bool(b) => SqlValue {
-            value: Some(sql_value::Value::BoolValue(*b)),
-        },
-        serde_json::Value::Null => SqlValue { value: None },
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-            // For complex types, serialize as JSON string
-            SqlValue {
-                value: Some(sql_value::Value::StringValue(v.to_string())),
-            }
         }
     }
 }
