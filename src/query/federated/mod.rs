@@ -2734,6 +2734,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_document_query_filter_keywords_are_case_insensitive() {
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "orders".to_string(),
+            vec![
+                DocumentRecord {
+                    id: "order-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([
+                            ("status".to_string(), string_value("pending")),
+                            ("price".to_string(), int_value(125)),
+                        ]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                },
+                DocumentRecord {
+                    id: "order-2".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([
+                            ("status".to_string(), string_value("closed")),
+                            ("price".to_string(), int_value(125)),
+                        ]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                },
+            ],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(MultiModalStorageFacade::new().with_document_store(document_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT id FROM DOCUMENT_QUERY('orders', 'status contains \"pend\" and price >= 100')",
+            )
+            .await
+            .expect("document filter keywords should be case-insensitive");
+
+        assert_eq!(result.row_count(), 1);
+        let ids = result.batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("id column should be utf8");
+        assert_eq!(ids.value(0), "order-1");
+    }
+
+    #[tokio::test]
     async fn test_document_query_filter_rejects_unsupported_or_clause() {
         let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
             "orders".to_string(),
@@ -2765,6 +2819,41 @@ mod tests {
             error
                 .to_string()
                 .contains("Unsupported DOCUMENT_QUERY filter clause")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_document_query_filter_rejects_lowercase_or_clause() {
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "orders".to_string(),
+            vec![DocumentRecord {
+                id: "order-1".to_string(),
+                document: SqlObject {
+                    fields: HashMap::from([("status".to_string(), string_value("pending"))]),
+                },
+                version: 1,
+                created_at_ns: 1,
+                updated_at_ns: 1,
+            }],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(MultiModalStorageFacade::new().with_document_store(document_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let error = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('orders', 'status = \"pending\" or status = \"shipped\"')",
+            )
+            .await
+            .expect_err("lowercase OR filters should fail explicitly");
+
+        assert!(
+            error
+                .to_string()
+                .contains("OR filters are not yet supported")
         );
     }
 

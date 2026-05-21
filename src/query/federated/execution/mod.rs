@@ -946,7 +946,7 @@ impl FederatedExecutor {
         if trimmed.is_empty() || trimmed == "1=1" {
             return Ok(None);
         }
-        if trimmed.contains(" OR ") {
+        if Self::split_document_filter_keyword(trimmed, "OR").len() > 1 {
             return Err(anyhow!(
                 "Unsupported DOCUMENT_QUERY filter clause '{}'; OR filters are not yet supported",
                 trimmed
@@ -976,11 +976,52 @@ impl FederatedExecutor {
     }
 
     fn split_document_filter_and_clauses(filter: &str) -> Vec<&str> {
-        filter
-            .split(" AND ")
+        Self::split_document_filter_keyword(filter, "AND")
+            .into_iter()
             .map(str::trim)
             .filter(|clause| !clause.is_empty())
             .collect()
+    }
+
+    fn split_document_filter_keyword<'a>(filter: &'a str, keyword: &str) -> Vec<&'a str> {
+        let mut clauses = Vec::new();
+        let mut start = 0usize;
+        let mut in_single_quote = false;
+        let mut in_double_quote = false;
+        let keyword_len = keyword.len();
+
+        for (idx, ch) in filter.char_indices() {
+            match ch {
+                '\'' if !in_double_quote => in_single_quote = !in_single_quote,
+                '"' if !in_single_quote => in_double_quote = !in_double_quote,
+                _ => {}
+            }
+
+            if in_single_quote || in_double_quote {
+                continue;
+            }
+
+            let Some(candidate) = filter.get(idx..idx + keyword_len) else {
+                continue;
+            };
+            if !candidate.eq_ignore_ascii_case(keyword) {
+                continue;
+            }
+
+            let before = filter[..idx].chars().next_back();
+            let after = filter[idx + keyword_len..].chars().next();
+            if before.is_some_and(|c| !c.is_ascii_whitespace())
+                || after.is_some_and(|c| !c.is_ascii_whitespace())
+            {
+                continue;
+            }
+
+            clauses.push(&filter[start..idx]);
+            start = idx + keyword_len;
+        }
+
+        clauses.push(&filter[start..]);
+        clauses
     }
 
     fn parse_document_filter_condition(clause: &str) -> Result<Option<DocFilterCondition>> {
@@ -994,7 +1035,8 @@ impl FederatedExecutor {
             ("<", DocFilterOperator::Lt),
             ("=", DocFilterOperator::Eq),
         ] {
-            let Some((path, value)) = clause.split_once(operator_text) else {
+            let Some((path, value)) = Self::split_document_filter_operator(clause, operator_text)
+            else {
                 continue;
             };
             let path = path.trim();
@@ -1012,6 +1054,35 @@ impl FederatedExecutor {
         }
 
         Ok(None)
+    }
+
+    fn split_document_filter_operator<'a>(
+        clause: &'a str,
+        operator_text: &str,
+    ) -> Option<(&'a str, &'a str)> {
+        if operator_text
+            .chars()
+            .all(|ch| ch.is_ascii_alphabetic() || ch.is_ascii_whitespace())
+        {
+            let needle = operator_text.trim();
+            for (idx, _) in clause.char_indices() {
+                let candidate = clause.get(idx..idx + needle.len())?;
+                if !candidate.eq_ignore_ascii_case(needle) {
+                    continue;
+                }
+                let before = clause[..idx].chars().next_back();
+                let after = clause[idx + needle.len()..].chars().next();
+                if before.is_some_and(|c| !c.is_ascii_whitespace())
+                    || after.is_some_and(|c| !c.is_ascii_whitespace())
+                {
+                    continue;
+                }
+                return Some((&clause[..idx], &clause[idx + needle.len()..]));
+            }
+            return None;
+        }
+
+        clause.split_once(operator_text)
     }
 
     fn document_filter_sql_value(raw: &str) -> Result<SqlValue> {
