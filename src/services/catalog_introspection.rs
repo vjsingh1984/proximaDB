@@ -1045,17 +1045,22 @@ mod tests {
 
         // Query via function-call form
         let result = introspection
-            .execute_select(
-                "SELECT * FROM proximadb_catalog.props_promotion_candidates('events')",
-            )
+            .execute_select("SELECT * FROM proximadb_catalog.props_promotion_candidates('events')")
             .await
             .expect("query")
             .expect("result");
 
         assert_eq!(
             result.columns,
-            ["table_name", "props_key", "promoted_column", "promotion_enabled",
-             "frequency_threshold", "min_record_count", "status"]
+            [
+                "table_name",
+                "props_key",
+                "promoted_column",
+                "promotion_enabled",
+                "frequency_threshold",
+                "min_record_count",
+                "status"
+            ]
         );
 
         let promoted = result

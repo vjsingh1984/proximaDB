@@ -40,6 +40,7 @@ import lancedb
 import numpy as np
 
 # Embedding models
+from proximadb_sdk import CollectionConfig, connect_grpc, connect_rest
 from proximadb_sdk.embedded import SentenceTransformerModel
 
 # FAISS
@@ -425,19 +426,18 @@ class ProximaDBEmbeddedBenchmark:
             start = time.perf_counter()
             embedding = self.model.embed(doc["content"])
 
-            # ProximaDB expects metadata in SqlValue format
-            vectors = [
+            records = [
                 {
                     "id": doc["id"],
                     "vector": embedding,
-                    "metadata": {
+                    "props": {
                         "language": doc["language"],
                         "path": doc["path"],
                         "content": doc["content"][:500],
                     },
                 }
             ]
-            self.client.insert_vectors(self.collection_name, vectors)
+            self.client.insert_records(self.collection_name, records)
             result.index_times.append(time.perf_counter() - start)
 
     def search(self, query: str, top_k: int = 5) -> Tuple[List[str], float]:
@@ -486,61 +486,37 @@ class ProximaDBRestBenchmark:
         self.server_url = server_url
         self.collection_name = "benchmark_rest"
         self.dimension = embedding_model.get_dimension()
+        self.client = None
 
     def setup(self):
+        self.client = connect_rest(self.server_url)
         try:
-            httpx.delete(
-                f"{self.server_url}/api/v1/collections/{self.collection_name}",
-                timeout=10,
-            )
-        except:
+            self.client.delete_collection(self.collection_name)
+        except Exception:
             pass
-
-        httpx.post(
-            f"{self.server_url}/api/v1/collections",
-            json={
-                "operation": 1,
-                "collection_id": self.collection_name,
-                "collection_config": {
-                    "name": self.collection_name,
-                    "dimension": self.dimension,
-                    "distance_metric": 1,
-                },
-            },
-            timeout=30,
+        self.client.create_collection(
+            self.collection_name,
+            CollectionConfig(name=self.collection_name, dimension=self.dimension),
         )
-
-    def _to_sql_value(self, value):
-        if isinstance(value, str):
-            return {"string_value": value}
-        elif isinstance(value, int):
-            return {"int64_value": value}
-        elif isinstance(value, float):
-            return {"number_value": value}
-        return {"string_value": str(value)}
 
     def index(self, documents: List[Dict], result: BenchmarkResult):
         for doc in documents:
             start = time.perf_counter()
             embedding = self.model.embed(doc["content"])
 
-            httpx.post(
-                f"{self.server_url}/api/v1/vectors/batch",
-                json={
-                    "collection_id": self.collection_name,
-                    "vectors": [
-                        {
-                            "id": doc["id"],
-                            "vector": embedding,
-                            "metadata": {
-                                "content": self._to_sql_value(doc["content"][:500]),
-                                "language": self._to_sql_value(doc["language"]),
-                                "path": self._to_sql_value(doc["path"]),
-                            },
-                        }
-                    ],
-                },
-                timeout=30,
+            self.client.insert_records(
+                self.collection_name,
+                [
+                    {
+                        "id": doc["id"],
+                        "vector": embedding,
+                        "props": {
+                            "content": doc["content"][:500],
+                            "language": doc["language"],
+                            "path": doc["path"],
+                        },
+                    }
+                ],
             )
             result.index_times.append(time.perf_counter() - start)
 
@@ -548,30 +524,19 @@ class ProximaDBRestBenchmark:
         start = time.perf_counter()
         embedding = self.model.embed(query)
 
-        response = httpx.post(
-            f"{self.server_url}/api/v1/search",
-            json={
-                "collection_id": self.collection_name,
-                "queries": [{"vector": embedding}],
-                "top_k": top_k,
-            },
-            timeout=30,
-        )
-
+        response = self.client.search_envelope(self.collection_name, embedding, top_k=top_k)
         elapsed = time.perf_counter() - start
-        data = response.json()
-
-        ids = []
-        if data.get("success") and data.get("results"):
-            inner = data["results"]
-            if isinstance(inner, dict) and "results" in inner:
-                for r in inner["results"] or []:
-                    if "id" in r:
-                        ids.append(r["id"])
-
+        ids = [item.id for item in response.items]
         return ids, elapsed
 
     def cleanup(self):
+        if self.client:
+            try:
+                self.client.delete_collection(self.collection_name)
+                self.client.close()
+                return
+            except Exception:
+                pass
         try:
             httpx.delete(
                 f"{self.server_url}/api/v1/collections/{self.collection_name}",
@@ -592,103 +557,59 @@ class ProximaDBGrpcBenchmark:
         self.server_url = server_url
         self.collection_name = "benchmark_grpc"
         self.dimension = embedding_model.get_dimension()
-        self.channel = None
-        self.stub = None
+        self.client = None
 
     def setup(self):
-        # For gRPC, we'll use REST API to create collection (simpler)
-        rest_url = "http://localhost:5678"
+        grpc_url = self.server_url
+        if not grpc_url.startswith("grpc://"):
+            grpc_url = f"grpc://{grpc_url}"
+        self.client = connect_grpc(grpc_url)
         try:
-            httpx.delete(
-                f"{rest_url}/api/v1/collections/{self.collection_name}", timeout=10
-            )
-        except:
+            self.client.delete_collection(self.collection_name)
+        except Exception:
             pass
-
-        httpx.post(
-            f"{rest_url}/api/v1/collections",
-            json={
-                "operation": 1,
-                "collection_id": self.collection_name,
-                "collection_config": {
-                    "name": self.collection_name,
-                    "dimension": self.dimension,
-                    "distance_metric": 1,
-                },
-            },
-            timeout=30,
+        self.client.create_collection(
+            self.collection_name,
+            CollectionConfig(name=self.collection_name, dimension=self.dimension),
         )
 
-        # Setup gRPC channel
-        if GRPC_AVAILABLE:
-            self.channel = grpc.insecure_channel(self.server_url)
-
-    def _to_sql_value(self, value):
-        if isinstance(value, str):
-            return {"string_value": value}
-        elif isinstance(value, int):
-            return {"int64_value": value}
-        return {"string_value": str(value)}
-
     def index(self, documents: List[Dict], result: BenchmarkResult):
-        # Use REST for indexing (gRPC proto would need to be compiled)
-        rest_url = "http://localhost:5678"
         for doc in documents:
             start = time.perf_counter()
             embedding = self.model.embed(doc["content"])
 
-            httpx.post(
-                f"{rest_url}/api/v1/vectors/batch",
-                json={
-                    "collection_id": self.collection_name,
-                    "vectors": [
-                        {
-                            "id": doc["id"],
-                            "vector": embedding,
-                            "metadata": {
-                                "content": self._to_sql_value(doc["content"][:500]),
-                                "language": self._to_sql_value(doc["language"]),
-                                "path": self._to_sql_value(doc["path"]),
-                            },
-                        }
-                    ],
-                },
-                timeout=30,
+            self.client.insert_records(
+                self.collection_name,
+                [
+                    {
+                        "id": doc["id"],
+                        "vector": embedding,
+                        "props": {
+                            "content": doc["content"][:500],
+                            "language": doc["language"],
+                            "path": doc["path"],
+                        },
+                    }
+                ],
             )
             result.index_times.append(time.perf_counter() - start)
 
     def search(self, query: str, top_k: int = 5) -> Tuple[List[str], float]:
-        # Use REST for search (measure gRPC when proto is compiled)
-        rest_url = "http://localhost:5678"
         start = time.perf_counter()
         embedding = self.model.embed(query)
-
-        response = httpx.post(
-            f"{rest_url}/api/v1/search",
-            json={
-                "collection_id": self.collection_name,
-                "queries": [{"vector": embedding}],
-                "top_k": top_k,
-            },
-            timeout=30,
-        )
-
+        response = self.client.search(self.collection_name, embedding, top_k=top_k)
         elapsed = time.perf_counter() - start
-        data = response.json()
-
-        ids = []
-        if data.get("success") and data.get("results"):
-            inner = data["results"]
-            if isinstance(inner, dict) and "results" in inner:
-                for r in inner["results"] or []:
-                    if "id" in r:
-                        ids.append(r["id"])
-
+        ids = [item.id for item in response]
         return ids, elapsed
 
     def cleanup(self):
-        if self.channel:
-            self.channel.close()
+        if self.client:
+            try:
+                self.client.delete_collection(self.collection_name)
+                self.client.close()
+                return
+            except Exception:
+                pass
         try:
             httpx.delete(
                 f"http://localhost:5678/api/v1/collections/{self.collection_name}",
@@ -711,36 +632,18 @@ class ProximaDBSqlBenchmark:
         self.server_url = server_url
         self.collection_name = "benchmark_sql"
         self.dimension = embedding_model.get_dimension()
+        self.client = None
 
     def setup(self):
+        self.client = connect_rest(self.server_url)
         try:
-            httpx.delete(
-                f"{self.server_url}/api/v1/collections/{self.collection_name}",
-                timeout=10,
-            )
-        except:
+            self.client.delete_collection(self.collection_name)
+        except Exception:
             pass
-
-        httpx.post(
-            f"{self.server_url}/api/v1/collections",
-            json={
-                "operation": 1,
-                "collection_id": self.collection_name,
-                "collection_config": {
-                    "name": self.collection_name,
-                    "dimension": self.dimension,
-                    "distance_metric": 1,
-                },
-            },
-            timeout=30,
+        self.client.create_collection(
+            self.collection_name,
+            CollectionConfig(name=self.collection_name, dimension=self.dimension),
         )
-
-    def _to_sql_value(self, value):
-        if isinstance(value, str):
-            return {"string_value": value}
-        elif isinstance(value, int):
-            return {"int64_value": value}
-        return {"string_value": str(value)}
 
     def index(self, documents: List[Dict], result: BenchmarkResult):
         # Batch insert for SQL-style
@@ -756,22 +659,15 @@ class ProximaDBSqlBenchmark:
                     {
                         "id": doc["id"],
                         "vector": embedding,
-                        "metadata": {
-                            "content": self._to_sql_value(doc["content"][:500]),
-                            "language": self._to_sql_value(doc["language"]),
-                            "path": self._to_sql_value(doc["path"]),
+                        "props": {
+                            "content": doc["content"][:500],
+                            "language": doc["language"],
+                            "path": doc["path"],
                         },
                     }
                 )
 
-            httpx.post(
-                f"{self.server_url}/api/v1/vectors/batch",
-                json={
-                    "collection_id": self.collection_name,
-                    "vectors": vectors,
-                },
-                timeout=60,
-            )
+            self.client.insert_records(self.collection_name, vectors)
 
             elapsed = time.perf_counter() - start
             for _ in batch:
@@ -781,31 +677,19 @@ class ProximaDBSqlBenchmark:
         start = time.perf_counter()
         embedding = self.model.embed(query)
 
-        # SQL-style filter query (filter by language = 'py')
-        response = httpx.post(
-            f"{self.server_url}/api/v1/search",
-            json={
-                "collection_id": self.collection_name,
-                "queries": [{"vector": embedding}],
-                "top_k": top_k,
-            },
-            timeout=30,
-        )
-
+        response = self.client.search_envelope(self.collection_name, embedding, top_k=top_k)
         elapsed = time.perf_counter() - start
-        data = response.json()
-
-        ids = []
-        if data.get("success") and data.get("results"):
-            inner = data["results"]
-            if isinstance(inner, dict) and "results" in inner:
-                for r in inner["results"] or []:
-                    if "id" in r:
-                        ids.append(r["id"])
-
+        ids = [item.id for item in response.items]
         return ids, elapsed
 
     def cleanup(self):
+        if self.client:
+            try:
+                self.client.delete_collection(self.collection_name)
+                self.client.close()
+                return
+            except Exception:
+                pass
         try:
             httpx.delete(
                 f"{self.server_url}/api/v1/collections/{self.collection_name}",

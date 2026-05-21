@@ -132,7 +132,12 @@ run_sql "information_schema columns" "SELECT table_name, column_name, data_type 
 run_sql "pg_catalog jdbc tables" "SELECT NULL AS TABLE_CAT, n.nspname AS TABLE_SCHEM, c.relname AS TABLE_NAME, CASE c.relkind WHEN 'r' THEN 'TABLE' ELSE NULL END AS TABLE_TYPE FROM pg_catalog.pg_namespace n, pg_catalog.pg_class c WHERE c.relnamespace = n.oid AND c.relname = 'pgwire_smoke_customer' ORDER BY TABLE_TYPE,TABLE_SCHEM,TABLE_NAME;"
 run_sql "pg_catalog jdbc columns" "SELECT NULL AS TABLE_CAT, n.nspname AS TABLE_SCHEM, c.relname AS TABLE_NAME, a.attname AS COLUMN_NAME, a.atttypid AS DATA_TYPE, a.attlen AS COLUMN_SIZE, CASE WHEN a.attnotnull THEN 'NO' ELSE 'YES' END AS IS_NULLABLE FROM pg_catalog.pg_namespace n, pg_catalog.pg_class c, pg_catalog.pg_attribute a WHERE c.relnamespace = n.oid AND a.attrelid = c.oid AND c.relname = 'pgwire_smoke_customer' ORDER BY TABLE_SCHEM,TABLE_NAME,a.attnum;"
 
-known_gap_until_contains "full table scan select returns inserted customer" "SELECT * FROM pgwire_smoke_customer;" "alice updated"
+run_sql_contains "full table scan select returns inserted customer" "SELECT * FROM pgwire_smoke_customer;" "alice updated"
+run_sql_contains "full table scan after update shows updated balance" "SELECT c_id, c_balance FROM pgwire_smoke_customer WHERE c_id = 1;" "75.25"
+run_sql "insert second customer for delete test" "INSERT INTO pgwire_smoke_customer (c_id, c_name, c_balance, c_active) VALUES (2, 'bob', 10.00, true);"
+run_sql "delete second customer" "DELETE FROM pgwire_smoke_customer WHERE c_id = 2;"
+run_sql_contains "scan after delete — only alice remains" "SELECT c_id, c_name FROM pgwire_smoke_customer;" "alice"
+run_sql_contains "or predicate select returns correct row" "SELECT c_id, c_name FROM pgwire_smoke_customer WHERE c_id = 1 OR c_id = 2;" "alice"
 
 echo "psql compatibility smoke: pass=$pass fail=$fail known_gap=$gap"
 if [ "$fail" -ne 0 ]; then

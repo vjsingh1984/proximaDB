@@ -1101,8 +1101,8 @@ impl ArrowFileExportHandler {
         if Path::new(&idx_path).exists()
             && let Ok(_reader) = ArrowBlockReader::open(path)
         {
-            // ArrowBlockReader returns VectorRecords, so we fall back to standard IPC reader
-            // for direct RecordBatch streaming (no conversion needed)
+            // ArrowBlockReader returns canonical records; direct Flight export
+            // can stream the underlying IPC batches without reconstructing them.
             debug!(
                 "Found ArrowBlockReader index, using standard IPC reader for {}",
                 file_path
@@ -1146,7 +1146,7 @@ impl ArrowFileExportHandler {
 
     /// Read RecordBatches from an SST file (ProximaBlocks format, SST engine)
     ///
-    /// Converts VectorRecords from ProximaBlocks format to Arrow RecordBatches on-the-fly.
+    /// Converts ProximaRecords from ProximaBlocks format to Arrow RecordBatches on-the-fly.
     /// Results are cached to improve performance for repeated access to the same file.
     /// The cache automatically invalidates entries when the underlying file is modified.
     ///
@@ -1239,7 +1239,7 @@ impl ArrowFileExportHandler {
             return Ok(Vec::new());
         }
 
-        // Build Arrow RecordBatch from VectorRecords
+        // Build Arrow RecordBatch from ProximaRecords
         // Process in batches of 10000 records
         const BATCH_SIZE: usize = 10000;
         let mut batches = Vec::new();

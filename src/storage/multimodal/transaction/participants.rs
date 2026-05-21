@@ -9,11 +9,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use proximadb_records::ProximaRecord;
 use tokio::sync::RwLock;
 
-use crate::proto::proximadb_v1::{
-    DocumentUpdate, LogEntry, MetricSample, SqlObject, TraceData, VectorRecord,
-};
+use crate::proto::proximadb_v1::{DocumentUpdate, LogEntry, MetricSample, SqlObject, TraceData};
 use crate::storage::traits::{DocumentStorageOperations, ObservabilityStorageOperations};
 
 use super::two_phase_commit::{CommitResult, ParticipantType, PrepareResult, TwoPhaseParticipant};
@@ -475,7 +474,8 @@ impl TwoPhaseParticipant for ObservabilityStoreParticipant {
 #[async_trait::async_trait]
 pub trait VectorWriteOperations: Send + Sync {
     /// Insert a batch of vectors into a collection.
-    async fn insert_vectors(&self, collection_id: &str, vectors: Vec<VectorRecord>) -> Result<u64>;
+    async fn insert_vectors(&self, collection_id: &str, vectors: Vec<ProximaRecord>)
+    -> Result<u64>;
 
     /// Delete vectors by their IDs.
     async fn delete_vectors(&self, collection_id: &str, ids: Vec<String>) -> Result<u64>;
@@ -486,7 +486,7 @@ pub trait VectorWriteOperations: Send + Sync {
 pub enum StagedVectorOperation {
     Insert {
         collection: String,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
     },
     Delete {
         collection: String,
@@ -512,7 +512,7 @@ impl VectorStoreParticipant {
         &self,
         transaction_id: &str,
         collection: &str,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
     ) -> Result<()> {
         self.stage_operation(
             transaction_id,

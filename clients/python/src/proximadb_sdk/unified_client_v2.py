@@ -532,6 +532,86 @@ class ProximaDBClient:
             }
 
     # ==========================================================================
+    # AQL/UQL Query Operations
+    # ==========================================================================
+
+    def execute_query(
+        self,
+        query: str,
+        *,
+        language: str = "uql",
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute AQL/UQL through the active adapter.
+
+        REST adapters use the OpenAPI v2 `/api/v2/query` contract. Other
+        adapters may add native support later; until then they fail explicitly.
+        """
+        if not hasattr(self._adapter, "execute_query"):
+            raise ProximaDBError(
+                f"{self._adapter.protocol_name} adapter does not support execute_query"
+            )
+        return self._adapter.execute_query(
+            query,
+            language=language,
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def execute_uql(
+        self,
+        query: str,
+        *,
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute a UQL query through the OpenAPI v2 REST query surface."""
+        return self.execute_query(
+            query,
+            language="uql",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def execute_aql(
+        self,
+        query: str,
+        *,
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute an AQL query through the OpenAPI v2 REST query surface."""
+        return self.execute_query(
+            query,
+            language="aql",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def explain_query(
+        self,
+        query: str,
+        *,
+        language: str = "uql",
+        collection: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Explain an AQL/UQL query through the active adapter."""
+        if not hasattr(self._adapter, "explain_query"):
+            raise ProximaDBError(
+                f"{self._adapter.protocol_name} adapter does not support explain_query"
+            )
+        return self._adapter.explain_query(
+            query, language=language, collection=collection
+        )
+
+    # ==========================================================================
     # Lifecycle Methods
     # ==========================================================================
 

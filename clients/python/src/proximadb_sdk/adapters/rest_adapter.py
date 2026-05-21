@@ -225,7 +225,9 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         if isinstance(result, dict):
             success = result.get(
                 "success",
-                result.get("successful_count", result.get("inserted_count", total_count)),
+                result.get(
+                    "successful_count", result.get("inserted_count", total_count)
+                ),
             )
             failed = result.get("failed", result.get("failed_count", 0))
             return BatchResult(
@@ -481,6 +483,74 @@ class RestProtocolAdapter(BaseProtocolAdapter):
                 )
 
         return search_results
+
+    # ==========================================================================
+    # AQL/UQL Query Operations
+    # ==========================================================================
+
+    def execute_query(
+        self,
+        query: str,
+        *,
+        language: str = "uql",
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute AQL/UQL through the OpenAPI v2 REST query surface."""
+        return self._client.execute_query(
+            query,
+            language=language,
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def execute_uql(
+        self,
+        query: str,
+        *,
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute UQL through the OpenAPI v2 REST query surface."""
+        return self.execute_query(
+            query,
+            language="uql",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def execute_aql(
+        self,
+        query: str,
+        *,
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute AQL through the OpenAPI v2 REST query surface."""
+        return self.execute_query(
+            query,
+            language="aql",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def explain_query(
+        self,
+        query: str,
+        *,
+        language: str = "uql",
+        collection: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Explain AQL/UQL through the OpenAPI v2 REST query surface."""
+        return self._client.explain_query(
+            query, language=language, collection=collection
+        )
 
     def batch_search(
         self,

@@ -1,22 +1,17 @@
 // Copyright (C) 2025 ProximaDB
 // SPDX-License-Identifier: Apache-2.0
 
-//! Adaptive per-segment codec selection (TD-036)
+//! Compatibility adapter for adaptive per-segment codec selection (TD-036).
 //!
-//! Analyzes data characteristics to select the optimal ProximaScheme
-//! for each segment, inspired by DuckDB's adaptive encoding.
-//!
-//! The selection follows a decision tree based on data profile:
-//! 1. Constant data -> RunLength
-//! 2. Very sparse (>95% zeros) -> SparseCOO
-//! 3. Sparse (>70% zeros) -> SparseBitmap
-//! 4. Low cardinality (<10% distinct) -> Dictionary
-//! 5. Sorted data -> Delta
-//! 6. Narrow range (<=16 bits) -> FrameOfReference
-//! 7. Medium range (<=32 bits) -> BitPacked
-//! 8. Fallback -> Raw
+//! This module preserves the old compute-facing API while delegating codec
+//! decisions to the canonical `proximadb-codec` strategy registry. New storage
+//! and projection code should use `StrategyRegistry::select_decision` directly.
 
-use super::types::ProximaScheme;
+use super::strategy::{
+    CodecDecision, CompressionProfile, DataAnalysis, LayoutHints, PhysicalOrdering,
+    SelectionContext, Sortedness, StrategyRegistry,
+};
+use super::types::{ProximaScheme, TypeId};
 use std::collections::HashSet;
 
 /// Result of data analysis for codec selection
@@ -113,68 +108,66 @@ pub fn select_optimal_codec(data: &[i64], sample_size: usize) -> ProximaScheme {
     select_from_profile(&profile)
 }
 
-/// Select optimal codec from a pre-computed data profile
+/// Select an explainable codec decision from a pre-computed data profile.
 ///
-/// Decision tree:
-/// 1. Empty data -> Raw
-/// 2. Constant -> RunLength
-/// 3. >95% zeros -> SparseCOO
-/// 4. >70% zeros -> SparseBitmap
-/// 5. <10% distinct -> Dictionary
-/// 6. Sorted -> Delta
-/// 7. <=16 bit range -> FrameOfReference
-/// 8. <=32 bit range -> BitPacked
-/// 9. Fallback -> Raw
+/// This is the compatibility bridge from the legacy `DataProfile` shape into
+/// the canonical codec selector.
+pub fn select_decision_from_profile(profile: &DataProfile) -> CodecDecision {
+    let analysis = data_analysis_from_profile(profile);
+    let context = selection_context_from_profile(profile);
+    let hints = layout_hints_from_profile(profile);
+    let registry = StrategyRegistry::default();
+    let compression_profile = CompressionProfile::from_selection_context(&context);
+
+    registry.select_decision(&analysis, &context, &compression_profile, &hints)
+}
+
+/// Select a codec from a pre-computed data profile.
 pub fn select_from_profile(profile: &DataProfile) -> ProximaScheme {
     if profile.total_count == 0 {
         return ProximaScheme::Raw;
     }
 
-    // 1. Constant data -> RunLength
-    if profile.is_constant {
-        return ProximaScheme::RunLength;
+    select_decision_from_profile(profile).scheme
+}
+
+fn data_analysis_from_profile(profile: &DataProfile) -> DataAnalysis {
+    if profile.total_count == 0 {
+        return DataAnalysis::empty();
     }
 
-    // 2. Very sparse data (>95% zeros) -> SparseCOO
-    if profile.zero_fraction > 0.95 {
-        return ProximaScheme::SparseCOO;
+    DataAnalysis {
+        zero_ratio: profile.zero_fraction,
+        unique_ratio: profile.distinct_count as f64 / profile.total_count as f64,
+        sequential_score: if profile.is_sorted { 1.0 } else { 0.0 },
+        range: profile.range,
+        max_bits: profile.bits_needed.max(1),
+        constant_score: if profile.is_constant { 1.0 } else { 0.0 },
+        count: profile.total_count,
+        min_value: Some(profile.min_value),
+        max_value: Some(profile.max_value),
     }
+}
 
-    // 3. Sparse data (>70% zeros) -> SparseBitmap
-    if profile.zero_fraction > 0.70 {
-        return ProximaScheme::SparseBitmap;
-    }
-
-    // 4. Low cardinality (<10% distinct) -> Dictionary
-    let cardinality_ratio = profile.distinct_count as f64 / profile.total_count as f64;
-    if cardinality_ratio < 0.1 {
-        return ProximaScheme::Dictionary;
-    }
-
-    // 5. Sorted data -> Delta
+fn selection_context_from_profile(profile: &DataProfile) -> SelectionContext {
+    let context = SelectionContext::general(TypeId::I64);
     if profile.is_sorted {
-        return ProximaScheme::Delta {
-            base: profile.min_value,
-        };
+        context.sorted()
+    } else {
+        context
     }
+}
 
-    // 6. Narrow range -> FrameOfReference
-    if profile.bits_needed <= 16 {
-        return ProximaScheme::FrameOfReference {
-            reference: profile.min_value,
-            bits: profile.bits_needed.max(1),
-        };
+fn layout_hints_from_profile(profile: &DataProfile) -> LayoutHints {
+    if profile.is_sorted {
+        LayoutHints {
+            physical_ordering: PhysicalOrdering::Value,
+            sortedness: Sortedness::Sorted,
+            ..LayoutHints::default()
+        }
+    } else {
+        LayoutHints::none()
     }
-
-    // 7. Medium range -> BitPacked
-    if profile.bits_needed <= 32 {
-        return ProximaScheme::BitPacked {
-            bits: profile.bits_needed,
-        };
-    }
-
-    // 8. Fallback -> Raw
-    ProximaScheme::Raw
 }
 
 #[cfg(test)]
@@ -240,18 +233,18 @@ mod tests {
     }
 
     #[test]
-    fn test_sorted_data_selects_delta() {
+    fn test_sorted_data_delegates_to_canonical_double_delta() {
         let data: Vec<i64> = (0..100).collect();
         let scheme = select_optimal_codec(&data, 100);
         assert!(
-            matches!(scheme, ProximaScheme::Delta { .. }),
-            "Sorted data should select Delta, got {:?}",
+            matches!(scheme, ProximaScheme::DoubleDelta { .. }),
+            "Sorted sequential data should use canonical DoubleDelta, got {:?}",
             scheme
         );
     }
 
     #[test]
-    fn test_narrow_range_selects_for() {
+    fn test_narrow_range_delegates_to_canonical_simple8b() {
         // Unsorted data with narrow range (fits in 16 bits)
         // Need >10% distinct to avoid Dictionary, and not sorted
         let mut data = Vec::with_capacity(100);
@@ -267,14 +260,14 @@ mod tests {
         }
         let scheme = select_optimal_codec(&data, 100);
         assert!(
-            matches!(scheme, ProximaScheme::FrameOfReference { .. }),
-            "Narrow range unsorted data should select FrameOfReference, got {:?}",
+            matches!(scheme, ProximaScheme::Simple8b),
+            "Narrow range unsorted data should use canonical Simple8b, got {:?}",
             scheme
         );
     }
 
     #[test]
-    fn test_wide_range_selects_raw() {
+    fn test_wide_range_uses_canonical_delta_fallback() {
         // Data with very wide range (>32 bits), unsorted, high cardinality
         let mut data = Vec::with_capacity(100);
         for i in 0..100 {
@@ -287,8 +280,8 @@ mod tests {
         }
         let scheme = select_optimal_codec(&data, 100);
         assert!(
-            matches!(scheme, ProximaScheme::Raw),
-            "Wide range data (>32 bits) should select Raw, got {:?}",
+            matches!(scheme, ProximaScheme::Delta { .. }),
+            "Wide range data should use canonical Delta fallback, got {:?}",
             scheme
         );
     }
@@ -352,7 +345,7 @@ mod tests {
     }
 
     #[test]
-    fn test_medium_range_selects_bitpacked() {
+    fn test_medium_range_delegates_to_canonical_for() {
         // Unsorted data with medium range (17-32 bits), high cardinality
         let mut data = Vec::with_capacity(100);
         for i in 0..100 {
@@ -364,14 +357,34 @@ mod tests {
             }
         }
         let profile = analyze_segment(&data, 100);
-        // Verify it falls in the BitPacked range
+        // Verify it falls in the canonical frame-of-reference range.
         if profile.bits_needed > 16 && profile.bits_needed <= 32 {
             let scheme = select_from_profile(&profile);
             assert!(
-                matches!(scheme, ProximaScheme::BitPacked { .. }),
-                "Medium range data should select BitPacked, got {:?}",
+                matches!(scheme, ProximaScheme::FrameOfReference { .. }),
+                "Medium range data should use canonical FrameOfReference, got {:?}",
                 scheme
             );
         }
+    }
+
+    #[test]
+    fn test_select_decision_from_profile_exposes_rejections() {
+        let profile = DataProfile {
+            distinct_count: 100,
+            total_count: 100,
+            min_value: 0,
+            max_value: 99,
+            range: 99,
+            is_sorted: true,
+            is_constant: false,
+            zero_fraction: 0.01,
+            bits_needed: 7,
+        };
+        let decision = select_decision_from_profile(&profile);
+
+        assert!(matches!(decision.scheme, ProximaScheme::DoubleDelta { .. }));
+        assert!(decision.exact_reconstruction);
+        assert_eq!(decision.rejected_candidates.len(), 0);
     }
 }

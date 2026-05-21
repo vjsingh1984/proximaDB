@@ -1,11 +1,30 @@
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::engines::sst::SstableWriter;
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
     use std::collections::BTreeMap;
     use std::sync::Arc;
     use tempfile::NamedTempFile;
+
+    fn test_record(id: impl Into<String>, vector: Vec<f32>) -> ProximaRecord {
+        let id = id.into();
+        ProximaRecord {
+            oid: id.clone(),
+            local_id: Some(id),
+            record_version: 1,
+            created_at_ns: 123_456_789_000_000,
+            updated_at_ns: 123_456_789_000_000,
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: vector.len() as u32,
+                values: vector,
+            }],
+            ..ProximaRecord::default()
+        }
+    }
 
     #[tokio::test]
     async fn test_sstable_writer_basic() {
@@ -16,17 +35,8 @@ mod tests {
         // Create test records
         let mut records = BTreeMap::new();
         for i in 0..10 {
-            let record = VectorRecord {
-                id: format!("key{:03}", i),
-                vector: vec![1.0, 2.0, 3.0],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(chrono::Utc::now().timestamp()),
-                updated_at: Some(chrono::Utc::now().timestamp()),
-                expires_at: None,
-                version: Some(1),
-                source: None,
-            };
-            records.insert(record.id.clone(), record);
+            let record = test_record(format!("key{:03}", i), vec![1.0, 2.0, 3.0]);
+            records.insert(record.oid.clone(), record);
         }
 
         assert_eq!(records.len(), 10);
@@ -34,8 +44,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_sstable_write_read_format() {
-        use crate::proto::proximadb_v1::VectorRecord as VR;
-        use crate::storage::engines::sst::SstEntry;
         use crate::storage::persistence::filesystem::FilesystemConfig;
         use crate::storage::persistence::filesystem::FilesystemFactory;
         use tempfile::TempDir;
@@ -51,18 +59,8 @@ mod tests {
 
         // Create a simple record
         let mut records = BTreeMap::new();
-        let vector_record = VR {
-            id: "test_vec".to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(123456789),
-            updated_at: Some(123456789),
-            expires_at: None,
-            version: Some(1),
-            source: None,
-        };
-        let record = SstEntry::from_vector_record(vector_record, 1, 0);
-        records.insert(record.record.id.clone(), record);
+        let record = test_record("test_vec", vec![1.0, 2.0, 3.0]);
+        records.insert(record.oid.clone(), record);
 
         // Write SSTable
         let writer = SstableWriter::new(
@@ -73,9 +71,9 @@ mod tests {
 
         // Write records using streaming approach for production consistency
         let record_count = records.len();
-        let sorted_records_iter = records.into_iter().map(|(_, entry)| entry.record);
+        let sorted_records_iter = records.into_values();
         writer
-            .write_sorted_records(sorted_records_iter, record_count)
+            .write_sorted_proxima_records(sorted_records_iter, record_count)
             .await
             .expect("Failed to write SSTable");
 
@@ -86,9 +84,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_sstable_format_inspection() {
-        use crate::proto::proximadb_v1::{SqlValue, VectorRecord as VR};
         use crate::storage::engines::sst::readers::sst_query_engine::SstDirectReader;
-        use crate::storage::engines::sst::{SstEntry, SstMetadata};
         use crate::storage::persistence::filesystem::FilesystemConfig;
         use crate::storage::persistence::filesystem::FilesystemFactory;
         use tempfile::TempDir;
@@ -106,46 +102,13 @@ mod tests {
         // Create records with metadata for bloom filter
         let mut records = BTreeMap::new();
         for i in 0..5 {
-            let _metadata = vec![crate::proto::proximadb_v1::MetadataItem {
-                key: "category".to_string(),
-                value: Some(
-                    crate::proto::proximadb_v1::metadata_item::Value::StringValue(format!(
-                        "cat_{}",
-                        i % 2
-                    )),
-                ),
-            }];
-
-            let mut metadata_map = std::collections::HashMap::new();
-            metadata_map.insert(
+            let mut record = test_record(format!("vec_{}", i), vec![i as f32; 3]);
+            record.props.insert(
                 "category".to_string(),
-                SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        format!("cat_{}", i % 2),
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::String(format!("cat_{}", i % 2))),
             );
 
-            let vector_record = VR {
-                id: format!("vec_{}", i),
-                vector: vec![i as f32; 3],
-                metadata: metadata_map,
-                timestamp: Some(123456789),
-                updated_at: Some(123456789),
-                expires_at: None,
-                version: Some(1),
-                source: None,
-            };
-
-            let sst_entry = SstEntry {
-                record: vector_record,
-                sst_meta: SstMetadata {
-                    is_tombstone: false,
-                    sequence_number: i as u64,
-                    level: 0,
-                },
-            };
-            records.insert(sst_entry.record.id.clone(), sst_entry);
+            records.insert(record.oid.clone(), record);
         }
 
         // Write SSTable
@@ -153,9 +116,9 @@ mod tests {
 
         // Write records using streaming approach for production consistency
         let record_count = records.len();
-        let sorted_records_iter = records.into_iter().map(|(_, entry)| entry.record);
+        let sorted_records_iter = records.into_values();
         writer
-            .write_sorted_records(sorted_records_iter, record_count)
+            .write_sorted_proxima_records(sorted_records_iter, record_count)
             .await
             .expect("Failed to write SSTable");
 

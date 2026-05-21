@@ -621,7 +621,7 @@ impl StorageEngine {
     ) -> crate::storage::Result<bool> {
         // Write delete marker to WAL using new interface
         self.write_ahead_log_manager
-            .delete(collection_id.to_string(), id.clone())
+            .delete_record(collection_id.to_string(), id.clone())
             .await
             .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?;
 

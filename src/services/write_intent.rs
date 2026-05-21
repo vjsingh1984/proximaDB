@@ -266,6 +266,32 @@ impl WriteLaneDecision {
             rejected_lanes,
         }
     }
+
+    /// Assert that the selected lane is `WalCurrentState`.
+    ///
+    /// Protocol adapters (gRPC, Arrow Flight) that route through legacy vector
+    /// handlers rather than `NativeTableWriteExecutor` must call this after
+    /// computing the lane decision so that non-WAL intents are rejected
+    /// explicitly rather than silently falling through to WAL.
+    pub fn require_wal_lane(&self, context: &str) -> anyhow::Result<()> {
+        if self.lane == WriteLane::WalCurrentState {
+            return Ok(());
+        }
+        let rejected: Vec<&str> = self
+            .rejected_lanes
+            .iter()
+            .map(|r| r.reason.as_str())
+            .collect();
+        Err(anyhow::anyhow!(
+            "{}: write-lane {:?} is not yet committed by this adapter \
+             (selected reason: {}; rejected lane notes: {:?}). \
+             Only WalCurrentState is supported until dedicated commit protocols are wired.",
+            context,
+            self.lane,
+            self.reason,
+            rejected,
+        ))
+    }
 }
 
 /// Tunables for the shared write-lane router.
@@ -625,6 +651,46 @@ mod tests {
             !decision
                 .required_guards
                 .contains(&WriteGuard::CanonicalWalAppend)
+        );
+    }
+
+    #[test]
+    fn require_wal_lane_passes_for_wal_current_state() {
+        let decision =
+            WriteLaneRouter::new().route(&WriteIntent::new("t", WriteOperationKind::Insert));
+        assert_eq!(decision.lane, WriteLane::WalCurrentState);
+        assert!(decision.require_wal_lane("test adapter").is_ok());
+    }
+
+    #[test]
+    fn require_wal_lane_rejects_projection_only() {
+        let intent = WriteIntent::new("t", WriteOperationKind::ProjectionRefresh)
+            .with_durability(WriteDurabilityRequirement::ProjectionOnly);
+        let decision = WriteLaneRouter::new().route(&intent);
+        assert_eq!(decision.lane, WriteLane::ProjectionOnly);
+        let result = decision.require_wal_lane("test adapter");
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("ProjectionOnly"),
+            "error should name the lane: {msg}"
+        );
+    }
+
+    #[test]
+    fn require_wal_lane_rejects_overwrite_snapshot_commit() {
+        let intent = WriteIntent::new("t", WriteOperationKind::OverwriteTable)
+            .with_durability(WriteDurabilityRequirement::DirectCommitAllowed)
+            .with_idempotency_key("snap-001");
+        let decision = WriteLaneRouter::new().route(&intent);
+        assert_eq!(decision.lane, WriteLane::OverwriteSnapshotCommit);
+        let result = decision.require_wal_lane("Arrow Flight DoPut");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("OverwriteSnapshotCommit")
         );
     }
 }

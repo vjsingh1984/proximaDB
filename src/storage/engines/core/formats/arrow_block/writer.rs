@@ -1,6 +1,6 @@
 //! Arrow Block Writer
 //!
-//! Writes VectorRecords to Arrow IPC format with B+ tree indexing.
+//! Writes ProximaRecords to Arrow IPC format with B+ tree indexing.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -10,11 +10,11 @@ use std::sync::Arc;
 use arrow_array::RecordBatch;
 use arrow_ipc::writer::{FileWriter, IpcWriteOptions};
 use arrow_schema::Schema as ArrowSchema;
+use proximadb_records::ProximaRecord;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::VectorRecord;
+use crate::storage::schema::proxima_record_bridge::DefaultProximaRecordBridge;
 use crate::storage::schema::proxima_schema::ProximaSchema;
-use crate::storage::schema::vector_record_bridge::{DefaultVectorRecordBridge, VectorRecordBridge};
 
 use super::config::{ArrowBlockConfig, ArrowBlockMetadata};
 use super::index::{ArrowBlockIndex, ArrowIndexEntry};
@@ -31,8 +31,8 @@ pub struct ArrowBlockWriter {
     /// Configuration
     config: ArrowBlockConfig,
 
-    /// VectorRecord to Arrow bridge
-    bridge: DefaultVectorRecordBridge,
+    /// ProximaRecord to Arrow bridge
+    bridge: DefaultProximaRecordBridge,
 
     /// Block index
     index: ArrowBlockIndex,
@@ -41,7 +41,7 @@ pub struct ArrowBlockWriter {
     current_block: u32,
 
     /// Accumulated records for current block
-    pending_records: Vec<VectorRecord>,
+    pending_records: Vec<ProximaRecord>,
 
     /// File offset tracker
     current_offset: u64,
@@ -73,7 +73,7 @@ impl ArrowBlockWriter {
         let writer = BufWriter::new(file);
 
         let schema = ProximaSchema::vector_record_schema(config.dimension);
-        let bridge = DefaultVectorRecordBridge::new(schema);
+        let bridge = DefaultProximaRecordBridge::new(schema);
 
         Ok(Self {
             inner: writer,
@@ -94,7 +94,7 @@ impl ArrowBlockWriter {
     }
 
     /// Add a single record
-    pub fn add_record(&mut self, record: VectorRecord) -> ArrowBlockResult<()> {
+    pub fn add_record(&mut self, record: ProximaRecord) -> ArrowBlockResult<()> {
         // Update global ranges
         self.update_global_ranges(&record);
 
@@ -109,7 +109,7 @@ impl ArrowBlockWriter {
     }
 
     /// Add multiple records
-    pub fn add_records(&mut self, records: &[VectorRecord]) -> ArrowBlockResult<()> {
+    pub fn add_records(&mut self, records: &[ProximaRecord]) -> ArrowBlockResult<()> {
         for record in records {
             self.add_record(record.clone())?;
         }
@@ -117,7 +117,7 @@ impl ArrowBlockWriter {
     }
 
     /// Write a complete block of records
-    pub fn write_block(&mut self, records: &[VectorRecord]) -> ArrowBlockResult<()> {
+    pub fn write_block(&mut self, records: &[ProximaRecord]) -> ArrowBlockResult<()> {
         if records.is_empty() {
             return Ok(());
         }
@@ -128,7 +128,7 @@ impl ArrowBlockWriter {
         }
 
         // Convert to Arrow RecordBatch
-        let batch = self.bridge.records_to_batch(records)?;
+        let batch = self.bridge.proxima_records_to_batch(records)?;
 
         // Initialize Arrow writer on first write
         if self.arrow_writer.is_none() {
@@ -278,21 +278,22 @@ impl ArrowBlockWriter {
     }
 
     /// Update global ID and timestamp ranges
-    fn update_global_ranges(&mut self, record: &VectorRecord) {
+    fn update_global_ranges(&mut self, record: &ProximaRecord) {
         // Update ID range
         match &self.global_min_id {
-            None => self.global_min_id = Some(record.id.clone()),
-            Some(min_id) if record.id < *min_id => self.global_min_id = Some(record.id.clone()),
+            None => self.global_min_id = Some(record.oid.clone()),
+            Some(min_id) if record.oid < *min_id => self.global_min_id = Some(record.oid.clone()),
             _ => {}
         }
         match &self.global_max_id {
-            None => self.global_max_id = Some(record.id.clone()),
-            Some(max_id) if record.id > *max_id => self.global_max_id = Some(record.id.clone()),
+            None => self.global_max_id = Some(record.oid.clone()),
+            Some(max_id) if record.oid > *max_id => self.global_max_id = Some(record.oid.clone()),
             _ => {}
         }
 
         // Update timestamp range
-        if let Some(ts) = record.timestamp {
+        let ts = record.created_at_ns / 1_000_000;
+        if ts > 0 {
             match self.global_min_timestamp {
                 None => self.global_min_timestamp = Some(ts),
                 Some(min_ts) if ts < min_ts => self.global_min_timestamp = Some(ts),
@@ -307,8 +308,8 @@ impl ArrowBlockWriter {
     }
 
     /// Get ID range from records
-    fn get_id_range(&self, records: &[VectorRecord]) -> ArrowBlockResult<(String, String)> {
-        let mut ids: Vec<_> = records.iter().map(|r| r.id.as_str()).collect();
+    fn get_id_range(&self, records: &[ProximaRecord]) -> ArrowBlockResult<(String, String)> {
+        let mut ids: Vec<_> = records.iter().map(|r| r.oid.as_str()).collect();
         ids.sort();
         let min = ids.first().copied().ok_or_else(|| {
             ArrowBlockError::ConversionError("No IDs found in records".to_string())
@@ -320,8 +321,12 @@ impl ArrowBlockWriter {
     }
 
     /// Get timestamp range from records
-    fn get_timestamp_range(&self, records: &[VectorRecord]) -> ArrowBlockResult<(i64, i64)> {
-        let timestamps: Vec<i64> = records.iter().filter_map(|r| r.timestamp).collect();
+    fn get_timestamp_range(&self, records: &[ProximaRecord]) -> ArrowBlockResult<(i64, i64)> {
+        let timestamps: Vec<i64> = records
+            .iter()
+            .map(|r| r.created_at_ns / 1_000_000)
+            .filter(|ts| *ts > 0)
+            .collect();
         let min = timestamps.iter().min().copied().ok_or_else(|| {
             ArrowBlockError::ConversionError("No timestamps found in records".to_string())
         })?;
@@ -350,17 +355,25 @@ impl ArrowBlockWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use proximadb_records::EmbeddingCell;
     use tempfile::tempdir;
 
-    fn create_test_record(id: &str, dim: usize) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector: (0..dim).map(|i| i as f32 * 0.1).collect(),
-            metadata: HashMap::new(),
-            timestamp: Some(chrono::Utc::now().timestamp_millis()),
-            version: Some(1),
-            ..Default::default()
+    fn create_test_record(id: &str, dim: usize) -> ProximaRecord {
+        let timestamp_ns = chrono::Utc::now()
+            .timestamp_millis()
+            .saturating_mul(1_000_000);
+        ProximaRecord {
+            oid: id.to_string(),
+            created_at_ns: timestamp_ns,
+            updated_at_ns: timestamp_ns,
+            record_version: 1,
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: dim as u32,
+                values: (0..dim).map(|i| i as f32 * 0.1).collect(),
+            }],
+            ..ProximaRecord::default()
         }
     }
 

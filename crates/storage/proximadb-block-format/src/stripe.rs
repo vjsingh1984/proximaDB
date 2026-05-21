@@ -68,7 +68,7 @@ impl ColumnRole {
 /// [0..4]   column_id      i32
 /// [4]      role           ColumnRole as u8
 /// [5]      data_type_id   proximadb_codec::TypeId as u8 (0xff = variable/string/bytes)
-/// [6]      encoding_id    ProximaScheme ordinal (from proximadb-codec)
+/// [6]      encoding_id    ProximaScheme stable marker (0 accepted as legacy raw)
 /// [7]      flags          bit0=nullable, bit1=has_bloom, bit2=sorted
 /// [8..12]  stripe_offset  u32 from body start (after row directory)
 /// [12..16] stripe_len     u32 encoded byte count
@@ -87,7 +87,9 @@ pub struct ColumnMeta {
     pub role: ColumnRole,
     /// Codec `TypeId` byte; `0xff` for variable-length (string, bytes, vec).
     pub data_type_id: u8,
-    /// `ProximaScheme` ordinal from `proximadb-codec`.
+    /// Stable `ProximaScheme` marker from `proximadb-codec`.
+    /// Reader compatibility also accepts legacy raw marker `0`; i64 readers
+    /// additionally accept legacy raw marker `3` from the original timestamp writer.
     pub encoding_id: u8,
     pub nullable: bool,
     pub has_bloom: bool,
@@ -100,8 +102,9 @@ pub struct ColumnMeta {
     /// Approximate distinct value count (HyperLogLog, 2-byte precision).
     pub distinct_hint: u32,
     /// Type-specific min value, little-endian encoded into 16 bytes.
+    /// For strings this is the minimum 64-bit PAX hash in bytes `[0..8]`.
     pub min_val: [u8; 16],
-    /// Type-specific max value.
+    /// Type-specific max value. For strings this is the maximum 64-bit PAX hash.
     pub max_val: [u8; 16],
     /// Offset of bloom filter bytes from start of footer section (0 = none).
     pub bloom_offset: u32,
@@ -162,12 +165,26 @@ impl ColumnMeta {
     /// Check whether a given i64 value (e.g., timestamp) could be in range.
     /// Returns `true` conservatively (if min/max are zeroed out).
     pub fn i64_in_range(&self, value: i64) -> bool {
+        if self.distinct_hint == 0 {
+            return true;
+        }
         let min = i64::from_le_bytes(self.min_val[0..8].try_into().unwrap_or([0; 8]));
         let max = i64::from_le_bytes(self.max_val[0..8].try_into().unwrap_or([0; 8]));
-        if min == 0 && max == 0 {
-            return true; // unset — cannot prune
-        }
         value >= min && value <= max
+    }
+
+    /// Check whether a 64-bit hash could fall within this column's hash bounds.
+    /// Returns `true` conservatively if hash stats are absent.
+    pub fn hash64_in_range(&self, hash: u64) -> bool {
+        if self.distinct_hint == 0 {
+            return true;
+        }
+        let min = u64::from_le_bytes(self.min_val[0..8].try_into().unwrap_or([0; 8]));
+        let max = u64::from_le_bytes(self.max_val[0..8].try_into().unwrap_or([0; 8]));
+        if min == 0 && max == 0 {
+            return true;
+        }
+        hash >= min && hash <= max
     }
 }
 
@@ -177,11 +194,22 @@ pub struct ColumnStripe {
     pub meta: ColumnMeta,
     /// Encoded column data bytes (scheme-specific, ready for I/O).
     pub data: Vec<u8>,
+    /// Optional footer-resident bloom payload for membership pruning.
+    pub bloom: Vec<u8>,
 }
 
 impl ColumnStripe {
     pub fn new(meta: ColumnMeta, data: Vec<u8>) -> Self {
-        Self { meta, data }
+        Self {
+            meta,
+            data,
+            bloom: Vec::new(),
+        }
+    }
+
+    pub fn with_bloom(mut self, bloom: Vec<u8>) -> Self {
+        self.bloom = bloom;
+        self
     }
 }
 
@@ -197,10 +225,18 @@ pub struct BlockStats {
     pub max_timestamp_ns: i64,
     /// Per-column null counts indexed by column_id.
     pub null_counts: std::collections::HashMap<i32, u32>,
+    /// Per-column approximate or exact distinct counts indexed by column_id.
+    pub distinct_counts: std::collections::HashMap<i32, u32>,
     /// Lower bounds (i64 representation) per column_id.
     pub lower_bounds: std::collections::HashMap<i32, i64>,
     /// Upper bounds per column_id.
     pub upper_bounds: std::collections::HashMap<i32, i64>,
+    /// Lower bounds for hash-pruned variable-width columns.
+    pub hash_lower_bounds: std::collections::HashMap<i32, u64>,
+    /// Upper bounds for hash-pruned variable-width columns.
+    pub hash_upper_bounds: std::collections::HashMap<i32, u64>,
+    /// Bloom payload sizes for columns with footer-resident bloom filters.
+    pub bloom_filter_bytes: std::collections::HashMap<i32, u32>,
 }
 
 impl BlockStats {
@@ -212,16 +248,37 @@ impl BlockStats {
         metas: &[ColumnMeta],
     ) -> Self {
         let mut null_counts = std::collections::HashMap::new();
+        let mut distinct_counts = std::collections::HashMap::new();
         let mut lower_bounds = std::collections::HashMap::new();
         let mut upper_bounds = std::collections::HashMap::new();
+        let mut hash_lower_bounds = std::collections::HashMap::new();
+        let mut hash_upper_bounds = std::collections::HashMap::new();
+        let mut bloom_filter_bytes = std::collections::HashMap::new();
 
         for m in metas {
             null_counts.insert(m.column_id, m.null_count);
-            let lo = i64::from_le_bytes(m.min_val[0..8].try_into().unwrap_or([0; 8]));
-            let hi = i64::from_le_bytes(m.max_val[0..8].try_into().unwrap_or([0; 8]));
-            if lo != 0 || hi != 0 {
-                lower_bounds.insert(m.column_id, lo);
-                upper_bounds.insert(m.column_id, hi);
+            if m.distinct_hint > 0 {
+                distinct_counts.insert(m.column_id, m.distinct_hint);
+                if m.data_type_id == 0x03 {
+                    lower_bounds.insert(
+                        m.column_id,
+                        i64::from_le_bytes(m.min_val[0..8].try_into().unwrap_or([0; 8])),
+                    );
+                    upper_bounds.insert(
+                        m.column_id,
+                        i64::from_le_bytes(m.max_val[0..8].try_into().unwrap_or([0; 8])),
+                    );
+                } else if m.data_type_id == 0xff {
+                    let lo = u64::from_le_bytes(m.min_val[0..8].try_into().unwrap_or([0; 8]));
+                    let hi = u64::from_le_bytes(m.max_val[0..8].try_into().unwrap_or([0; 8]));
+                    if lo != 0 || hi != 0 {
+                        hash_lower_bounds.insert(m.column_id, lo);
+                        hash_upper_bounds.insert(m.column_id, hi);
+                    }
+                }
+            }
+            if m.has_bloom && m.bloom_len > 0 {
+                bloom_filter_bytes.insert(m.column_id, m.bloom_len);
             }
         }
 
@@ -231,8 +288,12 @@ impl BlockStats {
             min_timestamp_ns: min_ts,
             max_timestamp_ns: max_ts,
             null_counts,
+            distinct_counts,
             lower_bounds,
             upper_bounds,
+            hash_lower_bounds,
+            hash_upper_bounds,
+            bloom_filter_bytes,
         }
     }
 }

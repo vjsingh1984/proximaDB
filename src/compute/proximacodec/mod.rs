@@ -62,7 +62,8 @@ pub mod types;
 pub mod wire_format;
 
 // Hardware-accelerated implementations (SIMD + GPU)
-pub mod simd; // simd/ directory - consolidated SIMD implementation
+// simd/ directory - consolidated SIMD implementation.
+pub mod simd;
 // Optional experimental feature entrypoint forwards to the active SIMD module.
 #[cfg(feature = "simd-experimental")]
 pub mod simd_experimental;
@@ -74,8 +75,12 @@ pub mod batching;
 pub use codec::ProximaCodec;
 pub use registry::ImplementationRegistry;
 pub use strategy::{
-    CodecSelectionStrategy, DataAnalysis, DataDomain, IntegerAnalysisStrategy, MlEmbeddingStrategy,
-    SelectionContext, SparseDataStrategy, StrategyRegistry, TimeSeriesStrategy,
+    AccessTemperature, AuthorityMode, BlockContext, CodecDecision, CodecParameters,
+    CodecSelectionStrategy, ColumnModality, CompressionProfile, CorrelationGroupId, DataAnalysis,
+    DataDomain, DictionaryScope, GraphLayoutHint, IntegerAnalysisStrategy, JsonLayoutHint,
+    LayoutHints, LossPolicy, MlEmbeddingStrategy, PhysicalOrdering, RandomAccessGranularity,
+    RejectedCodecCandidate, RejectionReason, SelectionContext, Sortedness, SparseDataStrategy,
+    StorageSpecialization, StrategyRegistry, TimeSeriesStrategy, VectorLayoutHint, WorkloadProfile,
 };
 pub use traits::{RawDecoder, RawEncoder};
 pub use types::{Decodable, Encodable, ProximaScheme, TypeId};

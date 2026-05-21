@@ -26,8 +26,8 @@ use crate::query::facade::{
     QueryFacadeAdapter, SqlStrategy, UnifiedQueryFacade, VectorSearchStrategy,
 };
 use crate::query::federated::FederatedQueryContext;
-use crate::services::VectorOperationsService;
 use crate::services::collection::manager::CollectionService;
+use crate::services::{DmlService, VectorOperationsService};
 use crate::storage::MultiModalStorageFacade;
 use crate::storage::StorageEngine;
 use crate::storage::document::DocumentService;
@@ -814,6 +814,16 @@ impl SharedServices {
         let query_adapter = Arc::new(QueryFacadeAdapter::new(query_facade.clone()));
         request_handlers.set_query_adapter(query_adapter.clone());
         debug!("✅ SharedServices::new - QueryFacadeAdapter wired to UnifiedHandlers");
+
+        // Wire DmlService to UnifiedHandlers for gRPC EXPLAIN routing.
+        // EXPLAIN INSERT … SELECT queries arriving on the ExecuteSql RPC are detected in
+        // execute_sql_v1 and dispatched here instead of the legacy SQL frontend.
+        let dml_service_for_grpc = Arc::new(DmlService::new(
+            catalog_manager.clone(),
+            vector_operations_service.clone(),
+        ));
+        request_handlers.set_dml_service(dml_service_for_grpc);
+        debug!("✅ SharedServices::new - DmlService wired to UnifiedHandlers for EXPLAIN routing");
 
         // Build a port-backed runtime handler for collection/vector REST routes.
         // Uses trait objects so API routes are decoupled from root-crate concrete services.

@@ -847,20 +847,6 @@ impl CompactionCoordinator {
     }
 }
 
-// 🔴 OBSOLETE - Consolidated into storage::traits::CompactionResult
-// This was an internal type only used for returning results from engine-specific
-// compaction methods. Now using the unified CompactionResult directly.
-/*
-/// Engine-specific compaction result (internal)
-#[derive(Debug, Clone)]
-struct EngineCompactionResult {
-    pub files_compacted: u64,
-    pub bytes_reclaimed: u64,
-    pub deleted_vector_ids: Vec<String>,
-    pub merged_vectors: Vec<VectorRecord>,
-}
-*/
-
 /// Trait for compaction coordination callbacks
 #[async_trait]
 pub trait CompactionCoordinatorCallbacks {

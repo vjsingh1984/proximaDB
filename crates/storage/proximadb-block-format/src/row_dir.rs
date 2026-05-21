@@ -63,7 +63,9 @@ impl RowEntry {
 
     /// True if this row is visible at snapshot time `at_ns`.
     pub fn visible_at(&self, at_ns: i64) -> bool {
-        !self.is_deleted() && self.valid_from_ns <= at_ns && at_ns < self.valid_to_ns
+        !self.is_deleted()
+            && self.valid_from_ns <= at_ns
+            && (self.valid_to_ns == i64::MAX || at_ns < self.valid_to_ns)
     }
 
     pub fn to_bytes(self) -> [u8; ROW_ENTRY_SIZE] {

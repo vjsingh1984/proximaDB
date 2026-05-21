@@ -9,7 +9,7 @@
 //! - **WS2**: SIMD Decoders for hardware-accelerated decoding
 //! - **WS3**: Smart I/O Layer with ParallelReader
 //! - **WS4**: DataFusion TableProvider integration
-//! - **WS5**: VectorRecordBridge for Arrow conversions
+//! - **WS5**: ProximaRecordBridge for Arrow conversions
 //! - **WS6**: Engine TableProvider Adapters (SST, HELIX, VIPER)
 //!
 //! ## Test Categories
@@ -616,52 +616,66 @@ fn test_vector_record_creation() {
 #[cfg(feature = "datafusion-integration")]
 #[test]
 fn test_vector_record_to_arrow_roundtrip() {
-    use proximadb::storage::schema::{DefaultVectorRecordBridge, MetadataMode, VectorRecordBridge};
+    use proximadb::storage::schema::{
+        DefaultProximaRecordBridge, MetadataMode, ProximaRecordBridge, ProximaSchema,
+    };
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
     // Create test records
-    let records: Vec<VectorRecord> = (0..10)
-        .map(|i| VectorRecord {
-            id: format!("vec_{}", i),
-            vector: vec![i as f32, (i + 1) as f32, (i + 2) as f32, (i + 3) as f32],
-            metadata: {
-                let mut meta = HashMap::new();
-                meta.insert(
-                    "index".to_string(),
-                    SqlValue {
-                        value: Some(
-                            proximadb::proto::proximadb_v1::sql_value::Value::Int64Value(i as i64),
-                        ),
-                    },
-                );
-                meta
-            },
-            timestamp: Some(i as i64),
-            ..Default::default()
+    let records: Vec<ProximaRecord> = (0..10)
+        .map(|i| {
+            let vector = vec![i as f32, (i + 1) as f32, (i + 2) as f32, (i + 3) as f32];
+            ProximaRecord {
+                oid: format!("vec_{}", i),
+                props: {
+                    let mut props = HashMap::new();
+                    props.insert(
+                        "index".to_string(),
+                        ProximaTreeNode::Value(ProximaValue::Int64(i as i64)),
+                    );
+                    props
+                },
+                created_at_ns: (i as i64).saturating_mul(1_000_000),
+                updated_at_ns: (i as i64).saturating_mul(1_000_000),
+                record_version: 1,
+                embeddings: vec![EmbeddingCell {
+                    model_id: "test".to_string(),
+                    modality: "dense_vector".to_string(),
+                    dim: vector.len() as u32,
+                    values: vector,
+                }],
+                ..Default::default()
+            }
         })
         .collect();
 
     // Create bridge with JSON metadata mode
-    let bridge = DefaultVectorRecordBridge::new(MetadataMode::JsonString);
+    let bridge = DefaultProximaRecordBridge::new(ProximaSchema::vector_record_schema(4))
+        .with_metadata_mode(MetadataMode::JsonString);
 
     // Convert to RecordBatch
     let batch = bridge
-        .vector_records_to_batch(&records)
+        .records_to_batch(&records)
         .expect("Should convert to RecordBatch");
 
     assert_eq!(batch.num_rows(), 10);
     assert!(batch.num_columns() >= 3); // id, vector, metadata (at minimum)
 
-    // Convert back to VectorRecords
+    // Convert back to ProximaRecords
     let recovered = bridge
-        .batch_to_vector_records(&batch)
-        .expect("Should convert back to VectorRecords");
+        .batch_to_records(&batch)
+        .expect("Should convert back to ProximaRecords");
 
     assert_eq!(recovered.len(), 10);
 
     // Verify roundtrip integrity
     for (original, recovered) in records.iter().zip(recovered.iter()) {
-        assert_eq!(original.id, recovered.id, "ID should match");
-        assert_eq!(original.vector, recovered.vector, "Vector should match");
+        assert_eq!(original.oid, recovered.oid, "ID should match");
+        assert_eq!(
+            original.embeddings[0].values, recovered.embeddings[0].values,
+            "Vector should match"
+        );
     }
 }
 

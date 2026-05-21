@@ -47,12 +47,12 @@ use proximadb_records::ProximaRecord;
 /// Result of bulk write route decision
 #[derive(Debug, Clone)]
 pub struct BulkWriteDecision {
-    /// Whether to use the large-batch lane.
+    /// Whether to use the large-batch lane (WAL-backed bulk path).
     ///
-    /// Historical name retained for API compatibility. The current VectorOps
-    /// implementation still writes this lane through WAL for durability; a true
-    /// WAL-skipping direct segment commit requires an accepted durability proof.
-    pub use_direct_write: bool,
+    /// True means the batch meets the size/count threshold for bulk-lane routing.
+    /// The implementation writes through WAL for durability; a future direct
+    /// segment commit path is separate and requires an accepted durability proof.
+    pub use_bulk_lane: bool,
     /// Reason for the decision
     pub reason: String,
     /// Estimated batch size in bytes
@@ -128,7 +128,7 @@ impl BulkWriteRouter {
     /// Arrow Flight and catalog-aware writes should use this path so routing is
     /// based on the `ProximaRecord` envelope instead of downgrading through
     /// legacy vector-only records.
-    pub fn should_use_direct_write_records(&self, records: &[ProximaRecord]) -> BulkWriteDecision {
+    pub fn route_records(&self, records: &[ProximaRecord]) -> BulkWriteDecision {
         let record_count = records.len();
         let estimated_size = if self.config.enabled {
             Some(self.estimate_record_batch_size(records))
@@ -148,7 +148,7 @@ impl BulkWriteRouter {
         // If disabled, always use WAL path
         if !self.config.enabled {
             return BulkWriteDecision {
-                use_direct_write: false,
+                use_bulk_lane: false,
                 reason: "Bulk write optimization disabled".to_string(),
                 estimated_size_bytes: 0,
                 vector_count: record_count,
@@ -159,7 +159,7 @@ impl BulkWriteRouter {
         if record_count >= self.config.vector_threshold {
             let estimated_size = estimated_size.unwrap_or(0);
             return BulkWriteDecision {
-                use_direct_write: true,
+                use_bulk_lane: true,
                 reason: format!(
                     "{} count {} >= threshold {}",
                     count_label, record_count, self.config.vector_threshold
@@ -173,7 +173,7 @@ impl BulkWriteRouter {
         let estimated_size = estimated_size.unwrap_or(0);
         if estimated_size >= self.config.size_threshold_bytes {
             return BulkWriteDecision {
-                use_direct_write: true,
+                use_bulk_lane: true,
                 reason: format!(
                     "Estimated size {} bytes >= threshold {} bytes",
                     estimated_size, self.config.size_threshold_bytes
@@ -185,7 +185,7 @@ impl BulkWriteRouter {
 
         // Use standard WAL path for small batches
         BulkWriteDecision {
-            use_direct_write: false,
+            use_bulk_lane: false,
             reason: format!(
                 "Small batch: {} {}, {} bytes (thresholds: {} records, {} bytes)",
                 record_count,
@@ -243,7 +243,7 @@ impl BulkWriteRouter {
     }
 
     /// Check if a batch of given size would trigger the bulk lane.
-    pub fn would_trigger_direct_write(&self, vector_count: usize, dimension: usize) -> bool {
+    pub fn would_use_bulk_lane(&self, vector_count: usize, dimension: usize) -> bool {
         if !self.config.enabled {
             return false;
         }
@@ -302,20 +302,20 @@ mod tests {
             .map(|i| create_test_record(&format!("rec_{}", i), 128))
             .collect();
 
-        let decision = router.should_use_direct_write_records(&records);
-        assert!(!decision.use_direct_write);
+        let decision = router.route_records(&records);
+        assert!(!decision.use_bulk_lane);
         assert_eq!(decision.vector_count, 10);
     }
 
     #[test]
-    fn test_large_count_uses_direct_write() {
+    fn test_large_count_uses_bulk_lane() {
         let router = BulkWriteRouter::new();
         let records: Vec<ProximaRecord> = (0..500)
             .map(|i| create_test_record(&format!("rec_{}", i), 128))
             .collect();
 
-        let decision = router.should_use_direct_write_records(&records);
-        assert!(decision.use_direct_write);
+        let decision = router.route_records(&records);
+        assert!(decision.use_bulk_lane);
     }
 
     #[test]
@@ -327,9 +327,9 @@ mod tests {
         });
         let records = vec![create_test_record("rec_1", 512)];
 
-        let decision = router.should_use_direct_write_records(&records);
+        let decision = router.route_records(&records);
 
-        assert!(decision.use_direct_write);
+        assert!(decision.use_bulk_lane);
         assert_eq!(decision.vector_count, 1);
         assert!(decision.estimated_size_bytes >= 512 * 4);
     }
@@ -343,8 +343,8 @@ mod tests {
             .map(|i| create_test_record(&format!("rec_{}", i), 768))
             .collect();
 
-        let decision = router.should_use_direct_write_records(&records);
-        assert!(!decision.use_direct_write);
+        let decision = router.route_records(&records);
+        assert!(!decision.use_bulk_lane);
         assert!(decision.reason.contains("disabled"));
     }
 
@@ -357,11 +357,11 @@ mod tests {
     }
 
     #[test]
-    fn test_would_trigger_direct_write() {
+    fn test_would_use_bulk_lane() {
         let router = BulkWriteRouter::new();
-        assert!(!router.would_trigger_direct_write(10, 128));
-        assert!(router.would_trigger_direct_write(500, 128));
-        assert!(router.would_trigger_direct_write(1000, 768));
+        assert!(!router.would_use_bulk_lane(10, 128));
+        assert!(router.would_use_bulk_lane(500, 128));
+        assert!(router.would_use_bulk_lane(1000, 768));
     }
 
     #[test]
@@ -376,8 +376,8 @@ mod tests {
             .map(|i| create_test_record(&format!("rec_{}", i), 128))
             .collect();
 
-        let decision = router.should_use_direct_write_records(&records);
-        assert!(decision.use_direct_write);
+        let decision = router.route_records(&records);
+        assert!(decision.use_bulk_lane);
     }
 
     #[test]
@@ -385,8 +385,8 @@ mod tests {
         let router = BulkWriteRouter::new();
         let records: Vec<ProximaRecord> = vec![];
 
-        let decision = router.should_use_direct_write_records(&records);
-        assert!(!decision.use_direct_write);
+        let decision = router.route_records(&records);
+        assert!(!decision.use_bulk_lane);
         assert_eq!(decision.estimated_size_bytes, 0);
         assert_eq!(decision.vector_count, 0);
     }

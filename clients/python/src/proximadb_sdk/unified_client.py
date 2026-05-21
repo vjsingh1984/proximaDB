@@ -170,7 +170,11 @@ class ProximaDBClient:
 
         if config is None:
             load_kwargs = dict(kwargs)
-            if requested_protocol == Protocol.EMBEDDED and not url and "url" not in load_kwargs:
+            if (
+                requested_protocol == Protocol.EMBEDDED
+                and not url
+                and "url" not in load_kwargs
+            ):
                 load_kwargs["url"] = "embedded://local"
             resolved_url = load_kwargs.pop("url", url)
             config = load_config(url=resolved_url, api_key=api_key, **load_kwargs)
@@ -534,8 +538,12 @@ class ProximaDBClient:
         if not hasattr(self._adapter, method_name):
             return None
 
-        ids_list = list(ids) if ids is not None else [f"vec_{i}" for i in range(len(vectors))]
-        metadata_list = metadata if metadata and any(item for item in metadata) else None
+        ids_list = (
+            list(ids) if ids is not None else [f"vec_{i}" for i in range(len(vectors))]
+        )
+        metadata_list = (
+            metadata if metadata and any(item for item in metadata) else None
+        )
 
         try:
             result = getattr(self._adapter, method_name)(
@@ -782,7 +790,9 @@ class ProximaDBClient:
         return None
 
     @staticmethod
-    def _sql_rows_to_unified_records(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _sql_rows_to_unified_records(
+        rows: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
         return [
             {
                 "id": row.get("id", f"row_{index}"),
@@ -2919,6 +2929,35 @@ class ProximaDBClient:
                 **filtered_kwargs,
             )
 
+    def search_envelope(
+        self,
+        collection_id: str,
+        vector: Union[List[float], np.ndarray],
+        top_k: int = 10,
+        include_vectors: bool = False,
+        include_metadata: bool = True,
+        **kwargs,
+    ):
+        """Run REST OpenAPI v2 search and return the paged search envelope."""
+        if hasattr(vector, "tolist"):
+            vector = vector.tolist()
+
+        if self._active_protocol == Protocol.REST and hasattr(
+            self._client, "search_envelope"
+        ):
+            return self._client.search_envelope(
+                collection_id=collection_id,
+                vector=vector,
+                top_k=top_k,
+                include_vectors=include_vectors,
+                include_metadata=include_metadata,
+                **kwargs,
+            )
+
+        raise ProximaDBError(
+            "search_envelope requires the REST OpenAPI v2 search surface"
+        )
+
     def search_iter(
         self,
         collection_id: str,
@@ -3312,8 +3351,8 @@ class ProximaDBClient:
     ) -> List[Dict[str, Any]]:
         """Execute a federated multi-model query.
 
-        This is currently implemented for embedded mode, where the native Rust
-        binding can delegate to the unified SQL/query planner directly.
+        Embedded mode uses the native binding. REST mode uses the OpenAPI v2
+        UQL query surface so existing clients do not need a separate migration.
         """
         if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
             try:
@@ -3359,8 +3398,84 @@ class ProximaDBClient:
                 fusion_strategy=fusion_strategy,
             )
 
+        if self._adapter and hasattr(self._adapter, "execute_query"):
+            result = self._adapter.execute_query(query, language="uql")
+            if isinstance(result, dict):
+                rows = (
+                    result.get("records")
+                    or result.get("rows")
+                    or result.get("data")
+                    or []
+                )
+                return rows if isinstance(rows, list) else [rows]
+            return result
+
         raise NotImplementedError(
-            "execute_unified_query is currently supported in embedded mode only"
+            "execute_unified_query requires embedded mode or a REST adapter with /api/v2/query"
+        )
+
+    def execute_query(
+        self,
+        query: str,
+        *,
+        language: str = "uql",
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute AQL/UQL through the OpenAPI v2 REST query surface."""
+        if self._adapter and hasattr(self._adapter, "execute_query"):
+            return self._adapter.execute_query(
+                query,
+                language=language,
+                parameters=parameters,
+                collection=collection,
+                limit=limit,
+            )
+        if self._client is not None and hasattr(self._client, "execute_query"):
+            return self._client.execute_query(
+                query,
+                language=language,
+                parameters=parameters,
+                collection=collection,
+                limit=limit,
+            )
+        raise NotImplementedError(
+            "execute_query requires the REST OpenAPI v2 query surface"
+        )
+
+    def execute_uql(
+        self,
+        query: str,
+        *,
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute UQL through the OpenAPI v2 REST query surface."""
+        return self.execute_query(
+            query,
+            language="uql",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def execute_aql(
+        self,
+        query: str,
+        *,
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute AQL through the OpenAPI v2 REST query surface."""
+        return self.execute_query(
+            query,
+            language="aql",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
         )
 
     def create_observability_namespace(
@@ -3380,9 +3495,7 @@ class ProximaDBClient:
                     else {"success": True, "namespace": name}
                 )
             except Exception as e:
-                logger.debug(
-                    "Embedded create_observability_namespace failed: %s", e
-                )
+                logger.debug("Embedded create_observability_namespace failed: %s", e)
 
         if self._adapter and hasattr(self._adapter, "create_observability_namespace"):
             return self._adapter.create_observability_namespace(
@@ -3404,7 +3517,9 @@ class ProximaDBClient:
         if self._adapter and hasattr(self._adapter, "ingest_logs"):
             return int(self._adapter.ingest_logs(namespace, logs))
 
-        raise NotImplementedError("Log ingest is currently supported in embedded mode only")
+        raise NotImplementedError(
+            "Log ingest is currently supported in embedded mode only"
+        )
 
     def query_logs(
         self,
@@ -3438,7 +3553,9 @@ class ProximaDBClient:
                 or []
             )
 
-        raise NotImplementedError("Log query is currently supported in embedded mode only")
+        raise NotImplementedError(
+            "Log query is currently supported in embedded mode only"
+        )
 
     def ingest_metrics(self, namespace: str, samples: List[Dict[str, Any]]) -> int:
         """Ingest metric samples into an observability namespace."""
@@ -3964,7 +4081,9 @@ class ProximaDBClient:
             "algorithm": algorithm,
             "limit": limit,
         }
-        result = self._invoke_graph_method("traverse_graph", graph_id=graph_id, **kwargs)
+        result = self._invoke_graph_method(
+            "traverse_graph", graph_id=graph_id, **kwargs
+        )
         if self._active_protocol == Protocol.EMBEDDED and not isinstance(result, dict):
             return {"nodes": list(result or []), "edges": [], "paths": [], "stats": {}}
         return result
@@ -4034,7 +4153,9 @@ class ProximaDBClient:
         graph_id: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Get a graph node by ID."""
-        result = self._invoke_graph_method("get_node", graph_id=graph_id, node_id=node_id)
+        result = self._invoke_graph_method(
+            "get_node", graph_id=graph_id, node_id=node_id
+        )
         if result is None:
             return None
         if self._active_protocol == Protocol.EMBEDDED and not isinstance(result, dict):

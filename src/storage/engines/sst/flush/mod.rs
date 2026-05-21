@@ -34,7 +34,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::storage::engines::core::formats::arrow_block::{ArrowBlockConfig, ArrowBlockWriter};
 use crate::storage::engines::sst::block_format::BlockFormat;
@@ -43,7 +42,7 @@ use crate::storage::engines::sst::writer::SstableWriter;
 use crate::storage::engines::sst::{SstEngine, SstError};
 use crate::storage::traits::{FlushParameters, FlushResult};
 use crate::storage::transaction_coordinator::{StagingConfig, TransactionStageType};
-use proximadb_records::conversions::proxima_record_to_vector;
+use proximadb_records::ProximaRecord;
 use proximadb_storage_common::storage_path::StoragePath;
 
 pub use coordinator::FlushCoordinator;
@@ -99,22 +98,15 @@ impl SstEngine {
             collection_storage_url, collection_id
         );
 
-        // Convert ProximaRecord → VectorRecord for SST engine internals
-        let vector_records_v1: Vec<VectorRecord> = params
-            .vector_records
-            .iter()
-            .map(proxima_record_to_vector)
-            .collect();
-
-        // Sort vectors for optimal SSTable encoding (clone since vector_records_v1 needed later for PCA)
+        // Sort canonical records for optimal SSTable encoding.
         let (sorted_vectors, sort_stats) = self
-            .sort_vectors_for_sstable_encoding(vector_records_v1.clone())
+            .sort_vectors_for_sstable_encoding(params.vector_records.clone())
             .await?;
 
         // Convert the result to expected format
-        let sorted_tuples: Vec<(String, VectorRecord)> = sorted_vectors
+        let sorted_tuples: Vec<(String, ProximaRecord)> = sorted_vectors
             .into_iter()
-            .map(|record| (record.id.clone(), record))
+            .map(|record| (record.oid.clone(), record))
             .collect();
 
         info!(
@@ -161,7 +153,7 @@ impl SstEngine {
                 .train_and_cache_pca_model(
                     collection_id,
                     &collection_storage_url,
-                    &vector_records_v1,
+                    &params.vector_records,
                 )
                 .await
             {
@@ -238,7 +230,7 @@ impl SstEngine {
     /// Perform atomic flush operation with staging
     async fn perform_atomic_flush(
         &self,
-        sorted_vectors: Vec<(String, VectorRecord)>,
+        sorted_vectors: Vec<(String, ProximaRecord)>,
         storage_url: &str,
         filename: &str,
         params: &FlushParameters,
@@ -285,7 +277,8 @@ impl SstEngine {
                         // Fallback: infer from first vector
                         sorted_vectors
                             .first()
-                            .map(|(_, rec)| rec.vector.len() as u32)
+                            .and_then(|(_, rec)| rec.embeddings.first())
+                            .map(|embedding| embedding.values.len() as u32)
                     })
                     .unwrap_or(128); // Default dimension if not available
 
@@ -304,8 +297,7 @@ impl SstEngine {
                 let mut writer = ArrowBlockWriter::new(staging_path, config)
                     .context("Failed to create ArrowBlockWriter")?;
 
-                // Convert sorted_vectors to VectorRecord slice for writing
-                let records: Vec<VectorRecord> =
+                let records: Vec<ProximaRecord> =
                     sorted_vectors.iter().map(|(_, rec)| rec.clone()).collect();
 
                 writer
@@ -353,13 +345,13 @@ impl SstEngine {
                 if entries_written > 0 {
                     let sorted_vec = sorted_vectors.clone();
                     if let Some((id, rec)) = sorted_vec.first() {
-                        tracing::trace!(vector_id = %id, metadata = ?rec.metadata, "First vector before write");
+                        tracing::trace!(vector_id = %id, props = ?rec.props, "First record before write");
                     }
                 }
 
                 writer
-                    .write_sorted_vector_records(
-                        sorted_vectors.into_iter(),
+                    .write_sorted_proxima_records(
+                        sorted_vectors.into_iter().map(|(_, record)| record),
                         entries_written as usize,
                     )
                     .await
@@ -464,9 +456,9 @@ mod tests {
             .unwrap();
 
         // Convert to tuples and verify sorting
-        let sorted_tuples: Vec<(String, VectorRecord)> = sorted
+        let sorted_tuples: Vec<(String, ProximaRecord)> = sorted
             .into_iter()
-            .map(|record| (record.id.clone(), record))
+            .map(|record| (record.oid.clone(), record))
             .collect();
         assert_eq!(sorted_tuples[0].0, "vector_1");
         assert_eq!(sorted_tuples[1].0, "vector_2");
@@ -489,16 +481,19 @@ mod tests {
             .unwrap()
     }
 
-    fn create_test_vector(id: &str, vector: Vec<f32>) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector,
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(12345),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
+    fn create_test_vector(id: &str, vector: Vec<f32>) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.to_string(),
+            created_at_ns: 12_345_000_000,
+            updated_at_ns: 12_345_000_000,
+            record_version: 1,
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: vector.len() as u32,
+                values: vector,
+            }],
+            ..ProximaRecord::default()
         }
     }
 }

@@ -1,42 +1,34 @@
 #!/usr/bin/env python3
-import requests
-import json
 import time
 import random
 
-base_url = "http://localhost:5678"
+from proximadb_sdk import connect_rest
 
-print("=== Testing Vector Persistence with REST API ===")
+base_url = "http://localhost:5678"
+client = connect_rest(base_url)
+
+print("=== Testing Vector Persistence with REST SDK ===")
 print()
 
 # 1. Use the recovery_test_collection that already exists
 collection_name = "recovery_test_collection"
 print(f"1. Using existing collection '{collection_name}'")
 
-# 2. Insert vectors using REST API
-print("\n2. Inserting vectors via REST API:")
-vectors = []
+# 2. Insert records using the OpenAPI v2 REST SDK surface
+print("\n2. Inserting records via REST SDK:")
+records = []
 for i in range(5):
-    vectors.append(
+    records.append(
         {
             "id": f"persist_test_{i}_{int(time.time())}",
             "vector": [random.random() for _ in range(128)],
-            "metadata": {"test": "persistence", "index": i, "timestamp": time.time()},
+            "props": {"test": "persistence", "index": i, "timestamp": time.time()},
         }
     )
 
-insert_data = {"vectors": vectors}
-
-response = requests.post(
-    f"{base_url}/api/v1/vectors/{collection_name}", json=insert_data
-)
-print(f"   Insert response: {response.status_code}")
-if response.status_code == 200:
-    print(f"   ✓ Vectors inserted successfully")
-    result = response.json()
-    print(f"   Response: {json.dumps(result, indent=2)[:200]}...")
-else:
-    print(f"   ✗ Error: {response.text}")
+result = client.insert_records(collection_name, records)
+print(f"   Insert success: {result.success}")
+print(f"   Inserted: {result.success}/{result.total}")
 
 print()
 
@@ -44,35 +36,26 @@ print()
 print("3. Checking vector operations:")
 
 # Try search
-print("   a) Search endpoint:")
-search_data = {"vector": [0.5] * 128, "top_k": 10}
-response = requests.post(
-    f"{base_url}/api/v1/search/{collection_name}", json=search_data
+print("   a) OpenAPI v2 search endpoint via SDK:")
+search = client.search_envelope(collection_name, [0.5] * 128, top_k=10)
+print(f"      Results: {len(search.items)}")
+
+# Try the query facade
+print("   b) OpenAPI v2 UQL query facade via SDK:")
+query_result = client.execute_uql(
+    f"SEARCH {collection_name} VECTOR SEARCH embedding NEAR {[0.5] * 4} TOP 1 RETURN id",
+    collection=collection_name,
+    limit=1,
 )
-print(f"      Status: {response.status_code}")
-
-# Try list
-print("   b) List endpoint:")
-response = requests.post(f"{base_url}/api/v1/vectors/{collection_name}/list", json={})
-print(f"      Status: {response.status_code}")
-
-# Try get specific vector
-print("   c) Get vector endpoint:")
-if vectors:
-    vector_id = vectors[0]["id"]
-    response = requests.get(f"{base_url}/api/v1/vectors/{collection_name}/{vector_id}")
-    print(f"      Status: {response.status_code}")
+print(f"      Query keys: {sorted(query_result.keys())}")
 
 print()
 
 # 4. Check collection stats again
 print("4. Checking collection stats after insert:")
-response = requests.get(f"{base_url}/api/v1/collection/{collection_name}")
-if response.status_code == 200:
-    col = response.json()
-    print(f"   ✓ Collection stats:")
-    print(f"     - Vector count: {col['vector_count']}")
-    print(f"     - Updated at: {col['updated_at']}")
+col = client.get_collection(collection_name)
+print("   Collection response received")
+print(f"     - Name: {getattr(col, 'name', collection_name)}")
 
 print()
 
@@ -95,3 +78,4 @@ print("Vectors have been inserted. Now you can:")
 print("1. Stop the server (kill the process)")
 print("2. Restart the server")
 print("3. Run this script again to see if vectors persist")
+client.close()

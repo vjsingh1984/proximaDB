@@ -241,55 +241,52 @@ impl ProximaEntityStore {
         embeddings: &[EmbeddingVersion],
     ) -> Result<()> {
         if let Some(vs) = &self.vector_service {
-            // Convert to native VectorRecord and write to WAL via vector service
-            let vectors: Vec<crate::proto::proximadb_v1::VectorRecord> = embeddings
+            // Convert to canonical records and write to WAL via vector service.
+            let records: Vec<proximadb_records::ProximaRecord> = embeddings
                 .iter()
                 .map(|e| {
-                    let id = Self::embedding_key(collection_id, entity_id, &e.model_id, &format!("{:?}", e.modality));
-                    let mut metadata = serde_json::Map::new();
-                    metadata.insert("entity_id".to_string(), serde_json::Value::String(entity_id.to_string()));
-                    metadata.insert("model_id".to_string(), serde_json::Value::String(e.model_id.clone()));
-                    metadata.insert("modality".to_string(), serde_json::Value::String(format!("{:?}", e.modality)));
-                    crate::proto::proximadb_v1::VectorRecord {
-                        id,
-                        vector: e.vector.clone(),
-                        metadata: {
-                            let mut sql_metadata = std::collections::HashMap::new();
-                            for (key, value) in metadata {
-                                let sql_value = match value {
-                                    serde_json::Value::String(s) => crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
-                                    },
-                                    serde_json::Value::Number(n) => {
-                                        // unwrap_or(0.0) is acceptable here: JSON numbers are almost always valid f64 values.
-                                        // as_f64() only returns None for numbers beyond f64 range (extremely rare).
-                                        // Defaulting to 0.0 provides a valid value for edge cases in metadata.
-                                        crate::proto::proximadb_v1::SqlValue {
-                                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n.as_f64().unwrap_or(0.0))),
-                                        }
-                                    },
-                                    serde_json::Value::Bool(b) => crate::proto::proximadb_v1::SqlValue {
-                                        value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
-                                    },
-                                    _ => crate::proto::proximadb_v1::SqlValue { value: None },
-                                };
-                                sql_metadata.insert(key, sql_value);
-                            }
-                            sql_metadata
-                        },
-                        timestamp: Some(0i64),
-                        updated_at: Some(0i64),
-                        expires_at: Some(0i64),
-                        version: Some(1u32),
-                        source: None,
+                    let id = Self::embedding_key(
+                        collection_id,
+                        entity_id,
+                        &e.model_id,
+                        &format!("{:?}", e.modality),
+                    );
+                    let mut props = proximadb_records::ProximaTree::new();
+                    props.insert(
+                        "entity_id".to_string(),
+                        proximadb_records::ProximaTreeNode::Value(
+                            proximadb_data_model::ProximaValue::String(entity_id.to_string()),
+                        ),
+                    );
+                    props.insert(
+                        "model_id".to_string(),
+                        proximadb_records::ProximaTreeNode::Value(
+                            proximadb_data_model::ProximaValue::String(e.model_id.clone()),
+                        ),
+                    );
+                    props.insert(
+                        "modality".to_string(),
+                        proximadb_records::ProximaTreeNode::Value(
+                            proximadb_data_model::ProximaValue::String(format!("{:?}", e.modality)),
+                        ),
+                    );
+                    proximadb_records::ProximaRecord {
+                        oid: id.clone(),
+                        local_id: Some(id),
+                        props,
+                        embeddings: vec![proximadb_records::EmbeddingCell {
+                            model_id: e.model_id.clone(),
+                            modality: format!("{:?}", e.modality),
+                            dim: e.dimension,
+                            values: e.vector.clone(),
+                        }],
+                        record_version: 1,
+                        ..Default::default()
                     }
                 })
                 .collect();
             let _ = vs
-                .handle_vector_batch_proto_vec(
-                    collection_id,
-                    vectors.into_iter().map(Into::into).collect(),
-                )
+                .handle_vector_batch_proto_vec(collection_id, records)
                 .await?;
         }
         Ok(())

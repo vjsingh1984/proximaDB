@@ -800,7 +800,9 @@ class ProximaDBClient:
             ),
             "enable_proxima_record": True,
         }
-        response = self._make_request("POST", "/api/v2/collections", json=v2_request_data)
+        response = self._make_request(
+            "POST", "/api/v2/collections", json=v2_request_data
+        )
         response_data = response.json()
 
         # Handle unified API response format
@@ -1245,7 +1247,10 @@ class ProximaDBClient:
                 "value": base64.b64encode(bytes(value)).decode("ascii"),
             }
         if isinstance(value, tuple):
-            return {"type": "array", "value": [self._proxima_rest_value(v) for v in value]}
+            return {
+                "type": "array",
+                "value": [self._proxima_rest_value(v) for v in value],
+            }
         if isinstance(value, dict):
             if set(value.keys()) == {"type", "value"}:
                 return value
@@ -1350,7 +1355,11 @@ class ProximaDBClient:
             response = self._make_request(
                 "POST",
                 f"/api/v2/collections/{collection_id}/records/batch",
-                json={"records": batch_data, "validate_schema": validate_schema},
+                json={
+                    "records": batch_data,
+                    "validate_schema": validate_schema,
+                    "upsert": upsert,
+                },
             )
             result = self._record_write_result(response.json())
             total_successful += result.success
@@ -1637,7 +1646,11 @@ class ProximaDBClient:
                     score=result.get("score", 0.0),
                     rank=result.get("rank", 0),
                     vector=(result.get("vector", []) if include_vectors else None),
-                    metadata=(result.get("metadata", {}) if include_metadata else None),
+                    metadata=(
+                        result.get("props", result.get("metadata", {}))
+                        if include_metadata
+                        else None
+                    ),
                     # Add all SearchVectorRecord fields (proto field 5-13)
                     version=result.get("version"),
                     similarity=result.get("similarity"),
@@ -1674,79 +1687,8 @@ class ProximaDBClient:
                 vector = vector.astype(np.float32)
             vector = vector.tolist()
 
-        # Try SKS
-        if self._sks_search_supported is not False:
-            try:
-                sks_body = {
-                    "vector": vector,
-                    "top_k": top_k,
-                    "include_vector": include_vectors,
-                    "include_metadata": include_metadata,
-                }
-                sks_resp = self._make_request(
-                    "POST",
-                    f"/api/v1/search/{collection_id}",
-                    json=sks_body,
-                    timeout=timeout or self.config.timeout,
-                )
-                sks_data = sks_resp.json()
-                if isinstance(sks_data, dict) and ("items" in sks_data):
-                    self._sks_search_supported = True
-                    # Map envelope
-                    items: List[SearchResult] = []
-                    for item in sks_data.get("items", []) or []:
-                        items.append(
-                            SearchResult(
-                                id=item.get("entity_id") or item.get("id", ""),
-                                score=item.get("score", 0.0),
-                                vector=(
-                                    None if not include_vectors else item.get("vector")
-                                ),
-                                metadata=(
-                                    (
-                                        item.get("typed_metadata")
-                                        or item.get("metadata")
-                                        or {}
-                                    )
-                                    if include_metadata
-                                    else None
-                                ),
-                            )
-                        )
-                    progress = None
-                    if sks_data.get("progress"):
-                        pr = sks_data["progress"]
-                        progress = SearchProgress(
-                            stage=pr.get("stage", 0),
-                            stages=pr.get("stages", 0),
-                            complete=pr.get("complete", False),
-                        )
-                    cursor = None
-                    has_more = False
-                    if sks_data.get("page"):
-                        page = sks_data["page"]
-                        cursor = page.get("cursor")
-                        has_more = page.get("has_more", False)
-                    return SearchEnvelope(
-                        items=items,
-                        total=sks_data.get("total"),
-                        cursor=cursor,
-                        has_more=has_more,
-                        progress=progress,
-                    )
-            except Exception as e:
-                try:
-                    status = (
-                        getattr(e, "response", None).status_code
-                        if hasattr(e, "response")
-                        else None
-                    )
-                except Exception:
-                    status = None
-                if status in (404, 405, 501):
-                    self._sks_search_supported = False
-
-        # Legacy fallback
+        # Keep SDK REST on the OpenAPI v2 record search contract. The legacy SKS
+        # envelope route is intentionally outside the published SDK surface.
         results = self.search(
             collection_id,
             vector,
@@ -2040,7 +1982,9 @@ class ProximaDBClient:
             "include_text": False,
         }
         response = self._make_request(
-            "GET", f"/api/v2/collections/{collection_id}/records/{vector_id}", params=params
+            "GET",
+            f"/api/v2/collections/{collection_id}/records/{vector_id}",
+            params=params,
         )
         data = response.json()
 
@@ -2900,7 +2844,9 @@ class ProximaDBClient:
         graph_id: str = "default",
     ) -> Optional[Dict[str, Any]]:
         """Get a graph node by ID via REST."""
-        response = self._http_client.get(f"/api/v1/graph/graphs/{graph_id}/nodes/{node_id}")
+        response = self._http_client.get(
+            f"/api/v1/graph/graphs/{graph_id}/nodes/{node_id}"
+        )
         response.raise_for_status()
         result = response.json()
         return result.get("data", result)
@@ -3058,6 +3004,80 @@ class ProximaDBClient:
         return response.json()
 
     # ==================== End Graph Collection Management ====================
+
+    # ==================== AQL/UQL Query API ====================
+
+    def execute_query(
+        self,
+        query: str,
+        *,
+        language: str = "uql",
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute an AQL or UQL query through the OpenAPI v2 query surface."""
+        payload: Dict[str, Any] = {"language": language, "query": query}
+        if parameters is not None:
+            payload["parameters"] = parameters
+        if collection is not None:
+            payload["collection"] = collection
+        if limit is not None:
+            payload["limit"] = limit
+
+        response = self._make_request("POST", "/api/v2/query", json=payload)
+        return response.json()
+
+    def explain_query(
+        self,
+        query: str,
+        *,
+        language: str = "uql",
+        collection: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Explain an AQL or UQL query through the OpenAPI v2 query surface."""
+        payload: Dict[str, Any] = {"language": language, "query": query}
+        if collection is not None:
+            payload["collection"] = collection
+
+        response = self._make_request("POST", "/api/v2/query/explain", json=payload)
+        return response.json()
+
+    def execute_uql(
+        self,
+        query: str,
+        *,
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute a UQL query through the OpenAPI v2 query surface."""
+        return self.execute_query(
+            query,
+            language="uql",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def execute_aql(
+        self,
+        query: str,
+        *,
+        parameters: Optional[List[Any]] = None,
+        collection: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute an AQL query through the OpenAPI v2 query surface."""
+        return self.execute_query(
+            query,
+            language="aql",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    # ==================== End AQL/UQL Query API ====================
 
     # ==================== SQL Query API ====================
 

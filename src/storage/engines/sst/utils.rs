@@ -28,9 +28,10 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
 use crate::storage::engines::sst::SstableBloomFilter;
 use crate::storage::engines::sst::{SstEngine, SstError};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{ProximaRecord, ProximaTreeNode};
 
 impl SstEngine {
     /// Sort vectors for optimal SSTable encoding
@@ -41,8 +42,8 @@ impl SstEngine {
     /// 3. Returns sorting statistics for monitoring
     pub async fn sort_vectors_for_sstable_encoding(
         &self,
-        vectors: Vec<VectorRecord>,
-    ) -> Result<(Vec<VectorRecord>, SortingStats)> {
+        vectors: Vec<ProximaRecord>,
+    ) -> Result<(Vec<ProximaRecord>, SortingStats)> {
         debug!("🔄 Sorting {} vectors for SSTable encoding", vectors.len());
 
         let mut sorted_vectors = vectors;
@@ -61,14 +62,14 @@ impl SstEngine {
 
                 match a_value.cmp(&b_value) {
                     std::cmp::Ordering::Equal => {
-                        // Secondary sort: by vector ID
-                        a.id.cmp(&b.id)
+                        // Secondary sort: by record ID
+                        a.oid.cmp(&b.oid)
                     }
                     other => other,
                 }
             } else {
                 // No metadata key: sort by ID only
-                a.id.cmp(&b.id)
+                a.oid.cmp(&b.oid)
             }
         });
 
@@ -94,11 +95,11 @@ impl SstEngine {
     }
 
     /// Find the most common metadata key for sorting
-    fn find_primary_sort_key(&self, vectors: &[VectorRecord]) -> Option<String> {
+    fn find_primary_sort_key(&self, vectors: &[ProximaRecord]) -> Option<String> {
         let mut key_frequency: HashMap<String, usize> = HashMap::new();
 
         for vector in vectors {
-            for key in vector.metadata.keys() {
+            for key in vector.props.keys() {
                 *key_frequency.entry(key.clone()).or_insert(0) += 1;
             }
         }
@@ -110,27 +111,47 @@ impl SstEngine {
     }
 
     /// Extract metadata value as a comparable string
-    fn extract_metadata_value(&self, vector: &VectorRecord, key: &str) -> String {
+    fn extract_metadata_value(&self, vector: &ProximaRecord, key: &str) -> String {
         vector
-            .metadata
+            .props
             .get(key)
-            .map(|sql_val| self.sql_value_to_string(sql_val))
+            .map(|value| self.tree_node_to_sort_string(value))
             .unwrap_or_default()
     }
 
-    /// Convert SqlValue to string for comparison
-    fn sql_value_to_string(&self, sql_val: &SqlValue) -> String {
-        match &sql_val.value {
-            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
-            Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => n.to_string(),
-            Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => b.to_string(),
-            Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => i.to_string(),
-            _ => String::new(),
+    /// Convert canonical property nodes to stable sort strings.
+    fn tree_node_to_sort_string(&self, node: &ProximaTreeNode) -> String {
+        match node {
+            ProximaTreeNode::Value(value) => self.proxima_value_to_sort_string(value),
+            ProximaTreeNode::Object(tree) => serde_json::to_string(tree).unwrap_or_default(),
+        }
+    }
+
+    /// Convert ProximaValue to string for comparison.
+    fn proxima_value_to_sort_string(&self, value: &ProximaValue) -> String {
+        match value {
+            ProximaValue::String(value)
+            | ProximaValue::Symbol(value)
+            | ProximaValue::Decimal(value) => value.clone(),
+            ProximaValue::Boolean(value) => value.to_string(),
+            ProximaValue::Int8(value) => value.to_string(),
+            ProximaValue::Int16(value) => value.to_string(),
+            ProximaValue::Int32(value) => value.to_string(),
+            ProximaValue::Int64(value) => value.to_string(),
+            ProximaValue::UInt8(value) => value.to_string(),
+            ProximaValue::UInt16(value) => value.to_string(),
+            ProximaValue::UInt32(value) => value.to_string(),
+            ProximaValue::UInt64(value) => value.to_string(),
+            ProximaValue::Float16(value) => value.to_string(),
+            ProximaValue::Float32(value) => value.to_string(),
+            ProximaValue::Float64(value) => value.to_string(),
+            ProximaValue::Null => String::new(),
+            other => serde_json::to_string(other).unwrap_or_default(),
         }
     }
 
     /// Estimate compression improvement from sorting
-    fn estimate_compression_improvement(&self, sorted_vectors: &[VectorRecord]) -> f64 {
+    fn estimate_compression_improvement(&self, sorted_vectors: &[ProximaRecord]) -> f64 {
         if sorted_vectors.is_empty() {
             return 0.0;
         }
@@ -157,10 +178,10 @@ impl SstEngine {
     }
 
     /// Check if two vectors have similar metadata
-    fn vectors_have_similar_metadata(&self, a: &VectorRecord, b: &VectorRecord) -> bool {
+    fn vectors_have_similar_metadata(&self, a: &ProximaRecord, b: &ProximaRecord) -> bool {
         // Count matching metadata keys
-        let a_keys: std::collections::HashSet<_> = a.metadata.keys().collect();
-        let b_keys: std::collections::HashSet<_> = b.metadata.keys().collect();
+        let a_keys: std::collections::HashSet<_> = a.props.keys().collect();
+        let b_keys: std::collections::HashSet<_> = b.props.keys().collect();
 
         let intersection = a_keys.intersection(&b_keys).count();
         let union = a_keys.union(&b_keys).count();
@@ -175,7 +196,10 @@ impl SstEngine {
     }
 
     /// Build bloom filter for a set of vector records
-    pub async fn build_bloom_filter(&self, records: &[VectorRecord]) -> Result<SstableBloomFilter> {
+    pub async fn build_bloom_filter(
+        &self,
+        records: &[ProximaRecord],
+    ) -> Result<SstableBloomFilter> {
         debug!("Building bloom filter for {} records", records.len());
 
         use crate::core::bloom::{
@@ -195,7 +219,7 @@ impl SstEngine {
 
         let mut bloom = BloomFilterFactory::create(&bloom_config);
         for record in records {
-            bloom.insert(record.id.as_bytes());
+            bloom.insert(record.oid.as_bytes());
         }
 
         let data = bloom
@@ -220,7 +244,7 @@ impl SstEngine {
     /// Serialize records to SSTable row format
     pub async fn serialize_records_to_sstable_row_format(
         &self,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
     ) -> Result<Vec<u8>> {
         debug!("📝 Serializing {} records to SSTable format", records.len());
 
@@ -451,9 +475,9 @@ mod tests {
             .unwrap();
 
         // Verify sorting by ID
-        assert_eq!(sorted[0].id, "vec1");
-        assert_eq!(sorted[1].id, "vec2");
-        assert_eq!(sorted[2].id, "vec3");
+        assert_eq!(sorted[0].oid, "vec1");
+        assert_eq!(sorted[1].oid, "vec2");
+        assert_eq!(sorted[2].oid, "vec3");
 
         // Verify statistics
         assert_eq!(stats.records_sorted, 3);
@@ -519,16 +543,19 @@ mod tests {
             .unwrap()
     }
 
-    fn create_test_vector(id: &str, vector: Vec<f32>) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector,
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(12345),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
+    fn create_test_vector(id: &str, vector: Vec<f32>) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.to_string(),
+            created_at_ns: 12_345_000_000,
+            updated_at_ns: 12_345_000_000,
+            record_version: 1,
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: vector.len() as u32,
+                values: vector,
+            }],
+            ..ProximaRecord::default()
         }
     }
 }

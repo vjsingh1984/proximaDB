@@ -37,7 +37,9 @@ use crate::proto::proximadb_v2::{
     proxima_record_service_server::ProximaRecordServiceServer,
 };
 use crate::services::operations::BatchOperationResult;
-use crate::services::{WriteDurabilityRequirement, WriteLaneRouter, WriteIntent, WriteOperationKind};
+use crate::services::{
+    WriteDurabilityRequirement, WriteIntent, WriteLaneRouter, WriteOperationKind,
+};
 use proximadb_records::proto_v2::{
     proto_record_to_envelope, proxima_value_to_typed_value, typed_value_to_proxima,
 };
@@ -701,6 +703,8 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             guards = ?lane.required_guards,
             "gRPC InsertRecords write-lane decision"
         );
+        lane.require_wal_lane("gRPC InsertRecords")
+            .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         match self
             .request_handlers
@@ -762,6 +766,8 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             guards = ?lane.required_guards,
             "gRPC UpsertRecords write-lane decision"
         );
+        lane.require_wal_lane("gRPC UpsertRecords")
+            .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         match self
             .request_handlers
@@ -818,6 +824,8 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             guards = ?lane.required_guards,
             "gRPC UpdateRecords write-lane decision"
         );
+        lane.require_wal_lane("gRPC UpdateRecords")
+            .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         match self
             .request_handlers
@@ -874,6 +882,8 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             guards = ?lane.required_guards,
             "gRPC DeleteRecords write-lane decision"
         );
+        lane.require_wal_lane("gRPC DeleteRecords")
+            .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         match self
             .request_handlers
@@ -1112,9 +1122,10 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                 metrics.record_queue_wait(queue_wait_time);
 
                 // Route batch intent — individual records may carry per-record modes.
-                let stream_intent = WriteIntent::new(&batch.collection_id, WriteOperationKind::Upsert)
-                    .with_durability(WriteDurabilityRequirement::WalRequired)
-                    .with_row_count_hint(batch_size as u64);
+                let stream_intent =
+                    WriteIntent::new(&batch.collection_id, WriteOperationKind::Upsert)
+                        .with_durability(WriteDurabilityRequirement::WalRequired)
+                        .with_row_count_hint(batch_size as u64);
                 let stream_lane = WriteLaneRouter::new().route(&stream_intent);
                 debug!(
                     collection_id = %batch.collection_id,
@@ -1123,6 +1134,10 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                     batch_size,
                     "gRPC BatchWriteStream write-lane decision"
                 );
+                if let Err(e) = stream_lane.require_wal_lane("gRPC BatchWriteStream") {
+                    error!("Rejecting non-WAL lane in streaming batch: {}", e);
+                    break;
+                }
 
                 // Start processing timer
                 let processing_start = Instant::now();

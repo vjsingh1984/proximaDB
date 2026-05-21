@@ -18,11 +18,7 @@ import matplotlib.pyplot as plt
 from typing import List, Dict, Any
 
 # Import ProximaDB SDK
-from proximadb import (
-    connect_rest, connect_grpc, CollectionConfig, DistanceMetric,
-    TextChunker, ChunkingStrategy, ChunkingConfig,
-    chunk_by_sentences, chunk_sliding_window
-)
+from proximadb_sdk import CollectionConfig, DistanceMetric, connect_grpc, connect_rest
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -46,6 +42,13 @@ class StorageEnginesDemo:
             "lsm": {"insert": [], "search": [], "update": [], "delete": []},
             "viper": {"insert": [], "search": [], "compression": [], "analytics": []}
         }
+
+    @staticmethod
+    def _records_from_vectors(vectors, ids, metadata):
+        return [
+            {"id": record_id, "vector": vector, "props": props}
+            for vector, record_id, props in zip(vectors, ids, metadata)
+        ]
         
     def setup(self):
         """Initialize connections and create storage-specific collections"""
@@ -59,6 +62,7 @@ class StorageEnginesDemo:
             
             # Create LSM-optimized collection
             lsm_config = CollectionConfig(
+                name=self.lsm_collection,
                 dimension=512,
                 distance_metric=DistanceMetric.COSINE,
                 description="LSM engine demo - optimized for frequent updates",
@@ -75,6 +79,7 @@ class StorageEnginesDemo:
             
             # Create VIPER-optimized collection
             viper_config = CollectionConfig(
+                name=self.viper_collection,
                 dimension=512,
                 distance_metric=DistanceMetric.EUCLIDEAN,
                 description="VIPER engine demo - optimized for analytics and compression",
@@ -148,11 +153,9 @@ class StorageEnginesDemo:
             batch_metadata = metadata[i:i+batch_size]
             
             insert_start = time.time()
-            result = self.grpc_client.insert_vectors(
+            result = self.grpc_client.insert_records(
                 self.lsm_collection,
-                batch_vectors,
-                batch_ids,
-                metadata=batch_metadata
+                self._records_from_vectors(batch_vectors, batch_ids, batch_metadata),
             )
             insert_time = time.time() - insert_start
             self.performance_data["lsm"]["insert"].append(insert_time * 1000)
@@ -171,11 +174,15 @@ class StorageEnginesDemo:
             
             start_time = time.time()
             # Simulate update by reinserting with same ID
-            result = self.rest_client.insert_vectors(
+            result = self.rest_client.insert_records(
                 self.lsm_collection,
-                [updated_vector.tolist()],
-                [update_id],
-                metadata=[{"updated": True, "update_time": time.time()}]
+                [
+                    {
+                        "id": update_id,
+                        "vector": updated_vector.tolist(),
+                        "props": {"updated": True, "update_time": time.time()},
+                    }
+                ],
             )
             update_time = time.time() - start_time
             update_times.append(update_time * 1000)
@@ -214,11 +221,9 @@ class StorageEnginesDemo:
             batch_metadata = [{"batch_operation": True, "atomic_id": "batch_001"}] * 10
             
             start_time = time.time()
-            result = self.grpc_client.insert_vectors(
+            result = self.grpc_client.insert_records(
                 self.lsm_collection,
-                batch_vectors,
-                batch_ids,
-                metadata=batch_metadata
+                self._records_from_vectors(batch_vectors, batch_ids, batch_metadata),
             )
             atomic_time = time.time() - start_time
             
@@ -307,11 +312,9 @@ class StorageEnginesDemo:
             batch_metadata = metadata[i:i+batch_size]
             
             insert_start = time.time()
-            result = self.grpc_client.insert_vectors(
+            result = self.grpc_client.insert_records(
                 self.viper_collection,
-                batch_vectors,
-                batch_ids,
-                metadata=batch_metadata
+                self._records_from_vectors(batch_vectors, batch_ids, batch_metadata),
             )
             insert_time = time.time() - insert_start
             self.performance_data["viper"]["insert"].append(insert_time * 1000)

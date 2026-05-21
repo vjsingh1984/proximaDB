@@ -213,7 +213,7 @@ impl MemtableManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::VectorRecord;
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
 
     fn create_test_config() -> MemtableConfig {
         MemtableConfig {
@@ -225,16 +225,20 @@ mod tests {
         }
     }
 
-    fn create_test_vector(id: &str) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector: vec![0.1, 0.2, 0.3, 0.4],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(1234567890),
-            updated_at: Some(1234567890),
-            expires_at: None,
-            version: Some(1),
-            source: Some("test".to_string()),
+    fn create_test_vector(id: &str) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: 4,
+                values: vec![0.1, 0.2, 0.3, 0.4],
+            }],
+            created_at_ns: 1_234_567_890_000_000_000,
+            updated_at_ns: 1_234_567_890_000_000_000,
+            record_version: 1,
+            origin: Some("test".to_string()),
+            ..Default::default()
         }
     }
 
@@ -246,7 +250,7 @@ mod tests {
         // Add a single vector
         let vector = create_test_vector("test1");
         let seq = manager
-            .add_vector(collection_id, vector.clone().into())
+            .add_vector(collection_id, vector.clone())
             .await
             .expect("Failed to add vector");
         assert!(seq > 0);
@@ -257,7 +261,7 @@ mod tests {
             .await
             .expect("Failed to search vector");
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().oid, vector.id);
+        assert_eq!(retrieved.unwrap().oid, vector.oid);
 
         // Get all vectors
         let all_vectors = manager

@@ -21,13 +21,16 @@
 
 use anyhow::Result;
 use crc32fast::Hasher as Crc32;
+use proximadb_codec::{
+    AccessTemperature, CompressionProfile, DataAnalysis, DataDomain, DictionaryScope,
+    ProximaScheme, SelectionContext, StrategyRegistry, TypeId, WorkloadProfile, functions,
+};
 use proximadb_records::ProximaRecord;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     header::{BlockCompression, BlockHeader, BlockMode, HEADER_SIZE, flags, fnv1a_hash},
-    record::{
-        FlatRow, col_id, encode_f32_vec_col, encode_i64_col, encode_str_col, update_i64_bounds,
-    },
+    record::{FlatRow, col_id, encode_f32_vec_col, encode_str_col, update_i64_bounds},
     row_dir::{RowDirectory, RowEntry},
     stripe::{COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe},
 };
@@ -278,25 +281,25 @@ impl PaxBlockWriter {
                 ColumnRole::Timestamp,
                 false,
                 &self.created_at.iter().map(|&v| Some(v)).collect::<Vec<_>>(),
-            ));
+            )?);
             stripes.push(self.build_i64_stripe(
                 col_id::UPDATED_AT,
                 ColumnRole::Timestamp,
                 false,
                 &self.updated_at.iter().map(|&v| Some(v)).collect::<Vec<_>>(),
-            ));
+            )?);
             stripes.push(self.build_i64_stripe(
                 col_id::VALID_FROM,
                 ColumnRole::Temporal,
                 true,
                 &self.valid_from,
-            ));
+            )?);
             stripes.push(self.build_i64_stripe(
                 col_id::VALID_TO,
                 ColumnRole::Temporal,
                 true,
                 &self.valid_to,
-            ));
+            )?);
 
             for (actor_opt, origin_opt) in self.actors.iter().zip(self.origins.iter()) {
                 let _ = actor_opt;
@@ -340,25 +343,7 @@ impl PaxBlockWriter {
 
             for (i, col) in self.embeddings.iter().enumerate() {
                 let refs: Vec<Option<&[f32]>> = col.iter().map(|v| v.as_deref()).collect();
-                let (data, null_count) = encode_f32_vec_col(&refs);
-                let meta = ColumnMeta {
-                    column_id: col_id::EMBED_BASE + i as i32,
-                    role: ColumnRole::Vector,
-                    data_type_id: 0x01, // F32
-                    encoding_id: 0,     // Raw (ML embeddings: skip delta/gorilla)
-                    nullable: true,
-                    has_bloom: false,
-                    is_sorted: false,
-                    stripe_offset: 0, // set below
-                    stripe_len: data.len() as u32,
-                    null_count,
-                    distinct_hint: 0,
-                    min_val: [0u8; 16],
-                    max_val: [0u8; 16],
-                    bloom_offset: 0,
-                    bloom_len: 0,
-                };
-                stripes.push(ColumnStripe::new(meta, data));
+                stripes.push(self.build_f32_vec_stripe(col_id::EMBED_BASE + i as i32, &refs)?);
             }
         }
 
@@ -371,12 +356,25 @@ impl PaxBlockWriter {
             cursor += s.meta.stripe_len;
         }
 
-        // ---- Build column footer ----
+        // ---- Build column footer and footer-resident pruning payloads ----
         let col_footer_offset = cursor;
-        let mut col_footer_bytes = Vec::with_capacity(stripes.len() * COLUMN_META_SIZE);
+        let mut footer_extra_bytes = Vec::new();
+        let bloom_base_offset = stripes.len() * COLUMN_META_SIZE;
+        for s in &mut stripes {
+            if !s.bloom.is_empty() {
+                s.meta.has_bloom = true;
+                s.meta.bloom_offset = (bloom_base_offset + footer_extra_bytes.len()) as u32;
+                s.meta.bloom_len = s.bloom.len() as u32;
+                footer_extra_bytes.extend_from_slice(&s.bloom);
+            }
+        }
+
+        let mut col_footer_bytes =
+            Vec::with_capacity(stripes.len() * COLUMN_META_SIZE + footer_extra_bytes.len());
         for s in &stripes {
             col_footer_bytes.extend_from_slice(&s.meta.to_bytes());
         }
+        col_footer_bytes.extend_from_slice(&footer_extra_bytes);
 
         // ---- Build block footer ----
         let block_footer_offset = col_footer_offset + col_footer_bytes.len() as u32;
@@ -407,6 +405,9 @@ impl PaxBlockWriter {
         // ---- Build header ----
         let block_flags = {
             let mut f = 0u8;
+            if stripes.iter().any(|s| s.meta.has_bloom) {
+                f |= flags::HAS_BLOOM;
+            }
             if !self.embeddings.is_empty() {
                 f |= flags::HAS_VECTOR;
             }
@@ -477,25 +478,54 @@ impl PaxBlockWriter {
         nullable: bool,
         vals: &[Option<&str>],
     ) -> ColumnStripe {
-        let (data, null_count) = encode_str_col(vals);
+        let scheme = select_str_scheme(role, nullable, vals);
+        let (data, null_count) = encode_str_with_scheme(vals, &scheme);
+        let stats = string_stats(vals);
         let meta = ColumnMeta {
             column_id: id,
             role,
             data_type_id: 0xff,
-            encoding_id: 0,
+            encoding_id: scheme.to_marker(),
             nullable,
             has_bloom: false,
             is_sorted: false,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
-            distinct_hint: 0,
+            distinct_hint: stats.distinct_hint,
+            min_val: stats.min_hash_bytes,
+            max_val: stats.max_hash_bytes,
+            bloom_offset: 0,
+            bloom_len: 0,
+        };
+        ColumnStripe::new(meta, data).with_bloom(stats.bloom)
+    }
+
+    fn build_f32_vec_stripe(&self, id: i32, vals: &[Option<&[f32]>]) -> Result<ColumnStripe> {
+        let scheme = select_f32_vec_scheme(vals);
+        let (data, null_count) = encode_f32_vec_with_scheme(vals, &scheme)?;
+        let meta = ColumnMeta {
+            column_id: id,
+            role: ColumnRole::Vector,
+            data_type_id: 0x01, // F32
+            encoding_id: scheme.to_marker(),
+            nullable: true,
+            has_bloom: false,
+            is_sorted: false,
+            stripe_offset: 0,
+            stripe_len: data.len() as u32,
+            null_count,
+            distinct_hint: vals
+                .iter()
+                .filter(|value| value.is_some())
+                .count()
+                .min(u32::MAX as usize) as u32,
             min_val: [0u8; 16],
             max_val: [0u8; 16],
             bloom_offset: 0,
             bloom_len: 0,
         };
-        ColumnStripe::new(meta, data)
+        Ok(ColumnStripe::new(meta, data))
     }
 
     fn build_str_opt_stripe(
@@ -514,20 +544,22 @@ impl PaxBlockWriter {
         role: ColumnRole,
         nullable: bool,
         vals: &[Option<i64>],
-    ) -> ColumnStripe {
-        let (data, null_count) = encode_i64_col(vals);
+    ) -> Result<ColumnStripe> {
+        let (raw_values, null_count) = flatten_i64_values(vals);
+        let scheme = select_i64_scheme(role, nullable, vals);
+        let data = encode_i64_with_scheme(&raw_values, &scheme)?;
         let mut meta = ColumnMeta {
             column_id: id,
             role,
             data_type_id: 0x03,
-            encoding_id: 3, // I64, DoubleDelta
+            encoding_id: scheme.to_marker(),
             nullable,
             has_bloom: false,
-            is_sorted: false,
+            is_sorted: is_i64_sorted(vals),
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
-            distinct_hint: 0,
+            distinct_hint: distinct_i64_hint(vals),
             min_val: [0u8; 16],
             max_val: [0u8; 16],
             bloom_offset: 0,
@@ -536,7 +568,7 @@ impl PaxBlockWriter {
         for v in vals.iter().flatten() {
             update_i64_bounds(&mut meta, *v);
         }
-        ColumnStripe::new(meta, data)
+        Ok(ColumnStripe::new(meta, data))
     }
 
     fn build_bytes_stripe(
@@ -572,20 +604,333 @@ impl PaxBlockWriter {
             column_id: id,
             role,
             data_type_id: 0xff,
-            encoding_id: 0,
+            encoding_id: ProximaScheme::Raw.to_marker(),
             nullable: true,
             has_bloom: false,
             is_sorted: false,
             stripe_offset: 0,
             stripe_len: data.len() as u32,
             null_count,
-            distinct_hint: 0,
+            distinct_hint: distinct_bytes_hint(vals),
             min_val: [0u8; 16],
             max_val: [0u8; 16],
             bloom_offset: 0,
             bloom_len: 0,
         };
         ColumnStripe::new(meta, data)
+    }
+}
+
+fn flatten_i64_values(values: &[Option<i64>]) -> (Vec<i64>, u32) {
+    let mut null_count = 0u32;
+    let raw_values = values
+        .iter()
+        .map(|value| match value {
+            Some(value) => *value,
+            None => {
+                null_count += 1;
+                i64::MIN
+            }
+        })
+        .collect();
+    (raw_values, null_count)
+}
+
+fn is_i64_sorted(values: &[Option<i64>]) -> bool {
+    let mut previous = None;
+    for value in values.iter().flatten() {
+        if let Some(previous) = previous {
+            if *value < previous {
+                return false;
+            }
+        }
+        previous = Some(*value);
+    }
+    true
+}
+
+fn distinct_i64_hint(values: &[Option<i64>]) -> u32 {
+    values
+        .iter()
+        .flatten()
+        .copied()
+        .collect::<HashSet<_>>()
+        .len()
+        .min(u32::MAX as usize) as u32
+}
+
+fn distinct_bytes_hint(values: &[Option<Vec<u8>>]) -> u32 {
+    values
+        .iter()
+        .flatten()
+        .map(|value| value.as_slice())
+        .collect::<HashSet<_>>()
+        .len()
+        .min(u32::MAX as usize) as u32
+}
+
+struct StringStats {
+    distinct_hint: u32,
+    min_hash_bytes: [u8; 16],
+    max_hash_bytes: [u8; 16],
+    bloom: Vec<u8>,
+}
+
+fn string_stats(values: &[Option<&str>]) -> StringStats {
+    let mut distinct = HashSet::new();
+    let mut min_hash = u64::MAX;
+    let mut max_hash = 0u64;
+    let mut bloom = vec![0u8; PAX_STRING_BLOOM_BYTES];
+
+    for value in values.iter().flatten() {
+        distinct.insert(*value);
+        let hash = fnv1a_hash(value);
+        min_hash = min_hash.min(hash);
+        max_hash = max_hash.max(hash);
+        bloom_insert_hash(&mut bloom, hash);
+    }
+
+    if distinct.is_empty() {
+        bloom.clear();
+        return StringStats {
+            distinct_hint: 0,
+            min_hash_bytes: [0u8; 16],
+            max_hash_bytes: [0u8; 16],
+            bloom,
+        };
+    }
+
+    StringStats {
+        distinct_hint: distinct.len().min(u32::MAX as usize) as u32,
+        min_hash_bytes: hash_bound_bytes(min_hash),
+        max_hash_bytes: hash_bound_bytes(max_hash),
+        bloom,
+    }
+}
+
+const PAX_STRING_BLOOM_BYTES: usize = 32;
+const PAX_BLOOM_SALTS: [u64; 3] = [
+    0x9e37_79b9_7f4a_7c15,
+    0xbf58_476d_1ce4_e5b9,
+    0x94d0_49bb_1331_11eb,
+];
+
+fn hash_bound_bytes(hash: u64) -> [u8; 16] {
+    let mut bytes = [0u8; 16];
+    bytes[0..8].copy_from_slice(&hash.to_le_bytes());
+    bytes
+}
+
+fn bloom_insert_hash(bloom: &mut [u8], hash: u64) {
+    if bloom.is_empty() {
+        return;
+    }
+    let bit_count = bloom.len() * 8;
+    for salt in PAX_BLOOM_SALTS {
+        let bit = (mix_hash64(hash ^ salt) as usize) % bit_count;
+        bloom[bit / 8] |= 1 << (bit % 8);
+    }
+}
+
+fn mix_hash64(mut value: u64) -> u64 {
+    value ^= value >> 30;
+    value = value.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    value ^= value >> 27;
+    value = value.wrapping_mul(0x94d0_49bb_1331_11eb);
+    value ^ (value >> 31)
+}
+
+fn select_i64_scheme(role: ColumnRole, nullable: bool, values: &[Option<i64>]) -> ProximaScheme {
+    let non_null_values: Vec<i64> = values.iter().flatten().copied().collect();
+    if non_null_values.is_empty() {
+        return ProximaScheme::Raw;
+    }
+
+    let analysis = DataAnalysis::from_i64_values(&non_null_values);
+    let domain = match role {
+        ColumnRole::Timestamp | ColumnRole::Temporal => DataDomain::TimeSeries,
+        _ => DataDomain::General,
+    };
+    let mut context = SelectionContext::for_pax_stripe(TypeId::I64, domain);
+    context.target_compression = None;
+    context.is_sorted = is_i64_sorted(values);
+
+    let mut profile = CompressionProfile::from_selection_context(&context);
+    profile.target_compression_ratio = None;
+    profile.hotness = AccessTemperature::Warm;
+    profile.workload_profile = WorkloadProfile::Htap;
+
+    let mut hints = context.layout_hints();
+    if nullable {
+        hints.dictionary_scope = DictionaryScope::Block;
+    }
+
+    StrategyRegistry::default()
+        .select_decision(&analysis, &context, &profile, &hints)
+        .scheme
+}
+
+fn select_str_scheme(role: ColumnRole, nullable: bool, values: &[Option<&str>]) -> ProximaScheme {
+    let codes = string_category_codes(values);
+    if codes.is_empty() {
+        return ProximaScheme::Raw;
+    }
+
+    let analysis = DataAnalysis::from_i64_values(&codes);
+    let domain = match role {
+        ColumnRole::Identity | ColumnRole::Tenant | ColumnRole::Provenance | ColumnRole::Edge => {
+            DataDomain::Metadata
+        }
+        _ => DataDomain::General,
+    };
+    let mut context = SelectionContext::for_pax_stripe(TypeId::I64, domain);
+    context.target_compression = None;
+
+    let mut profile = CompressionProfile::from_selection_context(&context);
+    profile.target_compression_ratio = None;
+    profile.hotness = AccessTemperature::Warm;
+    profile.workload_profile = WorkloadProfile::Htap;
+
+    let mut hints = context.layout_hints();
+    if nullable
+        || matches!(
+            role,
+            ColumnRole::Identity | ColumnRole::Tenant | ColumnRole::Provenance | ColumnRole::Edge
+        )
+    {
+        hints.dictionary_scope = DictionaryScope::Block;
+    }
+
+    match StrategyRegistry::default()
+        .select_decision(&analysis, &context, &profile, &hints)
+        .scheme
+    {
+        ProximaScheme::Dictionary | ProximaScheme::RunLength => ProximaScheme::Dictionary,
+        _ => ProximaScheme::Raw,
+    }
+}
+
+fn string_category_codes(values: &[Option<&str>]) -> Vec<i64> {
+    let mut value_to_code: HashMap<&str, i64> = HashMap::new();
+    let mut codes = Vec::new();
+
+    for value in values.iter().flatten() {
+        let code = if let Some(code) = value_to_code.get(*value) {
+            *code
+        } else {
+            let code = value_to_code.len() as i64;
+            value_to_code.insert(*value, code);
+            code
+        };
+        codes.push(code);
+    }
+
+    codes
+}
+
+fn encode_str_with_scheme(values: &[Option<&str>], scheme: &ProximaScheme) -> (Vec<u8>, u32) {
+    match scheme {
+        ProximaScheme::Dictionary => encode_str_dictionary_col(values),
+        _ => encode_str_col(values),
+    }
+}
+
+fn encode_str_dictionary_col(values: &[Option<&str>]) -> (Vec<u8>, u32) {
+    let mut dictionary = Vec::new();
+    let mut value_to_code: HashMap<&str, u32> = HashMap::new();
+
+    for value in values.iter().flatten() {
+        if !value_to_code.contains_key(*value) {
+            let code = dictionary.len() as u32;
+            value_to_code.insert(*value, code);
+            dictionary.push(*value);
+        }
+    }
+
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&(dictionary.len() as u32).to_le_bytes());
+    for value in &dictionary {
+        let bytes = value.as_bytes();
+        buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        buf.extend_from_slice(bytes);
+    }
+
+    let mut null_count = 0u32;
+    for value in values {
+        match value {
+            Some(value) => {
+                let code = value_to_code[value];
+                buf.extend_from_slice(&code.to_le_bytes());
+            }
+            None => {
+                buf.extend_from_slice(&u32::MAX.to_le_bytes());
+                null_count += 1;
+            }
+        }
+    }
+
+    (buf, null_count)
+}
+
+fn select_f32_vec_scheme(values: &[Option<&[f32]>]) -> ProximaScheme {
+    let flattened: Vec<f32> = values
+        .iter()
+        .flatten()
+        .flat_map(|v| v.iter().copied())
+        .collect();
+    if flattened.is_empty() {
+        return ProximaScheme::Raw;
+    }
+
+    let analysis = DataAnalysis::from_f32_values(&flattened);
+    let mut context = SelectionContext::for_pax_stripe(TypeId::F32, DataDomain::MlEmbeddings);
+    context.target_compression = None;
+
+    let mut profile = CompressionProfile::from_selection_context(&context);
+    profile.target_compression_ratio = None;
+    profile.hotness = AccessTemperature::Warm;
+    profile.workload_profile = WorkloadProfile::Htap;
+
+    let hints = context.layout_hints();
+    let decision = StrategyRegistry::default()
+        .select_decision(&analysis, &context, &profile, &hints)
+        .scheme;
+    debug_assert!(matches!(decision, ProximaScheme::Raw));
+    ProximaScheme::Raw
+}
+
+fn encode_f32_vec_with_scheme(
+    values: &[Option<&[f32]>],
+    scheme: &ProximaScheme,
+) -> Result<(Vec<u8>, u32)> {
+    match scheme {
+        ProximaScheme::Raw => Ok(encode_f32_vec_col(values)),
+        other => anyhow::bail!("unsupported exact PAX f32 vector scheme: {}", other.name()),
+    }
+}
+
+fn encode_i64_with_scheme(values: &[i64], scheme: &ProximaScheme) -> Result<Vec<u8>> {
+    match scheme {
+        ProximaScheme::Raw => functions::raw::encode_i64(values),
+        ProximaScheme::Delta { base } => functions::delta::encode_i64(values, *base),
+        ProximaScheme::BitPacked { bits } => functions::bitpack::encode_i64(values, *bits),
+        ProximaScheme::FrameOfReference { reference, .. } => {
+            functions::frame_of_ref::encode_i64(values, *reference)
+        }
+        ProximaScheme::PForDelta { base, .. } => functions::pfor_delta::encode_i64(values, *base),
+        ProximaScheme::Zigzag { bits } => functions::zigzag::encode_i64(values, *bits),
+        ProximaScheme::Simple8b => functions::simple8b::encode_i64(values),
+        ProximaScheme::VByte => functions::vbyte::encode_i64(values),
+        ProximaScheme::DoubleDelta { .. } => functions::double_delta::encode_i64(values),
+        ProximaScheme::PForDoubleDelta { base, .. } => {
+            functions::pfor_double_delta::encode_i64(values, *base)
+        }
+        ProximaScheme::Gorilla => functions::gorilla::encode_i64(values),
+        ProximaScheme::SparseBitmap => functions::sparse_bitmap::encode_i64(values),
+        ProximaScheme::SparseCOO => functions::sparse_coo::encode_i64(values),
+        ProximaScheme::Dictionary => functions::dictionary::encode_i64(values),
+        ProximaScheme::RunLength => functions::run_length::encode_i64(values),
+        ProximaScheme::Adaptive => functions::adaptive::encode_i64(values),
     }
 }
 

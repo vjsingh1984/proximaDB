@@ -14,7 +14,12 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Union
 
 from ..exceptions import ProximaDBError
-from ..models import BatchResult, OperationMetrics, SearchResult, VectorOperationResponse
+from ..models import (
+    BatchResult,
+    OperationMetrics,
+    SearchResult,
+    VectorOperationResponse,
+)
 from ..models_v2 import ProximaRecord
 from .connection_pools import GrpcChannelContext, GrpcConnectionPool
 
@@ -301,7 +306,9 @@ class ProximaDBSyncGrpcClient:
         if kind == "bytes_value":
             return bytes(value.bytes_value)
         if kind == "array_value":
-            return [self._sql_value_to_python(item) for item in value.array_value.values]
+            return [
+                self._sql_value_to_python(item) for item in value.array_value.values
+            ]
         if kind == "object_value":
             return {
                 key: self._sql_value_to_python(item)
@@ -837,7 +844,9 @@ class ProximaDBSyncGrpcClient:
             tv.declared_type = v2_record_pb2.INTEGER
             tv.integer_value = value
         elif isinstance(value, float):
-            tv.declared_type = v2_record_pb2.FLOAT32 if type_hint == "float32" else v2_record_pb2.FLOAT
+            tv.declared_type = (
+                v2_record_pb2.FLOAT32 if type_hint == "float32" else v2_record_pb2.FLOAT
+            )
             if type_hint == "float32":
                 tv.float32_value = value
             else:
@@ -846,7 +855,9 @@ class ProximaDBSyncGrpcClient:
             tv.declared_type = v2_record_pb2.BINARY
             tv.binary_value = bytes(value)
         elif isinstance(value, str):
-            tv.declared_type = v2_record_pb2.SYMBOL if type_hint == "symbol" else v2_record_pb2.TEXT
+            tv.declared_type = (
+                v2_record_pb2.SYMBOL if type_hint == "symbol" else v2_record_pb2.TEXT
+            )
             if type_hint == "symbol":
                 tv.symbol_value = value
             else:
@@ -863,6 +874,112 @@ class ProximaDBSyncGrpcClient:
             tv.declared_type = v2_record_pb2.TEXT
             tv.text_value = str(value)
         return tv
+
+    def _v2_typed_value_to_python(self, value: Any) -> Any:
+        """Decode v2 TypedValue protobufs into Python values."""
+        which = value.WhichOneof("value")
+        if which in (None, "is_null"):
+            return None
+        if which == "text_value":
+            return value.text_value
+        if which == "integer_value":
+            return value.integer_value
+        if which == "float_value":
+            return value.float_value
+        if which == "boolean_value":
+            return value.boolean_value
+        if which == "timestamp_value":
+            return value.timestamp_value
+        if which == "date_value":
+            return value.date_value
+        if which == "time_value":
+            return value.time_value
+        if which == "duration_value":
+            return value.duration_value
+        if which == "uuid_value":
+            return bytes(value.uuid_value).hex()
+        if which == "binary_value":
+            return bytes(value.binary_value)
+        if which == "json_value":
+            try:
+                return json.loads(value.json_value)
+            except json.JSONDecodeError:
+                return value.json_value
+        if which == "jsonb_value":
+            try:
+                return json.loads(bytes(value.jsonb_value).decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return bytes(value.jsonb_value)
+        if which == "array_value":
+            return [
+                self._v2_typed_value_to_python(item)
+                for item in value.array_value.values
+            ]
+        if which == "map_value":
+            return {
+                key: self._v2_typed_value_to_python(item)
+                for key, item in value.map_value.entries.items()
+            }
+        if which == "struct_value":
+            return {
+                key: self._v2_typed_value_to_python(item)
+                for key, item in value.struct_value.entries.items()
+            }
+        if which == "float32_value":
+            return value.float32_value
+        if which.endswith("_array"):
+            return list(getattr(value, which).values)
+        return getattr(value, which)
+
+    def _normalize_vector_alias_records(
+        self, vectors: List[Union[Dict[str, Any], Any]]
+    ) -> List[Dict[str, Any]]:
+        """Normalize legacy vector alias inputs to v2 ProximaRecord payloads."""
+        records: List[Dict[str, Any]] = []
+        for index, vector_data in enumerate(vectors):
+            if hasattr(vector_data, "model_dump"):
+                vector_dict = vector_data.model_dump(exclude_none=True)
+            elif hasattr(vector_data, "dict"):
+                vector_dict = vector_data.dict(exclude_none=True)
+            elif hasattr(vector_data, "__dict__") and not isinstance(vector_data, dict):
+                vector_dict = {
+                    key: value
+                    for key, value in vector_data.__dict__.items()
+                    if not key.startswith("_")
+                }
+            else:
+                vector_dict = vector_data
+
+            if not isinstance(vector_dict, dict):
+                vector_dict = {"id": f"record_{index}", "vector": vector_dict}
+
+            props = (
+                vector_dict.get("props")
+                or vector_dict.get("metadata")
+                or vector_dict.get("typed_fields")
+                or {}
+            )
+            record = {
+                "id": vector_dict.get("id")
+                or vector_dict.get("oid")
+                or f"record_{index}",
+                "vector": vector_dict.get("vector"),
+                "props": props,
+            }
+            for field in (
+                "timestamp_ms",
+                "timestamp",
+                "updated_at_ms",
+                "updated_at",
+                "expires_at_ms",
+                "expires_at",
+                "version",
+                "source",
+            ):
+                if vector_dict.get(field) is not None:
+                    record[field] = vector_dict[field]
+            records.append(record)
+        return records
 
     def _record_proto_for_grpc(
         self, record: Union[ProximaRecord, Dict[str, Any]], index: int = 0
@@ -898,7 +1015,9 @@ class ProximaDBSyncGrpcClient:
             values = record.get(source)
             if isinstance(values, dict):
                 for key, value in values.items():
-                    proto.props[str(key)].CopyFrom(self._python_to_v2_typed_value(value))
+                    proto.props[str(key)].CopyFrom(
+                        self._python_to_v2_typed_value(value)
+                    )
 
         typed_fields = record.get("typed_fields")
         if isinstance(typed_fields, dict):
@@ -1037,7 +1156,7 @@ class ProximaDBSyncGrpcClient:
     def insert_vectors(
         self, collection_id: str, vectors: List[Dict[str, Any]], upsert: bool = False
     ) -> VectorOperationResponse:
-        """Insert vectors with unified interface
+        """Insert vectors through the v2 ProximaRecord gRPC surface.
 
         Args:
             collection_id: Target collection ID
@@ -1048,115 +1167,21 @@ class ProximaDBSyncGrpcClient:
         Returns:
             VectorOperationResponse with operation details
         """
-
-        def _insert_vectors_operation(stub):
-            # Convert vectors to proto format using v1 VectorRecord
-            proto_vectors = []
-            for vector_data in vectors:
-                # Handle both VectorRecord objects and dictionaries
-                if hasattr(vector_data, "model_dump"):
-                    # Pydantic BaseModel (VectorRecord) - convert to dict
-                    vector_dict = vector_data.model_dump(exclude_none=False)
-                elif hasattr(vector_data, "__dict__"):
-                    # Regular object with __dict__
-                    vector_dict = vector_data.__dict__
-                else:
-                    # Already a dictionary
-                    vector_dict = vector_data
-
-                vector_record = v1_vector_types_pb2.VectorRecord()
-
-                if "id" in vector_dict and vector_dict["id"]:
-                    vector_record.id = vector_dict["id"]
-                if "vector" in vector_dict and vector_dict["vector"]:
-                    vector_record.vector.extend(vector_dict["vector"])
-                if "metadata" in vector_dict and vector_dict["metadata"]:
-                    for key, value in vector_dict["metadata"].items():
-                        vector_record.metadata[str(key)].CopyFrom(
-                            self._python_to_sql_value(value)
-                        )
-
-                # Add timestamp field (accept both 'timestamp' and 'timestamp_ms')
-                if "timestamp" in vector_dict and vector_dict["timestamp"] is not None:
-                    vector_record.timestamp = int(vector_dict["timestamp"])
-                elif (
-                    "timestamp_ms" in vector_dict
-                    and vector_dict["timestamp_ms"] is not None
-                ):
-                    vector_record.timestamp = int(vector_dict["timestamp_ms"])
-
-                # Add updated_at field (accept both forms)
-                if (
-                    "updated_at" in vector_dict
-                    and vector_dict["updated_at"] is not None
-                ):
-                    vector_record.updated_at = int(vector_dict["updated_at"])
-                elif (
-                    "updated_at_ms" in vector_dict
-                    and vector_dict["updated_at_ms"] is not None
-                ):
-                    vector_record.updated_at = int(vector_dict["updated_at_ms"])
-
-                # Add expires_at field (accept both forms)
-                if (
-                    "expires_at" in vector_dict
-                    and vector_dict["expires_at"] is not None
-                ):
-                    vector_record.expires_at = int(vector_dict["expires_at"])
-                elif (
-                    "expires_at_ms" in vector_dict
-                    and vector_dict["expires_at_ms"] is not None
-                ):
-                    vector_record.expires_at = int(vector_dict["expires_at_ms"])
-
-                # Add version field
-                if "version" in vector_dict and vector_dict["version"] is not None:
-                    vector_record.version = int(vector_dict["version"])
-
-                # Add source field (original content that generated this vector)
-                if "source" in vector_dict and vector_dict["source"] is not None:
-                    vector_record.source = str(vector_dict["source"])
-
-                proto_vectors.append(vector_record)
-
-            # Use VectorBatch endpoint for inserts (v1)
-            request = v1_vector_types_pb2.VectorBatchRequest(
-                collection_id=collection_id, vectors=proto_vectors
-            )
-            response = stub.VectorBatch(request, timeout=self.timeout)
-
-            # Return VectorOperationResponse
-            from ..models import OperationMetrics
-
-            return VectorOperationResponse(
-                success=response.success,
-                operation="INSERT",
-                metrics=OperationMetrics(
-                    successful_count=(
-                        getattr(response.metrics, "successful_count", len(vectors))
-                        if hasattr(response, "metrics")
-                        else len(vectors)
-                    ),
-                    failed_count=(
-                        getattr(response.metrics, "failed_count", 0)
-                        if hasattr(response, "metrics")
-                        else 0
-                    ),
-                    duration_ms=(
-                        getattr(response.metrics, "processing_time_us", 0) / 1000
-                        if hasattr(response, "metrics")
-                        else 0
-                    ),
-                    total_count=len(vectors),
-                ),
-                error_message=(
-                    getattr(response, "error_message", None)
-                    if not response.success
-                    else None
-                ),
-            )
-
-        return self._execute_with_pool("insert_vectors", _insert_vectors_operation)
+        records = self._normalize_vector_alias_records(vectors)
+        batch_result = (
+            self.upsert_records(collection_id, records)
+            if upsert
+            else self.insert_records(collection_id, records)
+        )
+        return VectorOperationResponse(
+            success=batch_result.failed == 0,
+            operation="UPSERT" if upsert else "INSERT",
+            metrics=batch_result.metrics,
+            vector_ids=[record["id"] for record in records],
+            error_message=(
+                "; ".join(batch_result.errors) if batch_result.errors else None
+            ),
+        )
 
     def search_vectors(
         self,
@@ -1169,7 +1194,7 @@ class ProximaDBSyncGrpcClient:
         include_metadata: bool = True,
         search_hints: Optional[Dict[str, Any]] = None,
     ) -> SearchResult:
-        """Search vectors with unified interface
+        """Search vectors through the v2 ProximaRecord gRPC surface.
 
         Args:
             collection_id: Target collection ID
@@ -1189,139 +1214,67 @@ class ProximaDBSyncGrpcClient:
             raise ValueError("Either query_vector or query_vectors must be provided")
 
         def _search_vectors_operation(stub):
-            # Build search queries using v1 protos
-            search_queries = []
+            search_results = []
             for qv in query_vectors:
-                query = v1_vector_types_pb2.SearchQuery()
-                query.vector.extend(qv)
-
-                # Add metadata filters if provided
+                request = v2_record_pb2.TypedSearchRequest(
+                    collection_id=collection_id,
+                    top_k=top_k,
+                    include_vector=include_vectors,
+                    include_text_fields=False,
+                )
+                request.query_vector.extend(float(value) for value in qv)
+                request.filter_logic = v2_record_pb2.AND
                 if metadata_filters:
                     for key, value in metadata_filters.items():
-                        query.filters[str(key)].CopyFrom(
-                            self._python_to_sql_value(value)
+                        filter_condition = request.filters.add()
+                        filter_condition.field_name = str(key)
+                        filter_condition.operator = v2_record_pb2.EQ
+                        filter_condition.value.CopyFrom(
+                            self._python_to_v2_typed_value(value)
                         )
+                if search_hints:
+                    request.search_hints.update(
+                        {str(key): str(value) for key, value in search_hints.items()}
+                    )
 
-                search_queries.append(query)
+                response = stub.Search(request, timeout=self.timeout)
+                for rank, result in enumerate(response.results):
+                    metadata = None
+                    if include_metadata:
+                        metadata = {
+                            key: self._v2_typed_value_to_python(value)
+                            for key, value in result.props.items()
+                        }
+                    search_results.append(
+                        SearchResult(
+                            id=result.id,
+                            score=result.score,
+                            rank=rank,
+                            vector=(
+                                list(result.vector)
+                                if include_vectors and result.vector
+                                else None
+                            ),
+                            metadata=metadata,
+                            timestamp=(
+                                result.timestamp_ms
+                                if result.HasField("timestamp_ms")
+                                else None
+                            ),
+                            version=(
+                                result.version if result.HasField("version") else None
+                            ),
+                            source=(
+                                result.source if result.HasField("source") else None
+                            ),
+                        )
+                    )
 
-            # Build include fields
-            include_fields = v1_vector_types_pb2.IncludeFields(
-                vector=include_vectors, metadata=include_metadata, score=True, rank=True
-            )
-
-            # Build search request with v1 proto
-            request = v1_vector_types_pb2.VectorSearchRequest(
-                collection_id=collection_id,
-                queries=search_queries,
-                top_k=top_k,
-                include_fields=include_fields,
-            )
-
-            response = stub.VectorSearch(request, timeout=self.timeout)
-
-            # VectorSearch returns VectorOperationResponse which wraps SearchResult
-            # Extract the SearchResult from the response
-            if not response.success:
-                error_msg = (
-                    response.error_message
-                    if response.error_message
-                    else "Search failed"
-                )
-                raise ProximaDBError(f"VectorSearch failed: {error_msg}")
-
-            # Access response.results which is a SearchResult message
-            search_result_msg = response.results
-            if not search_result_msg or not search_result_msg.results:
-                return []
-
-            # Convert v1 SearchResult.results (repeated SearchVectorRecord) to list
-            results = []
-            for result in search_result_msg.results:
-                vector_result = {
-                    "id": result.id,
-                    "score": result.score,
-                }
-                if include_vectors and result.vector:
-                    vector_result["vector"] = list(result.vector)
-                if include_metadata and result.metadata:
-                    # Convert v1 metadata (map of SqlValue) to dict
-                    metadata_dict = {}
-                    for item in result.metadata:
-                        sql_value = result.metadata[item]
-                        if sql_value.HasField("string_value"):
-                            metadata_dict[item] = sql_value.string_value
-                        elif sql_value.HasField("int64_value"):
-                            metadata_dict[item] = sql_value.int64_value
-                        elif sql_value.HasField("number_value"):
-                            metadata_dict[item] = sql_value.number_value
-                        elif sql_value.HasField("bool_value"):
-                            metadata_dict[item] = sql_value.bool_value
-                    vector_result["metadata"] = metadata_dict
-
-                # Add timestamp fields (use _ms suffix for SDK consistency)
-                if result.HasField("timestamp"):
-                    vector_result["timestamp_ms"] = result.timestamp
-                    vector_result["timestamp"] = result.timestamp
-
-                # Add version field (proto field 5)
-                if result.HasField("version"):
-                    vector_result["version"] = result.version
-
-                # Add similarity field (proto field 6)
-                if result.HasField("similarity"):
-                    vector_result["similarity"] = result.similarity
-
-                # Add source field (proto field 8 - original content for RAG)
-                if result.HasField("source"):
-                    vector_result["source"] = result.source
-
-                # Add expanded_context field (proto field 9)
-                if result.expanded_context:
-                    vector_result["expanded_context"] = list(result.expanded_context)
-
-                # Add semantic_similarity field (proto field 10)
-                if result.HasField("semantic_similarity"):
-                    vector_result["semantic_similarity"] = result.semantic_similarity
-
-                # Add quantization_info field (proto field 11)
-                if result.HasField("quantization_info"):
-                    vector_result["quantization_info"] = result.quantization_info
-
-                # Add engine_stats field (proto field 12)
-                if result.engine_stats:
-                    vector_result["engine_stats"] = dict(result.engine_stats)
-
-                # Add index_path field (proto field 13)
-                if result.HasField("index_path"):
-                    vector_result["index_path"] = result.index_path
-
-                results.append(vector_result)
-
-            # Return list of SearchResult dataclass objects
-            search_results = []
-            for result in results:
-                search_result = SearchResult(
-                    id=result["id"],
-                    score=result["score"],
-                    metadata=result.get("metadata", {}),
-                    vector=result.get("vector", None),
-                    # Add all SearchVectorRecord fields
-                    timestamp=result.get("timestamp"),
-                    version=result.get("version"),
-                    similarity=result.get("similarity"),
-                    source=result.get("source"),
-                    expanded_context=result.get("expanded_context"),
-                    semantic_similarity=result.get("semantic_similarity"),
-                    quantization_info=result.get("quantization_info"),
-                    engine_stats=result.get("engine_stats"),
-                    index_path=result.get("index_path"),
-                )
-                search_results.append(search_result)
-
-            # Wrap results to provide .results attribute for backward compatibility
             return SearchResultsWrapper(search_results)
 
-        return self._execute_with_pool("search_vectors", _search_vectors_operation)
+        return self._execute_record_with_pool(
+            "search_vectors", _search_vectors_operation
+        )
 
     def search(
         self,
@@ -1454,7 +1407,7 @@ class ProximaDBSyncGrpcClient:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Update vector data and/or metadata"""
-        # For now, treat update as upsert using VectorBatch
+        # Treat vector update as an upsert over the v2 ProximaRecord contract.
         vector_data = {"id": vector_id}
         if vector is not None:
             vector_data["vector"] = vector
@@ -1473,56 +1426,54 @@ class ProximaDBSyncGrpcClient:
         }
 
     def delete_vector(self, collection_id: str, vector_id: str) -> Dict[str, Any]:
-        """Delete single vector - using vector batch with empty vector (mark for deletion)"""
+        """Delete a vector through the v2 ProximaRecord gRPC surface."""
 
         def _delete_vector_operation(stub):
-            # Create a vector record with just ID for deletion (v1)
-            vector_record = v1_vector_types_pb2.VectorRecord()
-            vector_record.id = vector_id
-            # Empty vector indicates deletion (this may need to be adjusted based on actual API)
-
-            request = v1_vector_types_pb2.VectorBatchRequest(
-                collection_id=collection_id, vectors=[vector_record]
+            record = v2_record_pb2.ProximaRecord(id=vector_id)
+            request = v2_record_pb2.ProximaRecordBatch(
+                collection_id=collection_id,
+                write_mode=v2_record_pb2.DELETE,
+                return_ids=True,
+                return_errors=True,
             )
-            response = stub.VectorBatch(request, timeout=self.timeout)
-            # If we got a response without error, the delete succeeded
-            # The status field should reflect success regardless of response.success value
+            request.records.append(record)
+            response = stub.DeleteRecords(request, timeout=self.timeout)
             return DictWrapper(
-                {"status": "deleted", "vector_id": vector_id, "success": True}
+                {
+                    "status": "deleted" if response.failed_count == 0 else "failed",
+                    "vector_id": vector_id,
+                    "success": response.failed_count == 0,
+                }
             )
 
-        return self._execute_with_pool("delete_vector", _delete_vector_operation)
+        return self._execute_record_with_pool("delete_vector", _delete_vector_operation)
 
     def delete_vectors(
         self, collection_id: str, vector_ids: List[str]
     ) -> Dict[str, Any]:
-        """Delete multiple vectors"""
+        """Delete multiple vectors through the v2 ProximaRecord gRPC surface."""
 
         def _delete_vectors_operation(stub):
-            deleted_count = 0
-            failed_count = 0
-
+            request = v2_record_pb2.ProximaRecordBatch(
+                collection_id=collection_id,
+                write_mode=v2_record_pb2.DELETE,
+                return_ids=True,
+                return_errors=True,
+            )
             for vector_id in vector_ids:
-                try:
-                    request = v1_vector_types_pb2.DeleteVectorRequest(
-                        collection_id=collection_id, vector_id=vector_id
-                    )
-                    response = stub.DeleteVector(request, timeout=self.timeout)
-                    if response.success:
-                        deleted_count += 1
-                    else:
-                        failed_count += 1
-                except Exception:
-                    failed_count += 1
+                request.records.append(v2_record_pb2.ProximaRecord(id=vector_id))
+            response = stub.DeleteRecords(request, timeout=self.timeout)
 
             return {
                 "status": "completed",
-                "deleted_count": deleted_count,
-                "failed_count": failed_count,
+                "deleted_count": int(response.success_count),
+                "failed_count": int(response.failed_count),
                 "total_requested": len(vector_ids),
             }
 
-        return self._execute_with_pool("delete_vectors", _delete_vectors_operation)
+        return self._execute_record_with_pool(
+            "delete_vectors", _delete_vectors_operation
+        )
 
     def insert_vector(
         self,
@@ -2126,9 +2077,7 @@ class ProximaDBSyncGrpcClient:
 
         def _op(channel):
             stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
-            request = v1_graph_pb2.DeleteNodeRequest(
-                graph_id=graph_id, node_id=node_id
-            )
+            request = v1_graph_pb2.DeleteNodeRequest(graph_id=graph_id, node_id=node_id)
             response = stub.DeleteNode(request, timeout=self.timeout)
             return self._convert_node_from_proto(response)
 

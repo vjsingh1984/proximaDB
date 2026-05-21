@@ -2146,4 +2146,88 @@ mod tests {
                 && path.reason.contains("lossy ProximaType mappings")
         }));
     }
+
+    #[test]
+    fn routes_vector_ann_to_native_vector_ann_access_method() {
+        let schema = CatalogTableSchema::new("embeddings")
+            .with_storage_specialization(CatalogStorageSpecialization::VectorAnn);
+        let plan =
+            CopyIntoPlan::insert_select(LogicalTableRef::new("embeddings"), "SELECT * FROM src");
+        let routed = TableWriteRouter.route(RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: None,
+            plan: &plan,
+        });
+
+        assert_eq!(routed.backend, ComputeBackend::Native);
+        assert_eq!(
+            routed.selected_path.access_method,
+            AccessMethodFamily::VectorAnn
+        );
+        assert!(routed.selected_path.pushdown.vector_topk);
+        // WAL lane is preserved even for vector-native path
+        assert_eq!(
+            format!("{:?}", routed.write_lane_decision.lane),
+            "WalCurrentState"
+        );
+    }
+
+    #[test]
+    fn routes_lsm_write_optimized_to_native_lsm_access_method() {
+        let schema = CatalogTableSchema::new("timeseries")
+            .with_storage_specialization(CatalogStorageSpecialization::LsmWriteOptimized);
+        let plan =
+            CopyIntoPlan::insert_select(LogicalTableRef::new("timeseries"), "SELECT * FROM src");
+        let routed = TableWriteRouter.route(RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: None,
+            plan: &plan,
+        });
+
+        assert_eq!(routed.backend, ComputeBackend::Native);
+        assert_eq!(routed.selected_path.access_method, AccessMethodFamily::Lsm);
+        // Low write amplification characteristic of LSM
+        assert!(routed.selected_path.cost_hints.write_amplification < 1.0);
+        assert_eq!(
+            format!("{:?}", routed.write_lane_decision.lane),
+            "WalCurrentState"
+        );
+    }
+
+    #[test]
+    fn routes_external_delta_to_external_delegated() {
+        let schema = CatalogTableSchema::new("delta_facts")
+            .with_storage_layout(CatalogStorageLayout::external_authoritative(
+                "primary",
+                CatalogPhysicalFormat::Delta,
+                "s3://warehouse/delta-facts",
+            ))
+            .with_storage_specialization(CatalogStorageSpecialization::ExternalOpenTable);
+        let plan = CopyIntoPlan::insert_overwrite(
+            LogicalTableRef::new("delta_facts"),
+            "SELECT * FROM source",
+        );
+        let routed = TableWriteRouter.route(RoutingContext {
+            target_schema: &schema,
+            target_stats: None,
+            source_schema: None,
+            source_stats: None,
+            write_intent_overrides: None,
+            plan: &plan,
+        });
+
+        assert!(matches!(
+            routed.backend,
+            ComputeBackend::ExternalDelegated(_)
+        ));
+        if let ComputeBackend::ExternalDelegated(ref name) = routed.backend {
+            assert_eq!(name.as_str(), "Delta");
+        }
+    }
 }

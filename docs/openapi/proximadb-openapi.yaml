@@ -236,6 +236,50 @@ paths:
                 $ref: "#/components/schemas/SearchResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /api/v2/query:
+    post:
+      tags: [Query]
+      operationId: executeQuery
+      summary: Execute AQL or UQL through the shared query facade.
+      description: |
+        Public HTTP query surface for SDKs, agents, and OAuth/SSO front doors.
+        SQL remains pgwire-primary; use this endpoint for AQL/UQL textual
+        queries that lower into ProximaDB's shared logical query layer.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/QueryRequest"
+      responses:
+        "200":
+          description: Query result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v2/query/explain:
+    post:
+      tags: [Query]
+      operationId: explainQuery
+      summary: Explain an AQL or UQL query through the shared query facade.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExplainQueryRequest"
+      responses:
+        "200":
+          description: Query plan and lowering details.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QueryResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
 components:
   securitySchemes:
     bearerAuth:
@@ -733,6 +777,47 @@ components:
           nullable: true
           items:
             $ref: "#/components/schemas/TextFieldOutput"
+    QueryLanguage:
+      type: string
+      enum: [uql, aql]
+    QueryRequest:
+      type: object
+      required: [language, query]
+      properties:
+        language:
+          $ref: "#/components/schemas/QueryLanguage"
+        query:
+          type: string
+          minLength: 1
+        parameters:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProximaValue"
+        collection:
+          type: string
+          nullable: true
+        limit:
+          type: integer
+          minimum: 1
+          nullable: true
+    ExplainQueryRequest:
+      type: object
+      required: [language, query]
+      properties:
+        language:
+          $ref: "#/components/schemas/QueryLanguage"
+        query:
+          type: string
+          minLength: 1
+        collection:
+          type: string
+          nullable: true
+    QueryResponse:
+      type: object
+      additionalProperties: true
+      description: |
+        Query facade result. Implementations typically return records, total_count,
+        metrics, plan, or diagnostics depending on language and endpoint.
     TextFieldOutput:
       type: object
       required: [name, content, truncated]

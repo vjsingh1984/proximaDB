@@ -429,9 +429,9 @@ pub use schema::{
     ColumnBounds,
     ColumnValue,
     ConsolidatedBloom,
+    DefaultProximaRecordBridge,
     DefaultSchemaEvolution,
     DefaultValue,
-    DefaultVectorRecordBridge,
     EncodingInfo,
     // Enhanced header cache with CentroidTree integration
     EnhancedCachedHeader,
@@ -453,6 +453,8 @@ pub use schema::{
     ProximaDataType,
     // Header cache for smart I/O
     ProximaHeaderCache,
+    // ProximaRecord bridge (WS5: ProximaRecord to Arrow RecordBatch conversion)
+    ProximaRecordBridge,
     // Core schema types
     ProximaSchema,
     RowGroupMeta,
@@ -471,10 +473,8 @@ pub use schema::{
     // Type mapping
     TypeMapper,
     VectorElementType,
-    // VectorRecord bridge (WS5: VectorRecord to Arrow RecordBatch conversion)
-    VectorRecordBridge,
     global_header_cache,
-    infer_schema_from_vector_records,
+    infer_schema_from_proxima_records,
     init_global_header_cache,
 };
 

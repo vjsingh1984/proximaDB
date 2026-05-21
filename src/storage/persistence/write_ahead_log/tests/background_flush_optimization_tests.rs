@@ -10,7 +10,6 @@ mod tests {
     use tokio::sync::{Mutex, RwLock};
 
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
@@ -22,6 +21,7 @@ mod tests {
     use crate::storage::traits::{
         CompactionParameters, CompactionResult, FlushParameters, FlushResult, UnifiedStorageEngine,
     };
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
 
     /// Mock storage engine for testing
     #[allow(dead_code)]
@@ -163,16 +163,18 @@ mod tests {
         }
     }
 
-    fn create_test_vectors(count: usize) -> Vec<VectorRecord> {
+    fn create_test_vectors(count: usize) -> Vec<ProximaRecord> {
         (0..count)
-            .map(|i| VectorRecord {
-                id: format!("test_vector_{}", i),
-                vector: vec![0.1; 384],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: Some(0),
-                expires_at: None,
-                version: Some(1),
+            .map(|i| ProximaRecord {
+                oid: format!("test_vector_{}", i),
+                embeddings: vec![EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "dense_vector".to_string(),
+                    values: vec![0.1; 384],
+                    dim: 384,
+                }],
+                record_version: 1,
+                method: Some("test".to_string()),
                 ..Default::default()
             })
             .collect()

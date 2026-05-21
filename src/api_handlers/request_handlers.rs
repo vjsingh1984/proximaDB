@@ -214,6 +214,7 @@ use crate::proto::proximadb_v1::{
     Collection, CollectionOperation, CollectionRequest, CollectionResponse,
 };
 use crate::query::QueryFacadeAdapter;
+use crate::services::DmlService;
 use crate::services::collection::manager::CollectionService;
 use crate::services::operations::BatchOperationResult;
 use crate::services::operations::vectors::{
@@ -255,6 +256,10 @@ pub struct UnifiedHandlers {
     /// When set, SQL queries route through the unified facade for consistent routing and metrics
     /// Uses RwLock for thread-safe post-initialization setting (similar to hybrid_runtime)
     query_adapter: std::sync::RwLock<Option<Arc<QueryFacadeAdapter>>>,
+    /// DML service for EXPLAIN and row-level DML routing (EXPLAIN INSERT/UPDATE/DELETE queries
+    /// detected in execute_sql_v1 are dispatched here instead of the legacy SQL frontend).
+    /// Optional; settable post-initialization via `set_dml_service`.
+    dml_service: std::sync::RwLock<Option<Arc<DmlService>>>,
 }
 
 impl UnifiedHandlers {
@@ -300,6 +305,7 @@ impl UnifiedHandlers {
             hybrid_runtime: std::sync::Arc::new(std::sync::RwLock::new(None)),
             collection_id_cache: CollectionIdCache::new(),
             query_adapter: std::sync::RwLock::new(None),
+            dml_service: std::sync::RwLock::new(None),
         }
     }
 
@@ -329,6 +335,7 @@ impl UnifiedHandlers {
             hybrid_runtime: std::sync::Arc::new(std::sync::RwLock::new(None)),
             collection_id_cache: CollectionIdCache::new(),
             query_adapter: std::sync::RwLock::new(None),
+            dml_service: std::sync::RwLock::new(None),
         }
     }
 
@@ -351,6 +358,19 @@ impl UnifiedHandlers {
             .read()
             .ok()
             .and_then(|guard| guard.clone())
+    }
+
+    /// Wire a `DmlService` for EXPLAIN routing through the gRPC `ExecuteSql` RPC.
+    /// Callable post-initialization; thread-safe.
+    pub fn set_dml_service(&self, svc: Arc<DmlService>) {
+        if let Ok(mut guard) = self.dml_service.write() {
+            *guard = Some(svc);
+            tracing::info!("DmlService set on UnifiedHandlers for EXPLAIN routing");
+        }
+    }
+
+    fn get_dml_service(&self) -> Option<Arc<DmlService>> {
+        self.dml_service.read().ok().and_then(|guard| guard.clone())
     }
 
     /// Set hybrid runtime configuration (thread-safe; callable post-initialization)
@@ -826,6 +846,7 @@ impl UnifiedHandlers {
             }
         };
 
+        let collection_name = request.collection_id.clone();
         match self
             .vector_operations_service
             .insert_records_with_tenant_context(
@@ -835,7 +856,15 @@ impl UnifiedHandlers {
             )
             .await
         {
-            Ok(result) => Ok(result),
+            Ok(result) => {
+                if result.success {
+                    let n = result.vector_ids.len() as i64;
+                    if let Some(dml_svc) = self.get_dml_service() {
+                        dml_svc.bump_row_count_stats(&collection_name, n).await;
+                    }
+                }
+                Ok(result)
+            }
             Err(error) => {
                 tracing::error!("Failed to process rich record batch: {:?}", error);
                 Ok(BatchOperationResult::failure(
@@ -867,6 +896,7 @@ impl UnifiedHandlers {
             }
         };
 
+        let collection_name = request.collection_id.clone();
         match self
             .vector_operations_service
             .insert_records_only_with_tenant_context(
@@ -876,7 +906,15 @@ impl UnifiedHandlers {
             )
             .await
         {
-            Ok(result) => Ok(result),
+            Ok(result) => {
+                if result.success {
+                    let n = result.vector_ids.len() as i64;
+                    if let Some(dml_svc) = self.get_dml_service() {
+                        dml_svc.bump_row_count_stats(&collection_name, n).await;
+                    }
+                }
+                Ok(result)
+            }
             Err(error) => {
                 tracing::error!(
                     "Failed to process insert-only rich record batch: {:?}",
@@ -1888,6 +1926,49 @@ impl UnifiedHandlers {
     ) -> Result<crate::proto::proximadb_v1::ExecuteSqlResponse> {
         let start_time = std::time::Instant::now();
 
+        // EXPLAIN detection: route EXPLAIN INSERT…SELECT through DmlService before any other path.
+        if let Some(inner_query) = Self::strip_explain_prefix(query.trim()) {
+            if let Some(dml_svc) = self.get_dml_service() {
+                let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+                match parser.parse_dml(inner_query) {
+                    Ok(Some(statement)) => match dml_svc.explain_table_write(statement).await {
+                        Ok(explanation) => {
+                            let json = serde_json::to_string_pretty(&explanation)
+                                .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e));
+                            return Ok(crate::proto::proximadb_v1::ExecuteSqlResponse {
+                                rows: vec![crate::proto::proximadb_v1::SqlRow {
+                                    fields: vec![crate::proto::proximadb_v1::SqlRowField {
+                                        key: "QUERY PLAN".to_string(),
+                                        value: Some(crate::proto::proximadb_v1::SqlValue {
+                                            value: Some(
+                                                crate::proto::proximadb_v1::sql_value::Value::StringValue(json),
+                                            ),
+                                        }),
+                                    }],
+                                    similarity: None,
+                                }],
+                                rows_scanned: 0,
+                                rows_returned: 1,
+                                execution_time_ms: start_time.elapsed().as_millis() as u64,
+                                columns: vec!["QUERY PLAN".to_string()],
+                                column_types: vec!["jsonb".to_string()],
+                            });
+                        }
+                        Err(e) => {
+                            return Err(anyhow::anyhow!("EXPLAIN failed: {}", e));
+                        }
+                    },
+                    Ok(None) => {
+                        return Err(anyhow::anyhow!("Invalid EXPLAIN statement"));
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("EXPLAIN parse error: {}", e));
+                    }
+                }
+            }
+            // DmlService not wired — fall through to legacy path so EXPLAIN degrades gracefully.
+        }
+
         // Route through unified facade when feature is enabled and adapter is available
         #[cfg(feature = "unified-facade-routing")]
         if let Some(adapter) = self.get_query_adapter() {
@@ -2099,6 +2180,25 @@ impl UnifiedHandlers {
 }
 
 impl UnifiedHandlers {
+    /// Return the inner DML query if the SQL starts with EXPLAIN, stripping the directive prefix.
+    /// Handles `EXPLAIN`, `EXPLAIN (FORMAT JSON)`, `EXPLAIN (FORMAT TEXT)`, etc.
+    /// Returns `None` if the query does not begin with `EXPLAIN`.
+    fn strip_explain_prefix(query: &str) -> Option<&str> {
+        let upper = query.to_ascii_uppercase();
+        if !upper.starts_with("EXPLAIN") {
+            return None;
+        }
+        let after_explain = query["EXPLAIN".len()..].trim_start();
+        // Strip optional parenthesized options: (FORMAT JSON), (FORMAT TEXT), (ANALYZE), etc.
+        let inner = if after_explain.starts_with('(') {
+            let close = after_explain.find(')')?;
+            after_explain[close + 1..].trim_start()
+        } else {
+            after_explain
+        };
+        Some(inner)
+    }
+
     fn json_to_sql_value(v: &serde_json::Value) -> crate::proto::proximadb_v1::SqlValue {
         use crate::proto::proximadb_v1::{self, sql_value::Value as V};
         match v {
@@ -2957,10 +3057,10 @@ mod tests {
         assert_eq!(request.queries.len(), 5);
     }
 
-    // ==================== VectorRecord Metadata Tests ====================
+    // ==================== ProximaRecord Metadata Tests ====================
 
     #[test]
-    fn test_vector_record_with_metadata() {
+    fn test_proxima_record_with_metadata() {
         let mut metadata = std::collections::HashMap::new();
         metadata.insert(
             "category".to_string(),
@@ -2975,17 +3075,15 @@ mod tests {
             proximadb_data_model::ProximaValue::Boolean(true),
         );
 
-        let record: crate::proto::proximadb_v1::VectorRecord =
-            test_proxima_record("product_1", vec![0.1, 0.2, 0.3], 1234567890)
-                .record_version(1)
-                .origin("product_catalog")
-                .metadata(metadata)
-                .into();
+        let record = test_proxima_record("product_1", vec![0.1, 0.2, 0.3], 1234567890)
+            .record_version(1)
+            .origin("product_catalog")
+            .metadata(metadata);
 
-        assert_eq!(record.metadata.len(), 3);
-        assert!(record.metadata.contains_key("category"));
-        assert!(record.metadata.contains_key("price"));
-        assert!(record.metadata.contains_key("in_stock"));
+        assert_eq!(record.props.len(), 3);
+        assert!(record.props.contains_key("category"));
+        assert!(record.props.contains_key("price"));
+        assert!(record.props.contains_key("in_stock"));
     }
 
     // ==================== CollectionConfig Validation Tests ====================
@@ -3159,12 +3257,9 @@ mod tests {
             proximadb_data_model::ProximaValue::String("Test data".to_string()),
         );
 
-        let record: crate::proto::proximadb_v1::VectorRecord =
-            test_proxima_record("unicode_test", vec![0.1, 0.2], 0)
-                .metadata(metadata)
-                .into();
+        let record = test_proxima_record("unicode_test", vec![0.1, 0.2], 0).metadata(metadata);
 
-        assert_eq!(record.metadata.len(), 2);
+        assert_eq!(record.props.len(), 2);
     }
 
     // ==================== Search Parameters Tests ====================
@@ -3515,5 +3610,43 @@ impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
                 .collect()
         });
         UnifiedHandlers::execute_sql_v1(self, query, legacy_parameters, collection).await
+    }
+}
+
+#[cfg(test)]
+mod explain_prefix_tests {
+    use super::UnifiedHandlers;
+
+    #[test]
+    fn strip_explain_returns_none_for_plain_select() {
+        assert!(UnifiedHandlers::strip_explain_prefix("SELECT 1").is_none());
+    }
+
+    #[test]
+    fn strip_explain_returns_inner_for_bare_explain() {
+        let inner = UnifiedHandlers::strip_explain_prefix("EXPLAIN INSERT INTO t SELECT * FROM s;");
+        assert_eq!(inner, Some("INSERT INTO t SELECT * FROM s;"));
+    }
+
+    #[test]
+    fn strip_explain_handles_format_json_option() {
+        let inner = UnifiedHandlers::strip_explain_prefix(
+            "EXPLAIN (FORMAT JSON) INSERT INTO t SELECT * FROM s;",
+        );
+        assert_eq!(inner, Some("INSERT INTO t SELECT * FROM s;"));
+    }
+
+    #[test]
+    fn strip_explain_case_insensitive() {
+        let inner = UnifiedHandlers::strip_explain_prefix("explain insert into t select 1;");
+        assert_eq!(inner, Some("insert into t select 1;"));
+    }
+
+    #[test]
+    fn strip_explain_handles_multiple_options() {
+        let inner = UnifiedHandlers::strip_explain_prefix(
+            "EXPLAIN (FORMAT JSON, ANALYZE) INSERT INTO t SELECT * FROM s;",
+        );
+        assert_eq!(inner, Some("INSERT INTO t SELECT * FROM s;"));
     }
 }

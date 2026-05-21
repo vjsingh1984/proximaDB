@@ -1,0 +1,158 @@
+//! OpenAPI-facing v2 query endpoints for AQL/UQL.
+//!
+//! These handlers are protocol facades only. They validate the REST contract and
+//! lower textual AQL/UQL into the shared `UnifiedQueryPort`, keeping SQL
+//! pgwire-primary and avoiding a separate query execution path.
+
+use axum::{Json, extract::State};
+use proximadb_data_model::ProximaValue;
+use serde::{Deserialize, Serialize};
+use tracing::{debug, error};
+
+use crate::errors::{ApiError, ApiResult};
+use crate::network::rest::v1::handlers::AppState;
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum QueryLanguage {
+    Uql,
+    Aql,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct QueryRequest {
+    pub language: QueryLanguage,
+    pub query: String,
+    #[serde(default)]
+    pub parameters: Option<Vec<serde_json::Value>>,
+    pub collection: Option<String>,
+    pub limit: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExplainQueryRequest {
+    pub language: QueryLanguage,
+    pub query: String,
+    pub collection: Option<String>,
+}
+
+fn validate_query(language: QueryLanguage, query: &str) -> ApiResult<()> {
+    if query.trim().is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "query cannot be empty".to_string(),
+        ));
+    }
+    debug!(
+        "v2 {:?} query: {}",
+        language,
+        query.chars().take(120).collect::<String>()
+    );
+    Ok(())
+}
+
+fn json_to_proxima_values(params: Option<Vec<serde_json::Value>>) -> Option<Vec<ProximaValue>> {
+    params.map(|values| values.into_iter().map(json_to_proxima_value).collect())
+}
+
+fn json_to_proxima_value(value: serde_json::Value) -> ProximaValue {
+    match value {
+        serde_json::Value::Null => ProximaValue::Null,
+        serde_json::Value::Bool(value) => ProximaValue::Boolean(value),
+        serde_json::Value::Number(value) => value
+            .as_i64()
+            .map(ProximaValue::Int64)
+            .or_else(|| value.as_u64().map(ProximaValue::UInt64))
+            .or_else(|| value.as_f64().map(ProximaValue::Float64))
+            .unwrap_or(ProximaValue::Null),
+        serde_json::Value::String(value) => ProximaValue::String(value),
+        serde_json::Value::Array(values) => {
+            ProximaValue::Array(values.into_iter().map(json_to_proxima_value).collect())
+        }
+        serde_json::Value::Object(fields) => ProximaValue::Map(
+            fields
+                .into_iter()
+                .map(|(key, value)| (key, json_to_proxima_value(value)))
+                .collect(),
+        ),
+    }
+}
+
+/// POST /api/v2/query
+pub async fn execute_query(
+    State(state): State<AppState>,
+    Json(request): Json<QueryRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    validate_query(request.language, &request.query)?;
+    let query_port = state
+        .unified_query_port
+        .as_ref()
+        .ok_or_else(|| ApiError::Internal("Unified query port is not configured".to_string()))?;
+
+    query_port
+        .execute_unified_query(
+            request.query,
+            json_to_proxima_values(request.parameters),
+            request.collection,
+            request.limit,
+        )
+        .await
+        .map(Json)
+        .map_err(|error| {
+            error!("v2 query execution failed: {}", error);
+            ApiError::Internal(format!("Query execution failed: {}", error))
+        })
+}
+
+/// POST /api/v2/query/explain
+pub async fn explain_query(
+    State(state): State<AppState>,
+    Json(request): Json<ExplainQueryRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    validate_query(request.language, &request.query)?;
+    let query_port = state
+        .unified_query_port
+        .as_ref()
+        .ok_or_else(|| ApiError::Internal("Unified query port is not configured".to_string()))?;
+
+    query_port
+        .explain_unified_query(request.query, request.collection)
+        .await
+        .map(Json)
+        .map_err(|error| {
+            error!("v2 query explain failed: {}", error);
+            ApiError::Internal(format!("Query explain failed: {}", error))
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_uql_request() {
+        let request: QueryRequest = serde_json::from_value(serde_json::json!({
+            "language": "uql",
+            "query": "SEARCH products RETURN id",
+            "parameters": ["acme", 42],
+            "collection": "products",
+            "limit": 10
+        }))
+        .expect("request should parse");
+
+        assert_eq!(request.language, QueryLanguage::Uql);
+        assert_eq!(request.limit, Some(10));
+        assert!(json_to_proxima_values(request.parameters).is_some());
+    }
+
+    #[test]
+    fn parses_aql_request() {
+        let request: QueryRequest = serde_json::from_value(serde_json::json!({
+            "language": "aql",
+            "query": "FIND related entities"
+        }))
+        .expect("request should parse");
+
+        assert_eq!(request.language, QueryLanguage::Aql);
+        assert!(request.collection.is_none());
+    }
+}

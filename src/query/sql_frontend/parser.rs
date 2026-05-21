@@ -2288,7 +2288,10 @@ mod tests {
 
             let stmt = result.expect("expected DdlStatement");
             match stmt {
-                crate::services::ddl::DdlStatement::AlterTable { table_name: _, changes } => {
+                crate::services::ddl::DdlStatement::AlterTable {
+                    table_name: _,
+                    changes,
+                } => {
                     assert_eq!(changes.len(), 1, "expected exactly one change");
                     match &changes[0] {
                         crate::services::ddl::AlterTableChange::PromotePropsKey {
@@ -2338,7 +2341,10 @@ mod tests {
                 .expect("expected DdlStatement");
 
             match stmt {
-                crate::services::ddl::DdlStatement::AlterTable { table_name, changes } => {
+                crate::services::ddl::DdlStatement::AlterTable {
+                    table_name,
+                    changes,
+                } => {
                     assert_eq!(table_name, expected_table, "table mismatch for `{sql}`");
                     assert_eq!(changes.len(), 1, "expected one change for `{sql}`");
                     match &changes[0] {
@@ -2360,26 +2366,24 @@ mod tests {
         let sql = "ALTER TABLE users PROMOTE PROPS KEY email TYPE VARCHAR(255);";
         let stmt = parser.parse_ddl(sql).unwrap().unwrap();
         match stmt {
-            crate::services::ddl::DdlStatement::AlterTable { changes, .. } => {
-                match &changes[0] {
-                    crate::services::ddl::AlterTableChange::PromotePropsKey {
-                        key,
-                        column_type,
-                        ..
-                    } => {
-                        assert_eq!(key, "email");
-                        assert!(
-                            matches!(
-                                column_type,
-                                crate::services::ddl::SqlDataType::Varchar { .. }
-                            ),
-                            "expected Varchar, got {:?}",
-                            column_type
-                        );
-                    }
-                    other => panic!("expected PromotePropsKey, got {:?}", other),
+            crate::services::ddl::DdlStatement::AlterTable { changes, .. } => match &changes[0] {
+                crate::services::ddl::AlterTableChange::PromotePropsKey {
+                    key,
+                    column_type,
+                    ..
+                } => {
+                    assert_eq!(key, "email");
+                    assert!(
+                        matches!(
+                            column_type,
+                            crate::services::ddl::SqlDataType::Varchar { .. }
+                        ),
+                        "expected Varchar, got {:?}",
+                        column_type
+                    );
                 }
-            }
+                other => panic!("expected PromotePropsKey, got {:?}", other),
+            },
             other => panic!("expected AlterTable, got {:?}", other),
         }
     }
@@ -2652,15 +2656,13 @@ impl SqlFrontendParser {
                             for opt in options {
                                 if let SqlOpt::KeyValue { key, value } = opt {
                                     let value_str = match value {
-                                        sqlparser::ast::Expr::Value(v) => {
-                                            match &v.value {
-                                                sqlparser::ast::Value::SingleQuotedString(s)
-                                                | sqlparser::ast::Value::DoubleQuotedString(s) => {
-                                                    s.clone()
-                                                }
-                                                other => format!("{other}"),
+                                        sqlparser::ast::Expr::Value(v) => match &v.value {
+                                            sqlparser::ast::Value::SingleQuotedString(s)
+                                            | sqlparser::ast::Value::DoubleQuotedString(s) => {
+                                                s.clone()
                                             }
-                                        }
+                                            other => format!("{other}"),
+                                        },
                                         other => format!("{other}"),
                                     };
                                     changes.push(AlterTableChange::SetTableOption {

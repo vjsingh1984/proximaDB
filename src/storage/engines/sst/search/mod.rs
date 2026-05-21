@@ -890,23 +890,29 @@ impl SstEngine {
             Vec::with_capacity(records.len().min(limit));
 
         for record in &records {
+            let Some(embedding) = record.embeddings.first() else {
+                continue;
+            };
+            if embedding.values.is_empty() {
+                continue;
+            }
+
             // Compute raw distance
-            let raw_distance = distance_computer.distance(query_vector, &record.vector);
+            let raw_distance = distance_computer.distance(query_vector, &embedding.values);
 
             // Use SimilarityResult to get normalized_score (higher = more similar)
             // This ensures consistency with the rest of the codebase and BoundedPriorityQueue
             let similarity_result = SimilarityResult::new(raw_distance, distance_metric);
 
             // OptimizedSearchRecord uses canonical ProximaValue metadata internally.
-            let metadata =
-                crate::core::search::results::sql_map_to_proxima(record.metadata.clone());
+            let metadata = proximadb_records::conversions::proxima_tree_to_value_map(&record.props);
 
             candidates.push(OptimizedSearchRecord {
-                id: record.id.clone(),
-                vector_id: Some(record.id.clone()),
+                id: record.oid.clone(),
+                vector_id: Some(record.oid.clone()),
                 score: similarity_result.normalized_score, // Use normalized_score (higher = better)
                 similarity: Some(similarity_result.normalized_score),
-                vector: Some(Arc::new(record.vector.clone())),
+                vector: Some(Arc::new(embedding.values.clone())),
                 metadata,
                 ..Default::default()
             });

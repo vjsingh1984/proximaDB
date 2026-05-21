@@ -82,9 +82,9 @@
 use std::path::Path;
 
 use anyhow::Result;
+use proximadb_records::ProximaRecord;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::arrow_block::{
     ArrowBlockConfig, ArrowBlockReader, ArrowBlockWriter,
 };
@@ -130,7 +130,7 @@ impl BlockFormatWriter {
     }
 
     /// Write records to a file using the configured format
-    pub fn write_records<P: AsRef<Path>>(&self, path: P, records: &[VectorRecord]) -> Result<()> {
+    pub fn write_records<P: AsRef<Path>>(&self, path: P, records: &[ProximaRecord]) -> Result<()> {
         match self.format {
             BlockFormat::ProximaBlocks => {
                 // ProximaBlocks uses existing SST writer path
@@ -186,7 +186,7 @@ impl BlockFormatReader {
         &self,
         path: P,
         vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<ProximaRecord>> {
         match self.format {
             BlockFormat::ProximaBlocks => {
                 // ProximaBlocks uses existing SST reader path
@@ -206,7 +206,7 @@ impl BlockFormatReader {
     }
 
     /// Read all records from a file
-    pub fn read_all<P: AsRef<Path>>(&self, path: P) -> Result<Vec<VectorRecord>> {
+    pub fn read_all<P: AsRef<Path>>(&self, path: P) -> Result<Vec<ProximaRecord>> {
         match self.format {
             BlockFormat::ProximaBlocks => {
                 debug!("ProximaBlocks read_all from {}", path.as_ref().display());
@@ -225,7 +225,7 @@ impl BlockFormatReader {
         &self,
         path: P,
         ids: &[&str],
-    ) -> Result<Vec<(String, VectorRecord)>> {
+    ) -> Result<Vec<(String, ProximaRecord)>> {
         match self.format {
             BlockFormat::ProximaBlocks => {
                 debug!("ProximaBlocks batch_lookup in {}", path.as_ref().display());

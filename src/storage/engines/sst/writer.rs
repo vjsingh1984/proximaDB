@@ -1226,7 +1226,31 @@ impl SstableWriter {
         self
     }
 
-    /// Stub for write_sorted_records - delegates to write_sorted_vector_records
+    /// Write sorted canonical records through the SSTable writer.
+    ///
+    /// The SST block writer still has a legacy VectorRecord core; keep that
+    /// projection here so callers can stay on the canonical ProximaRecord API.
+    pub async fn write_sorted_proxima_records<I>(
+        &self,
+        sorted_records: I,
+        record_count: usize,
+    ) -> Result<()>
+    where
+        I: Iterator<Item = proximadb_records::ProximaRecord> + Send,
+    {
+        let sorted_with_keys = sorted_records.map(|record| {
+            let key = if record.oid.is_empty() {
+                format!("vec_{}", proximadb_kernel::uuid::Uuid::new_v4())
+            } else {
+                record.oid.clone()
+            };
+            (key, VectorRecord::from(record))
+        });
+        self.write_sorted_vector_records(sorted_with_keys, record_count)
+            .await
+    }
+
+    /// Legacy v1 wire-record entrypoint - delegates to write_sorted_vector_records.
     pub async fn write_sorted_records<I>(
         &self,
         sorted_records: I,

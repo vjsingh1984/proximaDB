@@ -1296,7 +1296,10 @@ Acceptance:
 
 Goal: make REST, gRPC, Arrow Flight, PostgreSQL wire, SDK, and embedded ingestion/query surfaces converge on xCatalog + `ProximaRecord`/`ProximaValue` instead of legacy vector-shaped or `SqlValue`-centric internal contracts.
 
-Operational HLD/LLD tracker for this phase: `docs/12-design/RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc`.
+Operational HLD/LLD trackers for this phase:
+
+* `docs/12-design/RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc`
+* `docs/12-design/PAX_CODEC_LAYOUT_COMPRESSION_LLD_2026_05_20.adoc`
 
 Tasks:
 

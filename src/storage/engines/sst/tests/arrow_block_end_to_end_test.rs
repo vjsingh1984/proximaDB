@@ -12,14 +12,45 @@
 #[cfg(test)]
 mod tests {
     use anyhow::Result;
-    use std::collections::HashMap;
     use tempfile::TempDir;
 
-    use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
     use crate::storage::engines::core::formats::arrow_block::{
         ArrowBlockConfig, ArrowBlockReader, ArrowBlockWriter,
     };
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
     use tracing::info;
+
+    fn create_test_record(
+        id: impl Into<String>,
+        vector: Vec<f32>,
+        timestamp_ms: i64,
+    ) -> ProximaRecord {
+        let id = id.into();
+        let timestamp_ns = timestamp_ms.saturating_mul(1_000_000);
+        ProximaRecord {
+            oid: id.clone(),
+            local_id: Some(id),
+            created_at_ns: timestamp_ns,
+            updated_at_ns: timestamp_ns,
+            record_version: 1,
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: vector.len() as u32,
+                values: vector,
+            }],
+            ..ProximaRecord::default()
+        }
+    }
+
+    fn embedding_values(record: &ProximaRecord) -> &[f32] {
+        record
+            .embeddings
+            .first()
+            .map(|embedding| embedding.values.as_slice())
+            .unwrap_or(&[])
+    }
 
     /// Test direct ArrowBlock write and read without SST engine
     #[tokio::test]
@@ -44,26 +75,12 @@ mod tests {
                 values[j] = ((i as f32) * 0.1 + (j as f32) * 0.01).sin();
             }
 
-            let mut metadata = HashMap::new();
-            metadata.insert(
+            let mut record = create_test_record(format!("arrow_vec_{}", i), values, i as i64);
+            record.props.insert(
                 "category".to_string(),
-                SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        format!("cat_{}", i % 5),
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::String(format!("cat_{}", i % 5))),
             );
-
-            vectors.push(VectorRecord {
-                id: format!("arrow_vec_{}", i),
-                vector: values,
-                metadata,
-                timestamp: Some(i as i64),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
-            });
+            vectors.push(record);
         }
 
         // Write using ArrowBlockWriter
@@ -91,16 +108,16 @@ mod tests {
 
         // Verify specific records
         for (i, record) in read_records.iter().enumerate() {
-            assert_eq!(record.id, format!("arrow_vec_{}", i));
-            assert_eq!(record.vector.len(), dimension);
-            assert!(record.metadata.contains_key("category"));
+            assert_eq!(record.oid, format!("arrow_vec_{}", i));
+            assert_eq!(embedding_values(record).len(), dimension);
+            assert!(record.props.contains_key("category"));
         }
 
         // Test lookup by ID
         let lookup_result = reader.lookup_by_id("arrow_vec_25")?;
         assert!(lookup_result.is_some(), "Should find vector by ID");
         let found = lookup_result.unwrap();
-        assert_eq!(found.id, "arrow_vec_25");
+        assert_eq!(found.oid, "arrow_vec_25");
 
         info!("✅ ArrowBlock direct write/read test passed");
         Ok(())
@@ -128,26 +145,12 @@ mod tests {
                 .map(|j| (i * dimension + j) as f32 / 1000.0)
                 .collect();
 
-            let mut metadata = HashMap::new();
-            metadata.insert(
+            let mut record = create_test_record(format!("pyarrow_vec_{}", i), values, i as i64);
+            record.props.insert(
                 "name".to_string(),
-                SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        format!("item_{}", i),
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::String(format!("item_{}", i))),
             );
-
-            vectors.push(VectorRecord {
-                id: format!("pyarrow_vec_{}", i),
-                vector: values,
-                metadata,
-                timestamp: Some(i as i64),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
-            });
+            vectors.push(record);
         }
 
         // Write using ArrowBlockWriter
@@ -209,16 +212,11 @@ mod tests {
 
         for i in 0..num_vectors {
             let values: Vec<f32> = (0..dimension).map(|j| (i + j) as f32).collect();
-            vectors.push(VectorRecord {
-                id: format!("batch_vec_{}", i),
-                vector: values,
-                metadata: HashMap::new(),
-                timestamp: Some(i as i64),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
-            });
+            vectors.push(create_test_record(
+                format!("batch_vec_{}", i),
+                values,
+                i as i64,
+            ));
         }
 
         // Write

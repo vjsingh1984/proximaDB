@@ -1075,8 +1075,10 @@ impl Compaction {
                     let mut writer = ArrowBlockWriter::new(&staging_file_path, config)
                         .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?;
 
-                    // Convert BTreeMap to Vec for ArrowBlockWriter
-                    let records: Vec<VectorRecord> = btree_records.into_values().collect();
+                    // ArrowBlock writes canonical records; this branch is the
+                    // boundary from legacy SST compaction records.
+                    let records: Vec<ProximaRecord> =
+                        btree_records.values().map(ProximaRecord::from).collect();
 
                     writer
                         .write_block(&records)
@@ -1180,8 +1182,10 @@ impl Compaction {
                     let mut writer = ArrowBlockWriter::new(&task.output_file, config)
                         .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?;
 
-                    // Convert BTreeMap to Vec for ArrowBlockWriter
-                    let records: Vec<VectorRecord> = btree_records.into_values().collect();
+                    // ArrowBlock writes canonical records; this branch is the
+                    // boundary from legacy SST compaction records.
+                    let records: Vec<ProximaRecord> =
+                        btree_records.values().map(ProximaRecord::from).collect();
 
                     writer
                         .write_block(&records)

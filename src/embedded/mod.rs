@@ -2258,7 +2258,7 @@ impl EmbeddedProximaDB {
     /// * `vector_id` - ID of the vector to retrieve
     ///
     /// # Returns
-    /// * `Ok(Some(VectorRecord))` - Vector found
+    /// * `Ok(Some(ProximaRecord))` - Vector found
     /// * `Ok(None)` - Vector not found
     /// * `Err` - Error occurred during lookup
     ///
@@ -4018,7 +4018,7 @@ impl EmbeddedProximaDB {
     /// Insert or upsert Arrow IPC stream bytes through the embedded vector batch path.
     ///
     /// This is the in-process equivalent of Arrow Flight vector bulk_insert/bulk_upsert:
-    /// Arrow IPC stream bytes are decoded to RecordBatches, converted to VectorRecord
+    /// Arrow IPC stream bytes are decoded to RecordBatches, converted to ProximaRecord
     /// batches with the shared Arrow codec, and routed directly to the embedded
     /// vector service without binding ports or starting a Flight server.
     pub fn insert_arrow_ipc(

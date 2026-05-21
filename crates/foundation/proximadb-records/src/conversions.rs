@@ -153,7 +153,7 @@ pub fn proxima_tree_to_sql_metadata(tree: &ProximaTree) -> HashMap<String, SqlVa
             let value = match node {
                 ProximaTreeNode::Value(value) => proxima_to_sql_value(value),
                 ProximaTreeNode::Object(subtree) => {
-                    proxima_to_sql_value(&ProximaValue::Map(tree_to_value_map(subtree)))
+                    proxima_to_sql_value(&ProximaValue::Map(proxima_tree_to_value_map(subtree)))
                 }
             };
             (key.clone(), value)
@@ -161,12 +161,15 @@ pub fn proxima_tree_to_sql_metadata(tree: &ProximaTree) -> HashMap<String, SqlVa
         .collect()
 }
 
-fn tree_to_value_map(tree: &ProximaTree) -> HashMap<String, ProximaValue> {
+/// Convert a canonical nested property tree to nested `ProximaValue` maps.
+pub fn proxima_tree_to_value_map(tree: &ProximaTree) -> HashMap<String, ProximaValue> {
     tree.iter()
         .map(|(key, node)| {
             let value = match node {
                 ProximaTreeNode::Value(value) => value.clone(),
-                ProximaTreeNode::Object(subtree) => ProximaValue::Map(tree_to_value_map(subtree)),
+                ProximaTreeNode::Object(subtree) => {
+                    ProximaValue::Map(proxima_tree_to_value_map(subtree))
+                }
             };
             (key.clone(), value)
         })

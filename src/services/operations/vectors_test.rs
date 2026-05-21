@@ -154,10 +154,9 @@ mod tests {
         let metadata = vec![("key1", "value1"), ("key2", "value2")];
 
         let canonical_record = create_test_vector_record("test_id", vector.clone(), metadata);
-        let proto_record: crate::proto::proximadb_v1::VectorRecord = (&canonical_record).into();
-        assert_eq!(proto_record.id, "test_id".to_string());
-        assert_eq!(proto_record.vector, vector);
-        assert_eq!(proto_record.metadata.len(), 2);
+        assert_eq!(canonical_record.oid, "test_id".to_string());
+        assert_eq!(canonical_record.embeddings[0].values, vector);
+        assert_eq!(canonical_record.props.len(), 2);
 
         let core_record = create_core_test_vector("test_id", vector.clone());
         assert_eq!(core_record.oid, "test_id");

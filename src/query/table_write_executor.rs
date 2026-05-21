@@ -764,6 +764,110 @@ mod tests {
         assert!(err.to_string().contains("MERGE table-write execution"));
     }
 
+    struct FailingRecordStore;
+
+    #[async_trait]
+    impl TableRecordStore for FailingRecordStore {
+        async fn write_mutations(
+            &self,
+            _table_schema: &CatalogTableSchema,
+            _mutations: Vec<TableRecordMutation>,
+            _tenant_context: Option<&TenantContext>,
+        ) -> Result<TableRecordWriteResult> {
+            Ok(TableRecordWriteResult {
+                success: false,
+                record_ids: Vec::new(),
+                metrics: OperationMetrics::default(),
+                errors: vec!["simulated write failure".to_string()],
+                error_code: None,
+            })
+        }
+
+        async fn get_by_key(
+            &self,
+            _table_schema: &CatalogTableSchema,
+            _request: TableRecordGetRequest,
+            _tenant_context: Option<&TenantContext>,
+        ) -> Result<TableRecordGetResponse> {
+            Ok(None)
+        }
+
+        async fn scan_records(
+            &self,
+            _table_schema: &CatalogTableSchema,
+            _request: TableRecordScanRequest,
+            _tenant_context: Option<&TenantContext>,
+        ) -> Result<Vec<ProximaRecord>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn native_executor_empty_source_completes_with_zero_rows() {
+        let schema = CatalogTableSchema::new("orders")
+            .with_storage_specialization(CatalogStorageSpecialization::PaxOltp);
+        let plan =
+            CopyIntoPlan::insert_select(LogicalTableRef::new("orders"), "SELECT * FROM staging");
+        let routed =
+            TableWriteRouter::default().route(crate::query::table_write_plan::RoutingContext {
+                target_schema: &schema,
+                target_stats: None,
+                source_schema: None,
+                source_stats: None,
+                write_intent_overrides: None,
+                plan: &plan,
+            });
+
+        let result = NativeTableWriteExecutor::new(
+            Arc::new(VecSourceReader::new(vec![])),
+            Arc::new(CapturingRecordStore {
+                writes: Mutex::new(Vec::new()),
+            }),
+        )
+        .execute(TableWriteExecutionRequest {
+            target_schema: &schema,
+            source_schema: None,
+            routed_plan: routed,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(result.status, TableWriteExecutionStatus::Completed);
+        assert_eq!(result.rows_written, 0);
+    }
+
+    #[tokio::test]
+    async fn native_executor_propagates_store_write_failure() {
+        let schema = CatalogTableSchema::new("orders")
+            .with_storage_specialization(CatalogStorageSpecialization::PaxOltp);
+        let plan =
+            CopyIntoPlan::insert_select(LogicalTableRef::new("orders"), "SELECT * FROM staging");
+        let routed =
+            TableWriteRouter::default().route(crate::query::table_write_plan::RoutingContext {
+                target_schema: &schema,
+                target_stats: None,
+                source_schema: None,
+                source_stats: None,
+                write_intent_overrides: None,
+                plan: &plan,
+            });
+
+        let err = NativeTableWriteExecutor::new(
+            Arc::new(VecSourceReader::new(vec![vec![test_record("r1")]])),
+            Arc::new(FailingRecordStore),
+        )
+        .execute(TableWriteExecutionRequest {
+            target_schema: &schema,
+            source_schema: None,
+            routed_plan: routed,
+        })
+        .await
+        .unwrap_err();
+
+        assert!(err.to_string().contains("Native table write failed"));
+        assert!(err.to_string().contains("simulated write failure"));
+    }
+
     #[tokio::test]
     async fn native_executor_rejects_direct_commit_lanes_until_implemented() {
         let schema = CatalogTableSchema::new("facts")

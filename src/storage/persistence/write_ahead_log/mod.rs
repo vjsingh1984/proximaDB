@@ -84,10 +84,11 @@ use crate::compute::distance_computation::engine::{
     DistanceComputeProvider, UnifiedDistanceCompute,
 };
 use crate::core::{String, VectorId};
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::traits::{FlushResult, UnifiedStorageEngine};
-use proximadb_records::ProximaRecord;
+use proximadb_records::{
+    EmbeddingCell, ProximaRecord, ProximaTreeNode, conversions::sql_value_to_proxima,
+};
 // DIP: CollectionPathResolver is re-exported below via pub use
 
 // Sub-modules
@@ -102,7 +103,6 @@ pub mod collection_path;
 pub mod compact_batch_id;
 pub mod compaction_axis_integration;
 pub mod compaction_coordinator;
-pub mod compaction_types;
 pub mod config;
 pub mod disk_manager; // New centralized disk operations
 pub mod enhanced_flush_result;
@@ -125,8 +125,6 @@ pub mod wal_operations; // WAL operations for vector and graph
 // pub mod optimized_path_resolver;
 // MARKED FOR REMOVAL: atomic_write_buffer_sync uses optimized_path_resolver
 // pub mod atomic_write_buffer_sync;
-// MARKED FOR REMOVAL: parallel_recovery uses assignment_service
-// pub mod parallel_recovery;
 
 // Unit tests
 #[cfg(test)]
@@ -147,15 +145,13 @@ pub use compaction_coordinator::{
 };
 pub use config::WriteBufferStrategyType;
 pub use config::{CompressionConfig, PerformanceConfig, WALConfig};
+pub use disk_manager::{DiskStats, WalFileInfo, WriteAheadLogDiskManager};
 pub use flush_coordinator::{
     CleanupInstructions, FlushCoordinatorCallbacks, FlushDataSource, FlushState, PendingFlush,
     WALFlushCoordinator,
 };
-pub use proto_serialization_strategy::ProtoSerializationStrategy;
-// 🔴 UNUSED EXPORT - EnhancedEngineCompactionResult marked for removal
-// pub use compaction_types::EnhancedEngineCompactionResult;
-pub use disk_manager::{DiskStats, WalFileInfo, WriteAheadLogDiskManager};
 pub use memtable_manager::{MemtableManager, MemtableStats};
+pub use proto_serialization_strategy::ProtoSerializationStrategy;
 pub use recovery_manager::{ParallelRecoveryManager, RecoveryManager, RecoveryMode, RecoveryStats};
 pub use recovery_thread_pool::{
     RecoveryPoolStats, RecoveryThreadPool, get_recovery_thread_pool,
@@ -1782,17 +1778,6 @@ impl WriteAheadLogManager {
         Ok(sequence)
     }
 
-    /// Insert single vector record (compatibility adapter over canonical records).
-    pub async fn insert(
-        &self,
-        collection_id: String,
-        vector_id: VectorId,
-        record: &VectorRecord,
-    ) -> Result<u64> {
-        self.insert_record(collection_id, vector_id, ProximaRecord::from(record))
-            .await
-    }
-
     /// Insert batch of canonical records using modern batch API.
     pub async fn insert_record_batch(
         &self,
@@ -1801,38 +1786,6 @@ impl WriteAheadLogManager {
     ) -> Result<Vec<u64>> {
         let vector_records: Vec<ProximaRecord> =
             records.into_iter().map(|(_, record)| record).collect();
-        self.insert_vectors(collection_id, vector_records).await
-    }
-
-    /// Insert batch of vector records using modern batch API
-    pub async fn insert_batch(
-        &self,
-        collection_id: String,
-        records: Vec<(VectorId, VectorRecord)>,
-    ) -> Result<Vec<u64>> {
-        // Use the modern batch API directly
-        let vector_records: Vec<ProximaRecord> = records
-            .into_iter()
-            .map(|(_, record)| record.into())
-            .collect();
-        self.insert_vectors(collection_id, vector_records).await
-    }
-
-    /// Insert batch of vector records with immediate sync option
-    /// Note: immediate_sync is largely ignored in the new architecture where
-    /// flush is handled atomically by TransactionCoordinator
-    pub async fn insert_batch_with_sync(
-        &self,
-        collection_id: String,
-        records: Vec<(VectorId, VectorRecord)>,
-        _immediate_sync: bool,
-    ) -> Result<Vec<u64>> {
-        let vector_records: Vec<ProximaRecord> = records
-            .into_iter()
-            .map(|(_, record)| record.into())
-            .collect();
-
-        // Just insert to WAL/memtable - sync will happen during flush via atomic coordinator
         self.insert_vectors(collection_id, vector_records).await
     }
 
@@ -1859,17 +1812,6 @@ impl WriteAheadLogManager {
         self.insert_record(collection_id, record_id, record).await
     }
 
-    /// Update vector record (compatibility adapter over canonical records).
-    pub async fn update(
-        &self,
-        collection_id: String,
-        vector_id: VectorId,
-        record: VectorRecord,
-    ) -> Result<u64> {
-        self.update_record(collection_id, vector_id, ProximaRecord::from(record))
-            .await
-    }
-
     /// Delete canonical record by identity (tombstone record).
     pub async fn delete_record(&self, collection_id: String, record_id: VectorId) -> Result<u64> {
         let now_ns = std::time::SystemTime::now()
@@ -1888,11 +1830,6 @@ impl WriteAheadLogManager {
         self.insert_record(collection_id, record_id, record).await
     }
 
-    /// Delete vector record (compatibility adapter over canonical tombstones).
-    pub async fn delete(&self, collection_id: String, vector_id: VectorId) -> Result<u64> {
-        self.delete_record(collection_id, vector_id).await
-    }
-
     // Note: Collection lifecycle operations (create/drop) are handled by CollectionService
     // WAL only handles vector-level operations (insert/update/delete/flush/checkpoint)
 
@@ -1905,16 +1842,6 @@ impl WriteAheadLogManager {
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
         let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         wal_behavior.vector_by_id(collection_id, record_id).await
-    }
-
-    /// Search for vector by ID (compatibility adapter returning VectorRecord).
-    pub async fn search(
-        &self,
-        collection_id: &str,
-        vector_id: &VectorId,
-    ) -> Result<Option<VectorRecord>> {
-        let result = self.search_record(collection_id, vector_id).await?;
-        Ok(result.map(|r| VectorRecord::from(r)))
     }
 
     /// Read canonical record batches for recovery or replication.
@@ -1937,21 +1864,6 @@ impl WriteAheadLogManager {
         Ok(filtered)
     }
 
-    /// Read vector batches for recovery or replication (compatibility adapter).
-    pub async fn read_entries(
-        &self,
-        collection_id: &str,
-        from_sequence: u64,
-        limit: Option<usize>,
-    ) -> Result<Vec<VectorRecord>> {
-        Ok(self
-            .read_record_entries(collection_id, from_sequence, limit)
-            .await?
-            .into_iter()
-            .map(VectorRecord::from)
-            .collect())
-    }
-
     /// Force flush to disk
     pub async fn flush(&self, _collection_id: Option<&String>) -> Result<FlushResult> {
         // Use shared WAL behavior for flush
@@ -1972,71 +1884,6 @@ impl WriteAheadLogManager {
         // Compaction not directly available in shared WAL behavior
         // Return 0 for now as compaction is handled at storage layer
         Ok(0)
-    }
-
-    /// Read vector records by operation type (proto-first approach)
-    pub async fn read_proto_entries(
-        &self,
-        collection_id: &str,
-        _operation_type: &str,
-        limit: Option<usize>,
-    ) -> Result<Vec<Vec<u8>>> {
-        // Get the vector records from the collection
-        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-        let vectors = wal_behavior.get_collection_vectors(collection_id).await?;
-
-        // Apply limit and convert from ProximaRecord to legacy VectorRecord for serialization
-        let limited_vectors: Vec<VectorRecord> = if let Some(lim) = limit {
-            vectors
-                .into_iter()
-                .take(lim)
-                .map(VectorRecord::from)
-                .collect()
-        } else {
-            vectors.into_iter().map(VectorRecord::from).collect()
-        };
-
-        // Serialize each vector to proto bytes (proto-first architecture)
-        let mut proto_payloads = Vec::new();
-        for vector in limited_vectors {
-            // Convert back to proto VectorRecord for wire encoding
-            let proto_record: crate::proto::proximadb_v1::VectorRecord = vector;
-            let proto_bytes = {
-                use prost::Message;
-                proto_record.encode_to_vec()
-            };
-            proto_payloads.push(proto_bytes);
-        }
-
-        Ok(proto_payloads)
-    }
-
-    /// Append batch entry using modern batch approach
-    ///
-    /// This method deserializes the payload and uses modern batch operations
-    pub async fn append_batch_entry(
-        &self,
-        collection_id: &str,
-        _operation_type: &str,
-        payload: &[u8],
-        immediate_sync: bool,
-    ) -> Result<u64> {
-        // Proto-first: try proto deserialization first, then fall back to strategy-specific handling
-        // Try proto deserialization using the serializer
-        use crate::storage::persistence::write_ahead_log::serialization::{
-            ProtocolBuffersSerializer, VectorBatchSerializer,
-        };
-        let proto_serializer = ProtocolBuffersSerializer::new();
-        if let Ok(records) = proto_serializer.deserialize_batch(payload) {
-            // Use the modern batch API with sync option
-            let _ = immediate_sync;
-            self.insert_vectors(collection_id.to_string(), records)
-                .await
-                .map(|sequences| sequences.into_iter().next().unwrap_or(0))
-        } else {
-            anyhow::bail!("Failed to deserialize batch payload")
-        }
     }
 
     /// Get all vectors for a collection (modern batch approach)
@@ -2487,18 +2334,17 @@ impl WriteAheadLogManager {
         wal_behavior.vector_by_id(collection_id, vector_id).await
     }
 
-    /// Similarity search for vectors (modern API)
+    /// Similarity search for canonical records.
     pub async fn search_vectors_similarity(
         &self,
         collection_id: &str,
         query_vector: &[f32],
         k: usize,
         distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
-    ) -> Result<Vec<(VectorId, f32, VectorRecord)>> {
+    ) -> Result<Vec<(VectorId, f32, ProximaRecord)>> {
         {
             let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
             let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-            // Convert to search_unflushed_vectors format and back
             let metric = distance_metric
                 .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
             let results = wal_behavior
@@ -2513,21 +2359,31 @@ impl WriteAheadLogManager {
                 )
                 .await?;
 
-            // Convert SearchVectorRecord back to (VectorId, f32, VectorRecord) format
             Ok(results
                 .into_iter()
                 .map(|r| {
-                    let record = VectorRecord {
-                        id: r.id.clone(),
-                        vector: r.vector,
-                        metadata: r.metadata,
-                        version: r.version,
-                        timestamp: Some(r.timestamp.unwrap_or(0)),
-                        expires_at: None,
-                        source: None,
-                        updated_at: None,
+                    let vector_id = r.id.clone();
+                    let dim = r.vector.len() as u32;
+                    let record = ProximaRecord {
+                        oid: r.id.clone(),
+                        record_version: r.version.unwrap_or_default() as u64,
+                        created_at_ns: r.timestamp.unwrap_or_default() * 1_000_000,
+                        props: r
+                            .metadata
+                            .into_iter()
+                            .map(|(key, value)| {
+                                (key, ProximaTreeNode::Value(sql_value_to_proxima(&value)))
+                            })
+                            .collect(),
+                        embeddings: vec![EmbeddingCell {
+                            model_id: "wal".to_string(),
+                            modality: "dense_vector".to_string(),
+                            dim,
+                            values: r.vector,
+                        }],
+                        ..Default::default()
                     };
-                    (r.id, r.score as f32, record)
+                    (vector_id, r.score as f32, record)
                 })
                 .collect())
         }
@@ -3016,65 +2872,6 @@ impl WriteAheadLogManager {
     // ================================================================================
     // ENHANCED METHODS (Consolidated from OptimizedWalManager)
     // ================================================================================
-
-    /// Initialize assignment service integration for multi-disk coordination
-    /// Insert batch with atomic disk synchronization (enhanced version)
-    pub async fn insert_batch_atomic(
-        &self,
-        collection_id: String,
-        records: Vec<(VectorId, VectorRecord)>,
-    ) -> Result<Vec<u64>> {
-        let start_time = std::time::Instant::now();
-
-        debug!(
-            "Inserting batch of {} vectors for collection '{}' using {} strategy with atomic sync",
-            records.len(),
-            collection_id,
-            self.get_strategy_name()
-        );
-
-        // 1. Collection assignment no longer needed - handled by pool manager
-        // Collections are tracked via assigned_collections HashMap
-
-        // MARKED FOR REMOVAL: Path resolution now handled via collection metadata
-        // // 2. Ensure collection directories exist (if assignment service is enabled)
-        // if let Some(path_resolver) = &self.path_resolver {
-        //     let collection_paths = path_resolver
-        //         .resolve_collection_paths(&collection_id)
-        //         .await
-        //         .context("Failed to resolve collection paths")?;
-        //
-        //     path_resolver
-        //         .ensure_collection_directories(&collection_paths)
-        //         .await
-        //         .context("Failed to ensure collection directories")?;
-        // }
-
-        // 3. Write to memory using existing strategy
-        let vector_records: Vec<proximadb_records::ProximaRecord> = records
-            .into_iter()
-            .map(|(_, record)| record.into())
-            .collect();
-        let sequences = self
-            .insert_vectors(collection_id.clone(), vector_records)
-            .await?;
-
-        // 4. Implement proper atomic disk sync for durability
-        let collections_affected = vec![collection_id.clone()];
-        self.force_disk_sync(&collections_affected).await?;
-        debug!(
-            "Completed atomic disk sync for {} collections",
-            collections_affected.len()
-        );
-
-        let duration = start_time.elapsed();
-        debug!(
-            "Atomic batch insert completed for collection '{}' in {:?}",
-            collection_id, duration
-        );
-
-        Ok(sequences)
-    }
 
     /// Determine if batch should be synced to disk
     async fn should_sync_to_disk(&self, _collection_id: &str) -> Result<bool> {

@@ -29,6 +29,92 @@
 
 use super::types::{ProximaScheme, TypeId};
 
+/// Semantic authority mode for data being encoded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AuthorityMode {
+    /// Canonical ProximaRecord payload; exact reconstruction is required.
+    #[default]
+    CanonicalRecord,
+    /// Rebuildable projection derived from canonical records.
+    RebuildableProjection,
+    /// External asset is declared authoritative by catalog policy.
+    ExternalAuthoritative,
+}
+
+/// Loss policy accepted for this encoding decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LossPolicy {
+    /// Only byte-exact reconstruction is allowed.
+    #[default]
+    ExactOnly,
+    /// The encoded data is a projection and may be approximate if cataloged.
+    ProjectionMayBeLossy,
+    /// The source is external-authoritative and follows its own precision contract.
+    ExternalAuthoritative,
+}
+
+/// Workload profile used for CPU-vs-I/O tradeoffs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum WorkloadProfile {
+    /// Point-heavy OLTP access.
+    Oltp,
+    /// Scan-heavy analytical access.
+    Olap,
+    /// Mixed point and scan access.
+    #[default]
+    Htap,
+    /// ANN/rerank access over vector-bearing records.
+    AnnRerank,
+    /// Graph traversal access.
+    GraphTraversal,
+    /// Document/path scan access.
+    DocumentScan,
+}
+
+/// Storage specialization for the column or projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StorageSpecialization {
+    /// General record/table data.
+    #[default]
+    General,
+    /// PAX row-family stripe.
+    PaxStripe,
+    /// Vector exact payload.
+    VectorExact,
+    /// Lossy vector projection/index payload.
+    VectorProjection,
+    /// Graph topology arrays such as CSR/CSC.
+    GraphTopology,
+    /// JSON/document structural stripe.
+    JsonStructural,
+    /// Time-series or observability stripe.
+    TimeSeries,
+}
+
+/// Expected access temperature for a block or stripe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AccessTemperature {
+    /// Frequently read or latency-sensitive data.
+    Hot,
+    /// Mixed access.
+    #[default]
+    Warm,
+    /// Infrequently read data where CPU can be traded for I/O.
+    Cold,
+}
+
+/// Random access granularity required by readers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RandomAccessGranularity {
+    /// Entire stripe/block decode is acceptable.
+    #[default]
+    Stripe,
+    /// Row group decode is required.
+    RowGroup,
+    /// Individual value access is expected.
+    Value,
+}
+
 /// Block access pattern for PAX stripe encoding decisions.
 ///
 /// Tells the codec whether a column value is being written for a single-row
@@ -59,6 +145,365 @@ pub enum DataDomain {
     /// General purpose (no specific optimization)
     #[default]
     General,
+}
+
+/// High-level modality of a column or projection payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ColumnModality {
+    /// Generic scalar column.
+    #[default]
+    Scalar,
+    /// Exact vector payload.
+    VectorExact,
+    /// Vector projection/index payload.
+    VectorProjection,
+    /// Graph adjacency/topology payload.
+    GraphTopology,
+    /// JSON/document path or structural payload.
+    JsonStructural,
+    /// Time-series value or timestamp payload.
+    TimeSeries,
+    /// Metadata/system column.
+    Metadata,
+}
+
+/// Physical ordering already applied or intended for the data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PhysicalOrdering {
+    /// No useful order known.
+    #[default]
+    None,
+    /// Ordered by primary key or row id.
+    PrimaryKey,
+    /// Ordered by time.
+    Time,
+    /// Ordered by value or by a correlated value.
+    Value,
+    /// Ordered by reduced vector spatial key.
+    VectorSpatial,
+    /// Ordered by graph vertex remapping.
+    GraphVertex,
+    /// Ordered by JSON shape/path dictionary.
+    JsonShape,
+}
+
+/// Coarse sortedness/correlation hint for a stripe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Sortedness {
+    /// No ordering guarantee.
+    #[default]
+    Unsorted,
+    /// Non-decreasing order.
+    Sorted,
+    /// Values are clustered or serially correlated but not strictly sorted.
+    Correlated,
+}
+
+/// Scope for dictionaries and learned/base parameters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DictionaryScope {
+    /// No dictionary or external parameter scope.
+    #[default]
+    None,
+    /// Parameters are local to the current stripe/block.
+    Block,
+    /// Parameters span a segment.
+    Segment,
+    /// Parameters are catalog-managed and versioned.
+    Catalog,
+}
+
+/// Identifier for correlated columns/stripes that should be optimized together.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CorrelationGroupId(pub u32);
+
+/// Vector-specific layout hint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VectorLayoutHint {
+    /// Embedding dimension, if known.
+    pub dimension: Option<u16>,
+    /// Model identifier or cataloged embedding profile.
+    pub model_id: Option<String>,
+    /// Physical ordering family.
+    pub ordering: PhysicalOrdering,
+    /// Whether exact f32/f64 payload reconstruction is required.
+    pub exact_payload: bool,
+}
+
+impl Default for VectorLayoutHint {
+    fn default() -> Self {
+        Self {
+            dimension: None,
+            model_id: None,
+            ordering: PhysicalOrdering::None,
+            exact_payload: true,
+        }
+    }
+}
+
+/// Graph-specific layout hint.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct GraphLayoutHint {
+    /// Edge label or topology family, if known.
+    pub edge_label: Option<String>,
+    /// Whether neighbor lists are sorted.
+    pub neighbor_sorted: bool,
+    /// Whether vertex ids were remapped for locality.
+    pub vertex_remapped: bool,
+}
+
+/// JSON/document-specific layout hint.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct JsonLayoutHint {
+    /// Stable shape id for common structural variants.
+    pub shape_id: Option<u32>,
+    /// JSON path dictionary id.
+    pub path_dictionary_id: Option<u32>,
+    /// Whether the column is a typed leaf stripe instead of the full props blob.
+    pub typed_leaf: bool,
+}
+
+/// Layout hints supplied to codec selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayoutHints {
+    /// Column/projection modality.
+    pub modality: ColumnModality,
+    /// Physical ordering applied to the values.
+    pub physical_ordering: PhysicalOrdering,
+    /// Optional correlation group.
+    pub correlation_group: Option<CorrelationGroupId>,
+    /// Vector-specific hints.
+    pub vector_layout: Option<VectorLayoutHint>,
+    /// Graph-specific hints.
+    pub graph_layout: Option<GraphLayoutHint>,
+    /// JSON-specific hints.
+    pub json_layout: Option<JsonLayoutHint>,
+    /// Dictionary/parameter scope.
+    pub dictionary_scope: DictionaryScope,
+    /// Sortedness/correlation of the physical order.
+    pub sortedness: Sortedness,
+}
+
+impl Default for LayoutHints {
+    fn default() -> Self {
+        Self {
+            modality: ColumnModality::Scalar,
+            physical_ordering: PhysicalOrdering::None,
+            correlation_group: None,
+            vector_layout: None,
+            graph_layout: None,
+            json_layout: None,
+            dictionary_scope: DictionaryScope::None,
+            sortedness: Sortedness::Unsorted,
+        }
+    }
+}
+
+impl LayoutHints {
+    /// No layout hints.
+    pub fn none() -> Self {
+        Self::default()
+    }
+
+    /// Values are physically sorted.
+    pub fn value_sorted() -> Self {
+        Self {
+            physical_ordering: PhysicalOrdering::Value,
+            sortedness: Sortedness::Sorted,
+            ..Self::default()
+        }
+    }
+
+    /// Values are physically co-located by vector spatial key.
+    pub fn vector_spatial() -> Self {
+        Self {
+            modality: ColumnModality::VectorExact,
+            physical_ordering: PhysicalOrdering::VectorSpatial,
+            sortedness: Sortedness::Correlated,
+            vector_layout: Some(VectorLayoutHint {
+                ordering: PhysicalOrdering::VectorSpatial,
+                exact_payload: true,
+                ..VectorLayoutHint::default()
+            }),
+            ..Self::default()
+        }
+    }
+}
+
+/// Canonical profile for one codec-selection decision.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CompressionProfile {
+    /// Semantic authority mode.
+    pub authority_mode: AuthorityMode,
+    /// Loss policy.
+    pub loss_policy: LossPolicy,
+    /// Workload profile.
+    pub workload_profile: WorkloadProfile,
+    /// Storage specialization.
+    pub storage_specialization: StorageSpecialization,
+    /// Access temperature.
+    pub hotness: AccessTemperature,
+    /// Required random-access granularity.
+    pub random_access_granularity: RandomAccessGranularity,
+    /// Target compression ratio. Values are uncompressed/compressed.
+    pub target_compression_ratio: Option<f32>,
+    /// Target decode budget per value.
+    pub target_decode_ns_per_value: Option<u64>,
+    /// Maximum allowed encode CPU per block.
+    pub max_encode_cpu_ms_per_block: Option<u64>,
+    /// Block context.
+    pub block_context: BlockContext,
+}
+
+impl Default for CompressionProfile {
+    fn default() -> Self {
+        Self {
+            authority_mode: AuthorityMode::CanonicalRecord,
+            loss_policy: LossPolicy::ExactOnly,
+            workload_profile: WorkloadProfile::Htap,
+            storage_specialization: StorageSpecialization::General,
+            hotness: AccessTemperature::Warm,
+            random_access_granularity: RandomAccessGranularity::Stripe,
+            target_compression_ratio: None,
+            target_decode_ns_per_value: None,
+            max_encode_cpu_ms_per_block: None,
+            block_context: BlockContext::PaxStripe,
+        }
+    }
+}
+
+impl CompressionProfile {
+    /// Profile for latency-sensitive hot reads/writes.
+    pub fn hot_oltp() -> Self {
+        Self {
+            workload_profile: WorkloadProfile::Oltp,
+            hotness: AccessTemperature::Hot,
+            random_access_granularity: RandomAccessGranularity::Value,
+            block_context: BlockContext::OltpRow,
+            ..Self::default()
+        }
+    }
+
+    /// Profile for cold analytical stripes.
+    pub fn cold_olap(target_compression_ratio: f32) -> Self {
+        Self {
+            workload_profile: WorkloadProfile::Olap,
+            hotness: AccessTemperature::Cold,
+            random_access_granularity: RandomAccessGranularity::Stripe,
+            target_compression_ratio: Some(target_compression_ratio),
+            block_context: BlockContext::OlapStripe,
+            storage_specialization: StorageSpecialization::PaxStripe,
+            ..Self::default()
+        }
+    }
+
+    /// Build a profile from the legacy selection context.
+    pub fn from_selection_context(context: &SelectionContext) -> Self {
+        let block_context = context.block_context.unwrap_or(BlockContext::PaxStripe);
+        let (workload_profile, hotness, random_access_granularity) = match block_context {
+            BlockContext::OltpRow => (
+                WorkloadProfile::Oltp,
+                AccessTemperature::Hot,
+                RandomAccessGranularity::Value,
+            ),
+            BlockContext::OlapStripe => (
+                WorkloadProfile::Olap,
+                AccessTemperature::Cold,
+                RandomAccessGranularity::Stripe,
+            ),
+            BlockContext::PaxStripe => (
+                WorkloadProfile::Htap,
+                AccessTemperature::Warm,
+                RandomAccessGranularity::RowGroup,
+            ),
+        };
+        let storage_specialization = match context.domain {
+            DataDomain::MlEmbeddings => StorageSpecialization::VectorExact,
+            DataDomain::TimeSeries => StorageSpecialization::TimeSeries,
+            DataDomain::Sparse | DataDomain::Metadata | DataDomain::General => {
+                StorageSpecialization::PaxStripe
+            }
+        };
+
+        Self {
+            authority_mode: AuthorityMode::CanonicalRecord,
+            loss_policy: if context.allow_lossy {
+                LossPolicy::ProjectionMayBeLossy
+            } else {
+                LossPolicy::ExactOnly
+            },
+            workload_profile,
+            storage_specialization,
+            hotness,
+            random_access_granularity,
+            target_compression_ratio: context.target_compression,
+            target_decode_ns_per_value: None,
+            max_encode_cpu_ms_per_block: None,
+            block_context,
+        }
+    }
+}
+
+/// Parameter metadata attached to a decision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodecParameters {
+    /// Scope for any external parameters.
+    pub dictionary_scope: DictionaryScope,
+    /// Stable layout parameter id, when cataloged.
+    pub layout_parameter_id: Option<u64>,
+    /// Stable codec parameter id, when cataloged.
+    pub codec_parameter_id: Option<u64>,
+}
+
+impl Default for CodecParameters {
+    fn default() -> Self {
+        Self {
+            dictionary_scope: DictionaryScope::None,
+            layout_parameter_id: None,
+            codec_parameter_id: None,
+        }
+    }
+}
+
+/// Why a codec candidate was rejected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RejectionReason {
+    /// Candidate is lossy but exact reconstruction was required.
+    LossyRejected,
+    /// Candidate is too CPU-heavy for the hot path.
+    HotPathDecodeBudget,
+    /// Candidate did not meet the configured compression threshold.
+    CompressionTargetMiss,
+    /// Candidate is incompatible with the declared modality/layout.
+    LayoutMismatch,
+}
+
+/// Rejected codec candidate with reason.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RejectedCodecCandidate {
+    /// Rejected scheme.
+    pub scheme: ProximaScheme,
+    /// Reason it was rejected.
+    pub reason: RejectionReason,
+    /// Estimated compression ratio, if known.
+    pub expected_ratio: Option<f32>,
+}
+
+/// Explainable codec-selection result.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CodecDecision {
+    /// Selected scheme.
+    pub scheme: ProximaScheme,
+    /// Selected parameter metadata.
+    pub parameters: CodecParameters,
+    /// Estimated compression ratio. Values are uncompressed/compressed.
+    pub expected_ratio: f32,
+    /// Estimated decode budget per value.
+    pub expected_decode_ns_per_value: Option<u64>,
+    /// Whether exact reconstruction is guaranteed for the input type.
+    pub exact_reconstruction: bool,
+    /// Rejected alternatives and reasons.
+    pub rejected_candidates: Vec<RejectedCodecCandidate>,
 }
 
 /// Context for codec selection decisions
@@ -215,6 +660,39 @@ impl SelectionContext {
         self.is_sorted = true;
         self
     }
+
+    /// Convert legacy context into the canonical compression profile.
+    pub fn compression_profile(&self) -> CompressionProfile {
+        CompressionProfile::from_selection_context(self)
+    }
+
+    /// Convert legacy context into layout hints.
+    pub fn layout_hints(&self) -> LayoutHints {
+        let modality = match self.domain {
+            DataDomain::MlEmbeddings => ColumnModality::VectorExact,
+            DataDomain::TimeSeries => ColumnModality::TimeSeries,
+            DataDomain::Sparse | DataDomain::Metadata | DataDomain::General => {
+                ColumnModality::Scalar
+            }
+        };
+        let physical_ordering = if self.is_sorted {
+            PhysicalOrdering::Value
+        } else {
+            PhysicalOrdering::None
+        };
+        let sortedness = if self.is_sorted {
+            Sortedness::Sorted
+        } else {
+            Sortedness::Unsorted
+        };
+
+        LayoutHints {
+            modality,
+            physical_ordering,
+            sortedness,
+            ..LayoutHints::default()
+        }
+    }
 }
 
 /// Analysis of data patterns for informed selection
@@ -350,6 +828,170 @@ impl DataAnalysis {
     /// Check if data has low cardinality (<10% unique)
     pub fn is_low_cardinality(&self) -> bool {
         self.unique_ratio < 0.10
+    }
+}
+
+fn type_bits(type_id: TypeId) -> u8 {
+    (type_id.size_bytes() * 8) as u8
+}
+
+fn decode_estimate_ns_per_value(scheme: &ProximaScheme) -> u64 {
+    match scheme {
+        ProximaScheme::Raw => 1,
+        ProximaScheme::Delta { .. } | ProximaScheme::BitPacked { .. } => 2,
+        ProximaScheme::FrameOfReference { .. } | ProximaScheme::DoubleDelta { .. } => 3,
+        ProximaScheme::Simple8b | ProximaScheme::VByte => 4,
+        ProximaScheme::SparseBitmap | ProximaScheme::RunLength => 5,
+        ProximaScheme::Dictionary | ProximaScheme::SparseCOO => 7,
+        ProximaScheme::PForDelta { .. } | ProximaScheme::PForDoubleDelta { .. } => 8,
+        ProximaScheme::Zigzag { .. } => 3,
+        ProximaScheme::Gorilla => 9,
+        ProximaScheme::Adaptive => 10,
+    }
+}
+
+fn is_hot_path_heavy(scheme: &ProximaScheme) -> bool {
+    matches!(
+        scheme,
+        ProximaScheme::Dictionary
+            | ProximaScheme::SparseCOO
+            | ProximaScheme::PForDelta { .. }
+            | ProximaScheme::PForDoubleDelta { .. }
+            | ProximaScheme::Gorilla
+            | ProximaScheme::Adaptive
+    )
+}
+
+fn is_high_value_fast_codec(scheme: &ProximaScheme, analysis: &DataAnalysis) -> bool {
+    matches!(scheme, ProximaScheme::RunLength)
+        || (analysis.is_sparse() && matches!(scheme, ProximaScheme::SparseBitmap))
+        || (analysis.is_sequential()
+            && matches!(
+                scheme,
+                ProximaScheme::Delta { .. } | ProximaScheme::DoubleDelta { .. }
+            ))
+}
+
+fn lossless_fallback_for(
+    type_id: TypeId,
+    analysis: &DataAnalysis,
+    hints: &LayoutHints,
+) -> ProximaScheme {
+    if hints.sortedness == Sortedness::Sorted || analysis.is_sequential() {
+        ProximaScheme::Delta {
+            base: analysis.min_value.unwrap_or(0),
+        }
+    } else if analysis.range > 0
+        && analysis.range < (1u64 << 32)
+        && !matches!(type_id, TypeId::F32 | TypeId::F64)
+    {
+        ProximaScheme::FrameOfReference {
+            reference: analysis.min_value.unwrap_or(0),
+            bits: analysis.max_bits.max(1),
+        }
+    } else {
+        ProximaScheme::Raw
+    }
+}
+
+fn ordering_preferred_scheme(
+    analysis: &DataAnalysis,
+    context: &SelectionContext,
+    hints: &LayoutHints,
+) -> Option<ProximaScheme> {
+    match (hints.physical_ordering, hints.sortedness) {
+        (PhysicalOrdering::Time, _) | (_, Sortedness::Sorted) if analysis.is_sequential() => {
+            Some(ProximaScheme::DoubleDelta {
+                first_value: analysis.min_value.unwrap_or(0),
+                first_delta: 1,
+            })
+        }
+        (PhysicalOrdering::Value | PhysicalOrdering::PrimaryKey | PhysicalOrdering::Time, _)
+        | (_, Sortedness::Sorted) => Some(ProximaScheme::Delta {
+            base: analysis.min_value.unwrap_or(0),
+        }),
+        (_, Sortedness::Correlated)
+            if context.data_type != TypeId::F32 && context.data_type != TypeId::F64 =>
+        {
+            Some(ProximaScheme::FrameOfReference {
+                reference: analysis.min_value.unwrap_or(0),
+                bits: analysis.max_bits.max(1),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn estimate_compression_ratio(
+    scheme: &ProximaScheme,
+    analysis: &DataAnalysis,
+    type_id: TypeId,
+) -> f32 {
+    match scheme {
+        ProximaScheme::Raw => 1.0,
+        ProximaScheme::RunLength => {
+            if analysis.is_constant() {
+                analysis.count.clamp(1, 256) as f32
+            } else {
+                1.2
+            }
+        }
+        ProximaScheme::SparseCOO => {
+            if analysis.zero_ratio > 0.95 {
+                8.0
+            } else {
+                1.4
+            }
+        }
+        ProximaScheme::SparseBitmap => {
+            if analysis.zero_ratio > 0.70 {
+                3.0
+            } else {
+                1.2
+            }
+        }
+        ProximaScheme::Dictionary => {
+            if analysis.unique_ratio < 0.10 {
+                (1.0 / analysis.unique_ratio.max(0.01) as f32).min(8.0)
+            } else {
+                1.1
+            }
+        }
+        ProximaScheme::Delta { .. } => {
+            if analysis.is_sequential() {
+                2.0
+            } else {
+                1.2
+            }
+        }
+        ProximaScheme::DoubleDelta { .. } => {
+            if analysis.is_sequential() {
+                3.0
+            } else {
+                1.3
+            }
+        }
+        ProximaScheme::FrameOfReference { bits, .. } => {
+            let full_bits = type_bits(type_id).max(1) as f32;
+            (full_bits / (*bits).max(1) as f32).max(1.0)
+        }
+        ProximaScheme::BitPacked { bits } => {
+            let full_bits = type_bits(type_id).max(1) as f32;
+            (full_bits / (*bits).max(1) as f32).max(1.0)
+        }
+        ProximaScheme::PForDelta { majority_bits, .. } => {
+            let full_bits = type_bits(type_id).max(1) as f32;
+            (full_bits / (*majority_bits).max(1) as f32).max(1.0) * 1.2
+        }
+        ProximaScheme::PForDoubleDelta { .. } => 2.5,
+        ProximaScheme::Simple8b => 1.8,
+        ProximaScheme::VByte => 1.5,
+        ProximaScheme::Zigzag { bits } => {
+            let full_bits = type_bits(type_id).max(1) as f32;
+            (full_bits / (*bits).max(1) as f32).max(1.0)
+        }
+        ProximaScheme::Gorilla => 2.0,
+        ProximaScheme::Adaptive => 1.0,
     }
 }
 
@@ -609,6 +1251,107 @@ impl StrategyRegistry {
         let strategy = self.get_strategy(context.domain);
         strategy.select(analysis, context)
     }
+
+    /// Select an explainable codec decision using the canonical compression profile.
+    ///
+    /// This is the forward-compatible selection entry point for PAX writers,
+    /// graph/JSON/vector projections, and future EXPLAIN output. `select()` is
+    /// retained as the legacy scheme-only API.
+    pub fn select_decision(
+        &self,
+        analysis: &DataAnalysis,
+        context: &SelectionContext,
+        profile: &CompressionProfile,
+        hints: &LayoutHints,
+    ) -> CodecDecision {
+        let mut rejected_candidates = Vec::new();
+        let strategy = self.get_strategy(context.domain);
+        let mut scheme = strategy.select(analysis, context);
+
+        if let Some(ordering_scheme) = ordering_preferred_scheme(analysis, context, hints) {
+            if ordering_scheme != scheme {
+                rejected_candidates.push(RejectedCodecCandidate {
+                    scheme: scheme.clone(),
+                    reason: RejectionReason::LayoutMismatch,
+                    expected_ratio: Some(estimate_compression_ratio(
+                        &scheme,
+                        analysis,
+                        context.data_type,
+                    )),
+                });
+                scheme = ordering_scheme;
+            }
+        }
+
+        if profile.loss_policy == LossPolicy::ExactOnly && scheme.is_lossy(context.data_type) {
+            rejected_candidates.push(RejectedCodecCandidate {
+                scheme: scheme.clone(),
+                reason: RejectionReason::LossyRejected,
+                expected_ratio: Some(estimate_compression_ratio(
+                    &scheme,
+                    analysis,
+                    context.data_type,
+                )),
+            });
+            scheme = lossless_fallback_for(context.data_type, analysis, hints);
+        }
+
+        if profile.hotness == AccessTemperature::Hot
+            && is_hot_path_heavy(&scheme)
+            && !is_high_value_fast_codec(&scheme, analysis)
+        {
+            rejected_candidates.push(RejectedCodecCandidate {
+                scheme: scheme.clone(),
+                reason: RejectionReason::HotPathDecodeBudget,
+                expected_ratio: Some(estimate_compression_ratio(
+                    &scheme,
+                    analysis,
+                    context.data_type,
+                )),
+            });
+            scheme = ProximaScheme::Raw;
+        }
+
+        let mut expected_ratio = estimate_compression_ratio(&scheme, analysis, context.data_type);
+        if let Some(target_ratio) = profile.target_compression_ratio {
+            if target_ratio > 1.0
+                && expected_ratio < target_ratio
+                && !matches!(scheme, ProximaScheme::Raw)
+            {
+                rejected_candidates.push(RejectedCodecCandidate {
+                    scheme: scheme.clone(),
+                    reason: RejectionReason::CompressionTargetMiss,
+                    expected_ratio: Some(expected_ratio),
+                });
+                scheme = ProximaScheme::Raw;
+                expected_ratio = 1.0;
+            }
+        }
+
+        CodecDecision {
+            exact_reconstruction: !scheme.is_lossy(context.data_type),
+            expected_decode_ns_per_value: Some(decode_estimate_ns_per_value(&scheme)),
+            parameters: CodecParameters {
+                dictionary_scope: hints.dictionary_scope,
+                ..CodecParameters::default()
+            },
+            scheme,
+            expected_ratio,
+            rejected_candidates,
+        }
+    }
+
+    /// Select an explainable decision by deriving the profile and layout hints
+    /// from the legacy `SelectionContext`.
+    pub fn select_decision_from_context(
+        &self,
+        analysis: &DataAnalysis,
+        context: &SelectionContext,
+    ) -> CodecDecision {
+        let profile = context.compression_profile();
+        let hints = context.layout_hints();
+        self.select_decision(analysis, context, &profile, &hints)
+    }
 }
 
 impl Default for StrategyRegistry {
@@ -736,5 +1479,105 @@ mod tests {
 
         let sparse = SelectionContext::for_sparse(TypeId::I64);
         assert_eq!(sparse.domain, DataDomain::Sparse);
+    }
+
+    #[test]
+    fn test_exact_only_rejects_lossy_float_codec() {
+        let registry = StrategyRegistry::default();
+        let values = vec![1.0f32, 2.5, 1.25, 4.75, 3.5];
+        let analysis = DataAnalysis::from_f32_values(&values);
+        let context = SelectionContext {
+            data_type: TypeId::F32,
+            domain: DataDomain::TimeSeries,
+            target_compression: None,
+            allow_lossy: false,
+            expected_range: None,
+            is_sorted: false,
+            block_context: Some(BlockContext::PaxStripe),
+        };
+        let profile = CompressionProfile::default();
+        let decision =
+            registry.select_decision(&analysis, &context, &profile, &LayoutHints::none());
+
+        assert!(matches!(decision.scheme, ProximaScheme::Raw));
+        assert!(decision.exact_reconstruction);
+        assert!(decision.rejected_candidates.iter().any(|candidate| {
+            matches!(candidate.scheme, ProximaScheme::Gorilla)
+                && candidate.reason == RejectionReason::LossyRejected
+        }));
+    }
+
+    #[test]
+    fn test_hot_profile_prefers_raw_over_heavy_dictionary() {
+        let registry = StrategyRegistry::default();
+        let values: Vec<i64> = (0..200).map(|i| (i % 5) as i64).collect();
+        let analysis = DataAnalysis::from_i64_values(&values);
+        let context = SelectionContext::general(TypeId::I64);
+        let profile = CompressionProfile::hot_oltp();
+        let decision =
+            registry.select_decision(&analysis, &context, &profile, &LayoutHints::none());
+
+        assert!(matches!(decision.scheme, ProximaScheme::Raw));
+        assert!(decision.rejected_candidates.iter().any(|candidate| {
+            matches!(candidate.scheme, ProximaScheme::Dictionary)
+                && candidate.reason == RejectionReason::HotPathDecodeBudget
+        }));
+    }
+
+    #[test]
+    fn test_cold_profile_keeps_compressive_dictionary() {
+        let registry = StrategyRegistry::default();
+        let values: Vec<i64> = (0..200).map(|i| (i % 5) as i64).collect();
+        let analysis = DataAnalysis::from_i64_values(&values);
+        let context = SelectionContext::general(TypeId::I64);
+        let profile = CompressionProfile::cold_olap(2.0);
+        let decision =
+            registry.select_decision(&analysis, &context, &profile, &LayoutHints::none());
+
+        assert!(matches!(decision.scheme, ProximaScheme::Dictionary));
+        assert!(decision.expected_ratio >= 2.0);
+        assert!(
+            !decision
+                .rejected_candidates
+                .iter()
+                .any(|candidate| candidate.reason == RejectionReason::HotPathDecodeBudget)
+        );
+    }
+
+    #[test]
+    fn test_value_ordering_prefers_delta_candidate() {
+        let registry = StrategyRegistry::default();
+        let values = vec![0i64, 10, 20, 30, 40, 50, 60, 70];
+        let analysis = DataAnalysis::from_i64_values(&values);
+        let context = SelectionContext::general(TypeId::I64);
+        let profile = CompressionProfile::default();
+        let decision =
+            registry.select_decision(&analysis, &context, &profile, &LayoutHints::value_sorted());
+
+        assert!(matches!(decision.scheme, ProximaScheme::Delta { .. }));
+        assert!(decision.rejected_candidates.iter().any(|candidate| {
+            matches!(candidate.scheme, ProximaScheme::Simple8b)
+                && candidate.reason == RejectionReason::LayoutMismatch
+        }));
+    }
+
+    #[test]
+    fn test_unmet_compression_target_falls_back_to_raw() {
+        let registry = StrategyRegistry::default();
+        let values: Vec<i64> = (0..128).map(|i| i * 4).collect();
+        let analysis = DataAnalysis::from_i64_values(&values);
+        let context = SelectionContext::general(TypeId::I64);
+        let profile = CompressionProfile::cold_olap(10.0);
+        let decision =
+            registry.select_decision(&analysis, &context, &profile, &LayoutHints::none());
+
+        assert!(matches!(decision.scheme, ProximaScheme::Raw));
+        assert_eq!(decision.expected_ratio, 1.0);
+        assert!(
+            decision
+                .rejected_candidates
+                .iter()
+                .any(|candidate| candidate.reason == RejectionReason::CompressionTargetMiss)
+        );
     }
 }

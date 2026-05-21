@@ -3,10 +3,9 @@
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use proximadb_records::ProximaRecord;
 
-use crate::proto::proximadb_v1::{
-    DocumentUpdate, LogEntry, MetricSample, SqlObject, TraceData, VectorRecord,
-};
+use crate::proto::proximadb_v1::{DocumentUpdate, LogEntry, MetricSample, SqlObject, TraceData};
 use crate::storage::multimodel::facade::MultiModelStorageFacade;
 
 use super::coordinator::{TransactionConfig, TransactionCoordinator};
@@ -343,7 +342,7 @@ impl TransactionalMultiModelFacade {
         &self,
         transaction_id: &str,
         collection: &str,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
     ) -> Result<()> {
         let participant = self.vector_participant.as_ref().ok_or_else(|| {
             anyhow!("Vector transactional participant is not configured on this facade")

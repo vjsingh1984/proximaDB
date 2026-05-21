@@ -376,8 +376,7 @@ impl WALFlushCoordinator {
             let mut base_result = optimized_result.base.clone();
             base_result.flushed_batch_ids = batch_ids.clone();
 
-            // Store optimized vectors for later AXIS indexing
-            // The optimized result uses Arc<VectorRecord> to avoid cloning
+            // Store optimized records for later AXIS indexing.
             base_result
         } else {
             // Regular flush path with collection metadata

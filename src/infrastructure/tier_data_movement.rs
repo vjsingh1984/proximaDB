@@ -313,23 +313,18 @@ impl TierDataMovement {
         // Pass records through without any ID manipulation or deduplication.
         // Collection service handles ID validation when needed
         let mut total_bytes = 0;
-        let vector_records: Vec<crate::proto::proximadb_v1::VectorRecord> = records
-            .iter()
-            .map(|record| {
-                total_bytes += record
-                    .embeddings
-                    .first()
-                    .map(|embedding| embedding.values.len() * 4)
-                    .unwrap_or_default();
-                record.into()
-            })
-            .collect();
+        for record in &records {
+            total_bytes += record
+                .embeddings
+                .first()
+                .map(|embedding| embedding.values.len() * 4)
+                .unwrap_or_default();
+        }
 
         // Write records using streaming approach for production consistency
-        let record_count = vector_records.len();
-        let sorted_records_iter = vector_records.into_iter();
+        let record_count = records.len();
         writer
-            .write_sorted_records(sorted_records_iter, record_count)
+            .write_sorted_proxima_records(records.into_iter(), record_count)
             .await?;
         Ok(total_bytes)
     }

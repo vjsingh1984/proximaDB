@@ -41,6 +41,7 @@ use crate::storage::engines::sst::{
 use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::transaction_coordinator::TransactionCoordinator;
+use proximadb_records::ProximaRecord;
 
 // AXIS manager for HNSW/IVF index integration
 use crate::index::axis::management::manager::AxisManager;
@@ -670,15 +671,30 @@ impl SstEngine {
         &self,
         collection_id: &str,
         collection_data_dir: &str,
-        vectors: &[crate::proto::proximadb_v1::VectorRecord],
+        records: &[ProximaRecord],
     ) -> Result<()> {
         use super::pca_manager::AdaptivePcaConfig;
+
+        if records.is_empty() {
+            return Ok(());
+        }
+
+        let vectors: Vec<Vec<f32>> = records
+            .iter()
+            .filter_map(|record| {
+                record
+                    .embeddings
+                    .first()
+                    .filter(|embedding| !embedding.values.is_empty())
+                    .map(|embedding| embedding.values.clone())
+            })
+            .collect();
 
         if vectors.is_empty() {
             return Ok(());
         }
 
-        let vector_dim = vectors[0].vector.len();
+        let vector_dim = vectors[0].len();
         if vector_dim == 0 {
             return Ok(());
         }
@@ -705,8 +721,9 @@ impl SstEngine {
         );
 
         // Train PCA model
-        let model = super::pca_manager::EnhancedPCAModel::train(vectors, n_components)
-            .map_err(|e| SstError::Internal(format!("Failed to train PCA model: {}", e)))?;
+        let model =
+            super::pca_manager::EnhancedPCAModel::train_from_vectors(&vectors, n_components)
+                .map_err(|e| SstError::Internal(format!("Failed to train PCA model: {}", e)))?;
 
         // Save to disk
         self.save_pca_model(collection_data_dir, &model).await?;

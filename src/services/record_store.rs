@@ -802,8 +802,7 @@ mod tests {
             ("graph", CatalogStorageSpecialization::GraphTopology),
         ];
         for (label, spec) in cases_canonical {
-            let schema =
-                CatalogTableSchema::new(label).with_storage_specialization(spec);
+            let schema = CatalogTableSchema::new(label).with_storage_specialization(spec);
             assert_eq!(
                 TableRecordStoreRoute::for_schema(&schema),
                 TableRecordStoreRoute::CanonicalRecordStore,
@@ -816,8 +815,7 @@ mod tests {
             ("vector_ann", CatalogStorageSpecialization::VectorAnn),
         ];
         for (label, spec) in cases_legacy {
-            let schema =
-                CatalogTableSchema::new(label).with_storage_specialization(spec);
+            let schema = CatalogTableSchema::new(label).with_storage_specialization(spec);
             assert_eq!(
                 TableRecordStoreRoute::for_schema(&schema),
                 TableRecordStoreRoute::LegacyVectorCompatibility,

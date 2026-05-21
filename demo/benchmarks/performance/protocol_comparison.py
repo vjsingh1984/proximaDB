@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Comprehensive ProximaDB Performance Test
-Tests REST and gRPC protocols with LSM and VIPER engines
+Tests REST and gRPC protocols with SST and VIPER engines
 Including quantization performance (16-bit, 8-bit, 4-bit)
 """
 
@@ -13,8 +13,14 @@ import time
 import json
 import numpy as np
 from typing import List, Dict, Any, Tuple
-from proximadb import connect_rest, connect_grpc, CollectionConfig, DistanceMetric, StorageEngine, VectorRecord
-from proximadb.models import QuantizationConfig, QuantizationType
+from proximadb_sdk import (
+    CollectionConfig,
+    DistanceMetric,
+    StorageEngine,
+    connect_grpc,
+    connect_rest,
+)
+from proximadb_sdk.models import QuantizationConfig, QuantizationType
 
 # Test configuration
 DIMENSION = 128
@@ -23,7 +29,7 @@ BATCH_SIZE = 100
 NUM_QUERIES = 100
 TOP_K = 10
 
-def generate_test_vectors(num_vectors: int, dimension: int) -> Tuple[List[VectorRecord], List[np.ndarray]]:
+def generate_test_vectors(num_vectors: int, dimension: int) -> Tuple[List[Dict[str, Any]], List[np.ndarray]]:
     """Generate test vectors and queries"""
     vectors = []
     raw_vectors = []
@@ -34,12 +40,13 @@ def generate_test_vectors(num_vectors: int, dimension: int) -> Tuple[List[Vector
         vec_data = vec_data / np.linalg.norm(vec_data)
         raw_vectors.append(vec_data)
         
-        vec = VectorRecord(
-            id=f"vec_{i}",
-            vector=vec_data.tolist(),
-            metadata={"index": i, "category": f"cat_{i % 10}"}
+        vectors.append(
+            {
+                "id": f"vec_{i}",
+                "vector": vec_data.tolist(),
+                "props": {"index": i, "category": f"cat_{i % 10}"},
+            }
         )
-        vectors.append(vec)
     
     # Generate query vectors
     queries = []
@@ -97,7 +104,7 @@ def test_protocol_engine_combination(
     if protocol == "rest":
         client = connect_rest("http://localhost:5678")
     else:
-        client = connect_grpc("http://localhost:5679")
+        client = connect_grpc("grpc://localhost:5679")
     
     # Create collection with specified engine
     collection_name = f"perf_{protocol}_{engine}_{quantization or 'fp32'}_{int(time.time())}"
@@ -106,7 +113,7 @@ def test_protocol_engine_combination(
         name=collection_name,
         dimension=DIMENSION,
         distance_metric=DistanceMetric.COSINE,
-        storage_engine=StorageEngine.VIPER if engine == "viper" else StorageEngine.LSM,
+        storage_engine=StorageEngine.VIPER if engine == "viper" else StorageEngine.SST,
         description=f"Performance test: {protocol}/{engine}/{quantization or 'FP32'}"
     )
     
@@ -139,7 +146,7 @@ def test_protocol_engine_combination(
     # Generate test data
     print(f"\n📊 Generating {NUM_VECTORS} test vectors...")
     vectors, queries, raw_vectors = generate_test_vectors(NUM_VECTORS, DIMENSION)
-    vector_ids = [v.id for v in vectors]
+    vector_ids = [v["id"] for v in vectors]
     
     # Test batch insert
     print(f"\n📝 Testing batch insert ({BATCH_SIZE} vectors per batch)...")
@@ -148,7 +155,7 @@ def test_protocol_engine_combination(
     
     for i in range(0, NUM_VECTORS, BATCH_SIZE):
         batch = vectors[i:i+BATCH_SIZE]
-        _, batch_time = time_operation(client.insert_vectors, collection_name, batch)
+        _, batch_time = time_operation(client.insert_records, collection_name, batch)
         insert_times.append(batch_time)
     
     total_insert_time = (time.time() - total_start) * 1000
@@ -232,20 +239,20 @@ def run_comprehensive_tests():
         ("rest", "viper", "pq16"),    # REST + VIPER + PQ16
         ("rest", "viper", "pq8"),     # REST + VIPER + PQ8
         ("rest", "viper", "pq4"),     # REST + VIPER + PQ4
-        ("rest", "lsm", None),        # REST + LSM + FP32
-        ("rest", "lsm", "pq16"),      # REST + LSM + PQ16
-        ("rest", "lsm", "pq8"),       # REST + LSM + PQ8
-        ("rest", "lsm", "pq4"),       # REST + LSM + PQ4
+        ("rest", "sst", None),        # REST + SST + FP32
+        ("rest", "sst", "pq16"),      # REST + SST + PQ16
+        ("rest", "sst", "pq8"),       # REST + SST + PQ8
+        ("rest", "sst", "pq4"),       # REST + SST + PQ4
         
         # gRPC tests
         ("grpc", "viper", None),      # gRPC + VIPER + FP32
         ("grpc", "viper", "pq16"),    # gRPC + VIPER + PQ16
         ("grpc", "viper", "pq8"),     # gRPC + VIPER + PQ8
         ("grpc", "viper", "pq4"),     # gRPC + VIPER + PQ4
-        ("grpc", "lsm", None),        # gRPC + LSM + FP32
-        ("grpc", "lsm", "pq16"),      # gRPC + LSM + PQ16
-        ("grpc", "lsm", "pq8"),       # gRPC + LSM + PQ8
-        ("grpc", "lsm", "pq4"),       # gRPC + LSM + PQ4
+        ("grpc", "sst", None),        # gRPC + SST + FP32
+        ("grpc", "sst", "pq16"),      # gRPC + SST + PQ16
+        ("grpc", "sst", "pq8"),       # gRPC + SST + PQ8
+        ("grpc", "sst", "pq4"),       # gRPC + SST + PQ4
     ]
     
     for protocol, engine, quantization in test_cases:
@@ -298,7 +305,7 @@ def print_performance_summary(results: Dict[str, Any]):
     print("QUANTIZATION TRADEOFFS")
     print("="*80)
     
-    for engine in ["viper", "lsm"]:
+    for engine in ["viper", "sst"]:
         print(f"\n{engine.upper()} Engine:")
         print("-"*60)
         
@@ -328,7 +335,7 @@ def print_performance_summary(results: Dict[str, Any]):
 
 if __name__ == "__main__":
     print("🚀 Starting Comprehensive ProximaDB Performance Test")
-    print("   Testing REST and gRPC with LSM and VIPER engines")
+    print("   Testing REST and gRPC with SST and VIPER engines")
     print("   Including PQ16, PQ8, and PQ4 quantization")
     
     run_comprehensive_tests()

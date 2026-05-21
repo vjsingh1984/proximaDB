@@ -8,13 +8,14 @@
 //! - Stats tracking
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
     AvroSerializationStrategy, BatchId, WALBatchStrategy, WALConfig,
 };
 use anyhow::Result;
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
 use std::sync::Arc;
 
 /// Create test configuration
@@ -42,34 +43,36 @@ fn create_test_config() -> WALConfig {
 }
 
 /// Create test vector
-fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
-    VectorRecord {
-        id: id.to_string(),
-        vector: vec![0.1; dimension],
-        metadata: std::collections::HashMap::from([
-            (
-                "category".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::StringValue("test".to_string())),
-                },
-            ),
-            (
-                "priority".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::StringValue("1".to_string())),
-                },
-            ),
-        ]),
-        timestamp: Some(1234567890i64),
-        updated_at: Some(1234567890i64),
-        expires_at: None,
-        version: Some(1),
-        source: None,
+fn create_test_vector(id: &str, dimension: usize) -> ProximaRecord {
+    let mut props = ProximaTree::new();
+    props.insert(
+        "category".to_string(),
+        ProximaTreeNode::Value(ProximaValue::String("test".to_string())),
+    );
+    props.insert(
+        "priority".to_string(),
+        ProximaTreeNode::Value(ProximaValue::String("1".to_string())),
+    );
+
+    ProximaRecord {
+        oid: id.to_string(),
+        embeddings: vec![EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "dense_vector".to_string(),
+            values: vec![0.1; dimension],
+            dim: dimension as u32,
+        }],
+        props,
+        created_at_ns: 1_234_567_890_000_000,
+        updated_at_ns: 1_234_567_890_000_000,
+        record_version: 1,
+        method: Some("test".to_string()),
+        ..ProximaRecord::default()
     }
 }
 
 /// Create test batch
-fn create_test_batch(vectors: Vec<VectorRecord>) -> WALVectorBatch {
+fn create_test_batch(vectors: Vec<ProximaRecord>) -> WALVectorBatch {
     let vector_count = vectors.len();
     WALVectorBatch {
         batch_id: BatchId::new(),
@@ -78,6 +81,13 @@ fn create_test_batch(vectors: Vec<VectorRecord>) -> WALVectorBatch {
         total_size_bytes: vector_count * 256, // Approximate
         is_flushed: false,
         metadata_bloom_filter: None,
+    }
+}
+
+fn set_vector_values(record: &mut ProximaRecord, values: Vec<f32>) {
+    if let Some(embedding) = record.embeddings.first_mut() {
+        embedding.dim = values.len() as u32;
+        embedding.values = values;
     }
 }
 
@@ -139,7 +149,7 @@ async fn test_avro_write_and_read_batch() {
     assert_eq!(retrieved.len(), 3);
 
     // Collect IDs and verify all are present (order not guaranteed)
-    let mut ids: Vec<String> = retrieved.iter().map(|v| v.id.clone()).collect();
+    let mut ids: Vec<String> = retrieved.iter().map(|v| v.oid.clone()).collect();
     ids.sort();
     assert_eq!(ids, vec!["vec1", "vec2", "vec3"]);
 }
@@ -169,7 +179,7 @@ async fn test_avro_search_by_id() {
         .expect("Failed to search");
 
     assert!(found.is_some());
-    assert_eq!(found.unwrap().id, "search_test");
+    assert_eq!(found.unwrap().oid, "search_test");
 
     // Search for non-existing vector
     let not_found = strategy
@@ -196,7 +206,7 @@ async fn test_avro_similarity_search() {
     for i in 0..10 {
         let mut vector = create_test_vector(&format!("vec_{}", i), 128);
         // Make each vector slightly different
-        vector.vector = vec![i as f32 * 0.1; 128];
+        set_vector_values(&mut vector, vec![i as f32 * 0.1; 128]);
         vectors.push(vector);
     }
 
@@ -422,8 +432,8 @@ async fn test_avro_multiple_collections() {
             .expect("Failed to get vectors");
 
         assert_eq!(vectors.len(), 2);
-        assert!(vectors[0].id.contains(&format!("col{}_", i)));
-        assert!(vectors[1].id.contains(&format!("col{}_", i)));
+        assert!(vectors[0].oid.contains(&format!("col{}_", i)));
+        assert!(vectors[1].oid.contains(&format!("col{}_", i)));
     }
 }
 

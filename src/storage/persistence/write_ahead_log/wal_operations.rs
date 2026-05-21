@@ -661,7 +661,7 @@ impl UnifiedWALReader {
 mod tests {
     use super::*;
     use crate::graph::Node;
-    use crate::proto::proximadb_v1::VectorRecord;
+    use proximadb_records::EmbeddingCell;
 
     #[tokio::test]
     async fn test_unified_wal_operations() {
@@ -690,16 +690,7 @@ mod tests {
         // Test vector operation
         let vector_op = UnifiedWALOperation::VectorOp(VectorOperation::AddVector {
             collection_id: "test_collection".to_string(),
-            record: ProximaRecord::from(VectorRecord {
-                id: "vec1".to_string(),
-                vector: vec![0.1, 0.2, 0.3],
-                metadata: Default::default(),
-                timestamp: Some(0),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
-            }),
+            record: test_record("vec1", vec![0.1, 0.2, 0.3]),
         });
 
         let seq2 = writer.append(vector_op).await.unwrap();
@@ -722,16 +713,7 @@ mod tests {
         let hybrid_op = UnifiedWALOperation::HybridOp {
             vector_ops: vec![VectorOperation::AddVector {
                 collection_id: "coll1".to_string(),
-                record: ProximaRecord::from(VectorRecord {
-                    id: "vec1".to_string(),
-                    vector: vec![0.1, 0.2],
-                    metadata: Default::default(),
-                    timestamp: Some(0),
-                    updated_at: None,
-                    expires_at: None,
-                    version: None,
-                    source: None,
-                }),
+                record: test_record("vec1", vec![0.1, 0.2]),
             }],
             graph_ops: vec![GraphOperation::CreateNode {
                 graph_id: "graph1".to_string(),
@@ -751,5 +733,19 @@ mod tests {
         assert!(entry.is_graph_operation());
         assert!(entry.is_vector_operation());
         assert!(entry.verify_checksum());
+    }
+
+    fn test_record(id: &str, vector: Vec<f32>) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: vector.len() as u32,
+                values: vector,
+            }],
+            created_at_ns: 0,
+            ..Default::default()
+        }
     }
 }

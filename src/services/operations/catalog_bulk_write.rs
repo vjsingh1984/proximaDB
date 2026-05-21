@@ -284,16 +284,14 @@ impl CatalogBulkWriteService {
         Ok((records, result))
     }
 
-    /// Check if the given batch size would trigger direct write path
-    pub fn should_use_direct_write(&self, records: &[ProximaRecord]) -> bool {
-        self.router
-            .should_use_direct_write_records(records)
-            .use_direct_write
+    /// Check if the given batch size would route to the bulk lane.
+    pub fn would_use_bulk_lane(&self, records: &[ProximaRecord]) -> bool {
+        self.router.route_records(records).use_bulk_lane
     }
 
     /// Get write routing decision for a batch
     pub fn get_write_decision(&self, records: &[ProximaRecord]) -> super::BulkWriteDecision {
-        self.router.should_use_direct_write_records(records)
+        self.router.route_records(records)
     }
 
     /// Begin a transactional bulk write session

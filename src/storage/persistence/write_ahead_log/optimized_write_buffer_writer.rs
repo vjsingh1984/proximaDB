@@ -726,12 +726,13 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::persistence::write_ahead_log::config::{
         CompressionConfig as WALCompressionConfig, DiskDistributionStrategy, MemTableConfig,
         MultiDiskConfig, PerformanceConfig, WALConfig, WriteBufferStrategyType,
     };
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaTreeNode};
 
     /// Test helper to create sample vectors
     fn create_test_vectors(count: usize, dimension: usize) -> Vec<ProximaRecord> {
@@ -740,22 +741,24 @@ mod tests {
                 let mut metadata = std::collections::HashMap::new();
                 metadata.insert(
                     "index".to_string(),
-                    SqlValue {
-                        value: Some(sql_value::Value::StringValue(i.to_string())),
-                    },
+                    ProximaTreeNode::Value(ProximaValue::String(i.to_string())),
                 );
 
-                let record = VectorRecord {
-                    id: format!("vec_{}", i),
-                    vector: vec![i as f32; dimension],
-                    metadata,
-                    timestamp: Some(chrono::Utc::now().timestamp()),
-                    updated_at: Some(chrono::Utc::now().timestamp()),
-                    expires_at: None,
-                    version: Some(1),
-                    source: None,
-                };
-                ProximaRecord::from(record)
+                let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default();
+                ProximaRecord {
+                    oid: format!("vec_{}", i),
+                    embeddings: vec![EmbeddingCell {
+                        model_id: "test".to_string(),
+                        modality: "dense_vector".to_string(),
+                        dim: dimension as u32,
+                        values: vec![i as f32; dimension],
+                    }],
+                    props: metadata,
+                    created_at_ns: now_ns,
+                    updated_at_ns: now_ns,
+                    record_version: 1,
+                    ..Default::default()
+                }
             })
             .collect()
     }

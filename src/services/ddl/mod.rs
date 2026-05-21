@@ -261,10 +261,7 @@ pub enum AlterTableChange {
         comment: Option<String>,
     },
     /// SET (key = 'value') — table-level option, e.g. `props_auto_promotion = 'enabled'`.
-    SetTableOption {
-        key: String,
-        value: String,
-    },
+    SetTableOption { key: String, value: String },
 }
 
 /// Column position for ALTER TABLE ... MODIFY

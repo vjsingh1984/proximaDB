@@ -61,8 +61,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use tracing::{debug, info, trace};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::columnar_query_engine::vectorized_executor::DataChunk;
+use proximadb_records::{EmbeddingCell, ProximaRecord};
 
 /// Pipeline executor for pull-based query execution
 pub struct PipelineExecutor {
@@ -286,7 +286,7 @@ impl PipelineExecutor {
         }
     }
 
-    /// Execute the pipeline on a stream of VectorRecords (convenience method)
+    /// Execute the pipeline on canonical records (convenience method)
     ///
     /// # Arguments
     ///
@@ -297,8 +297,8 @@ impl PipelineExecutor {
     /// Processed results as a vector of results
     pub async fn execute_on_records(
         &self,
-        records: Vec<VectorRecord>,
-    ) -> Result<Vec<VectorRecord>> {
+        records: Vec<ProximaRecord>,
+    ) -> Result<Vec<ProximaRecord>> {
         info!(
             "Executing pipeline with {} operators on {} records",
             self.len(),
@@ -311,12 +311,12 @@ impl PipelineExecutor {
         // Execute pipeline operators
         let result_chunk = self.execute_chunk(chunk).await?;
 
-        // Convert back to VectorRecords
+        // Convert back to canonical records
         self.chunk_to_records(result_chunk)
     }
 
-    /// Convert VectorRecords to a DataChunk
-    fn records_to_chunk(&self, records: &[VectorRecord]) -> Result<DataChunk> {
+    /// Convert canonical records to a DataChunk
+    fn records_to_chunk(&self, records: &[ProximaRecord]) -> Result<DataChunk> {
         use arrow::array::{Float32Array, StringArray};
         use arrow::datatypes::{DataType, Field, Schema};
 
@@ -343,15 +343,23 @@ impl PipelineExecutor {
         }
 
         // Extract IDs
-        let ids: Vec<&str> = records.iter().map(|r| r.id.as_str()).collect();
+        let ids: Vec<&str> = records.iter().map(|r| r.oid.as_str()).collect();
 
         // Extract vectors (assuming all have the same dimension)
-        let vector_dim = records.first().map(|r| r.vector.len()).unwrap_or(384);
+        let vector_dim = records
+            .first()
+            .and_then(|r| r.embeddings.first())
+            .map(|embedding| embedding.values.len())
+            .unwrap_or(384);
 
         // Create vector arrays
         let mut vector_values = Vec::with_capacity(records.len() * vector_dim);
         for record in records {
-            vector_values.extend_from_slice(&record.vector);
+            if let Some(embedding) = record.embeddings.first() {
+                vector_values.extend_from_slice(&embedding.values);
+            } else {
+                vector_values.extend(std::iter::repeat_n(0.0, vector_dim));
+            }
         }
 
         let vector_array = Float32Array::from(vector_values);
@@ -612,8 +620,8 @@ impl PipelineExecutor {
         Ok(DataChunk::new(topk_batch))
     }
 
-    /// Convert DataChunk back to VectorRecords
-    fn chunk_to_records(&self, chunk: DataChunk) -> Result<Vec<VectorRecord>> {
+    /// Convert DataChunk back to canonical records
+    fn chunk_to_records(&self, chunk: DataChunk) -> Result<Vec<ProximaRecord>> {
         use arrow::array::{Float32Array, StringArray};
 
         let batch = chunk.batch();
@@ -657,9 +665,15 @@ impl PipelineExecutor {
                 }
             };
 
-            records.push(VectorRecord {
-                id,
-                vector,
+            records.push(ProximaRecord {
+                oid: id.clone(),
+                local_id: Some(id),
+                embeddings: vec![EmbeddingCell {
+                    model_id: "pipeline".to_string(),
+                    modality: "dense_vector".to_string(),
+                    dim: vector.len() as u32,
+                    values: vector,
+                }],
                 ..Default::default()
             });
         }
@@ -726,17 +740,25 @@ mod tests {
 
         // Create test records
         let records = vec![
-            {
-                let mut record = VectorRecord::default();
-                record.id = "1".to_string();
-                record.vector = vec![0.1; 384];
-                record
+            ProximaRecord {
+                oid: "1".to_string(),
+                embeddings: vec![EmbeddingCell {
+                    model_id: "test".to_string(),
+                    modality: "dense_vector".to_string(),
+                    dim: 384,
+                    values: vec![0.1; 384],
+                }],
+                ..Default::default()
             },
-            {
-                let mut record = VectorRecord::default();
-                record.id = "2".to_string();
-                record.vector = vec![0.2; 384];
-                record
+            ProximaRecord {
+                oid: "2".to_string(),
+                embeddings: vec![EmbeddingCell {
+                    model_id: "test".to_string(),
+                    modality: "dense_vector".to_string(),
+                    dim: 384,
+                    values: vec![0.2; 384],
+                }],
+                ..Default::default()
             },
         ];
 

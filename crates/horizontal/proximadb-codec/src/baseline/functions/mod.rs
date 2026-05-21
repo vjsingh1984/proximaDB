@@ -41,6 +41,7 @@ pub mod simple8b;
 pub mod sparse_bitmap;
 pub mod sparse_coo;
 pub mod vbyte;
+pub mod vector_base_xor;
 pub mod zigzag;
 
 // Re-export for convenience
@@ -139,4 +140,11 @@ pub use adaptive::{
     decode_f32 as adaptive_decode_f32, decode_i32 as adaptive_decode_i32,
     decode_i64 as adaptive_decode_i64, encode_f32 as adaptive_encode_f32,
     encode_i32 as adaptive_encode_i32, encode_i64 as adaptive_encode_i64,
+};
+
+pub use vector_base_xor::{
+    VectorBaseXorProfile, decode_f32_vectors as vector_base_xor_decode_f32_vectors,
+    encode_f32_vectors as vector_base_xor_encode_f32_vectors,
+    encode_f32_vectors_with_profile as vector_base_xor_encode_f32_vectors_with_profile,
+    profile_f32_vectors as vector_base_xor_profile_f32_vectors,
 };

@@ -19,7 +19,7 @@ use proximadb_catalog::{
 };
 use proximadb_data_model::ProximaValue;
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode, RecordStorage};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::catalog::CatalogManager;
 use crate::query::table_write_executor::{
@@ -27,8 +27,9 @@ use crate::query::table_write_executor::{
     TableWriteExecutionRequest, TableWriteExecutionStatus, TableWriteExecutor,
 };
 use crate::query::table_write_plan::{
-    CopyIntoPlan, DmlWritePlanRequest, DmlWritePlanner, ReadSource, RoutedExecutionPlan,
-    TableWriteRouteExplanation, WriteIntentOverrides,
+    ConflictPolicy, CopyIntoPlan, DistributionMode, DmlWritePlanRequest, DmlWritePlanner,
+    LogicalTableRef, ReadSource, RoutedExecutionPlan, TableWriteRouteExplanation,
+    WriteIntentOverrides, WriteMode,
 };
 use crate::services::operations::VectorOps;
 use crate::services::operations::vectors::RichSearchResult;
@@ -704,10 +705,74 @@ impl DmlService {
                     .await?;
                 Ok(routed.route_explanation())
             }
-            other => Err(anyhow!(
-                "EXPLAIN table-write routing only supports INSERT ... SELECT and INSERT OVERWRITE; got {:?}",
-                other
-            )),
+            // VALUES-based DML: synthesize a CopyIntoPlan for route planning.
+            // ReadSource::QuerySql acts as a sentinel for inline-values writes;
+            // the row count hint drives bulk-vs-WAL lane selection.
+            DmlStatement::Insert {
+                table_name,
+                columns,
+                values,
+            } => {
+                let row_count = values.len() as u64;
+                let plan = CopyIntoPlan::insert_select(LogicalTableRef::new(&table_name), "VALUES");
+                let mut overrides = write_intent_overrides.cloned().unwrap_or_default();
+                overrides.row_count_hint = Some(row_count);
+                let plan = CopyIntoPlan {
+                    write_mode: WriteMode::InsertOnly,
+                    ..plan
+                };
+                let routed = self
+                    .route_table_write_plan_with_overrides(&plan, &columns, Some(&overrides))
+                    .await?;
+                Ok(routed.route_explanation())
+            }
+            DmlStatement::Upsert {
+                table_name,
+                columns,
+                values,
+                ..
+            } => {
+                let row_count = values.len() as u64;
+                let mut overrides = write_intent_overrides.cloned().unwrap_or_default();
+                overrides.row_count_hint = Some(row_count);
+                let plan = CopyIntoPlan {
+                    source: ReadSource::QuerySql("VALUES".to_string()),
+                    target: LogicalTableRef::new(&table_name),
+                    write_mode: WriteMode::Upsert,
+                    conflict_policy: ConflictPolicy::Upsert,
+                    distribution: DistributionMode::Auto,
+                };
+                let routed = self
+                    .route_table_write_plan_with_overrides(&plan, &columns, Some(&overrides))
+                    .await?;
+                Ok(routed.route_explanation())
+            }
+            DmlStatement::Update { table_name, .. } => {
+                let plan = CopyIntoPlan {
+                    source: ReadSource::QuerySql("UPDATE".to_string()),
+                    target: LogicalTableRef::new(&table_name),
+                    write_mode: WriteMode::Upsert,
+                    conflict_policy: ConflictPolicy::Upsert,
+                    distribution: DistributionMode::Auto,
+                };
+                let routed = self
+                    .route_table_write_plan_with_overrides(&plan, &[], write_intent_overrides)
+                    .await?;
+                Ok(routed.route_explanation())
+            }
+            DmlStatement::Delete { table_name, .. } => {
+                let plan = CopyIntoPlan {
+                    source: ReadSource::QuerySql("DELETE".to_string()),
+                    target: LogicalTableRef::new(&table_name),
+                    write_mode: WriteMode::Append,
+                    conflict_policy: ConflictPolicy::Error,
+                    distribution: DistributionMode::Auto,
+                };
+                let routed = self
+                    .route_table_write_plan_with_overrides(&plan, &[], write_intent_overrides)
+                    .await?;
+                Ok(routed.route_explanation())
+            }
         }
     }
 
@@ -1310,6 +1375,19 @@ impl DmlService {
         );
         Self::trace_row_dml_write_lane(&write_intent, &write_lane_decision);
 
+        // Compute per-column null counts before consuming values (for T8 column stats).
+        let null_counts_per_column: Vec<u64> = (0..columns.len())
+            .map(|idx| {
+                values
+                    .iter()
+                    .filter(|row| {
+                        row.get(idx)
+                            .map_or(true, |v| matches!(v, SqlValueLiteral::Null))
+                    })
+                    .count() as u64
+            })
+            .collect();
+
         // Convert SQL literals into canonical ProximaRecord envelopes.
         let mut records = Vec::new();
         let mut inserted_ids = Vec::new();
@@ -1352,6 +1430,11 @@ impl DmlService {
             rows = num_records,
             "Inserted rows"
         );
+
+        self.bump_row_count_stats(table_name, num_records as i64)
+            .await;
+        self.bump_column_null_counts(table_name, columns, &null_counts_per_column)
+            .await;
 
         Ok(
             DmlResult::success(num_records as u64, format!("Inserted {} rows", num_records))
@@ -1529,6 +1612,9 @@ impl DmlService {
             "Deleted rows"
         );
 
+        self.bump_row_count_stats(table_name, -(deleted_count as i64))
+            .await;
+
         Ok(DmlResult::success(
             deleted_count as u64,
             format!("Deleted {} rows", deleted_count),
@@ -1600,6 +1686,9 @@ impl DmlService {
             "Upserted rows"
         );
 
+        self.bump_row_count_stats(table_name, num_records as i64)
+            .await;
+
         Ok(
             DmlResult::success(num_records as u64, format!("Upserted {} rows", num_records))
                 .with_inserted_ids(inserted_ids),
@@ -1609,6 +1698,59 @@ impl DmlService {
     // ========================
     // Helper Methods
     // ========================
+
+    /// Increment or decrement the row count in catalog statistics after a successful write.
+    /// Errors are non-fatal: they are logged as warnings and do not fail the operation.
+    /// Called by DML paths and by fast-lane (gRPC/REST/Arrow Flight) write paths for
+    /// collections that are registered as relational tables in xCatalog.
+    pub(crate) async fn bump_row_count_stats(&self, table_name: &str, delta: i64) {
+        let Ok((catalog, table_id)) = self.catalog_manager.resolve_table(table_name).await else {
+            return;
+        };
+        let mut stats = catalog.get_statistics(&table_id).await.unwrap_or_default();
+        stats.row_count = if delta >= 0 {
+            stats.row_count.saturating_add(delta as u64)
+        } else {
+            stats.row_count.saturating_sub(delta.unsigned_abs())
+        };
+        stats.last_analyzed_ms = Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64,
+        );
+        if let Err(e) = catalog.update_statistics(&table_id, stats).await {
+            warn!(table = %table_name, error = %e, "Failed to update row-count statistics after DML");
+        }
+    }
+
+    /// Increment per-column null counts in catalog statistics after a successful INSERT.
+    /// `null_counts[i]` is the number of NULL values for `columns[i]` in the inserted batch.
+    /// Errors are non-fatal. Called only from the INSERT path (null counts grow monotonically).
+    async fn bump_column_null_counts(
+        &self,
+        table_name: &str,
+        columns: &[String],
+        null_counts: &[u64],
+    ) {
+        if columns.is_empty() || null_counts.iter().all(|&c| c == 0) {
+            return;
+        }
+        let Ok((catalog, table_id)) = self.catalog_manager.resolve_table(table_name).await else {
+            return;
+        };
+        let mut stats = catalog.get_statistics(&table_id).await.unwrap_or_default();
+        for (col_name, &null_delta) in columns.iter().zip(null_counts.iter()) {
+            if null_delta > 0 {
+                let col_stats = stats.column_stats.entry(col_name.clone()).or_default();
+                col_stats.null_count =
+                    Some(col_stats.null_count.unwrap_or(0).saturating_add(null_delta));
+            }
+        }
+        if let Err(e) = catalog.update_statistics(&table_id, stats).await {
+            warn!(table = %table_name, error = %e, "Failed to update column-null statistics after INSERT");
+        }
+    }
 
     /// Build a canonical ProximaRecord from catalog schema and SQL literals.
     fn build_mutation_record(
@@ -2856,13 +2998,200 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn explain_insert_values_returns_native_oltp_route() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl("CREATE TABLE orders (id TEXT NOT NULL, amount FLOAT);")
+            .expect("parse ddl")
+            .expect("ddl");
+        DdlService::new(manager.clone())
+            .execute(ddl_stmt)
+            .await
+            .expect("create table");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(ExplainOnlyRecordStore),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let stmt = parser
+            .parse_dml("INSERT INTO orders (id, amount) VALUES ('r1', 9.99);")
+            .expect("parse dml")
+            .expect("dml stmt");
+
+        let explanation = dml
+            .explain_table_write(stmt)
+            .await
+            .expect("explain values insert");
+
+        assert_eq!(explanation.target_table, "orders");
+        assert_eq!(explanation.selected_backend, "Native");
+        // Default table (no WITH options) gets the htap workload profile.
+        assert!(
+            explanation.route_metadata.workload_profile == "htap"
+                || explanation.route_metadata.workload_profile == "oltp",
+            "unexpected workload_profile: {}",
+            explanation.route_metadata.workload_profile
+        );
+        assert!(
+            explanation.write_lane.contains("Wal"),
+            "expected WAL lane, got {:?}",
+            explanation.write_lane
+        );
+    }
+
+    #[tokio::test]
+    async fn explain_update_and_delete_return_routes() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl("CREATE TABLE accounts (id TEXT NOT NULL, balance FLOAT);")
+            .expect("parse ddl")
+            .expect("ddl");
+        DdlService::new(manager.clone())
+            .execute(ddl_stmt)
+            .await
+            .expect("create table");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(ExplainOnlyRecordStore),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        let update_stmt = parser
+            .parse_dml("UPDATE accounts SET balance = 100.0 WHERE id = 'a1';")
+            .expect("parse dml")
+            .expect("update stmt");
+        let update_explanation = dml
+            .explain_table_write(update_stmt)
+            .await
+            .expect("explain update");
+        assert_eq!(update_explanation.target_table, "accounts");
+        assert_eq!(update_explanation.selected_backend, "Native");
+
+        let delete_stmt = parser
+            .parse_dml("DELETE FROM accounts WHERE id = 'a1';")
+            .expect("parse dml")
+            .expect("delete stmt");
+        let delete_explanation = dml
+            .explain_table_write(delete_stmt)
+            .await
+            .expect("explain delete");
+        assert_eq!(delete_explanation.target_table, "accounts");
+        assert_eq!(delete_explanation.selected_backend, "Native");
+    }
+
+    /// T9: OLAP/HTAP route validation — EXPLAIN on a columnar-analytics table must select
+    /// the DataFusion local backend, not Native, regardless of whether the source is SELECT
+    /// or VALUES. This verifies the catalog workload_profile + compute_route knobs flow
+    /// through the planner end-to-end.
+    #[tokio::test]
+    async fn explain_values_insert_to_olap_table_routes_to_datafusion() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE metrics (id TEXT NOT NULL, value FLOAT)
+                 WITH (
+                     workload = 'olap',
+                     layout = 'columnar',
+                     compute_route = 'datafusion-local',
+                     freshness_sla = '10s'
+                 );",
+            )
+            .expect("parse ddl")
+            .expect("ddl");
+        DdlService::new(manager.clone())
+            .execute(ddl_stmt)
+            .await
+            .expect("create olap table");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(ExplainOnlyRecordStore),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let stmt = parser
+            .parse_dml("INSERT INTO metrics (id, value) VALUES ('m1', 42.0);")
+            .expect("parse dml")
+            .expect("dml stmt");
+
+        let explanation = dml
+            .explain_table_write(stmt)
+            .await
+            .expect("explain olap insert values");
+
+        assert_eq!(explanation.target_table, "metrics");
+        assert_eq!(
+            explanation.selected_backend, "DataFusionLocal",
+            "OLAP table should route to DataFusion, not Native"
+        );
+        assert_eq!(explanation.route_metadata.workload_profile, "olap");
+        assert_eq!(
+            explanation.route_metadata.storage_specialization,
+            "columnar_analytics"
+        );
+        assert_eq!(
+            explanation
+                .route_metadata
+                .preferred_compute_route
+                .as_deref(),
+            Some("datafusion-local")
+        );
+    }
+
     /// End-to-end smoke test: `DmlService` with a `DirectWalTableRecordStore` performs a
     /// VALUES INSERT and a primary-key SELECT through the canonical WAL + memtable path,
     /// then replays the WAL into a fresh memtable to verify durability.
     #[tokio::test]
     async fn direct_record_storage_insert_select_and_wal_replay() {
-        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
         use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
 
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let wal_path = temp_dir.path().join("dml-smoke.wal");
@@ -2946,10 +3275,7 @@ mod tests {
         let replay_wal = FramedTableWalAppender::open(&wal_path)
             .await
             .expect("reopen WAL for replay");
-        let entries = replay_wal
-            .read_entries()
-            .await
-            .expect("read WAL entries");
+        let entries = replay_wal.read_entries().await.expect("read WAL entries");
         assert!(!entries.is_empty(), "WAL must contain at least one entry");
         let summary = replay_storage
             .replay_wal_entries(entries)
@@ -2972,8 +3298,8 @@ mod tests {
     /// the row invisible to subsequent scans, both through the canonical WAL path.
     #[tokio::test]
     async fn direct_record_storage_update_and_delete_conformance() {
-        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
         use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
 
         let temp_dir = tempfile::tempdir().expect("tempdir");
         let wal_path = temp_dir.path().join("dml-ud.wal");
@@ -3056,7 +3382,11 @@ mod tests {
             )
             .await
             .expect("select after update");
-        assert_eq!(after_update.rows.len(), 1, "SELECT must find i1 after update");
+        assert_eq!(
+            after_update.rows.len(),
+            1,
+            "SELECT must find i1 after update"
+        );
         assert_eq!(
             after_update.rows[0][1],
             ProximaValue::String("alpha-updated".to_string()),
@@ -3074,12 +3404,7 @@ mod tests {
 
         // Verify i2 is no longer returned by a full scan.
         let after_delete = dml
-            .select_table_records_with_projection(
-                "items",
-                &["id".to_string()],
-                None,
-                &[],
-            )
+            .select_table_records_with_projection("items", &["id".to_string()], None, &[])
             .await
             .expect("select after delete");
         let ids: Vec<&ProximaValue> = after_delete.rows.iter().map(|r| &r[0]).collect();
@@ -3088,5 +3413,311 @@ mod tests {
             "deleted row must not appear in scan"
         );
         assert_eq!(after_delete.rows.len(), 1, "only i1 must remain");
+    }
+
+    /// INSERT and DELETE through `DmlService` bump catalog row-count statistics
+    /// so that subsequent route decisions reflect the current approximate cardinality.
+    #[tokio::test]
+    async fn insert_and_delete_update_catalog_row_count_statistics() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("stats-feedback.wal");
+
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let create_sql = "CREATE TABLE stat_rows (id TEXT NOT NULL, val TEXT, PRIMARY KEY (id));";
+        let ddl_stmt = parser
+            .parse_ddl(create_sql)
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute(ddl_stmt).await.expect("create table");
+
+        let wal_appender = Arc::new(
+            FramedTableWalAppender::open(&wal_path)
+                .await
+                .expect("open WAL"),
+        );
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            wal_appender,
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        // Pre-condition: row_count starts at 0 (no stats written yet).
+        let (catalog_pre, table_id_pre) = manager
+            .resolve_table("stat_rows")
+            .await
+            .expect("resolve table");
+        let stats_pre = catalog_pre
+            .get_statistics(&table_id_pre)
+            .await
+            .unwrap_or_default();
+        assert_eq!(stats_pre.row_count, 0, "row_count must start at 0");
+
+        // INSERT 3 rows → bump_row_count_stats adds +3.
+        for i in 1..=3u32 {
+            let sql = format!(
+                "INSERT INTO stat_rows (id, val) VALUES ('r{}', 'v{}');",
+                i, i
+            );
+            let stmt = parser
+                .parse_dml(&sql)
+                .expect("parse insert")
+                .expect("dml stmt");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        let (catalog_after_insert, table_id_after_insert) = manager
+            .resolve_table("stat_rows")
+            .await
+            .expect("resolve table after insert");
+        let stats_after_insert = catalog_after_insert
+            .get_statistics(&table_id_after_insert)
+            .await
+            .unwrap_or_default();
+        assert_eq!(
+            stats_after_insert.row_count, 3,
+            "row_count must be 3 after three inserts"
+        );
+
+        // DELETE 1 row → bump_row_count_stats subtracts 1.
+        let del_stmt = parser
+            .parse_dml("DELETE FROM stat_rows WHERE id = 'r1';")
+            .expect("parse delete")
+            .expect("dml stmt");
+        dml.execute(del_stmt).await.expect("delete");
+
+        let (catalog_after_delete, table_id_after_delete) = manager
+            .resolve_table("stat_rows")
+            .await
+            .expect("resolve table after delete");
+        let stats_after_delete = catalog_after_delete
+            .get_statistics(&table_id_after_delete)
+            .await
+            .unwrap_or_default();
+        assert_eq!(
+            stats_after_delete.row_count, 2,
+            "row_count must be 2 after one delete"
+        );
+        assert!(
+            stats_after_delete.last_analyzed_ms.is_some(),
+            "last_analyzed_ms must be set"
+        );
+    }
+
+    /// T8: After INSERT with some NULL column values, `column_stats[col].null_count`
+    /// reflects the number of NULLs written. Null-free inserts leave null_count at 0/absent.
+    #[tokio::test]
+    async fn insert_null_values_update_column_null_count_statistics() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("col-stats.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl("CREATE TABLE nullable_tbl (id TEXT NOT NULL, note TEXT, score FLOAT);")
+            .expect("parse ddl")
+            .expect("ddl");
+        DdlService::new(manager.clone())
+            .execute(ddl_stmt)
+            .await
+            .expect("create table");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(DirectWalTableRecordStore::new(
+                Arc::new(MemtableRecordStorage::new()),
+                Arc::new(
+                    FramedTableWalAppender::open(&wal_path)
+                        .await
+                        .expect("open WAL"),
+                ),
+            )),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        // Row 1: note = NULL, score present.
+        // Row 2: note present, score = NULL.
+        // Row 3: both present.
+        for stmt_sql in [
+            "INSERT INTO nullable_tbl (id, note, score) VALUES ('r1', NULL, 1.0);",
+            "INSERT INTO nullable_tbl (id, note, score) VALUES ('r2', 'hello', NULL);",
+            "INSERT INTO nullable_tbl (id, note, score) VALUES ('r3', 'world', 2.0);",
+        ] {
+            let stmt = parser
+                .parse_dml(stmt_sql)
+                .expect("parse insert")
+                .expect("dml stmt");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        let (catalog, table_id) = manager
+            .resolve_table("nullable_tbl")
+            .await
+            .expect("resolve");
+        let stats = catalog.get_statistics(&table_id).await.unwrap_or_default();
+
+        assert_eq!(stats.row_count, 3, "three rows inserted");
+        assert_eq!(
+            stats.column_stats.get("note").and_then(|cs| cs.null_count),
+            Some(1),
+            "note has 1 NULL across 3 inserts"
+        );
+        assert_eq!(
+            stats.column_stats.get("score").and_then(|cs| cs.null_count),
+            Some(1),
+            "score has 1 NULL across 3 inserts"
+        );
+        // id is NOT NULL — null_count entry should be absent or 0.
+        let id_null_count = stats
+            .column_stats
+            .get("id")
+            .and_then(|cs| cs.null_count)
+            .unwrap_or(0);
+        assert_eq!(
+            id_null_count, 0,
+            "id is NOT NULL, no nulls should be counted"
+        );
+    }
+
+    /// CREATE TABLE via `DdlService` appears in `information_schema.tables` and `columns`,
+    /// and `DmlService` can resolve the table metadata immediately after DDL. Covers T9
+    /// DDL metadata round-trip: catalog write → introspection read → DML resolve.
+    #[tokio::test]
+    async fn ddl_create_table_visible_in_introspection_and_resolvable_by_dml() {
+        use crate::services::CatalogIntrospectionService;
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let create_sql = "CREATE TABLE meta_test (id TEXT NOT NULL, label TEXT, score DECIMAL(10,4), PRIMARY KEY (id));";
+        let ddl_stmt = parser
+            .parse_ddl(create_sql)
+            .expect("parse create table")
+            .expect("ddl stmt");
+        ddl.execute(ddl_stmt).await.expect("create table");
+
+        // information_schema.tables must include the newly created table.
+        let introspection = CatalogIntrospectionService::new(manager.clone());
+        let result = introspection
+            .execute_select(
+                "SELECT table_schema, table_name FROM information_schema.tables WHERE table_name = 'meta_test'",
+            )
+            .await
+            .expect("catalog introspection query")
+            .expect("must return a result");
+        let tables_result = result
+            .rows
+            .iter()
+            .any(|row| row.iter().any(|v| v.contains("meta_test")));
+        assert!(
+            tables_result,
+            "meta_test must appear in information_schema.tables"
+        );
+
+        // information_schema.columns must include all declared columns.
+        let col_result = introspection
+            .execute_select(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'meta_test'",
+            )
+            .await
+            .expect("columns introspection query")
+            .expect("must return columns result");
+        let all_values: Vec<&str> = col_result
+            .rows
+            .iter()
+            .flat_map(|row| row.iter().map(|v| v.as_str()))
+            .collect();
+        assert!(
+            all_values.contains(&"id"),
+            "id column must appear in information_schema.columns"
+        );
+        assert!(
+            all_values.contains(&"label"),
+            "label column must appear in information_schema.columns"
+        );
+        assert!(
+            all_values.contains(&"score"),
+            "score column must appear in information_schema.columns"
+        );
+
+        // DmlService must be able to resolve the table — verifies catalog → DML integration.
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(ExplainOnlyRecordStore),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let (catalog, table_id) = manager
+            .resolve_table("meta_test")
+            .await
+            .expect("DmlService must resolve DDL-created table");
+        let schema = catalog
+            .get_table(&table_id)
+            .await
+            .expect("get table schema");
+        assert_eq!(schema.name, "meta_test");
+        assert_eq!(schema.primary_key.len(), 1);
+        assert_eq!(schema.primary_key[0], "id");
+
+        // Explain a write plan into the table — end-to-end DDL → route planner round-trip.
+        let explain_stmt = parser
+            .parse_dml("INSERT INTO meta_test SELECT * FROM meta_test;")
+            .expect("parse explain dml")
+            .expect("dml stmt");
+        let explanation = dml
+            .explain_table_write(explain_stmt)
+            .await
+            .expect("explain table write must succeed for DDL-created table");
+        assert_eq!(explanation.target_table, "meta_test");
     }
 }

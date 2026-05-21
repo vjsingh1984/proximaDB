@@ -588,6 +588,10 @@ impl ProximaFlightService {
             guards = ?lane_decision.required_guards,
             "Arrow Flight write-lane decision"
         );
+        // BulkAppendCommit and OverwriteSnapshotCommit are not yet wired to a
+        // direct segment/manifest commit path; reject them explicitly here
+        // rather than silently falling through to WAL (T16 will add that path).
+        lane_decision.require_wal_lane("Arrow Flight DoPut")?;
 
         // Route to WAL-current-state or bulk-append based on lane decision.
         // BulkAppendCommit defers to WAL while direct-commit is not yet wired.
@@ -1992,6 +1996,9 @@ impl ProximaFlightService {
             write_lane = ?exchange_lane.lane,
             "Arrow Flight DoExchange write-lane decision"
         );
+        exchange_lane
+            .require_wal_lane("Arrow Flight DoExchange")
+            .map_err(|e| TonicStatus::invalid_argument(e.to_string()))?;
 
         for batch in batches {
             let batch_rows = batch.num_rows();

@@ -35,6 +35,7 @@ pub mod query;
 pub mod query_ast;
 pub mod record;
 pub mod storage;
+pub mod topology_codec;
 pub mod traversal;
 
 // Re-export core types

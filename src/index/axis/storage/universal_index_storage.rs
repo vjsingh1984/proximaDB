@@ -331,31 +331,22 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 let filesystem = Arc::new(filesystem_factory);
                 let writer = SstableWriter::new(&file_path, 4096, filesystem);
                 let _value = bincode::serialize(&data)?;
-                // Note: SstableWriter doesn't have add method, need to use write_sorted_records
                 let mut records = std::collections::BTreeMap::new();
+                let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default();
                 records.insert(
                     id.to_string(),
-                    crate::proto::proximadb_v1::VectorRecord {
-                        id: id.to_string(),
-                        vector: vec![], // Empty vector for index data
-                        metadata: std::collections::HashMap::new(),
-                        timestamp: Some(
-                            std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .unwrap_or_default()
-                                .as_secs() as i64,
-                        ),
-                        updated_at: None,
-                        expires_at: None,
-                        version: None,
-                        source: None,
+                    proximadb_records::ProximaRecord {
+                        oid: id.to_string(),
+                        created_at_ns: now_ns,
+                        updated_at_ns: now_ns,
+                        ..proximadb_records::ProximaRecord::default()
                     },
                 );
                 // Write records using streaming approach for production consistency
                 let record_count = records.len();
                 let sorted_records_iter = records.into_values(); // Extract values from BTreeMap
                 writer
-                    .write_sorted_records(sorted_records_iter, record_count)
+                    .write_sorted_proxima_records(sorted_records_iter, record_count)
                     .await?;
             }
             StorageEngine::VIPER => {
@@ -518,41 +509,26 @@ impl<T: IndexData> UniversalIndexStorage<T> {
                 let writer = SstableWriter::new(&staging_file, 4096, filesystem);
                 let value = bincode::serialize(&data)?;
                 let mut records = std::collections::BTreeMap::new();
-                // Create a dummy SstRecord with serialized data as the vector
-                let record = crate::proto::proximadb_v1::VectorRecord {
-                    id: id.to_string(),
-                    vector: vec![], // Empty vector since we're storing serialized data
-                    metadata: {
-                        let mut map = std::collections::HashMap::new();
-                        map.insert(
-                            "serialized_data".to_string(),
-                            crate::proto::proximadb_v1::SqlValue {
-                                value: Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                        base64_encode(&value),
-                                    ),
-                                ),
-                            },
-                        );
-                        map
-                    },
-                    timestamp: Some(
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_secs() as i64,
-                    ),
-                    updated_at: None,
-                    expires_at: None,
-                    version: None,
-                    source: None,
+                let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default();
+                let record = proximadb_records::ProximaRecord {
+                    oid: id.to_string(),
+                    created_at_ns: now_ns,
+                    updated_at_ns: now_ns,
+                    props: std::iter::once((
+                        "serialized_data".to_string(),
+                        proximadb_records::ProximaTreeNode::Value(
+                            proximadb_data_model::ProximaValue::String(base64_encode(&value)),
+                        ),
+                    ))
+                    .collect(),
+                    ..proximadb_records::ProximaRecord::default()
                 };
                 records.insert(id.to_string(), record);
                 // Write records using streaming approach for production consistency
                 let record_count = records.len();
                 let sorted_records_iter = records.into_values(); // Extract values from BTreeMap
                 writer
-                    .write_sorted_records(sorted_records_iter, record_count)
+                    .write_sorted_proxima_records(sorted_records_iter, record_count)
                     .await?;
             }
             StorageEngine::VIPER => {

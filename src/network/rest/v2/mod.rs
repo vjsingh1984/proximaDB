@@ -27,6 +27,7 @@
 //! - `POST /api/v2/collections/{collection}/records/batch` - Insert ProximaRecords
 //! - `DELETE /api/v2/collections/{collection}/records/{id}` - Delete a ProximaRecord
 //! - `POST /api/v2/collections/{collection}/search` - Search with typed filters
+//! - `POST /api/v2/query` - Execute AQL/UQL through the shared query facade
 //!
 //! ## Key Features
 //!
@@ -42,10 +43,12 @@
 //! mixed v1/v2 operations during transition.
 
 pub mod collections;
+pub mod query;
 pub mod records;
 pub mod schema;
 
 pub use collections::*;
+pub use query::*;
 pub use records::*;
 pub use schema::*;
 
@@ -73,6 +76,10 @@ use super::v1::handlers::AppState;
 /// - `POST /collections/:collection_id/records/batch` - Batch insert ProximaRecords
 /// - `GET /collections/:collection_id/records/:record_id` - Get single record
 /// - `POST /collections/:collection_id/search` - Search with typed filters
+///
+/// ### Query
+/// - `POST /query` - Execute AQL/UQL through UnifiedQueryPort
+/// - `POST /query/explain` - Explain AQL/UQL through UnifiedQueryPort
 pub fn create_v2_router() -> Router<AppState> {
     use axum::routing::{get, post, put};
 
@@ -107,4 +114,7 @@ pub fn create_v2_router() -> Router<AppState> {
             "/collections/:collection_id/search",
             post(records::search_with_typed_filters),
         )
+        // Query facade operations
+        .route("/query", post(query::execute_query))
+        .route("/query/explain", post(query::explain_query))
 }

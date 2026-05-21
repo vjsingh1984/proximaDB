@@ -10,12 +10,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
     BatchId, BincodeSerializationStrategy, WALBatchStrategy, WALConfig,
 };
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
 use tracing::debug;
 
 /// Counter for generating unique test paths
@@ -63,40 +64,36 @@ fn create_test_config() -> WALConfig {
 }
 
 /// Create test vector with specific patterns
-fn create_test_vector(id: &str, dimension: usize, value: f32) -> VectorRecord {
-    VectorRecord {
-        id: id.to_string(),
-        vector: vec![value; dimension],
-        metadata: {
-            let mut metadata = std::collections::HashMap::new();
-            metadata.insert(
-                "type".to_string(),
-                crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        "bincode_test".to_string(),
-                    )),
-                },
-            );
-            metadata.insert(
-                "value".to_string(),
-                crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        value.to_string(),
-                    )),
-                },
-            );
-            metadata
-        },
-        timestamp: Some(1234567890i64),
-        updated_at: Some(1234567890i64),
-        expires_at: None,
-        version: Some(1),
-        source: None,
+fn create_test_vector(id: &str, dimension: usize, value: f32) -> ProximaRecord {
+    let mut props = ProximaTree::new();
+    props.insert(
+        "type".to_string(),
+        ProximaTreeNode::Value(ProximaValue::String("bincode_test".to_string())),
+    );
+    props.insert(
+        "value".to_string(),
+        ProximaTreeNode::Value(ProximaValue::String(value.to_string())),
+    );
+
+    ProximaRecord {
+        oid: id.to_string(),
+        embeddings: vec![EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "dense_vector".to_string(),
+            values: vec![value; dimension],
+            dim: dimension as u32,
+        }],
+        props,
+        created_at_ns: 1_234_567_890_000_000,
+        updated_at_ns: 1_234_567_890_000_000,
+        record_version: 1,
+        method: Some("test".to_string()),
+        ..ProximaRecord::default()
     }
 }
 
 /// Create test batch with size tracking
-fn create_test_batch(vectors: Vec<VectorRecord>) -> WALVectorBatch {
+fn create_test_batch(vectors: Vec<ProximaRecord>) -> WALVectorBatch {
     let vector_count = vectors.len();
     WALVectorBatch {
         batch_id: BatchId::new(),
@@ -106,6 +103,30 @@ fn create_test_batch(vectors: Vec<VectorRecord>) -> WALVectorBatch {
         is_flushed: false,
         metadata_bloom_filter: None,
     }
+}
+
+fn vector_values(record: &ProximaRecord) -> &[f32] {
+    record
+        .embeddings
+        .first()
+        .map(|embedding| embedding.values.as_slice())
+        .unwrap_or(&[])
+}
+
+fn vector_values_mut(record: &mut ProximaRecord) -> &mut [f32] {
+    record
+        .embeddings
+        .first_mut()
+        .expect("test record should have a dense embedding")
+        .values
+        .as_mut_slice()
+}
+
+fn insert_string_prop(record: &mut ProximaRecord, key: &str, value: String) {
+    record.props.insert(
+        key.to_string(),
+        ProximaTreeNode::Value(ProximaValue::String(value)),
+    );
 }
 
 /// Create WriteBuffer directory for collection with specific base path
@@ -163,9 +184,9 @@ async fn test_bincode_binary_serialization() {
 
         let found = retrieved
             .iter()
-            .find(|v| v.id == format!("bin_vec_{}", size));
+            .find(|v| v.oid == format!("bin_vec_{}", size));
         assert!(found.is_some());
-        assert_eq!(found.unwrap().vector.len(), size);
+        assert_eq!(vector_values(found.unwrap()).len(), size);
     }
 }
 
@@ -234,19 +255,19 @@ async fn test_bincode_similarity_search_accuracy() {
     let mut close_vec = create_test_vector("close_match", 128, 0.95);
     // Perturb slightly to create different direction
     for i in 0..10 {
-        close_vec.vector[i] = 0.85;
+        vector_values_mut(&mut close_vec)[i] = 0.85;
     }
 
     let mut medium_vec = create_test_vector("medium_match", 128, 0.5);
     // More perturbation
     for i in 0..64 {
-        medium_vec.vector[i] = 0.2;
+        vector_values_mut(&mut medium_vec)[i] = 0.2;
     }
 
     let mut far_vec = create_test_vector("far_match", 128, 0.1);
     // Even more different
     for i in 0..96 {
-        far_vec.vector[i] = -0.3;
+        vector_values_mut(&mut far_vec)[i] = -0.3;
     }
 
     let opposite_vec = create_test_vector("opposite", 128, -1.0);
@@ -450,7 +471,7 @@ async fn test_bincode_collection_isolation() {
 
         assert_eq!(vectors.len(), 2);
         for vector in vectors {
-            assert!(vector.id.starts_with(collection_id));
+            assert!(vector.oid.starts_with(collection_id));
         }
 
         // TODO: Re-enable collection stats when collection_stats() method is implemented
@@ -478,26 +499,9 @@ async fn test_bincode_batch_metadata() {
     let mut vectors = Vec::new();
     for i in 0..5 {
         let mut vector = create_test_vector(&format!("meta_{}", i), 128, 0.1);
-        vector.metadata.insert(
-            "index".to_string(),
-            SqlValue {
-                value: Some(sql_value::Value::StringValue(i.to_string())),
-            },
-        );
-        vector.metadata.insert(
-            "binary_data".to_string(),
-            SqlValue {
-                value: Some(sql_value::Value::StringValue(format!("{:08b}", i))),
-            },
-        );
-        vector.metadata.insert(
-            "timestamp".to_string(),
-            SqlValue {
-                value: Some(sql_value::Value::StringValue(
-                    (1234567890 + i * 1000).to_string(),
-                )),
-            },
-        );
+        insert_string_prop(&mut vector, "index", i.to_string());
+        insert_string_prop(&mut vector, "binary_data", format!("{:08b}", i));
+        insert_string_prop(&mut vector, "timestamp", (1234567890 + i * 1000).to_string());
         vectors.push(vector);
     }
 
@@ -516,13 +520,13 @@ async fn test_bincode_batch_metadata() {
     assert_eq!(retrieved.len(), 5);
 
     for vector in retrieved {
-        assert_eq!(vector.metadata.len(), 5);
+        assert_eq!(vector.props.len(), 5);
 
         // Verify metadata keys exist
-        assert!(vector.metadata.contains_key("type"));
-        assert!(vector.metadata.contains_key("value"));
-        assert!(vector.metadata.contains_key("index"));
-        assert!(vector.metadata.contains_key("binary_data"));
-        assert!(vector.metadata.contains_key("timestamp"));
+        assert!(vector.props.contains_key("type"));
+        assert!(vector.props.contains_key("value"));
+        assert!(vector.props.contains_key("index"));
+        assert!(vector.props.contains_key("binary_data"));
+        assert!(vector.props.contains_key("timestamp"));
     }
 }

@@ -220,15 +220,9 @@ impl PaxSegmentWriter {
         let block_size = block_bytes.len() as u32;
         let offset = self.file_buf.len() as u64;
 
-        let stats = BlockStats {
-            row_count,
-            block_size_bytes: block_size,
-            min_timestamp_ns: min_ts,
-            max_timestamp_ns: max_ts,
-            null_counts: std::collections::HashMap::new(),
-            lower_bounds: std::collections::HashMap::new(),
-            upper_bounds: std::collections::HashMap::new(),
-        };
+        let reader = PaxBlockReader::open(&block_bytes)?;
+        let stats =
+            BlockStats::from_metas(row_count, block_size, min_ts, max_ts, reader.column_metas());
 
         self.index.blocks.push(BlockIndexEntry {
             offset,
@@ -513,6 +507,23 @@ mod tests {
         let meta = writer.finish().unwrap();
         assert_eq!(meta.row_count, 3);
         assert!(meta.size_bytes > 0);
+        assert_eq!(meta.block_stats.len(), meta.block_count as usize);
+        assert!(
+            meta.block_stats[0]
+                .distinct_counts
+                .contains_key(&proximadb_block_format::col_id::TENANT_ID)
+        );
+        assert!(
+            meta.block_stats[0]
+                .bloom_filter_bytes
+                .contains_key(&proximadb_block_format::col_id::TENANT_ID)
+        );
+        assert_eq!(
+            meta.block_stats[0]
+                .lower_bounds
+                .get(&proximadb_block_format::col_id::CREATED_AT),
+            Some(&1000)
+        );
 
         // Scan with tenant_a predicate
         let mut scanner =

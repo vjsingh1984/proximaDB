@@ -63,6 +63,84 @@ pub enum TopologyFormat {
     AdjacencyTable,
 }
 
+/// Physical vertex ordering used by a topology projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopologyVertexOrdering {
+    /// Natural catalog or insertion id order.
+    Natural,
+    /// Source-sorted order, compatible with adjacency-table scans.
+    SourceSorted,
+    /// Degree-aware remap for read-heavy traversal projections.
+    DegreeAware,
+    /// BFS/community-style locality remap.
+    LocalityAware,
+}
+
+/// Direction materialized by a topology projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopologyDirection {
+    /// Source to target adjacency, CSR-style.
+    Outgoing,
+    /// Target to source adjacency, CSC-style.
+    Incoming,
+}
+
+/// Exact compression used for topology arrays.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopologyCompression {
+    /// Plain fixed-width u64 neighbor ids.
+    RawU64,
+    /// Sorted neighbor ids stored as monotonic gaps with varint coding.
+    GapVarint,
+    /// Future patched frame-of-reference or Simple8b family.
+    PatchedInteger,
+    /// Future Elias-Fano family for very large monotonic lists.
+    EliasFano,
+}
+
+/// Catalog/EXPLAIN-facing metadata for a graph topology projection.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GraphTopologyProjectionMetadata {
+    /// Base projection descriptor.
+    pub descriptor: GraphTopologyDescriptor,
+    /// Canonical edge epoch covered by the projection.
+    pub topology_epoch: TopologyEpoch,
+    /// Materialized direction.
+    pub direction: TopologyDirection,
+    /// Vertex ordering used before encoding adjacency lists.
+    pub vertex_ordering: TopologyVertexOrdering,
+    /// Exact topology-array compression.
+    pub compression: TopologyCompression,
+    /// Optional edge label if this is a label-split topology.
+    pub edge_label: Option<String>,
+    /// Number of vertices covered.
+    pub vertex_count: usize,
+    /// Number of edges covered.
+    pub edge_count: usize,
+    /// Uncompressed topology payload bytes.
+    pub raw_bytes: usize,
+    /// Encoded topology payload bytes.
+    pub encoded_bytes: usize,
+    /// Why raw or adjacency fallback was selected, if applicable.
+    pub fallback_reason: Option<String>,
+}
+
+impl GraphTopologyProjectionMetadata {
+    /// Whether this metadata describes a compressed exact topology payload.
+    pub fn is_compressed(&self) -> bool {
+        !matches!(self.compression, TopologyCompression::RawU64)
+    }
+
+    /// Compression ratio over topology payload bytes.
+    pub fn compression_ratio(&self) -> f64 {
+        if self.raw_bytes == 0 || self.encoded_bytes == 0 {
+            0.0
+        } else {
+            self.raw_bytes as f64 / self.encoded_bytes as f64
+        }
+    }
+}
+
 /// Directional adjacency index maintained from canonical edge records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdjacencyIndexKind {

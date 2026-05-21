@@ -29,6 +29,11 @@ Implement **PAX (Partition Attributes Across)** blocks as the exclusive internal
 PAX interleaves a sorted row directory (OLTP path) with column stripes (OLAP path) in a single
 fixed-layout block. Three modes control which sections are present:
 
+Active codec/layout implementation blueprint:
+`docs/12-design/PAX_CODEC_LAYOUT_COMPRESSION_LLD_2026_05_20.adoc`. That blueprint tracks the
+lossless codec-selection, vector co-location, graph topology compression, JSON structural stripe,
+profiling, and EXPLAIN work needed to make this ADR's stripe-encoding contract operational.
+
 [cols="1,2,2,2"]
 |===
 |Mode|Row Directory|Column Stripes|Use Case

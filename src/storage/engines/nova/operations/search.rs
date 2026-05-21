@@ -2,13 +2,13 @@
 //! Handles all search-related logic including hierarchical pruning and progressive refinement
 
 use anyhow::Result;
+use proximadb_records::{ProximaRecord, conversions::proxima_tree_to_value_map};
 use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Handles all search operations for NOVA engine
@@ -216,19 +216,23 @@ impl NovaSearchOperations {
                     &vector,
                     &ctx.distance_metric(),
                 );
-                let wire_record = crate::proto::proximadb_v1::VectorRecord::from(&record);
+                let record_id = record
+                    .local_id
+                    .clone()
+                    .filter(|id| !id.is_empty())
+                    .unwrap_or_else(|| record.oid.clone());
 
                 let search_record = OptimizedSearchRecord {
-                    id: wire_record.id.clone(),
-                    vector_id: Some(wire_record.id),
+                    id: record_id.clone(),
+                    vector_id: Some(record_id),
                     score: similarity_result.normalized_score,
                     similarity: Some(similarity_result.normalized_score),
                     vector: Some(Arc::new(vector)),
-                    metadata: crate::core::search::results::sql_map_to_proxima(
-                        wire_record.metadata,
-                    ),
-                    version: wire_record.version,
-                    timestamp: wire_record.timestamp,
+                    metadata: proxima_tree_to_value_map(&record.props),
+                    version: Some(record.record_version as u32),
+                    timestamp: Some(record.created_at_ns / 1_000_000),
+                    updated_at: Some(record.updated_at_ns / 1_000_000),
+                    expires_at: record.valid_to_ns.map(|ts| ts / 1_000_000),
                     ..Default::default()
                 };
 
@@ -275,7 +279,7 @@ impl NovaSearchOperations {
         &self,
         _collection_id: &str,
         vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<ProximaRecord>> {
         // Implement ID-based search using bloom filters and hierarchical index
         debug!("🔍 NOVA: Searching for vector ID: {}", vector_id);
 

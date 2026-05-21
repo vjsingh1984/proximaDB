@@ -20,7 +20,11 @@ pub mod types;
 pub use baseline::functions;
 pub use simd_analysis::{simd_min_max_f32, simd_zero_count_f32};
 pub use strategy::{
-    BlockContext, CodecSelectionStrategy, DataAnalysis, DataDomain, IntegerAnalysisStrategy,
-    MlEmbeddingStrategy, SelectionContext, SparseDataStrategy, TimeSeriesStrategy,
+    AccessTemperature, AuthorityMode, BlockContext, CodecDecision, CodecParameters,
+    CodecSelectionStrategy, ColumnModality, CompressionProfile, CorrelationGroupId, DataAnalysis,
+    DataDomain, DictionaryScope, GraphLayoutHint, IntegerAnalysisStrategy, JsonLayoutHint,
+    LayoutHints, LossPolicy, MlEmbeddingStrategy, PhysicalOrdering, RandomAccessGranularity,
+    RejectedCodecCandidate, RejectionReason, SelectionContext, Sortedness, SparseDataStrategy,
+    StorageSpecialization, StrategyRegistry, TimeSeriesStrategy, VectorLayoutHint, WorkloadProfile,
 };
 pub use types::{Decodable, Encodable, ProximaScheme, TypeId};

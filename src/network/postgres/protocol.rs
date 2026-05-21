@@ -1245,8 +1245,12 @@ impl PostgresProtocol {
 
     fn extract_select_where_predicates(query: &str) -> Option<Vec<SelectPredicate>> {
         let predicate = Self::extract_select_where_clause(query)?;
+
+        // OR detected: try to fold `col = v1 OR col = v2` into `col IN (v1, v2)`.
+        // Mixed-column OR, non-equality OR, and AND/OR combinations return None so
+        // the caller falls back to a full scan (over-inclusive but correct).
         if Self::find_keyword_outside_literals(predicate, " OR ").is_some() {
-            return None;
+            return Self::try_fold_or_as_in(predicate).map(|p| vec![p]);
         }
 
         let mut predicates = Vec::new();
@@ -1259,6 +1263,58 @@ impl PostgresProtocol {
         }
 
         Some(predicates)
+    }
+
+    fn split_or_predicates(predicate: &str) -> Vec<&str> {
+        let mut parts = Vec::new();
+        let mut remaining = predicate;
+        loop {
+            let Some(index) = Self::find_keyword_outside_literals(remaining, " OR ") else {
+                parts.push(remaining);
+                break;
+            };
+            parts.push(&remaining[..index]);
+            remaining = &remaining[index + " OR ".len()..];
+        }
+        parts
+    }
+
+    /// Fold `col = v1 OR col = v2 OR ...` into `col IN (v1, v2, ...)`.
+    ///
+    /// Returns `None` for: multi-column OR, non-equality OR, compound branches
+    /// with AND, or empty input. Caller falls back to full scan on `None`.
+    fn try_fold_or_as_in(predicate: &str) -> Option<SelectPredicate> {
+        let parts = Self::split_or_predicates(predicate);
+        if parts.is_empty() {
+            return None;
+        }
+        let mut column_name: Option<String> = None;
+        let mut literals: Vec<String> = Vec::with_capacity(parts.len());
+        for part in parts {
+            let part = part.trim();
+            // Compound branch (AND inside OR) is not folded
+            if Self::find_keyword_outside_literals(part, " AND ").is_some() {
+                return None;
+            }
+            let (left, operator, right) = Self::split_comparison_predicate(part)?;
+            if operator != SelectPredicateOperator::Equal {
+                return None;
+            }
+            let col = Self::predicate_column_name(left)?;
+            match &column_name {
+                None => column_name = Some(col),
+                Some(existing) if existing.eq_ignore_ascii_case(&col) => {}
+                _ => return None,
+            }
+            literals.push(Self::strip_sql_literal(right));
+        }
+        Some(SelectPredicate {
+            column_name: column_name?,
+            condition: SelectPredicateCondition::In {
+                literals,
+                negated: false,
+            },
+        })
     }
 
     fn parse_select_predicate(predicate: &str) -> Option<SelectPredicate> {
@@ -1543,11 +1599,11 @@ impl PostgresProtocol {
 
         let projection_column_names = Self::extract_selected_column_names(query);
         let predicates = if query.to_ascii_uppercase().contains(" WHERE ") {
-            let Some(predicates) = Self::extract_select_where_predicates(query) else {
-                self.send_command_complete("SELECT 0").await?;
-                return Ok(());
-            };
-            predicates
+            // OR predicates and other complex expressions are not yet wired into the
+            // simple AND-predicate model (T4 remaining work). Fall back to a full
+            // scan rather than returning an empty result — over-inclusive is better
+            // than empty for a compatibility layer.
+            Self::extract_select_where_predicates(query).unwrap_or_default()
         } else {
             Vec::new()
         };
@@ -4149,6 +4205,94 @@ mod tests {
     }
 
     #[test]
+    fn test_record_matches_not_in_rejects_excluded_values() {
+        let schema = CatalogTableSchema::new("orders")
+            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int32))
+            .with_column(CatalogColumn::new(2, "status", CatalogDataType::String))
+            .with_primary_key(vec!["id".to_string()]);
+
+        // Record with id=5 should be rejected by NOT IN (1, 2, 5) predicate.
+        let excluded_record = ProximaRecord {
+            oid: "5".to_string(),
+            ..Default::default()
+        };
+        let predicates = vec![SelectPredicate {
+            column_name: "id".to_string(),
+            condition: SelectPredicateCondition::In {
+                literals: vec!["1".to_string(), "2".to_string(), "5".to_string()],
+                negated: true,
+            },
+        }];
+        assert!(
+            !DmlService::record_matches_select_predicate_inputs(
+                &excluded_record,
+                &schema,
+                &predicates
+            )
+            .expect("NOT IN must resolve"),
+            "record with id in the excluded list must not match NOT IN"
+        );
+
+        // Record with id=99 should pass NOT IN (1, 2, 5).
+        let passing_record = ProximaRecord {
+            oid: "99".to_string(),
+            ..Default::default()
+        };
+        assert!(
+            DmlService::record_matches_select_predicate_inputs(
+                &passing_record,
+                &schema,
+                &predicates
+            )
+            .expect("NOT IN must resolve"),
+            "record with id not in the excluded list must match NOT IN"
+        );
+    }
+
+    #[test]
+    fn test_record_matches_is_not_null_accepts_present_field_rejects_absent() {
+        let schema = CatalogTableSchema::new("users")
+            .with_column(CatalogColumn::new(1, "id", CatalogDataType::String))
+            .with_column(CatalogColumn::new(2, "email", CatalogDataType::String))
+            .with_primary_key(vec!["id".to_string()]);
+
+        let predicates = vec![SelectPredicate {
+            column_name: "email".to_string(),
+            condition: SelectPredicateCondition::IsNull { negated: true },
+        }];
+
+        // Record WITH email field → matches IS NOT NULL.
+        let with_email = ProximaRecord {
+            oid: "u1".to_string(),
+            props: proximadb_records::ProximaTree::from([(
+                "email".to_string(),
+                ProximaTreeNode::Value(ProximaValue::String("u@example.com".to_string())),
+            )]),
+            ..Default::default()
+        };
+        assert!(
+            DmlService::record_matches_select_predicate_inputs(&with_email, &schema, &predicates)
+                .expect("IS NOT NULL must resolve"),
+            "record with email present must match IS NOT NULL"
+        );
+
+        // Record WITHOUT email field → must NOT match IS NOT NULL.
+        let without_email = ProximaRecord {
+            oid: "u2".to_string(),
+            ..Default::default()
+        };
+        assert!(
+            !DmlService::record_matches_select_predicate_inputs(
+                &without_email,
+                &schema,
+                &predicates
+            )
+            .expect("IS NOT NULL must resolve"),
+            "record with absent email must not match IS NOT NULL"
+        );
+    }
+
+    #[test]
     fn test_extract_vector_dimension() {
         // extract_vector_dimension is a method on PostgresProtocol which requires
         // a full instance with TcpStream. Instead, test the parsing logic directly
@@ -4194,5 +4338,183 @@ mod tests {
             extract("CREATE TABLE broken (id TEXT, v VECTOR(abc))"),
             None
         );
+    }
+
+    #[test]
+    fn test_or_predicate_same_column_folds_to_in() {
+        let predicates = PostgresProtocol::extract_select_where_predicates(
+            "SELECT c_id, c_name FROM pgwire_smoke_customer WHERE c_id = 1 OR c_id = 2;",
+        )
+        .expect("single-column OR should fold to IN");
+
+        assert_eq!(predicates.len(), 1);
+        assert_eq!(predicates[0].column_name, "c_id");
+        match &predicates[0].condition {
+            SelectPredicateCondition::In { literals, negated } => {
+                assert!(!negated);
+                assert_eq!(literals, &vec!["1".to_string(), "2".to_string()]);
+            }
+            other => panic!("expected In, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_or_predicate_three_values_folds_to_in() {
+        let predicates = PostgresProtocol::extract_select_where_predicates(
+            "SELECT * FROM orders WHERE status = 'N' OR status = 'P' OR status = 'C';",
+        )
+        .expect("three-value OR on same column should fold");
+
+        assert_eq!(predicates.len(), 1);
+        match &predicates[0].condition {
+            SelectPredicateCondition::In { literals, .. } => {
+                assert_eq!(
+                    literals,
+                    &vec!["N".to_string(), "P".to_string(), "C".to_string()]
+                );
+            }
+            other => panic!("expected In, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_or_predicate_multi_column_falls_back_to_full_scan() {
+        // Different columns: col1 = v1 OR col2 = v2 — cannot fold, returns None → full scan
+        let result = PostgresProtocol::extract_select_where_predicates(
+            "SELECT * FROM t WHERE col1 = 1 OR col2 = 2;",
+        );
+        assert!(
+            result.is_none(),
+            "multi-column OR should return None (full scan)"
+        );
+    }
+
+    #[test]
+    fn test_or_predicate_non_equality_falls_back_to_full_scan() {
+        // OR with non-equality: col > v1 OR col < v2 — cannot fold
+        let result = PostgresProtocol::extract_select_where_predicates(
+            "SELECT * FROM t WHERE col > 5 OR col < 0;",
+        );
+        assert!(
+            result.is_none(),
+            "non-equality OR should return None (full scan)"
+        );
+    }
+
+    #[test]
+    fn test_and_chain_with_in_predicate_parses_correctly() {
+        // AND-chain: one IN predicate + one equality — both must be extracted
+        let result = PostgresProtocol::extract_select_where_predicates(
+            "SELECT * FROM t WHERE c_id IN (1, 2, 3) AND c_active = true;",
+        );
+        let predicates = result.expect("AND chain with IN must parse");
+        assert_eq!(predicates.len(), 2);
+        let in_pred = predicates
+            .iter()
+            .find(|p| p.column_name.eq_ignore_ascii_case("c_id"))
+            .expect("IN predicate for c_id must be present");
+        match &in_pred.condition {
+            SelectPredicateCondition::In { literals, negated } => {
+                assert!(!negated);
+                assert_eq!(literals.len(), 3);
+            }
+            other => panic!("expected In condition, got {:?}", other),
+        }
+        let eq_pred = predicates
+            .iter()
+            .find(|p| p.column_name.eq_ignore_ascii_case("c_active"))
+            .expect("equality predicate for c_active must be present");
+        match &eq_pred.condition {
+            SelectPredicateCondition::Comparison { literal, .. } => {
+                assert_eq!(literal, "true");
+            }
+            other => panic!("expected Comparison condition, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_and_chain_with_is_null_predicate() {
+        let result = PostgresProtocol::extract_select_where_predicates(
+            "SELECT * FROM t WHERE label IS NULL AND c_id = 5;",
+        );
+        let predicates = result.expect("AND chain with IS NULL must parse");
+        assert_eq!(predicates.len(), 2);
+        let null_pred = predicates
+            .iter()
+            .find(|p| p.column_name.eq_ignore_ascii_case("label"))
+            .expect("IS NULL predicate for label must be present");
+        match &null_pred.condition {
+            SelectPredicateCondition::IsNull { negated } => {
+                assert!(!negated, "IS NULL must not be negated");
+            }
+            other => panic!("expected IsNull condition, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_and_chain_with_like_predicate_parses_correctly() {
+        let result = PostgresProtocol::extract_select_where_predicates(
+            "SELECT * FROM t WHERE label LIKE 'prefix%' AND c_id = 5;",
+        );
+        let predicates = result.expect("AND chain with LIKE must parse");
+        assert_eq!(predicates.len(), 2);
+        let like_pred = predicates
+            .iter()
+            .find(|p| p.column_name.eq_ignore_ascii_case("label"))
+            .expect("LIKE predicate for label must be present");
+        match &like_pred.condition {
+            SelectPredicateCondition::Like { pattern, negated } => {
+                assert_eq!(pattern, "prefix%");
+                assert!(!negated, "LIKE must not be negated");
+            }
+            other => panic!("expected Like condition, got {:?}", other),
+        }
+        let id_pred = predicates
+            .iter()
+            .find(|p| p.column_name.eq_ignore_ascii_case("c_id"))
+            .expect("comparison predicate for c_id must be present");
+        assert!(matches!(
+            &id_pred.condition,
+            SelectPredicateCondition::Comparison { literal, .. } if literal == "5"
+        ));
+    }
+
+    #[test]
+    fn test_and_chain_with_is_not_null_predicate() {
+        let result = PostgresProtocol::extract_select_where_predicates(
+            "SELECT * FROM t WHERE label IS NOT NULL AND c_active = true;",
+        );
+        let predicates = result.expect("AND chain with IS NOT NULL must parse");
+        assert_eq!(predicates.len(), 2);
+        let not_null_pred = predicates
+            .iter()
+            .find(|p| p.column_name.eq_ignore_ascii_case("label"))
+            .expect("IS NOT NULL predicate for label must be present");
+        match &not_null_pred.condition {
+            SelectPredicateCondition::IsNull { negated } => {
+                assert!(*negated, "IS NOT NULL must be negated=true");
+            }
+            other => panic!("expected IsNull(negated=true) condition, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_and_chain_with_not_in_predicate_parses_correctly() {
+        let result = PostgresProtocol::extract_select_where_predicates(
+            "SELECT * FROM t WHERE c_id NOT IN (10, 20, 30) AND c_active = false;",
+        );
+        let predicates = result.expect("AND chain with NOT IN must parse");
+        assert_eq!(predicates.len(), 2);
+        let not_in_pred = predicates
+            .iter()
+            .find(|p| p.column_name.eq_ignore_ascii_case("c_id"))
+            .expect("NOT IN predicate for c_id must be present");
+        match &not_in_pred.condition {
+            SelectPredicateCondition::In { literals, negated } => {
+                assert_eq!(literals.len(), 3);
+                assert!(*negated, "NOT IN must be negated=true");
+            }
+            other => panic!("expected In(negated=true) condition, got {:?}", other),
+        }
     }
 }

@@ -8,6 +8,8 @@ Date: 2026-05-19 +
 Scope: SQL/pgwire, relational DDL/DML, catalog tables, PAX/SST storage layouts, MVCC, open-format external tables, and future vector/document/graph/observability records
 
 Implementation blueprint and tracker: `docs/12-design/RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc`.
+PAX codec/layout/compression LLD and tracker:
+`docs/12-design/PAX_CODEC_LAYOUT_COMPRESSION_LLD_2026_05_20.adoc`.
 Competitive OLTP/OLAP/HTAP/MPP route-map refinement:
 `docs/12-design/COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc`.
 

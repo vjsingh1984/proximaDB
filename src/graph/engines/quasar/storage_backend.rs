@@ -109,9 +109,9 @@ impl ColdStorageBackend {
     /// Create a new cold storage backend
     pub async fn new(backend_type: BackendType, storage_path: &Path) -> Result<Self> {
         // Create storage directory if it doesn't exist
-        fs::create_dir_all(storage_path).await.map_err(|e| {
-            VectorDBError::Filesystem(e.to_string())
-        })?;
+        fs::create_dir_all(storage_path)
+            .await
+            .map_err(|e| VectorDBError::Filesystem(e.to_string()))?;
 
         let backend = Self {
             backend_type,
@@ -396,9 +396,7 @@ impl ColdStorageBackend {
             .join(format!("{}.json", node.id));
         fs::create_dir_all(file_path.parent().unwrap())
             .await
-            .map_err(|e| {
-                VectorDBError::Filesystem(e.to_string())
-            })?;
+            .map_err(|e| VectorDBError::Filesystem(e.to_string()))?;
 
         let json_data = serde_json::to_string_pretty(node)
             .map_err(|e| VectorDBError::Internal(format!("Serialization error: {}", e)))?;

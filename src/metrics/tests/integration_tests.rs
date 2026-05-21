@@ -8,7 +8,6 @@ mod tests {
     use crate::metrics::updater::{
         MetricsUpdateService, OperationMetricsUpdate, SearchMetricsUpdate,
     };
-    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
@@ -216,17 +215,18 @@ mod tests {
         }
     }
 
-    fn create_test_vectors(count: usize) -> Vec<VectorRecord> {
+    fn create_test_vectors(count: usize) -> Vec<proximadb_records::ProximaRecord> {
         (0..count)
-            .map(|i| VectorRecord {
-                id: format!("integration_vector_{}", i),
-                vector: vec![0.1; 384],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
-                source: None,
+            .map(|i| proximadb_records::ProximaRecord {
+                oid: format!("integration_vector_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "dense_vector".to_string(),
+                    dim: 384,
+                    values: vec![0.1; 384],
+                }],
+                record_version: 1,
+                ..proximadb_records::ProximaRecord::default()
             })
             .collect()
     }
@@ -346,7 +346,7 @@ mod tests {
 
         // Execute coordinated flush with metrics
         let flush_data = crate::storage::persistence::write_ahead_log::flush_coordinator::FlushDataSource::VectorRecords(
-            test_vectors.into_iter().map(proximadb_records::ProximaRecord::from).collect()
+            test_vectors
         );
 
         let flush_result = flush_coordinator
@@ -557,7 +557,7 @@ mod tests {
         // Step 2: Execute FlushCoordinator operation
         let test_vectors = create_test_vectors(25);
         let flush_data = crate::storage::persistence::write_ahead_log::flush_coordinator::FlushDataSource::VectorRecords(
-            test_vectors.into_iter().map(proximadb_records::ProximaRecord::from).collect()
+            test_vectors
         );
 
         let flush_result = flush_coordinator
@@ -717,8 +717,8 @@ mod tests {
             // Execute flush for each collection
             let test_vectors = create_test_vectors(10 + (i * 5));
             let flush_data = crate::storage::persistence::write_ahead_log::flush_coordinator::FlushDataSource::VectorRecords(
-            test_vectors.into_iter().map(proximadb_records::ProximaRecord::from).collect()
-        );
+                test_vectors
+            );
 
             flush_coordinator
                 .execute_coordinated_flush(collection_id, flush_data, None, Some(&context))

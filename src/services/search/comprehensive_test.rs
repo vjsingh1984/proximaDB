@@ -33,7 +33,6 @@ mod tests {
         SearchParams, SearchPlan, SearchResultSet, StorageInfo, UnifiedSearchEngine,
         results::OptimizedSearchRecord,
     };
-    use crate::proto::proximadb_v1::{MetadataItem, VectorRecord};
     use crate::services::operations::vectors::VectorOperationsService;
     use crate::storage::engines::viper::FilterValue;
     // use crate::storage::engines::viper::unified_search_engine::{ViperUnifiedSearchEngine, ViperSearchConfig}; // Removed

@@ -20,13 +20,16 @@ Read these in order for future-shaping architecture work:
    projection/access-method boundaries.
 4. `RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc` +
    Relational/PAX/MVCC/open-format storage shape and pgwire interoperability direction.
-5. `RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc` +
+5. `PAX_CODEC_LAYOUT_COMPRESSION_LLD_2026_05_20.adoc` +
+   Active HLD/LLD tracker for PAX stripe codecs, vector co-location, graph topology compression,
+   JSON structural stripes, codec profiling, xCatalog compression metadata, and EXPLAIN visibility.
+6. `RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc` +
    Active HLD/LLD tracker for pgwire DML, legacy VectorOps routing, table-record execution, and
    compute-engine routing.
-6. `OPEN_FORMAT_CATALOG_2026_05_17.adoc` +
+7. `OPEN_FORMAT_CATALOG_2026_05_17.adoc` +
    Iceberg REST catalog, OLTP catalog backends, open-format compatibility, and xCatalog ownership
    for external engines.
-7. `MULTIMODEL_TRAJECTORY_ALIGNMENT_2026_05_18.adoc` +
+8. `MULTIMODEL_TRAJECTORY_ALIGNMENT_2026_05_18.adoc` +
    Execution guide for keeping new multimodel code aligned with `ProximaRecord` and
    `ProximaValue`.
 

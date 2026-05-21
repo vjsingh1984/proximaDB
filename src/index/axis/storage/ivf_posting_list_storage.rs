@@ -193,39 +193,35 @@ impl PostingListStorage {
                     let id = format!("{}:{}", cluster_id, entry.vector_id);
                     // For posting list entries, we store the distance as a simple vector
                     let vector = vec![entry.distance_to_centroid];
-                    let mut metadata = std::collections::HashMap::new();
-                    metadata.insert(
-                        "cluster_id".to_string(),
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                cluster_id.to_string(),
-                            )),
-                        },
-                    );
-                    metadata.insert(
-                        "vector_id".to_string(),
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                entry.vector_id.clone(),
-                            )),
-                        },
-                    );
+                    let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default();
+                    let props = std::collections::HashMap::from([
+                        (
+                            "cluster_id".to_string(),
+                            proximadb_records::ProximaTreeNode::Value(
+                                proximadb_data_model::ProximaValue::String(cluster_id.to_string()),
+                            ),
+                        ),
+                        (
+                            "vector_id".to_string(),
+                            proximadb_records::ProximaTreeNode::Value(
+                                proximadb_data_model::ProximaValue::String(entry.vector_id.clone()),
+                            ),
+                        ),
+                    ]);
                     records.insert(
                         id.clone(),
-                        crate::proto::proximadb_v1::VectorRecord {
-                            id,
-                            vector,
-                            metadata,
-                            timestamp: Some(
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_secs() as i64,
-                            ),
-                            updated_at: None,
-                            expires_at: None,
-                            version: None,
-                            source: None,
+                        proximadb_records::ProximaRecord {
+                            oid: id,
+                            created_at_ns: now_ns,
+                            updated_at_ns: now_ns,
+                            props,
+                            embeddings: vec![proximadb_records::EmbeddingCell {
+                                model_id: "ivf_posting_distance".to_string(),
+                                modality: "dense_vector".to_string(),
+                                dim: vector.len() as u32,
+                                values: vector,
+                            }],
+                            ..proximadb_records::ProximaRecord::default()
                         },
                     );
                 }
@@ -234,7 +230,7 @@ impl PostingListStorage {
                 let record_count = records.len();
                 let sorted_records_iter = records.into_values(); // Extract values from BTreeMap
                 writer
-                    .write_sorted_records(sorted_records_iter, record_count)
+                    .write_sorted_proxima_records(sorted_records_iter, record_count)
                     .await?;
                 debug!("Stored posting list {} to SST at {}", cluster_id, path);
                 Ok(())

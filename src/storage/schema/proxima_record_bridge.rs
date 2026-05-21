@@ -1,24 +1,23 @@
-//! # VectorRecordBridge - VectorRecord to Arrow RecordBatch Conversion
+//! # ProximaRecordBridge - ProximaRecord to Arrow RecordBatch Conversion
 //!
-//! Provides zero-copy conversion between VectorRecord (proto type) and Arrow RecordBatch.
-//! This bridge enables seamless integration between ProximaDB's proto-first architecture
-//! and the Arrow-native compute layer.
+//! Provides conversion between the canonical ProximaRecord envelope and Arrow
+//! RecordBatch values for the Arrow-native compute layer.
 //!
 //! ## Key Features
 //!
 //! - Zero-copy conversion where possible using Arrow's memory format
 //! - Support for nested metadata fields (JSON -> Arrow Struct)
-//! - Schema inference from VectorRecord metadata
+//! - Schema inference from ProximaRecord properties
 //! - Batch conversion utilities for efficient bulk operations
 //!
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use proximadb::storage::schema::vector_record_bridge::{
-//!     VectorRecordBridge, DefaultVectorRecordBridge
+//! use proximadb::storage::schema::proxima_record_bridge::{
+//!     ProximaRecordBridge, DefaultProximaRecordBridge
 //! };
 //!
-//! let bridge = DefaultVectorRecordBridge::new(schema);
+//! let bridge = DefaultProximaRecordBridge::new(schema);
 //! let batch = bridge.records_to_batch(&records)?;
 //! let records = bridge.batch_to_records(&batch)?;
 //! ```
@@ -36,47 +35,46 @@ use arrow_array::{
     },
 };
 use arrow_schema::{DataType, Field, Schema as ArrowSchema};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
 use serde_json::Value as JsonValue;
 
 use super::proxima_schema::{ProximaDataType, ProximaSchema};
-use crate::proto::proximadb_v1::sql_value::Value as ProtoSqlValueInner;
-use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
-use crate::storage::formats::arrow_conversion::{json_to_sql_value, sql_value_to_json};
 
 // ============================================================================
-// VectorRecordBridge Trait
+// ProximaRecordBridge Trait
 // ============================================================================
 
-/// Trait for converting between VectorRecord and Arrow RecordBatch.
+/// Trait for converting between ProximaRecord and Arrow RecordBatch.
 ///
 /// Implementations must ensure:
 /// - Zero-copy conversion where possible
 /// - Proper handling of nullable fields
 /// - Correct metadata serialization/deserialization
 /// - Schema compatibility validation
-pub trait VectorRecordBridge: Send + Sync {
+pub trait ProximaRecordBridge: Send + Sync {
     /// Get the schema used for conversions.
     fn schema(&self) -> &ProximaSchema;
 
-    /// Convert a slice of VectorRecords to an Arrow RecordBatch.
+    /// Convert a slice of ProximaRecords to an Arrow RecordBatch.
     ///
     /// # Arguments
-    /// * `records` - Vector records to convert
+    /// * `records` - Canonical records to convert
     ///
     /// # Returns
     /// * Arrow RecordBatch containing all records
-    fn records_to_batch(&self, records: &[VectorRecord]) -> Result<RecordBatch>;
+    fn records_to_batch(&self, records: &[ProximaRecord]) -> Result<RecordBatch>;
 
-    /// Convert an Arrow RecordBatch to VectorRecords.
+    /// Convert an Arrow RecordBatch to ProximaRecords.
     ///
     /// # Arguments
     /// * `batch` - Arrow RecordBatch to convert
     ///
     /// # Returns
-    /// * Vec of VectorRecords extracted from the batch
-    fn batch_to_records(&self, batch: &RecordBatch) -> Result<Vec<VectorRecord>>;
+    /// * Vec of ProximaRecords extracted from the batch
+    fn batch_to_records(&self, batch: &RecordBatch) -> Result<Vec<ProximaRecord>>;
 
-    /// Infer schema from a set of VectorRecords.
+    /// Infer schema from a set of ProximaRecords.
     ///
     /// Analyzes the metadata fields across records to determine
     /// the optimal schema for the collection.
@@ -86,7 +84,7 @@ pub trait VectorRecordBridge: Send + Sync {
     ///
     /// # Returns
     /// * Inferred ProximaSchema
-    fn infer_schema_from_records(&self, records: &[VectorRecord]) -> Result<ProximaSchema>;
+    fn infer_schema_from_records(&self, records: &[ProximaRecord]) -> Result<ProximaSchema>;
 
     /// Validate that records are compatible with the current schema.
     ///
@@ -95,19 +93,19 @@ pub trait VectorRecordBridge: Send + Sync {
     ///
     /// # Returns
     /// * Ok(()) if compatible, Err with details otherwise
-    fn validate_records(&self, records: &[VectorRecord]) -> Result<()>;
+    fn validate_records(&self, records: &[ProximaRecord]) -> Result<()>;
 }
 
 // ============================================================================
-// DefaultVectorRecordBridge Implementation
+// DefaultProximaRecordBridge Implementation
 // ============================================================================
 
-/// Default implementation of VectorRecordBridge.
+/// Default implementation of ProximaRecordBridge.
 ///
 /// Uses the standard ProximaSchema for conversions and supports
 /// both flat metadata (JSON string) and structured metadata (Arrow Struct).
 #[derive(Debug, Clone)]
-pub struct DefaultVectorRecordBridge {
+pub struct DefaultProximaRecordBridge {
     /// Schema for conversions
     schema: ProximaSchema,
     /// Metadata handling mode
@@ -128,7 +126,7 @@ pub enum MetadataMode {
     Auto,
 }
 
-impl DefaultVectorRecordBridge {
+impl DefaultProximaRecordBridge {
     /// Create a new bridge with the given schema.
     pub fn new(schema: ProximaSchema) -> Self {
         Self {
@@ -150,7 +148,7 @@ impl DefaultVectorRecordBridge {
         self
     }
 
-    /// Create a legacy VectorRecord bridge for backward compatibility.
+    /// Create a bridge with the historical vector schema shape.
     pub fn legacy(dimension: u32) -> Self {
         Self::new(ProximaSchema::vector_record_schema(dimension))
     }
@@ -160,15 +158,25 @@ impl DefaultVectorRecordBridge {
         self.schema.vector_dimension()
     }
 
+    /// Convert canonical records into an Arrow RecordBatch.
+    pub fn proxima_records_to_batch(&self, records: &[ProximaRecord]) -> Result<RecordBatch> {
+        self.records_to_batch(records)
+    }
+
+    /// Convert an Arrow RecordBatch into canonical records.
+    pub fn batch_to_proxima_records(&self, batch: &RecordBatch) -> Result<Vec<ProximaRecord>> {
+        self.batch_to_records(batch)
+    }
+
     /// Build ID array from records.
-    fn build_id_array(&self, records: &[VectorRecord]) -> ArrayRef {
+    fn build_id_array(&self, records: &[ProximaRecord]) -> ArrayRef {
         Arc::new(StringArray::from(
-            records.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            records.iter().map(|r| r.oid.as_str()).collect::<Vec<_>>(),
         ))
     }
 
     /// Build vector array from records.
-    fn build_vector_array(&self, records: &[VectorRecord]) -> Result<ArrayRef> {
+    fn build_vector_array(&self, records: &[ProximaRecord]) -> Result<ArrayRef> {
         let dimension =
             self.vector_dimension()
                 .ok_or_else(|| anyhow!("Schema has no vector dimension"))? as usize;
@@ -181,15 +189,20 @@ impl DefaultVectorRecordBridge {
         let mut builder = FixedSizeListBuilder::new(values_builder, dimension as i32);
 
         for record in records {
-            if record.vector.len() != dimension {
+            let vector = record
+                .embeddings
+                .first()
+                .map(|embedding| embedding.values.as_slice())
+                .unwrap_or(&[]);
+            if vector.len() != dimension {
                 return Err(anyhow!(
                     "Vector dimension mismatch: expected {}, got {}",
                     dimension,
-                    record.vector.len()
+                    vector.len()
                 ));
             }
             let values = builder.values();
-            for &v in &record.vector {
+            for &v in vector {
                 values.append_value(v);
             }
             builder.append(true);
@@ -199,7 +212,7 @@ impl DefaultVectorRecordBridge {
     }
 
     /// Build metadata array from records based on mode.
-    fn build_metadata_array(&self, records: &[VectorRecord]) -> Result<ArrayRef> {
+    fn build_metadata_array(&self, records: &[ProximaRecord]) -> Result<ArrayRef> {
         match self.metadata_mode {
             MetadataMode::JsonString | MetadataMode::Auto => {
                 self.build_metadata_json_array(records)
@@ -209,19 +222,19 @@ impl DefaultVectorRecordBridge {
     }
 
     /// Build metadata as JSON string array.
-    fn build_metadata_json_array(&self, records: &[VectorRecord]) -> Result<ArrayRef> {
+    fn build_metadata_json_array(&self, records: &[ProximaRecord]) -> Result<ArrayRef> {
         let mut builder = StringBuilder::new();
 
         for record in records {
-            if record.metadata.is_empty() {
+            if record.props.is_empty() {
                 builder.append_null();
             } else {
-                let json_map: HashMap<String, JsonValue> = record
-                    .metadata
+                let json_map: serde_json::Map<String, JsonValue> = record
+                    .props
                     .iter()
-                    .map(|(k, v)| (k.clone(), sql_value_to_json(v)))
+                    .map(|(k, v)| (k.clone(), Self::tree_node_to_json(v)))
                     .collect();
-                let json_str = serde_json::to_string(&json_map)
+                let json_str = serde_json::to_string(&JsonValue::Object(json_map))
                     .context("Failed to serialize metadata to JSON")?;
                 builder.append_value(&json_str);
             }
@@ -231,7 +244,7 @@ impl DefaultVectorRecordBridge {
     }
 
     /// Build metadata as Arrow Struct array.
-    fn build_metadata_struct_array(&self, records: &[VectorRecord]) -> Result<ArrayRef> {
+    fn build_metadata_struct_array(&self, records: &[ProximaRecord]) -> Result<ArrayRef> {
         // Collect all unique metadata keys and infer types
         let inferred = self.infer_metadata_schema(records)?;
 
@@ -263,12 +276,12 @@ impl DefaultVectorRecordBridge {
     }
 
     /// Infer metadata schema from records.
-    fn infer_metadata_schema(&self, records: &[VectorRecord]) -> Result<Vec<(String, DataType)>> {
+    fn infer_metadata_schema(&self, records: &[ProximaRecord]) -> Result<Vec<(String, DataType)>> {
         let mut schema: HashMap<String, DataType> = HashMap::new();
 
         for record in records {
-            for (key, value) in &record.metadata {
-                let dtype = self.infer_arrow_type_from_sql_value(value);
+            for (key, value) in &record.props {
+                let dtype = self.infer_arrow_type_from_tree_node(value);
                 schema.entry(key.clone()).or_insert(dtype);
             }
         }
@@ -278,27 +291,40 @@ impl DefaultVectorRecordBridge {
         Ok(result)
     }
 
-    /// Infer Arrow DataType from SqlValue.
-    fn infer_arrow_type_from_sql_value(&self, value: &SqlValue) -> DataType {
-        match &value.value {
-            None => DataType::Null,
-            Some(inner) => match inner {
-                ProtoSqlValueInner::NullValue(_) => DataType::Null,
-                ProtoSqlValueInner::BoolValue(_) => DataType::Boolean,
-                ProtoSqlValueInner::Int64Value(_) => DataType::Int64,
-                ProtoSqlValueInner::NumberValue(_) => DataType::Float64,
-                ProtoSqlValueInner::StringValue(_) => DataType::Utf8,
-                ProtoSqlValueInner::BytesValue(_) => DataType::Binary,
-                ProtoSqlValueInner::ArrayValue(_) => DataType::Utf8, // Store as JSON
-                ProtoSqlValueInner::ObjectValue(_) => DataType::Utf8, // Store as JSON
-            },
+    /// Infer Arrow DataType from a canonical property node.
+    fn infer_arrow_type_from_tree_node(&self, node: &ProximaTreeNode) -> DataType {
+        match node {
+            ProximaTreeNode::Value(value) => self.infer_arrow_type_from_proxima_value(value),
+            ProximaTreeNode::Object(_) => DataType::Utf8,
+        }
+    }
+
+    /// Infer Arrow DataType from ProximaValue.
+    fn infer_arrow_type_from_proxima_value(&self, value: &ProximaValue) -> DataType {
+        match value {
+            ProximaValue::Null => DataType::Null,
+            ProximaValue::Boolean(_) => DataType::Boolean,
+            ProximaValue::Int8(_)
+            | ProximaValue::Int16(_)
+            | ProximaValue::Int32(_)
+            | ProximaValue::Int64(_)
+            | ProximaValue::UInt8(_)
+            | ProximaValue::UInt16(_)
+            | ProximaValue::UInt32(_)
+            | ProximaValue::UInt64(_) => DataType::Int64,
+            ProximaValue::Float16(_) | ProximaValue::Float32(_) | ProximaValue::Float64(_) => {
+                DataType::Float64
+            }
+            ProximaValue::String(_) | ProximaValue::Symbol(_) => DataType::Utf8,
+            ProximaValue::Binary(_) | ProximaValue::BinaryVector(_) => DataType::Binary,
+            _ => DataType::Utf8,
         }
     }
 
     /// Build a typed metadata field array.
     fn build_typed_metadata_field(
         &self,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         key: &str,
         data_type: &DataType,
     ) -> Result<ArrayRef> {
@@ -308,11 +334,8 @@ impl DefaultVectorRecordBridge {
             DataType::Boolean => {
                 let mut builder = BooleanBuilder::with_capacity(num_records);
                 for record in records {
-                    if let Some(value) = record.metadata.get(key) {
-                        match &value.value {
-                            Some(ProtoSqlValueInner::BoolValue(b)) => builder.append_value(*b),
-                            _ => builder.append_null(),
-                        }
+                    if let Some(ProximaValue::Boolean(value)) = self.property_value(record, key) {
+                        builder.append_value(*value);
                     } else {
                         builder.append_null();
                     }
@@ -322,10 +345,11 @@ impl DefaultVectorRecordBridge {
             DataType::Int64 => {
                 let mut builder = Int64Builder::with_capacity(num_records);
                 for record in records {
-                    if let Some(value) = record.metadata.get(key) {
-                        match &value.value {
-                            Some(ProtoSqlValueInner::Int64Value(i)) => builder.append_value(*i),
-                            _ => builder.append_null(),
+                    if let Some(value) = self.property_value(record, key) {
+                        if let Some(int_value) = Self::proxima_value_to_i64(value) {
+                            builder.append_value(int_value);
+                        } else {
+                            builder.append_null();
                         }
                     } else {
                         builder.append_null();
@@ -336,10 +360,11 @@ impl DefaultVectorRecordBridge {
             DataType::Float64 => {
                 let mut builder = Float64Builder::with_capacity(num_records);
                 for record in records {
-                    if let Some(value) = record.metadata.get(key) {
-                        match &value.value {
-                            Some(ProtoSqlValueInner::NumberValue(f)) => builder.append_value(*f),
-                            _ => builder.append_null(),
+                    if let Some(value) = self.property_value(record, key) {
+                        if let Some(float_value) = Self::proxima_value_to_f64(value) {
+                            builder.append_value(float_value);
+                        } else {
+                            builder.append_null();
                         }
                     } else {
                         builder.append_null();
@@ -351,11 +376,11 @@ impl DefaultVectorRecordBridge {
                 // Default to string for all other types
                 let mut builder = StringBuilder::new();
                 for record in records {
-                    if let Some(value) = record.metadata.get(key) {
-                        let json = sql_value_to_json(value);
+                    if let Some(node) = record.props.get(key) {
+                        let json = Self::tree_node_to_json(node);
                         match json {
                             JsonValue::Null => builder.append_null(),
-                            JsonValue::String(s) => builder.append_value(&s),
+                            JsonValue::String(value) => builder.append_value(&value),
                             other => builder.append_value(other.to_string()),
                         }
                     } else {
@@ -368,21 +393,132 @@ impl DefaultVectorRecordBridge {
     }
 
     /// Build timestamp array from records.
-    fn build_timestamp_array(&self, records: &[VectorRecord]) -> ArrayRef {
+    fn build_timestamp_array(&self, records: &[ProximaRecord]) -> ArrayRef {
         let timestamps: Vec<Option<i64>> = records
             .iter()
-            .map(|r| r.timestamp.or(Some(chrono::Utc::now().timestamp_millis())))
+            .map(|r| Some(r.created_at_ns / 1_000_000))
             .collect();
         Arc::new(Int64Array::from(timestamps))
     }
 
     /// Build version array from records.
-    fn build_version_array(&self, records: &[VectorRecord]) -> ArrayRef {
+    fn build_version_array(&self, records: &[ProximaRecord]) -> ArrayRef {
         let versions: Vec<Option<i64>> = records
             .iter()
-            .map(|r| r.version.map(|v| v as i64))
+            .map(|r| Some(r.record_version as i64))
             .collect();
         Arc::new(Int64Array::from(versions))
+    }
+
+    fn property_value<'a>(&self, record: &'a ProximaRecord, key: &str) -> Option<&'a ProximaValue> {
+        match record.props.get(key)? {
+            ProximaTreeNode::Value(value) => Some(value),
+            ProximaTreeNode::Object(_) => None,
+        }
+    }
+
+    fn tree_node_to_json(node: &ProximaTreeNode) -> JsonValue {
+        match node {
+            ProximaTreeNode::Value(value) => Self::proxima_value_to_json(value),
+            ProximaTreeNode::Object(tree) => JsonValue::Object(
+                tree.iter()
+                    .map(|(key, node)| (key.clone(), Self::tree_node_to_json(node)))
+                    .collect(),
+            ),
+        }
+    }
+
+    fn proxima_value_to_json(value: &ProximaValue) -> JsonValue {
+        match value {
+            ProximaValue::Boolean(value) => JsonValue::Bool(*value),
+            ProximaValue::Int8(value) => JsonValue::from(*value),
+            ProximaValue::Int16(value) => JsonValue::from(*value),
+            ProximaValue::Int32(value) => JsonValue::from(*value),
+            ProximaValue::Int64(value) => JsonValue::from(*value),
+            ProximaValue::UInt8(value) => JsonValue::from(*value),
+            ProximaValue::UInt16(value) => JsonValue::from(*value),
+            ProximaValue::UInt32(value) => JsonValue::from(*value),
+            ProximaValue::UInt64(value) => JsonValue::from(*value),
+            ProximaValue::Float16(value) | ProximaValue::Float32(value) => JsonValue::from(*value),
+            ProximaValue::Float64(value) => JsonValue::from(*value),
+            ProximaValue::String(value)
+            | ProximaValue::Symbol(value)
+            | ProximaValue::Decimal(value) => JsonValue::String(value.clone()),
+            ProximaValue::Json(value) | ProximaValue::Jsonb(value) => value.clone(),
+            ProximaValue::Array(values) => {
+                JsonValue::Array(values.iter().map(Self::proxima_value_to_json).collect())
+            }
+            ProximaValue::Map(values) | ProximaValue::Struct(values) => JsonValue::Object(
+                values
+                    .iter()
+                    .map(|(key, value)| (key.clone(), Self::proxima_value_to_json(value)))
+                    .collect(),
+            ),
+            ProximaValue::Null => JsonValue::Null,
+            other => serde_json::to_value(other).unwrap_or(JsonValue::Null),
+        }
+    }
+
+    fn json_to_tree_node(value: JsonValue) -> ProximaTreeNode {
+        match value {
+            JsonValue::Object(map) => ProximaTreeNode::Object(
+                map.into_iter()
+                    .map(|(key, value)| (key, Self::json_to_tree_node(value)))
+                    .collect(),
+            ),
+            other => ProximaTreeNode::Value(Self::json_to_proxima_value(other)),
+        }
+    }
+
+    fn json_to_proxima_value(value: JsonValue) -> ProximaValue {
+        match value {
+            JsonValue::Null => ProximaValue::Null,
+            JsonValue::Bool(value) => ProximaValue::Boolean(value),
+            JsonValue::Number(value) => {
+                if let Some(int_value) = value.as_i64() {
+                    ProximaValue::Int64(int_value)
+                } else if let Some(float_value) = value.as_f64() {
+                    ProximaValue::Float64(float_value)
+                } else {
+                    ProximaValue::Null
+                }
+            }
+            JsonValue::String(value) => ProximaValue::String(value),
+            JsonValue::Array(values) => ProximaValue::Array(
+                values
+                    .into_iter()
+                    .map(Self::json_to_proxima_value)
+                    .collect(),
+            ),
+            JsonValue::Object(values) => ProximaValue::Map(
+                values
+                    .into_iter()
+                    .map(|(key, value)| (key, Self::json_to_proxima_value(value)))
+                    .collect(),
+            ),
+        }
+    }
+
+    fn proxima_value_to_i64(value: &ProximaValue) -> Option<i64> {
+        match value {
+            ProximaValue::Int8(value) => Some(*value as i64),
+            ProximaValue::Int16(value) => Some(*value as i64),
+            ProximaValue::Int32(value) => Some(*value as i64),
+            ProximaValue::Int64(value) => Some(*value),
+            ProximaValue::UInt8(value) => Some(*value as i64),
+            ProximaValue::UInt16(value) => Some(*value as i64),
+            ProximaValue::UInt32(value) => Some(*value as i64),
+            ProximaValue::UInt64(value) => i64::try_from(*value).ok(),
+            _ => None,
+        }
+    }
+
+    fn proxima_value_to_f64(value: &ProximaValue) -> Option<f64> {
+        match value {
+            ProximaValue::Float16(value) | ProximaValue::Float32(value) => Some(*value as f64),
+            ProximaValue::Float64(value) => Some(*value),
+            _ => Self::proxima_value_to_i64(value).map(|value| value as f64),
+        }
     }
 
     /// Extract ID from batch at given row.
@@ -445,11 +581,7 @@ impl DefaultVectorRecordBridge {
     }
 
     /// Extract metadata from batch at given row.
-    fn extract_metadata(
-        &self,
-        batch: &RecordBatch,
-        row: usize,
-    ) -> Result<HashMap<String, SqlValue>> {
+    fn extract_metadata(&self, batch: &RecordBatch, row: usize) -> Result<ProximaTree> {
         let metadata_col = match batch.column_by_name("metadata") {
             Some(col) => col,
             None => return Ok(HashMap::new()),
@@ -465,7 +597,7 @@ impl DefaultVectorRecordBridge {
                 .with_context(|| format!("Failed to parse metadata JSON: {}", json_str))?;
             return Ok(json_map
                 .into_iter()
-                .map(|(k, v)| (k, json_to_sql_value(&v)))
+                .map(|(k, v)| (k, Self::json_to_tree_node(v)))
                 .collect());
         }
 
@@ -482,57 +614,49 @@ impl DefaultVectorRecordBridge {
         &self,
         struct_array: &StructArray,
         row: usize,
-    ) -> Result<HashMap<String, SqlValue>> {
+    ) -> Result<ProximaTree> {
         let mut metadata = HashMap::new();
 
         for (i, field) in struct_array.fields().iter().enumerate() {
             let column = struct_array.column(i);
             let value = self.extract_field_value(column.as_ref(), row, field.data_type())?;
             if let Some(v) = value {
-                metadata.insert(field.name().clone(), v);
+                metadata.insert(field.name().clone(), ProximaTreeNode::Value(v));
             }
         }
 
         Ok(metadata)
     }
 
-    /// Extract a single field value and convert to SqlValue.
+    /// Extract a single field value and convert to ProximaValue.
     fn extract_field_value(
         &self,
         array: &dyn Array,
         row: usize,
         _data_type: &DataType,
-    ) -> Result<Option<SqlValue>> {
+    ) -> Result<Option<ProximaValue>> {
         if array.is_null(row) {
             return Ok(None);
         }
 
         // Boolean
         if let Some(arr) = array.as_any().downcast_ref::<BooleanArray>() {
-            return Ok(Some(SqlValue {
-                value: Some(ProtoSqlValueInner::BoolValue(arr.value(row))),
-            }));
+            return Ok(Some(ProximaValue::Boolean(arr.value(row))));
         }
 
         // Int64
         if let Some(arr) = array.as_any().downcast_ref::<Int64Array>() {
-            return Ok(Some(SqlValue {
-                value: Some(ProtoSqlValueInner::Int64Value(arr.value(row))),
-            }));
+            return Ok(Some(ProximaValue::Int64(arr.value(row))));
         }
 
         // Float64
         if let Some(arr) = array.as_any().downcast_ref::<Float64Array>() {
-            return Ok(Some(SqlValue {
-                value: Some(ProtoSqlValueInner::NumberValue(arr.value(row))),
-            }));
+            return Ok(Some(ProximaValue::Float64(arr.value(row))));
         }
 
         // String
         if let Some(arr) = array.as_any().downcast_ref::<StringArray>() {
-            return Ok(Some(SqlValue {
-                value: Some(ProtoSqlValueInner::StringValue(arr.value(row).to_string())),
-            }));
+            return Ok(Some(ProximaValue::String(arr.value(row).to_string())));
         }
 
         Ok(None)
@@ -567,12 +691,12 @@ impl DefaultVectorRecordBridge {
     }
 }
 
-impl VectorRecordBridge for DefaultVectorRecordBridge {
+impl ProximaRecordBridge for DefaultProximaRecordBridge {
     fn schema(&self) -> &ProximaSchema {
         &self.schema
     }
 
-    fn records_to_batch(&self, records: &[VectorRecord]) -> Result<RecordBatch> {
+    fn records_to_batch(&self, records: &[ProximaRecord]) -> Result<RecordBatch> {
         if records.is_empty() {
             return Err(anyhow!("Cannot create RecordBatch from empty records"));
         }
@@ -638,34 +762,55 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
 
         let arrow_schema = Arc::new(ArrowSchema::new(fields));
         RecordBatch::try_new(arrow_schema, columns)
-            .context("Failed to create RecordBatch from VectorRecords")
+            .context("Failed to create RecordBatch from ProximaRecords")
     }
 
-    fn batch_to_records(&self, batch: &RecordBatch) -> Result<Vec<VectorRecord>> {
+    fn batch_to_records(&self, batch: &RecordBatch) -> Result<Vec<ProximaRecord>> {
         let num_rows = batch.num_rows();
         let mut records = Vec::with_capacity(num_rows);
 
         for row in 0..num_rows {
             let id = self.extract_id(batch, row)?;
             let vector = self.extract_vector(batch, row)?;
-            let metadata = self.extract_metadata(batch, row)?;
+            let props = self.extract_metadata(batch, row)?;
             let timestamp = self.extract_timestamp(batch, row);
             let version = self.extract_version(batch, row);
+            let created_at_ns = timestamp
+                .map(|ts| ts.saturating_mul(1_000_000))
+                .unwrap_or_else(|| {
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos() as i64
+                });
 
-            records.push(VectorRecord {
-                id,
-                vector,
-                metadata,
-                timestamp,
-                version,
-                ..Default::default()
+            let embeddings = if vector.is_empty() {
+                Vec::new()
+            } else {
+                vec![EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "dense_vector".to_string(),
+                    dim: vector.len() as u32,
+                    values: vector,
+                }]
+            };
+
+            records.push(ProximaRecord {
+                oid: id.clone(),
+                local_id: Some(id),
+                created_at_ns,
+                updated_at_ns: created_at_ns,
+                record_version: version.unwrap_or(0) as u64,
+                props,
+                embeddings,
+                ..ProximaRecord::default()
             });
         }
 
         Ok(records)
     }
 
-    fn infer_schema_from_records(&self, records: &[VectorRecord]) -> Result<ProximaSchema> {
+    fn infer_schema_from_records(&self, records: &[ProximaRecord]) -> Result<ProximaSchema> {
         if records.is_empty() {
             return Err(anyhow!("Cannot infer schema from empty records"));
         }
@@ -673,7 +818,12 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
         // Determine vector dimension
         let dimension = records
             .iter()
-            .map(|r| r.vector.len())
+            .map(|r| {
+                r.embeddings
+                    .first()
+                    .map(|embedding| embedding.values.len())
+                    .unwrap_or_default()
+            })
             .max()
             .ok_or_else(|| anyhow!("Cannot infer schema from empty records"))?
             as u32;
@@ -703,24 +853,34 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
         Ok(schema)
     }
 
-    fn validate_records(&self, records: &[VectorRecord]) -> Result<()> {
+    fn validate_records(&self, records: &[ProximaRecord]) -> Result<()> {
         let expected_dim = self.vector_dimension();
 
         for (i, record) in records.iter().enumerate() {
             // Validate vector dimension
             if let Some(dim) = expected_dim
-                && record.vector.len() != dim as usize
+                && record
+                    .embeddings
+                    .first()
+                    .map(|embedding| embedding.values.len())
+                    .unwrap_or_default()
+                    != dim as usize
             {
+                let actual_dim = record
+                    .embeddings
+                    .first()
+                    .map(|embedding| embedding.values.len())
+                    .unwrap_or_default();
                 return Err(anyhow!(
                     "Record {} has wrong vector dimension: expected {}, got {}",
                     i,
                     dim,
-                    record.vector.len()
+                    actual_dim
                 ));
             }
 
             // Validate ID is not empty
-            if record.id.is_empty() {
+            if record.oid.is_empty() {
                 return Err(anyhow!("Record {} has empty ID", i));
             }
         }
@@ -733,11 +893,11 @@ impl VectorRecordBridge for DefaultVectorRecordBridge {
 // Schema Inference Utilities
 // ============================================================================
 
-/// Infer ProximaSchema from VectorRecord samples.
+/// Infer ProximaSchema from ProximaRecord samples.
 ///
-/// Analyzes metadata fields to determine optimal typing.
-pub fn infer_schema_from_vector_records(
-    records: &[VectorRecord],
+/// Analyzes property fields to determine optimal typing.
+pub fn infer_schema_from_proxima_records(
+    records: &[ProximaRecord],
     schema_id: String,
 ) -> Result<ProximaSchema> {
     if records.is_empty() {
@@ -746,7 +906,12 @@ pub fn infer_schema_from_vector_records(
 
     let dimension = records
         .iter()
-        .map(|r| r.vector.len())
+        .map(|r| {
+            r.embeddings
+                .first()
+                .map(|embedding| embedding.values.len())
+                .unwrap_or_default()
+        })
         .max()
         .ok_or_else(|| anyhow!("Cannot infer schema from empty records"))?
         as u32;
@@ -759,8 +924,8 @@ pub fn infer_schema_from_vector_records(
     let mut field_types: HashMap<String, ProximaDataType> = HashMap::new();
 
     for record in records {
-        for (key, value) in &record.metadata {
-            let inferred_type = infer_proxima_type_from_sql_value(value);
+        for (key, value) in &record.props {
+            let inferred_type = infer_proxima_type_from_tree_node(value);
             field_types.entry(key.clone()).or_insert(inferred_type);
         }
     }
@@ -776,20 +941,36 @@ pub fn infer_schema_from_vector_records(
     ))
 }
 
-/// Infer ProximaDataType from SqlValue.
-fn infer_proxima_type_from_sql_value(value: &SqlValue) -> ProximaDataType {
-    match &value.value {
-        None => ProximaDataType::String, // Default to string for null
-        Some(inner) => match inner {
-            ProtoSqlValueInner::NullValue(_) => ProximaDataType::String,
-            ProtoSqlValueInner::BoolValue(_) => ProximaDataType::Boolean,
-            ProtoSqlValueInner::Int64Value(_) => ProximaDataType::Int64,
-            ProtoSqlValueInner::NumberValue(_) => ProximaDataType::Float64,
-            ProtoSqlValueInner::StringValue(_) => ProximaDataType::String,
-            ProtoSqlValueInner::BytesValue(_) => ProximaDataType::Binary,
-            ProtoSqlValueInner::ArrayValue(_) => ProximaDataType::Json,
-            ProtoSqlValueInner::ObjectValue(_) => ProximaDataType::Json,
-        },
+/// Infer ProximaDataType from a property tree node.
+fn infer_proxima_type_from_tree_node(value: &ProximaTreeNode) -> ProximaDataType {
+    match value {
+        ProximaTreeNode::Object(_) => ProximaDataType::Json,
+        ProximaTreeNode::Value(value) => infer_proxima_type_from_value(value),
+    }
+}
+
+/// Infer ProximaDataType from ProximaValue.
+fn infer_proxima_type_from_value(value: &ProximaValue) -> ProximaDataType {
+    match value {
+        ProximaValue::Boolean(_) => ProximaDataType::Boolean,
+        ProximaValue::Int8(_)
+        | ProximaValue::Int16(_)
+        | ProximaValue::Int32(_)
+        | ProximaValue::Int64(_)
+        | ProximaValue::UInt8(_)
+        | ProximaValue::UInt16(_)
+        | ProximaValue::UInt32(_)
+        | ProximaValue::UInt64(_) => ProximaDataType::Int64,
+        ProximaValue::Float16(_) | ProximaValue::Float32(_) | ProximaValue::Float64(_) => {
+            ProximaDataType::Float64
+        }
+        ProximaValue::Binary(_) | ProximaValue::BinaryVector(_) => ProximaDataType::Binary,
+        ProximaValue::Array(_)
+        | ProximaValue::Map(_)
+        | ProximaValue::Struct(_)
+        | ProximaValue::Json(_)
+        | ProximaValue::Jsonb(_) => ProximaDataType::Json,
+        _ => ProximaDataType::String,
     }
 }
 
@@ -800,49 +981,50 @@ fn infer_proxima_type_from_sql_value(value: &SqlValue) -> ProximaDataType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::SqlArray;
 
-    fn create_test_record(id: &str, dim: usize) -> VectorRecord {
-        let mut metadata = HashMap::new();
-        metadata.insert(
+    fn create_test_record(id: &str, dim: usize) -> ProximaRecord {
+        let mut props = HashMap::new();
+        props.insert(
             "name".to_string(),
-            SqlValue {
-                value: Some(ProtoSqlValueInner::StringValue("test".to_string())),
-            },
+            ProximaTreeNode::Value(ProximaValue::String("test".to_string())),
         );
-        metadata.insert(
+        props.insert(
             "score".to_string(),
-            SqlValue {
-                value: Some(ProtoSqlValueInner::NumberValue(0.95)),
-            },
+            ProximaTreeNode::Value(ProximaValue::Float64(0.95)),
         );
-        metadata.insert(
+        props.insert(
             "count".to_string(),
-            SqlValue {
-                value: Some(ProtoSqlValueInner::Int64Value(42)),
-            },
+            ProximaTreeNode::Value(ProximaValue::Int64(42)),
         );
-        metadata.insert(
+        props.insert(
             "active".to_string(),
-            SqlValue {
-                value: Some(ProtoSqlValueInner::BoolValue(true)),
-            },
+            ProximaTreeNode::Value(ProximaValue::Boolean(true)),
         );
 
-        VectorRecord {
-            id: id.to_string(),
-            vector: (0..dim).map(|i| i as f32 * 0.1).collect(),
-            metadata,
-            timestamp: Some(chrono::Utc::now().timestamp_millis()),
-            version: Some(1),
-            ..Default::default()
+        let timestamp_ns = chrono::Utc::now()
+            .timestamp_millis()
+            .saturating_mul(1_000_000);
+        ProximaRecord {
+            oid: id.to_string(),
+            local_id: Some(id.to_string()),
+            props,
+            created_at_ns: timestamp_ns,
+            updated_at_ns: timestamp_ns,
+            record_version: 1,
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: dim as u32,
+                values: (0..dim).map(|i| i as f32 * 0.1).collect(),
+            }],
+            ..ProximaRecord::default()
         }
     }
 
     #[test]
     fn test_records_to_batch_roundtrip() {
         let schema = ProximaSchema::vector_record_schema(128);
-        let bridge = DefaultVectorRecordBridge::new(schema);
+        let bridge = DefaultProximaRecordBridge::new(schema);
 
         let records = vec![
             create_test_record("vec_1", 128),
@@ -858,16 +1040,16 @@ mod tests {
             .batch_to_records(&batch)
             .expect("Failed to convert batch to records");
         assert_eq!(recovered.len(), 2);
-        assert_eq!(recovered[0].id, "vec_1");
-        assert_eq!(recovered[1].id, "vec_2");
-        assert_eq!(recovered[0].vector.len(), 128);
+        assert_eq!(recovered[0].oid, "vec_1");
+        assert_eq!(recovered[1].oid, "vec_2");
+        assert_eq!(recovered[0].embeddings[0].values.len(), 128);
     }
 
     #[test]
     fn test_metadata_json_mode() {
         let schema = ProximaSchema::vector_record_schema(64);
         let bridge =
-            DefaultVectorRecordBridge::new(schema).with_metadata_mode(MetadataMode::JsonString);
+            DefaultProximaRecordBridge::new(schema).with_metadata_mode(MetadataMode::JsonString);
 
         let records = vec![create_test_record("test", 64)];
         let batch = bridge
@@ -890,7 +1072,7 @@ mod tests {
     fn test_metadata_struct_mode() {
         let schema = ProximaSchema::vector_record_schema(64);
         let bridge =
-            DefaultVectorRecordBridge::new(schema).with_metadata_mode(MetadataMode::ArrowStruct);
+            DefaultProximaRecordBridge::new(schema).with_metadata_mode(MetadataMode::ArrowStruct);
 
         let records = vec![create_test_record("test", 64)];
         let batch = bridge
@@ -912,7 +1094,7 @@ mod tests {
     #[test]
     fn test_schema_inference() {
         let schema = ProximaSchema::vector_record_schema(256);
-        let bridge = DefaultVectorRecordBridge::new(schema);
+        let bridge = DefaultProximaRecordBridge::new(schema);
 
         let records = vec![create_test_record("a", 256), create_test_record("b", 256)];
 
@@ -926,22 +1108,32 @@ mod tests {
     #[test]
     fn test_validate_records() {
         let schema = ProximaSchema::vector_record_schema(128);
-        let bridge = DefaultVectorRecordBridge::new(schema);
+        let bridge = DefaultProximaRecordBridge::new(schema);
 
         let valid_records = vec![create_test_record("valid", 128)];
         assert!(bridge.validate_records(&valid_records).is_ok());
 
-        let invalid_records = vec![VectorRecord {
-            id: "".to_string(), // Empty ID
-            vector: vec![0.1; 128],
-            ..Default::default()
+        let invalid_records = vec![ProximaRecord {
+            oid: "".to_string(), // Empty ID
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: 128,
+                values: vec![0.1; 128],
+            }],
+            ..ProximaRecord::default()
         }];
         assert!(bridge.validate_records(&invalid_records).is_err());
 
-        let wrong_dim_records = vec![VectorRecord {
-            id: "wrong_dim".to_string(),
-            vector: vec![0.1; 64], // Wrong dimension
-            ..Default::default()
+        let wrong_dim_records = vec![ProximaRecord {
+            oid: "wrong_dim".to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: 64,
+                values: vec![0.1; 64], // Wrong dimension
+            }],
+            ..ProximaRecord::default()
         }];
         assert!(bridge.validate_records(&wrong_dim_records).is_err());
     }
@@ -966,7 +1158,7 @@ mod tests {
 
     #[test]
     fn test_legacy_bridge() {
-        let bridge = DefaultVectorRecordBridge::legacy(768);
+        let bridge = DefaultProximaRecordBridge::legacy(768);
         assert_eq!(bridge.vector_dimension(), Some(768));
         assert!(bridge.schema().is_legacy_vector_record);
     }
@@ -974,7 +1166,7 @@ mod tests {
     #[test]
     fn test_without_vectors() {
         let schema = ProximaSchema::vector_record_schema(128);
-        let bridge = DefaultVectorRecordBridge::new(schema).without_vectors();
+        let bridge = DefaultProximaRecordBridge::new(schema).without_vectors();
 
         let records = vec![create_test_record("test", 128)];
         let batch = bridge
@@ -986,11 +1178,11 @@ mod tests {
     }
 
     #[test]
-    fn test_infer_schema_from_vector_records() {
+    fn test_infer_schema_from_proxima_records() {
         let records = vec![create_test_record("a", 384), create_test_record("b", 384)];
 
-        let schema = infer_schema_from_vector_records(&records, "test_schema".to_string())
-            .expect("Failed to infer schema from vector records");
+        let schema = infer_schema_from_proxima_records(&records, "test_schema".to_string())
+            .expect("Failed to infer schema from records");
         assert_eq!(schema.vector_dimension(), Some(384));
         assert_eq!(schema.schema_id, "test_schema");
     }
@@ -998,14 +1190,19 @@ mod tests {
     #[test]
     fn test_empty_metadata() {
         let schema = ProximaSchema::vector_record_schema(64);
-        let bridge = DefaultVectorRecordBridge::new(schema);
+        let bridge = DefaultProximaRecordBridge::new(schema);
 
-        let records = vec![VectorRecord {
-            id: "empty_meta".to_string(),
-            vector: vec![0.1; 64],
-            metadata: HashMap::new(),
-            timestamp: Some(1234567890),
-            ..Default::default()
+        let records = vec![ProximaRecord {
+            oid: "empty_meta".to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: 64,
+                values: vec![0.1; 64],
+            }],
+            created_at_ns: 1_234_567_890_000_000,
+            updated_at_ns: 1_234_567_890_000_000,
+            ..ProximaRecord::default()
         }];
 
         let batch = bridge
@@ -1015,38 +1212,35 @@ mod tests {
             .batch_to_records(&batch)
             .expect("Failed to convert batch to records");
 
-        assert_eq!(recovered[0].id, "empty_meta");
-        assert!(recovered[0].metadata.is_empty());
+        assert_eq!(recovered[0].oid, "empty_meta");
+        assert!(recovered[0].props.is_empty());
     }
 
     #[test]
     fn test_nested_metadata() {
         let schema = ProximaSchema::vector_record_schema(32);
         let bridge =
-            DefaultVectorRecordBridge::new(schema).with_metadata_mode(MetadataMode::JsonString);
+            DefaultProximaRecordBridge::new(schema).with_metadata_mode(MetadataMode::JsonString);
 
-        let mut metadata = HashMap::new();
-        metadata.insert(
+        let mut props = HashMap::new();
+        props.insert(
             "nested".to_string(),
-            SqlValue {
-                value: Some(ProtoSqlValueInner::ArrayValue(SqlArray {
-                    values: vec![
-                        SqlValue {
-                            value: Some(ProtoSqlValueInner::Int64Value(1)),
-                        },
-                        SqlValue {
-                            value: Some(ProtoSqlValueInner::Int64Value(2)),
-                        },
-                    ],
-                })),
-            },
+            ProximaTreeNode::Value(ProximaValue::Array(vec![
+                ProximaValue::Int64(1),
+                ProximaValue::Int64(2),
+            ])),
         );
 
-        let records = vec![VectorRecord {
-            id: "nested".to_string(),
-            vector: vec![0.1; 32],
-            metadata,
-            ..Default::default()
+        let records = vec![ProximaRecord {
+            oid: "nested".to_string(),
+            props,
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: 32,
+                values: vec![0.1; 32],
+            }],
+            ..ProximaRecord::default()
         }];
 
         let batch = bridge
@@ -1056,6 +1250,6 @@ mod tests {
             .batch_to_records(&batch)
             .expect("Failed to convert batch to records");
 
-        assert!(recovered[0].metadata.contains_key("nested"));
+        assert!(recovered[0].props.contains_key("nested"));
     }
 }

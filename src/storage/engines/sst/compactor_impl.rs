@@ -988,7 +988,9 @@ impl SstCompactor {
                     stats.bytes_written += bincode::serialized_size(record).unwrap_or(0);
                 }
 
-                writer.write_block(&records)?;
+                let arrow_records: Vec<ProximaRecord> =
+                    records.iter().map(ProximaRecord::from).collect();
+                writer.write_block(&arrow_records)?;
                 writer.finalize()?;
 
                 info!(

@@ -1160,8 +1160,7 @@ impl VectorOperationsService {
         &self,
         records: &[ProximaRecord],
     ) -> crate::services::operations::BulkWriteDecision {
-        self.bulk_write_router
-            .should_use_direct_write_records(records)
+        self.bulk_write_router.route_records(records)
     }
 
     /// Bulk write operation for large batches.
@@ -1189,16 +1188,14 @@ impl VectorOperationsService {
         let start_time = std::time::Instant::now();
         let vector_count = vectors.len();
         let vector_ids: Vec<String> = vectors.iter().map(|v| v.oid.clone()).collect();
-        let decision = self
-            .bulk_write_router
-            .should_use_direct_write_records(&vectors);
+        let decision = self.bulk_write_router.route_records(&vectors);
 
         info!(
             "📦 Bulk write: collection={}, vectors={}, estimated_size={} bytes, decision={}",
             collection_id,
             vector_count,
             decision.estimated_size_bytes,
-            if decision.use_direct_write {
+            if decision.use_bulk_lane {
                 "BULK_WAL"
             } else {
                 "WAL"
@@ -1206,7 +1203,7 @@ impl VectorOperationsService {
         );
 
         // If below thresholds, fall back to standard WAL path
-        if !decision.use_direct_write {
+        if !decision.use_bulk_lane {
             debug!(
                 "📝 Batch below bulk threshold ({}), using standard WAL path",
                 decision.reason
@@ -1518,23 +1515,21 @@ impl VectorOperationsService {
         let mut vectors = vectors;
         apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
 
-        let decision = self
-            .bulk_write_router
-            .should_use_direct_write_records(&vectors);
+        let decision = self.bulk_write_router.route_records(&vectors);
 
         debug!(
             "📦 insert_batch: collection={}, vectors={}, estimated_size={} bytes, path={}",
             collection_id,
             decision.vector_count,
             decision.estimated_size_bytes,
-            if decision.use_direct_write {
+            if decision.use_bulk_lane {
                 "BULK_WAL"
             } else {
                 "WAL"
             }
         );
 
-        if decision.use_direct_write {
+        if decision.use_bulk_lane {
             // Large batch: use bulk write (optimized for throughput)
             info!(
                 "🚀 Routing to bulk_write: {} (vectors: {}, size: {} bytes)",
