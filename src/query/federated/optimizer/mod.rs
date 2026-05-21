@@ -2949,6 +2949,26 @@ impl CrossModelOptimizer {
                     required_capabilities: CapabilitySet::new(),
                 },
                 QuerySourceRef::Extension {
+                    extension: SqlExtension::Traces { namespace },
+                    ..
+                } => PlanNode {
+                    id: self.next_id(),
+                    node_type: PlanNodeType::ObservabilityQuery {
+                        namespace: namespace.clone(),
+                        query_type: ObservabilityQueryType::Traces,
+                        time_range: None,
+                    },
+                    estimated_cost: 20.0,
+                    estimated_rows: 500,
+                    output_columns: vec![
+                        "trace_id".to_string(),
+                        "span_id".to_string(),
+                        "operation".to_string(),
+                        "duration_ns".to_string(),
+                    ],
+                    required_capabilities: CapabilitySet::new(),
+                },
+                QuerySourceRef::Extension {
                     extension:
                         SqlExtension::VectorDistance {
                             left_column,
@@ -3056,7 +3076,9 @@ impl CrossModelOptimizer {
             QueryType::VectorSearch => self.plan_vector_search(query),
             QueryType::GraphQuery => self.plan_graph_query(query),
             QueryType::DocumentQuery => self.plan_document_query(query),
-            QueryType::LogQuery | QueryType::MetricQuery => self.plan_observability_query(query),
+            QueryType::LogQuery | QueryType::MetricQuery | QueryType::TraceQuery => {
+                self.plan_observability_query(query)
+            }
             QueryType::Federated => self.plan_federated_query(query),
         }?;
 
@@ -3394,6 +3416,9 @@ impl CrossModelOptimizer {
                 SqlExtension::Metrics { namespace } => {
                     Some((namespace.clone(), ObservabilityQueryType::Metrics))
                 }
+                SqlExtension::Traces { namespace } => {
+                    Some((namespace.clone(), ObservabilityQueryType::Traces))
+                }
                 _ => None,
             })
             .unwrap_or(("default".to_string(), ObservabilityQueryType::Logs));
@@ -3527,6 +3552,26 @@ impl CrossModelOptimizer {
                         "timestamp".to_string(),
                         "metric_name".to_string(),
                         "value".to_string(),
+                    ],
+                    required_capabilities: CapabilitySet::new(),
+                },
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::Traces { namespace },
+                    ..
+                } => PlanNode {
+                    id: self.next_id(),
+                    node_type: PlanNodeType::ObservabilityQuery {
+                        namespace: namespace.clone(),
+                        query_type: ObservabilityQueryType::Traces,
+                        time_range: None,
+                    },
+                    estimated_cost: 20.0,
+                    estimated_rows: 500,
+                    output_columns: vec![
+                        "trace_id".to_string(),
+                        "span_id".to_string(),
+                        "operation".to_string(),
+                        "duration_ns".to_string(),
                     ],
                     required_capabilities: CapabilitySet::new(),
                 },

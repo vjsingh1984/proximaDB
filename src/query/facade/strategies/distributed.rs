@@ -481,6 +481,10 @@ impl DistributedQueryStrategy {
                     dependencies: Vec::new(),
                 })
             }
+            SqlExtension::Traces { namespace } => Err(anyhow!(
+                "Distributed execution does not support TRACES('{}') yet; use the federated observability executor",
+                namespace
+            )),
         }
     }
 }

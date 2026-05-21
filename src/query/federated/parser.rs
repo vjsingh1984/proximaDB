@@ -9,6 +9,7 @@
 //! - **DOCUMENT_QUERY(collection, filter)**: Document queries
 //! - **LOGS(namespace)**: Observability log queries
 //! - **METRICS(namespace)**: Observability metric queries
+//! - **TRACES(namespace)**: Observability trace queries
 //! - **<->** operator: Vector distance (pgvector compatible)
 
 use anyhow::Result;
@@ -29,6 +30,8 @@ pub enum QueryType {
     LogQuery,
     /// Observability metric query
     MetricQuery,
+    /// Observability trace query
+    TraceQuery,
     /// Cross-model federated query
     Federated,
 }
@@ -62,6 +65,8 @@ pub enum SqlExtension {
     Logs { namespace: String },
     /// METRICS(namespace)
     Metrics { namespace: String },
+    /// TRACES(namespace)
+    Traces { namespace: String },
     /// Vector distance operator <->
     VectorDistance {
         left_column: String,
@@ -134,6 +139,7 @@ impl FederatedParser {
                 "DOCUMENT_QUERY",
                 "LOGS",
                 "METRICS",
+                "TRACES",
                 "<->",
                 "::vector",
             ],
@@ -184,6 +190,7 @@ impl FederatedParser {
                     && !upper.starts_with("DOCUMENT_QUERY")
                     && !upper.starts_with("LOGS")
                     && !upper.starts_with("METRICS")
+                    && !upper.starts_with("TRACES")
             })
             .count();
 
@@ -220,16 +227,18 @@ impl FederatedParser {
             SqlExtension::DocumentQuery { .. } => QueryType::DocumentQuery,
             SqlExtension::Logs { .. } => QueryType::LogQuery,
             SqlExtension::Metrics { .. } => QueryType::MetricQuery,
+            SqlExtension::Traces { .. } => QueryType::TraceQuery,
         }
     }
 
     fn parse_function_extensions(&self, sql: &str) -> Vec<(SqlExtension, usize, Option<String>)> {
-        const FUNCTION_NAMES: [&str; 5] = [
+        const FUNCTION_NAMES: [&str; 6] = [
             "VECTOR_SEARCH",
             "GRAPH_QUERY",
             "DOCUMENT_QUERY",
             "LOGS",
             "METRICS",
+            "TRACES",
         ];
 
         let sql_upper = sql.to_ascii_uppercase();
@@ -277,6 +286,7 @@ impl FederatedParser {
             "DOCUMENT_QUERY" => self.parse_document_query_args(args),
             "LOGS" => self.parse_logs_query_args(args),
             "METRICS" => self.parse_metrics_query_args(args),
+            "TRACES" => self.parse_traces_query_args(args),
             _ => None,
         }
     }
@@ -325,6 +335,12 @@ impl FederatedParser {
     fn parse_metrics_query_args(&self, args: &str) -> Option<SqlExtension> {
         let namespace = Self::unquote_sql_string(args).to_string();
         Some(SqlExtension::Metrics { namespace })
+    }
+
+    /// Parse TRACES(namespace)
+    fn parse_traces_query_args(&self, args: &str) -> Option<SqlExtension> {
+        let namespace = Self::unquote_sql_string(args).to_string();
+        Some(SqlExtension::Traces { namespace })
     }
 
     /// Parse vector distance operator <->
@@ -453,7 +469,8 @@ impl FederatedParser {
                 || from_upper.starts_with("GRAPH_QUERY")
                 || from_upper.starts_with("DOCUMENT_QUERY")
                 || from_upper.starts_with("LOGS(")
-                || from_upper.starts_with("METRICS(");
+                || from_upper.starts_with("METRICS(")
+                || from_upper.starts_with("TRACES(");
 
             // If it's a function call, don't split by comma
             if is_function_call {
@@ -930,6 +947,20 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_traces_query() {
+        let parser = FederatedParser::new();
+        let query = parser.parse("SELECT * FROM TRACES('production')").unwrap();
+        assert_eq!(query.query_type, QueryType::TraceQuery);
+        match &query.extensions[0] {
+            SqlExtension::Traces { namespace } => {
+                assert_eq!(namespace, "production");
+            }
+            other => panic!("Expected Traces extension, got {other:?}"),
+        }
+        assert!(query.targets.is_empty());
+    }
+
+    #[test]
     fn test_parse_cross_model_join() {
         let parser = FederatedParser::new();
         let query = parser.parse(
@@ -1019,6 +1050,7 @@ mod tests {
         assert!(extensions.contains(&"VECTOR_SEARCH"));
         assert!(extensions.contains(&"GRAPH_QUERY"));
         assert!(extensions.contains(&"LOGS"));
+        assert!(extensions.contains(&"TRACES"));
     }
 
     #[test]

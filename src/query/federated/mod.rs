@@ -61,7 +61,7 @@
 //!
 //! ### LOGS(namespace) / METRICS(namespace)
 //!
-//! Queries observability data (logs and metrics).
+//! Queries observability data (logs, metrics, and traces).
 //!
 //! ```sql
 //! -- Query recent logs
@@ -69,6 +69,9 @@
 //!
 //! -- Query metrics
 //! SELECT * FROM METRICS('system') WHERE metric_name = 'cpu_usage';
+//!
+//! -- Query traces
+//! SELECT * FROM TRACES('production');
 //! ```
 //!
 //! ### Vector Distance Operator (<->)
@@ -284,7 +287,7 @@ impl FederatedQueryContext {
 
             if federated_query.query_type == QueryType::Sql {
                 return Err(anyhow::anyhow!(
-                    "Standard relational SQL execution is not configured in FederatedQueryContext; use columnar providers or SQL extensions such as VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY, LOGS, or METRICS"
+                    "Standard relational SQL execution is not configured in FederatedQueryContext; use columnar providers or SQL extensions such as VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY, LOGS, METRICS, or TRACES"
                 ));
             }
 
@@ -339,7 +342,7 @@ impl FederatedQueryContext {
             let federated_query = self.parser.parse(sql)?;
             if federated_query.query_type == QueryType::Sql {
                 return Err(anyhow::anyhow!(
-                    "Standard relational SQL execution is not configured in FederatedQueryContext; use columnar providers or SQL extensions such as VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY, LOGS, or METRICS"
+                    "Standard relational SQL execution is not configured in FederatedQueryContext; use columnar providers or SQL extensions such as VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY, LOGS, METRICS, or TRACES"
                 ));
             }
             let plan = self.optimizer.optimize(&federated_query)?;
@@ -790,6 +793,7 @@ mod tests {
     struct MockObservabilityService {
         logs: HashMap<String, Vec<LogEntry>>,
         metrics: HashMap<String, MetricAggregationResult>,
+        traces: HashMap<String, Vec<TraceData>>,
         metric_params: Mutex<Vec<(String, MetricAggregationParams)>>,
     }
 
@@ -801,8 +805,14 @@ mod tests {
             Self {
                 logs,
                 metrics,
+                traces: HashMap::new(),
                 metric_params: Mutex::new(Vec::new()),
             }
+        }
+
+        fn with_traces(mut self, traces: HashMap<String, Vec<TraceData>>) -> Self {
+            self.traces = traces;
+            self
         }
 
         fn recorded_metric_params(&self) -> Vec<(String, MetricAggregationParams)> {
@@ -895,14 +905,21 @@ mod tests {
 
         async fn query_traces(
             &self,
-            _namespace: &str,
+            namespace: &str,
             _start_time_ns: i64,
             _end_time_ns: i64,
             _trace_id: Option<String>,
             _service: Option<String>,
-            _limit: u32,
+            limit: u32,
         ) -> Result<Vec<TraceData>> {
-            Ok(vec![])
+            Ok(self
+                .traces
+                .get(namespace)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .take(limit as usize)
+                .collect())
         }
 
         async fn create_namespace(&self, config: ObservabilityNamespaceConfig) -> Result<String> {
@@ -3115,6 +3132,192 @@ mod tests {
         assert_eq!(recorded_params[0].1.metric_name, "*");
         assert_eq!(recorded_params[0].1.aggregation, MetricAggregation::Avg);
         assert_eq!(recorded_params[0].1.step_seconds, 60);
+    }
+
+    #[tokio::test]
+    async fn test_observability_metrics_query_applies_sql_filter() {
+        let observability_service = Arc::new(MockObservabilityService::new(
+            HashMap::new(),
+            HashMap::from([(
+                "production".to_string(),
+                MetricAggregationResult {
+                    series: vec![
+                        TimeSeriesData {
+                            labels: HashMap::from([(
+                                "__name__".to_string(),
+                                "cpu_usage".to_string(),
+                            )]),
+                            points: vec![DataPointValue {
+                                timestamp_ns: 100,
+                                value: 0.75,
+                            }],
+                        },
+                        TimeSeriesData {
+                            labels: HashMap::from([(
+                                "__name__".to_string(),
+                                "memory_usage".to_string(),
+                            )]),
+                            points: vec![DataPointValue {
+                                timestamp_ns: 101,
+                                value: 0.55,
+                            }],
+                        },
+                    ],
+                    query_time_ms: 0,
+                },
+            )]),
+        )) as Arc<dyn ObservabilityStorageOperations>;
+        let observability_store = Arc::new(
+            ObservabilityStore::new(ObservabilityStoreConfig::default())
+                .with_service(observability_service),
+        );
+
+        let storage =
+            Arc::new(MultiModalStorageFacade::new().with_observability_store(observability_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached("SELECT * FROM METRICS('production') WHERE metric_name = 'cpu_usage'")
+            .await
+            .expect("metrics query should apply SQL filters after store execution");
+
+        assert_eq!(result.row_count(), 1);
+        let metric_name = result.batches[0]
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("metric_name column should be utf8");
+        assert_eq!(metric_name.value(0), "cpu_usage");
+    }
+
+    #[tokio::test]
+    async fn test_observability_traces_query_executes_against_store() {
+        let observability_service = Arc::new(
+            MockObservabilityService::new(HashMap::new(), HashMap::new()).with_traces(
+                HashMap::from([(
+                    "production".to_string(),
+                    vec![TraceData {
+                        trace_id: "trace-1".to_string(),
+                        span_id: "span-1".to_string(),
+                        parent_span_id: None,
+                        name: "flush_segment".to_string(),
+                        kind: 0,
+                        start_time_ns: 1_000,
+                        end_time_ns: 1_750,
+                        status: None,
+                        attributes: HashMap::new(),
+                        events: vec![],
+                        links: vec![],
+                    }],
+                )]),
+            ),
+        ) as Arc<dyn ObservabilityStorageOperations>;
+        let observability_store = Arc::new(
+            ObservabilityStore::new(ObservabilityStoreConfig::default())
+                .with_service(observability_service),
+        );
+
+        let storage =
+            Arc::new(MultiModalStorageFacade::new().with_observability_store(observability_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached("SELECT * FROM TRACES('production')")
+            .await
+            .expect("traces query should execute against the observability store");
+
+        assert_eq!(result.row_count(), 1);
+        let trace_id = result.batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("trace_id column should be utf8");
+        let span_id = result.batches[0]
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("span_id column should be utf8");
+        let operation = result.batches[0]
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("operation column should be utf8");
+        let duration = result.batches[0]
+            .column(3)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("duration_ns column should be int64");
+
+        assert_eq!(trace_id.value(0), "trace-1");
+        assert_eq!(span_id.value(0), "span-1");
+        assert_eq!(operation.value(0), "flush_segment");
+        assert_eq!(duration.value(0), 750);
+    }
+
+    #[tokio::test]
+    async fn test_observability_traces_query_applies_duration_filter() {
+        let observability_service = Arc::new(
+            MockObservabilityService::new(HashMap::new(), HashMap::new()).with_traces(
+                HashMap::from([(
+                    "production".to_string(),
+                    vec![
+                        TraceData {
+                            trace_id: "trace-fast".to_string(),
+                            span_id: "span-fast".to_string(),
+                            parent_span_id: None,
+                            name: "fast_path".to_string(),
+                            kind: 0,
+                            start_time_ns: 1_000,
+                            end_time_ns: 1_100,
+                            status: None,
+                            attributes: HashMap::new(),
+                            events: vec![],
+                            links: vec![],
+                        },
+                        TraceData {
+                            trace_id: "trace-slow".to_string(),
+                            span_id: "span-slow".to_string(),
+                            parent_span_id: None,
+                            name: "slow_path".to_string(),
+                            kind: 0,
+                            start_time_ns: 2_000,
+                            end_time_ns: 3_500,
+                            status: None,
+                            attributes: HashMap::new(),
+                            events: vec![],
+                            links: vec![],
+                        },
+                    ],
+                )]),
+            ),
+        ) as Arc<dyn ObservabilityStorageOperations>;
+        let observability_store = Arc::new(
+            ObservabilityStore::new(ObservabilityStoreConfig::default())
+                .with_service(observability_service),
+        );
+
+        let storage =
+            Arc::new(MultiModalStorageFacade::new().with_observability_store(observability_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached("SELECT * FROM TRACES('production') WHERE duration_ns >= 1000")
+            .await
+            .expect("trace query should apply SQL duration filters after store execution");
+
+        assert_eq!(result.row_count(), 1);
+        let trace_id = result.batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("trace_id column should be utf8");
+        let duration = result.batches[0]
+            .column(3)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("duration_ns column should be int64");
+        assert_eq!(trace_id.value(0), "trace-slow");
+        assert_eq!(duration.value(0), 1_500);
     }
 
     #[tokio::test]
