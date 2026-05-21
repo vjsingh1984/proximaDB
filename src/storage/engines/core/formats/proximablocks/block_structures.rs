@@ -1076,107 +1076,12 @@ pub struct BlockLocation {
     pub estimated_load_time_ms: f32,
 }
 
-/// Convert a SqlValue to a serde_json::Value for JSON serialization.
-/// Used when persisting ObjectValue/ArrayValue to SST with type tag 0x05.
-fn sql_value_to_json(v: &crate::proto::proximadb_v1::SqlValue) -> serde_json::Value {
-    use crate::proto::proximadb_v1::sql_value::Value;
-    match &v.value {
-        Some(Value::StringValue(s)) => serde_json::Value::String(s.clone()),
-        Some(Value::NumberValue(n)) => serde_json::Number::from_f64(*n)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
-        Some(Value::Int64Value(i)) => serde_json::Value::Number(serde_json::Number::from(*i)),
-        Some(Value::BoolValue(b)) => serde_json::Value::Bool(*b),
-        Some(Value::ObjectValue(obj)) => {
-            let map: serde_json::Map<String, serde_json::Value> = obj
-                .fields
-                .iter()
-                .map(|(k, v)| (k.clone(), sql_value_to_json(v)))
-                .collect();
-            serde_json::Value::Object(map)
-        }
-        Some(Value::ArrayValue(arr)) => {
-            serde_json::Value::Array(arr.values.iter().map(sql_value_to_json).collect())
-        }
-        _ => serde_json::Value::Null,
-    }
-}
-
-/// Inverse of sql_value_to_json — used during deserialization of type tag 0x05.
-fn json_value_to_sql_value(v: &serde_json::Value) -> crate::proto::proximadb_v1::SqlValue {
-    use crate::proto::proximadb_v1::{SqlArray, SqlObject, SqlValue, sql_value::Value};
-    let inner = match v {
-        serde_json::Value::String(s) => Value::StringValue(s.clone()),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Value::Int64Value(i)
-            } else {
-                Value::NumberValue(n.as_f64().unwrap_or(0.0))
-            }
-        }
-        serde_json::Value::Bool(b) => Value::BoolValue(*b),
-        serde_json::Value::Object(map) => {
-            let fields = map
-                .iter()
-                .map(|(k, v)| (k.clone(), json_value_to_sql_value(v)))
-                .collect();
-            Value::ObjectValue(SqlObject { fields })
-        }
-        serde_json::Value::Array(arr) => {
-            let values = arr.iter().map(json_value_to_sql_value).collect();
-            Value::ArrayValue(SqlArray { values })
-        }
-        serde_json::Value::Null => return SqlValue { value: None },
-    };
-    SqlValue { value: Some(inner) }
-}
-
 impl ProximaDataBlock {
     fn record_vector(record: &ProximaRecord) -> &[f32] {
         record
             .embeddings
             .first()
             .map_or(&[][..], |embedding| embedding.values.as_slice())
-    }
-
-    fn is_deleted_record(record: &ProximaRecord) -> bool {
-        record.props.get("_deleted").is_some_and(|node| {
-            matches!(
-                node,
-                ProximaTreeNode::Value(ProximaValue::String(value)) if value == "true"
-            )
-        })
-    }
-
-    /// DEPRECATED: Use ProximaCodec::global() instead
-    ///
-    /// OBSOLETE: This function has been removed - use ProximaCodec::global() instead
-    /// Kept as stub to avoid breaking old code references
-    #[deprecated(since = "0.1.5", note = "Use ProximaCodec::global() for all encoding")]
-    #[allow(dead_code)]
-    #[allow(clippy::panic)] // Intentional panic for obsolete API - prevents compilation of deprecated code
-    fn get_simd_encoder(_engine_profile: super::engine_profile::EngineProfile) -> ! {
-        panic!("get_simd_encoder is obsolete - use ProximaCodec::global() instead")
-    }
-
-    /// DEPRECATED: Use serialize_with_config() which now uses ProximaCodec
-    ///
-    /// Apply SIMD-optimized encoding based on layout strategy
-    #[deprecated(
-        since = "0.1.5",
-        note = "Use serialize_with_config() which now uses ProximaCodec"
-    )]
-    #[allow(dead_code)]
-    #[allow(clippy::panic)] // Intentional panic for obsolete API - prevents compilation of deprecated code
-    fn apply_simd_encoding(
-        &mut self,
-        _vectors: &[Vec<f32>],
-        _layout: VectorEncodingLayout,
-        _engine_profile: EngineProfile,
-    ) -> anyhow::Result<()> {
-        panic!(
-            "apply_simd_encoding is obsolete - use serialize_with_config() which uses ProximaCodec instead"
-        )
     }
 
     /// **🚀 Create a new Proxima data block with AUTOMATIC optimization capabilities**
