@@ -379,19 +379,23 @@ mod tests {
     use crate::graph::engines::GraphEngine;
     use crate::graph::{Edge, EdgeId, Node, NodeId};
     use crate::proto::proximadb_v1::{
-        DocumentCollectionConfig, DocumentFilter, DocumentUpdate, PropertyValue, SqlArray,
-        SqlObject, SqlValue, VectorData, property_value, sql_value,
+        DocumentCollectionConfig, DocumentFilter, DocumentUpdate, LogEntry, LogFilter,
+        MetricAggregation, MetricSample, ObservabilityNamespaceConfig, PropertyValue,
+        RetentionConfig, Severity, SqlArray, SqlObject, SqlValue, TraceData, VectorData,
+        property_value, sql_value,
     };
     use crate::query::federated::{FederatedQueryContext, QueryResultCache};
     use crate::storage::MultiModalStorageFacade;
     use crate::storage::multimodal::stores::{
-        DocumentStore, DocumentStoreConfig, GraphStore, GraphStoreConfig, VectorStore,
-        VectorStoreConfig,
+        DocumentStore, DocumentStoreConfig, GraphStore, GraphStoreConfig, ObservabilityStore,
+        ObservabilityStoreConfig, VectorStore, VectorStoreConfig,
     };
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::traits::{
-        CompactionParameters, DocumentCollectionInfo, DocumentRecord, DocumentStorageOperations,
-        FlushParameters, UnifiedStorageEngine,
+        CompactionParameters, DataPointValue, DocumentCollectionInfo, DocumentRecord,
+        DocumentStorageOperations, FlushParameters, IngestResult, LogQueryResult,
+        MetricAggregationParams, MetricAggregationResult, NamespaceInfo,
+        ObservabilityStorageOperations, TimeSeriesData, UnifiedStorageEngine,
     };
     use anyhow::Result;
     use arrow::array::{Float32Array, Float64Array, Int64Array, StringArray};
@@ -778,6 +782,148 @@ mod tests {
                     document_count: documents.len() as u64,
                     storage_size_bytes: 0,
                     indexes: vec![],
+                })
+                .collect())
+        }
+    }
+
+    struct MockObservabilityService {
+        logs: HashMap<String, Vec<LogEntry>>,
+        metrics: HashMap<String, MetricAggregationResult>,
+        metric_params: Mutex<Vec<(String, MetricAggregationParams)>>,
+    }
+
+    impl MockObservabilityService {
+        fn new(
+            logs: HashMap<String, Vec<LogEntry>>,
+            metrics: HashMap<String, MetricAggregationResult>,
+        ) -> Self {
+            Self {
+                logs,
+                metrics,
+                metric_params: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn recorded_metric_params(&self) -> Vec<(String, MetricAggregationParams)> {
+            self.metric_params
+                .lock()
+                .expect("metric params lock should not be poisoned")
+                .clone()
+        }
+    }
+
+    #[async_trait]
+    impl ObservabilityStorageOperations for MockObservabilityService {
+        async fn ingest_logs(&self, _namespace: &str, logs: Vec<LogEntry>) -> Result<IngestResult> {
+            Ok(IngestResult {
+                ingested: logs.len() as u64,
+                failed: 0,
+                errors: vec![],
+                processing_time_ms: 0,
+            })
+        }
+
+        async fn ingest_metrics(
+            &self,
+            _namespace: &str,
+            metrics: Vec<MetricSample>,
+        ) -> Result<IngestResult> {
+            Ok(IngestResult {
+                ingested: metrics.len() as u64,
+                failed: 0,
+                errors: vec![],
+                processing_time_ms: 0,
+            })
+        }
+
+        async fn ingest_traces(
+            &self,
+            _namespace: &str,
+            traces: Vec<TraceData>,
+        ) -> Result<IngestResult> {
+            Ok(IngestResult {
+                ingested: traces.len() as u64,
+                failed: 0,
+                errors: vec![],
+                processing_time_ms: 0,
+            })
+        }
+
+        async fn query_logs(
+            &self,
+            namespace: &str,
+            _start_time_ns: i64,
+            _end_time_ns: i64,
+            _filter: Option<LogFilter>,
+            limit: u32,
+        ) -> Result<LogQueryResult> {
+            let logs = self
+                .logs
+                .get(namespace)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .take(limit as usize)
+                .collect::<Vec<_>>();
+            Ok(LogQueryResult {
+                total_matched: logs.len() as u64,
+                logs,
+                next_cursor: None,
+                query_time_ms: 0,
+            })
+        }
+
+        async fn aggregate_metrics(
+            &self,
+            namespace: &str,
+            params: MetricAggregationParams,
+        ) -> Result<MetricAggregationResult> {
+            self.metric_params
+                .lock()
+                .expect("metric params lock should not be poisoned")
+                .push((namespace.to_string(), params));
+            Ok(self
+                .metrics
+                .get(namespace)
+                .cloned()
+                .unwrap_or(MetricAggregationResult {
+                    series: vec![],
+                    query_time_ms: 0,
+                }))
+        }
+
+        async fn query_traces(
+            &self,
+            _namespace: &str,
+            _start_time_ns: i64,
+            _end_time_ns: i64,
+            _trace_id: Option<String>,
+            _service: Option<String>,
+            _limit: u32,
+        ) -> Result<Vec<TraceData>> {
+            Ok(vec![])
+        }
+
+        async fn create_namespace(&self, config: ObservabilityNamespaceConfig) -> Result<String> {
+            Ok(config.name)
+        }
+
+        async fn list_namespaces(&self) -> Result<Vec<NamespaceInfo>> {
+            Ok(self
+                .logs
+                .iter()
+                .map(|(name, logs)| NamespaceInfo {
+                    name: name.clone(),
+                    log_count: logs.len() as u64,
+                    metric_count: 0,
+                    trace_count: 0,
+                    retention_config: Some(RetentionConfig {
+                        hot_retention_hours: 24,
+                        warm_retention_days: 7,
+                        cold_retention_days: 30,
+                        archive_retention_days: 0,
+                    }),
                 })
                 .collect())
         }
@@ -2855,6 +3001,120 @@ mod tests {
                 .to_string()
                 .contains("OR filters are not yet supported")
         );
+    }
+
+    #[tokio::test]
+    async fn test_observability_logs_query_executes_against_store() {
+        let observability_service = Arc::new(MockObservabilityService::new(
+            HashMap::from([(
+                "production".to_string(),
+                vec![LogEntry {
+                    timestamp_ns: 42,
+                    severity: Severity::Error as i32,
+                    message: "disk full".to_string(),
+                    fields: HashMap::new(),
+                    source: Some("node-1".to_string()),
+                    service: Some("storage".to_string()),
+                }],
+            )]),
+            HashMap::new(),
+        )) as Arc<dyn ObservabilityStorageOperations>;
+        let observability_store = Arc::new(
+            ObservabilityStore::new(ObservabilityStoreConfig::default())
+                .with_service(observability_service),
+        );
+
+        let storage =
+            Arc::new(MultiModalStorageFacade::new().with_observability_store(observability_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached("SELECT * FROM LOGS('production')")
+            .await
+            .expect("logs query should execute against the observability store");
+
+        assert_eq!(result.row_count(), 1);
+        let timestamp = result.batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("timestamp column should be int64");
+        let level = result.batches[0]
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("level column should be utf8");
+        let message = result.batches[0]
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("message column should be utf8");
+
+        assert_eq!(timestamp.value(0), 42);
+        assert_eq!(level.value(0), "ERROR");
+        assert_eq!(message.value(0), "disk full");
+    }
+
+    #[tokio::test]
+    async fn test_observability_metrics_query_executes_against_store() {
+        let observability_service = Arc::new(MockObservabilityService::new(
+            HashMap::new(),
+            HashMap::from([(
+                "production".to_string(),
+                MetricAggregationResult {
+                    series: vec![TimeSeriesData {
+                        labels: HashMap::from([("__name__".to_string(), "cpu_usage".to_string())]),
+                        points: vec![DataPointValue {
+                            timestamp_ns: 99,
+                            value: 0.75,
+                        }],
+                    }],
+                    query_time_ms: 0,
+                },
+            )]),
+        ));
+        let recorded_service = observability_service.clone();
+        let observability_store = Arc::new(
+            ObservabilityStore::new(ObservabilityStoreConfig::default())
+                .with_service(observability_service as Arc<dyn ObservabilityStorageOperations>),
+        );
+
+        let storage =
+            Arc::new(MultiModalStorageFacade::new().with_observability_store(observability_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached("SELECT * FROM METRICS('production')")
+            .await
+            .expect("metrics query should execute against the observability store");
+
+        assert_eq!(result.row_count(), 1);
+        let timestamp = result.batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("timestamp column should be int64");
+        let metric_name = result.batches[0]
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("metric_name column should be utf8");
+        let value = result.batches[0]
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .expect("value column should be float32");
+
+        assert_eq!(timestamp.value(0), 99);
+        assert_eq!(metric_name.value(0), "cpu_usage");
+        assert!((value.value(0) - 0.75).abs() < f32::EPSILON);
+
+        let recorded_params = recorded_service.recorded_metric_params();
+        assert_eq!(recorded_params.len(), 1);
+        assert_eq!(recorded_params[0].0, "production");
+        assert_eq!(recorded_params[0].1.metric_name, "*");
+        assert_eq!(recorded_params[0].1.aggregation, MetricAggregation::Avg);
+        assert_eq!(recorded_params[0].1.step_seconds, 60);
     }
 
     #[tokio::test]
