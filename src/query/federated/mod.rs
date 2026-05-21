@@ -616,29 +616,96 @@ mod tests {
 
         fn matches_filter(document: &DocumentRecord, filter: &DocumentFilter) -> bool {
             filter.conditions.iter().all(|condition| {
-                if condition.operator != crate::proto::proximadb_v1::DocFilterOperator::Eq as i32 {
-                    return false;
+                let operator =
+                    crate::proto::proximadb_v1::DocFilterOperator::try_from(condition.operator)
+                        .unwrap_or(crate::proto::proximadb_v1::DocFilterOperator::Unspecified);
+                let path = condition.path.strip_prefix("$.").unwrap_or(&condition.path);
+                let actual = document.document.fields.get(path);
+                match operator {
+                    crate::proto::proximadb_v1::DocFilterOperator::Eq => {
+                        Self::sql_values_equal(actual, condition.value.as_ref())
+                    }
+                    crate::proto::proximadb_v1::DocFilterOperator::Ne => {
+                        !Self::sql_values_equal(actual, condition.value.as_ref())
+                    }
+                    crate::proto::proximadb_v1::DocFilterOperator::Gt => {
+                        Self::compare_sql_values(actual, condition.value.as_ref(), |left, right| {
+                            left > right
+                        })
+                    }
+                    crate::proto::proximadb_v1::DocFilterOperator::Gte => {
+                        Self::compare_sql_values(actual, condition.value.as_ref(), |left, right| {
+                            left >= right
+                        })
+                    }
+                    crate::proto::proximadb_v1::DocFilterOperator::Lt => {
+                        Self::compare_sql_values(actual, condition.value.as_ref(), |left, right| {
+                            left < right
+                        })
+                    }
+                    crate::proto::proximadb_v1::DocFilterOperator::Lte => {
+                        Self::compare_sql_values(actual, condition.value.as_ref(), |left, right| {
+                            left <= right
+                        })
+                    }
+                    crate::proto::proximadb_v1::DocFilterOperator::Contains => {
+                        let actual = actual.and_then(Self::sql_value_string);
+                        let expected = condition.value.as_ref().and_then(Self::sql_value_string);
+                        actual
+                            .zip(expected)
+                            .is_some_and(|(left, right)| left.contains(&right))
+                    }
+                    _ => false,
                 }
-
-                let expected = condition
-                    .value
-                    .as_ref()
-                    .and_then(|value| match &value.value {
-                        Some(sql_value::Value::StringValue(s)) => Some(s.as_str()),
-                        _ => None,
-                    });
-
-                let actual = document
-                    .document
-                    .fields
-                    .get(&condition.path)
-                    .and_then(|value| match &value.value {
-                        Some(sql_value::Value::StringValue(s)) => Some(s.as_str()),
-                        _ => None,
-                    });
-
-                expected.zip(actual).map(|(l, r)| l == r).unwrap_or(false)
             })
+        }
+
+        fn sql_values_equal(left: Option<&SqlValue>, right: Option<&SqlValue>) -> bool {
+            match (
+                left.and_then(Self::sql_value_string),
+                right.and_then(Self::sql_value_string),
+            ) {
+                (Some(left), Some(right)) => left == right,
+                _ => match (
+                    left.and_then(Self::sql_value_number),
+                    right.and_then(Self::sql_value_number),
+                ) {
+                    (Some(left), Some(right)) => (left - right).abs() < f64::EPSILON,
+                    _ => false,
+                },
+            }
+        }
+
+        fn compare_sql_values<F>(
+            left: Option<&SqlValue>,
+            right: Option<&SqlValue>,
+            predicate: F,
+        ) -> bool
+        where
+            F: FnOnce(f64, f64) -> bool,
+        {
+            left.and_then(Self::sql_value_number)
+                .zip(right.and_then(Self::sql_value_number))
+                .is_some_and(|(left, right)| predicate(left, right))
+        }
+
+        fn sql_value_string(value: &SqlValue) -> Option<String> {
+            match value.value.as_ref()? {
+                sql_value::Value::StringValue(value) => Some(value.clone()),
+                sql_value::Value::BoolValue(value) => Some(value.to_string()),
+                sql_value::Value::Int64Value(value) => Some(value.to_string()),
+                sql_value::Value::NumberValue(value) => Some(value.to_string()),
+                _ => None,
+            }
+        }
+
+        fn sql_value_number(value: &SqlValue) -> Option<f64> {
+            match value.value.as_ref()? {
+                sql_value::Value::Int64Value(value) => Some(*value as f64),
+                sql_value::Value::NumberValue(value) => Some(*value),
+                sql_value::Value::StringValue(value) => value.parse().ok(),
+                _ => None,
+            }
         }
     }
 
@@ -719,6 +786,12 @@ mod tests {
     fn string_value(value: &str) -> SqlValue {
         SqlValue {
             value: Some(sql_value::Value::StringValue(value.to_string())),
+        }
+    }
+
+    fn int_value(value: i64) -> SqlValue {
+        SqlValue {
+            value: Some(sql_value::Value::Int64Value(value)),
         }
     }
 
@@ -2592,6 +2665,107 @@ mod tests {
             .map(|field| field.name().clone())
             .collect();
         assert_eq!(field_names, vec!["id", "document"]);
+    }
+
+    #[tokio::test]
+    async fn test_document_query_filter_supports_comparison_and_and_clauses() {
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "orders".to_string(),
+            vec![
+                DocumentRecord {
+                    id: "order-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([
+                            ("status".to_string(), string_value("pending")),
+                            ("price".to_string(), int_value(125)),
+                        ]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                },
+                DocumentRecord {
+                    id: "order-2".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([
+                            ("status".to_string(), string_value("pending")),
+                            ("price".to_string(), int_value(25)),
+                        ]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                },
+                DocumentRecord {
+                    id: "order-3".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([
+                            ("status".to_string(), string_value("shipped")),
+                            ("price".to_string(), int_value(225)),
+                        ]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                },
+            ],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(MultiModalStorageFacade::new().with_document_store(document_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT id FROM DOCUMENT_QUERY('orders', 'status = \"pending\" AND price >= 100')",
+            )
+            .await
+            .expect("document comparison filters should execute");
+
+        assert_eq!(result.row_count(), 1);
+        let ids = result.batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("id column should be utf8");
+        assert_eq!(ids.value(0), "order-1");
+    }
+
+    #[tokio::test]
+    async fn test_document_query_filter_rejects_unsupported_or_clause() {
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "orders".to_string(),
+            vec![DocumentRecord {
+                id: "order-1".to_string(),
+                document: SqlObject {
+                    fields: HashMap::from([("status".to_string(), string_value("pending"))]),
+                },
+                version: 1,
+                created_at_ns: 1,
+                updated_at_ns: 1,
+            }],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(MultiModalStorageFacade::new().with_document_store(document_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let error = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('orders', 'status = \"pending\" OR status = \"shipped\"')",
+            )
+            .await
+            .expect_err("unsupported OR filters should fail explicitly");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Unsupported DOCUMENT_QUERY filter clause")
+        );
     }
 
     #[tokio::test]

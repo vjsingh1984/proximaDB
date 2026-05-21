@@ -921,31 +921,10 @@ impl FederatedExecutor {
             .get_document_store()
             .ok_or_else(|| anyhow!("Document store is not configured"))?;
 
-        let doc_filter = filter.and_then(|f| {
-            if f.contains('=') {
-                let parts: Vec<&str> = f.splitn(2, '=').collect();
-                if parts.len() == 2 {
-                    Some(DocumentFilter {
-                        conditions: vec![DocFilterCondition {
-                            path: parts[0].trim().to_string(),
-                            operator: DocFilterOperator::Eq as i32,
-                            value: Some(SqlValue {
-                                value: Some(sql_value::Value::StringValue(
-                                    parts[1].trim().trim_matches('"').to_string(),
-                                )),
-                            }),
-                            values: vec![],
-                        }],
-                        or_filters: vec![],
-                        and_filters: vec![],
-                    })
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        });
+        let doc_filter = match filter {
+            Some(filter) => Self::parse_document_query_filter(filter)?,
+            None => None,
+        };
 
         let documents = doc_store
             .query_documents(collection, doc_filter, self.config.batch_size, 0)
@@ -960,6 +939,121 @@ impl FederatedExecutor {
         let batch = Self::build_document_record_batch(&documents, source_alias)?;
 
         Ok(ExecutionResult::from_batch(batch))
+    }
+
+    fn parse_document_query_filter(filter: &str) -> Result<Option<DocumentFilter>> {
+        let trimmed = filter.trim();
+        if trimmed.is_empty() || trimmed == "1=1" {
+            return Ok(None);
+        }
+        if trimmed.contains(" OR ") {
+            return Err(anyhow!(
+                "Unsupported DOCUMENT_QUERY filter clause '{}'; OR filters are not yet supported",
+                trimmed
+            ));
+        }
+
+        let mut conditions = Vec::new();
+        for clause in Self::split_document_filter_and_clauses(trimmed) {
+            let Some(condition) = Self::parse_document_filter_condition(clause)? else {
+                return Err(anyhow!(
+                    "Unsupported DOCUMENT_QUERY filter clause '{}'; supported clauses are simple AND comparisons with =, !=, <, <=, >, >=, or CONTAINS",
+                    clause
+                ));
+            };
+            conditions.push(condition);
+        }
+
+        if conditions.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(DocumentFilter {
+            conditions,
+            or_filters: vec![],
+            and_filters: vec![],
+        }))
+    }
+
+    fn split_document_filter_and_clauses(filter: &str) -> Vec<&str> {
+        filter
+            .split(" AND ")
+            .map(str::trim)
+            .filter(|clause| !clause.is_empty())
+            .collect()
+    }
+
+    fn parse_document_filter_condition(clause: &str) -> Result<Option<DocFilterCondition>> {
+        for (operator_text, operator) in [
+            (" CONTAINS ", DocFilterOperator::Contains),
+            (">=", DocFilterOperator::Gte),
+            ("<=", DocFilterOperator::Lte),
+            ("!=", DocFilterOperator::Ne),
+            ("<>", DocFilterOperator::Ne),
+            (">", DocFilterOperator::Gt),
+            ("<", DocFilterOperator::Lt),
+            ("=", DocFilterOperator::Eq),
+        ] {
+            let Some((path, value)) = clause.split_once(operator_text) else {
+                continue;
+            };
+            let path = path.trim();
+            let value = value.trim();
+            if path.is_empty() || value.is_empty() {
+                return Ok(None);
+            }
+
+            return Ok(Some(DocFilterCondition {
+                path: path.strip_prefix("$.").unwrap_or(path).to_string(),
+                operator: operator as i32,
+                value: Some(Self::document_filter_sql_value(value)?),
+                values: vec![],
+            }));
+        }
+
+        Ok(None)
+    }
+
+    fn document_filter_sql_value(raw: &str) -> Result<SqlValue> {
+        let trimmed = raw.trim();
+        let unquoted = trimmed
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .or_else(|| {
+                trimmed
+                    .strip_prefix('\'')
+                    .and_then(|value| value.strip_suffix('\''))
+            });
+
+        if let Some(value) = unquoted {
+            return Ok(SqlValue {
+                value: Some(sql_value::Value::StringValue(value.to_string())),
+            });
+        }
+
+        if trimmed.eq_ignore_ascii_case("true") || trimmed.eq_ignore_ascii_case("false") {
+            return Ok(SqlValue {
+                value: Some(sql_value::Value::BoolValue(
+                    trimmed.eq_ignore_ascii_case("true"),
+                )),
+            });
+        }
+
+        if let Ok(value) = trimmed.parse::<i64>() {
+            return Ok(SqlValue {
+                value: Some(sql_value::Value::Int64Value(value)),
+            });
+        }
+
+        if let Ok(value) = trimmed.parse::<f64>() {
+            return Ok(SqlValue {
+                value: Some(sql_value::Value::NumberValue(value)),
+            });
+        }
+
+        Ok(SqlValue {
+            value: Some(sql_value::Value::StringValue(trimmed.to_string())),
+        })
     }
 
     fn document_query_schema(
