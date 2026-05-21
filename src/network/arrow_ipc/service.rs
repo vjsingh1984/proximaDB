@@ -2914,4 +2914,152 @@ mod tests {
         assert_eq!(parsed.collection_id, "test_collection");
         assert_eq!(parsed.file_path, "/path/to/file.arrow");
     }
+
+    // ── Native embedding dispatch tests (Phase 1) ──────────────────────────
+
+    fn init_embedding_singleton() {
+        use proximadb_embedding::{
+            EmbeddingService,
+            config::{ChunkConfig, EmbedRoute, EmbeddingConfig},
+            scheduler::EmbedSchedulerConfig,
+        };
+
+        // Idempotent: second call to initialize is a no-op via OnceCell.
+        if EmbeddingService::try_global().is_some() {
+            return;
+        }
+        let _ = EmbeddingService::initialize(
+            EmbeddingConfig {
+                route: EmbedRoute::BgeSmall,
+                chunk: ChunkConfig::default(),
+            },
+            EmbedSchedulerConfig::default(),
+        );
+    }
+
+    /// Records arriving with text but no vector get their `embeddings` field
+    /// populated by the in-process EmbeddingService. Without `--features onnx`
+    /// the service returns deterministic synthetic vectors at the route's
+    /// declared dimension (384 for bge-small), which is exactly what the
+    /// downstream WAL + index paths need to function end-to-end.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn embed_text_only_records_populates_empty_embeddings() {
+        use proximadb_data_model::ProximaValue;
+        use proximadb_records::{ProximaRecord, ProximaTreeNode};
+
+        init_embedding_singleton();
+
+        let mut records = vec![
+            ProximaRecord {
+                oid: "doc-1".to_string(),
+                local_id: Some("doc-1".to_string()),
+                tenant_id: "tenant-a".to_string(),
+                props: {
+                    let mut m = std::collections::HashMap::new();
+                    m.insert(
+                        "text".to_string(),
+                        ProximaTreeNode::Value(ProximaValue::String(
+                            "API gateway returned 503; check upstream connector health".into(),
+                        )),
+                    );
+                    m
+                },
+                ..ProximaRecord::default()
+            },
+            ProximaRecord {
+                oid: "doc-2".to_string(),
+                local_id: Some("doc-2".to_string()),
+                tenant_id: "tenant-a".to_string(),
+                props: {
+                    let mut m = std::collections::HashMap::new();
+                    m.insert(
+                        "text".to_string(),
+                        ProximaTreeNode::Value(ProximaValue::String("rate limit 429 retry".into())),
+                    );
+                    m
+                },
+                ..ProximaRecord::default()
+            },
+        ];
+
+        ProximaFlightService::embed_text_only_records(&mut records, Some("tenant-a"))
+            .await
+            .unwrap();
+
+        assert_eq!(records[0].embeddings.len(), 1);
+        assert_eq!(records[1].embeddings.len(), 1);
+        assert_eq!(records[0].embeddings[0].dim, 384, "bge-small dimension");
+        assert_eq!(records[0].embeddings[0].values.len(), 384);
+        assert_eq!(records[0].embeddings[0].modality, "dense_vector");
+        // Deterministic: same text → same vector
+        assert_ne!(records[0].embeddings[0].values, records[1].embeddings[0].values);
+    }
+
+    /// Records that already have a vector populated should pass through
+    /// untouched — no embedding inference happens, no extra EmbeddingCell.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn embed_text_only_records_skips_records_with_existing_vector() {
+        use proximadb_records::{EmbeddingCell, ProximaRecord};
+
+        init_embedding_singleton();
+
+        let mut records = vec![ProximaRecord {
+            oid: "doc-prevector".to_string(),
+            local_id: Some("doc-prevector".to_string()),
+            tenant_id: "tenant-b".to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "client-provided".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: 1536,
+                values: vec![0.1_f32; 1536],
+            }],
+            ..ProximaRecord::default()
+        }];
+
+        ProximaFlightService::embed_text_only_records(&mut records, Some("tenant-b"))
+            .await
+            .unwrap();
+
+        // Unchanged: still exactly one embedding, still 1536-dim, still the
+        // client-provided model id.
+        assert_eq!(records[0].embeddings.len(), 1);
+        assert_eq!(records[0].embeddings[0].dim, 1536);
+        assert_eq!(records[0].embeddings[0].model_id, "client-provided");
+    }
+
+    /// extract_record_text reads from `text` first, then falls back to `body`
+    /// and `title` so connectors that normalize through AnvaiDocument (which
+    /// carries title/body separately) still produce embeddings.
+    #[test]
+    fn extract_record_text_prefers_text_then_body_then_title() {
+        use proximadb_data_model::ProximaValue;
+        use proximadb_records::{ProximaRecord, ProximaTreeNode};
+
+        let mk = |key: &str, value: &str| {
+            let mut r = ProximaRecord::default();
+            r.oid = "r".into();
+            r.props.insert(
+                key.to_string(),
+                ProximaTreeNode::Value(ProximaValue::String(value.into())),
+            );
+            r
+        };
+
+        assert_eq!(
+            ProximaFlightService::extract_record_text(&mk("text", "from-text")),
+            Some("from-text".to_string())
+        );
+        assert_eq!(
+            ProximaFlightService::extract_record_text(&mk("body", "from-body")),
+            Some("from-body".to_string())
+        );
+        assert_eq!(
+            ProximaFlightService::extract_record_text(&mk("title", "from-title")),
+            Some("from-title".to_string())
+        );
+        assert_eq!(
+            ProximaFlightService::extract_record_text(&ProximaRecord::default()),
+            None
+        );
+    }
 }
