@@ -1,0 +1,67 @@
+[package]
+name = "proximadb-embedding"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage = "https://github.com/vjsingh1984/proximadb"
+description = "ProximaDB native embedding service — tier-aware ONNX inference with two-tier priority scheduling"
+
+[lib]
+name = "proximadb_embedding"
+path = "src/lib.rs"
+
+[features]
+default = []
+# Heavy ONNX runtime; gated behind a feature so test/CI builds without
+# system ONNX libraries still compile and link.
+onnx = []
+# External Azure OpenAI fallback for the Premium add-on. Optional because
+# many deployments won't enable Premium.
+azure-openai = []
+# Bring-your-own embedding endpoint (Enterprise tier feature).
+byo = []
+# All embedding routes enabled.
+full = ["onnx", "azure-openai", "byo"]
+
+[dependencies]
+# ProximaDB foundation
+proximadb-kernel = { path = "../../foundation/proximadb-kernel" }
+proximadb-records = { path = "../../foundation/proximadb-records" }
+proximadb-data-model = { path = "../../foundation/proximadb-data-model" }
+
+# Async runtime
+tokio = { workspace = true, features = ["sync", "rt-multi-thread", "time", "macros"] }
+async-trait.workspace = true
+
+# Singleton + shared state
+once_cell = "1.19"
+dashmap = "6.1.0"
+
+# Errors + tracing
+anyhow.workspace = true
+thiserror.workspace = true
+tracing = "0.1"
+
+# Metrics
+prometheus = "0.14"
+
+# Serde for config + tenant registry payloads
+serde.workspace = true
+serde_json.workspace = true
+
+# Bounded queues for the scheduler
+crossbeam-queue = "0.3"
+
+# HTTP for Azure OpenAI + BYO endpoint clients. Blocking client is used
+# inside the scheduler's worker threads which already isolate latency from
+# the main runtime.
+reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], default-features = false }
+
+# Tokenization (BPE / WordPiece) — used for chunking and pre-embedding token counts
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "test-util"] }
