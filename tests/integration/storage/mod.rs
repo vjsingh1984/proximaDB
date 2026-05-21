@@ -23,7 +23,7 @@
 // The following test files were removed as they require extensive rewrites to work with current APIs:
 // - metadata_backend_test.rs, schema_test.rs (outdated metadata APIs)
 // - sst_bplustree_integration_test.rs, sst_flush_*.rs, sst_sstable_integration_test.rs (outdated SST APIs)
-// - cloud_url_routing_test.rs, compaction_config_test.rs (outdated storage APIs)
+// - compaction_config_test.rs (outdated storage APIs)
 // - test_atomic_strategy.rs, test_filestore_backend_integration.rs, test_local_filesystem.rs (outdated test infrastructure)
 // - threshold_triggers_test.rs, write_buffer_config_*.rs (outdated WAL/write buffer APIs)
 
