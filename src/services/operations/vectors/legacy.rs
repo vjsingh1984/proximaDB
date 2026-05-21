@@ -2622,31 +2622,6 @@ impl VectorOperationsService {
         Ok(())
     }
 
-    /// Execute TWO-STAGE PARALLEL search (works for both filtered and non-filtered searches)
-    /// This is the UNIFIED method that replaces both execute_search and execute_filtered_search
-    async fn execute_two_stage_search(
-        &self,
-        collection_id: &str,
-        method: crate::query::query_optimizer::SearchExecutionMethod,
-        _quantization: Option<crate::query::query_optimizer::QuantizationStrategy>,
-        candidates: usize,
-        query_vector: Vec<f32>,
-        filter: Option<FilterExpression>,
-        search_mode: crate::core::search::SearchMode,
-    ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
-        self.execute_two_stage_search_with_mode(
-            collection_id,
-            method,
-            _quantization,
-            candidates,
-            query_vector,
-            filter,
-            search_mode,
-            crate::index::axis::management::manager::AnnFilteringMode::default(),
-        )
-        .await
-    }
-
     async fn execute_two_stage_search_with_mode(
         &self,
         collection_id: &str,

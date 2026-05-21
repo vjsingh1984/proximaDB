@@ -11,7 +11,6 @@ use std::sync::Arc;
 /// Read-only memory-mapped file
 pub struct MmapFile {
     mmap: Arc<Mmap>,
-    path: PathBuf,
     len: usize,
 }
 
@@ -26,7 +25,6 @@ impl MmapFile {
 
         Ok(Self {
             mmap: Arc::new(mmap),
-            path: path.as_ref().to_path_buf(),
             len,
         })
     }
@@ -130,7 +128,6 @@ impl Deref for MmapView {
 pub struct MmapMutFile {
     mmap: MmapMut,
     file: File,
-    path: PathBuf,
     len: usize,
 }
 
@@ -151,7 +148,6 @@ impl MmapMutFile {
         Ok(Self {
             mmap,
             file,
-            path: path.as_ref().to_path_buf(),
             len: size,
         })
     }
@@ -165,12 +161,7 @@ impl MmapMutFile {
 
         let mmap = unsafe { MmapOptions::new().map_mut(&file)? };
 
-        Ok(Self {
-            mmap,
-            file,
-            path: path.as_ref().to_path_buf(),
-            len,
-        })
+        Ok(Self { mmap, file, len })
     }
 
     /// Write data at a specific offset
@@ -236,7 +227,6 @@ impl From<Advice> for memmap2::Advice {
 /// Memory-mapped SST file reader
 pub struct MmapSstReader {
     mmap: MmapFile,
-    header_size: usize,
     index_offset: usize,
     data_offset: usize,
 }
@@ -258,7 +248,6 @@ impl MmapSstReader {
 
         Ok(Self {
             mmap,
-            header_size,
             index_offset,
             data_offset,
         })
@@ -347,7 +336,6 @@ impl MmapParquetReader {
 pub struct MmapPool {
     files:
         Arc<parking_lot::RwLock<proximadb_runtime_common::cache::LruCache<PathBuf, Arc<MmapFile>>>>,
-    max_files: usize,
 }
 
 impl MmapPool {
@@ -356,7 +344,6 @@ impl MmapPool {
             files: Arc::new(parking_lot::RwLock::new(
                 proximadb_runtime_common::cache::LruCache::new(max_files),
             )),
-            max_files,
         }
     }
 

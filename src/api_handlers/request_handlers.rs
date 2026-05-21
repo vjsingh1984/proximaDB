@@ -928,19 +928,6 @@ impl UnifiedHandlers {
         }
     }
 
-    fn insert_existing_record_conflict_result(
-        collection_id: &str,
-        record_id: &str,
-    ) -> BatchOperationResult {
-        BatchOperationResult::failure(
-            format!(
-                "Record '{}' already exists in collection '{}'",
-                record_id, collection_id
-            ),
-            "INSERT_CONFLICT".to_string(),
-        )
-    }
-
     /// v1 native: accept v1::VectorBatchRequest, delegate to v1 services, and return v1 response
     ///
     /// REFACTORED: Now uses clean typed insert_batch() instead of JSON serialization
@@ -2520,19 +2507,6 @@ mod tests {
     fn test_collection_id_cache_new() {
         let cache = CollectionIdCache::new();
         assert!(cache.get("nonexistent").is_none());
-    }
-
-    #[test]
-    fn test_insert_existing_record_conflict_result() {
-        let result =
-            UnifiedHandlers::insert_existing_record_conflict_result("collection-1", "record-1");
-
-        assert!(!result.success);
-        assert_eq!(result.error_code.as_deref(), Some("INSERT_CONFLICT"));
-        assert_eq!(
-            result.errors,
-            vec!["Record 'record-1' already exists in collection 'collection-1'".to_string()]
-        );
     }
 
     #[test]

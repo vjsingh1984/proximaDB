@@ -2360,16 +2360,12 @@ pub trait CypherVisitor {
 /// Query validator visitor
 pub struct QueryValidator {
     errors: Vec<String>,
-    variables: std::collections::HashSet<String>,
 }
 
 impl QueryValidator {
     /// Create a new query validator.
     pub fn new() -> Self {
-        Self {
-            errors: Vec::new(),
-            variables: std::collections::HashSet::new(),
-        }
+        Self { errors: Vec::new() }
     }
 
     /// Validate a Cypher query AST for semantic correctness.

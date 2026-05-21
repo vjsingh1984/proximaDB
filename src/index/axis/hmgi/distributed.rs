@@ -170,19 +170,6 @@ impl DistributedPartitionLocator {
         Some(active_nodes[index].id)
     }
 
-    /// Hash a partition key for consistent routing
-    fn partition_key_hash(&self, key: &HmgiPartitionKey) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        key.oid.hash(&mut hasher);
-        key.variation_id.hash(&mut hasher);
-        key.modality_tag.hash(&mut hasher);
-        key.tenant_id.hash(&mut hasher);
-        hasher.finish()
-    }
-
     /// Check if a partition is local to this node
     pub async fn is_partition_local(&self, key: &HmgiPartitionKey) -> bool {
         {
@@ -305,27 +292,6 @@ impl DistributedPartitionLocator {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_partition_key_hash() {
-        let locator = DistributedPartitionLocator::new(3, 1);
-
-        let key1 = HmgiPartitionKey::new(123, 1, "text".to_string(), Some(456));
-        let key2 = HmgiPartitionKey::new(123, 1, "text".to_string(), Some(456));
-        let key3 = HmgiPartitionKey::new(123, 1, "image".to_string(), Some(456));
-
-        // Same keys should have same hash
-        assert_eq!(
-            locator.partition_key_hash(&key1),
-            locator.partition_key_hash(&key2)
-        );
-
-        // Different keys should (very likely) have different hashes
-        assert_ne!(
-            locator.partition_key_hash(&key1),
-            locator.partition_key_hash(&key3)
-        );
-    }
 
     #[tokio::test]
     async fn test_local_partition_registration() {

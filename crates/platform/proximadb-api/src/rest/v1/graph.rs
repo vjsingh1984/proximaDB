@@ -169,20 +169,6 @@ pub enum ErrorCode {
     PermissionDenied,
 }
 
-impl ErrorCode {
-    fn http_status(&self) -> StatusCode {
-        match self {
-            ErrorCode::NotFound => StatusCode::NOT_FOUND,
-            ErrorCode::AlreadyExists => StatusCode::CONFLICT,
-            ErrorCode::InvalidArgument => StatusCode::BAD_REQUEST,
-            ErrorCode::ConstraintViolation => StatusCode::CONFLICT,
-            ErrorCode::InternalError => StatusCode::INTERNAL_SERVER_ERROR,
-            ErrorCode::Timeout => StatusCode::GATEWAY_TIMEOUT,
-            ErrorCode::PermissionDenied => StatusCode::FORBIDDEN,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResponseMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
