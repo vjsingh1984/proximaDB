@@ -17,13 +17,11 @@ impl Default for ExecutorConfig {
 }
 
 #[derive(Debug, Clone)]
-pub struct Executor {
-    config: ExecutorConfig,
-}
+pub struct Executor;
 
 impl Executor {
-    pub fn new(config: ExecutorConfig) -> Self {
-        Self { config }
+    pub fn new(_config: ExecutorConfig) -> Self {
+        Self
     }
 
     pub fn execute(

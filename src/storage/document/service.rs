@@ -350,6 +350,8 @@ impl DocumentService {
                         #[cfg(feature = "canonical-document-store")]
                         canonical_recovery_ops
                             .push(RecordRecoveryOperation::Delete(RecordKey::new(record_oid)));
+                        #[cfg(not(feature = "canonical-document-store"))]
+                        let _ = record_oid;
 
                         let mut documents = self.documents.write().await;
                         if let Some(collection_docs) = documents.get_mut(&collection_id) {
@@ -883,7 +885,7 @@ impl DocumentService {
         let doc_id = id.map_or_else(|| uuid::Uuid::new_v4().to_string(), |s| s.to_string());
 
         // Create document record
-        let mut record = DocumentRecord::new(doc_id.clone(), document, collection.to_string());
+        let record = DocumentRecord::new(doc_id.clone(), document, collection.to_string());
 
         // Write to WAL first (durability before in-memory update)
         if let Err(e) = self.write_document_upsert_to_wal(collection, &record).await {
@@ -894,19 +896,21 @@ impl DocumentService {
         // Phase 2 migration path: when configured, canonical records are the
         // durable truth and legacy maps/indexes are compatibility projections.
         #[cfg(feature = "canonical-document-store")]
-        if let Some(record_store) = &self.canonical_record_store {
+        let record = if let Some(record_store) = &self.canonical_record_store {
             let stored = record_store
                 .upsert_record(legacy_document_to_proxima_record(&record))
                 .await
                 .context("Failed to upsert canonical document record")?;
 
-            record = proxima_record_to_legacy_document(&stored).ok_or_else(|| {
+            proxima_record_to_legacy_document(&stored).ok_or_else(|| {
                 anyhow!(
                     "Canonical document record '{}' could not be rebuilt",
                     stored.oid
                 )
-            })?;
-        }
+            })?
+        } else {
+            record
+        };
 
         // Update indexes
         if let Err(e) = self.index_document_projection(collection, &record).await {

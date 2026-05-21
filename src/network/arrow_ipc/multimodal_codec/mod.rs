@@ -23,13 +23,11 @@ impl Default for CodecConfig {
 }
 
 /// Multi-modal codec for Arrow IPC
-pub struct MultiModalCodec {
-    config: CodecConfig,
-}
+pub struct MultiModalCodec;
 
 impl MultiModalCodec {
-    pub fn new(config: CodecConfig) -> Self {
-        Self { config }
+    pub fn new(_config: CodecConfig) -> Self {
+        Self
     }
 
     /// Encode multi-modal data to Arrow IPC format

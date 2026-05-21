@@ -39,11 +39,8 @@ use crate::infrastructure::tier_policy_engine::{
 
 /// HMGI tier policy - modality-aware storage placement
 ///
-/// Extends the base SmartTierPolicy with modality-specific overrides.
+/// Applies modality-specific overrides and access-pattern based placement.
 pub struct HmgiTierPolicy {
-    /// Base tier policy from tier_policy_engine
-    base_policy: SmartTierPolicy,
-
     /// Modality-specific tier overrides
     modality_tiers: Arc<RwLock<HashMap<String, InfrastructureTier>>>,
 
@@ -56,9 +53,8 @@ pub struct HmgiTierPolicy {
 
 impl HmgiTierPolicy {
     /// Create a new HMGI tier policy
-    pub fn new(base_policy: SmartTierPolicy) -> Self {
+    pub fn new(_base_policy: SmartTierPolicy) -> Self {
         Self {
-            base_policy,
             modality_tiers: Arc::new(RwLock::new(HashMap::new())),
             access_patterns: Arc::new(RwLock::new(HashMap::new())),
             default_tier: InfrastructureTier::NvmeSsd {
@@ -69,11 +65,10 @@ impl HmgiTierPolicy {
 
     /// Create with custom default tier
     pub fn with_default_tier(
-        base_policy: SmartTierPolicy,
+        _base_policy: SmartTierPolicy,
         default_tier: InfrastructureTier,
     ) -> Self {
         Self {
-            base_policy,
             modality_tiers: Arc::new(RwLock::new(HashMap::new())),
             access_patterns: Arc::new(RwLock::new(HashMap::new())),
             default_tier,
@@ -472,7 +467,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_modality_tier_override() {
-        let mut policy = HmgiTierPolicy::default();
+        let policy = HmgiTierPolicy::default();
         let cloud_tier = InfrastructureTier::CloudStandard {
             provider: test_cloud_provider(),
             region: "us-west-2".to_string(),
@@ -511,7 +506,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_promote_modality() {
-        let mut policy = HmgiTierPolicy::default();
+        let policy = HmgiTierPolicy::default();
 
         // Start with NVMe tier (default)
         let initial_tier = policy.select_tier_for_modality("hot_modality").await;
@@ -538,7 +533,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_demote_modality() {
-        let mut policy = HmgiTierPolicy::default();
+        let policy = HmgiTierPolicy::default();
 
         // Manually set a hot tier first
         policy
@@ -564,7 +559,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_promote_to_colder_tier_fails() {
-        let mut policy = HmgiTierPolicy::default();
+        let policy = HmgiTierPolicy::default();
 
         // Try to "promote" to a colder tier (should fail)
         let cloud_tier = InfrastructureTier::CloudStandard {
@@ -579,7 +574,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_demote_to_hotter_tier_fails() {
-        let mut policy = HmgiTierPolicy::default();
+        let policy = HmgiTierPolicy::default();
 
         // Set up a modality in cloud tier
         let cloud_tier = InfrastructureTier::CloudStandard {
