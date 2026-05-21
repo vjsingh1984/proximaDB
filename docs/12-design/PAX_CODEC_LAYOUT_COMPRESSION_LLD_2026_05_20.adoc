@@ -502,6 +502,8 @@ Current pilot:
   `src/storage/engines/core/ops/proxima_encoding_*` design sketches.
 * Private unused ProximaBlocks helper code was removed: stale `SqlValue`/JSON converters,
   a duplicate string-based tombstone helper, and obsolete SIMD panic stubs.
+* Unreferenced per-engine extractor `SqlValue`/JSON helper copies were removed from SST,
+  VIPER, and NOVA while leaving SWIFT/HELIX's called helpers intact.
 * Integration tests permanently disabled by `cfg(disabled_due_to_obsolete_apis)` were removed
   instead of being carried as non-compiling reference material.
 
