@@ -414,7 +414,7 @@ impl RestServer {
         // Build service layers conditionally to avoid type mismatch
         let security_coordinator = state.security_coordinator.clone();
         let state_for_v2 = state.clone();
-        let mut base_router = create_router(state);
+        let mut base_router = create_router(state.clone());
 
         // Nest metrics router if available
         if let Some(metrics) = metrics_router {
@@ -426,9 +426,15 @@ impl RestServer {
         base_router = base_router.route("/dashboard", axum::routing::get(dashboard_handler));
 
         // Add V2 API router with ProximaRecord support
+        let state_for_v3 = state_for_v2.clone();
         let v2_router = super::v2::create_v2_router().with_state(state_for_v2);
         base_router = base_router.nest("/api/v2", v2_router);
         tracing::info!("✅ V2 API enabled at /api/v2 (ProximaRecord, typed schema)");
+
+        // Add V3 API router with native server-side embedding
+        let v3_router = super::v3::create_v3_router().with_state(state_for_v3);
+        base_router = base_router.nest("/api/v3", v3_router);
+        tracing::info!("✅ V3 API enabled at /api/v3 (native server-side embedding)");
 
         // Add WebSocket streaming routes
         let ws_state = super::websocket::WebSocketState::new();
@@ -641,7 +647,7 @@ impl RestServer {
 
         // Build base router with all endpoints
         let state_for_v2 = state.clone();
-        let mut base_router = create_router(state);
+        let mut base_router = create_router(state.clone());
 
         // Nest metrics router if available
         if let Some(metrics) = metrics_router {
@@ -653,9 +659,15 @@ impl RestServer {
         base_router = base_router.route("/dashboard", axum::routing::get(dashboard_handler));
 
         // Add V2 API router with ProximaRecord support
+        let state_for_v3 = state_for_v2.clone();
         let v2_router = super::v2::create_v2_router().with_state(state_for_v2);
         base_router = base_router.nest("/api/v2", v2_router);
         tracing::info!("✅ V2 API enabled at /api/v2 (unified mode)");
+
+        // Add V3 API router with native server-side embedding
+        let v3_router = super::v3::create_v3_router().with_state(state_for_v3);
+        base_router = base_router.nest("/api/v3", v3_router);
+        tracing::info!("✅ V3 API enabled at /api/v3 (native embedding, unified mode)");
 
         // Add WebSocket streaming routes
         let ws_state = super::websocket::WebSocketState::new();

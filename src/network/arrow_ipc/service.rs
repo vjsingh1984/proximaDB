@@ -475,7 +475,10 @@ impl ProximaFlightService {
     /// embedding singleton hasn't been initialized (defensive), we leave the
     /// records as-is and let the existing catalog validation reject them —
     /// no silent data loss.
-    async fn embed_text_only_records(
+    ///
+    /// `pub(crate)` so the REST `/api/v3/documents` handler can reuse the same
+    /// dispatch logic without duplicating it.
+    pub(crate) async fn embed_text_only_records(
         records: &mut [ProximaRecord],
         tenant_id: Option<&str>,
     ) -> Result<()> {
@@ -544,9 +547,11 @@ impl ProximaFlightService {
         Ok(())
     }
 
-    fn extract_record_text(record: &ProximaRecord) -> Option<String> {
+    pub(crate) fn extract_record_text(record: &ProximaRecord) -> Option<String> {
         for key in ["text", "body", "title"] {
-            if let Some(ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(s))) = record.props.get(key) {
+            if let Some(ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(s))) =
+                record.props.get(key)
+            {
                 return Some(s.clone());
             }
         }
@@ -2992,7 +2997,10 @@ mod tests {
         assert_eq!(records[0].embeddings[0].values.len(), 384);
         assert_eq!(records[0].embeddings[0].modality, "dense_vector");
         // Deterministic: same text → same vector
-        assert_ne!(records[0].embeddings[0].values, records[1].embeddings[0].values);
+        assert_ne!(
+            records[0].embeddings[0].values,
+            records[1].embeddings[0].values
+        );
     }
 
     /// Records that already have a vector populated should pass through
