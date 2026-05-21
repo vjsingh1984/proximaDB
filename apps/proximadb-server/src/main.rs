@@ -206,6 +206,18 @@ async fn main() -> anyhow::Result<()> {
         info!("Continuing with CPU-only mode");
     }
 
+    // Initialize the in-process embedding singleton. Loads BGE ONNX sessions
+    // (or synthetic fallback when the `onnx` feature is off), spawns sync +
+    // async tokio runtimes, and registers Prometheus instruments. Crashing
+    // here is intentional — embedding is part of the data plane, not optional.
+    info!("🧠 Initializing embedding service (in-process, Arc-shared)...");
+    proximadb_embedding::EmbeddingService::initialize(
+        proximadb_embedding::config::EmbeddingConfig::default(),
+        proximadb_embedding::scheduler::EmbedSchedulerConfig::from_env(),
+    )
+    .map_err(|e| anyhow::anyhow!("embedding service init: {}", e))?;
+    info!("✅ Embedding service ready");
+
     info!("Starting ProximaDB server with config: {:?}", config);
 
     // Ensure all required directories exist

@@ -6634,6 +6634,7 @@ dependencies = [
  "anyhow",
  "clap",
  "proximadb",
+ "proximadb-embedding",
  "tokio",
  "tracing",
  "tracing-appender",
