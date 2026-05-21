@@ -119,6 +119,8 @@
 
 pub mod adaptive_cache;
 pub mod invalidation;
+pub mod mismatch_cost;
+pub mod per_category_policy;
 pub mod query_result_cache;
 
 // Re-export main types
