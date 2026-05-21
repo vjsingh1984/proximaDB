@@ -651,7 +651,7 @@ pub extern "C" fn proximadb_init() -> i32 {
 }
 
 /// Get extension version
-#[unsafe(no_mangle)]
+#[cfg_attr(not(feature = "c_ffi"), unsafe(no_mangle))]
 pub extern "C" fn proximadb_version() -> *const std::ffi::c_char {
     DUCKDB_EXTENSION_VERSION.as_ptr() as *const std::ffi::c_char
 }
