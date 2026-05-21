@@ -810,6 +810,78 @@ fn bytes_from_json_array(value: &serde_json::Value) -> Result<Vec<u8>, ApiError>
         .collect()
 }
 
+/// Convert TypedFilter list → optimizer Predicate list for the planner.
+///
+/// Best-effort: filter ops we can't map to a `PredicateOp` are dropped, since
+/// the planner can fall through to policy defaults. The selectivity estimator
+/// treats an empty predicate list as "selectivity = 1.0" (full scan).
+fn typed_filters_to_predicates(
+    filters: &[TypedFilter],
+) -> Vec<crate::query::federated::optimizer::Predicate> {
+    use crate::query::federated::optimizer::{Predicate, PredicateOp, PredicateValue};
+    filters
+        .iter()
+        .filter_map(|f| {
+            let op = match f.op.as_str() {
+                "eq" => PredicateOp::Eq,
+                "neq" => PredicateOp::Ne,
+                "gt" => PredicateOp::Gt,
+                "gte" => PredicateOp::Ge,
+                "lt" => PredicateOp::Lt,
+                "lte" => PredicateOp::Le,
+                "between" => PredicateOp::Between,
+                "in" => PredicateOp::In,
+                _ => return None,
+            };
+            let value = rest_value_to_predicate_value(&f.value);
+            Some(Predicate { column: f.field.clone(), op, value })
+        })
+        .collect()
+}
+
+fn rest_value_to_predicate_value(
+    v: &RestProximaValue,
+) -> crate::query::federated::optimizer::PredicateValue {
+    use crate::query::federated::optimizer::PredicateValue;
+    // Project through ProximaValue so we share the same JSON-inference logic
+    // already used for query execution. Anything we can't infer collapses to
+    // Null — the selectivity estimator handles Null gracefully via the
+    // fallback policy.
+    let pv = match rest_value_to_proxima(v) {
+        Ok(p) => p,
+        Err(_) => return PredicateValue::Null,
+    };
+    match pv {
+        ProximaValue::String(s) => PredicateValue::String(s),
+        ProximaValue::Int64(i) => PredicateValue::Int(i),
+        ProximaValue::UInt64(u) => PredicateValue::Int(u as i64),
+        ProximaValue::Float64(f) => PredicateValue::Float(f),
+        ProximaValue::Boolean(b) => PredicateValue::Bool(b),
+        ProximaValue::Array(items) => PredicateValue::List(
+            items
+                .into_iter()
+                .filter_map(proxima_to_predicate_value)
+                .collect(),
+        ),
+        _ => PredicateValue::Null,
+    }
+}
+
+fn proxima_to_predicate_value(
+    p: ProximaValue,
+) -> Option<crate::query::federated::optimizer::PredicateValue> {
+    use crate::query::federated::optimizer::PredicateValue;
+    Some(match p {
+        ProximaValue::String(s) => PredicateValue::String(s),
+        ProximaValue::Int64(i) => PredicateValue::Int(i),
+        ProximaValue::UInt64(u) => PredicateValue::Int(u as i64),
+        ProximaValue::Float64(f) => PredicateValue::Float(f),
+        ProximaValue::Boolean(b) => PredicateValue::Bool(b),
+        ProximaValue::Null => PredicateValue::Null,
+        _ => return None,
+    })
+}
+
 fn typed_filter_to_rich(filter: &TypedFilter) -> Result<RichFilterCondition, ApiError> {
     let operator = match filter.op.as_str() {
         "eq" => RichFilterOperator::Eq,
@@ -1362,10 +1434,11 @@ pub async fn search_with_typed_filters(
 
             let total_matches = resp.total_found as u64;
 
-            // Build the Phase-0 SearchPlanTrace. Most fields are zero-stubbed
-            // and will be populated by later phases (planner v1 fills
-            // estimated/actual selectivity, AXIS fills block_fill_pct, etc.).
-            // The shape is the LLD §10 contract — gateway depends on it.
+            // Build the Phase-1 SearchPlanTrace. The planner consults the
+            // selectivity estimator (with Phase-5 stats stubbed empty for now,
+            // so estimates fall through to the policy defaults) and the
+            // filter-strategy router. AXIS-level counters (block_fill_pct,
+            // tunneled_nodes, ...) remain zero until Phase 3.
             let mut trace = crate::observability::search_plan_trace::SearchPlanTrace::new(
                 request_id.clone(),
                 tenant.tenant_id.clone(),
@@ -1374,6 +1447,40 @@ pub async fn search_with_typed_filters(
             trace.latency_ms = latency_ms as f64;
             trace.candidate_count = results.len() as u32;
             trace.rerank_count = results.len() as u32;
+
+            // ── Phase 1: run the deterministic planner ───────────────────
+            // Convert TypedFilter list → optimizer::Predicate so the estimator
+            // can run. The conversion is best-effort; unknown ops fall back
+            // through the policy defaults inside the estimator.
+            let predicates = match request.filters.as_ref() {
+                Some(filters) => typed_filters_to_predicates(filters.as_slice()),
+                None => Vec::new(),
+            };
+            let stats = crate::query::federated::optimizer::selectivity::FieldStatistics::default();
+            let policy =
+                crate::query::federated::optimizer::PredicateSelectivityPolicy::default();
+            let estimator =
+                crate::query::federated::optimizer::selectivity::SelectivityEstimator::new(
+                    &stats, &policy,
+                );
+            let selectivity_estimate = estimator.estimate_and(&predicates);
+            // GLS sampling requires neighborhood centroids that we don't yet
+            // surface in Phase 1; leave the score `None` until Phase 5 wires
+            // the stats refresher.
+            let plan_inputs = crate::query::federated::optimizer::filter_strategy::PlanInputs {
+                selectivity: selectivity_estimate,
+                gls_score: None,
+                dim: request.vector.len(),
+                recall_target: 0.9,
+                collection_gb: 0.0,
+            };
+            let tier_record =
+                crate::catalog::tenant_tier::TenantTierRecord::fail_safe(&tenant.tenant_id);
+            let plan_choice =
+                crate::query::federated::optimizer::filter_strategy::choose_plan(&plan_inputs, &tier_record);
+            trace.filter_strategy = plan_choice.strategy;
+            trace.index_route = plan_choice.route;
+            trace.estimated_selectivity = Some(selectivity_estimate);
 
             let response = TypedSearchResponse {
                 results: results.clone(),

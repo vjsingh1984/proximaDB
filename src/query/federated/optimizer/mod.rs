@@ -23,6 +23,10 @@ use proximadb_kernel::error::VectorDBError;
 mod sql_parsing;
 mod vector_query_parsing;
 
+pub mod filter_strategy;
+pub mod gls;
+pub mod selectivity;
+
 /// Physical plan node types
 #[derive(Debug, Clone)]
 pub enum PlanNodeType {
