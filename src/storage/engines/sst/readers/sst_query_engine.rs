@@ -27,7 +27,6 @@
 //! RENAME SUGGESTION: This file should be renamed to `sst_query_engine.rs`
 //! to match the suggested parquet naming convention
 
-use crate::core::metadata_types::MetadataValue;
 use crate::core::search::OptimizedSearchRecord;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use anyhow::Result;

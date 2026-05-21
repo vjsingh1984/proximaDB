@@ -31,12 +31,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use tracing::{debug, info, warn};
+use tracing::debug;
 
 use crate::catalog::{
-    CatalogDataType, CatalogManager, CatalogNamespace, CatalogTableSchema, TableIdentifier,
+    CatalogDataType, CatalogManager, CatalogTableSchema, TableIdentifier,
 };
 
 // ============================================================================

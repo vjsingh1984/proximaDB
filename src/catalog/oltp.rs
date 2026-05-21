@@ -41,8 +41,8 @@ use super::TableIdentifier;
 use super::cache::CatalogCache;
 use super::traits::Catalog;
 use super::types::{
-    CatalogColumn, CatalogDataType, CatalogIndex, CatalogNamespace, CatalogPartitionSpec,
-    CatalogSchemaEvolution, CatalogSortOrder, CatalogTableSchema, CatalogTableStatistics,
+    CatalogIndex, CatalogNamespace, CatalogSchemaEvolution, CatalogTableSchema,
+    CatalogTableStatistics,
 };
 use proximadb_catalog::schema::apply_evolution;
 
