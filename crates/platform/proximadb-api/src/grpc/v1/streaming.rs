@@ -128,3 +128,48 @@ impl StreamingService for StreamingServiceImpl {
             .map_err(Self::port_err)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tonic::Code;
+
+    fn assert_unimplemented<T>(result: Result<Response<T>, Status>, expected: &str) {
+        let err = result.expect_err("streaming service should reject unsupported RPC");
+        assert_eq!(err.code(), Code::Unimplemented);
+        assert!(err.message().contains(expected));
+    }
+
+    #[tokio::test]
+    async fn backendless_streaming_service_rejects_unary_session_rpcs() {
+        let service = StreamingServiceImpl::without_backend();
+
+        assert_unimplemented(
+            StreamingService::create_session(&service, Request::new(Default::default())).await,
+            "Streaming session management not configured",
+        );
+        assert_unimplemented(
+            StreamingService::close_session(&service, Request::new(Default::default())).await,
+            "Streaming session management not configured",
+        );
+        assert_unimplemented(
+            StreamingService::get_session_status(&service, Request::new(Default::default())).await,
+            "Streaming session management not configured",
+        );
+    }
+
+    #[tokio::test]
+    async fn protocol_specific_server_streaming_rpc_remains_explicitly_unimplemented() {
+        let service = StreamingServiceImpl::without_backend();
+
+        assert_unimplemented(
+            StreamingService::subscribe_query(&service, Request::new(Default::default())).await,
+            "subscribe_query",
+        );
+    }
+
+    #[test]
+    fn backendless_streaming_service_can_be_wrapped_as_tonic_server() {
+        let _server = StreamingServiceImpl::without_backend().into_server();
+    }
+}

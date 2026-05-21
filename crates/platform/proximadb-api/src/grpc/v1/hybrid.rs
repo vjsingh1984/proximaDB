@@ -68,3 +68,36 @@ impl HybridSearchService for HybridSearchServiceImpl {
             .map_err(Self::port_err)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tonic::Code;
+
+    fn assert_unimplemented<T>(result: Result<Response<T>, Status>) {
+        let err = result.expect_err("backend-less hybrid service should reject RPC");
+        assert_eq!(err.code(), Code::Unimplemented);
+        assert!(
+            err.message()
+                .contains("Hybrid search service not configured")
+        );
+    }
+
+    #[tokio::test]
+    async fn backendless_hybrid_service_rejects_every_rpc_consistently() {
+        let service = HybridSearchServiceImpl::without_backend();
+
+        assert_unimplemented(
+            HybridSearchService::hybrid_search(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            HybridSearchService::list_fusion_strategies(&service, Request::new(Default::default()))
+                .await,
+        );
+    }
+
+    #[test]
+    fn backendless_hybrid_service_can_be_wrapped_as_tonic_server() {
+        let _server = HybridSearchServiceImpl::without_backend().into_server();
+    }
+}

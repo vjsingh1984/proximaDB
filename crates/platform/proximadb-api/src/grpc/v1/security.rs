@@ -166,3 +166,62 @@ impl SecurityService for SecurityServiceImpl {
             .map_err(Self::port_err)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tonic::Code;
+
+    fn assert_not_configured<T>(result: Result<Response<T>, Status>) {
+        let err = result.expect_err("backend-less security service should reject RPC");
+        assert_eq!(err.code(), Code::NotFound);
+        assert!(err.message().contains("Security service not configured"));
+    }
+
+    #[tokio::test]
+    async fn default_security_service_rejects_every_rpc_with_not_found() {
+        let service = SecurityServiceImpl::with_default_config();
+
+        assert_not_configured(
+            SecurityService::validate_access(&service, Request::new(Default::default())).await,
+        );
+        assert_not_configured(
+            SecurityService::batch_validate_access(&service, Request::new(Default::default()))
+                .await,
+        );
+        assert_not_configured(
+            SecurityService::create_role(&service, Request::new(Default::default())).await,
+        );
+        assert_not_configured(
+            SecurityService::list_roles(&service, Request::new(Default::default())).await,
+        );
+        assert_not_configured(
+            SecurityService::delete_role(&service, Request::new(Default::default())).await,
+        );
+        assert_not_configured(
+            SecurityService::assign_role(&service, Request::new(Default::default())).await,
+        );
+        assert_not_configured(
+            SecurityService::revoke_role(&service, Request::new(Default::default())).await,
+        );
+        assert_not_configured(
+            SecurityService::list_user_roles(&service, Request::new(Default::default())).await,
+        );
+        assert_not_configured(
+            SecurityService::list_audit_events(&service, Request::new(Default::default())).await,
+        );
+        assert_not_configured(
+            SecurityService::get_tenant_security_policy(&service, Request::new(Default::default()))
+                .await,
+        );
+        assert_not_configured(
+            SecurityService::set_tenant_security_policy(&service, Request::new(Default::default()))
+                .await,
+        );
+    }
+
+    #[test]
+    fn default_security_service_can_be_wrapped_as_tonic_server() {
+        let _server = SecurityServiceImpl::with_default_config().into_server();
+    }
+}

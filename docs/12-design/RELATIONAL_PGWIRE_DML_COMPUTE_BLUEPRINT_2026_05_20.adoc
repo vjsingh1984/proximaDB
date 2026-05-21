@@ -1121,6 +1121,9 @@ compound (`c_id IN (1,2,3) AND c_active = true` → two predicates correctly ext
 (`label LIKE 'prefix%' AND c_id = 5` → Like + Comparison), AND+IS_NOT_NULL
 (`label IS NOT NULL AND c_active = true` → IsNull(negated=true) + Comparison), and AND+NOT_IN
 (`c_id NOT IN (10,20,30) AND c_active = false` → In(negated=true) + Comparison). Total pgwire protocol tests: 29.
+DML-level predicate filtering tests added for: `is_null_predicate_filters_nullable_column_rows`
+(IS NULL + IS NOT NULL via `scan_table_records_with_predicates`), `in_and_not_in_predicates_filter_correctly`
+(IN + NOT IN on TEXT column), `like_predicate_filters_correctly` (LIKE + NOT LIKE with `%` wildcard).
 Multi-column OR, OR of non-equality expressions, and compound AND/OR branches still fall back to
 full scan. Joins, aggregates, full expression planning, and direct PAX/record-storage scanners remain pending.
 | `src/query/table_write_executor.rs`, `src/query/sql_frontend/parser.rs`, `src/services/dml/mod.rs`,
@@ -1164,7 +1167,32 @@ estimates into route cost and explanation output. Runtime feedback added: `DmlSe
 performs a read-delta-write on `CatalogTableStatistics.row_count` after successful INSERT (+N),
 DELETE (-N), and UPSERT (+N) operations; errors are non-fatal (logged as warnings). Test
 `insert_and_delete_update_catalog_row_count_statistics` verifies that three inserts set row_count=3
-and one delete decrements to row_count=2. Remaining: fuller column/cardinality stats and staleness handling.
+and one delete decrements to row_count=2. Per-column NULL counts added:
+`DmlService::bump_column_null_counts` computes per-column null deltas before consuming the `values`
+vector, then performs a read-delta-write on `CatalogTableStatistics.column_stats[col].null_count`
+after each INSERT; null-free inserts skip the catalog write. `literal_to_proxima_value_for_column`
+extended to return `ProximaValue::Null` for nullable String, Integer, Float, Date, Time, and Decimal
+columns (previously returned `Err` for these types, causing INSERT to fail). Test
+`insert_null_values_update_column_null_count_statistics` verifies: 3 rows (row1 note=NULL,
+row2 score=NULL, row3 both present) → row_count=3, note.null_count=1, score.null_count=1,
+id.null_count=0. Per-column min/max tracking added: `DmlService::compute_column_minmax_from_records` extracts
+sortable string representations of String and integer column values from the canonical
+`ProximaRecord` batch before it is consumed by mutations; `bump_column_minmax` merges the
+batch min/max into `CatalogTableStatistics.column_stats[col].min_value` / `.max_value` using
+lexicographic comparison (integers zero-padded with explicit sign for correct sort order). Test
+`insert_updates_column_min_max_statistics` verifies: 3 rows (name ∈ {alice, bob, charlie},
+score ∈ {10, 20, 30}) → `name.min='alice', name.max='charlie'`, `score.min < score.max`.
+NDV (distinct count) tracking added: `DmlService::value_to_ndv_key` converts ProximaValue to a
+string key for counting (covers Int8/16/32/64, Float32/64, String, Bool, Date — wider than the
+min/max orderable set); `compute_column_ndv_from_records` collects a bounded `HashSet<String>` per
+column within the batch and returns `HashMap<String, u64>` (col → distinct count in this batch);
+`bump_column_ndv` merges the batch NDV into `CatalogColumnStatistics.distinct_count` using an
+additive estimate (assumes no overlap between batches) capped at `row_count` to prevent impossible
+values. Called in `execute_insert` alongside `bump_column_minmax`. Test
+`insert_updates_column_ndv_statistics` verifies: 4 rows across 4 single-row batches → NDV
+populated and capped at row_count for both `id` and `category` columns.
+Total DML tests: 36. Remaining: bloom filter hints, staleness TTL (mark stats stale when
+`last_analyzed_ms` exceeds a configurable threshold), HLL for cross-batch NDV without overcounting.
 | `src/query/table_write_plan.rs`, `src/services/dml/mod.rs`, xCatalog stats
 
 | T9
@@ -1181,8 +1209,13 @@ OLAP/HTAP route validation added: `explain_values_insert_to_olap_table_routes_to
 that a table created with `WITH (workload = 'olap', layout = 'columnar', compute_route = 'datafusion-local')`
 routes `INSERT VALUES` to `DataFusionLocal` backend with `columnar_analytics` specialization — confirming
 xCatalog workload knobs flow end-to-end through `explain_table_write_with_overrides` and the VALUES synthesis
-path. Total DML tests: 25.
-Remaining: pgwire wire-protocol SQL tests (external TPC/BenchBase driver hitting port 5433).
+path. Nullable column round-trip tests added:
+`insert_nullable_values_are_scannable_and_project_null_correctly` verifies that INSERT with NULL in
+TEXT/FLOAT nullable columns stores `ProximaValue::Null` in `record.props`, `scan_table_records` returns it,
+and `select_table_records_with_projection` surfaces `ProximaValue::Null` per-column.
+`is_null_predicate_filters_nullable_column_rows` verifies `IS NULL` returns only null-tagged rows and
+`IS NOT NULL` returns only non-null rows via `scan_table_records_with_predicates`.
+Total DML tests: 32 (26 previous + 6 new: T8 null stats, T9 nullable scan+projection, T9 IS NULL filter, T4 IN/NOT IN filter, T4 LIKE/NOT LIKE filter, T9 UPDATE nullable column to NULL). Remaining: pgwire wire-protocol SQL tests (external TPC/BenchBase driver hitting port 5433).
 | `src/services/dml/mod.rs`, `tools/pgwire/**`, `tests/**`, external benchmark harness
 
 | T10
@@ -1219,7 +1252,16 @@ INSERT VALUES and UPSERT VALUES synthesize a `CopyIntoPlan` with `ReadSource::Qu
 actual row count as the hint so bulk-vs-WAL lane selection is informed. UPDATE and DELETE synthesize similar
 plans with `WriteMode::Upsert`/`WriteMode::Append`. Two new tests verify: INSERT VALUES routes to Native
 backend with WAL lane for a default OLTP table; UPDATE and DELETE both resolve to Native backend.
-Remaining: EXPLAIN ANALYZE (execution + stats), and richer estimates as catalog statistics mature.
+EXPLAIN ANALYZE implemented: `DmlService::explain_analyze_table_write` calls planning-only EXPLAIN, then
+executes the write, and returns the route explanation enriched with `execution_elapsed_us` and
+`execution_rows_written`. `TableWriteRouteExplanation` gains two optional `#[serde(skip_serializing_if)]`
+fields. pgwire EXPLAIN handler upgraded: `extract_explain_inner_query` now delegates to new
+`extract_explain_with_analyze(query) → (bool, &str)`, which handles `EXPLAIN ANALYZE <dml>` and
+`EXPLAIN (ANALYZE, ...) <dml>` without rejection; the EXPLAIN response tag becomes "EXPLAIN ANALYZE"
+when applicable. gRPC `execute_sql_v1` now calls `parse_explain_kind` (replaces `strip_explain_prefix`
+call) and dispatches to `explain_analyze_table_write` when `is_analyze = true`.
+8 `explain_prefix_tests` + 4 pgwire `test_extract_explain*` + 1 DML T11 test all pass. Total DML tests: 35.
+Remaining: richer estimates as catalog statistics mature (NDV/distinct_count for CBO, bloom hints).
 | `src/query/table_write_plan.rs`, `src/api_handlers/request_handlers.rs`, `src/network/shared_services.rs`
 
 | T12
@@ -1261,9 +1303,23 @@ xCatalog statistics feedback wired to gRPC fast-lane: `handle_record_batch_for_t
 `handle_record_insert_batch_for_tenant` now call `DmlService::bump_row_count_stats` after every
 successful batch write; the method is `pub(crate)` and guards silently (non-fatal) when the
 collection is not registered as a relational table. This aligns gRPC and DML on catalog stats.
-Remaining: column-schema constraint validation for fast-lane writes, RLS/tenant coercion wiring,
-WAL-policy enforcement at the record-batch level, and Arrow Flight stats parity.
+Column-schema constraint validation added: `DmlService::validate_record_batch_against_schema`
+validates each incoming `ProximaRecord`'s props against the xCatalog schema using
+`RelationalWriteProfile::fast_lane()` (no unknown-column rejection, no full-column requirement,
+but null-constraint and type-compatibility checks are enforced). Both
+`handle_record_batch_for_tenant` and `handle_record_insert_batch_for_tenant` call this before
+dispatching to the vector-ops path; a failing record returns
+`BatchOperationResult::failure("SCHEMA_VALIDATION_FAILED")` without touching storage.
+Collections not registered as relational tables silently skip validation (non-relational
+collections remain unrestricted). Arrow Flight writes inherit this validation transitively
+since DoPut/DoExchange route through the same handlers. New `RelationalWriteProfile::fast_lane()`
+profile added to `crates/control/proximadb-catalog/src/relational.rs`. Two unit tests:
+`fast_lane_schema_validation_rejects_null_for_not_null_column` and
+`fast_lane_schema_validation_skips_non_relational_collections`. Total DML tests: 33.
+Remaining: RLS/tenant coercion wiring, WAL-policy enforcement at the record-batch level,
+Arrow Flight stats parity via Arrow Flight path (not yet bumped for DoPut/DoExchange directly).
 | `src/api_handlers/request_handlers.rs`, `src/services/dml/mod.rs`,
+`crates/control/proximadb-catalog/src/relational.rs`,
 `src/network/grpc/v2/record_service.rs`, `src/network/arrow_ipc/service.rs`,
 `src/network/postgres/protocol.rs`, DML executor modules
 
@@ -1326,8 +1382,11 @@ commit, projection-only rebuild.
 | `query::table_write_plan` has 17 tests covering OLTP, OLAP, distributed, external Iceberg/Delta,
 VectorAnn, LSM, WAL/bulk-append/overwrite/projection lanes. `services::write_intent` has 9 tests
 covering WAL gate, bulk-append guard, overwrite snapshot guard, projection-only guard, and
-`require_wal_lane` rejection for non-WAL lanes. `services::dml` has 25 tests including EXPLAIN routing
-for INSERT SELECT (OLAP/OLTP backends), INSERT VALUES, UPDATE, DELETE, and UPSERT DML variants.
+`require_wal_lane` rejection for non-WAL lanes. `services::dml` has 33 tests including EXPLAIN routing
+for INSERT SELECT (OLAP/OLTP backends), INSERT VALUES, UPDATE, DELETE, and UPSERT DML variants;
+nullable column NULL round-trips (T8/T9); predicate filtering (T4: IN/NOT IN/LIKE/IS NULL); and
+fast-lane schema validation (T15: `fast_lane_schema_validation_rejects_null_for_not_null_column`,
+`fast_lane_schema_validation_skips_non_relational_collections`).
 OLAP/HTAP validation: EXPLAIN for VALUES INSERT to a `compute_route='datafusion-local'` table confirms
 DataFusion backend selection end-to-end through the catalog routing chain.
 

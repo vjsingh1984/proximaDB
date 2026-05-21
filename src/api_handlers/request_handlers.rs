@@ -847,6 +847,17 @@ impl UnifiedHandlers {
         };
 
         let collection_name = request.collection_id.clone();
+        if let Some(dml_svc) = self.get_dml_service() {
+            if let Err(e) = dml_svc
+                .validate_record_batch_against_schema(&collection_name, &request.records)
+                .await
+            {
+                return Ok(BatchOperationResult::failure(
+                    format!("Schema validation failed: {}", e),
+                    "SCHEMA_VALIDATION_FAILED".to_string(),
+                ));
+            }
+        }
         match self
             .vector_operations_service
             .insert_records_with_tenant_context(
@@ -897,6 +908,17 @@ impl UnifiedHandlers {
         };
 
         let collection_name = request.collection_id.clone();
+        if let Some(dml_svc) = self.get_dml_service() {
+            if let Err(e) = dml_svc
+                .validate_record_batch_against_schema(&collection_name, &request.records)
+                .await
+            {
+                return Ok(BatchOperationResult::failure(
+                    format!("Schema validation failed: {}", e),
+                    "SCHEMA_VALIDATION_FAILED".to_string(),
+                ));
+            }
+        }
         match self
             .vector_operations_service
             .insert_records_only_with_tenant_context(
@@ -1913,38 +1935,45 @@ impl UnifiedHandlers {
     ) -> Result<crate::proto::proximadb_v1::ExecuteSqlResponse> {
         let start_time = std::time::Instant::now();
 
-        // EXPLAIN detection: route EXPLAIN INSERT…SELECT through DmlService before any other path.
-        if let Some(inner_query) = Self::strip_explain_prefix(query.trim()) {
+        // EXPLAIN detection: route EXPLAIN [ANALYZE] <DML> through DmlService before any other path.
+        if let Some((is_analyze, inner_query)) = Self::parse_explain_kind(query.trim()) {
             if let Some(dml_svc) = self.get_dml_service() {
                 let parser = crate::query::sql_frontend::SqlFrontendParser::new();
                 match parser.parse_dml(inner_query) {
-                    Ok(Some(statement)) => match dml_svc.explain_table_write(statement).await {
-                        Ok(explanation) => {
-                            let json = serde_json::to_string_pretty(&explanation)
-                                .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e));
-                            return Ok(crate::proto::proximadb_v1::ExecuteSqlResponse {
-                                rows: vec![crate::proto::proximadb_v1::SqlRow {
-                                    fields: vec![crate::proto::proximadb_v1::SqlRowField {
-                                        key: "QUERY PLAN".to_string(),
-                                        value: Some(crate::proto::proximadb_v1::SqlValue {
-                                            value: Some(
-                                                crate::proto::proximadb_v1::sql_value::Value::StringValue(json),
-                                            ),
-                                        }),
+                    Ok(Some(statement)) => {
+                        let explain_result = if is_analyze {
+                            dml_svc.explain_analyze_table_write(statement).await
+                        } else {
+                            dml_svc.explain_table_write(statement).await
+                        };
+                        match explain_result {
+                            Ok(explanation) => {
+                                let json = serde_json::to_string_pretty(&explanation)
+                                    .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e));
+                                return Ok(crate::proto::proximadb_v1::ExecuteSqlResponse {
+                                    rows: vec![crate::proto::proximadb_v1::SqlRow {
+                                        fields: vec![crate::proto::proximadb_v1::SqlRowField {
+                                            key: "QUERY PLAN".to_string(),
+                                            value: Some(crate::proto::proximadb_v1::SqlValue {
+                                                value: Some(
+                                                    crate::proto::proximadb_v1::sql_value::Value::StringValue(json),
+                                                ),
+                                            }),
+                                        }],
+                                        similarity: None,
                                     }],
-                                    similarity: None,
-                                }],
-                                rows_scanned: 0,
-                                rows_returned: 1,
-                                execution_time_ms: start_time.elapsed().as_millis() as u64,
-                                columns: vec!["QUERY PLAN".to_string()],
-                                column_types: vec!["jsonb".to_string()],
-                            });
+                                    rows_scanned: 0,
+                                    rows_returned: 1,
+                                    execution_time_ms: start_time.elapsed().as_millis() as u64,
+                                    columns: vec!["QUERY PLAN".to_string()],
+                                    column_types: vec!["jsonb".to_string()],
+                                });
+                            }
+                            Err(e) => {
+                                return Err(anyhow::anyhow!("EXPLAIN failed: {}", e));
+                            }
                         }
-                        Err(e) => {
-                            return Err(anyhow::anyhow!("EXPLAIN failed: {}", e));
-                        }
-                    },
+                    }
                     Ok(None) => {
                         return Err(anyhow::anyhow!("Invalid EXPLAIN statement"));
                     }
@@ -2171,19 +2200,33 @@ impl UnifiedHandlers {
     /// Handles `EXPLAIN`, `EXPLAIN (FORMAT JSON)`, `EXPLAIN (FORMAT TEXT)`, etc.
     /// Returns `None` if the query does not begin with `EXPLAIN`.
     fn strip_explain_prefix(query: &str) -> Option<&str> {
+        Self::parse_explain_kind(query).map(|(_, inner)| inner)
+    }
+
+    /// Parse an EXPLAIN statement into `(is_analyze, inner_dml)`.
+    /// Handles `EXPLAIN ANALYZE <dml>`, `EXPLAIN (ANALYZE) <dml>`, and plain `EXPLAIN <dml>`.
+    fn parse_explain_kind(query: &str) -> Option<(bool, &str)> {
         let upper = query.to_ascii_uppercase();
         if !upper.starts_with("EXPLAIN") {
             return None;
         }
         let after_explain = query["EXPLAIN".len()..].trim_start();
-        // Strip optional parenthesized options: (FORMAT JSON), (FORMAT TEXT), (ANALYZE), etc.
-        let inner = if after_explain.starts_with('(') {
+        let after_upper = after_explain.to_ascii_uppercase();
+
+        if after_upper.starts_with("ANALYZE") {
+            let inner = after_explain["ANALYZE".len()..].trim_start();
+            return Some((true, inner));
+        }
+
+        if after_explain.starts_with('(') {
             let close = after_explain.find(')')?;
-            after_explain[close + 1..].trim_start()
-        } else {
-            after_explain
-        };
-        Some(inner)
+            let options = &after_explain[1..close];
+            let is_analyze = options.to_ascii_uppercase().contains("ANALYZE");
+            let rest = after_explain[close + 1..].trim_start();
+            return Some((is_analyze, rest));
+        }
+
+        Some((false, after_explain))
     }
 
     fn json_to_sql_value(v: &serde_json::Value) -> crate::proto::proximadb_v1::SqlValue {
@@ -3622,5 +3665,34 @@ mod explain_prefix_tests {
             "EXPLAIN (FORMAT JSON, ANALYZE) INSERT INTO t SELECT * FROM s;",
         );
         assert_eq!(inner, Some("INSERT INTO t SELECT * FROM s;"));
+    }
+
+    #[test]
+    fn parse_explain_kind_detects_bare_analyze() {
+        let (is_analyze, inner) = UnifiedHandlers::parse_explain_kind(
+            "EXPLAIN ANALYZE INSERT INTO t SELECT * FROM s;",
+        )
+        .expect("should parse");
+        assert!(is_analyze);
+        assert_eq!(inner, "INSERT INTO t SELECT * FROM s;");
+    }
+
+    #[test]
+    fn parse_explain_kind_detects_parenthesized_analyze() {
+        let (is_analyze, inner) = UnifiedHandlers::parse_explain_kind(
+            "EXPLAIN (ANALYZE, FORMAT JSON) INSERT INTO t SELECT * FROM s;",
+        )
+        .expect("should parse");
+        assert!(is_analyze);
+        assert_eq!(inner, "INSERT INTO t SELECT * FROM s;");
+    }
+
+    #[test]
+    fn parse_explain_kind_plain_explain_returns_false() {
+        let (is_analyze, inner) =
+            UnifiedHandlers::parse_explain_kind("EXPLAIN INSERT INTO t SELECT * FROM s;")
+                .expect("should parse");
+        assert!(!is_analyze);
+        assert_eq!(inner, "INSERT INTO t SELECT * FROM s;");
     }
 }

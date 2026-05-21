@@ -151,3 +151,53 @@ impl DocumentService for DocumentServiceImpl {
             .map_err(Self::port_err)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tonic::Code;
+
+    fn assert_unimplemented<T>(result: Result<Response<T>, Status>) {
+        let err = result.expect_err("backend-less document service should reject RPC");
+        assert_eq!(err.code(), Code::Unimplemented);
+        assert!(err.message().contains("Document service not configured"));
+    }
+
+    #[tokio::test]
+    async fn backendless_document_service_rejects_every_rpc_consistently() {
+        let service = DocumentServiceImpl::without_backend();
+
+        assert_unimplemented(
+            DocumentService::create_collection(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            DocumentService::list_collections(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            DocumentService::delete_collection(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            DocumentService::insert_document(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            DocumentService::get_document(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            DocumentService::update_document(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            DocumentService::delete_document(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            DocumentService::query_documents(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            DocumentService::aggregate_documents(&service, Request::new(Default::default())).await,
+        );
+    }
+
+    #[test]
+    fn backendless_document_service_can_be_wrapped_as_tonic_server() {
+        let _server = DocumentServiceImpl::without_backend().into_server();
+    }
+}

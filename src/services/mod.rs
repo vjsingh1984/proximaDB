@@ -172,6 +172,7 @@ pub mod catalog_introspection;
 pub mod collection;
 pub mod ddl;
 pub mod dml;
+pub mod embedding_drainer;
 pub mod events;
 pub mod graph_collection;
 pub mod operations;
@@ -193,6 +194,9 @@ pub use ddl::{
 pub use dml::{
     ComparisonOperator, Condition, DmlResult, DmlService, DmlStatement, LogicalOperator,
     SqlValueLiteral, WhereClause,
+};
+pub use embedding_drainer::{
+    DLQ_COLLECTION, EmbeddingDrainer, EmbeddingDrainerConfig, PENDING_COLLECTION,
 };
 pub use events::EventLog;
 pub use graph_collection::GraphCollectionService;

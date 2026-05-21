@@ -382,7 +382,11 @@ mod tests {
         assert_eq!(pool.len().await, 3);
         pool.put(4, Arc::new(vec![4u8])).await;
         assert_eq!(pool.len().await, 3, "capacity must not be exceeded");
-        assert_eq!(pool.stats().snapshot().evictions, 1, "one eviction expected");
+        assert_eq!(
+            pool.stats().snapshot().evictions,
+            1,
+            "one eviction expected"
+        );
         // The freshest insertion must always be present.
         assert!(pool.get(&4).await.is_some());
     }
@@ -401,8 +405,14 @@ mod tests {
         let _ = pool.get(&4).await; // protect 4 for the next round
         pool.put(5, Arc::new(vec![5u8])).await; // forces another eviction
         assert_eq!(pool.len().await, 3);
-        assert!(pool.get(&4).await.is_some(), "recently-touched key 4 should survive");
-        assert!(pool.get(&5).await.is_some(), "freshly-inserted key 5 should be present");
+        assert!(
+            pool.get(&4).await.is_some(),
+            "recently-touched key 4 should survive"
+        );
+        assert!(
+            pool.get(&5).await.is_some(),
+            "freshly-inserted key 5 should be present"
+        );
     }
 
     #[tokio::test]

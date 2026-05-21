@@ -90,3 +90,38 @@ impl EntityService for EntityServiceImpl {
             .map_err(Self::port_err)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tonic::Code;
+
+    fn assert_unimplemented<T>(result: Result<Response<T>, Status>) {
+        let err = result.expect_err("backend-less entity service should reject RPC");
+        assert_eq!(err.code(), Code::Unimplemented);
+        assert!(err.message().contains("Entity service not configured"));
+    }
+
+    #[tokio::test]
+    async fn backendless_entity_service_rejects_every_rpc_consistently() {
+        let service = EntityServiceImpl::without_backend();
+
+        assert_unimplemented(
+            EntityService::upsert_entity(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            EntityService::get_entity(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            EntityService::delete_entity(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            EntityService::search_entities(&service, Request::new(Default::default())).await,
+        );
+    }
+
+    #[test]
+    fn backendless_entity_service_can_be_wrapped_as_tonic_server() {
+        let _server = EntityServiceImpl::without_backend().into_service();
+    }
+}

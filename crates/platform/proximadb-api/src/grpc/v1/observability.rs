@@ -240,3 +240,85 @@ impl ObservabilityService for ObservabilityServiceImpl {
             .map_err(Self::port_err)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tonic::Code;
+
+    fn assert_unimplemented<T>(result: Result<Response<T>, Status>) {
+        let err = result.expect_err("backend-less observability service should reject RPC");
+        assert_eq!(err.code(), Code::Unimplemented);
+        assert!(
+            err.message()
+                .contains("Observability service not configured")
+        );
+    }
+
+    #[tokio::test]
+    async fn backendless_observability_service_rejects_namespace_and_log_rpcs() {
+        let service = ObservabilityServiceImpl::without_backend();
+
+        assert_unimplemented(
+            ObservabilityService::create_namespace(&service, Request::new(Default::default()))
+                .await,
+        );
+        assert_unimplemented(
+            ObservabilityService::list_namespaces(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            ObservabilityService::delete_namespace(&service, Request::new(Default::default()))
+                .await,
+        );
+        assert_unimplemented(
+            ObservabilityService::ingest_logs(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            ObservabilityService::query_logs(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            ObservabilityService::stream_logs(&service, Request::new(Default::default())).await,
+        );
+    }
+
+    #[tokio::test]
+    async fn backendless_observability_service_rejects_metrics_traces_and_alert_rpcs() {
+        let service = ObservabilityServiceImpl::without_backend();
+
+        assert_unimplemented(
+            ObservabilityService::ingest_metrics(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            ObservabilityService::query_metrics(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            ObservabilityService::aggregate_metrics(&service, Request::new(Default::default()))
+                .await,
+        );
+        assert_unimplemented(
+            ObservabilityService::ingest_traces(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            ObservabilityService::query_traces(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            ObservabilityService::get_trace(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            ObservabilityService::upsert_alert_rule(&service, Request::new(Default::default()))
+                .await,
+        );
+        assert_unimplemented(
+            ObservabilityService::delete_alert_rule(&service, Request::new(Default::default()))
+                .await,
+        );
+        assert_unimplemented(
+            ObservabilityService::list_alerts(&service, Request::new(Default::default())).await,
+        );
+    }
+
+    #[test]
+    fn backendless_observability_service_can_be_wrapped_as_tonic_server() {
+        let _server = ObservabilityServiceImpl::without_backend().into_server();
+    }
+}

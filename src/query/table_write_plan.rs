@@ -397,6 +397,12 @@ pub struct TableWriteRouteExplanation {
     pub route_metadata: TableWriteRouteMetadataExplanation,
     pub candidate_paths: Vec<TableWriteCandidateExplanation>,
     pub rejected_paths: Vec<TableWriteRejectedPathExplanation>,
+    /// Set only for EXPLAIN ANALYZE: wall-clock time of the actual write in microseconds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_elapsed_us: Option<u64>,
+    /// Set only for EXPLAIN ANALYZE: actual rows written by the executed statement.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_rows_written: Option<u64>,
 }
 
 /// Result of routing a logical copy/write plan.
@@ -451,6 +457,8 @@ impl RoutedExecutionPlan {
                 .iter()
                 .map(rejected_path_explanation)
                 .collect(),
+            execution_elapsed_us: None,
+            execution_rows_written: None,
         }
     }
 }

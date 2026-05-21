@@ -327,3 +327,105 @@ impl GraphServiceTrait for GraphServiceImpl {
             .map_err(Self::port_err)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tonic::Code;
+
+    fn assert_unimplemented<T>(result: Result<Response<T>, Status>) {
+        let err = result.expect_err("backend-less graph service should reject RPC");
+        assert_eq!(err.code(), Code::Unimplemented);
+        assert!(err.message().contains("Graph service not configured"));
+    }
+
+    #[tokio::test]
+    async fn backendless_graph_service_rejects_crud_and_query_rpcs() {
+        let service = GraphServiceImpl::without_backend();
+
+        assert_unimplemented(
+            GraphServiceTrait::create_node(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::get_node(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::update_node(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::delete_node(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::create_edge(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::get_edge(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::update_edge(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::delete_edge(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::query_nodes(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::query_edges(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::execute_query(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::get_neighbors(&service, Request::new(Default::default())).await,
+        );
+    }
+
+    #[tokio::test]
+    async fn backendless_graph_service_rejects_traversal_analytics_and_batch_rpcs() {
+        let service = GraphServiceImpl::without_backend();
+
+        assert_unimplemented(
+            GraphServiceTrait::traverse_graph(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::stream_traverse(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::get_graph_stats(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::shortest_path(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::get_connected_components(&service, Request::new(Default::default()))
+                .await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::has_cycle(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::add_unique_constraint(&service, Request::new(Default::default()))
+                .await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::remove_unique_constraint(&service, Request::new(Default::default()))
+                .await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::batch_create_nodes(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::batch_create_edges(&service, Request::new(Default::default())).await,
+        );
+        assert_unimplemented(
+            GraphServiceTrait::execute_hybrid_query(&service, Request::new(Default::default()))
+                .await,
+        );
+    }
+
+    #[test]
+    fn backendless_graph_service_can_be_wrapped_as_tonic_server() {
+        let _server = GraphServiceImpl::without_backend().into_server();
+    }
+}

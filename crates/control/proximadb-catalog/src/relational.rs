@@ -58,6 +58,17 @@ impl RelationalWriteProfile {
             require_all_columns: false,
         }
     }
+
+    /// Profile for fast-lane REST/gRPC/Arrow Flight record batch writes: validates only the
+    /// columns that are present in the incoming record (null constraints, type compatibility),
+    /// without rejecting extra fields or requiring full column coverage.
+    pub fn fast_lane() -> Self {
+        Self {
+            mode: RelationalSchemaMode::SchemaOnWrite,
+            reject_unknown_columns: false,
+            require_all_columns: false,
+        }
+    }
 }
 
 /// Catalog-validated row values keyed by logical column name.

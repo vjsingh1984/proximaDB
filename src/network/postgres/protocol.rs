@@ -903,8 +903,8 @@ impl PostgresProtocol {
     }
 
     async fn execute_explain(&mut self, query: &str) -> Result<()> {
-        let inner_query = match Self::extract_explain_inner_query(query) {
-            Ok(inner_query) => inner_query,
+        let (is_analyze, inner_query) = match Self::extract_explain_with_analyze(query) {
+            Ok(pair) => pair,
             Err(error) => {
                 return self
                     .send_error("ERROR", "0A000", &format!("EXPLAIN failed: {}", error))
@@ -952,16 +952,25 @@ impl PostgresProtocol {
         };
 
         let write_intent_overrides = self.write_intent_overrides_from_session().await;
-        match dml_service
-            .explain_table_write_with_overrides(statement, Some(&write_intent_overrides))
-            .await
-        {
+        let explain_result = if is_analyze {
+            dml_service.explain_analyze_table_write(statement).await
+        } else {
+            dml_service
+                .explain_table_write_with_overrides(statement, Some(&write_intent_overrides))
+                .await
+        };
+        match explain_result {
             Ok(explanation) => {
                 let json = serde_json::to_string_pretty(&explanation)?;
                 let fields = vec![FieldDescription::new("QUERY PLAN", PgType::Jsonb)];
                 self.send_row_description(&fields).await?;
                 self.send_data_row(&[&json]).await?;
-                self.send_command_complete("EXPLAIN").await
+                let tag = if is_analyze {
+                    "EXPLAIN ANALYZE"
+                } else {
+                    "EXPLAIN"
+                };
+                self.send_command_complete(tag).await
             }
             Err(error) => {
                 warn!("DmlService EXPLAIN failed: {}", error);
@@ -1032,6 +1041,12 @@ impl PostgresProtocol {
     }
 
     fn extract_explain_inner_query(query: &str) -> Result<&str> {
+        Self::extract_explain_with_analyze(query).map(|(_, inner)| inner)
+    }
+
+    /// Parse an EXPLAIN [ANALYZE] statement, returning `(is_analyze, inner_dml_sql)`.
+    /// `EXPLAIN ANALYZE` and `EXPLAIN (ANALYZE)` both set `is_analyze = true`.
+    fn extract_explain_with_analyze(query: &str) -> Result<(bool, &str)> {
         let trimmed = query.trim();
         let upper = trimmed.to_ascii_uppercase();
         if !upper.starts_with("EXPLAIN") {
@@ -1039,14 +1054,13 @@ impl PostgresProtocol {
         }
 
         let mut rest = trimmed["EXPLAIN".len()..].trim_start();
+        let mut is_analyze = false;
+
         let rest_upper = rest.to_ascii_uppercase();
         if rest_upper.starts_with("ANALYZE") {
-            return Err(anyhow!(
-                "EXPLAIN ANALYZE would execute the write and is not supported"
-            ));
-        }
-
-        if rest.starts_with('(') {
+            is_analyze = true;
+            rest = rest["ANALYZE".len()..].trim_start();
+        } else if rest.starts_with('(') {
             let mut depth = 0usize;
             let mut end = None;
             for (index, ch) in rest.char_indices() {
@@ -1067,9 +1081,7 @@ impl PostgresProtocol {
             };
             let options = &rest[1..end_index];
             if options.to_ascii_uppercase().contains("ANALYZE") {
-                return Err(anyhow!(
-                    "EXPLAIN ANALYZE would execute the write and is not supported"
-                ));
+                is_analyze = true;
             }
             rest = rest[end_index + 1..].trim_start();
         }
@@ -1088,7 +1100,7 @@ impl PostgresProtocol {
             return Err(anyhow!("EXPLAIN requires an inner statement"));
         }
 
-        Ok(rest)
+        Ok((is_analyze, rest))
     }
 
     /// Extract table name from query
@@ -3955,13 +3967,36 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_explain_inner_query_rejects_analyze() {
-        let err = PostgresProtocol::extract_explain_inner_query(
+    fn test_extract_explain_with_analyze_detects_analyze_flag() {
+        let (is_analyze, inner) = PostgresProtocol::extract_explain_with_analyze(
             "EXPLAIN (ANALYZE, FORMAT JSON) INSERT INTO facts SELECT * FROM staging;",
         )
-        .expect_err("analyze should be rejected");
+        .expect("analyze EXPLAIN should parse");
 
-        assert!(err.to_string().contains("would execute the write"));
+        assert!(is_analyze, "ANALYZE option should be detected");
+        assert_eq!(inner, "INSERT INTO facts SELECT * FROM staging;");
+    }
+
+    #[test]
+    fn test_extract_explain_with_analyze_bare_analyze_keyword() {
+        let (is_analyze, inner) = PostgresProtocol::extract_explain_with_analyze(
+            "EXPLAIN ANALYZE INSERT INTO facts SELECT * FROM staging;",
+        )
+        .expect("bare EXPLAIN ANALYZE should parse");
+
+        assert!(is_analyze, "bare ANALYZE should be detected");
+        assert_eq!(inner, "INSERT INTO facts SELECT * FROM staging;");
+    }
+
+    #[test]
+    fn test_extract_explain_without_analyze_returns_false() {
+        let (is_analyze, inner) = PostgresProtocol::extract_explain_with_analyze(
+            "EXPLAIN (FORMAT JSON) INSERT INTO facts SELECT * FROM staging;",
+        )
+        .expect("plain EXPLAIN should parse");
+
+        assert!(!is_analyze, "no ANALYZE option — flag should be false");
+        assert_eq!(inner, "INSERT INTO facts SELECT * FROM staging;");
     }
 
     #[test]
