@@ -54,12 +54,16 @@ ProximaCodec maintains **strict separation** between implementation layers:
 
 [cols="2,3"]
 |===
-| Location | `src/storage/engines/core/ops/proximacodec/impls/baseline/`
+| Location | `crates/horizontal/proximadb-codec/src/baseline/functions/`
 | Language | Pure Rust (stable)
 | Restrictions | *NO* SIMD intrinsics, *NO* unsafe code for SIMD, *NO* `#[cfg(target_arch)]`
 | Purpose | Portable fallback, reference implementation, platform independence
 | Performance | Baseline (1x)
 |===
+
+NOTE: `src/compute/proximacodec/baseline/functions/` is now a compatibility
+re-export only. Do not add implementation files there; add scalar codec logic to
+`proximadb-codec` and let compute route through the compatibility module.
 
 **Example (CORRECT Baseline)**:
 [source,rust]

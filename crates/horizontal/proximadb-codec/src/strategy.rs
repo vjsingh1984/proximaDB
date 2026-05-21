@@ -1270,18 +1270,20 @@ impl StrategyRegistry {
         let strategy = self.get_strategy(context.domain);
         let mut scheme = strategy.select(analysis, context);
 
-        if let Some(ordering_scheme) = ordering_preferred_scheme(analysis, context, hints) {
-            if ordering_scheme != scheme {
-                rejected_candidates.push(RejectedCodecCandidate {
-                    scheme: scheme.clone(),
-                    reason: RejectionReason::LayoutMismatch,
-                    expected_ratio: Some(estimate_compression_ratio(
-                        &scheme,
-                        analysis,
-                        context.data_type,
-                    )),
-                });
-                scheme = ordering_scheme;
+        if !analysis.is_constant() {
+            if let Some(ordering_scheme) = ordering_preferred_scheme(analysis, context, hints) {
+                if ordering_scheme != scheme {
+                    rejected_candidates.push(RejectedCodecCandidate {
+                        scheme: scheme.clone(),
+                        reason: RejectionReason::LayoutMismatch,
+                        expected_ratio: Some(estimate_compression_ratio(
+                            &scheme,
+                            analysis,
+                            context.data_type,
+                        )),
+                    });
+                    scheme = ordering_scheme;
+                }
             }
         }
 
@@ -1538,12 +1540,10 @@ mod tests {
 
         assert!(matches!(decision.scheme, ProximaScheme::Dictionary));
         assert!(decision.expected_ratio >= 2.0);
-        assert!(
-            !decision
-                .rejected_candidates
-                .iter()
-                .any(|candidate| candidate.reason == RejectionReason::HotPathDecodeBudget)
-        );
+        assert!(!decision
+            .rejected_candidates
+            .iter()
+            .any(|candidate| candidate.reason == RejectionReason::HotPathDecodeBudget));
     }
 
     #[test]
@@ -1564,6 +1564,20 @@ mod tests {
     }
 
     #[test]
+    fn test_sorted_constant_decision_keeps_runlength() {
+        let registry = StrategyRegistry::default();
+        let values = vec![42i64; 128];
+        let analysis = DataAnalysis::from_i64_values(&values);
+        let context = SelectionContext::general(TypeId::I64).sorted();
+        let profile = CompressionProfile::default();
+        let decision =
+            registry.select_decision(&analysis, &context, &profile, &LayoutHints::value_sorted());
+
+        assert!(matches!(decision.scheme, ProximaScheme::RunLength));
+        assert!(decision.rejected_candidates.is_empty());
+    }
+
+    #[test]
     fn test_unmet_compression_target_falls_back_to_raw() {
         let registry = StrategyRegistry::default();
         let values: Vec<i64> = (0..128).map(|i| i * 4).collect();
@@ -1575,11 +1589,9 @@ mod tests {
 
         assert!(matches!(decision.scheme, ProximaScheme::Raw));
         assert_eq!(decision.expected_ratio, 1.0);
-        assert!(
-            decision
-                .rejected_candidates
-                .iter()
-                .any(|candidate| candidate.reason == RejectionReason::CompressionTargetMiss)
-        );
+        assert!(decision
+            .rejected_candidates
+            .iter()
+            .any(|candidate| candidate.reason == RejectionReason::CompressionTargetMiss));
     }
 }

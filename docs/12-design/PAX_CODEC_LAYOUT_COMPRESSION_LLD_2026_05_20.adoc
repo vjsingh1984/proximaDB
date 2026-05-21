@@ -481,6 +481,22 @@ Current pilot:
   freshness, loss policy, authority mode, policy boundary, and decode budget before relying on a
   stored profile.
 
+== LLD: Dead Code Retirement
+
+Cleanup must happen after a checkpoint commit and only when the canonical path has tests. Removal
+should preserve compatibility modules when external or older internal imports still depend on the
+module path.
+
+Current pilot:
+
+* Commit `b8122857f` checkpoints PCX-005 through PCX-009 before deletion-oriented cleanup.
+* The duplicate compute baseline codec implementation files under
+  `src/compute/proximacodec/baseline/functions/` have been removed. The directory now keeps only a
+  compatibility `mod.rs` that re-exports `proximadb_codec::baseline::functions::*`.
+* Compute-facing `analysis`, `strategy`, `types`, and `simd_analysis` remain compatibility adapters
+  until all storage, benchmark, and test imports move to `proximadb-codec` or an explicit compute
+  runtime routing API.
+
 == Progress Tracker
 
 [cols="1,1,3,3"]
@@ -546,7 +562,7 @@ Current pilot:
   loss policy, authority mode, and policy boundary remain eligibility checks before runtime use.
 
 | PCX-010
-| Not started
+| In progress
 | Retire dead or duplicate codec/layout paths after migration.
 | Old selectors and unused block-layout code are removed only after the equivalent canonical path
   has tests and migration notes.
