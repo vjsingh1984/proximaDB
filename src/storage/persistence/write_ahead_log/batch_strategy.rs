@@ -280,6 +280,8 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             payload_data: strategy_payload,
             payload_format: self.strategy_name().to_lowercase(),
             vector_count: batch.vector_records.len(),
+            // Vector-bearing path; the embedding drainer ignores these entries.
+            pending_embed: false,
         };
 
         // Step 4: Persist to disk (unified logic)

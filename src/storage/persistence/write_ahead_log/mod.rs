@@ -196,6 +196,17 @@ pub struct WALOperation {
     pub payload_format: String,
     /// Number of vectors in this batch (for metrics)
     pub vector_count: usize,
+    /// When true, this batch arrived via Arrow Flight text-only schema and
+    /// needs server-side embedding before the index write completes. The
+    /// embedding drainer (proximadb-embedding crate) polls for these entries,
+    /// invokes the EmbeddingService, populates the vector field, and flips
+    /// this flag to false before promoting the batch to the index.
+    ///
+    /// Default false — existing serialized WAL entries deserialize correctly
+    /// without modification. New entries that don't go through native embedding
+    /// also default to false.
+    #[serde(default)]
+    pub pending_embed: bool,
 }
 
 // Re-export CompactBatchId as BatchId - it's globally unique, no need for collection_id

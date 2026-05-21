@@ -119,13 +119,41 @@ impl InternalSchemaRegistry {
         dimension: u32,
         distance_metric: &str,
     ) -> Result<Arc<CatalogObject>> {
+        // Default to the vector-required path (the legacy contract). Collections
+        // that opt into native server-side embedding should use
+        // [`create_vector_collection_with_embedding`] which relaxes the
+        // vector-column nullability requirement.
+        self.create_vector_collection_with_embedding(
+            name,
+            dimension,
+            distance_metric,
+            /* native_embedding = */ false,
+        )
+        .await
+    }
+
+    /// Variant of `create_vector_collection` that accepts a `native_embedding`
+    /// flag. When true, the `vector` catalog column is marked nullable so the
+    /// Arrow Flight DoPut text-only schema variant can write rows without a
+    /// vector populated; the embedding drainer fills the column asynchronously
+    /// (see `proximadb-embedding::EmbeddingService`).
+    pub async fn create_vector_collection_with_embedding(
+        &self,
+        name: &str,
+        dimension: u32,
+        distance_metric: &str,
+        native_embedding: bool,
+    ) -> Result<Arc<CatalogObject>> {
         use super::{ModelProperties, VectorProperties};
         use proximadb_catalog::{CatalogColumn, CatalogDataType};
+
+        let vector_column =
+            CatalogColumn::new(2, "vector", CatalogDataType::Vector).nullable(native_embedding);
 
         let object_schema = ObjectSchema {
             columns: vec![
                 CatalogColumn::new(1, "id", CatalogDataType::String).nullable(false),
-                CatalogColumn::new(2, "vector", CatalogDataType::Vector).nullable(false),
+                vector_column,
                 CatalogColumn::new(3, "metadata", CatalogDataType::Json),
             ],
             primary_key: vec!["id".to_string()],
