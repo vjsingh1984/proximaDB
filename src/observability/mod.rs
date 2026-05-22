@@ -85,6 +85,9 @@ pub mod route_explain;
 pub mod trace_digest;
 /// Trace fingerprint — shape-only hash for incident-triage grouping.
 pub mod trace_fingerprint;
+/// Trace batcher — bundles N populated traces into one POST payload
+/// for the async billing sink (digest-keyed dedup + fingerprint-aware).
+pub mod trace_batcher;
 /// Query engine for logs, metrics, and traces with PromQL support.
 pub mod query;
 /// SearchPlanTrace — per-query telemetry envelope feeding KRU billing and the
