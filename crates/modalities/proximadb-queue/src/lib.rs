@@ -56,12 +56,14 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock, oneshot};
+use tokio::task::JoinHandle;
 use tracing::info;
 
 use crate::disk_tier::PartitionDiskWriter;
 use crate::fs::{LocalFs, QueueFs};
 use crate::memory_tier::PartitionMemory;
+use crate::object_tier::ObjectTierUploader;
 
 /// Handle to the running queue subsystem. Holds per-topic state and serves
 /// `Producer` / `Consumer` handles to callers.
@@ -73,6 +75,10 @@ pub struct QueueClient {
     root_path: PathBuf,
     fs: Arc<dyn QueueFs>,
     topics: RwLock<HashMap<String, Arc<TopicState>>>,
+    /// Background-task handles spawned at open. `shutdown()` signals
+    /// each one's oneshot and awaits their JoinHandle so a clean exit
+    /// drains any in-flight uploads / reaps before returning.
+    background_tasks: Mutex<Vec<(JoinHandle<()>, oneshot::Sender<()>)>>,
 }
 
 pub(crate) struct TopicState {
@@ -98,6 +104,7 @@ impl QueueClient {
             root_path,
             fs,
             topics: RwLock::new(HashMap::new()),
+            background_tasks: Mutex::new(Vec::new()),
         });
 
         // Snapshot the configured topic names to drop the borrow on
@@ -117,9 +124,26 @@ impl QueueClient {
         // to recover, so the lazy path skips recovery.
         recovery::recover(&client).await?;
 
+        // Object-tier uploader: spawned only when an archive is
+        // configured. Mirrors sealed disk segments to the archive root
+        // so the queue survives node-loss (PVC-less ECS, k8s pod
+        // eviction onto fresh local disk, etc.).
+        if let Some(archive_url) = client.config.object_archive.clone() {
+            let archive_root = crate::object_tier::resolve_archive_root(&archive_url)?;
+            client.fs.create_dir_all(&archive_root).await?;
+            let uploader = ObjectTierUploader::new(
+                client.fs.clone(),
+                client.root_path.clone(),
+                archive_root,
+            );
+            let pair = uploader.start(client.clone());
+            client.background_tasks.lock().await.push(pair);
+        }
+
         info!(
             root = %client.config.root,
             topics = client.topics.read().await.len(),
+            object_archive = ?client.config.object_archive,
             "proximadb-queue opened"
         );
         Ok(client)
@@ -135,10 +159,17 @@ impl QueueClient {
         Consumer::new(self.clone(), group_id.into())
     }
 
-    /// Graceful shutdown. Phase 1B scaffold: no background workers to stop
-    /// yet beyond the group-commit drainer (which exits on its own when
-    /// the QueueClient is dropped).
+    /// Graceful shutdown. Signals every background task (uploader, and
+    /// later: reaper, lease renewer) via its oneshot, then awaits the
+    /// JoinHandle so any in-flight upload completes before the function
+    /// returns. The group-commit drainer is dropped implicitly when
+    /// the QueueClient's Arc count hits zero.
     pub async fn shutdown(&self) -> Result<()> {
+        let mut tasks = self.background_tasks.lock().await;
+        for (handle, tx) in tasks.drain(..) {
+            let _ = tx.send(());
+            let _ = handle.await;
+        }
         info!("proximadb-queue shutdown");
         Ok(())
     }

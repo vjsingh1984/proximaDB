@@ -146,6 +146,13 @@ impl PartitionDiskWriter {
         self.next_offset.load(Ordering::Relaxed)
     }
 
+    /// The currently-active (still-growing) segment id. Object-tier
+    /// upload skips this one and only mirrors sealed segments (those
+    /// with id strictly less than this).
+    pub async fn active_segment_id(&self) -> u64 {
+        self.state.lock().await.active_segment_id
+    }
+
     /// Serialize + append + register fsync. Returns the segment path that
     /// the caller should await on via `wait_for_fsync` (Strict mode) plus
     /// the offset assigned to this message.
