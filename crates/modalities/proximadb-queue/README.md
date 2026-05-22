@@ -64,40 +64,120 @@ respect them; deviations require explicit revision of this document.
    in-process `DashMap`-backed lease enforces this within a single
    ProximaDB process; cross-process disk-backed leases extend the same
    guarantee across replicas when the disk tier lands.
+5. **The async drainer bypasses WAL+memtable and bulk-loads SST
+   segments directly.** This is LSM-aware: per-record WAL+memtable
+   ingestion is optimal at p99-latency-budgeted batch-of-one writes;
+   batched bulk-load is optimal once you've amortized over more than a
+   handful of records. The queue's disk tier already provides
+   durability before the drainer pulls, so the WAL is redundant
+   overhead on the async path. The drainer:
+   (a) pulls a batch from one partition,
+   (b) embeds them in one inference call,
+   (c) sorts by oid,
+   (d) writes a single SST segment with one fsync,
+   (e) atomically commits the segment to the collection's manifest,
+   (f) acks the queue messages.
+   Crash recovery is "replay the queue from the last ack" — the SST
+   segment is either committed or it isn't; there's no half-state.
+6. **Queue partitions are aligned with tenant-to-instance assignment.**
+   The drainer for partition K only consumes messages for tenants
+   whose target collection lives on the local instance. This avoids
+   cross-instance writes entirely in steady state. Scaling events
+   trigger lease handoff: old owner drains in-flight, then new owner
+   picks up.
 
-## Architecture (one-screen)
+## Architecture (LSM-aware)
+
+ProximaDB's storage engines (SST, VIPER, NOVA) are LSM-based. The sync
+write path and the async write path land at the same final storage layer
+(SSTs on disk) but take **deliberately different** routes there because
+the optimal LSM ingestion pattern differs by batch size.
 
 ```
-                           customer
-                              │
-                              ▼
-              ┌────────────────────────────────┐
-              │ ProximaDB request handlers     │
-              │ (REST /v3/documents, Arrow     │
-              │  Flight DoPut, gRPC Insert)    │
-              └────────────────────────────────┘
-                     │                   │
-            mode=sync│                   │mode=async
-                     ▼                   ▼
-              ┌────────────┐      ┌────────────────────┐
-              │ inline     │      │ queue.send         │
-              │ embed      │      │  → memory tier     │
-              │            │      │  → disk segment    │
-              │            │      │  → group-commit    │
-              │            │      │    fsync           │
-              │            │      │  → MessageReceipt  │
-              └────────────┘      │  → 202 to client   │
-                     │            └────────────────────┘
-                     │                       │
-                     │              (background drainer)
-                     │              queue.poll → embed
-                     │                       │
-                     ▼                       ▼
-              ┌──────────────────────────────────────┐
-              │ request_handlers.insert →            │
-              │ WAL append → memtable → HNSW/SST     │
-              └──────────────────────────────────────┘
+                                customer
+                                   │
+                                   ▼
+                   ┌────────────────────────────────┐
+                   │ ProximaDB request handlers     │
+                   │ (REST /v3/documents, Arrow     │
+                   │  Flight DoPut, gRPC Insert)    │
+                   └────────────────────────────────┘
+                          │                   │
+                 mode=sync│                   │mode=async
+                          ▼                   ▼
+                   ┌────────────┐      ┌──────────────────────┐
+                   │ embed      │      │ queue.send           │
+                   │ inline     │      │  → memory tier       │
+                   │            │      │  → disk segment      │
+                   │            │      │  → group-commit fsync│
+                   │            │      │  → MessageReceipt    │
+                   │            │      │  → 202 to client     │
+                   └────────────┘      └──────────────────────┘
+                          │                       │
+                          │                       │
+                          │            (per-tenant-partitioned drainer
+                          │             running on the instance that
+                          │             OWNS the target collection;
+                          │             no cross-instance RPC)
+                          │                       │
+                          │             queue.poll(batch)
+                          │                       │
+                          │             embed batch in one shot
+                          │             sort by oid
+                          │                       │
+                          ▼                       ▼
+              ┌──────────────────┐      ┌─────────────────────────┐
+              │ WAL append       │      │ BULK-LOAD: write SST    │
+              │   ↓ fsync        │      │ segment directly        │
+              │ memtable insert  │      │   ↓ one fsync per batch │
+              │   ↓ (async flush)│      │ atomic manifest commit  │
+              │ SST segment      │      │   ↓                     │
+              │   ↓ (compaction) │      │ queue.ack               │
+              │ merged tiers     │      │                         │
+              └──────────────────┘      └─────────────────────────┘
+                       │                          │
+                       └─────────┬────────────────┘
+                                 ▼
+                          searchable corpus
 ```
+
+### Why the two paths converge at SST but take different routes
+
+| Path | Latency budget | LSM pattern | Why |
+|---|---|---|---|
+| **Sync** | < 2s p99 | WAL → memtable → SST (background flush) | One record at a time; latency-dominated; memtable serves immediate reads before flush; cheap fsync amortized over the request lifecycle |
+| **Async** | 202 in <10ms; searchable in <5min | Queue → bulk-load SST (skip WAL + memtable) | Drainer accumulates N records per batch; one SST write + one fsync amortizes across N; skipping memtable avoids memory pressure from large backfills; sorted-on-write avoids compaction churn |
+
+**Async deliberately bypasses WAL and memtable.** Durability is provided
+by the queue's disk tier — the drainer only pulls messages that have
+already been fsync'd. On drainer crash mid-SST-write, recovery is:
+replay queue (idempotent via `message_id`) → re-derive the SST segment.
+This is the LSM bulk-load pattern used by RocksDB `IngestExternalFile`,
+Cassandra `SSTableLoader`, and DuckDB COPY.
+
+### Per-tenant routing aligns queue partitions with storage assignment
+
+The drainer **must not** ship records to a different instance — the SST
+write needs to land on the instance that owns the target collection's
+storage. We achieve this by aligning the queue partition assignment with
+the tenant-to-instance assignment:
+
+```
+partition_for(tenant_id) = xxhash64(tenant_id) mod partition_count
+
+When partition_count == instance_count and instance K owns the partitions
+hashing to K:
+  - Each drainer only consumes messages for tenants whose collection
+    lives on the same instance
+  - SST writes are always local; no cross-instance RPC
+  - Per-tenant FIFO is preserved across the instance boundary
+```
+
+When instance count changes (scale event), partition reassignment uses
+the disk-backed lease + handoff: the old owner finishes draining
+in-flight messages before the new owner picks up. Combined with the
+queue's `Consumer::nack` retry semantics, this gives at-least-once
+delivery with no cross-instance traffic in the steady state.
 
 ## Phase 1B scope
 
