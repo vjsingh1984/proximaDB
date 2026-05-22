@@ -41,6 +41,8 @@ pub mod builder; // Filtered hybrid query builder (Issue #39, SB-09)
 pub mod coordinator;
 pub mod fusion;
 pub mod reranker;
+/// Utility-aware scorer (LLD 8) - linear blend + pluggable UAE artifact path.
+pub mod utility_scorer;
 
 // Export fusion engine, error, and coordinator
 pub use builder::{HybridExecutionStrategy, HybridQuery, HybridQueryBuilder, HybridQueryResult};
