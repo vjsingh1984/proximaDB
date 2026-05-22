@@ -1354,6 +1354,85 @@ impl UnifiedStorageEngine for NovaEngine {
         self.flush_ops.flush(params).await
     }
 
+    /// NOVA's LSM bulk-load override (Phase 2F-b).
+    ///
+    /// Bypasses WAL + memtable entirely: the queue drainer hands us a
+    /// pre-sorted batch, and we write a single Parquet file directly
+    /// through `flush_ops.flush()` — the SAME writer the normal flush
+    /// path uses for memtable-to-disk promotion. Because the writer is
+    /// already record-shape-aware (`Vec<ProximaRecord>` in,
+    /// VectorRecord-on-the-fly conversion + Parquet out), no engine
+    /// refactor was needed — the trait method just builds a synthetic
+    /// `FlushParameters` and delegates.
+    ///
+    /// Returns `used_engine_specific_path = true` so the caller's
+    /// `BulkLoader` knows it doesn't need the per-record WAL fallback.
+    async fn ingest_sorted_segment(
+        &self,
+        collection_id: &str,
+        base_path: &str,
+        records: Vec<proximadb_records::ProximaRecord>,
+    ) -> Result<crate::storage::traits::SegmentIngestResult> {
+        use crate::proto::proximadb_v1::{Collection, StorageAssignment};
+
+        let count = records.len();
+        if count == 0 {
+            return Ok(crate::storage::traits::SegmentIngestResult {
+                collection_id: collection_id.to_string(),
+                record_count: 0,
+                synthetic_segment_id: "empty".to_string(),
+                used_engine_specific_path: true,
+            });
+        }
+
+        // Build a minimal Collection so flush_ops knows where to write.
+        // `config = None` lets dimension fall back to inspecting
+        // records[0].embeddings[0].dim inside the flush path (per the
+        // existing fallback chain). `storage_assignment.base_location`
+        // is the only field flush_ops::flush actually reads.
+        let collection_config = Some(Collection {
+            id: collection_id.to_string(),
+            config: None,
+            stats: None,
+            created_at: 0,
+            updated_at: 0,
+            storage_assignment: Some(StorageAssignment {
+                primary_path: base_path.to_string(),
+                backup_paths: vec![],
+                engine: 0, // engine enum slot — flush_ops doesn't read this
+                engine_config: std::collections::HashMap::new(),
+                base_location: base_path.to_string(),
+            }),
+        });
+
+        let params = FlushParameters {
+            collection_id: Some(collection_id.to_string()),
+            force: true,
+            synchronous: true,
+            hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            vector_records: records,
+            trigger_compaction: false,
+            batch_ids: vec![],
+            collection_config,
+            estimated_size: 0,
+        };
+
+        let flush_result = self.flush_ops.flush(&params).await?;
+        let synthetic_segment_id = flush_result
+            .file_paths
+            .first()
+            .cloned()
+            .unwrap_or_else(|| format!("nova-bulkload-{collection_id}-{count}"));
+
+        Ok(crate::storage::traits::SegmentIngestResult {
+            collection_id: collection_id.to_string(),
+            record_count: count,
+            synthetic_segment_id,
+            used_engine_specific_path: true,
+        })
+    }
+
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
         // Delegate to modularized compaction operations
         self.compaction_ops.compact(params).await

@@ -39,6 +39,7 @@ mod tests {
             }],
             sequence: None,
             labels: LabelSet::new(),
+            ..Default::default()
         }
     }
 

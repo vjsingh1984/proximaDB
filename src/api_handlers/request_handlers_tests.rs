@@ -47,8 +47,7 @@ mod tests {
             (0..dimension).map(|i| i as f32 * 0.1).collect(),
             Utc::now().timestamp(),
         )
-        .with_record_version(1),
-        ..Default::default()
+        .with_record_version(1)
     }
 
     fn create_test_proxima_record(
@@ -81,16 +80,13 @@ mod tests {
     impl TestProximaRecordExt for proximadb_records::ProximaRecord {
         fn with_record_version(mut self, version: u64) -> proximadb_records::ProximaRecord {
             self.record_version = version;
-            self,
-            ..Default::default()
+            self
         }
 
         fn with_valid_to_ms(mut self, expires_at_ms: i64) -> proximadb_records::ProximaRecord {
             self.valid_to_ns = Some(expires_at_ms.saturating_mul(1_000_000));
-            self,
-            ..Default::default()
-        },
-        ..Default::default()
+            self
+        }
     }
 
     #[test]

@@ -111,7 +111,7 @@ impl TransitionClass {
 ///
 /// The `tier_before` / `tier_after` fields are owned `String` so the
 /// event round-trips through JSON; the values themselves are always
-/// from the bounded `{free, community, business, enterprise}` set, so
+/// from the bounded `{free, team, pro, business, enterprise}` set, so
 /// observability cardinality stays safe. Use `event.class.label()`
 /// when a `&'static str` of the class is needed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -187,9 +187,10 @@ fn compare_tiers(before: Tier, after: Tier) -> AxisDirection {
 fn tier_rank(t: Tier) -> u8 {
     match t {
         Tier::FreeTrial => 0,
-        Tier::Community => 1,
-        Tier::Business => 2,
-        Tier::Enterprise => 3,
+        Tier::Team => 1,
+        Tier::Pro => 2,
+        Tier::Business => 3,
+        Tier::Enterprise => 4,
     }
 }
 
@@ -257,11 +258,11 @@ mod tests {
 
     #[test]
     fn tier_up_is_upgrade() {
-        let a = record(Tier::Community, None, None, None);
+        let a = record(Tier::Team, None, None, None);
         let b = record(Tier::Business, None, None, None);
         let ev = detect(&a, &b);
         assert_eq!(ev.class, TransitionClass::Upgrade);
-        assert_eq!(ev.tier_before, "community");
+        assert_eq!(ev.tier_before, "team");
         assert_eq!(ev.tier_after, "business");
     }
 
@@ -324,7 +325,7 @@ mod tests {
     fn tier_class_dominates_axis_mix() {
         // Tier moved up; one of the axes moved down — overall still
         // Upgrade because tier_dir wins.
-        let a = record(Tier::Community, Some(2.0), Some(128), None);
+        let a = record(Tier::Team, Some(2.0), Some(128), None);
         let b = record(Tier::Business, Some(1.5), None, None);
         let ev = detect(&a, &b);
         assert_eq!(ev.class, TransitionClass::Upgrade);
@@ -336,7 +337,7 @@ mod tests {
         // user removed an override that was tighter than the new tier
         // default. The class is still Downgrade because tier wins.
         let a = record(Tier::Business, Some(1.0), None, None);
-        let b = record(Tier::Community, None, None, None);
+        let b = record(Tier::Team, None, None, None);
         let ev = detect(&a, &b);
         assert_eq!(ev.class, TransitionClass::Downgrade);
     }
@@ -361,7 +362,7 @@ mod tests {
 
     #[test]
     fn audit_json_carries_every_field() {
-        let a = record(Tier::Community, None, None, None);
+        let a = record(Tier::Team, None, None, None);
         let b = record(Tier::Business, None, None, None);
         let json = detect(&a, &b).to_audit_json();
         // Top-level field presence.
@@ -382,7 +383,7 @@ mod tests {
     #[test]
     fn event_round_trips_via_json() {
         let a = record(Tier::FreeTrial, None, None, None);
-        let b = record(Tier::Community, Some(3.0), None, None);
+        let b = record(Tier::Team, Some(3.0), None, None);
         let ev = detect(&a, &b);
         let s = serde_json::to_string(&ev).expect("serialize");
         let back: TierTransitionEvent = serde_json::from_str(&s).expect("deserialize");
@@ -392,7 +393,7 @@ mod tests {
     #[test]
     fn delta_carries_before_and_after_values() {
         // Spot-check: a 2 → 16 GB upgrade keeps both values in the delta.
-        let a = record(Tier::Community, None, None, None); // default 2.0
+        let a = record(Tier::Team, None, None, None); // default 2.0
         let b = record(Tier::Business, None, None, None); // default 16.0
         let ev = detect(&a, &b);
         assert_eq!(ev.scan_budget_gb.before, 2.0);
@@ -415,7 +416,7 @@ mod tests {
         // If the after snapshot has a different tenant_id (caller bug),
         // the event reflects the after value — caller is responsible for
         // pre-checking the IDs match.
-        let mut a = record(Tier::Community, None, None, None);
+        let mut a = record(Tier::Team, None, None, None);
         a.tenant_id = "tenant-a".into();
         let mut b = record(Tier::Business, None, None, None);
         b.tenant_id = "tenant-b".into();
@@ -425,7 +426,7 @@ mod tests {
 
     #[test]
     fn class_label_helper_returns_bounded_string() {
-        let a = record(Tier::Community, None, None, None);
+        let a = record(Tier::Team, None, None, None);
         let b = record(Tier::Business, None, None, None);
         let ev = detect(&a, &b);
         // The class enum exposes a bounded `label()` for observability;

@@ -190,7 +190,7 @@ pub fn recommend(
     if matches!(
         mix.concentration,
         ConcentrationClass::HighlyConcentrated | ConcentrationClass::Concentrated
-    ) && matches!(tenant.tier, Tier::FreeTrial | Tier::Community)
+    ) && matches!(tenant.tier, Tier::FreeTrial | Tier::Team)
     {
         return upgrade(out, tenant.tier, reason::CONCENTRATED_HOT_WORKLOAD);
     }
@@ -235,8 +235,9 @@ fn upgrade(mut out: Recommendation, current: Tier, reason_label: &str) -> Recomm
 
 fn tier_above(t: Tier) -> Option<Tier> {
     match t {
-        Tier::FreeTrial => Some(Tier::Community),
-        Tier::Community => Some(Tier::Business),
+        Tier::FreeTrial => Some(Tier::Team),
+        Tier::Team => Some(Tier::Pro),
+        Tier::Pro => Some(Tier::Business),
         Tier::Business => Some(Tier::Enterprise),
         Tier::Enterprise => None,
     }
@@ -245,8 +246,9 @@ fn tier_above(t: Tier) -> Option<Tier> {
 fn tier_below(t: Tier) -> Option<Tier> {
     match t {
         Tier::FreeTrial => None,
-        Tier::Community => Some(Tier::FreeTrial),
-        Tier::Business => Some(Tier::Community),
+        Tier::Team => Some(Tier::FreeTrial),
+        Tier::Pro => Some(Tier::Team),
+        Tier::Business => Some(Tier::Pro),
         Tier::Enterprise => Some(Tier::Business),
     }
 }
@@ -307,7 +309,7 @@ mod tests {
 
     #[test]
     fn below_min_samples_returns_insufficient_signal() {
-        let t = tenant(Tier::Community);
+        let t = tenant(Tier::Team);
         let m = mix(ConcentrationClass::HighlyConcentrated, Some("fp"), 10);
         let s = signals_with_count(10);
         let r = recommend(
@@ -324,7 +326,7 @@ mod tests {
 
     #[test]
     fn high_over_budget_rate_recommends_upgrade() {
-        let t = tenant(Tier::Community);
+        let t = tenant(Tier::Team);
         let m = mix(ConcentrationClass::Broad, Some("fp"), 1_000);
         let mut s = signals_with_count(1_000);
         s.over_budget_rate = 0.25; // well above 0.10 threshold
@@ -338,7 +340,7 @@ mod tests {
         );
         assert_eq!(r.kind, RecommendationKind::Upgrade);
         assert_eq!(r.reason, reason::HIGH_OVER_BUDGET_RATE);
-        assert_eq!(r.suggested_tier.as_deref(), Some("business"));
+        assert_eq!(r.suggested_tier.as_deref(), Some("pro"));
     }
 
     #[test]
@@ -375,12 +377,12 @@ mod tests {
         );
         assert_eq!(r.kind, RecommendationKind::Upgrade);
         assert_eq!(r.reason, reason::CONCENTRATED_HOT_WORKLOAD);
-        assert_eq!(r.suggested_tier.as_deref(), Some("community"));
+        assert_eq!(r.suggested_tier.as_deref(), Some("team"));
     }
 
     #[test]
     fn concentrated_workload_on_business_tier_holds() {
-        // The concentrated-workload signal only fires on free/community
+        // The concentrated-workload signal only fires on free/team
         // tiers — a business tenant with concentrated traffic is the
         // normal case, not a tier-recommendation trigger.
         let t = tenant(Tier::Business);
@@ -436,7 +438,7 @@ mod tests {
         );
         assert_eq!(r.kind, RecommendationKind::Downgrade);
         assert_eq!(r.reason, reason::UNDERUTILIZED);
-        assert_eq!(r.suggested_tier.as_deref(), Some("community"));
+        assert_eq!(r.suggested_tier.as_deref(), Some("pro"));
     }
 
     #[test]
@@ -502,7 +504,7 @@ mod tests {
     fn upgrade_signal_takes_precedence_over_downgrade() {
         // Both signals present — high cache hit rate AND high latency
         // stall. Upgrade wins (latency pain dominates over-provisioning).
-        let t = tenant(Tier::Community);
+        let t = tenant(Tier::Team);
         let m = mix(ConcentrationClass::Broad, Some("fp"), 1_000);
         let mut s = signals_with_count(1_000);
         s.cache_hit_rate = 0.95;
@@ -597,7 +599,7 @@ mod tests {
 
     #[test]
     fn recommendation_round_trips_via_json() {
-        let t = tenant(Tier::Community);
+        let t = tenant(Tier::Team);
         let m = mix(ConcentrationClass::HighlyConcentrated, Some("fp"), 1_000);
         let s = signals_with_count(1_000);
         let r = recommend(
@@ -617,7 +619,7 @@ mod tests {
     fn over_budget_threshold_exactly_at_boundary_triggers_upgrade() {
         // 0.10 is the upgrade threshold — at-boundary should fire
         // (>=, not >).
-        let t = tenant(Tier::Community);
+        let t = tenant(Tier::Team);
         let m = mix(ConcentrationClass::Diverse, Some("fp"), 1_000);
         let mut s = signals_with_count(1_000);
         s.over_budget_rate = 0.10;

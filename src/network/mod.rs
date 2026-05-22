@@ -232,7 +232,7 @@ pub struct NetworkConfig {
     pub enable_dashboard: bool,
 
     /// Authentication configuration
-    pub auth: AuthConfig,
+    pub auth: NetworkAuthConfig,
 
     /// Rate limiting configuration
     pub rate_limit: RateLimitConfig,
@@ -258,7 +258,7 @@ impl Default for NetworkConfig {
             enable_grpc: true,
             enable_rest: true,
             enable_dashboard: true,
-            auth: AuthConfig::default(),
+            auth: NetworkAuthConfig::default(),
             rate_limit: RateLimitConfig::default(),
             request_timeout_secs: 30,
             max_request_size: 64 * 1024 * 1024, // 64MB for bulk operations
@@ -268,9 +268,16 @@ impl Default for NetworkConfig {
     }
 }
 
-/// Authentication configuration
+/// Authentication configuration embedded in [`NetworkConfig`].
+///
+/// Lightweight surface used by the legacy top-level network config — JWT
+/// secret + a flat API-key allowlist. Distinct from
+/// [`crate::network::auth::config::AuthConfig`] (the comprehensive
+/// enterprise-grade auth config with RBAC/OAuth2/mTLS/audit) and
+/// [`crate::network::middleware::MiddlewareAuthConfig`] (the Axum
+/// middleware-specific minimal config).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct AuthConfig {
+pub struct NetworkAuthConfig {
     /// Enable authentication
     pub enabled: bool,
 
@@ -284,7 +291,7 @@ pub struct AuthConfig {
     pub api_keys: Vec<String>,
 }
 
-impl Default for AuthConfig {
+impl Default for NetworkAuthConfig {
     fn default() -> Self {
         Self {
             enabled: false,
@@ -467,7 +474,7 @@ mod config_tests {
 
     #[tokio::test]
     async fn test_network_config_custom() {
-        let custom_auth = AuthConfig {
+        let custom_auth = NetworkAuthConfig {
             enabled: true,
             jwt_secret: Some("secret_key".to_string()),
             jwt_expiration_secs: 7200,
@@ -508,7 +515,7 @@ mod config_tests {
 
     #[tokio::test]
     async fn test_auth_config_default() {
-        let config = AuthConfig::default();
+        let config = NetworkAuthConfig::default();
 
         assert!(!config.enabled);
         assert_eq!(config.jwt_secret, None);
@@ -550,7 +557,7 @@ mod config_tests {
 
     #[tokio::test]
     async fn test_auth_config_with_api_keys() {
-        let config = AuthConfig {
+        let config = NetworkAuthConfig {
             enabled: true,
             jwt_secret: Some("my_jwt_secret".to_string()),
             jwt_expiration_secs: 1800,

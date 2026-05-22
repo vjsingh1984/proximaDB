@@ -24,29 +24,43 @@ use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
 /// Tier identifier. Names match `docs/PRICING_INTERNAL.md` in the AnvaiOps repo.
+///
+/// **2026 Q2 consolidation** — the prior `Community` variant maps to `Team`.
+/// Legacy stored values (`"community"`, `"starter"`, `"standard"`,
+/// `"enterprise_pooled"`, `"enterprise_dedicated"`) deserialize transparently
+/// via the serde aliases below so existing `anvaiops_tenant_tier` rows stay
+/// readable without a data migration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Tier {
     /// Shared pool, capped resources, evaluation usage.
     #[default]
     FreeTrial,
-    /// Community tier — shared pool with predictable per-tenant guardrails.
-    Community,
-    /// Pooled business tier — higher caps, priority over community.
+    /// Team — $19/mo pooled entry tier. Replaces the legacy `community`
+    /// (and the prior `starter`/`standard` SKUs on the AnvaiOps side).
+    #[serde(alias = "community", alias = "starter", alias = "standard")]
+    Team,
+    /// Pro — $199/mo pooled production tier with sync ingest + DR add-on.
+    Pro,
+    /// Business — $599/mo pooled tier with all 21 connectors + webhook bots.
+    #[serde(alias = "enterprise_pooled")]
     Business,
-    /// Dedicated infrastructure, customer-defined caps.
+    /// Enterprise — $1,500+/mo dedicated infrastructure, custom commits.
+    #[serde(alias = "enterprise_dedicated")]
     Enterprise,
 }
 
 impl Tier {
     /// Default scan budget (GB) for the tier — the soft cap the gateway uses
     /// when the request omits `scan_budget_gb` and the per-tenant override is
-    /// absent. Tuned to match the published pricing tiers.
+    /// absent. Values mirror the Python `tier_cache._TIER_DEFAULTS` in the
+    /// AnvaiOps repo and must move in lockstep with it.
     pub const fn default_scan_budget_gb(self) -> f64 {
         match self {
-            Tier::FreeTrial => 0.5,
-            Tier::Community => 2.0,
-            Tier::Business => 16.0,
+            Tier::FreeTrial => 1.0,
+            Tier::Team => 4.0,
+            Tier::Pro => 15.0,
+            Tier::Business => 50.0,
             Tier::Enterprise => 256.0,
         }
     }
@@ -55,8 +69,9 @@ impl Tier {
     pub const fn default_ef_search_cap(self) -> u32 {
         match self {
             Tier::FreeTrial => 64,
-            Tier::Community => 128,
-            Tier::Business => 256,
+            Tier::Team => 160,
+            Tier::Pro => 256,
+            Tier::Business => 384,
             Tier::Enterprise => 1024,
         }
     }
@@ -65,19 +80,21 @@ impl Tier {
     pub const fn default_freshness_sla_seconds(self) -> u32 {
         match self {
             Tier::FreeTrial => 900,
-            Tier::Community => 300,
+            Tier::Team => 300,
+            Tier::Pro => 120,
             Tier::Business => 60,
             Tier::Enterprise => 15,
         }
     }
 
     /// Label used on bounded-cardinality Prometheus counters. Must stay in the
-    /// fixed set {free, community, business, enterprise} to keep cardinality
+    /// fixed set {free, team, pro, business, enterprise} to keep cardinality
     /// safe (see LLD `Multi-Tenant + SaaS Posture`).
     pub const fn prometheus_label(self) -> &'static str {
         match self {
             Tier::FreeTrial => "free",
-            Tier::Community => "community",
+            Tier::Team => "team",
+            Tier::Pro => "pro",
             Tier::Business => "business",
             Tier::Enterprise => "enterprise",
         }
@@ -348,7 +365,7 @@ mod tests {
     async fn fail_safe_is_free_trial() {
         let r = TenantTierRecord::fail_safe("unknown-tenant");
         assert_eq!(r.tier, Tier::FreeTrial);
-        assert_eq!(r.effective_scan_budget_gb(), 0.5);
+        assert_eq!(r.effective_scan_budget_gb(), 1.0);
         assert_eq!(r.effective_ef_search_cap(), 64);
         assert!(!r.feature_flags.quantized_route);
     }
@@ -367,7 +384,7 @@ mod tests {
         let record = cache.fetch("tenant-acme").await;
         assert_eq!(record.tier, Tier::Business);
         assert_eq!(record.effective_scan_budget_gb(), 8.0);
-        // Tier default for Business is 256 — override only set the budget.
+        // Override only set the budget; ef_search defaults to Business tier.
         assert_eq!(
             record.effective_ef_search_cap(),
             Tier::Business.default_ef_search_cap()
@@ -386,7 +403,7 @@ mod tests {
     async fn budget_exceeded_emits_structured_decision() {
         let store = Arc::new(InMemoryTenantTierStore::with_rows(vec![TenantTierRecord {
             tenant_id: "t".into(),
-            tier: Tier::Community,
+            tier: Tier::Team,
             scan_budget_gb_hard: Some(1.0),
             ef_search_cap: Some(96),
             freshness_sla_seconds: None,
@@ -419,17 +436,71 @@ mod tests {
     #[test]
     fn prometheus_labels_are_bounded() {
         // Bounded-cardinality contract: every tier must produce a fixed label
-        // from the {free, community, business, enterprise} set so per-second
+        // from the {free, team, pro, business, enterprise} set so per-second
         // Prometheus counters never grow with tenant count.
         let labels: Vec<_> = [
             Tier::FreeTrial,
-            Tier::Community,
+            Tier::Team,
+            Tier::Pro,
             Tier::Business,
             Tier::Enterprise,
         ]
         .iter()
         .map(|t| t.prometheus_label())
         .collect();
-        assert_eq!(labels, vec!["free", "community", "business", "enterprise"]);
+        assert_eq!(
+            labels,
+            vec!["free", "team", "pro", "business", "enterprise"]
+        );
+    }
+
+    #[test]
+    fn legacy_tier_aliases_deserialize_to_team() {
+        // 2026 Q2 consolidation: stored tier values from the old AnvaiOps
+        // ladder (Starter/Standard/Community) must continue to load as Team
+        // so we don't need a one-shot migration over the tenant registry.
+        for raw in ["\"community\"", "\"starter\"", "\"standard\""] {
+            let parsed: Tier = serde_json::from_str(raw).expect("deserialize legacy tier");
+            assert_eq!(parsed, Tier::Team, "expected {raw} → Team");
+        }
+    }
+
+    #[test]
+    fn legacy_enterprise_aliases_deserialize_to_canonical() {
+        let pooled: Tier =
+            serde_json::from_str("\"enterprise_pooled\"").expect("enterprise_pooled");
+        assert_eq!(pooled, Tier::Business);
+        let dedicated: Tier =
+            serde_json::from_str("\"enterprise_dedicated\"").expect("enterprise_dedicated");
+        assert_eq!(dedicated, Tier::Enterprise);
+    }
+
+    #[test]
+    fn paid_tier_scan_budgets_grow_monotonically() {
+        // Ratio rule: scan budget at tier (x+1) must be ≥ tier (x). Without
+        // this an upgrade could leave a customer with less budget than they
+        // had on the prior tier.
+        let ladder = [
+            Tier::FreeTrial,
+            Tier::Team,
+            Tier::Pro,
+            Tier::Business,
+            Tier::Enterprise,
+        ];
+        for w in ladder.windows(2) {
+            let (lo, hi) = (w[0], w[1]);
+            assert!(
+                hi.default_scan_budget_gb() >= lo.default_scan_budget_gb(),
+                "{hi:?} scan budget must be >= {lo:?}"
+            );
+            assert!(
+                hi.default_ef_search_cap() >= lo.default_ef_search_cap(),
+                "{hi:?} ef_search cap must be >= {lo:?}"
+            );
+            assert!(
+                hi.default_freshness_sla_seconds() <= lo.default_freshness_sla_seconds(),
+                "{hi:?} freshness SLA must be tighter than {lo:?}"
+            );
+        }
     }
 }

@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn within_budget_passes() {
-        let r = record(Tier::Community, None, None);
+        let r = record(Tier::Team, None, None);
         let ok = enforce(&r, Some(1.0), Some(64)).expect("should succeed");
         assert_eq!(ok.effective_scan_gb, 1.0);
         assert_eq!(ok.effective_ef_search, 64);
@@ -165,37 +165,34 @@ mod tests {
 
     #[test]
     fn scan_exceeded_returns_structured_rejection() {
-        let r = record(Tier::Community, None, None);
+        let r = record(Tier::Team, None, None);
         let err = enforce(&r, Some(100.0), None).expect_err("should reject");
         assert_eq!(err.which, "scan_budget_gb");
-        assert_eq!(err.limit, Tier::Community.default_scan_budget_gb());
+        assert_eq!(err.limit, Tier::Team.default_scan_budget_gb());
         assert_eq!(err.requested, 100.0);
-        assert_eq!(err.tier_label, "community");
+        assert_eq!(err.tier_label, "team");
         assert_eq!(err.tenant_id, "tenant-a");
     }
 
     #[test]
     fn ef_search_exceeded_returns_structured_rejection() {
-        let r = record(Tier::Community, None, None);
+        let r = record(Tier::Team, None, None);
         let err = enforce(&r, None, Some(10_000)).expect_err("should reject");
         assert_eq!(err.which, "ef_search_cap");
-        assert_eq!(
-            err.limit,
-            f64::from(Tier::Community.default_ef_search_cap())
-        );
+        assert_eq!(err.limit, f64::from(Tier::Team.default_ef_search_cap()));
         assert_eq!(err.requested, 10_000.0);
     }
 
     #[test]
     fn negative_scan_clamps_to_zero() {
-        let r = record(Tier::Community, None, None);
+        let r = record(Tier::Team, None, None);
         let ok = enforce(&r, Some(-1.0), None).expect("negative scan is clamped, not rejected");
         assert_eq!(ok.effective_scan_gb, 0.0);
     }
 
     #[test]
     fn nan_scan_is_rejected_explicitly() {
-        let r = record(Tier::Community, None, None);
+        let r = record(Tier::Team, None, None);
         let err = enforce(&r, Some(f64::NAN), None).expect_err("NaN must reject");
         assert_eq!(err.which, "scan_budget_gb");
         assert!(err.requested.is_nan());
@@ -203,8 +200,8 @@ mod tests {
 
     #[test]
     fn per_tenant_override_takes_precedence_over_default() {
-        // Custom hard cap of 0.1 GB on a community tenant.
-        let r = record(Tier::Community, Some(0.1), Some(96));
+        // Custom hard cap of 0.1 GB on a Team tenant.
+        let r = record(Tier::Team, Some(0.1), Some(96));
         // 0.2 exceeds the per-tenant override even though it's well below
         // the tier default.
         let err = enforce(&r, Some(0.2), None).expect_err("override should reject");
@@ -231,11 +228,12 @@ mod tests {
 
     #[test]
     fn tier_label_is_bounded_string_set() {
-        // The label must always be one of the four bounded values so
+        // The label must always be one of the five bounded values so
         // Prometheus cardinality stays safe.
         for tier in [
             Tier::FreeTrial,
-            Tier::Community,
+            Tier::Team,
+            Tier::Pro,
             Tier::Business,
             Tier::Enterprise,
         ] {
@@ -244,7 +242,7 @@ mod tests {
             assert!(
                 matches!(
                     ok.tier_label,
-                    "free" | "community" | "business" | "enterprise"
+                    "free" | "team" | "pro" | "business" | "enterprise"
                 ),
                 "label {} must be in the bounded set",
                 ok.tier_label
@@ -256,9 +254,9 @@ mod tests {
     fn at_exact_limit_passes() {
         // Requested == limit must succeed — strict less-than would be a
         // surprising customer-visible boundary.
-        let r = record(Tier::Community, None, None);
-        let scan_limit = Tier::Community.default_scan_budget_gb();
-        let ef_limit = Tier::Community.default_ef_search_cap();
+        let r = record(Tier::Team, None, None);
+        let scan_limit = Tier::Team.default_scan_budget_gb();
+        let ef_limit = Tier::Team.default_ef_search_cap();
         let ok = enforce(&r, Some(scan_limit), Some(ef_limit)).expect("exact limit passes");
         assert_eq!(ok.effective_scan_gb, scan_limit);
         assert_eq!(ok.effective_ef_search, ef_limit);
@@ -268,7 +266,7 @@ mod tests {
     fn rejection_carries_specific_tenant_id() {
         // The rejection must echo the actual tenant id so observability
         // can attribute it; a generic "<unknown>" would be a bug.
-        let mut r = record(Tier::Community, None, None);
+        let mut r = record(Tier::Team, None, None);
         r.tenant_id = "tenant-zzz".into();
         let err = enforce(&r, Some(100.0), None).expect_err("reject");
         assert_eq!(err.tenant_id, "tenant-zzz");

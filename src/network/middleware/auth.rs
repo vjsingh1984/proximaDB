@@ -27,7 +27,7 @@ use std::collections::HashMap;
 
 /// Authentication configuration
 #[derive(Debug, Clone, Default)]
-pub struct AuthConfig {
+pub struct MiddlewareAuthConfig {
     /// Enable authentication (if false, all requests pass through)
     pub enabled: bool,
     /// API keys mapped to user/tenant information
@@ -56,19 +56,19 @@ pub struct AuthErrorResponse {
 
 /// Authentication layer for Axum
 pub struct AuthLayer {
-    _config: AuthConfig,
+    _config: MiddlewareAuthConfig,
 }
 
 impl AuthLayer {
     /// Create a new authentication layer with the given configuration
-    pub fn new(config: AuthConfig) -> Self {
+    pub fn new(config: MiddlewareAuthConfig) -> Self {
         Self { _config: config }
     }
 
     /// Create a disabled authentication layer (all requests pass through)
     pub fn disabled() -> Self {
         Self {
-            _config: AuthConfig {
+            _config: MiddlewareAuthConfig {
                 enabled: false,
                 ..Default::default()
             },
@@ -78,7 +78,7 @@ impl AuthLayer {
     /// Create an authentication layer with basic API key support
     pub fn with_api_keys(api_keys: HashMap<String, UserInfo>) -> Self {
         Self {
-            _config: AuthConfig {
+            _config: MiddlewareAuthConfig {
                 enabled: true,
                 api_keys,
                 require_auth_for_health: false,
@@ -89,7 +89,7 @@ impl AuthLayer {
 
 /// Authentication middleware function
 pub async fn auth_middleware<B>(
-    State(auth_config): State<AuthConfig>,
+    State(auth_config): State<MiddlewareAuthConfig>,
     mut request: Request<B>,
     next: Next<B>,
 ) -> Result<Response, (StatusCode, Json<AuthErrorResponse>)> {
@@ -184,7 +184,7 @@ mod tests {
 
     #[test]
     fn test_auth_config_default() {
-        let config = AuthConfig::default();
+        let config = MiddlewareAuthConfig::default();
         assert!(!config.enabled);
         assert!(config.api_keys.is_empty());
         assert!(!config.require_auth_for_health);

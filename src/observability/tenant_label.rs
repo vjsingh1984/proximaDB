@@ -16,7 +16,7 @@
 // returns the raw `tenant_id` and is intentionally not `&'static`,
 // signaling that it must only land on metrics scraped at >=1m.
 //
-// Bounded set: free, community, business, enterprise — same set
+// Bounded set: free, team, pro, business, enterprise — same set
 // the audit + billing surfaces use.
 
 use serde::{Deserialize, Serialize};
@@ -53,13 +53,19 @@ impl TenantLabel {
     }
 
     /// Safe label for high-cardinality counters (per-second scrape).
-    /// Returns the bounded `&'static str` from the static set of four.
+    /// Returns the bounded `&'static str` from the static set of five.
+    ///
+    /// Legacy pre-2026-Q2 tier labels (`"community"`, `"starter"`,
+    /// `"standard"`, `"enterprise_pooled"`, `"enterprise_dedicated"`)
+    /// map to their canonical replacements so historical TenantLabel
+    /// JSON keeps producing bounded metrics after deserialization.
     pub fn high_cardinality_label(&self) -> &'static str {
         match self.tier_label.as_str() {
             "free" => "free",
-            "community" => "community",
-            "business" => "business",
-            "enterprise" => "enterprise",
+            "team" | "community" | "starter" | "standard" => "team",
+            "pro" => "pro",
+            "business" | "enterprise_pooled" => "business",
+            "enterprise" | "enterprise_dedicated" => "enterprise",
             _ => "unknown",
         }
     }
@@ -84,9 +90,9 @@ impl TenantLabel {
 
 /// Bounded label set — listed here as a single source of truth so
 /// callers can register Prometheus metric families with the static set.
-pub const BOUNDED_TIER_LABELS: &[&str] = &["free", "community", "business", "enterprise"];
+pub const BOUNDED_TIER_LABELS: &[&str] = &["free", "team", "pro", "business", "enterprise"];
 
-/// `true` when `s` is one of the four bounded tier labels. Used by
+/// `true` when `s` is one of the five bounded tier labels. Used by
 /// metric registration code that wants to assert label safety at
 /// startup.
 pub fn is_bounded_label(s: &str) -> bool {
@@ -131,11 +137,32 @@ mod tests {
         // pins each tier's label.
         for (tier, expected) in [
             (Tier::FreeTrial, "free"),
-            (Tier::Community, "community"),
+            (Tier::Team, "team"),
+            (Tier::Pro, "pro"),
             (Tier::Business, "business"),
             (Tier::Enterprise, "enterprise"),
         ] {
             let label = TenantLabel::from_parts("any", tier);
+            assert_eq!(label.high_cardinality_label(), expected);
+        }
+    }
+
+    #[test]
+    fn legacy_tier_labels_map_to_canonical_bounded_labels() {
+        // 2026 Q2 consolidation: historical TenantLabel JSON with the
+        // pre-rename `tier_label` values must still produce a bounded
+        // metric label rather than collapsing to "unknown".
+        for (raw, expected) in [
+            ("community", "team"),
+            ("starter", "team"),
+            ("standard", "team"),
+            ("enterprise_pooled", "business"),
+            ("enterprise_dedicated", "enterprise"),
+        ] {
+            let label = TenantLabel {
+                tenant_id: "any".into(),
+                tier_label: raw.into(),
+            };
             assert_eq!(label.high_cardinality_label(), expected);
         }
     }
@@ -159,10 +186,11 @@ mod tests {
     }
 
     #[test]
-    fn bounded_tier_labels_contains_exactly_four() {
-        assert_eq!(BOUNDED_TIER_LABELS.len(), 4);
+    fn bounded_tier_labels_contains_exactly_five() {
+        assert_eq!(BOUNDED_TIER_LABELS.len(), 5);
         assert!(BOUNDED_TIER_LABELS.contains(&"free"));
-        assert!(BOUNDED_TIER_LABELS.contains(&"community"));
+        assert!(BOUNDED_TIER_LABELS.contains(&"team"));
+        assert!(BOUNDED_TIER_LABELS.contains(&"pro"));
         assert!(BOUNDED_TIER_LABELS.contains(&"business"));
         assert!(BOUNDED_TIER_LABELS.contains(&"enterprise"));
     }
@@ -170,7 +198,8 @@ mod tests {
     #[test]
     fn is_bounded_label_recognizes_each_tier() {
         assert!(is_bounded_label("free"));
-        assert!(is_bounded_label("community"));
+        assert!(is_bounded_label("team"));
+        assert!(is_bounded_label("pro"));
         assert!(is_bounded_label("business"));
         assert!(is_bounded_label("enterprise"));
     }
