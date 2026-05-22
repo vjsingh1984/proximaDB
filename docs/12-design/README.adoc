@@ -35,6 +35,11 @@ Read these in order for future-shaping architecture work:
 
 == Stable Reference Docs
 
+* `ARCHITECTURE_ATLAS_2026_05_22.adoc` - top-down OSS/SaaS architecture map, workspace map, and
+  Victor/Cargo connectedness findings.
+* `MODULE_COMPONENT_LLD_2026_05_22.adoc` - per-module LLD component and authority map.
+* `DOCUMENTATION_CONSOLIDATION_AND_ARCHIVE_PLAN_2026_05_22.adoc` - OSS documentation taxonomy,
+  duplicate-doc findings, and archive batch plan.
 * `DESIGN_PATTERNS.adoc` - general design patterns and implementation references.
 * `SUPPORTED_SURFACES.adoc` - supported API/projection status and retirement candidates.
 * `platform/CLOUD_HOSTED_SERVICE_DESIGN.adoc` - cloud service deployment/control-plane design.

@@ -1,0 +1,297 @@
+= ProximaDB Architecture Atlas
+:toc:
+:toclevels: 3
+
+Status: active baseline +
+Date: 2026-05-22 +
+Evidence: Cargo workspace metadata, repository layout, `docs/12-design/README.adoc`, and
+`.victor/project.db`
+
+This atlas is the top-down map for ProximaDB as an OSS core database and as the data plane behind
+a hosted SaaS product. It is intentionally navigation-first: it shows ownership boundaries,
+authority boundaries, and where lower-level module maps live.
+
+== Reading Order
+
+1. This atlas for system shape and connectedness.
+2. `MODULE_COMPONENT_LLD_2026_05_22.adoc` for per-module component breakdown.
+3. `DOCUMENTATION_CONSOLIDATION_AND_ARCHIVE_PLAN_2026_05_22.adoc` for doc ownership and archive
+   rules.
+4. Existing active blueprints and ADRs in `docs/12-design/README.adoc`.
+
+== Non-Negotiable Architecture Invariants
+
+* Durable authority is `xCatalog + WAL/log/manifest + ProximaRecord + policy/RLS + version/time`.
+* Protocols are adapters: REST, gRPC, pgwire, Arrow Flight, SDKs, and embedded bindings lower into
+  canonical records, catalog metadata, and shared query/write contracts.
+* Open formats are interoperability contracts. Iceberg, Delta, Hudi, Parquet, and object stores are
+  publications, imports, federated reads, or explicit external-authoritative assets.
+* Storage engines and modality-specific indexes are layouts, projections, and access methods. They
+  do not own independent durable truth unless xCatalog declares that authority mode explicitly.
+* The router is a control-plane planner boundary: route once per plan/fragment/split, emit typed
+  route/explain metadata, and dispatch to leaf executors/readers.
+
+== System Context
+
+[source,mermaid]
+----
+flowchart TB
+  Users["OSS users / SaaS tenants / operators"]
+  SDK["SDKs and embedded bindings"]
+  API["REST / gRPC / pgwire / Arrow Flight"]
+  Auth["Auth, tenant context, RLS, budget guard"]
+  Handlers["API handlers and protocol adapters"]
+  Planner["Unified query/write planner and router"]
+  Services["Service layer: DDL, DML, vector, document, graph, observability, queue"]
+  Authority["xCatalog + WAL/log/manifest + policy + provenance"]
+  Storage["PAX, LSM, columnar, ANN, graph, JSON, observability, queue disk/object tiers"]
+  External["Open formats and external engines: Parquet, Iceberg, Delta, Hudi, DataFusion"]
+  Ops["Telemetry, metering, audit, security, deployment"]
+
+  Users --> SDK
+  Users --> API
+  SDK --> API
+  API --> Auth
+  Auth --> Handlers
+  Handlers --> Planner
+  Planner --> Services
+  Services --> Authority
+  Authority --> Storage
+  Storage --> External
+  Services --> Ops
+  Auth --> Ops
+----
+
+== Workspace Layer Map
+
+[source,text]
+----
+apps/ and clients/
+    |
+    v
+crates/platform/        crates/platform/
+  proximadb-api           proximadb-runtime
+    |                       |
+    +-----------+-----------+
+                v
+root crate `proximadb` (compatibility and integration shell while migration continues)
+                |
+                v
+crates/query/  <---->  crates/modalities/
+                |
+                v
+crates/control/ and crates/storage/
+                |
+                v
+crates/horizontal/
+                |
+                v
+crates/foundation/ and crates/contracts/
+----
+
+The long-term map remains the May 2026 workspace refactor plan:
+
+`Foundation -> Contracts -> Modality Runtime -> Cross-Model Query Runtime -> Platform Runtime -> Apps/Bindings`
+
+== Workspace Crate Inventory
+
+[cols="1,2,4",options="header"]
+|===
+| Layer | Crates | Role
+
+| Application
+| `proximadb-server`, `proximadb-migrate`, `proximadb-bench`
+| Operator and benchmark entry points. They should depend on platform/runtime/root integration
+  crates, not on leaf storage/query internals.
+
+| Binding
+| `proximadb-sdk`
+| Rust client SDK. Other SDKs live outside the Cargo workspace under `clients/`.
+
+| Contract
+| `proximadb-quantization-contracts`
+| Shared contract surface for quantization behavior and compatibility gates.
+
+| Control
+| `proximadb-catalog`
+| xCatalog schema, statistics, relational metadata, authority declarations, catalog cache, and
+  planner-visible knobs.
+
+| Foundation
+| `proximadb-kernel`, `proximadb-data-model`, `proximadb-proto`, `proximadb-records`,
+  `proximadb-filter-expression`, `proximadb-distance-types`, `proximadb-compression-types`,
+  `proximadb-encoding-types`, `proximadb-quantization-types`, `proximadb-config`,
+  `proximadb-hardware`, `proximadb-pipeline-operator`
+| Stable lowest-level types, generated protobufs, canonical records, expression contracts, errors,
+  config, hardware capability, and common operator abstractions. High centrality; changes need
+  narrow tests and migration notes.
+
+| Horizontal
+| `proximadb-codec`, `proximadb-compression`, `proximadb-security`, `proximadb-telemetry`,
+  `proximadb-runtime-common`, `proximadb-embedded-common`
+| Cross-cutting services reused by multiple modalities and platform paths.
+
+| Modality
+| `proximadb-vector`, `proximadb-document`, `proximadb-graph`, `proximadb-observability`,
+  `proximadb-embedding`, `proximadb-queue`
+| Domain-specific runtime capabilities that must lower into canonical authority and shared query
+  contracts.
+
+| Platform
+| `proximadb-api`, `proximadb-runtime`
+| Public protocol surfaces and runtime composition. SaaS product control plane should integrate
+  here rather than inside storage/query internals.
+
+| Query
+| `proximadb-query`, `proximadb-uql`, `proximadb-multimodel-query`,
+  `proximadb-multimodel-plan`, `proximadb-query-capability`, `proximadb-query-filter`,
+  `proximadb-query-clauses`, `proximadb-query-fusion`, `proximadb-vector-query`,
+  `proximadb-document-query`, `proximadb-graph-query`, `proximadb-graph-arrow`,
+  `proximadb-graph-subset`, `proximadb-observability-query`
+| Cross-model algebra, query clauses, planning, fusion, modality query contracts, and query
+  adapters.
+
+| Storage
+| `proximadb-block-format`, `proximadb-storage-common`
+| Shared block/PAX/record storage format and common storage interfaces.
+|===
+
+== SaaS/Core Database Split
+
+[source,mermaid]
+----
+flowchart LR
+  subgraph SaaS["Hosted SaaS control plane"]
+    Tenant["tenant/org/project"]
+    Billing["metering and budget"]
+    Policy["policy, auth, RLS"]
+    Ops["audit, support, rollout flags"]
+  end
+
+  subgraph Core["OSS core data plane"]
+    API["protocol adapters"]
+    Catalog["xCatalog"]
+    WAL["WAL/log/manifest"]
+    Query["query and write planner"]
+    Store["storage engines and projections"]
+    Obs["observability events"]
+  end
+
+  Tenant --> Policy
+  Billing --> Policy
+  Policy --> API
+  API --> Catalog
+  API --> Query
+  Query --> WAL
+  WAL --> Store
+  Store --> Obs
+  Obs --> Billing
+  Ops --> Catalog
+----
+
+SaaS-specific functions should remain policy/control-plane concerns around the OSS data plane:
+tenant hierarchy, usage metering, billing, operator audit, feature rollout, support tooling, and
+fleet orchestration. The OSS data plane should keep deterministic protocol behavior, storage
+semantics, query semantics, and explainable routing.
+
+== Runtime Data Flow
+
+[source,text]
+----
+Client request
+  -> protocol decode and tenant/auth context
+  -> schema/type coercion at protocol boundary
+  -> write/query intent
+  -> xCatalog route/profile lookup
+  -> planner/router emits executable plan + EXPLAIN metadata
+  -> service layer executes against canonical record/storage contracts
+  -> WAL/log/manifest updates authoritative state
+  -> projections/indexes/cache/observability update as derived state
+  -> protocol response encode
+----
+
+== Victor Graph Findings
+
+The local Victor graph is useful, but it has two important limitations in this snapshot:
+
+* `graph_module_metric` contains 0 rows, so Victor has not materialized module-level PageRank,
+  LCOM, hotspot, or TDD priority metrics into the database.
+* `CALLS` edges are all same-file in this snapshot: 102,855 same-file calls and 0 cross-file calls.
+  Use Cargo dependency edges for workspace coupling until Victor cross-file call resolution is
+  refreshed.
+
+Victor database scale:
+
+[cols="1,1",options="header"]
+|===
+| Metric | Value
+| `graph_node` rows | 170,424
+| `graph_edge` rows | 3,611,701
+| `CALLS` edges | 102,855
+| `CDG` edges | 2,582,217
+| `CFG_SUCCESSOR` edges | 112,538
+| `DDG_DEF_USE` edges | 3,298
+|===
+
+Top symbol-heavy files from Victor:
+
+[cols="3,1",options="header"]
+|===
+| File | Symbols
+| `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs` | 1279
+| `clients/python/src/proximadb_sdk/chunking_strategies/code.py` | 278
+| `crates/foundation/proximadb-proto/src/proto/proximadb.cluster.v1.rs` | 213
+| `src/query/federated/optimizer/mod.rs` | 192
+| `src/embedded/python.rs` | 185
+| `src/api_handlers/request_handlers.rs` | 172
+| `src/query/explain.rs` | 170
+| `src/embedded/mod.rs` | 170
+| `crates/platform/proximadb-api/src/rest/v1/graph.rs` | 168
+| `crates/control/proximadb-catalog/src/lib.rs` | 166
+|===
+
+Top workspace crates by Cargo dependency PageRank:
+
+[cols="2,1,1,1",options="header"]
+|===
+| Crate | PageRank | In | Out
+| `proximadb-kernel` | 0.130951 | 18 | 0
+| `proximadb-data-model` | 0.073740 | 15 | 0
+| `proximadb-proto` | 0.053290 | 10 | 1
+| `proximadb-query-filter` | 0.049835 | 12 | 0
+| `proximadb` | 0.043111 | 4 | 42
+| `proximadb-records` | 0.039766 | 11 | 2
+| `proximadb-filter-expression` | 0.030123 | 4 | 0
+| `proximadb-graph-query` | 0.025395 | 7 | 3
+| `proximadb-compression-types` | 0.023671 | 3 | 0
+| `proximadb-query` | 0.023101 | 3 | 13
+|===
+
+Interpretation:
+
+* Foundation crates are correctly central, but they are blast-radius sensitive.
+* The root `proximadb` crate still has high efferent coupling (`out=42`). That is acceptable as a
+  migration shell but should continue shrinking as platform/runtime/query/modality crates mature.
+* `proximadb-query`, `proximadb-uql`, and `proximadb-multimodel-query` are expected integration
+  hubs. Their public contracts should stay small and test-heavy.
+* Generated proto files dominate symbol and call counts. Treat them as generated artifacts, not
+  refactor targets.
+* `src/query/federated/optimizer`, `src/api_handlers/request_handlers.rs`,
+  `src/network/postgres/protocol.rs`, `src/services/dml/mod.rs`, and `proximadb-catalog` are real
+  human-authored hotspots and should be first-class consolidation targets.
+
+== Consolidation / Expansion Zigzag
+
+Use this cycle for feature growth:
+
+1. Expand behind existing contracts, feature flags, and xCatalog-declared authority.
+2. Refresh Victor and Cargo coupling metrics.
+3. Identify hotspots, duplicated authority, and root-crate fanout.
+4. Consolidate one boundary at a time into the existing crate/module owner.
+5. Add or update the module LLD section before enabling by default.
+6. Run focused tests plus workspace layering validation.
+7. Repeat.
+
+This keeps the system from drifting into parallel protocol, storage, or modality paths while still
+allowing rapid feature expansion.
+

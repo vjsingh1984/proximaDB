@@ -1,0 +1,222 @@
+= Documentation Consolidation And Archive Plan
+:toc:
+:toclevels: 3
+
+Status: active consolidation plan +
+Date: 2026-05-22 +
+Scope: OSS repository documentation, SaaS/core boundary documentation, active design docs, and
+archive rules.
+
+== Goals
+
+* Make the public OSS documentation easy to navigate from `README` and `docs/README.md`.
+* Keep active architecture in `docs/12-design/` and accepted decisions in `docs/12-design/adr/`.
+* Keep implementation reports, session summaries, and superseded plans out of public navigation.
+* Preserve obsolete material under `docs/_archive/` instead of deleting it.
+* Keep SaaS/control-plane details documented as boundaries around the OSS core, not as hidden
+  behavior inside storage/query docs.
+
+== Public Documentation Taxonomy
+
+[cols="1,2,2",options="header"]
+|===
+| Path | Audience | Rule
+
+| `docs/README.md`
+| All users
+| Public front door. Keep current, concise, and product-safe.
+
+| `docs/INDEX.adoc`
+| Developers and evaluators
+| Complete current-doc index. Link active docs only; avoid phase reports.
+
+| `docs/01-quick-start`
+| New users
+| Install, first query, architecture basics. No historical scripts except current verified flow.
+
+| `docs/02-guides`
+| Builders
+| Task-oriented guides: SDKs, API use, migration, observability, packages.
+
+| `docs/03-api-reference`
+| Builders and SDK maintainers
+| REST/gRPC/pgwire/Graph/config references. Must align with OpenAPI/proto.
+
+| `docs/04-operations`
+| Operators
+| Deployment, monitoring, security, production readiness, release notes.
+
+| `docs/05-concepts`
+| Users and contributors
+| Stable concepts, not active implementation trackers.
+
+| `docs/06-internals`
+| Contributors
+| Maintained internals and workflow docs. Avoid stale completion/status reports.
+
+| `docs/10-quality`
+| Maintainers
+| Technical debt, supported-surface updates, audits, test/coverage status.
+
+| `docs/11-usecases`
+| Product and solution architects
+| Use cases and dogfooding blueprints.
+
+| `docs/12-design`
+| Architects and senior implementers
+| Active blueprints, architecture anchors, and ADRs.
+
+| `docs/_internal`
+| Maintainers
+| Working notes that are not public navigation. Periodically archive.
+
+| `docs/_archive`
+| Historians
+| Superseded, obsolete, or one-off reports. Do not link from public entrypoints except archive
+  manifests.
+|===
+
+== Current Findings
+
+Doc inventory at depth two:
+
+[cols="1,1",options="header"]
+|===
+| Area | File count
+| `docs/_internal` | 14
+| `docs/02-guides` | 12
+| `docs/12-design` | 11
+| `docs/05-concepts` | 11
+| `docs/10-quality` | 9
+| `docs/06-internals` | 5
+| `docs/04-operations` | 5
+| `docs/03-api-reference` | 5
+| `docs/11-usecases` | 4
+| `docs/01-quick-start` | 4
+|===
+
+Duplicate or potentially superseded stems detected:
+
+[cols="1,3,2",options="header"]
+|===
+| Stem | Current locations | Recommendation
+
+| `graph-engines`
+| `docs/05-concepts/graph-engines.md`, `docs/05-concepts/graph-engines.adoc`
+| Pick one current format; archive the other after link scan.
+
+| `storage-engines`
+| `docs/05-concepts/storage-engines.md`, `docs/05-concepts/storage-engines.adoc`
+| Pick one current format; archive the other after link scan.
+
+| Engine deep dives
+| Current `docs/06-internals/deep-dives/*` plus older copies under `docs/_internal/archive/*`
+| Keep current deep dives; move older internal archive copies under `docs/_archive/internal/` or
+  leave if already intentionally archived.
+
+| `vision`
+| `docs/00-product/VISION.adoc`, `docs/05-concepts/vision.adoc`
+| Product vision should be canonical in `00-product`; concepts should link to it or summarize.
+
+| Quick-start legacy set
+| Former `docs/01-quick-start/legacy/*`
+| Archived to `docs/_archive/quick-start/2026-05-22/` with a manifest.
+
+| Phase completion reports
+| `docs/_internal/roadmap/*COMPLETION*`, `*SESSION_SUMMARY*`, `PROJECT_COMPLETION_REPORT*`
+| Archive to `docs/_archive/root/project-status/` or `docs/_archive/roadmap/2026-05/`.
+|===
+
+== Archive Rules
+
+Archive a document when any of these are true:
+
+* It is a phase/session/progress report rather than a current guide, reference, concept, ADR, or
+  active blueprint.
+* It duplicates another current doc and is not the selected canonical format.
+* It describes a retired API, route, feature flag, engine maturity, or packaging workflow.
+* It makes support claims that conflict with `SUPPORTED_SURFACE.md`,
+  `docs/SUPPORTED_SURFACE.adoc`, or `docs/12-design/SUPPORTED_SURFACES.adoc`.
+* It is useful historical context but not useful as a current implementation instruction.
+
+Do not delete obsolete docs in this repository cleanup pass. Move them under `docs/_archive/` with
+the original filename preserved, and add an archive manifest entry explaining what superseded them.
+
+== Archive Batch Plan
+
+Batch 1: safe public-doc cleanup. Status: first legacy quick-start move completed 2026-05-22.
+
+* Moved `docs/01-quick-start/legacy/*` to `docs/_archive/quick-start/2026-05-22/`.
+* Replace public references with links to `docs/01-quick-start/index.md`, `install.md`, and
+  `first-query.md`.
+* Kept a manifest in `docs/_archive/quick-start/2026-05-22/README.adoc`.
+
+Batch 2: duplicate concept format cleanup.
+
+* Decide canonical format for `graph-engines` and `storage-engines`.
+* Keep one current doc in `docs/05-concepts/`.
+* Move the other into `docs/_archive/concepts/2026-05-22/`.
+
+Batch 3: internal roadmap/status cleanup.
+
+* Move phase/session/completion reports from `docs/_internal/roadmap/` to
+  `docs/_archive/roadmap/2026-05/`.
+* Keep `docs/_internal/roadmap/README.adoc`, active trackers, and machine-readable artifacts only.
+
+Batch 4: current architecture index refresh.
+
+* Keep `docs/12-design/README.adoc` as the design front door.
+* Link this plan, `ARCHITECTURE_ATLAS_2026_05_22.adoc`, and
+  `MODULE_COMPONENT_LLD_2026_05_22.adoc`.
+* Archive superseded design docs to `docs/_archive/design/<yyyy-mm>/` with manifest notes.
+
+== Public Navigation Standard
+
+Public docs should follow this shape:
+
+[source,text]
+----
+README
+  -> docs/README.md
+      -> Quick Start
+      -> Guides
+      -> API Reference
+      -> Operations
+      -> Concepts
+      -> Internals
+      -> Architecture and ADRs
+      -> Supported Surface
+----
+
+Any doc linked from the public navigation should have:
+
+* clear audience;
+* current status;
+* supported/experimental maturity when it describes a feature;
+* code/API references that still exist;
+* no private SaaS assumptions unless explicitly marked as hosted-control-plane context.
+
+== SaaS/Core Documentation Boundary
+
+SaaS-specific documentation belongs in one of these categories:
+
+* hosted service design: control plane, tenant hierarchy, metering, billing, audit, support;
+* operator runbooks: deployment, incident response, SLOs, migrations;
+* policy docs: tenant isolation, security, compliance, data retention;
+* integration docs: how SaaS invokes the OSS core APIs.
+
+Core database docs should not imply hidden SaaS-only semantics. If a SaaS feature requires a core
+hook, document the hook as an explicit policy boundary, catalog field, feature flag, or protocol
+extension.
+
+== Maintenance Checklist
+
+Before merging documentation changes:
+
+* Run a link/path scan for moved docs.
+* Keep old docs recoverable under `docs/_archive/`.
+* Update `docs/README.md`, `docs/INDEX.adoc`, or `docs/12-design/README.adoc` only when navigation
+  changes.
+* Cite the superseding doc in each archive manifest.
+* Avoid embedding volatile benchmark claims unless the benchmark command/date is present.
+* Keep OpenAPI/proto/SDK docs aligned when API behavior changes.

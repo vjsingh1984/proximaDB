@@ -1,0 +1,377 @@
+= Module Component LLD Map
+:toc:
+:toclevels: 3
+
+Status: active baseline +
+Date: 2026-05-22 +
+Companion: `ARCHITECTURE_ATLAS_2026_05_22.adoc`
+
+This document decomposes the ProximaDB workspace into LLD-level component groups. It is not a
+replacement for ADRs or active implementation trackers; it is the connectedness map used to decide
+where a change belongs.
+
+== Legend
+
+* Authority: whether the module owns durable truth, derived state, protocol adaptation, or control
+  metadata.
+* Inputs: primary upstream contracts.
+* Outputs: downstream contracts or side effects.
+* Consolidation gate: what must be checked before expanding this module.
+
+== Foundation Layer
+
+[cols="1,2,2,2,2",options="header"]
+|===
+| Module | Components | Authority | Inputs | Outputs / Gates
+
+| `proximadb-kernel`
+| Error types, base traits, UUID/time/core utility contracts.
+| Foundational API semantics; no product-specific state.
+| Rust std, async/runtime-neutral traits.
+| High PageRank. Keep minimal; no modality or platform dependencies.
+
+| `proximadb-data-model`
+| Core typed model structures shared by records, catalog, modalities, query.
+| Canonical data semantics.
+| Kernel contracts.
+| Any breaking change requires SDK, query, record, catalog, and storage compatibility review.
+
+| `proximadb-proto`
+| Generated protobuf Rust bindings for v1/v2/cluster contracts.
+| Wire contract artifact, generated only.
+| `proto/`.
+| Do not hand-edit. Regenerate stubs and update OpenAPI/SDKs together.
+
+| `proximadb-records`
+| `ProximaRecord`, `ProximaType`, `ProximaValue`, proto conversion bridges.
+| Canonical durable record/value shape.
+| Data model and proto.
+| Legacy v1 DTOs remain edge adapters only.
+
+| `proximadb-filter-expression`
+| Predicate ASTs, normalized filters, search/query params.
+| Shared predicate contract.
+| Query parameters and protocol inputs.
+| Keep query-algebra neutral; engines consume normalized form.
+
+| Type crates
+| Distance, encoding, compression, quantization type contracts.
+| Stable enum/config surfaces.
+| Engine/query configs.
+| Prefer additive variants and explicit compatibility notes.
+
+| Config/hardware/operator
+| Runtime config, hardware capabilities, pipeline operator abstraction.
+| Deployment-time and execution capability metadata.
+| Environment/config files, CPU/GPU probes.
+| No protocol-specific behavior here.
+|===
+
+== Control And Authority Layer
+
+[cols="1,2,2,2,2",options="header"]
+|===
+| Module | Components | Authority | Inputs | Outputs / Gates
+
+| `proximadb-catalog`
+| Table schemas, collection metadata, statistics, system columns, catalog cache, relational profiles.
+| xCatalog control metadata and route knobs.
+| DDL, runtime registration, external catalog imports.
+| Planner metadata: `authority_mode`, `workload_profile`, `storage_specialization`,
+  `freshness_sla`, `compute_route`, policy boundary.
+
+| Root `src/catalog`
+| Budget guard, OLTP catalog adapters, tenant tier, compatibility facades.
+| Transitional integration shell around catalog capabilities.
+| Platform/runtime config and services.
+| Should migrate stable contracts into `proximadb-catalog`; root stays adapter/composition.
+|===
+
+== Protocol And Platform Layer
+
+[cols="1,2,2,2,2",options="header"]
+|===
+| Module | Components | Authority | Inputs | Outputs / Gates
+
+| `proximadb-api`
+| REST v1, gRPC v1, Arrow Flight service, pgwire session/server scaffolding.
+| Protocol adaptation only.
+| HTTP/gRPC/Flight/SQL wire payloads.
+| Canonical request structs and typed errors. No independent storage writes.
+
+| `proximadb-runtime`
+| Runtime composition, resource wiring, handler registry.
+| Process composition, not data authority.
+| Config, services, platform resources.
+| Wires modules without introducing hidden alternate routes.
+
+| Root `src/network`
+| Existing REST v1/v2/v3, pgwire, Arrow IPC, auth middleware, multi-server wiring.
+| Transitional protocol implementation.
+| Wire requests, tenant/auth context.
+| Lower into handlers/services and shared write/query intent. Continue extraction into
+  `proximadb-api` where stable.
+
+| Root `src/api_handlers`
+| Unified request handlers, SQL execution dispatch, record batch facade.
+| Request orchestration; not durable authority.
+| Protocol-normalized requests and tenant context.
+| Calls services after schema, policy, and write-lane checks.
+|===
+
+== Query Layer
+
+[cols="1,2,2,2,2",options="header"]
+|===
+| Module | Components | Authority | Inputs | Outputs / Gates
+
+| `proximadb-query`
+| Cross-model query runtime, planner integration, execution contracts.
+| Query execution semantics.
+| Modality query contracts, catalog, record contracts.
+| Routed execution plans and result streams.
+
+| `proximadb-multimodel-query`
+| Vector/document/graph/observability join contract.
+| Algebra-level multimodel semantics.
+| Modality query crates.
+| Keep independent of concrete storage engines.
+
+| `proximadb-multimodel-plan`
+| Plan model, filter expression integration, pipeline operators.
+| Planner contract shape.
+| Filter expressions and catalog metadata.
+| EXPLAIN-visible plan fragments.
+
+| Query modality crates
+| `proximadb-vector-query`, `proximadb-document-query`, `proximadb-graph-query`,
+  `proximadb-observability-query`.
+| Modality-specific query contracts.
+| User query clauses and protocol adapters.
+| Shared query runtime inputs; avoid duplicate parser semantics.
+
+| Query helper crates
+| `proximadb-query-filter`, `proximadb-query-clauses`, `proximadb-query-fusion`,
+  `proximadb-uql`, `proximadb-query-capability`.
+| Filter/clauses/fusion/capability contracts.
+| Parser/planner/service inputs.
+| Capability snapshots and normalized filters.
+
+| Root `src/query`
+| SQL frontend, federated optimizer, cache, explain, repair, table write plan.
+| Transitional query implementation and active experimentation.
+| Protocols, services, catalog.
+| Gradually move stable contracts to crates; keep experimental routes flagged and documented.
+|===
+
+== Service Layer
+
+[cols="1,2,2,2,2",options="header"]
+|===
+| Module | Components | Authority | Inputs | Outputs / Gates
+
+| `src/services/ddl`
+| DDL statements and schema/table operations.
+| Catalog mutation authority through xCatalog.
+| SQL/REST/gRPC DDL requests.
+| Catalog updates, schema validation outcomes.
+
+| `src/services/dml`
+| Insert/update/delete/upsert, row count/stat bumps, table write execution.
+| Mutation orchestration into canonical write authority.
+| DML statements, write intents, catalog profiles.
+| WAL/current-state writes plus catalog stats. No protocol-specific durability shortcut.
+
+| `src/services/record_store`
+| Direct WAL table record store, memtable, scan/get/mutation requests.
+| Canonical table record IO bridge.
+| Table mutations and scans.
+| WAL append/current-state visibility.
+
+| `src/services/operations`
+| Legacy vector operations service and compatibility paths.
+| Compatibility facade only for legacy vector flows.
+| v1/v2 record requests.
+| Must route through canonical records for new durable behavior.
+
+| Queue/embedding services
+| Embedding drainer, queue-facing ingest.
+| Async ingest orchestration; source data remains authoritative elsewhere until committed.
+| Queue messages and ingest requests.
+| Idempotency and backpressure must be explicit.
+|===
+
+== Storage Layer
+
+[cols="1,2,2,2,2",options="header"]
+|===
+| Module | Components | Authority | Inputs | Outputs / Gates
+
+| `proximadb-block-format`
+| PAX/block layout, codec integration, record block format.
+| Durable block layout contract.
+| Records, codec strategy, storage metadata.
+| Must remain open-format aware and backwards compatible.
+
+| `proximadb-storage-common`
+| Common storage interfaces and block-format adapters.
+| Shared engine contract.
+| Block format, records, runtime common.
+| Storage engines consume, not fork, this contract.
+
+| Root `src/storage`
+| Engine implementations, WAL/recovery, cache, persistence, open-format paths.
+| Transitional storage runtime.
+| Services, record store, catalog routes.
+| New engine behavior must declare authority mode, policy boundary, repair source, and maturity.
+
+| Codecs/compression
+| `proximadb-codec`, `proximadb-compression`, PAX codec LLD.
+| Encoding/compression policy and implementations.
+| PAX/record blocks, graph/json/vector stripes.
+| EXPLAIN and xCatalog must expose codec decisions when user-visible.
+|===
+
+== Modality Layer
+
+[cols="1,2,2,2,2",options="header"]
+|===
+| Module | Components | Authority | Inputs | Outputs / Gates
+
+| `proximadb-vector`
+| Vector record/query/index contracts and runtime helpers.
+| Vector modality semantics, not independent durability.
+| Records, vector query, filter contracts.
+| ANN access methods and vector results.
+
+| `proximadb-document`
+| Document runtime, document query bridge, record projection.
+| Document semantics.
+| ProximaRecord and document query contract.
+| JSON/document indexes are projections unless cataloged otherwise.
+
+| `proximadb-graph`
+| Graph core, graph query contracts, topology semantics.
+| Graph modality semantics.
+| ProximaRecord, graph query, graph topology projections.
+| Graph topology durability must remain stacked on canonical records.
+
+| `proximadb-observability`
+| Metrics/traces/log modality, query filters, proto bridge.
+| Observability modality semantics.
+| Telemetry records and query contracts.
+| Retention, compression, and external export are policy-driven.
+
+| `proximadb-embedding`
+| Embedding runtime helpers and queued ingest integration.
+| Derived embedding materialization.
+| Source records, model config, queue messages.
+| Must preserve source provenance and idempotent replay.
+
+| `proximadb-queue`
+| Memory tier, disk tier, group commit, object archive scaffold, producer/consumer API.
+| Queue message durability only; not table-record authority.
+| Producer messages and topic config.
+| Backpressure, sync mode, fsync, archive, and consumer leases must be observable.
+|===
+
+== SaaS And Operations Modules
+
+[cols="1,2,2,2,2",options="header"]
+|===
+| Module | Components | Authority | Inputs | Outputs / Gates
+
+| `src/security`, `proximadb-security`
+| Auth service, JWT, RBAC/policy helpers.
+| Access-control decisions.
+| Tenant identity, tokens, policy config.
+| Must execute before query/write planning.
+
+| `src/network/middleware`
+| Tenant context, auth middleware, request metadata.
+| Request-scoped policy context.
+| Protocol requests.
+| Emits context consumed by handlers/services.
+
+| `src/observability`, `proximadb-telemetry`
+| Metering events, request context, traces, metrics, alerting.
+| Operational evidence, not user data authority.
+| Runtime/service events.
+| Used by SaaS billing, SLO, audit, and debugging.
+
+| `src/cluster`
+| Cluster coordination and RPC.
+| Distributed coordination metadata.
+| Runtime node state and membership.
+| Must not bypass catalog/WAL authority for data changes.
+
+| `src/cdc`
+| Change-data-capture connectors.
+| Publication/subscription state.
+| WAL/catalog/storage events.
+| External sinks/sources require explicit authority mode.
+
+| `deploy/`, `deployment/`, `helm/`, `k8s/`, `packaging/`
+| Deployment and packaging assets.
+| Operational rollout, not runtime semantics.
+| Config and release artifacts.
+| Keep examples secret-free and supported-surface accurate.
+|===
+
+== Clients And Bindings
+
+[cols="1,2,2,2,2",options="header"]
+|===
+| Module | Components | Authority | Inputs | Outputs / Gates
+
+| `clients/python`
+| Unified Python SDK, REST/gRPC adapters, models, chunking, repository helpers.
+| Client-side API ergonomics.
+| OpenAPI/proto contracts.
+| Must track supported surface and generated stubs.
+
+| `clients/rust`
+| Rust SDK crate.
+| Client API.
+| REST/gRPC/OpenAPI/proto contracts.
+| Keep aligned with OpenAPI and server semantics.
+
+| `clients/go`, TypeScript/Node, Java embedded, Python embedded
+| SDKs and embedded/native bindings.
+| Client API and embedded runtime access.
+| Protocol contracts and FFI boundaries.
+| Generated or bridge code should be clearly marked.
+
+| `ui`
+| React/TypeScript UI.
+| Operator/user UX only.
+| REST/API contracts.
+| Should not encode hidden server behavior.
+|===
+
+== High-Risk Coupling Flags
+
+* Foundation crates with high PageRank: `proximadb-kernel`, `proximadb-data-model`,
+  `proximadb-proto`, `proximadb-query-filter`, and `proximadb-records`.
+* Root crate still depends on 42 workspace crates. Treat it as integration shell and continue
+  migrating stable ownership downward.
+* Human-authored hotspots from Victor: `src/query/federated/optimizer/mod.rs`,
+  `src/api_handlers/request_handlers.rs`, `src/network/postgres/protocol.rs`,
+  `src/services/dml/mod.rs`, and `crates/control/proximadb-catalog/src/lib.rs`.
+* Generated proto files dominate raw symbol/call counts and should be excluded from manual
+  complexity refactor queues.
+* Victor cross-file call centrality is not currently available; regenerate or fix Victor's
+  cross-file resolution before using call PageRank as a release gate.
+
+== Per-Change LLD Checklist
+
+Every feature-level implementation should answer:
+
+* Which module owns the durable or derived authority?
+* Which protocol adapters lower into it?
+* Which xCatalog knobs or policy boundaries does it consult?
+* Which WAL/log/manifest behavior makes recovery possible?
+* Which projection/index/cache paths are derived and rebuildable?
+* Which EXPLAIN or trace metadata proves the route?
+* Which supported-surface status applies: supported, beta, experimental, internal, or archived?
+
