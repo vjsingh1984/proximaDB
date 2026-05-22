@@ -218,27 +218,43 @@ file resolved to the empty set and no edge was emitted. With cross-file CALLS em
 `ModuleAnalyzer._load_module_graph` (which only loads cross-file `graph_edge` rows) returned an
 empty module set and `graph_module_metric` stayed at zero rows.
 
-Two passes close both gaps. (1) A project-wide leaf-name index in
-`_resolve_cross_file_calls` runs after all nodes are persisted and emits CALLS edges via UPSERT;
-module metrics auto-materialize as a downstream effect. (2) A receiver-typed dispatch pass binds
-`obj.method()` to methods inside `impl T` whenever the Rust plugin can infer `obj`'s static type
-from local scope (parameter annotations, `let x: T = ...`, `let x = T::new()`, or `self` against
-the enclosing `impl T`). The typed pass runs first and bypasses the fanout cap; misses fall
-through to the leaf-name pass.
+Resolution now proceeds in three coordinated layers:
 
-Victor database scale after the 2026-05-22 fix (receiver-typed dispatch enabled):
+1. *Project-wide leaf-name index* in `_resolve_cross_file_calls` runs after all nodes are
+   persisted and emits CALLS edges via UPSERT. A fanout cap
+   (`cross_file_call_max_fanout`, default 25) keeps common names (`new`, `default`, `from`) from
+   inflating the graph.
+2. *Impl-type index* keyed by `(impl_type, method_name)`, populated from the existing
+   ``parent_id`` linkage (methods inside ``impl T`` carry ``parent_id`` pointing at the impl
+   node, whose name is ``T``). When a call record carries ``receiver_type``, the typed pass
+   binds against this index and bypasses the fanout cap — typed dispatch is unambiguous.
+3. *Receiver-type inference in the Rust plugin* covers four expression shapes:
++
+[loweralpha]
+.. ``self`` against the enclosing ``impl T`` (including ``Self::method()`` path calls).
+.. ``identifier`` against the current function's scope (parameter annotations and
+   ``let x: T = ...`` / ``let x = T::new()`` bindings).
+.. ``field_expression`` chains like ``self.a.b.method()`` walk through a per-file
+   ``struct_item`` field map.
+.. ``call_expression`` chains like ``a.foo().bar()`` walk through a per-file impl-method
+   return-type map.
++
+Cross-file struct fields and return types are out of scope for this round; method chains and
+field receivers that cross file boundaries fall back to name-only.
+
+Victor database scale after the full 2026-05-22 resolver:
 
 [cols="1,1",options="header"]
 |===
 | Metric | Value
-| `graph_node` rows | 859,823
-| `graph_edge` rows | 2,976,347
-| `graph_module_metric` rows | 1,684
-| `DDG_DEF_USE` edges | 1,560,423
-| `CFG_SUCCESSOR` edges | 520,429
-| `CALLS` edges | 467,982 (52,194 same-file, 415,788 cross-file)
-| `CDG` edges | 100,698
-| `CONTAINS` edges | ~22,300
+| `graph_node` rows | 861,783
+| `graph_edge` rows | 3,776,395
+| `graph_module_metric` rows | 1,706
+| `DDG_DEF_USE` edges | ~1,565,000
+| `CFG_SUCCESSOR` edges | ~521,000
+| `CALLS` edges | 1,262,182 (59,013 same-file, 1,203,169 cross-file)
+| `CDG` edges | ~101,000
+| `CONTAINS` edges | ~22,400
 |===
 
 Evolution across the fix:
@@ -248,16 +264,19 @@ Evolution across the fix:
 | Snapshot | CALLS total | CALLS cross-file | module metrics
 | Pre-fix (per-file resolution) | 103,255 | **0** | **0**
 | Name-only project-wide resolution | 480,632 | 428,791 | 1,675
-| Receiver-typed dispatch (current) | 467,982 | 415,788 | 1,684
+| Receiver-typed dispatch (basic) | 467,982 | 415,788 | 1,684
+| Plus struct-field, method-chain, ``Self::`` | **1,262,182** | **1,203,169** | 1,706
 |===
 
-The 12,650 edge reduction between the name-only and receiver-typed snapshots is noise removed:
-method calls like `obj.method()` that previously bound to every `method` defined anywhere in the
-codebase now bind only to methods inside `impl <receiver_type>`. Cross-file ratio holds at ~89%
-because the receiver-typed pass is precise but doesn't expand coverage beyond what name-only
-could see. The remaining 5,423-edge net drop in `graph_edge` is dominated by this CALLS
-reduction plus minor variance in CCG output between runs (CFG/CDG/DDG counts are stable to
-~+/-1%).
+The 2.7x jump in CALLS between the basic and full receiver-typed snapshots is recovered
+edges, not new noise. Calls like ``self.field.method()``, ``a.foo().bar()``, and
+``Self::method()`` that previously had ``receiver_type=None`` would fall back to name-only
+resolution — and the leaf names involved (``iter``, ``format``, ``handle``, ``process``,
+``run``, ``execute``) routinely exceed the fanout cap of 25 candidates and got *skipped*
+entirely. With the new inferences, each of those calls now binds to a specific
+``impl <type>::<method>`` and is included again, this time precisely. Cross-file ratio
+climbs to 95% because typed dispatch overwhelmingly resolves to methods in other files
+(impl blocks are rarely co-located with every caller).
 
 Top node kinds from Victor:
 
@@ -381,22 +400,28 @@ where edge.type = 'CALLS';
 
 Current interpretation:
 
-* `graph_module_metric` contains 1,684 rows. Module-level PageRank, instability, cohesion,
+* `graph_module_metric` contains 1,706 rows. Module-level PageRank, instability, cohesion,
   hotspot, and TDD priority metrics are first-class signals; use them as gates alongside Cargo
-  dependency centrality.
-* `CALLS` resolves cross-file (89%) and uses receiver-typed dispatch where the receiver's type
-  can be inferred from local scope. `obj.method()` calls with a known receiver type bind only to
-  methods inside `impl <type>` and bypass the leaf-name fanout cap. Top hotspots:
-  `src/network/rest/v1/handlers.rs` (Ce=230, 2,231 symbols), `src/network/multi_server.rs`,
-  `src/network/arrow_ipc/service.rs`, `src/services/operations/vectors/legacy.rs`.
-* Receiver-type inference is best-effort: it covers `let x: T = ...`, `let x = T::new()`, `self`
-  inside `impl T`, and `fn(arg: T)` annotations. Method chains (`a.foo().bar()`), struct-field
-  receivers (`self.field.method()`), and generic-parameter receivers fall back to name-only
-  resolution. Calls on tracked receivers whose type lookup misses every `impl` also fall back to
-  name-only (the resolver chose graceful degradation over silently dropping edges).
-* Leaf-name fallback retains the fanout cap (default 25), so common names (`new`, `default`,
-  `from`) still skip when ambiguous beyond the cap. Treat call-edge counts as a tight upper
-  bound: typed dispatch is exact; the name-only tail is bounded.
+  dependency centrality. Current top hotspots: `src/network/rest/v1/handlers.rs` (Ce=550,
+  2,238 symbols), `src/network/multi_server.rs`, `src/network/arrow_ipc/service.rs`,
+  `src/services/operations/vectors/legacy.rs`, `src/services/dml/mod.rs`. Note that Ce
+  values have roughly tripled vs. the basic-receiver-typed snapshot — that's a true
+  reflection of the cross-module call graph, previously hidden behind name-only fanout
+  skips.
+* `CALLS` resolves cross-file at 95% (1.2M of 1.26M total). The resolver applies receiver-typed
+  dispatch whenever the Rust plugin can infer the receiver from any of: ``self`` inside
+  ``impl T``, ``Self::method()`` path calls, scope identifiers (parameter type, ``let`` binding),
+  ``struct_item`` field chains (``self.field.method()`` and longer paths), and impl-method
+  return-type chains (``a.foo().bar()``).
+* Falls back to name-only resolution (with fanout cap 25) when the receiver-type chain hits
+  something unsupported: a method call on a stdlib type (``Vec``, ``HashMap``) whose impl lives
+  outside the codebase, a generic parameter with no concrete bound resolved at parse time, a
+  trait object (``Box<dyn Trait>``), or a cross-file struct field whose type is declared in
+  another module. None of these are wrong — they're just imprecise; the fanout cap keeps the
+  noise bounded.
+* Treat call-edge counts as a tight upper bound: typed dispatch is exact; the name-only tail
+  is fanout-bounded; the recovered edges in the third snapshot are real calls that the
+  earlier resolvers were dropping silently.
 * Statement-level nodes still dominate the graph. Use file/module aggregation first, then
   inspect human-authored hotspot files manually.
 
