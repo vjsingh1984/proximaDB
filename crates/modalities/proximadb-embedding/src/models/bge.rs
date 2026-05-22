@@ -52,6 +52,40 @@ impl Variant {
     }
 }
 
+/// Resolve the BGE session pool size from an optional env-var string.
+///
+/// Default 1, parsed as usize, clamped to [1, 32]. Garbage input falls back
+/// to default. Pure function for unit-testing without touching the
+/// process env.
+pub fn resolve_pool_size(env_var: Option<&str>) -> usize {
+    env_var
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or(1)
+        .clamp(1, 32)
+}
+
+/// Default per-session intra-op thread count when no env override is given.
+///
+/// Policy: split the available CPU cores evenly across the pool so total
+/// ORT threads ≈ core count. Always returns at least 1.
+pub fn intra_op_default(cores: usize, pool_size: usize) -> usize {
+    let safe_pool = pool_size.max(1);
+    std::cmp::max(1, cores / safe_pool)
+}
+
+/// Resolve the per-session ORT intra-op thread count. Env var wins; on
+/// parse failure or absence, fall back to [`intra_op_default`].
+pub fn resolve_intra_op_threads(
+    env_var: Option<&str>,
+    cores: usize,
+    pool_size: usize,
+) -> usize {
+    env_var
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .filter(|n| *n >= 1)
+        .unwrap_or_else(|| intra_op_default(cores, pool_size))
+}
+
 #[cfg(feature = "onnx")]
 pub struct BgeModel {
     variant: Variant,
@@ -100,31 +134,55 @@ impl BgeModel {
             // to [1, 32]. Each session is one ONNX inference context; weights
             // are shared via mmap so memory cost is mostly the per-session
             // runtime arenas (single-digit MB on bge-small).
-            let pool_size = std::env::var("PROXIMADB_EMBED_SESSIONS")
-                .ok()
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(1)
-                .clamp(1, 32);
+            let pool_size =
+                resolve_pool_size(std::env::var("PROXIMADB_EMBED_SESSIONS").ok().as_deref());
+
+            // Per-session ORT intra-op thread count. Without this, each
+            // session defaults to using all CPU cores, which over-subscribes
+            // when pool_size > 1. Default policy: split available cores
+            // evenly across the pool so total threads ≈ core count.
+            // Override via PROXIMADB_EMBED_INTRA_OP_THREADS (>=1).
+            let cores = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(8);
+            let intra_op_threads = resolve_intra_op_threads(
+                std::env::var("PROXIMADB_EMBED_INTRA_OP_THREADS")
+                    .ok()
+                    .as_deref(),
+                cores,
+                pool_size,
+            );
 
             tracing::info!(
                 variant = ?variant,
                 model = %model_path.display(),
                 tokenizer = %tokenizer_path,
                 pool_size,
+                intra_op_threads,
+                cores,
                 "loading BGE ONNX session pool"
             );
 
             let mut sessions = Vec::with_capacity(pool_size);
             for idx in 0..pool_size {
-                let session = ort::session::Session::builder()
-                    .map_err(|e| crate::EmbeddingError::ModelUnavailable(format!(
+                let mut builder = ort::session::Session::builder().map_err(|e| {
+                    crate::EmbeddingError::ModelUnavailable(format!(
                         "ort builder (session {idx}): {e}"
-                    )))?
-                    .commit_from_file(&model_path)
-                    .map_err(|e| crate::EmbeddingError::ModelUnavailable(format!(
+                    ))
+                })?;
+                if intra_op_threads >= 1 {
+                    builder = builder.with_intra_threads(intra_op_threads).map_err(|e| {
+                        crate::EmbeddingError::ModelUnavailable(format!(
+                            "with_intra_threads({intra_op_threads}) (session {idx}): {e}"
+                        ))
+                    })?;
+                }
+                let session = builder.commit_from_file(&model_path).map_err(|e| {
+                    crate::EmbeddingError::ModelUnavailable(format!(
                         "ort commit_from_file({}) (session {idx}): {e}",
                         model_path.display()
-                    )))?;
+                    ))
+                })?;
                 sessions.push(std::sync::Mutex::new(session));
             }
 
@@ -367,5 +425,108 @@ pub mod testing {
     /// Deterministic batch helper for the scheduler tests.
     pub fn synthetic_batch(texts: &[String], dim: usize) -> Vec<Vec<f32>> {
         texts.iter().map(|t| synthetic_vector(t, dim)).collect()
+    }
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+
+    // ---------- resolve_pool_size ----------
+
+    #[test]
+    fn pool_size_defaults_to_one_when_env_absent() {
+        assert_eq!(resolve_pool_size(None), 1);
+    }
+
+    #[test]
+    fn pool_size_parses_positive_integer() {
+        assert_eq!(resolve_pool_size(Some("4")), 4);
+        assert_eq!(resolve_pool_size(Some("12")), 12);
+    }
+
+    #[test]
+    fn pool_size_clamps_to_upper_bound() {
+        assert_eq!(resolve_pool_size(Some("100")), 32);
+        assert_eq!(resolve_pool_size(Some("999")), 32);
+    }
+
+    #[test]
+    fn pool_size_clamps_zero_to_one() {
+        assert_eq!(resolve_pool_size(Some("0")), 1);
+    }
+
+    #[test]
+    fn pool_size_falls_back_on_garbage() {
+        assert_eq!(resolve_pool_size(Some("not-a-number")), 1);
+        assert_eq!(resolve_pool_size(Some("")), 1);
+        assert_eq!(resolve_pool_size(Some("4.5")), 1);
+    }
+
+    #[test]
+    fn pool_size_trims_whitespace() {
+        assert_eq!(resolve_pool_size(Some("  4  ")), 4);
+    }
+
+    // ---------- intra_op_default ----------
+
+    #[test]
+    fn intra_op_default_divides_cores_evenly() {
+        assert_eq!(intra_op_default(8, 1), 8);
+        assert_eq!(intra_op_default(8, 2), 4);
+        assert_eq!(intra_op_default(8, 4), 2);
+        assert_eq!(intra_op_default(8, 8), 1);
+    }
+
+    #[test]
+    fn intra_op_default_rounds_down_for_uneven_division() {
+        // 10 cores / 3 sessions = 3.33 → 3 (total threads 9 < cores)
+        assert_eq!(intra_op_default(10, 3), 3);
+    }
+
+    #[test]
+    fn intra_op_default_returns_at_least_one() {
+        // Pool larger than core count: each session still gets 1 thread.
+        assert_eq!(intra_op_default(8, 16), 1);
+        assert_eq!(intra_op_default(2, 8), 1);
+    }
+
+    #[test]
+    fn intra_op_default_handles_zero_pool_size() {
+        // Defensive: divide-by-zero would panic; we treat zero as one.
+        assert_eq!(intra_op_default(8, 0), 8);
+    }
+
+    #[test]
+    fn intra_op_default_handles_zero_cores() {
+        // available_parallelism() can theoretically return 0/Err; minimum 1.
+        assert_eq!(intra_op_default(0, 4), 1);
+    }
+
+    // ---------- resolve_intra_op_threads ----------
+
+    #[test]
+    fn intra_op_env_override_wins() {
+        assert_eq!(resolve_intra_op_threads(Some("4"), 8, 1), 4);
+        assert_eq!(resolve_intra_op_threads(Some("2"), 8, 2), 2);
+    }
+
+    #[test]
+    fn intra_op_env_zero_falls_back_to_default() {
+        // 0 doesn't make sense for ORT (would mean no threads).
+        // Filter rejects it; default policy applies.
+        assert_eq!(resolve_intra_op_threads(Some("0"), 8, 2), 4);
+    }
+
+    #[test]
+    fn intra_op_env_garbage_falls_back_to_default() {
+        assert_eq!(resolve_intra_op_threads(Some("garbage"), 8, 4), 2);
+        assert_eq!(resolve_intra_op_threads(Some(""), 8, 4), 2);
+    }
+
+    #[test]
+    fn intra_op_env_absent_uses_default_policy() {
+        assert_eq!(resolve_intra_op_threads(None, 8, 2), 4);
+        assert_eq!(resolve_intra_op_threads(None, 16, 4), 4);
     }
 }
