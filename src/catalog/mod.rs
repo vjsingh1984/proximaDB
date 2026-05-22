@@ -58,6 +58,10 @@ pub use tenant_tier::{
 pub mod recall_probe;
 pub use recall_probe::{ProbeConfig, ProbeOutcome, ProbeScope, ProbeState, RecallProbeGate};
 
+/// Soft-cap budget guard — gateway-side check returning structured rejection.
+pub mod budget_guard;
+pub use budget_guard::{BudgetRejection, EnforcedBudget, enforce as enforce_budget};
+
 // Feature-gated implementations
 #[cfg(feature = "delta-lake")]
 pub mod delta;
