@@ -122,6 +122,7 @@ pub mod batch_group;
 pub mod invalidation;
 pub mod mismatch_cost;
 pub mod per_category_policy;
+pub mod plan_cache;
 pub mod query_result_cache;
 
 // Re-export main types
