@@ -1746,6 +1746,22 @@ pub struct CatalogTableStatistics {
     pub column_stats: HashMap<String, CatalogColumnStatistics>,
 }
 
+impl CatalogTableStatistics {
+    /// Returns true if these statistics should be treated as stale by the planner.
+    ///
+    /// Stats are stale when:
+    /// - `last_analyzed_ms` is `None` (never updated), or
+    /// - `now_ms - last_analyzed_ms > ttl_ms` (older than the configured freshness window).
+    ///
+    /// Planners should fall back to defaults (or trigger a refresh) when this returns true.
+    pub fn is_stale(&self, now_ms: i64, ttl_ms: i64) -> bool {
+        match self.last_analyzed_ms {
+            None => true,
+            Some(last_ms) => now_ms.saturating_sub(last_ms) > ttl_ms,
+        }
+    }
+}
+
 /// Column statistics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CatalogColumnStatistics {
@@ -2312,6 +2328,43 @@ mod tests {
         let encoded = serde_json::to_string(&schema).unwrap();
         let decoded: CatalogTableSchema = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded.compression_stats_profiles[0], profile);
+    }
+
+    #[test]
+    fn catalog_table_statistics_is_stale_when_never_analyzed() {
+        let stats = CatalogTableStatistics::default();
+        assert!(
+            stats.is_stale(1_000_000, 60_000),
+            "stats with no last_analyzed_ms must be considered stale"
+        );
+    }
+
+    #[test]
+    fn catalog_table_statistics_is_fresh_within_ttl_window() {
+        let stats = CatalogTableStatistics {
+            row_count: 10,
+            last_analyzed_ms: Some(950_000),
+            ..Default::default()
+        };
+        // now=1_000_000, last=950_000, ttl=60_000 -> delta=50_000 < 60_000 -> fresh
+        assert!(
+            !stats.is_stale(1_000_000, 60_000),
+            "stats within TTL must NOT be stale"
+        );
+    }
+
+    #[test]
+    fn catalog_table_statistics_is_stale_past_ttl_window() {
+        let stats = CatalogTableStatistics {
+            row_count: 10,
+            last_analyzed_ms: Some(900_000),
+            ..Default::default()
+        };
+        // now=1_000_000, last=900_000, ttl=60_000 -> delta=100_000 > 60_000 -> stale
+        assert!(
+            stats.is_stale(1_000_000, 60_000),
+            "stats older than TTL must be stale"
+        );
     }
 }
 

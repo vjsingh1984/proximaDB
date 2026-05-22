@@ -1191,8 +1191,18 @@ additive estimate (assumes no overlap between batches) capped at `row_count` to 
 values. Called in `execute_insert` alongside `bump_column_minmax`. Test
 `insert_updates_column_ndv_statistics` verifies: 4 rows across 4 single-row batches → NDV
 populated and capped at row_count for both `id` and `category` columns.
-Total DML tests: 36. Remaining: bloom filter hints, staleness TTL (mark stats stale when
-`last_analyzed_ms` exceeds a configurable threshold), HLL for cross-batch NDV without overcounting.
+Staleness TTL added: `DmlService::now_unix_ms` helper centralizes wall-clock reads; all four bump
+helpers (`bump_row_count_stats`, `bump_column_null_counts`, `bump_column_minmax`, `bump_column_ndv`)
+set `CatalogTableStatistics.last_analyzed_ms = Some(now)` after each successful update.
+`CatalogTableStatistics::is_stale(now_ms, ttl_ms) -> bool` added to the catalog crate: returns
+`true` when `last_analyzed_ms` is `None` or older than `ttl_ms`. Three catalog unit tests
+(`catalog_table_statistics_is_stale_when_never_analyzed`,
+`catalog_table_statistics_is_fresh_within_ttl_window`,
+`catalog_table_statistics_is_stale_past_ttl_window`) cover the boundaries. DML test
+`insert_marks_statistics_with_last_analyzed_timestamp` verifies INSERT sets `last_analyzed_ms`
+within the wall-clock window and that `is_stale` returns the expected freshness verdict.
+Total DML tests: 37 (+3 catalog tests). Remaining: bloom filter hints, HLL for cross-batch NDV
+accuracy, planner usage of `is_stale` to gate CBO fallback paths.
 | `src/query/table_write_plan.rs`, `src/services/dml/mod.rs`, xCatalog stats
 
 | T9

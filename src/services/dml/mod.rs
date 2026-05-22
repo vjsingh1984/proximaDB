@@ -1722,6 +1722,16 @@ impl DmlService {
     // Helper Methods
     // ========================
 
+    /// Current wall-clock time in milliseconds since the Unix epoch, used to mark
+    /// `CatalogTableStatistics.last_analyzed_ms` after a stats update so the planner
+    /// can detect stale statistics via `CatalogTableStatistics::is_stale`.
+    fn now_unix_ms() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64
+    }
+
     /// Increment or decrement the row count in catalog statistics after a successful write.
     /// Errors are non-fatal: they are logged as warnings and do not fail the operation.
     /// Called by DML paths and by fast-lane (gRPC/REST/Arrow Flight) write paths for
@@ -1736,12 +1746,7 @@ impl DmlService {
         } else {
             stats.row_count.saturating_sub(delta.unsigned_abs())
         };
-        stats.last_analyzed_ms = Some(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as i64,
-        );
+        stats.last_analyzed_ms = Some(Self::now_unix_ms());
         if let Err(e) = catalog.update_statistics(&table_id, stats).await {
             warn!(table = %table_name, error = %e, "Failed to update row-count statistics after DML");
         }
@@ -1770,6 +1775,7 @@ impl DmlService {
                     Some(col_stats.null_count.unwrap_or(0).saturating_add(null_delta));
             }
         }
+        stats.last_analyzed_ms = Some(Self::now_unix_ms());
         if let Err(e) = catalog.update_statistics(&table_id, stats).await {
             warn!(table = %table_name, error = %e, "Failed to update column-null statistics after INSERT");
         }
@@ -1850,6 +1856,7 @@ impl DmlService {
                 _ => batch_max,
             });
         }
+        stats.last_analyzed_ms = Some(Self::now_unix_ms());
         if let Err(e) = catalog.update_statistics(&table_id, stats).await {
             warn!(table = %table_name, error = %e, "Failed to update column min/max statistics after INSERT");
         }
@@ -1887,7 +1894,9 @@ impl DmlService {
                 seen.entry(col.clone()).or_default().insert(key);
             }
         }
-        seen.into_iter().map(|(col, set)| (col, set.len() as u64)).collect()
+        seen.into_iter()
+            .map(|(col, set)| (col, set.len() as u64))
+            .collect()
     }
 
     /// Merge per-column distinct counts from a batch into `CatalogColumnStatistics.distinct_count`.
@@ -1906,9 +1915,13 @@ impl DmlService {
         let row_count_cap = stats.row_count.max(1);
         for (col, batch_ndv) in ndv_per_column {
             let col_stats = stats.column_stats.entry(col).or_default();
-            let new_ndv = col_stats.distinct_count.unwrap_or(0).saturating_add(batch_ndv);
+            let new_ndv = col_stats
+                .distinct_count
+                .unwrap_or(0)
+                .saturating_add(batch_ndv);
             col_stats.distinct_count = Some(new_ndv.min(row_count_cap));
         }
+        stats.last_analyzed_ms = Some(Self::now_unix_ms());
         if let Err(e) = catalog.update_statistics(&table_id, stats).await {
             warn!(table = %table_name, error = %e, "Failed to update column NDV statistics after INSERT");
         }
@@ -4877,11 +4890,91 @@ mod tests {
             .get("category")
             .and_then(|s| s.distinct_count)
             .expect("category distinct_count must be populated");
-        assert!(cat_ndv >= 1, "category NDV must be at least 1, got {cat_ndv}");
+        assert!(
+            cat_ndv >= 1,
+            "category NDV must be at least 1, got {cat_ndv}"
+        );
         assert!(
             cat_ndv <= stats.row_count,
             "category NDV ({cat_ndv}) must not exceed row count ({})",
             stats.row_count
+        );
+    }
+
+    #[tokio::test]
+    async fn insert_marks_statistics_with_last_analyzed_timestamp() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("stale-stats.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE stale_tbl (id TEXT NOT NULL, val INTEGER NOT NULL, PRIMARY KEY (id));",
+            )
+            .expect("parse ddl")
+            .expect("ddl");
+        DdlService::new(manager.clone())
+            .execute(ddl_stmt)
+            .await
+            .expect("create table");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(DirectWalTableRecordStore::new(
+                Arc::new(MemtableRecordStorage::new()),
+                Arc::new(
+                    FramedTableWalAppender::open(&wal_path)
+                        .await
+                        .expect("open WAL"),
+                ),
+            )),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        let pre_insert_ms = DmlService::now_unix_ms();
+        let stmt = parser
+            .parse_dml("INSERT INTO stale_tbl (id, val) VALUES ('r1', 42);")
+            .expect("parse")
+            .expect("dml");
+        dml.execute(stmt).await.expect("insert");
+        let post_insert_ms = DmlService::now_unix_ms();
+
+        let (catalog, table_id) = manager.resolve_table("stale_tbl").await.expect("resolve");
+        let stats = catalog.get_statistics(&table_id).await.unwrap_or_default();
+
+        // last_analyzed_ms must be set and within the wall-clock window of the INSERT.
+        let last_ms = stats
+            .last_analyzed_ms
+            .expect("last_analyzed_ms must be populated after INSERT");
+        assert!(
+            last_ms >= pre_insert_ms && last_ms <= post_insert_ms,
+            "last_analyzed_ms ({last_ms}) must be within [{pre_insert_ms}, {post_insert_ms}]"
+        );
+
+        // Stats are fresh inside a generous TTL window and stale outside it.
+        assert!(
+            !stats.is_stale(last_ms, 60_000),
+            "stats updated at now must not be stale within a 60s TTL"
+        );
+        assert!(
+            stats.is_stale(last_ms + 120_000, 60_000),
+            "stats 120s old must be stale under a 60s TTL"
         );
     }
 }
