@@ -83,6 +83,8 @@ pub mod route_explain;
 /// Trace digest — stable FNV-1a hash for billing-event dedup +
 /// idempotency keys on the async sink.
 pub mod trace_digest;
+/// Trace fingerprint — shape-only hash for incident-triage grouping.
+pub mod trace_fingerprint;
 /// Query engine for logs, metrics, and traces with PromQL support.
 pub mod query;
 /// SearchPlanTrace — per-query telemetry envelope feeding KRU billing and the

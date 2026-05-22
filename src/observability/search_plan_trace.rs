@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::service_types::IndexStats;
 
 /// Filter execution strategy chosen by the cost-aware planner (LLD §3).
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum FilterStrategy {
     /// Filter the dataset first, then run ANN over the matching subset.
@@ -35,7 +35,7 @@ pub enum FilterStrategy {
 }
 
 /// Index route chosen by the planner.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum IndexRoute {
     /// Traverse the quantized graph first, exact-rerank a small candidate set
@@ -53,7 +53,7 @@ pub enum IndexRoute {
 }
 
 /// Outcome of the cache-lookup stage for this query.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum CacheResult {
     /// Result served from a ProxiDB cache hit (no backend execution).
@@ -68,7 +68,7 @@ pub enum CacheResult {
 }
 
 /// Failure classification populated when the repair controller engages (LLD §9).
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum FailureClass {
     /// Tenant or request scan budget exhausted before completion.
