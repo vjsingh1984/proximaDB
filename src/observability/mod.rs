@@ -88,6 +88,9 @@ pub mod trace_fingerprint;
 /// Trace batcher — bundles N populated traces into one POST payload
 /// for the async billing sink (digest-keyed dedup + fingerprint-aware).
 pub mod trace_batcher;
+/// Workload mix detector — aggregates fingerprint counts into a typed
+/// summary for tier-recommendation hints and cache-warm targeting.
+pub mod workload_mix;
 /// Query engine for logs, metrics, and traces with PromQL support.
 pub mod query;
 /// SearchPlanTrace — per-query telemetry envelope feeding KRU billing and the
