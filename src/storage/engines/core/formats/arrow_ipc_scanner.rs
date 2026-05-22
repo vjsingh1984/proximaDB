@@ -424,6 +424,7 @@ fn batch_to_vector_records(batch: &RecordBatch) -> Result<Vec<ProximaRecord>> {
                 modality: "vector".to_string(),
                 values,
                 dim,
+                ..Default::default()
             });
         }
         records.push(record);

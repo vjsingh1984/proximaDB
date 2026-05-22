@@ -318,6 +318,7 @@ mod tests {
                 modality: "vector".to_string(),
                 dim: values.len() as u32,
                 values,
+                ..Default::default()
             }],
             ..Default::default()
         }

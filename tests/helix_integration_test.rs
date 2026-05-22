@@ -341,6 +341,7 @@ mod helix_integration_tests {
                     modality: "vector".to_string(),
                     dim: 128,
                     values,
+                    ..Default::default()
                 }],
                 props,
                 record_version: 1,
@@ -368,6 +369,7 @@ mod helix_integration_tests {
                     modality: "vector".to_string(),
                     dim: 128,
                     values,
+                    ..Default::default()
                 }],
                 props,
                 record_version: 1,
@@ -514,6 +516,7 @@ mod helix_integration_tests {
                     modality: "vector".to_string(),
                     dim: 128,
                     values: vec![i as f32 / 100.0; 128],
+                    ..Default::default()
                 }],
                 props,
                 record_version: 1,
@@ -719,6 +722,7 @@ mod helix_integration_tests {
                     modality: "vector".to_string(),
                     dim: 128,
                     values: vec![i as f32 / 100.0; 128],
+                    ..Default::default()
                 }],
                 props,
                 record_version: 1,
@@ -835,6 +839,7 @@ mod helix_integration_tests {
                     modality: "vector".to_string(),
                     dim: 128,
                     values: vec![i as f32 / 100.0; 128],
+                    ..Default::default()
                 }],
                 props,
                 record_version: 1,

@@ -208,6 +208,7 @@ mod tests {
                 modality: "dense_vector".to_string(),
                 values: vec![1.0, 2.0, 3.0],
                 dim: 3,
+                ..Default::default()
             }],
             sequence: None,
             labels: LabelSet::new(),

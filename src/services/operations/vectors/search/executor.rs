@@ -40,6 +40,7 @@ pub fn proto_results_to_vector_records(
                         modality: "vector".to_string(),
                         values: result.vector,
                         dim,
+                        ..Default::default()
                     }]
                 } else {
                     vec![]

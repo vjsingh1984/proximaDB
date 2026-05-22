@@ -79,6 +79,7 @@ fn create_compressible_test_vectors(
                     modality: "vector".to_string(),
                     dim: dimension as u32,
                     values,
+                    ..Default::default()
                 }],
                 props,
                 record_version: 1,
@@ -362,6 +363,7 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
                 modality: "vector".to_string(),
                 dim: 512,
                 values,
+                ..Default::default()
             }],
             props,
             record_version: 1,
@@ -388,6 +390,7 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
                 modality: "vector".to_string(),
                 dim: 512,
                 values,
+                ..Default::default()
             }],
             props,
             record_version: 1,

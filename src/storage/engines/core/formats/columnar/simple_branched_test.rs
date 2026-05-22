@@ -28,6 +28,7 @@ mod tests {
                     modality: "vector".to_string(),
                     values: vec![i as f32; 128],
                     dim: 128,
+                    ..Default::default()
                 });
                 record
             })

@@ -312,6 +312,7 @@ fn generate_clustered_vectors(count: usize, dim: usize) -> Vec<ProximaRecord> {
                     modality: "vector".to_string(),
                     dim: dim as u32,
                     values,
+                    ..Default::default()
                 }],
                 record_version: 1,
                 ..Default::default()
@@ -341,6 +342,7 @@ fn generate_clustered_vectors(count: usize, dim: usize) -> Vec<ProximaRecord> {
                 modality: "vector".to_string(),
                 dim: dim as u32,
                 values,
+                ..Default::default()
             }],
             record_version: 1,
             ..Default::default()

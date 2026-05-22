@@ -127,6 +127,7 @@ fn create_test_vector(id: &str) -> ProximaRecord {
             modality: "dense_vector".to_string(),
             values: vec![0.1; 128],
             dim: 128,
+            ..Default::default()
         }],
         props,
         created_at_ns: 1_234_567_890_000_000,

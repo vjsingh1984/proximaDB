@@ -90,6 +90,7 @@ mod tests {
                 modality: "dense_vector".to_string(),
                 dim: vector_data.len() as u32,
                 values: vector_data,
+                ..Default::default()
             }],
             record_version: 1,
             method: Some("test".to_string()),

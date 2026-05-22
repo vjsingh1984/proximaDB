@@ -2117,6 +2117,7 @@ impl UnifiedParquetReader {
                     modality: "vector".to_string(),
                     values: vector,
                     dim,
+                    ..Default::default()
                 });
             }
             records.push(record);

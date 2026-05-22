@@ -29,6 +29,7 @@ fn create_test_vector(id: &str, vector: Vec<f32>) -> ProximaRecord {
             modality: "vector".to_string(),
             values: vector,
             dim,
+            ..Default::default()
         });
     }
     record

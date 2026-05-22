@@ -93,6 +93,7 @@ pub async fn viper_optimization_example() -> Result<()> {
                     modality: "text".to_string(),
                     dim: vector.len() as u32,
                     values: vector,
+                    ..Default::default()
                 }],
                 created_at_ns: i as i64,
                 record_version: 1,
@@ -354,6 +355,7 @@ pub async fn nova_optimization_example() -> Result<()> {
                     modality: "text".to_string(),
                     dim: vector.len() as u32,
                     values: vector,
+                    ..Default::default()
                 }],
                 created_at_ns: (1_700_000_000 + i) as i64,
                 record_version: 1,

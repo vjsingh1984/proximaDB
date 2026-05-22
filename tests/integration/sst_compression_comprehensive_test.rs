@@ -41,6 +41,7 @@ fn create_dense_vectors(
                     modality: "vector".to_string(),
                     dim: dimension as u32,
                     values,
+                    ..Default::default()
                 }],
                 record_version: 1,
                 created_at_ns: (1000 + i) as i64 * 1_000_000_000,
@@ -72,6 +73,7 @@ fn create_sparse_vectors(
                     modality: "vector".to_string(),
                     dim: dimension as u32,
                     values,
+                    ..Default::default()
                 }],
                 record_version: 1,
                 created_at_ns: (1000 + i) as i64 * 1_000_000_000,

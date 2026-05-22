@@ -57,6 +57,7 @@ mod streaming_flush_tests {
                     modality: String::new(),
                     values: vec![0.1 * (i as f32); dimension],
                     dim: dimension as u32,
+                    ..Default::default()
                 }],
                 ..Default::default()
             })
@@ -1734,6 +1735,7 @@ mod cross_workstream_tests {
                     modality: String::new(),
                     values: vec![0.1 * (i as f32); dimension],
                     dim: dimension as u32,
+                    ..Default::default()
                 }],
                 ..Default::default()
             })

@@ -2577,6 +2577,7 @@ mod tests {
                 modality: "dense_vector".to_string(),
                 dim,
                 values: vector,
+                ..Default::default()
             }],
             ..proximadb_records::ProximaRecord::default()
         }

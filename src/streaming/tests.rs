@@ -38,6 +38,7 @@ async fn test_end_to_end_streaming() {
                     modality: "vector".to_string(),
                     dim: 128,
                     values: vec![0.1 * (i as f32); 128],
+                    ..Default::default()
                 }],
                 record_version: 1,
                 ..Default::default()
@@ -93,6 +94,7 @@ async fn test_backpressure_signaling() {
                 modality: "vector".to_string(),
                 dim: 128,
                 values: vec![0.1; 128],
+                ..Default::default()
             }],
             record_version: 1,
             ..Default::default()
@@ -133,6 +135,7 @@ async fn test_concurrent_sessions() {
                             modality: "vector".to_string(),
                             dim: 64,
                             values: vec![0.1; 64],
+                            ..Default::default()
                         }],
                         record_version: 1,
                         ..Default::default()
@@ -180,6 +183,7 @@ async fn test_session_stats() {
                 modality: "vector".to_string(),
                 dim: 64,
                 values: vec![0.1; 64],
+                ..Default::default()
             }],
             record_version: 1,
             ..Default::default()
@@ -287,6 +291,7 @@ async fn test_rate_limiter_integration() {
                 modality: "vector".to_string(),
                 dim: 64,
                 values: vec![0.1; 64],
+                ..Default::default()
             }],
             record_version: 1,
             ..Default::default()
@@ -305,6 +310,7 @@ async fn test_rate_limiter_integration() {
                 modality: "vector".to_string(),
                 dim: 64,
                 values: vec![0.1; 64],
+                ..Default::default()
             }],
             record_version: 1,
             ..Default::default()

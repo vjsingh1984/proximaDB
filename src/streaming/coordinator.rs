@@ -890,6 +890,7 @@ mod tests {
                     modality: "vector".to_string(),
                     dim: 128,
                     values: vec![0.1; 128],
+                    ..Default::default()
                 }],
                 record_version: 1,
                 ..Default::default()
@@ -923,6 +924,7 @@ mod tests {
                     modality: "vector".to_string(),
                     dim: 128,
                     values: vec![0.1; 128],
+                    ..Default::default()
                 }],
                 record_version: 1,
                 ..Default::default()

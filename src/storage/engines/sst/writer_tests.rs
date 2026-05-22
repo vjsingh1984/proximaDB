@@ -21,6 +21,7 @@ mod tests {
                 modality: "dense_vector".to_string(),
                 dim: vector.len() as u32,
                 values: vector,
+                ..Default::default()
             }],
             ..ProximaRecord::default()
         }

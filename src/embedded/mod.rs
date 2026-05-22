@@ -1480,6 +1480,7 @@ impl EmbeddedProximaDB {
                         modality: "vector".to_string(),
                         dim,
                         values,
+                        ..Default::default()
                     }],
                     props,
                     created_at_ns: now_ns,

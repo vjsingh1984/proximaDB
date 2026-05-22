@@ -776,6 +776,7 @@ impl AxisEventLogConsumer {
                             modality: "vector".to_string(),
                             values: fp32_vec,
                             dim,
+                            ..Default::default()
                         }],
                         ..Default::default()
                     }

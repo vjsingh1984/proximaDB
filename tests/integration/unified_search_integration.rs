@@ -48,6 +48,7 @@ fn generate_test_vectors(count: usize, dimension: usize) -> Vec<ProximaRecord> {
                     modality: "vector".to_string(),
                     values,
                     dim,
+                    ..Default::default()
                 }],
                 ..Default::default()
             }

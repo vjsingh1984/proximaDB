@@ -374,6 +374,7 @@ mod tests {
                     modality: "vector".to_string(),
                     dim: 128,
                     values: vec![i as f32; 128],
+                    ..Default::default()
                 }],
                 record_version: 1,
                 created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
@@ -398,6 +399,7 @@ mod tests {
                     modality: "vector".to_string(),
                     dim: 128,
                     values: vec![i as f32; 128],
+                    ..Default::default()
                 }],
                 record_version: 1,
                 created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),

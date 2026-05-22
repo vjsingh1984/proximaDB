@@ -484,6 +484,7 @@ impl ParquetReader {
                     modality: "vector".to_string(),
                     values,
                     dim,
+                    ..Default::default()
                 });
             }
 

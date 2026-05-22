@@ -2958,6 +2958,7 @@ impl PostgresProtocol {
                     modality: "vector".to_string(),
                     dim,
                     values: vector,
+                    ..Default::default()
                 }],
                 created_at_ns: now_ns,
                 updated_at_ns: now_ns,
@@ -3021,6 +3022,7 @@ impl PostgresProtocol {
                         modality: "vector".to_string(),
                         dim,
                         values: vector,
+                        ..Default::default()
                     }],
                     created_at_ns: now_ns,
                     updated_at_ns: now_ns,
@@ -3116,6 +3118,7 @@ impl PostgresProtocol {
                     modality: "vector".to_string(),
                     dim,
                     values: vector,
+                    ..Default::default()
                 }],
                 created_at_ns: now_ns,
                 updated_at_ns: now_ns,

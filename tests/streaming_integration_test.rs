@@ -48,6 +48,7 @@ fn create_test_vectors(count: usize, start_id: usize, dimension: usize) -> Vec<P
                 modality: "dense_vector".to_string(),
                 values: vec![0.1 * (i as f32); dimension],
                 dim,
+                ..Default::default()
             }],
             ..Default::default()
         })

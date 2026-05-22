@@ -117,7 +117,7 @@ async fn test_basic_vector_operations() {
         distance_metric: DistanceMetric::Cosine as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default(),
+        ..Default::default()
                 compression: None,
                 optimization_hints: None,
             };
@@ -179,7 +179,7 @@ async fn test_batch_vector_insertion() {
         distance_metric: DistanceMetric::Euclidean as i32,
         storage_engine: StorageEngine::Sst as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Ivf as i32,
-        ..Default::default(),
+        ..Default::default()
                 compression: None,
                 optimization_hints: None,
             };
@@ -243,7 +243,7 @@ async fn test_streaming_search() {
         distance_metric: DistanceMetric::Manhattan as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default(),
+        ..Default::default()
                 compression: None,
                 optimization_hints: None,
             };
@@ -305,7 +305,7 @@ async fn test_metadata_filtering() {
             "score".to_string(),
             "is_active".to_string(),
         ],
-        ..Default::default(),
+        ..Default::default()
                 compression: None,
                 optimization_hints: None,
             };
@@ -396,7 +396,7 @@ async fn test_flush_operations() {
         distance_metric: DistanceMetric::DotProduct as i32,
         storage_engine: StorageEngine::Sst as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Pq as i32,
-        ..Default::default(),
+        ..Default::default()
                 compression: None,
                 optimization_hints: None,
             };
@@ -470,7 +470,7 @@ async fn test_metrics_and_health() {
         distance_metric: DistanceMetric::Cosine as i32,
         storage_engine: StorageEngine::Viper as i32,
         primary_indexing_algorithm: IndexingAlgorithm::Hnsw as i32,
-        ..Default::default(),
+        ..Default::default()
                 compression: None,
                 optimization_hints: None,
             };

@@ -1057,6 +1057,7 @@ impl DmlService {
                 modality: "vector".to_string(),
                 dim: result.vector.len() as u32,
                 values: result.vector,
+                ..Default::default()
             }]
         };
 
@@ -2876,6 +2877,7 @@ mod tests {
                 modality: "vector".to_string(),
                 dim: 2,
                 values: vec![0.1, 0.2],
+                ..Default::default()
             }],
             ..Default::default()
         };

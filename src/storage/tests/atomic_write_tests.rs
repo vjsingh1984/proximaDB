@@ -201,6 +201,7 @@ async fn test_atomic_wal_to_storage_flow() {
                 modality: "vector".to_string(),
                 values: vec![1.0, 2.0, 3.0],
                 dim: 3,
+                ..Default::default()
             }],
             ..Default::default()
         },
@@ -211,6 +212,7 @@ async fn test_atomic_wal_to_storage_flow() {
                 modality: "vector".to_string(),
                 values: vec![4.0, 5.0, 6.0],
                 dim: 3,
+                ..Default::default()
             }],
             ..Default::default()
         },

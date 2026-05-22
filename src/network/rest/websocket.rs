@@ -384,6 +384,7 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
                                         modality: "vector".to_string(),
                                         dim,
                                         values: v.vector,
+                                        ..Default::default()
                                     }],
                                     props,
                                     record_version: 1,

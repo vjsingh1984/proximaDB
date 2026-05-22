@@ -224,6 +224,7 @@ mod tests {
                     modality: "dense_vector".to_string(),
                     dim: 384,
                     values: vec![0.1; 384],
+                    ..Default::default()
                 }],
                 record_version: 1,
                 ..proximadb_records::ProximaRecord::default()

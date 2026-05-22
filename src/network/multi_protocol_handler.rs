@@ -467,6 +467,7 @@ impl UnifiedQueryRequest {
                         modality: "vector".to_string(),
                         values: v.vector.clone(),
                         dim,
+                        ..Default::default()
                     }],
                     ..Default::default()
                 }

@@ -434,6 +434,7 @@ mod tests {
             modality: "dense".into(),
             values,
             dim,
+            ..Default::default()
         }];
         record
     }

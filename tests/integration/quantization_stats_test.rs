@@ -373,6 +373,7 @@ fn generate_sparse_vectors(
                 modality: "vector".to_string(),
                 dim: dim as u32,
                 values,
+                ..Default::default()
             }],
             record_version: 1,
             created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),

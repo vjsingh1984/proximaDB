@@ -171,6 +171,7 @@ mod tests {
                 modality: "vector".to_string(),
                 dim: dimension as u32,
                 values: vec![value; dimension],
+                ..Default::default()
             }],
             props,
             record_version: 1,
@@ -881,6 +882,7 @@ mod tests {
                     modality: "vector".to_string(),
                     dim,
                     values: vector_data,
+                    ..Default::default()
                 }],
                 props,
                 record_version: 1,

@@ -298,7 +298,11 @@ impl EmbeddingValues {
 /// The `values: Vec<f32>` field remains the durable canonical storage for PR 1;
 /// `precision` and `precision_epoch` are advisory until PR 3 switches durable
 /// storage to the `EmbeddingValues` enum.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+///
+/// `Default` derive: enables existing struct literals to spread
+/// `..Default::default()` for the new precision fields without per-site code
+/// migration. Defaults are `Fp32` and `None` — back-compat with PR 0 records.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct EmbeddingCell {
     /// Identifier of the model that produced this embedding.
     pub model_id: String,

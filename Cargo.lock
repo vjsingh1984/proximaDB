@@ -3578,6 +3578,7 @@ dependencies = [
  "cfg-if",
  "crunchy",
  "num-traits",
+ "serde",
  "zerocopy",
 ]
 
@@ -6641,6 +6642,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "half",
  "proximadb-data-model",
  "proximadb-proto",
  "serde",

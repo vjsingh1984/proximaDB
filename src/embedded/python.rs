@@ -3896,6 +3896,7 @@ fn proxima_record_from_batch_parts(
             modality,
             dim,
             values,
+            ..Default::default()
         }],
         props,
         created_at_ns: now_ns,
@@ -3934,6 +3935,7 @@ fn python_to_proxima_record(
             modality,
             dim,
             values,
+            ..Default::default()
         }],
         props,
         created_at_ns: now_ns,

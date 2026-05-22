@@ -176,6 +176,7 @@ async fn test_parquet_flush_and_read_pattern() {
                 modality: "vector".to_string(),
                 values,
                 dim,
+                ..Default::default()
             });
             r
         })
@@ -304,6 +305,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
             modality: "vector".to_string(),
             values,
             dim,
+            ..Default::default()
         });
         test_records.push(r);
     }
@@ -564,6 +566,7 @@ async fn test_multi_file_directory_scan() {
                     modality: "vector".to_string(),
                     values,
                     dim,
+                    ..Default::default()
                 });
                 r
             })
@@ -703,6 +706,7 @@ async fn test_dictionary_encoding_optimization() {
                     modality: "vector".to_string(),
                     values,
                     dim,
+                    ..Default::default()
                 });
                 r
             }
@@ -761,6 +765,7 @@ async fn test_dictionary_encoding_optimization() {
                 modality: "vector".to_string(),
                 values,
                 dim,
+                ..Default::default()
             });
             r
         },
@@ -777,6 +782,7 @@ async fn test_dictionary_encoding_optimization() {
                 modality: "vector".to_string(),
                 values,
                 dim,
+                ..Default::default()
             });
             r
         },
@@ -820,6 +826,7 @@ async fn test_customer_api_compatibility() {
                 modality: "vector".to_string(),
                 values,
                 dim,
+                ..Default::default()
             });
             r
         },
@@ -837,6 +844,7 @@ async fn test_customer_api_compatibility() {
                 modality: "vector".to_string(),
                 values,
                 dim,
+                ..Default::default()
             });
             r
         },
@@ -854,6 +862,7 @@ async fn test_customer_api_compatibility() {
                 modality: "vector".to_string(),
                 values,
                 dim,
+                ..Default::default()
             });
             r
         },
@@ -900,6 +909,7 @@ async fn test_customer_api_compatibility() {
             modality: "vector".to_string(),
             values,
             dim,
+            ..Default::default()
         });
         r
     }];
@@ -926,6 +936,7 @@ async fn test_customer_api_compatibility() {
                 modality: "vector".to_string(),
                 values,
                 dim,
+                ..Default::default()
             });
             r
         },
@@ -943,6 +954,7 @@ async fn test_customer_api_compatibility() {
                 modality: "vector".to_string(),
                 values,
                 dim,
+                ..Default::default()
             });
             r
         },
@@ -1036,6 +1048,7 @@ async fn test_row_group_offset_optimization() {
             modality: "vector".to_string(),
             values,
             dim,
+            ..Default::default()
         });
         r
     }];
@@ -1074,6 +1087,7 @@ fn create_test_records(count: usize) -> Vec<ProximaRecord> {
                 modality: "vector".to_string(),
                 values,
                 dim,
+                ..Default::default()
             });
             r
         })
@@ -1287,6 +1301,7 @@ fn convert_batches_to_records(batches: Vec<arrow_array::RecordBatch>) -> Vec<Pro
                 modality: "vector".to_string(),
                 dim: vector.len() as u32,
                 values: vector,
+                ..Default::default()
             });
             records.push(record);
         }

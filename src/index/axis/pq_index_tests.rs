@@ -26,6 +26,7 @@ mod tests {
                 modality: "vector".to_string(),
                 values,
                 dim,
+                ..Default::default()
             }],
             ..Default::default()
         }

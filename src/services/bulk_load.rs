@@ -233,6 +233,7 @@ impl DrainerInsertSink for BulkLoadDrainerSink {
                         modality: "dense_vector".to_string(),
                         dim: r.vector_dim,
                         values: r.vector,
+                        ..Default::default()
                     }],
                     ..ProximaRecord::default()
                 }

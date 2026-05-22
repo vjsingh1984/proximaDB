@@ -1433,6 +1433,7 @@ impl HybridQueryEngine {
                                         modality: "vector".to_string(),
                                         values: vector,
                                         dim,
+                                        ..Default::default()
                                     }],
                                     ..Default::default()
                                 },
@@ -1505,6 +1506,7 @@ impl HybridQueryEngine {
                                 modality: "vector".to_string(),
                                 values: embedding.vector.clone(),
                                 dim,
+                                ..Default::default()
                             }],
                             ..Default::default()
                         },

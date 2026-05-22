@@ -3467,6 +3467,7 @@ impl VectorOperationsService {
                         modality: "vector".to_string(),
                         values: vector_values,
                         dim,
+                        ..Default::default()
                     }]
                 } else {
                     vec![]
@@ -4075,6 +4076,7 @@ mod tenant_tests {
                 modality: "vector".to_string(),
                 values: vec![0.3, 0.4],
                 dim: 2,
+                ..Default::default()
             }],
             props,
             created_at_ns: 456_000_000,
@@ -4135,6 +4137,7 @@ mod pseudo_query_tests {
                 modality: "vector".to_string(),
                 values: vec![1.0, 2.0, 3.0],
                 dim: 3,
+                ..Default::default()
             }],
             props: tree,
             ..Default::default()
@@ -4656,6 +4659,7 @@ mod index_first_search_tests {
                 modality: "vector".to_string(),
                 values: vec![1.0, 2.0, 3.0],
                 dim: 3,
+                ..Default::default()
             }],
             props,
             record_version: 1,
@@ -4784,6 +4788,7 @@ mod index_first_search_tests {
                     modality: "vector".to_string(),
                     values: vec![i as f32, (i * 2) as f32, (i * 3) as f32],
                     dim: 3,
+                    ..Default::default()
                 }],
                 props,
                 record_version: 1,

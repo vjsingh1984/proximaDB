@@ -268,6 +268,7 @@ impl FlatRow {
                     modality: "dense".into(),
                     values,
                     dim,
+                    ..Default::default()
                 }
             })
             .collect();
@@ -417,6 +418,7 @@ mod tests {
                 modality: "text".into(),
                 values: vec![0.1, 0.2, 0.3, 0.4],
                 dim: 4,
+                ..Default::default()
             }],
             ..Default::default()
         }

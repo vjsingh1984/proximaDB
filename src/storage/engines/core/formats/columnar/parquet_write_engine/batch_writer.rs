@@ -212,6 +212,7 @@ mod tests {
                     modality: "vector".to_string(),
                     values: vec![1.0; 128],
                     dim: 128,
+                    ..Default::default()
                 });
                 r
             },
@@ -225,6 +226,7 @@ mod tests {
                     modality: "vector".to_string(),
                     values: vec![2.0; 128],
                     dim: 128,
+                    ..Default::default()
                 });
                 r
             },
@@ -261,6 +263,7 @@ mod tests {
             modality: "vector".to_string(),
             values: vec![1.0; 64],
             dim: 64,
+            ..Default::default()
         });
         r.props.insert(
             "category".to_string(),

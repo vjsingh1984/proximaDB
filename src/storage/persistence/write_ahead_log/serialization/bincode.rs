@@ -44,6 +44,7 @@ mod tests {
                 modality: "vector".to_string(),
                 values: vec![0.1, 0.2, 0.3, 0.4],
                 dim: 4,
+                ..Default::default()
             }],
             origin: Some("test".to_string()),
             record_version: 1,
@@ -102,6 +103,7 @@ mod tests {
             modality: "vector".to_string(),
             values: vec![0.1; 1024],
             dim: 1024,
+            ..Default::default()
         }];
 
         let vectors = vec![vector];

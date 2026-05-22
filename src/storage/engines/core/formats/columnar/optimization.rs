@@ -592,6 +592,7 @@ impl ColumnarOptimizer {
             modality: "vector".to_string(),
             values,
             dim,
+            ..Default::default()
         });
         Ok(Some(record))
     }

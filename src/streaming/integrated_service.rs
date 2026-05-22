@@ -470,6 +470,7 @@ mod tests {
                     modality: "vector".to_string(),
                     dim: 64,
                     values: vec![0.1; 64],
+                    ..Default::default()
                 }],
                 record_version: 1,
                 ..Default::default()
@@ -524,6 +525,7 @@ mod tests {
                     modality: "vector".to_string(),
                     dim: 64,
                     values: vec![0.1 * (i as f32); 64],
+                    ..Default::default()
                 }],
                 record_version: 1,
                 ..Default::default()
@@ -564,6 +566,7 @@ mod tests {
                 modality: "vector".to_string(),
                 dim: 64,
                 values: vec![0.1; 64],
+                ..Default::default()
             }],
             record_version: 1,
             ..Default::default()

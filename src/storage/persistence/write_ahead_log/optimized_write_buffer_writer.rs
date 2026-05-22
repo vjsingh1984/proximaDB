@@ -752,6 +752,7 @@ mod tests {
                         modality: "dense_vector".to_string(),
                         dim: dimension as u32,
                         values: vec![i as f32; dimension],
+                        ..Default::default()
                     }],
                     props: metadata,
                     created_at_ns: now_ns,

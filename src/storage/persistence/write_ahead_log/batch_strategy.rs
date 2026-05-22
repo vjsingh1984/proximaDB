@@ -444,6 +444,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                             modality: "dense_vector".to_string(),
                             dim: search_result.vector.len() as u32,
                             values: search_result.vector,
+                            ..Default::default()
                         }]
                     };
 

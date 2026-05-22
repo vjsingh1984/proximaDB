@@ -586,6 +586,7 @@ impl ColumnarSerializer {
                         modality: "vector".to_string(),
                         values: vector,
                         dim,
+                        ..Default::default()
                     });
                 }
                 record

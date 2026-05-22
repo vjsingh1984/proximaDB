@@ -792,6 +792,7 @@ impl ProximaRecordBridge for DefaultProximaRecordBridge {
                     modality: "dense_vector".to_string(),
                     dim: vector.len() as u32,
                     values: vector,
+                    ..Default::default()
                 }]
             };
 
@@ -1120,6 +1121,7 @@ mod tests {
                 modality: "dense_vector".to_string(),
                 dim: 128,
                 values: vec![0.1; 128],
+                ..Default::default()
             }],
             ..ProximaRecord::default()
         }];
@@ -1131,7 +1133,8 @@ mod tests {
                 model_id: "test".to_string(),
                 modality: "dense_vector".to_string(),
                 dim: 64,
-                values: vec![0.1; 64], // Wrong dimension
+                values: vec![0.1; 64], // Wrong dimension,
+                ..Default::default()
             }],
             ..ProximaRecord::default()
         }];
@@ -1199,6 +1202,7 @@ mod tests {
                 modality: "dense_vector".to_string(),
                 dim: 64,
                 values: vec![0.1; 64],
+                ..Default::default()
             }],
             created_at_ns: 1_234_567_890_000_000,
             updated_at_ns: 1_234_567_890_000_000,
@@ -1239,6 +1243,7 @@ mod tests {
                 modality: "dense_vector".to_string(),
                 dim: 32,
                 values: vec![0.1; 32],
+                ..Default::default()
             }],
             ..ProximaRecord::default()
         }];

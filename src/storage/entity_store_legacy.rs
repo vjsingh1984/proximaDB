@@ -279,6 +279,7 @@ impl ProximaEntityStore {
                             modality: format!("{:?}", e.modality),
                             dim: e.dimension,
                             values: e.vector.clone(),
+                            ..Default::default()
                         }],
                         record_version: 1,
                         ..Default::default()

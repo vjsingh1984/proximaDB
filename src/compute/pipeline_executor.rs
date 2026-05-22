@@ -673,6 +673,7 @@ impl PipelineExecutor {
                     modality: "dense_vector".to_string(),
                     dim: vector.len() as u32,
                     values: vector,
+                    ..Default::default()
                 }],
                 ..Default::default()
             });
@@ -747,6 +748,7 @@ mod tests {
                     modality: "dense_vector".to_string(),
                     dim: 384,
                     values: vec![0.1; 384],
+                    ..Default::default()
                 }],
                 ..Default::default()
             },
@@ -757,6 +759,7 @@ mod tests {
                     modality: "dense_vector".to_string(),
                     dim: 384,
                     values: vec![0.2; 384],
+                    ..Default::default()
                 }],
                 ..Default::default()
             },

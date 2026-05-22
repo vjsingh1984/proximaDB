@@ -2391,6 +2391,7 @@ impl WriteAheadLogManager {
                             modality: "dense_vector".to_string(),
                             dim,
                             values: r.vector,
+                            ..Default::default()
                         }],
                         ..Default::default()
                     };

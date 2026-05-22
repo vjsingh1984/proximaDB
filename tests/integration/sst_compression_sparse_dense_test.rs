@@ -45,6 +45,7 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
                     modality: "vector".to_string(),
                     dim: 1024,
                     values,
+                    ..Default::default()
                 }],
                 props,
                 record_version: 1,
@@ -179,6 +180,7 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
                     modality: "vector".to_string(),
                     dim: 1024,
                     values,
+                    ..Default::default()
                 }],
                 props,
                 record_version: 1,

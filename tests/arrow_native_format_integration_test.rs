@@ -644,6 +644,7 @@ fn test_vector_record_to_arrow_roundtrip() {
                     modality: "dense_vector".to_string(),
                     dim: vector.len() as u32,
                     values: vector,
+                    ..Default::default()
                 }],
                 ..Default::default()
             }

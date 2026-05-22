@@ -4725,6 +4725,7 @@ impl ProximaDataBlock {
                         modality: "vector".to_string(),
                         values: vector,
                         dim,
+                        ..Default::default()
                     });
                 }
                 records.push(r);
@@ -4754,6 +4755,7 @@ impl ProximaDataBlock {
                         modality: "vector".to_string(),
                         values: vector,
                         dim,
+                        ..Default::default()
                     });
                 }
                 records.push(r);
@@ -4989,6 +4991,7 @@ impl ProximaDataBlock {
                 modality: "vector".to_string(),
                 values: vector,
                 dim,
+                ..Default::default()
             });
             records.push(record);
         }
@@ -5131,6 +5134,7 @@ impl ProximaDataBlock {
                 modality: "vector".to_string(),
                 values: vector,
                 dim,
+                ..Default::default()
             });
             records.push(record);
         }
@@ -5199,6 +5203,7 @@ impl ProximaDataBlock {
                 modality: "vector".to_string(),
                 values: vector,
                 dim,
+                ..Default::default()
             });
             records.push(record);
         }
@@ -5370,6 +5375,7 @@ impl ProximaDataBlock {
                 modality: "vector".to_string(),
                 values: vector,
                 dim,
+                ..Default::default()
             });
             records.push(record);
         }
@@ -5513,6 +5519,7 @@ impl ProximaDataBlock {
                 modality: "vector".to_string(),
                 values: vector,
                 dim,
+                ..Default::default()
             });
             records.push(record);
         }
@@ -5689,6 +5696,7 @@ mod tests {
                     modality: "vector".to_string(),
                     values,
                     dim,
+                    ..Default::default()
                 });
                 r
             },
@@ -5705,6 +5713,7 @@ mod tests {
                     modality: "vector".to_string(),
                     values,
                     dim,
+                    ..Default::default()
                 });
                 r
             },
@@ -5757,6 +5766,7 @@ mod tests {
                     modality: "vector".to_string(),
                     values,
                     dim,
+                    ..Default::default()
                 });
                 r
             })
@@ -5830,6 +5840,7 @@ mod tests {
                 modality: "vector".to_string(),
                 values,
                 dim,
+                ..Default::default()
             });
             r
         }];
@@ -5860,6 +5871,7 @@ mod tests {
                     modality: "vector".to_string(),
                     values,
                     dim,
+                    ..Default::default()
                 });
                 r
             })
@@ -5935,6 +5947,7 @@ mod tests {
                     modality: "vector".to_string(),
                     values,
                     dim,
+                    ..Default::default()
                 });
                 r
             })
@@ -6053,6 +6066,7 @@ mod tests {
                         modality: "vector".to_string(),
                         values: vector,
                         dim,
+                        ..Default::default()
                     });
                     r
                 }
@@ -6151,6 +6165,7 @@ mod tests {
                     modality: "vector".to_string(),
                     values,
                     dim,
+                    ..Default::default()
                 });
                 r
             },
@@ -6166,6 +6181,7 @@ mod tests {
                     modality: "vector".to_string(),
                     values,
                     dim,
+                    ..Default::default()
                 });
                 r
             },
@@ -6181,6 +6197,7 @@ mod tests {
                     modality: "vector".to_string(),
                     values,
                     dim,
+                    ..Default::default()
                 });
                 r
             },
@@ -6224,6 +6241,7 @@ mod tests {
                     modality: "vector".to_string(),
                     values,
                     dim,
+                    ..Default::default()
                 });
                 r
             },
@@ -6239,6 +6257,7 @@ mod tests {
                     modality: "vector".to_string(),
                     values,
                     dim,
+                    ..Default::default()
                 });
                 r
             },
@@ -6295,6 +6314,7 @@ mod tests {
             modality: "vector".to_string(),
             values,
             dim,
+            ..Default::default()
         });
         let records = vec![async_rec];
 
@@ -6377,6 +6397,7 @@ mod tests {
                             modality: "vector".to_string(),
                             values: vector,
                             dim,
+                            ..Default::default()
                         });
                         r
                     }

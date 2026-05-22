@@ -1087,6 +1087,7 @@ pub async fn insert_records(
                 modality: "dense_vector".to_string(),
                 dim: record.vector.len() as u32,
                 values: record.vector.clone(),
+                ..Default::default()
             }],
             ..ProximaRecord::default()
         };

@@ -669,6 +669,7 @@ impl ProximaFlightService {
                 modality: "dense_vector".to_string(),
                 dim,
                 values: vector,
+                ..Default::default()
             });
         }
         Ok(())
@@ -1607,6 +1608,7 @@ impl FlightService for ProximaFlightService {
                             modality: "vector".to_string(),
                             dim,
                             values,
+                            ..Default::default()
                         }],
                         props,
                         created_at_ns: now_ns,
@@ -3120,6 +3122,7 @@ mod tests {
                 modality: "dense_vector".to_string(),
                 dim: 1536,
                 values: vec![0.1_f32; 1536],
+                ..Default::default()
             }],
             ..ProximaRecord::default()
         }];

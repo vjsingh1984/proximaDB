@@ -159,6 +159,7 @@ fn create_test_vector(id: &str, dimension: usize) -> ProximaRecord {
             modality: "vector".to_string(),
             dim: dimension as u32,
             values,
+            ..Default::default()
         }],
         props,
         record_version: 1,

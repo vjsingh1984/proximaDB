@@ -47,6 +47,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
                 modality: "vector".to_string(),
                 dim: values.len() as u32,
                 values,
+                ..Default::default()
             }],
             props,
             record_version: 1,

@@ -55,6 +55,7 @@ fn make_record(id: &str, vector: Vec<f32>, props: ProximaTree) -> ProximaRecord 
                 modality: "dense_vector".to_string(),
                 dim,
                 values: vector,
+                ..Default::default()
             }]
         } else {
             vec![]

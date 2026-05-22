@@ -1226,6 +1226,7 @@ impl StorageEngine {
                                         modality: "vector".to_string(),
                                         values: v.vector,
                                         dim,
+                                        ..Default::default()
                                     }]
                                 } else {
                                     vec![]

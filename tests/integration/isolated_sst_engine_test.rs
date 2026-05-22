@@ -328,6 +328,7 @@ async fn test_isolated_sst_multi_batch_flush_compaction() -> Result<()> {
                             (global_id + 1) as f32,
                             (global_id + 2) as f32,
                         ],
+                        ..Default::default()
                     }],
                     record_version: 1,
                     created_at_ns: (1000 + global_id) as i64 * 1_000_000_000,
@@ -542,6 +543,7 @@ async fn test_isolated_sst_concurrent_read_operations() -> Result<()> {
                     modality: "vector".to_string(),
                     dim: 3,
                     values: vec![(i * 2) as f32, (i * 2 + 1) as f32, (i * 2 + 2) as f32],
+                    ..Default::default()
                 }],
                 props,
                 record_version: 1,
@@ -867,6 +869,7 @@ async fn test_isolated_sst_multiple_distance_metrics() -> Result<()> {
             modality: "vector".to_string(),
             dim: values.len() as u32,
             values,
+            ..Default::default()
         }],
         record_version: 1,
         created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
@@ -1011,6 +1014,7 @@ async fn test_isolated_sst_large_dataset_performance() -> Result<()> {
                             ((global_id + 1) as f32) / 100.0,
                             ((global_id + 2) as f32) / 100.0,
                         ],
+                        ..Default::default()
                     }],
                     props,
                     record_version: 1,

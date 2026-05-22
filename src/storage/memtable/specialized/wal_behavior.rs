@@ -1193,6 +1193,7 @@ mod tests {
                     modality: "dense_vector".to_string(),
                     dim,
                     values: vector,
+                    ..Default::default()
                 }]
             } else {
                 vec![]

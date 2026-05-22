@@ -1377,6 +1377,7 @@ mod tests {
                 modality: "dense_vector".to_string(),
                 dim: 4,
                 values: vec![0.1, 0.2, 0.3, 0.4],
+                ..Default::default()
             }],
             ..Default::default()
         };

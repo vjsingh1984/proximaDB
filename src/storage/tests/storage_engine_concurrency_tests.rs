@@ -95,6 +95,7 @@ mod tests {
                 modality: "vector".to_string(),
                 values: vec![0.1_f32; 128],
                 dim: 128,
+                ..Default::default()
             }],
             ..ProximaRecord::default()
         }

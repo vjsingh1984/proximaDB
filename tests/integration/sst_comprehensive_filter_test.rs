@@ -135,6 +135,7 @@ fn create_test_vectors(collection_id: &str, count: usize) -> Vec<proximadb_recor
                     modality: "vector".to_string(),
                     dim: 128,
                     values: vec![0.1; 128],
+                    ..Default::default()
                 }],
                 props,
                 record_version: 1,

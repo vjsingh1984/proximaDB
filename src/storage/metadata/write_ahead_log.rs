@@ -520,6 +520,7 @@ impl MetadataWriteAheadLog {
                     modality: "tombstone".to_string(),
                     values: vec![0.0], // Content irrelevant for delete.
                     dim: 1,
+                    ..Default::default()
                 }],
                 created_at_ns: current_time_secs as i64 * 1_000_000_000,
                 updated_at_ns: current_time_secs as i64 * 1_000_000_000,
@@ -650,6 +651,7 @@ impl MetadataWriteAheadLog {
                 modality: "collection_metadata".to_string(),
                 dim: vector.len() as u32,
                 values: vector,
+                ..Default::default()
             }],
             created_at_ns: timestamp_secs as i64 * 1_000_000_000,
             updated_at_ns: timestamp_secs as i64 * 1_000_000_000,

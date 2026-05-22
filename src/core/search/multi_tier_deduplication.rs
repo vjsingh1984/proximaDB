@@ -401,6 +401,7 @@ mod tests {
                     modality: "dense_vector".to_string(),
                     dim: values.len() as u32,
                     values,
+                    ..Default::default()
                 }]
             },
             sequence: None,

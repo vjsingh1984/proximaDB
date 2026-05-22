@@ -308,6 +308,7 @@ mod write_ahead_log_batch_strategy_tests {
                 modality: "vector".to_string(),
                 values: vector,
                 dim,
+                ..Default::default()
             }],
             props,
             record_version: 1,

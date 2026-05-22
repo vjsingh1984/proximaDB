@@ -399,6 +399,7 @@ impl CatalogRow {
                     .unwrap_or_else(|| "dense_vector".to_string()),
                 dim: vector.len() as u32,
                 values: vector.clone(),
+                ..Default::default()
             });
         }
 

@@ -38,6 +38,7 @@ mod tests {
                 modality: "vector".to_string(),
                 dim: 4,
                 values: vec![1.0, 2.0, 3.0, 4.0],
+                ..Default::default()
             }],
             props,
             record_version: 1,

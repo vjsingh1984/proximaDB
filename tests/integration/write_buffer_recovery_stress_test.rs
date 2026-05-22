@@ -48,6 +48,7 @@ fn create_test_vectors_with_metadata(
                     modality: "vector".to_string(),
                     dim: dimension as u32,
                     values: vec![(i % 256) as f32; dimension],
+                    ..Default::default()
                 }],
                 props,
                 record_version: 1,
