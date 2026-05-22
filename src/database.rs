@@ -35,6 +35,19 @@ pub struct ProximaDB {
     rl_checkpoint_handle: Option<tokio::task::JoinHandle<()>>,
     /// Path where RL planner policy is persisted
     rl_policy_path: Option<String>,
+    /// Queue subsystem for async ingest. Activated when the
+    /// `PROXIMADB_QUEUE_ROOT` env var is set; otherwise `None` and
+    /// async ingest degrades to inline embedding via the v3 handler
+    /// fallback. Closed on `shutdown()`.
+    queue_client: Option<Arc<proximadb_queue::QueueClient>>,
+    /// Drainer task handle + its shutdown channel. Present when
+    /// `queue_client` is present. `shutdown()` signals the drainer
+    /// and awaits the join handle so in-flight work completes
+    /// before the queue subsystem closes.
+    drainer: Option<(
+        tokio::task::JoinHandle<()>,
+        tokio::sync::oneshot::Sender<()>,
+    )>,
 }
 
 impl ProximaDB {
@@ -215,6 +228,12 @@ impl ProximaDB {
         let rest_multi_tenant_required = security_config.as_ref().map_or(false, |s| {
             s.authentication.require_authentication && s.mode != security::SecurityMode::Development
         });
+        // Capture an Arc to the request handlers BEFORE shared_services
+        // is moved into MultiServer below. The async-ingest drainer
+        // needs it as the production DrainerInsertSink target via the
+        // BulkLoadDrainerSink wrapper.
+        let handlers_for_drainer = shared_services.request_handlers.clone();
+
         let multi_server = network::MultiServer::new(
             multi_config,
             shared_services,
@@ -225,6 +244,13 @@ impl ProximaDB {
         );
         tracing::debug!("✅ ProximaDB::new - MultiServer created");
 
+        // Phase 2H wiring: when PROXIMADB_QUEUE_ROOT is set, open the
+        // queue subsystem and spawn the embedding drainer with the
+        // production BulkLoadDrainerSink. Otherwise leave both `None`
+        // and the v3 REST handler async path falls back to inline
+        // embedding (its documented degradation).
+        let (queue_client, drainer) = init_async_ingest_subsystem(handlers_for_drainer).await?;
+
         Ok(Self {
             storage,
             multi_server: Some(multi_server),
@@ -232,7 +258,17 @@ impl ProximaDB {
             security,
             rl_checkpoint_handle: None,
             rl_policy_path: None,
+            queue_client,
+            drainer,
         })
+    }
+
+    /// Expose the queue client to startup code that wires `AppState`
+    /// for the v3 async-ingest producer side. Returns `None` when the
+    /// queue subsystem isn't enabled — the REST handler then takes the
+    /// inline-embed fallback path.
+    pub fn queue_client(&self) -> Option<Arc<proximadb_queue::QueueClient>> {
+        self.queue_client.clone()
     }
 
     /// Start all database services (network listeners, background tasks, WAL recovery).
@@ -341,6 +377,23 @@ impl ProximaDB {
     /// Shutdown the database instance gracefully.
     pub async fn shutdown(&mut self) -> anyhow::Result<()> {
         info!("Graceful shutdown requested");
+
+        // 1a. Stop the async-ingest drainer first so it stops consuming
+        //     before we shut down the storage layer it inserts into.
+        //     The queue subsystem itself is stopped after — its
+        //     background tasks (uploader, reaper) need a few ticks to
+        //     finish in-flight work.
+        if let Some((handle, tx)) = self.drainer.take() {
+            tracing::info!("Stopping embedding drainer...");
+            let _ = tx.send(());
+            let _ = tokio::time::timeout(tokio::time::Duration::from_secs(5), handle).await;
+        }
+        if let Some(client) = self.queue_client.take() {
+            tracing::info!("Stopping queue subsystem...");
+            if let Err(e) = client.shutdown().await {
+                tracing::warn!("queue shutdown error: {}", e);
+            }
+        }
 
         // 1. Stop RL planner checkpoint task and persist policy
         tracing::info!("Stopping RL Query Planner...");
@@ -714,5 +767,111 @@ impl ProximaDB {
         } else {
             anyhow::bail!("Multi-server not initialized")
         }
+    }
+}
+
+/// Initialize the async-ingest queue + drainer subsystem when the
+/// `PROXIMADB_QUEUE_ROOT` env var is set. Returns `(None, None)` when
+/// the var is absent — production deployments that haven't migrated
+/// to async ingest just see no behavior change.
+///
+/// Config knobs (all env-driven for now):
+///
+/// - `PROXIMADB_QUEUE_ROOT` (required to enable): filesystem root URL,
+///   typically `file:///var/lib/proximadb/queue` (PVC-backed in k8s)
+///   or `adls://...` once the proximadb-filesystem extraction lands.
+/// - `PROXIMADB_QUEUE_OBJECT_ARCHIVE` (optional): archive URL for
+///   sealed segments — proves out the ECS-node-failure recovery story.
+/// - `PROXIMADB_EMBED_DRAINER_PARTITIONS` (optional, default "0..16"):
+///   partition range this replica drains. Single-replica deployments
+///   leave it default; multi-replica needs disjoint per-pod ranges.
+async fn init_async_ingest_subsystem(
+    handlers: Arc<crate::api_handlers::request_handlers::UnifiedHandlers>,
+) -> anyhow::Result<(
+    Option<Arc<proximadb_queue::QueueClient>>,
+    Option<(
+        tokio::task::JoinHandle<()>,
+        tokio::sync::oneshot::Sender<()>,
+    )>,
+)> {
+    let Some(root) = std::env::var("PROXIMADB_QUEUE_ROOT").ok() else {
+        tracing::info!("PROXIMADB_QUEUE_ROOT not set; async ingest will degrade to inline embed");
+        return Ok((None, None));
+    };
+    tracing::info!(queue_root = %root, "Opening queue subsystem for async ingest");
+
+    let mut topics = std::collections::HashMap::new();
+    topics.insert(
+        crate::services::EMBED_INGEST_TOPIC.to_string(),
+        proximadb_queue::TopicConfig::default(),
+    );
+    let mut queue_cfg = proximadb_queue::QueueConfig::from_env();
+    queue_cfg.root = root;
+    queue_cfg.topics = topics;
+
+    let queue = proximadb_queue::QueueClient::open(queue_cfg)
+        .await
+        .map_err(|e| anyhow::anyhow!("queue open: {}", e))?;
+    tracing::info!("✅ Queue subsystem opened");
+
+    // Wire the drainer with the production BulkLoadDrainerSink. The
+    // drainer subscribes to `0..partition_count` by default. For
+    // multi-replica deployments, set PROXIMADB_EMBED_DRAINER_PARTITIONS
+    // to a disjoint slice per pod.
+    let bulk_loader = Arc::new(crate::services::bulk_load::BulkLoader::new(handlers));
+    let sink: Arc<dyn crate::services::DrainerInsertSink> = Arc::new(
+        crate::services::bulk_load::BulkLoadDrainerSink::new(bulk_loader),
+    );
+    let embed_service = proximadb_embedding::EmbeddingService::global();
+    let drainer_cfg = crate::services::EmbeddingDrainerConfig::default();
+    let drainer =
+        crate::services::EmbeddingDrainer::new(queue.clone(), embed_service, sink, drainer_cfg);
+
+    let partitions: Vec<u32> = std::env::var("PROXIMADB_EMBED_DRAINER_PARTITIONS")
+        .ok()
+        .and_then(|s| parse_partition_list(&s))
+        .unwrap_or_else(|| (0..16u32).collect());
+    let pair = drainer.start(partitions);
+    tracing::info!("✅ Embedding drainer started");
+    Ok((Some(queue), Some(pair)))
+}
+
+/// Parse "0,1,2" or "0..4" or "0,3..6,9" into a Vec<u32>.
+fn parse_partition_list(s: &str) -> Option<Vec<u32>> {
+    let mut out = Vec::new();
+    for chunk in s.split(',') {
+        let chunk = chunk.trim();
+        if chunk.is_empty() {
+            continue;
+        }
+        if let Some((lo, hi)) = chunk.split_once("..") {
+            let lo: u32 = lo.parse().ok()?;
+            let hi: u32 = hi.parse().ok()?;
+            for p in lo..hi {
+                out.push(p);
+            }
+        } else {
+            out.push(chunk.parse().ok()?);
+        }
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod async_ingest_wiring_tests {
+    use super::parse_partition_list;
+
+    #[test]
+    fn parse_partition_list_handles_commas_and_ranges() {
+        assert_eq!(parse_partition_list("0,1,2"), Some(vec![0, 1, 2]));
+        assert_eq!(parse_partition_list("0..4"), Some(vec![0, 1, 2, 3]));
+        assert_eq!(parse_partition_list("0,3..6,9"), Some(vec![0, 3, 4, 5, 9]));
+        assert_eq!(parse_partition_list(""), Some(vec![]));
+    }
+
+    #[test]
+    fn parse_partition_list_rejects_garbage() {
+        assert_eq!(parse_partition_list("abc"), None);
+        assert_eq!(parse_partition_list("0..abc"), None);
     }
 }
