@@ -64,26 +64,31 @@ pub fn resolve_pool_size(env_var: Option<&str>) -> usize {
         .clamp(1, 32)
 }
 
-/// Default per-session intra-op thread count when no env override is given.
+/// Suggested per-session intra-op thread count for highly-concurrent
+/// pool workloads.
 ///
-/// Policy: split the available CPU cores evenly across the pool so total
-/// ORT threads ≈ core count. Always returns at least 1.
-pub fn intra_op_default(cores: usize, pool_size: usize) -> usize {
+/// Policy: split the available CPU cores evenly across the pool so the
+/// total ORT thread count ≈ core count. **Not used as the default**
+/// because most workloads are batch-dominated and benefit from each
+/// session using ORT's own tuned default (typically all cores). This
+/// helper is exposed so operators can compute a sensible explicit value
+/// and pass it via `PROXIMADB_EMBED_INTRA_OP_THREADS`.
+pub fn intra_op_suggested(cores: usize, pool_size: usize) -> usize {
     let safe_pool = pool_size.max(1);
     std::cmp::max(1, cores / safe_pool)
 }
 
-/// Resolve the per-session ORT intra-op thread count. Env var wins; on
-/// parse failure or absence, fall back to [`intra_op_default`].
-pub fn resolve_intra_op_threads(
-    env_var: Option<&str>,
-    cores: usize,
-    pool_size: usize,
-) -> usize {
+/// Resolve the per-session ORT intra-op thread count override.
+///
+/// Returns `Some(N)` only when the env var is explicitly set to a
+/// valid positive integer. `None` means "use ort's default" (typically
+/// all cores), which the v3_pool_sweep_*_tuned benchmarks showed is the
+/// best policy for batch-heavy workloads. Pure function for unit
+/// testing without touching the process env.
+pub fn resolve_intra_op_threads(env_var: Option<&str>) -> Option<usize> {
     env_var
         .and_then(|s| s.trim().parse::<usize>().ok())
         .filter(|n| *n >= 1)
-        .unwrap_or_else(|| intra_op_default(cores, pool_size))
 }
 
 #[cfg(feature = "onnx")]
@@ -137,20 +142,20 @@ impl BgeModel {
             let pool_size =
                 resolve_pool_size(std::env::var("PROXIMADB_EMBED_SESSIONS").ok().as_deref());
 
-            // Per-session ORT intra-op thread count. Without this, each
-            // session defaults to using all CPU cores, which over-subscribes
-            // when pool_size > 1. Default policy: split available cores
-            // evenly across the pool so total threads ≈ core count.
-            // Override via PROXIMADB_EMBED_INTRA_OP_THREADS (>=1).
+            // Per-session ORT intra-op thread count is OPT-IN. When the
+            // env var is not set, we leave ort's own default in place,
+            // which the tuned pool sweep showed is the best policy for
+            // batch-heavy workloads (a single batch can use all cores).
+            // Operators with fan-out workloads (many small concurrent
+            // calls) can compute a sane override using `intra_op_suggested`
+            // — typically `max(1, cores / pool_size)`.
             let cores = std::thread::available_parallelism()
                 .map(|n| n.get())
                 .unwrap_or(8);
-            let intra_op_threads = resolve_intra_op_threads(
+            let intra_op_override = resolve_intra_op_threads(
                 std::env::var("PROXIMADB_EMBED_INTRA_OP_THREADS")
                     .ok()
                     .as_deref(),
-                cores,
-                pool_size,
             );
 
             tracing::info!(
@@ -158,7 +163,7 @@ impl BgeModel {
                 model = %model_path.display(),
                 tokenizer = %tokenizer_path,
                 pool_size,
-                intra_op_threads,
+                intra_op_threads = ?intra_op_override,
                 cores,
                 "loading BGE ONNX session pool"
             );
@@ -170,10 +175,10 @@ impl BgeModel {
                         "ort builder (session {idx}): {e}"
                     ))
                 })?;
-                if intra_op_threads >= 1 {
-                    builder = builder.with_intra_threads(intra_op_threads).map_err(|e| {
+                if let Some(threads) = intra_op_override {
+                    builder = builder.with_intra_threads(threads).map_err(|e| {
                         crate::EmbeddingError::ModelUnavailable(format!(
-                            "with_intra_threads({intra_op_threads}) (session {idx}): {e}"
+                            "with_intra_threads({threads}) (session {idx}): {e}"
                         ))
                     })?;
                 }
@@ -468,65 +473,73 @@ mod policy_tests {
         assert_eq!(resolve_pool_size(Some("  4  ")), 4);
     }
 
-    // ---------- intra_op_default ----------
+    // ---------- intra_op_suggested ----------
 
     #[test]
-    fn intra_op_default_divides_cores_evenly() {
-        assert_eq!(intra_op_default(8, 1), 8);
-        assert_eq!(intra_op_default(8, 2), 4);
-        assert_eq!(intra_op_default(8, 4), 2);
-        assert_eq!(intra_op_default(8, 8), 1);
+    fn intra_op_suggested_divides_cores_evenly() {
+        assert_eq!(intra_op_suggested(8, 1), 8);
+        assert_eq!(intra_op_suggested(8, 2), 4);
+        assert_eq!(intra_op_suggested(8, 4), 2);
+        assert_eq!(intra_op_suggested(8, 8), 1);
     }
 
     #[test]
-    fn intra_op_default_rounds_down_for_uneven_division() {
+    fn intra_op_suggested_rounds_down_for_uneven_division() {
         // 10 cores / 3 sessions = 3.33 → 3 (total threads 9 < cores)
-        assert_eq!(intra_op_default(10, 3), 3);
+        assert_eq!(intra_op_suggested(10, 3), 3);
     }
 
     #[test]
-    fn intra_op_default_returns_at_least_one() {
+    fn intra_op_suggested_returns_at_least_one() {
         // Pool larger than core count: each session still gets 1 thread.
-        assert_eq!(intra_op_default(8, 16), 1);
-        assert_eq!(intra_op_default(2, 8), 1);
+        assert_eq!(intra_op_suggested(8, 16), 1);
+        assert_eq!(intra_op_suggested(2, 8), 1);
     }
 
     #[test]
-    fn intra_op_default_handles_zero_pool_size() {
+    fn intra_op_suggested_handles_zero_pool_size() {
         // Defensive: divide-by-zero would panic; we treat zero as one.
-        assert_eq!(intra_op_default(8, 0), 8);
+        assert_eq!(intra_op_suggested(8, 0), 8);
     }
 
     #[test]
-    fn intra_op_default_handles_zero_cores() {
+    fn intra_op_suggested_handles_zero_cores() {
         // available_parallelism() can theoretically return 0/Err; minimum 1.
-        assert_eq!(intra_op_default(0, 4), 1);
+        assert_eq!(intra_op_suggested(0, 4), 1);
     }
 
-    // ---------- resolve_intra_op_threads ----------
+    // ---------- resolve_intra_op_threads (Option-returning override) ----------
 
     #[test]
-    fn intra_op_env_override_wins() {
-        assert_eq!(resolve_intra_op_threads(Some("4"), 8, 1), 4);
-        assert_eq!(resolve_intra_op_threads(Some("2"), 8, 2), 2);
-    }
-
-    #[test]
-    fn intra_op_env_zero_falls_back_to_default() {
-        // 0 doesn't make sense for ORT (would mean no threads).
-        // Filter rejects it; default policy applies.
-        assert_eq!(resolve_intra_op_threads(Some("0"), 8, 2), 4);
+    fn intra_op_env_explicit_value_returned() {
+        // Operator opts in to a specific thread count.
+        assert_eq!(resolve_intra_op_threads(Some("4")), Some(4));
+        assert_eq!(resolve_intra_op_threads(Some("1")), Some(1));
+        assert_eq!(resolve_intra_op_threads(Some("12")), Some(12));
     }
 
     #[test]
-    fn intra_op_env_garbage_falls_back_to_default() {
-        assert_eq!(resolve_intra_op_threads(Some("garbage"), 8, 4), 2);
-        assert_eq!(resolve_intra_op_threads(Some(""), 8, 4), 2);
+    fn intra_op_env_zero_treated_as_unset() {
+        // 0 doesn't make sense for ORT; filter to None so ort's default applies.
+        assert_eq!(resolve_intra_op_threads(Some("0")), None);
     }
 
     #[test]
-    fn intra_op_env_absent_uses_default_policy() {
-        assert_eq!(resolve_intra_op_threads(None, 8, 2), 4);
-        assert_eq!(resolve_intra_op_threads(None, 16, 4), 4);
+    fn intra_op_env_garbage_treated_as_unset() {
+        // Parse failures should not force a value; ort default applies.
+        assert_eq!(resolve_intra_op_threads(Some("garbage")), None);
+        assert_eq!(resolve_intra_op_threads(Some("")), None);
+        assert_eq!(resolve_intra_op_threads(Some("-1")), None);
+    }
+
+    #[test]
+    fn intra_op_env_absent_returns_none() {
+        // No env override: ort picks its own default (typically all cores).
+        assert_eq!(resolve_intra_op_threads(None), None);
+    }
+
+    #[test]
+    fn intra_op_env_trims_whitespace() {
+        assert_eq!(resolve_intra_op_threads(Some("  4  ")), Some(4));
     }
 }
