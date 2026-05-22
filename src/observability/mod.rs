@@ -69,6 +69,11 @@ pub mod alerting;
 pub mod audit;
 /// High-throughput ingestion pipeline with multi-format parsing.
 pub mod ingestion;
+/// KRU metering event builder — converts SearchPlanTrace → AnvaiOps
+/// billing_events JSON shape so the data and control planes can't drift.
+pub mod metering_event;
+/// Trace sampling policy — LLD-anchored down-sampling by tier + load.
+pub mod trace_sampling;
 /// Query engine for logs, metrics, and traces with PromQL support.
 pub mod query;
 /// SearchPlanTrace — per-query telemetry envelope feeding KRU billing and the
@@ -76,9 +81,6 @@ pub mod query;
 pub mod search_plan_trace;
 /// Post-execution SearchPlanTrace builder.
 pub mod search_plan_trace_builder;
-/// KRU metering event builder — converts SearchPlanTrace → AnvaiOps
-/// billing_events JSON shape so the data and control planes can't drift.
-pub mod metering_event;
 /// Time-partitioned storage for observability data with WAL durability.
 pub mod storage;
 
