@@ -15,9 +15,14 @@ path = "src/lib.rs"
 
 [features]
 default = []
-# Heavy ONNX runtime; gated behind a feature so test/CI builds without
-# system ONNX libraries still compile and link.
-onnx = []
+# Real ONNX runtime via the `ort` crate. Without this feature the embedding
+# crate compiles but `BgeModel::initialize` returns ModelUnavailable for
+# production paths. Test code that needs a deterministic vector source uses
+# `test-synthetic` (test-cfg only).
+onnx = ["dep:ort", "dep:ndarray"]
+# Deterministic hash-derived vector fallback. Visible only to `#[cfg(test)]`
+# code via the helper in `bge::testing` — never enabled in release builds.
+test-synthetic = []
 # External Azure OpenAI fallback for the Premium add-on. Optional because
 # many deployments won't enable Premium.
 azure-openai = []
@@ -62,6 +67,22 @@ reqwest = { version = "0.12", features = ["blocking", "json", "rustls-tls"], def
 
 # Tokenization (BPE / WordPiece) — used for chunking and pre-embedding token counts
 tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+
+# Optional ONNX Runtime via the `ort` crate. The `download-binaries` feature
+# fetches a prebuilt ONNX Runtime shared library at build time so the binary
+# is self-contained on macOS/Linux without a system install. Gated to keep
+# default builds dependency-light.
+ort = { version = "2.0.0-rc.10", optional = true, default-features = false, features = [
+    "std",
+    "download-binaries",
+    "ndarray",
+    "tls-rustls",
+] }
+
+# ndarray for tensor manipulation in the BGE inference path (mean-pool, L2 norm).
+# Pinned to 0.17 to match ort 2.0.0-rc.x; ndarray 0.16 lacks the `NdFloat` trait
+# layout that ort imports.
+ndarray = { version = "0.17", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "test-util"] }

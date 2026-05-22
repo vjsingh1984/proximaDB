@@ -1,9 +1,16 @@
 //! Model registry — maps `EmbedRoute` to inference engines.
 //!
-//! At process startup, the registry loads the three BGE ONNX sessions
-//! (small / large / m3) into memory. Sessions are mmap-backed and read-only
-//! after init; thread-safe inference is delegated to the underlying ONNX
-//! runtime (`ort`) which supports parallel inference on a single session.
+//! BGE variants are **lazy-loaded on first use**. The registry itself
+//! constructs without touching the model files, so the server starts even
+//! when no model is staged. The first request that resolves to a BGE
+//! route either succeeds (model file present, ONNX session loaded) or
+//! returns `ModelUnavailable` with a clear message — never a silent
+//! synthetic fallback. Tests that don't need real inference can construct
+//! the registry and exercise non-BGE routes without any setup.
+//!
+//! Sessions are mmap-backed and read-only after init; the `ort` crate
+//! supports parallel inference on a single session, so once loaded a
+//! variant is shared across all concurrent requests.
 //!
 //! Per-tenant external clients (Azure OpenAI for Premium, BYO endpoints
 //! for Enterprise) are constructed lazily — most tenants never use them.
@@ -12,13 +19,16 @@ pub mod azure_openai;
 pub mod bge;
 pub mod byo;
 
+use std::sync::Arc;
+use std::sync::OnceLock;
+
 use crate::config::EmbedRoute;
 use crate::{EmbeddingError, Result};
 
 pub struct ModelRegistry {
-    bge_small: bge::BgeModel,
-    bge_large: bge::BgeModel,
-    bge_m3: bge::BgeModel,
+    bge_small: OnceLock<Arc<bge::BgeModel>>,
+    bge_large: OnceLock<Arc<bge::BgeModel>>,
+    bge_m3: OnceLock<Arc<bge::BgeModel>>,
     azure_openai: Option<azure_openai::AzureOpenAiClient>,
     // BYO endpoints are stored per-tenant in EmbeddingService::tenant_cache;
     // the route variant carries the endpoint URL + auth.
@@ -26,16 +36,30 @@ pub struct ModelRegistry {
 
 impl ModelRegistry {
     pub fn initialize() -> Result<Self> {
-        // Phase 1 scaffold: model loading is feature-gated behind `onnx`.
-        // When the feature is off (default in test builds), inference returns
-        // deterministic synthetic vectors so the scheduler + WAL paths can be
-        // tested without ONNX libraries linked.
         Ok(Self {
-            bge_small: bge::BgeModel::initialize(bge::Variant::Small)?,
-            bge_large: bge::BgeModel::initialize(bge::Variant::Large)?,
-            bge_m3: bge::BgeModel::initialize(bge::Variant::M3)?,
+            bge_small: OnceLock::new(),
+            bge_large: OnceLock::new(),
+            bge_m3: OnceLock::new(),
             azure_openai: azure_openai::AzureOpenAiClient::from_env(),
         })
+    }
+
+    fn bge(&self, variant: bge::Variant) -> Result<Arc<bge::BgeModel>> {
+        let slot = match variant {
+            bge::Variant::Small => &self.bge_small,
+            bge::Variant::Large => &self.bge_large,
+            bge::Variant::M3 => &self.bge_m3,
+        };
+        if let Some(existing) = slot.get() {
+            return Ok(existing.clone());
+        }
+        // Race-safe: get_or_try_init isn't stable, so we initialize and try set;
+        // if another thread won the race, drop ours and use theirs.
+        let new = Arc::new(bge::BgeModel::initialize(variant)?);
+        match slot.set(new.clone()) {
+            Ok(()) => Ok(new),
+            Err(_existing) => Ok(slot.get().expect("slot just lost a set race").clone()),
+        }
     }
 
     /// Embed a batch of texts using the route's configured model. Caller is
@@ -43,9 +67,9 @@ impl ModelRegistry {
     /// `EmbeddingService::resolve_route` cache makes this trivial in practice).
     pub fn embed_batch(&self, route: &EmbedRoute, texts: &[String]) -> Result<Vec<Vec<f32>>> {
         match route {
-            EmbedRoute::BgeSmall => self.bge_small.embed_batch(texts),
-            EmbedRoute::BgeLarge => self.bge_large.embed_batch(texts),
-            EmbedRoute::BgeM3 => self.bge_m3.embed_batch(texts),
+            EmbedRoute::BgeSmall => self.bge(bge::Variant::Small)?.embed_batch(texts),
+            EmbedRoute::BgeLarge => self.bge(bge::Variant::Large)?.embed_batch(texts),
+            EmbedRoute::BgeM3 => self.bge(bge::Variant::M3)?.embed_batch(texts),
             EmbedRoute::AzureOpenAi { model } => self
                 .azure_openai
                 .as_ref()

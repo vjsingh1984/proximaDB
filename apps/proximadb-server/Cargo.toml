@@ -13,6 +13,15 @@ description = "ProximaDB server binary - cloud-native vector database"
 name = "proximadb-server"
 path = "src/main.rs"
 
+[features]
+default = []
+# Build with real ONNX inference. Adds the ort + ndarray runtime, downloads
+# a prebuilt ONNX Runtime binary at build time, and links the resulting
+# native library into the server. Required for production embedding;
+# without it, `EmbeddingService` returns `ModelUnavailable` on first BGE
+# request. Pass through to the embedding crate's `onnx` feature.
+onnx = ["proximadb-embedding/onnx"]
+
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
