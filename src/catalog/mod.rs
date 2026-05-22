@@ -70,6 +70,14 @@ pub use tier_transition::{
     AxisDelta, AxisDirection, TierTransitionEvent, TransitionClass, detect as detect_transition,
 };
 
+/// Tier recommendation — consumes a WorkloadMix + signal counts and
+/// recommends Upgrade / Hold / Downgrade with bounded reason labels.
+pub mod tier_recommendation;
+pub use tier_recommendation::{
+    Recommendation, RecommendationInputs, RecommendationKind, RecommendationPolicy, SignalCounts,
+    recommend as recommend_tier,
+};
+
 // Feature-gated implementations
 #[cfg(feature = "delta-lake")]
 pub mod delta;
