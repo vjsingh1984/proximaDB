@@ -13,12 +13,18 @@ use tempfile::TempDir;
 
 /// Topic-declared config bound to a specific root path so a follow-on
 /// `QueueClient::open` against the same TempDir resumes from disk.
+///
+/// Uses a SHORT lease_duration so that the prior session's leftover
+/// `lease.meta` expires fast — these tests simulate sequential
+/// restart, not multi-replica contention. Multi-replica lease behavior
+/// is exercised in `tests/leases.rs`.
 fn cfg_with_topic(root: &std::path::Path, name: &str, partition_count: u32) -> QueueConfig {
     let mut topics = HashMap::new();
     topics.insert(
         name.to_string(),
         TopicConfig {
             partition_count,
+            lease_duration: Duration::from_millis(200),
             ..Default::default()
         },
     );

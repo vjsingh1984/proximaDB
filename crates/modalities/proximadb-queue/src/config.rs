@@ -70,6 +70,13 @@ pub struct TopicConfig {
     pub sync_mode_override: Option<SyncMode>,
     pub group_commit_max_wait: Duration,
     pub group_commit_max_batch: usize,
+    /// How long a partition lease lives before another consumer can
+    /// take it over. The consumer renewer task refreshes the lease
+    /// every `lease_duration / 2` while the consumer is alive. Default
+    /// 30 s — short enough that a crashed pod's partitions reassign
+    /// within ~30 s, long enough to absorb GC pauses + transient
+    /// filesystem latency without churning ownership.
+    pub lease_duration: Duration,
 }
 
 impl Default for TopicConfig {
@@ -83,6 +90,7 @@ impl Default for TopicConfig {
             sync_mode_override: None,
             group_commit_max_wait: Duration::from_millis(5),
             group_commit_max_batch: 64,
+            lease_duration: Duration::from_secs(30),
         }
     }
 }
@@ -168,6 +176,7 @@ mod tests {
                 sync_mode_override: Some(SyncMode::Lazy),
                 group_commit_max_wait: Duration::from_millis(10),
                 group_commit_max_batch: 32,
+                lease_duration: Duration::from_secs(20),
             },
         );
         let cfg = QueueConfig {
