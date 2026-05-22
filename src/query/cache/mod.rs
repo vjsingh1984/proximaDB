@@ -119,6 +119,7 @@
 
 pub mod adaptive_cache;
 pub mod batch_group;
+pub mod category_classifier;
 pub mod invalidation;
 pub mod invalidation_coordinator;
 pub mod mismatch_cost;
