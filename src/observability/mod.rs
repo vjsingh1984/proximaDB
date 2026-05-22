@@ -76,6 +76,9 @@ pub mod query;
 pub mod search_plan_trace;
 /// Post-execution SearchPlanTrace builder.
 pub mod search_plan_trace_builder;
+/// KRU metering event builder — converts SearchPlanTrace → AnvaiOps
+/// billing_events JSON shape so the data and control planes can't drift.
+pub mod metering_event;
 /// Time-partitioned storage for observability data with WAL durability.
 pub mod storage;
 
