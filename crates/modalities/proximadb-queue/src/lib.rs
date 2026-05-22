@@ -34,6 +34,8 @@ pub mod config;
 pub mod consumer;
 pub mod disk_tier;
 pub mod error;
+pub mod fs;
+pub mod group_commit;
 pub mod memory_tier;
 pub mod message;
 pub mod metrics;
