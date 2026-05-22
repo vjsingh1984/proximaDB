@@ -100,6 +100,9 @@ pub mod trace_sampling;
 /// Workload mix detector — aggregates fingerprint counts into a typed
 /// summary for tier-recommendation hints and cache-warm targeting.
 pub mod workload_mix;
+/// Tenant Prometheus label resolver — bundles tenant_id → bounded
+/// label resolution with the LLD's cardinality-safety guardrail.
+pub mod tenant_label;
 
 use std::collections::HashMap;
 use std::sync::Arc;
