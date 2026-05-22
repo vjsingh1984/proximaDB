@@ -242,17 +242,18 @@ Resolution now proceeds in three coordinated layers:
 Cross-file struct fields and return types are out of scope for this round; method chains and
 field receivers that cross file boundaries fall back to name-only.
 
-Victor database scale after the 2026-05-22 resolver, audit, and quality fixes:
+Victor database scale after the 2026-05-22 resolver, audit, and quality fixes
+(10/10 random spot-check samples manually verified against source):
 
 [cols="1,1",options="header"]
 |===
 | Metric | Value
-| `graph_node` rows | 864,017
-| `graph_edge` rows | 2,637,714
-| `graph_module_metric` rows | 1,714
-| `DDG_DEF_USE` edges | ~1,569,000
+| `graph_node` rows | 864,367
+| `graph_edge` rows | 2,645,534
+| `graph_module_metric` rows | 1,716
+| `DDG_DEF_USE` edges | ~1,571,000
 | `CFG_SUCCESSOR` edges | ~523,000
-| `CALLS` edges | 116,910 (59,274 same-file, 57,636 cross-file)
+| `CALLS` edges | 124,018 (58,962 same-file, 65,056 cross-file)
 | `CDG` edges | ~101,000
 | `CONTAINS` edges | ~22,400
 |===
@@ -268,7 +269,8 @@ Evolution across the fix:
 | Plus struct-field, method-chain, ``Self::`` | 1,262,182 | 1,203,169 | 1,706
 | Strict semantics + macro skip + method-drop | 1,034,444 | 979,795 | 1,707
 | Plus impl_item-as-implementing-type | 239,097 | 183,520 | 1,713
-| Plus same-file preference for plain calls | **116,910** | **57,636** | 1,714
+| Plus same-file preference for plain calls | 116,910 | 57,636 | 1,714
+| Plus trait-impl exclusion from name-only | **124,018** | **65,056** | 1,716
 |===
 
 The dramatic drop in the final snapshot is **noise removal, not coverage loss**. Audit
@@ -305,6 +307,18 @@ set to caller-file matches when any exist (Rust function name resolution is
 module-scoped; cross-file binding only makes sense when there's no local match).
 Removed 122k cross-file fanout edges while increasing same-file edges by 3.7k
 (the legitimate local bindings that were getting buried in the fanout).
+
+A second-round spot-check on the post-same-file graph (10 random samples) caught
+a fifth quality issue: plain ``drop(deps)`` calls (the stdlib ``std::mem::drop``)
+were binding to all 16 user ``impl Drop for T { fn drop }`` impls. Same pattern
+applied for any trait method whose name collides with stdlib functions or that
+the user might invoke as a plain function. The fix -- *exclude trait-impl methods
+from the name-only candidate list* -- detects trait impls via the impl node's
+signature (``impl <Trait> for <Type>`` always contains `` for `` between
+identifiers; inherent impls don't). Typed dispatch via the impl-method index
+still has full access to trait methods, so ``x.clone()`` and ``x.fmt(f)``
+continue to bind correctly via receiver-type lookup. After the fix, a fresh
+10-sample audit hit 10/10 verified correct (vs 8/10 in the prior round).
 
 Cross-file ratio settles at 49% (57,636 / 116,910) -- intentionally lower than the
 inflated 95% in earlier snapshots. The earlier ratios were dominated by cross-file
