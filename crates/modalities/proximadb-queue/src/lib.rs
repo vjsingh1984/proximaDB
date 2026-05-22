@@ -42,6 +42,7 @@ pub mod metrics;
 pub mod object_tier;
 pub mod offset_store;
 pub mod producer;
+pub mod reaper;
 pub mod recovery;
 pub mod topic;
 
@@ -64,6 +65,7 @@ use crate::disk_tier::PartitionDiskWriter;
 use crate::fs::{LocalFs, QueueFs};
 use crate::memory_tier::PartitionMemory;
 use crate::object_tier::ObjectTierUploader;
+use crate::reaper::Reaper;
 
 /// Handle to the running queue subsystem. Holds per-topic state and serves
 /// `Producer` / `Consumer` handles to callers.
@@ -128,6 +130,7 @@ impl QueueClient {
         // configured. Mirrors sealed disk segments to the archive root
         // so the queue survives node-loss (PVC-less ECS, k8s pod
         // eviction onto fresh local disk, etc.).
+        let archive_configured = client.config.object_archive.is_some();
         if let Some(archive_url) = client.config.object_archive.clone() {
             let archive_root = crate::object_tier::resolve_archive_root(&archive_url)?;
             client.fs.create_dir_all(&archive_root).await?;
@@ -139,6 +142,15 @@ impl QueueClient {
             let pair = uploader.start(client.clone());
             client.background_tasks.lock().await.push(pair);
         }
+
+        // Reaper: deletes sealed disk segments after upload (when
+        // archive configured) + all consumers committed past their
+        // last offset. Runs even when no archive is configured —
+        // the upload condition becomes vacuous in that case ("local
+        // disk only" deployments still benefit from disk reclamation).
+        let reaper = Reaper::new(client.fs.clone(), archive_configured);
+        let pair = reaper.start(client.clone());
+        client.background_tasks.lock().await.push(pair);
 
         info!(
             root = %client.config.root,
