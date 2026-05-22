@@ -306,12 +306,12 @@ pub fn proto_record_to_envelope(proto: &v2::ProximaRecord) -> Result<ProximaReco
     }
 
     if !proto.vector.is_empty() {
-        record.embeddings.push(EmbeddingCell {
-            model_id: "default".to_string(),
-            modality: "dense_vector".to_string(),
-            dim: proto.vector_dimension.unwrap_or(proto.vector.len() as u32),
-            values: proto.vector.clone(),
-        });
+        record.embeddings.push(EmbeddingCell::new_fp32(
+            "default",
+            "dense_vector",
+            proto.vector_dimension.unwrap_or(proto.vector.len() as u32),
+            proto.vector.clone(),
+        ));
     }
 
     if let Some(sparse) = proto.sparse_vector.as_ref() {
@@ -735,12 +735,9 @@ mod tests {
         record
             .props
             .insert("nested".to_string(), ProximaTreeNode::Object(nested));
-        record.embeddings.push(EmbeddingCell {
-            model_id: "m".to_string(),
-            modality: "text".to_string(),
-            dim: 2,
-            values: vec![0.1, 0.2],
-        });
+        record
+            .embeddings
+            .push(EmbeddingCell::new_fp32("m", "text", 2, vec![0.1, 0.2]));
 
         let proto = envelope_to_proto_record(&record);
 

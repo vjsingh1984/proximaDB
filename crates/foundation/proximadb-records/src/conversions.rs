@@ -245,12 +245,12 @@ pub fn property_value_to_proxima(pv: &PropertyValue) -> ProximaValue {
 
 /// Convert an `EmbeddingVersion` proto to an `EmbeddingCell`.
 pub fn embedding_version_to_cell(ev: &EmbeddingVersion) -> EmbeddingCell {
-    EmbeddingCell {
-        model_id: ev.model_id.clone(),
-        modality: format!("{}", ev.modality), // stored as i32 in proto
-        values: ev.vector.clone(),
-        dim: ev.dimension,
-    }
+    EmbeddingCell::new_fp32(
+        ev.model_id.clone(),
+        format!("{}", ev.modality), // stored as i32 in proto
+        ev.dimension,
+        ev.vector.clone(),
+    )
 }
 
 fn ms_to_ns(ms: i64) -> i64 {
@@ -286,12 +286,12 @@ impl From<&VectorRecord> for ProximaRecord {
 
         // The vector becomes a default embedding cell
         let embeddings = if !v.vector.is_empty() {
-            vec![EmbeddingCell {
-                model_id: "default".to_string(),
-                modality: "dense_vector".to_string(),
-                dim: v.vector.len() as u32,
-                values: v.vector.clone(),
-            }]
+            vec![EmbeddingCell::new_fp32(
+                "default",
+                "dense_vector",
+                v.vector.len() as u32,
+                v.vector.clone(),
+            )]
         } else {
             vec![]
         };
@@ -799,12 +799,9 @@ mod tests {
             origin: Some("canonical".to_string()),
             ..ProximaRecord::default()
         };
-        record.embeddings.push(EmbeddingCell {
-            model_id: "model".to_string(),
-            modality: "text".to_string(),
-            dim: 2,
-            values: vec![0.1, 0.2],
-        });
+        record
+            .embeddings
+            .push(EmbeddingCell::new_fp32("model", "text", 2, vec![0.1, 0.2]));
 
         let vector = proxima_record_to_vector(&record);
         assert_eq!(vector.id, "rec-1");

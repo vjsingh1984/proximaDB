@@ -20,6 +20,9 @@ proximadb-data-model = { workspace = true }
 proximadb-proto = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
+# fp16 / bf16 element types for EmbeddingValues (PR 1 of the precision rollout
+# per docs/12-design/EMBEDDING_PRECISION_LLD_2026_05_22.adoc).
+half = { version = "2.7", features = ["serde"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

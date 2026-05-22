@@ -117,9 +117,187 @@ pub struct EdgeShape {
     pub weight: Option<f64>,
 }
 
+/// Scalar storage type for embedding values. See
+/// `docs/12-design/EMBEDDING_PRECISION_LLD_2026_05_22.adoc` for the canonical
+/// byte tags and serialization shape.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum EmbeddingScalarType {
+    /// IEEE-754 f32, 4 bytes per element. Today's universal default.
+    Fp32 = 0x01,
+    /// IEEE-754 f16 (half-precision), 2 bytes per element.
+    Fp16 = 0x02,
+    /// Brain float16, 2 bytes per element. Reserved for Phase 6 hardware paths.
+    Bf16 = 0x03,
+    /// Signed 8-bit scalar with per-cell scale + zero-point. Lossy.
+    Int8Scalar = 0x04,
+    /// Unsigned 8-bit scalar with per-cell scale + zero-point. Lossy.
+    UInt8Scalar = 0x05,
+}
+
+impl EmbeddingScalarType {
+    /// Bytes-per-element for this scalar type (excluding per-cell metadata).
+    pub fn bytes_per_element(self) -> usize {
+        match self {
+            Self::Fp32 => 4,
+            Self::Fp16 | Self::Bf16 => 2,
+            Self::Int8Scalar | Self::UInt8Scalar => 1,
+        }
+    }
+
+    /// Whether this precision is lossy relative to the f32 source.
+    pub fn is_lossy(self) -> bool {
+        matches!(self, Self::Int8Scalar | Self::UInt8Scalar)
+    }
+}
+
+impl Default for EmbeddingScalarType {
+    fn default() -> Self {
+        Self::Fp32
+    }
+}
+
+/// Typed embedding payload. PR 1 of the precision rollout adds the enum
+/// variants; only `Fp32` is exercised by existing call sites today. PR 3
+/// switches durable storage to this enum.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum EmbeddingValues {
+    Fp32(Vec<f32>),
+    Fp16(Vec<half::f16>),
+    Bf16(Vec<half::bf16>),
+    Int8Scalar {
+        values: Vec<i8>,
+        scale: f32,
+        zero_point: i8,
+    },
+    UInt8Scalar {
+        values: Vec<u8>,
+        scale: f32,
+        zero_point: u8,
+    },
+}
+
+impl EmbeddingValues {
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Fp32(v) => v.len(),
+            Self::Fp16(v) => v.len(),
+            Self::Bf16(v) => v.len(),
+            Self::Int8Scalar { values, .. } => values.len(),
+            Self::UInt8Scalar { values, .. } => values.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn scalar_type(&self) -> EmbeddingScalarType {
+        match self {
+            Self::Fp32(_) => EmbeddingScalarType::Fp32,
+            Self::Fp16(_) => EmbeddingScalarType::Fp16,
+            Self::Bf16(_) => EmbeddingScalarType::Bf16,
+            Self::Int8Scalar { .. } => EmbeddingScalarType::Int8Scalar,
+            Self::UInt8Scalar { .. } => EmbeddingScalarType::UInt8Scalar,
+        }
+    }
+
+    /// On-disk byte size of the values payload (excluding the surrounding
+    /// EmbeddingCell metadata). Drives storage budget enforcement.
+    pub fn byte_size(&self) -> usize {
+        let bytes = self.scalar_type().bytes_per_element();
+        let scale_meta = match self {
+            Self::Int8Scalar { .. } | Self::UInt8Scalar { .. } => 5, // 4B scale + 1B zero_point
+            _ => 0,
+        };
+        self.len() * bytes + scale_meta
+    }
+
+    pub fn as_fp32_slice(&self) -> Option<&[f32]> {
+        match self {
+            Self::Fp32(v) => Some(v.as_slice()),
+            _ => None,
+        }
+    }
+
+    pub fn to_fp32_owned(&self) -> Vec<f32> {
+        match self {
+            Self::Fp32(v) => v.clone(),
+            Self::Fp16(v) => v.iter().map(|x| x.to_f32()).collect(),
+            Self::Bf16(v) => v.iter().map(|x| x.to_f32()).collect(),
+            Self::Int8Scalar {
+                values,
+                scale,
+                zero_point,
+            } => values
+                .iter()
+                .map(|x| (i32::from(*x) - i32::from(*zero_point)) as f32 * scale)
+                .collect(),
+            Self::UInt8Scalar {
+                values,
+                scale,
+                zero_point,
+            } => values
+                .iter()
+                .map(|x| (i32::from(*x) - i32::from(*zero_point)) as f32 * scale)
+                .collect(),
+        }
+    }
+
+    /// Downconvert an `&[f32]` to the requested scalar type. Symmetric for
+    /// Int8Scalar (per-cell scale, zero_point=0), zero-point-aware for UInt8.
+    pub fn from_fp32_lossy(src: &[f32], target: EmbeddingScalarType) -> Self {
+        match target {
+            EmbeddingScalarType::Fp32 => Self::Fp32(src.to_vec()),
+            EmbeddingScalarType::Fp16 => {
+                Self::Fp16(src.iter().map(|&x| half::f16::from_f32(x)).collect())
+            }
+            EmbeddingScalarType::Bf16 => {
+                Self::Bf16(src.iter().map(|&x| half::bf16::from_f32(x)).collect())
+            }
+            EmbeddingScalarType::Int8Scalar => {
+                let abs_max = src
+                    .iter()
+                    .fold(0.0_f32, |acc, &x| acc.max(x.abs()))
+                    .max(f32::EPSILON);
+                let scale = abs_max / 127.0;
+                let values: Vec<i8> = src
+                    .iter()
+                    .map(|&x| (x / scale).round().clamp(-127.0, 127.0) as i8)
+                    .collect();
+                Self::Int8Scalar {
+                    values,
+                    scale,
+                    zero_point: 0,
+                }
+            }
+            EmbeddingScalarType::UInt8Scalar => {
+                let min = src.iter().cloned().fold(f32::INFINITY, f32::min);
+                let max = src.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+                let range = (max - min).max(f32::EPSILON);
+                let scale = range / 255.0;
+                let zero_point: u8 = (-min / scale).round().clamp(0.0, 255.0) as u8;
+                let values: Vec<u8> = src
+                    .iter()
+                    .map(|&x| ((x / scale).round() + zero_point as f32).clamp(0.0, 255.0) as u8)
+                    .collect();
+                Self::UInt8Scalar {
+                    values,
+                    scale,
+                    zero_point,
+                }
+            }
+        }
+    }
+}
+
 /// A single embedding stored alongside a record (spec §3 — embeddings field).
 ///
 /// One record can carry multiple `EmbeddingCell`s — one per model or modality.
+/// The `values: Vec<f32>` field remains the durable canonical storage for PR 1;
+/// `precision` and `precision_epoch` are advisory until PR 3 switches durable
+/// storage to the `EmbeddingValues` enum.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EmbeddingCell {
     /// Identifier of the model that produced this embedding.
@@ -130,6 +308,43 @@ pub struct EmbeddingCell {
     pub values: Vec<f32>,
     /// Declared dimensionality (must equal `values.len()` for dense vectors).
     pub dim: u32,
+    /// Declared scalar storage precision (PR 1 advisory; PR 3 authoritative).
+    #[serde(default)]
+    pub precision: EmbeddingScalarType,
+    /// Precision epoch this cell was written under, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub precision_epoch: Option<u64>,
+}
+
+impl EmbeddingCell {
+    /// Construct an fp32 embedding cell with default precision metadata.
+    pub fn new_fp32(
+        model_id: impl Into<String>,
+        modality: impl Into<String>,
+        dim: u32,
+        values: Vec<f32>,
+    ) -> Self {
+        Self {
+            model_id: model_id.into(),
+            modality: modality.into(),
+            values,
+            dim,
+            precision: EmbeddingScalarType::Fp32,
+            precision_epoch: None,
+        }
+    }
+
+    pub fn as_fp32_slice(&self) -> &[f32] {
+        &self.values
+    }
+
+    pub fn values_byte_size(&self) -> usize {
+        self.values.len() * self.precision.bytes_per_element()
+    }
+
+    pub fn as_embedding_values(&self) -> EmbeddingValues {
+        EmbeddingValues::from_fp32_lossy(&self.values, self.precision)
+    }
 }
 
 /// Token sequence for LLM / event-stream records (spec §3 — sequence field).
@@ -539,12 +754,12 @@ mod tests {
 
     #[test]
     fn test_embedding_cell_fields() {
-        let cell = EmbeddingCell {
-            model_id: "text-embedding-3-small".to_string(),
-            modality: "text".to_string(),
-            values: vec![0.1, 0.2, 0.3],
-            dim: 3,
-        };
+        let cell = EmbeddingCell::new_fp32(
+            "text-embedding-3-small",
+            "text",
+            3,
+            vec![0.1, 0.2, 0.3],
+        );
         assert_eq!(cell.dim, 3);
         assert_eq!(cell.values.len(), 3);
 
@@ -661,5 +876,196 @@ mod tests {
         assert_eq!(response.records[0].rank, 1);
         assert_eq!(response.total_found, 1);
         assert_eq!(response.collection_id, "docs");
+    }
+
+    // ---- EmbeddingScalarType + EmbeddingValues (PR 1, precision rollout) ----
+
+    #[test]
+    fn scalar_type_bytes_per_element_match_lld_table() {
+        assert_eq!(EmbeddingScalarType::Fp32.bytes_per_element(), 4);
+        assert_eq!(EmbeddingScalarType::Fp16.bytes_per_element(), 2);
+        assert_eq!(EmbeddingScalarType::Bf16.bytes_per_element(), 2);
+        assert_eq!(EmbeddingScalarType::Int8Scalar.bytes_per_element(), 1);
+        assert_eq!(EmbeddingScalarType::UInt8Scalar.bytes_per_element(), 1);
+    }
+
+    #[test]
+    fn scalar_type_lossiness_flags_int8_paths() {
+        assert!(!EmbeddingScalarType::Fp32.is_lossy());
+        assert!(!EmbeddingScalarType::Fp16.is_lossy());
+        assert!(!EmbeddingScalarType::Bf16.is_lossy());
+        assert!(EmbeddingScalarType::Int8Scalar.is_lossy());
+        assert!(EmbeddingScalarType::UInt8Scalar.is_lossy());
+    }
+
+    #[test]
+    fn scalar_type_default_is_fp32_for_backward_compat() {
+        assert_eq!(EmbeddingScalarType::default(), EmbeddingScalarType::Fp32);
+    }
+
+    #[test]
+    fn embedding_values_byte_size_matches_layout() {
+        let dim = 1024usize;
+        assert_eq!(EmbeddingValues::Fp32(vec![0.0; dim]).byte_size(), 4 * dim);
+        assert_eq!(
+            EmbeddingValues::Fp16(vec![half::f16::from_f32(0.0); dim]).byte_size(),
+            2 * dim
+        );
+        assert_eq!(
+            EmbeddingValues::Bf16(vec![half::bf16::from_f32(0.0); dim]).byte_size(),
+            2 * dim
+        );
+        assert_eq!(
+            EmbeddingValues::Int8Scalar {
+                values: vec![0i8; dim],
+                scale: 1.0,
+                zero_point: 0,
+            }
+            .byte_size(),
+            dim + 5
+        );
+        assert_eq!(
+            EmbeddingValues::UInt8Scalar {
+                values: vec![0u8; dim],
+                scale: 1.0,
+                zero_point: 128,
+            }
+            .byte_size(),
+            dim + 5
+        );
+    }
+
+    #[test]
+    fn embedding_values_len_matches_inner_vec() {
+        let v = vec![1.0, 2.0, 3.0, 4.0];
+        let ev = EmbeddingValues::Fp32(v.clone());
+        assert_eq!(ev.len(), v.len());
+        assert!(!ev.is_empty());
+        assert!(EmbeddingValues::Fp32(vec![]).is_empty());
+    }
+
+    #[test]
+    fn embedding_values_scalar_type_round_trip() {
+        for st in [
+            EmbeddingScalarType::Fp32,
+            EmbeddingScalarType::Fp16,
+            EmbeddingScalarType::Bf16,
+            EmbeddingScalarType::Int8Scalar,
+            EmbeddingScalarType::UInt8Scalar,
+        ] {
+            let ev = EmbeddingValues::from_fp32_lossy(&[1.0, 2.0, 3.0], st);
+            assert_eq!(ev.scalar_type(), st);
+        }
+    }
+
+    #[test]
+    fn embedding_values_as_fp32_slice_only_for_fp32() {
+        let v = vec![1.0, 2.0, 3.0];
+        assert_eq!(
+            EmbeddingValues::Fp32(v.clone()).as_fp32_slice(),
+            Some(v.as_slice())
+        );
+        assert!(EmbeddingValues::from_fp32_lossy(&v, EmbeddingScalarType::Fp16)
+            .as_fp32_slice()
+            .is_none());
+    }
+
+    #[test]
+    fn embedding_values_to_fp32_owned_round_trips_fp16_within_tolerance() {
+        let src: Vec<f32> = (0..16).map(|i| (i as f32) * 0.1).collect();
+        let ev = EmbeddingValues::from_fp32_lossy(&src, EmbeddingScalarType::Fp16);
+        let back = ev.to_fp32_owned();
+        assert_eq!(back.len(), src.len());
+        for (a, b) in src.iter().zip(back.iter()) {
+            assert!((a - b).abs() < 0.01, "fp16 RT tolerance fail: {a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn embedding_values_int8_lossy_round_trip_within_per_cell_scale() {
+        let src: Vec<f32> = (0..16).map(|i| (i as f32 - 8.0) * 0.1).collect();
+        let ev = EmbeddingValues::from_fp32_lossy(&src, EmbeddingScalarType::Int8Scalar);
+        let back = ev.to_fp32_owned();
+        let quantum = match &ev {
+            EmbeddingValues::Int8Scalar { scale, .. } => *scale,
+            _ => unreachable!(),
+        };
+        for (a, b) in src.iter().zip(back.iter()) {
+            assert!(
+                (a - b).abs() <= quantum * 1.05,
+                "int8 RT beyond one quantum: {a} vs {b} q={quantum}"
+            );
+        }
+    }
+
+    #[test]
+    fn embedding_values_serde_round_trips_fp32() {
+        let ev = EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0]);
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: EmbeddingValues = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    #[test]
+    fn embedding_values_serde_round_trips_fp16() {
+        let ev = EmbeddingValues::from_fp32_lossy(&[0.5, 1.0, 1.5], EmbeddingScalarType::Fp16);
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: EmbeddingValues = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, back);
+    }
+
+    // ---- EmbeddingCell migration to new schema (PR 1) ----
+
+    #[test]
+    fn new_fp32_constructor_sets_default_precision_metadata() {
+        let cell = EmbeddingCell::new_fp32("bge-small", "text", 4, vec![0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(cell.model_id, "bge-small");
+        assert_eq!(cell.modality, "text");
+        assert_eq!(cell.dim, 4);
+        assert_eq!(cell.values, vec![0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(cell.precision, EmbeddingScalarType::Fp32);
+        assert_eq!(cell.precision_epoch, None);
+    }
+
+    #[test]
+    fn embedding_cell_as_fp32_slice_borrows_values() {
+        let cell = EmbeddingCell::new_fp32("m", "text", 3, vec![1.0, 2.0, 3.0]);
+        assert_eq!(cell.as_fp32_slice(), &[1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn embedding_cell_byte_size_reflects_declared_precision() {
+        let cell = EmbeddingCell::new_fp32("m", "text", 1024, vec![0.0; 1024]);
+        assert_eq!(cell.values_byte_size(), 4096);
+        let cell16 = EmbeddingCell {
+            precision: EmbeddingScalarType::Fp16,
+            ..cell
+        };
+        assert_eq!(cell16.values_byte_size(), 2048);
+    }
+
+    #[test]
+    fn embedding_cell_serde_back_compat_round_trip() {
+        // Old-shape JSON without precision/precision_epoch should deserialize
+        // into a cell whose precision defaults to Fp32 and epoch is None.
+        let old_json = r#"{
+            "model_id": "legacy",
+            "modality": "text",
+            "values": [0.1, 0.2, 0.3],
+            "dim": 3
+        }"#;
+        let cell: EmbeddingCell = serde_json::from_str(old_json).unwrap();
+        assert_eq!(cell.precision, EmbeddingScalarType::Fp32);
+        assert_eq!(cell.precision_epoch, None);
+        assert_eq!(cell.values, vec![0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    fn embedding_cell_as_embedding_values_uses_declared_precision() {
+        let mut cell = EmbeddingCell::new_fp32("m", "text", 3, vec![0.0, 1.0, 2.0]);
+        cell.precision = EmbeddingScalarType::Fp16;
+        let ev = cell.as_embedding_values();
+        assert_eq!(ev.scalar_type(), EmbeddingScalarType::Fp16);
+        assert_eq!(ev.len(), 3);
     }
 }
