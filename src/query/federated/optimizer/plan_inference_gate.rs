@@ -110,10 +110,13 @@ pub struct GateInputs<'a> {
 
 /// Run the gate. Pure given the inputs + config.
 pub fn decide(inputs: &GateInputs<'_>, config: &InferenceGateConfig) -> GateOutcome {
-    let v1_plan = || GateOutcome::Fallback {
+    // Helper: build the fallback variant with the v1 plan and the
+    // given reason. Functional-record-update syntax doesn't work on
+    // enum variants in stable Rust, so we spell out the fields.
+    let fallback = |reason: &'static str| GateOutcome::Fallback {
         filter_strategy: inputs.v1.filter_strategy.clone(),
         index_route: inputs.v1.index_route.clone(),
-        reason: "",
+        reason,
     };
 
     // Step 1: pending-artifact passthrough. When the registry returned
@@ -121,19 +124,13 @@ pub fn decide(inputs: &GateInputs<'_>, config: &InferenceGateConfig) -> GateOutc
     // "uae-artifact-pending" and the recommendation is just v1 with a
     // different label. Pass v1 through and don't log it as a deviation.
     if inputs.v2.source == "uae-artifact-pending" {
-        return GateOutcome::Fallback {
-            reason: reason::PENDING_ARTIFACT,
-            ..v1_plan()
-        };
+        return fallback(reason::PENDING_ARTIFACT);
     }
 
     // Step 2: confidence floor.
     let confidence = inputs.v2.confidence.clamp(0.0, 1.0);
     if confidence < config.confidence_threshold {
-        return GateOutcome::Fallback {
-            reason: reason::CONFIDENCE_BELOW_THRESHOLD,
-            ..v1_plan()
-        };
+        return fallback(reason::CONFIDENCE_BELOW_THRESHOLD);
     }
 
     // Step 3: quantized-route safety veto. If v2 recommends the
@@ -143,10 +140,7 @@ pub fn decide(inputs: &GateInputs<'_>, config: &InferenceGateConfig) -> GateOutc
     if matches!(inputs.v2.index_route, IndexRoute::QuantizedGraphThenExact)
         && !inputs.recall_probe_open
     {
-        return GateOutcome::Fallback {
-            reason: reason::QUANTIZED_ROUTE_BLOCKED,
-            ..v1_plan()
-        };
+        return fallback(reason::QUANTIZED_ROUTE_BLOCKED);
     }
 
     // Step 4: v2 wins. Distinguish "v2 honored because it differed from
