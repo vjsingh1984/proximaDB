@@ -16,6 +16,9 @@
 //! protocol adapters live in `crates/platform/proximadb-api`. Port traits live in
 //! `crates/platform/proximadb-runtime`.
 
+/// Shared gRPC authentication and data-plane capability enforcement.
+pub mod auth;
+
 // Port implementations: root crate provides concrete types that implement runtime port traits
 /// gRPC service for document CRUD operations (implements DocumentPort)
 pub mod document_service;

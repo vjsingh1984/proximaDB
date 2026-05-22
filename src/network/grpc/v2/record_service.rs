@@ -26,6 +26,7 @@ use crate::api_handlers::{
     RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichRecordDeleteBatchRequest,
     RichSearchRequest, RichSearchResponse, UnifiedHandlers,
 };
+use crate::network::grpc::auth as grpc_auth;
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
 use crate::proto::proximadb_v2::{
     self, BackpressureLevel, BackpressureSignal, BatchError, BatchWriteMode,
@@ -663,7 +664,15 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ProximaRecordBatch>,
     ) -> Result<Response<ProximaRecordBatchResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id =
+            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        grpc_auth::enforce_data_plane_request(
+            &request,
+            "ingest",
+            &request.get_ref().collection_id,
+            request.get_ref().records.len(),
+            Some(prost::Message::encoded_len(request.get_ref()) as u64),
+        )?;
         let batch = request.into_inner();
         info!(
             "V2 gRPC: InsertRecords - collection='{}', records={}",
@@ -735,7 +744,15 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ProximaRecordBatch>,
     ) -> Result<Response<ProximaRecordBatchResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id =
+            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        grpc_auth::enforce_data_plane_request(
+            &request,
+            "ingest",
+            &request.get_ref().collection_id,
+            request.get_ref().records.len(),
+            Some(prost::Message::encoded_len(request.get_ref()) as u64),
+        )?;
         let batch = request.into_inner();
         info!(
             "V2 gRPC: UpsertRecords - collection='{}', records={}",
@@ -798,7 +815,15 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ProximaRecordBatch>,
     ) -> Result<Response<ProximaRecordBatchResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id =
+            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        grpc_auth::enforce_data_plane_request(
+            &request,
+            "ingest",
+            &request.get_ref().collection_id,
+            request.get_ref().records.len(),
+            Some(prost::Message::encoded_len(request.get_ref()) as u64),
+        )?;
         let batch = request.into_inner();
         info!(
             "V2 gRPC: UpdateRecords - collection='{}', records={}",
@@ -849,7 +874,15 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ProximaRecordBatch>,
     ) -> Result<Response<ProximaRecordBatchResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id =
+            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        grpc_auth::enforce_data_plane_request(
+            &request,
+            "ingest",
+            &request.get_ref().collection_id,
+            request.get_ref().records.len(),
+            Some(prost::Message::encoded_len(request.get_ref()) as u64),
+        )?;
         let batch = request.into_inner();
         info!(
             "V2 gRPC: DeleteRecords - collection='{}', records={}",
@@ -924,7 +957,15 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<TypedSearchRequest>,
     ) -> Result<Response<TypedSearchResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id =
+            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        grpc_auth::enforce_data_plane_request(
+            &request,
+            "search",
+            &request.get_ref().collection_id,
+            request.get_ref().top_k.max(0) as usize,
+            Some(prost::Message::encoded_len(request.get_ref()) as u64),
+        )?;
         let req = request.into_inner();
         debug!(
             "V2 gRPC: Search - collection='{}', top_k={}",
@@ -978,7 +1019,15 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<TypedSearchRequest>,
     ) -> Result<Response<Self::SearchStreamStream>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id =
+            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        grpc_auth::enforce_data_plane_request(
+            &request,
+            "search",
+            &request.get_ref().collection_id,
+            request.get_ref().top_k.max(0) as usize,
+            Some(prost::Message::encoded_len(request.get_ref()) as u64),
+        )?;
         let req = request.into_inner();
         debug!(
             "V2 gRPC: SearchStream - collection='{}', top_k={}",
@@ -1052,7 +1101,9 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<Streaming<BatchWriteStreamRequest>>,
     ) -> Result<Response<Self::BatchWriteStreamStream>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id =
+            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        let data_plane_capability = grpc_auth::data_plane_capability(&request);
         let mut inbound = request.into_inner();
 
         // Create a bounded channel for response streaming with flow control
@@ -1074,6 +1125,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         // Clone handlers for the processing task
         let request_handlers = Arc::clone(&self.request_handlers);
         let tenant_id = tenant_id.clone();
+        let data_plane_capability = data_plane_capability.clone();
 
         // Clone metrics for the spawned task
         let metrics_clone = Arc::clone(&metrics);
@@ -1100,6 +1152,18 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                 };
 
                 let batch_size = batch.records.len();
+                if let Some(capability) = data_plane_capability.as_ref()
+                    && let Err(status) = grpc_auth::validate_data_plane_capability(
+                        capability,
+                        "ingest",
+                        &batch.collection_id,
+                        batch_size,
+                        Some(prost::Message::encoded_len(&batch) as u64),
+                    )
+                {
+                    let _ = tx.send(Err(status)).await;
+                    break;
+                }
                 debug!(
                     "V2 gRPC: BatchWriteStream - processing batch for collection='{}', records={}",
                     batch.collection_id, batch_size

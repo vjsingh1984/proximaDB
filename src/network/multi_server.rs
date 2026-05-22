@@ -260,7 +260,7 @@ impl MultiServer {
             let ca_path = self.config.tls_config.ca_file.clone();
 
             // Create gRPC server builder with TLS if configured
-            let mut server_builder = if tls_enabled || mtls_enabled {
+            let server_builder = if tls_enabled || mtls_enabled {
                 if let (Some(cert), Some(key)) = (&cert_path, &key_path) {
                     use tonic::transport::{Certificate, Identity, ServerTlsConfig};
 
@@ -302,6 +302,14 @@ impl MultiServer {
             } else {
                 tonic::transport::Server::builder()
             };
+            let mut server_builder =
+                server_builder.layer(tower::util::option_layer(if self.rest_auth_enabled {
+                    self.security_coordinator
+                        .clone()
+                        .map(crate::network::grpc::auth::GrpcAuthLayer::new)
+                } else {
+                    None
+                }));
 
             // ── Create backend services (doc + observability need data-dir paths) ──
 
@@ -845,7 +853,16 @@ impl MultiServer {
             warn!(
                 "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
             );
-            let server = tonic::transport::Server::builder()
+            let mut server_builder = tonic::transport::Server::builder().layer(
+                tower::util::option_layer(if self.rest_auth_enabled {
+                    self.security_coordinator
+                        .clone()
+                        .map(crate::network::grpc::auth::GrpcAuthLayer::new)
+                } else {
+                    None
+                }),
+            );
+            let server = server_builder
                 .add_service(vector_service)
                 .add_service(sql_service)
                 .add_service(col_service)
@@ -1097,7 +1114,7 @@ impl MultiServer {
             let ca_path = self.config.tls_config.ca_file.clone();
 
             // Create gRPC server builder with TLS if configured
-            let mut server_builder = if tls_enabled || mtls_enabled {
+            let server_builder = if tls_enabled || mtls_enabled {
                 if let (Some(cert), Some(key)) = (&cert_path, &key_path) {
                     use tonic::transport::{Certificate, Identity, ServerTlsConfig};
 
@@ -1137,6 +1154,14 @@ impl MultiServer {
             } else {
                 tonic::transport::Server::builder()
             };
+            let mut server_builder =
+                server_builder.layer(tower::util::option_layer(if self.rest_auth_enabled {
+                    self.security_coordinator
+                        .clone()
+                        .map(crate::network::grpc::auth::GrpcAuthLayer::new)
+                } else {
+                    None
+                }));
 
             // ── Build standard services via factory ───────────────────────────
             let graph_port: Arc<dyn proximadb_runtime::GraphPort> =
