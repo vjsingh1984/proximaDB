@@ -33,6 +33,16 @@
 //!   -h, --help               Print help information
 //! ```
 
+// Embedding precision rollout (EMBEDDING_PRECISION_LLD_2026_05_22 §Endianness):
+// canonical embedding payloads, WAL segment headers, and PAX block headers all
+// use little-endian byte order without runtime swap. Refuse to build on
+// big-endian targets so the on-disk format is never written incorrectly.
+#[cfg(target_endian = "big")]
+compile_error!(
+    "proximadb does not support big-endian targets; \
+     target a little-endian arch (x86_64, aarch64, etc.)"
+);
+
 use clap::Parser;
 use proximadb::ProximaDB;
 use proximadb::core::ConfigLoader;

@@ -431,6 +431,7 @@ impl UnifiedTestEnvironment {
                         modality: "vector".to_string(),
                         dim: dimension as u32,
                         values: (0..dimension).map(|j| (i + j) as f32).collect(),
+                        ..Default::default()
                     }],
                     props,
                     record_version: 1,

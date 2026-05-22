@@ -506,6 +506,7 @@ impl<'a> UpdateBuilder<'a> {
                 vector: self.vector.unwrap_or_default(),
                 props: self.metadata,
                 source: None,
+                ..Default::default()
             }],
             validate_schema: true,
             upsert: true,
@@ -845,7 +846,7 @@ struct ProximaRecordBatchRequest {
 }
 
 /// Canonical record payload with optional vector embedding and rich properties.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProximaRecord {
     /// Record ID
     pub id: String,
@@ -1098,6 +1099,7 @@ mod tests {
             vector: Vec::new(),
             props: HashMap::new(),
             source: None,
+            ..Default::default()
         })
         .unwrap();
         assert_eq!(serialized, json!({"id": "vec_2"}));

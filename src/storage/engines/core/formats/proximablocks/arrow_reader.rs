@@ -599,6 +599,7 @@ mod tests {
                         modality: "text".to_string(),
                         values: (0..dimension).map(|d| (i + d) as f32 * 0.01).collect(),
                         dim: dimension as u32,
+                        ..Default::default()
                     }],
                     created_at_ns: 1_700_000_000_000_000_000 + i as i64,
                     record_version: 1,

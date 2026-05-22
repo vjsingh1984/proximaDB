@@ -409,6 +409,29 @@ impl From<Vec<String>> for LabelSet {
 // ProximaRecord — the unified envelope
 // ---------------------------------------------------------------------------
 
+/// Embedding-precision schema versions (Q17, LLD §schema-version-dispatch).
+///
+/// The WAL/PAX/record path tags each `ProximaRecord` with the schema version
+/// under which it was written so readers can dispatch to the correct payload
+/// decoder. `V1` is the legacy fp32-only shape; `V2` is the precision-aware
+/// shape introduced by the embedding-precision rollout.
+pub mod schema_version {
+    /// Legacy schema: every `EmbeddingCell.values` is read as `Vec<f32>`.
+    pub const V1: u8 = 1;
+    /// Precision-aware schema: cells carry an explicit precision discriminant.
+    pub const V2: u8 = 2;
+    /// Current default for newly constructed records (PR 2: still V1; PR 3 will
+    /// flip via `PROXIMADB_EMBED_PRECISION_SCHEMA_V2`).
+    pub const CURRENT: u8 = V1;
+
+    /// `serde(default = ...)` callback for `ProximaRecord.schema_version`. Old
+    /// JSON payloads and freshly-defaulted records resolve to `V1` for
+    /// backwards compatibility with PR 0 readers.
+    pub fn default_schema_version() -> u8 {
+        V1
+    }
+}
+
 /// The unified record envelope for all ProximaDB modalities.
 ///
 /// Implements spec §3 of MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc. Every stored
@@ -423,6 +446,21 @@ impl From<Vec<String>> for LabelSet {
 /// referencing request context beyond the predicate.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProximaRecord {
+    // === Embedding-precision schema version (Q17, LLD §schema-version-dispatch) ===
+    /// Embedding-precision schema that wrote this record.
+    ///
+    /// * `schema_version::V1` — legacy: every `EmbeddingCell.values` is read as
+    ///   `Vec<f32>` and `EmbeddingCell.precision = Fp32`.
+    /// * `schema_version::V2` — precision-aware: cells carry an explicit precision
+    ///   discriminant and (in PR 3+) a durable typed payload.
+    ///
+    /// Not serialized: bincode WAL frames are positional and on-disk format does
+    /// not change in PR 2. The WAL reader stamps this field after deserialization
+    /// based on the segment header (PR 4) or the legacy default `V1`. JSON and
+    /// proto bridges populate it from external metadata.
+    #[serde(skip, default = "schema_version::default_schema_version")]
+    pub schema_version: u8,
+
     // === Identity ===
     /// Globally unique object identifier (UUID or ULID string).
     pub oid: String,
@@ -497,6 +535,7 @@ impl Default for ProximaRecord {
             .as_nanos() as i64;
 
         Self {
+            schema_version: schema_version::default_schema_version(),
             oid: String::new(),
             local_id: None,
             tid: None,
@@ -1071,5 +1110,80 @@ mod tests {
         let ev = cell.as_embedding_values();
         assert_eq!(ev.scalar_type(), EmbeddingScalarType::Fp16);
         assert_eq!(ev.len(), 3);
+    }
+
+    // === PR 2: ProximaRecord.schema_version ===
+
+    #[test]
+    fn schema_version_constants_match_lld() {
+        assert_eq!(schema_version::V1, 1);
+        assert_eq!(schema_version::V2, 2);
+        // PR 2 keeps writers on V1; PR 3 flips this via the feature flag.
+        assert_eq!(schema_version::CURRENT, schema_version::V1);
+    }
+
+    #[test]
+    fn default_record_has_schema_version_v1() {
+        let r = ProximaRecord::default();
+        assert_eq!(r.schema_version, schema_version::V1);
+    }
+
+    #[test]
+    fn schema_version_is_skipped_by_serde() {
+        // serde(skip) means a v2-tagged record serialized to JSON omits the
+        // schema_version field entirely. Old readers see the same bytes they
+        // always did — back-compat with PR 0 wire formats.
+        let mut r = ProximaRecord::default();
+        r.schema_version = schema_version::V2;
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(
+            !json.contains("schema_version"),
+            "schema_version must not appear on the wire (got {json})"
+        );
+    }
+
+    #[test]
+    fn schema_version_round_trip_through_json_resets_to_v1() {
+        // serde(skip) on the way IN means deserialization re-applies the
+        // default; the WAL/segment-header reader is responsible for stamping
+        // the correct value (PR 4).
+        let mut r = ProximaRecord::default();
+        r.schema_version = schema_version::V2;
+        r.oid = "oid-1".into();
+        let json = serde_json::to_string(&r).unwrap();
+        let parsed: ProximaRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.schema_version, schema_version::V1);
+        assert_eq!(parsed.oid, "oid-1");
+    }
+
+    #[test]
+    fn schema_version_round_trip_through_bincode_resets_to_v1() {
+        // Same contract for bincode: positional encoder skips the field.
+        let mut r = ProximaRecord::default();
+        r.schema_version = schema_version::V2;
+        r.oid = "oid-bincode".into();
+        let bytes = bincode::serialize(&r).unwrap();
+        let parsed: ProximaRecord = bincode::deserialize(&bytes).unwrap();
+        assert_eq!(parsed.schema_version, schema_version::V1);
+        assert_eq!(parsed.oid, "oid-bincode");
+    }
+
+    #[test]
+    fn schema_version_old_json_without_field_deserializes_to_v1() {
+        // Serialize a v2 record, parse the JSON, confirm it contains no
+        // schema_version key (so old/new readers see the same bytes), then
+        // deserialize to verify the default kicks in.
+        let mut r = ProximaRecord::default();
+        r.schema_version = schema_version::V2;
+        r.oid = "legacy-record".into();
+        let json = serde_json::to_string(&r).unwrap();
+        let parsed_value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(
+            parsed_value.get("schema_version").is_none(),
+            "serialized record must not contain a schema_version field"
+        );
+        let parsed: ProximaRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.schema_version, schema_version::V1);
+        assert_eq!(parsed.oid, "legacy-record");
     }
 }

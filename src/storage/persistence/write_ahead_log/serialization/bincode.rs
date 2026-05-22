@@ -128,4 +128,80 @@ mod tests {
             super::super::SerializationFormat::Bincode
         );
     }
+
+    // === PR 2: schema_version dispatch (LLD §schema-version-dispatch) ===
+
+    #[test]
+    fn deserialize_batch_default_stamps_v1() {
+        let serializer = BincodeSerializer::new();
+        let bytes = serializer.serialize_batch(&[create_test_vector()]).unwrap();
+        let records = serializer.deserialize_batch(&bytes).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].schema_version,
+            proximadb_records::schema_version::V1,
+            "PR 2 WAL frames must read as V1 by default"
+        );
+    }
+
+    #[test]
+    fn deserialize_batch_with_v1_hint_stamps_v1() {
+        let serializer = BincodeSerializer::new();
+        let bytes = serializer.serialize_batch(&[create_test_vector()]).unwrap();
+        let records = serializer
+            .deserialize_batch_with_schema_version(
+                &bytes,
+                proximadb_records::schema_version::V1,
+            )
+            .unwrap();
+        assert_eq!(records[0].schema_version, proximadb_records::schema_version::V1);
+    }
+
+    #[test]
+    fn deserialize_batch_with_v2_hint_stamps_v2() {
+        // PR 2: on-disk format is unchanged (writer is still V1). The hint is
+        // what the caller (segment header in PR 4) declares the segment to
+        // be. Stamping V2 here is the dispatch site future PRs will use to
+        // pick a precision-aware decoder.
+        let serializer = BincodeSerializer::new();
+        let bytes = serializer.serialize_batch(&[create_test_vector()]).unwrap();
+        let records = serializer
+            .deserialize_batch_with_schema_version(
+                &bytes,
+                proximadb_records::schema_version::V2,
+            )
+            .unwrap();
+        assert_eq!(records[0].schema_version, proximadb_records::schema_version::V2);
+    }
+
+    #[test]
+    fn mixed_v1_v2_segments_read_independently() {
+        // Simulates PR 4's mixed-segment-reader contract: two batches written
+        // identically (PR 2 keeps the writer on V1), but each read dispatch
+        // can label them with their declared schema version.
+        let serializer = BincodeSerializer::new();
+        let bytes_a = serializer.serialize_batch(&[create_test_vector()]).unwrap();
+        let bytes_b = serializer.serialize_batch(&[create_test_vector()]).unwrap();
+
+        let v1_records = serializer
+            .deserialize_batch_with_schema_version(
+                &bytes_a,
+                proximadb_records::schema_version::V1,
+            )
+            .unwrap();
+        let v2_records = serializer
+            .deserialize_batch_with_schema_version(
+                &bytes_b,
+                proximadb_records::schema_version::V2,
+            )
+            .unwrap();
+        assert_eq!(v1_records[0].schema_version, proximadb_records::schema_version::V1);
+        assert_eq!(v2_records[0].schema_version, proximadb_records::schema_version::V2);
+        // Payload is structurally identical — PR 4 will change this when the
+        // v2 path swaps in the EmbeddingValues decoder.
+        assert_eq!(
+            v1_records[0].embeddings[0].values,
+            v2_records[0].embeddings[0].values
+        );
+    }
 }

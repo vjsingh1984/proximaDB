@@ -353,6 +353,7 @@ mod tests {
                 modality: "dense_vector".to_string(),
                 dim: dim as u32,
                 values: (0..dim).map(|i| i as f32 * 0.1).collect(),
+                ..Default::default()
             }],
             ..ProximaRecord::default()
         }

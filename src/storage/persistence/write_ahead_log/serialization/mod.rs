@@ -11,14 +11,45 @@ use proximadb_records::ProximaRecord;
 /// Implementations should ONLY handle data format conversion,
 /// not I/O, memtable operations, or any other concerns.
 pub trait VectorBatchSerializer: Send + Sync {
-    /// Convert a batch of canonical records to serialized bytes
+    /// Convert a batch of canonical records to serialized bytes.
+    ///
+    /// PR 2 of the embedding-precision rollout: writers ignore
+    /// `schema_version` (the field is `serde(skip)` on ProximaRecord). PR 3
+    /// adds a feature-flag-gated v2 writer that prepends a schema byte.
     fn serialize_batch(&self, records: &[ProximaRecord]) -> Result<Vec<u8>>;
 
-    /// Convert serialized bytes back to canonical records
+    /// Convert serialized bytes back to canonical records.
+    ///
+    /// Default behavior stamps every record with `schema_version::V1` because
+    /// PR 2 WAL frames are bytewise-identical to PR 0. Use
+    /// [`Self::deserialize_batch_with_schema_version`] when dispatching from
+    /// a v2 segment header (PR 4) or an explicit version-aware reader.
     fn deserialize_batch(&self, data: &[u8]) -> Result<Vec<ProximaRecord>>;
 
-    /// Get the serialization format identifier
+    /// Get the serialization format identifier.
     fn format(&self) -> SerializationFormat;
+
+    /// PR 2 §schema-version-dispatch: deserialize a batch and stamp every
+    /// returned record with `schema_version`.
+    ///
+    /// * `schema_version::V1` — legacy fp32 records. Behavior identical to
+    ///   [`Self::deserialize_batch`] because PR 2 storage is still
+    ///   `Vec<f32>`.
+    /// * `schema_version::V2` — precision-aware records. PR 2 returns
+    ///   structurally-identical records (no on-disk format change); PR 4+
+    ///   will wire this branch to the `EmbeddingValues` decoder once the
+    ///   v2 segment header lands.
+    fn deserialize_batch_with_schema_version(
+        &self,
+        data: &[u8],
+        schema_version: u8,
+    ) -> Result<Vec<ProximaRecord>> {
+        let mut records = self.deserialize_batch(data)?;
+        for r in &mut records {
+            r.schema_version = schema_version;
+        }
+        Ok(records)
+    }
 }
 
 /// Supported serialization formats

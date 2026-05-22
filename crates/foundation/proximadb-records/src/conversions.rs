@@ -31,7 +31,7 @@ use proximadb_proto::proximadb_v1::{
 
 use crate::{
     EdgeDirection, EdgeShape, EmbeddingCell, LabelSet, ProximaRecord, ProximaTree, ProximaTreeNode,
-    TypedRef,
+    TypedRef, schema_version,
 };
 
 // ---------------------------------------------------------------------------
@@ -320,6 +320,7 @@ impl From<&VectorRecord> for ProximaRecord {
             embeddings,
             sequence: None,
             labels: LabelSet::new(),
+            ..Default::default()
         }
     }
 }
@@ -359,6 +360,7 @@ impl From<&Node> for ProximaRecord {
         }];
 
         ProximaRecord {
+            schema_version: schema_version::default_schema_version(),
             oid: n.id.clone(),
             local_id: None,
             tid: None,
@@ -382,6 +384,7 @@ impl From<&Node> for ProximaRecord {
             embeddings,
             sequence: None,
             labels,
+            ..Default::default()
         }
     }
 }
@@ -414,6 +417,7 @@ impl From<&Edge> for ProximaRecord {
         });
 
         ProximaRecord {
+            schema_version: schema_version::default_schema_version(),
             oid: e.id.clone(),
             local_id: None,
             tid: None,
@@ -437,6 +441,7 @@ impl From<&Edge> for ProximaRecord {
             embeddings: Vec::new(),
             sequence: None,
             labels: LabelSet::new(),
+            ..Default::default()
         }
     }
 }

@@ -808,6 +808,7 @@ mod tests {
                     .map(|i| (i as f32) / (dimension as f32))
                     .collect(),
                 dim: dimension as u32,
+                ..Default::default()
             }],
             props,
             record_version: 1,

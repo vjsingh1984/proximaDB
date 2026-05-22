@@ -72,6 +72,7 @@ use proximadb_records::{EmbeddingCell, ProximaRecord};
                     expires_at: None,
                     version: Some(1),
                     source: None,
+                    ..Default::default()
                 }
             })
             .collect()
@@ -224,6 +225,7 @@ use proximadb_records::{EmbeddingCell, ProximaRecord};
                 expires_at: None,
                 version: Some(1),
                 source: None,
+                ..Default::default()
             })
             .collect();
 
@@ -303,6 +305,7 @@ use proximadb_records::{EmbeddingCell, ProximaRecord};
                 expires_at: None,
                 version: Some(1),
                 source: None,
+                ..Default::default()
             })
             .collect();
 
@@ -379,6 +382,7 @@ use proximadb_records::{EmbeddingCell, ProximaRecord};
                 expires_at: None,
                 version: Some(1),
                 source: None,
+                ..Default::default()
             })
             .collect();
 
