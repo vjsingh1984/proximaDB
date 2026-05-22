@@ -39,11 +39,13 @@ impl ObservabilityServiceImpl {
     }
 
     fn not_configured() -> Status {
-        Status::unimplemented("Observability service not configured on this node")
+        super::deprecated_status(Status::unimplemented(
+            "Observability service not configured on this node",
+        ))
     }
 
     fn port_err(e: anyhow::Error) -> Status {
-        Status::internal(e.to_string())
+        super::deprecated_status(Status::internal(e.to_string()))
     }
 }
 
@@ -61,7 +63,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.create_namespace(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -72,7 +74,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.list_namespaces(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -83,7 +85,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.delete_namespace(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -96,7 +98,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.ingest_logs(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -107,7 +109,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.query_logs(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -132,7 +134,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
             }
         });
 
-        Ok(Response::new(ReceiverStream::new(rx)))
+        Ok(super::deprecated_response(ReceiverStream::new(rx)))
     }
 
     // ── Metrics ───────────────────────────────────────────────────────────
@@ -144,7 +146,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.ingest_metrics(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -155,7 +157,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.query_metrics(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -166,7 +168,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.aggregate_metrics(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -179,7 +181,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.ingest_traces(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -190,7 +192,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.query_traces(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -201,7 +203,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.get_trace(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -214,7 +216,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.upsert_alert_rule(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -225,7 +227,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.delete_alert_rule(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -236,7 +238,7 @@ impl ObservabilityService for ObservabilityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.list_alerts(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 }

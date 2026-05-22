@@ -139,7 +139,8 @@ This document describes the officially supported features, APIs, and capabilitie
 - ❌ Aggregation pipeline (Phase 2)
 - ❌ Disk persistence (Phase 2)
 
-**API**: REST `POST /api/v1/document/query`, SQL `DOCUMENT_QUERY()`, PG wire  
+**API**: Canonical REST v2 record/table APIs, SQL `DOCUMENT_QUERY()`, PG wire. REST `/api/v1/document/*` remains a deprecated compatibility facade.
+
 **Best For**: Semi-structured JSON data, flexible schemas
 
 ---
@@ -159,7 +160,8 @@ This document describes the officially supported features, APIs, and capabilitie
 - ❌ Gorilla-encoded disk persistence (Phase 5)
 - ❌ Time-window compaction and downsampling (Phase 5)
 
-**API**: REST `/api/v1/logs`, REST `/api/v1/metrics`, SQL `LOGS()`, SQL `METRICS()`, PG wire  
+**API**: Canonical record ingestion/query paths, SQL `LOGS()`, SQL `METRICS()`, PG wire. REST `/api/v1/logs` and `/api/v1/metrics` remain deprecated compatibility facades.
+
 **Best For**: Application logs, infrastructure metrics, distributed traces
 
 ---
@@ -182,7 +184,8 @@ This document describes the officially supported features, APIs, and capabilitie
 - ❌ Disk persistence (Phase 2)
 - ❌ Compaction (Phase 2)
 
-**API**: SQL via PG wire (port 5433), REST `POST /api/v1/sql`  
+**API**: SQL via PG wire (port 5433). REST `/api/v1/sql/*` remains a deprecated compatibility facade.
+
 **Best For**: Structured data with schema enforcement, traditional SQL workloads
 
 ---
@@ -292,7 +295,7 @@ All protocols (REST, gRPC, PostgreSQL wire, Arrow Flight) use the same detection
 - ✅ Scalar and product quantization
 - ✅ Sparse vector support
 
-**API**: REST `/api/v1/vector/search`, gRPC `VectorSearch()`, SQL `VECTOR_SEARCH()`, PostgreSQL wire `<->` operator
+**API**: REST `POST /api/v2/collections/{collection}/search`, gRPC `proximadb.v2.ProximaRecordService`, SQL `VECTOR_SEARCH()`, PostgreSQL wire `<->` operator. REST/gRPC v1 vector-shaped calls are deprecated compatibility adapters.
 
 ---
 
@@ -314,7 +317,7 @@ All protocols (REST, gRPC, PostgreSQL wire, Arrow Flight) use the same detection
 - ✅ **NEW**: Cost-based query optimization (TD-035 Phase 3)
 - ✅ **NEW**: Streaming support for large traversals (TD-035)
 
-**API**: REST `/api/v1/graph/query`, gRPC `GraphQuery()`, SQL `GRAPH_QUERY()`
+**API**: SQL `GRAPH_QUERY()` and record-backed graph projections. REST/gRPC v1 graph calls are deprecated compatibility facades until the record-native graph surface is promoted.
 
 **Performance**: 150+ tests, production-ready for in-memory graphs
 
@@ -354,7 +357,7 @@ All protocols (REST, gRPC, PostgreSQL wire, Arrow Flight) use the same detection
 - ✅ Aggregation functions
 - ✅ Zone map pruning
 
-**API**: REST `/api/v1/logs`, REST `/api/v1/metrics`, SQL `LOGS()`, SQL `METRICS()`
+**API**: SQL `LOGS()`, SQL `METRICS()`, and canonical record-backed observability paths. REST `/api/v1/logs` and `/api/v1/metrics` are deprecated compatibility facades.
 
 ---
 

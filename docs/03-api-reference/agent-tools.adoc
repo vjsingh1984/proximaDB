@@ -6,6 +6,14 @@ walk a graph step by step without the database materializing a subgraph
 that won't fit in the agent's context window. The patterns follow
 arXiv:2604.01610 (Ghandi/Mahyar/Klaiman 2026, GraphWalk).
 
+[NOTE]
+====
+These REST tool endpoints currently live under the deprecated REST v1 graph
+compatibility facade. Responses include deprecation metadata. The machine-readable
+tool schema remains the source of truth while graph APIs converge on canonical
+record-backed query surfaces.
+====
+
 == Tool catalog
 
 |===

@@ -36,11 +36,13 @@ impl EntityServiceImpl {
     }
 
     fn not_configured() -> Status {
-        Status::unimplemented("Entity service not configured on this node")
+        super::deprecated_status(Status::unimplemented(
+            "Entity service not configured on this node",
+        ))
     }
 
     fn port_err(e: anyhow::Error) -> Status {
-        Status::internal(e.to_string())
+        super::deprecated_status(Status::internal(e.to_string()))
     }
 }
 
@@ -53,7 +55,7 @@ impl EntityService for EntityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.upsert_entity(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -64,7 +66,7 @@ impl EntityService for EntityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.get_entity(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -75,7 +77,7 @@ impl EntityService for EntityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.delete_entity(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -86,7 +88,7 @@ impl EntityService for EntityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.search_entities(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 }

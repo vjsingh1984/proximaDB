@@ -333,15 +333,17 @@ pub async fn delete_collection(
 
 /// Build the collection lifecycle router.
 pub fn create_collection_router() -> Router<RestAppState> {
-    Router::new()
-        .route(
-            "/api/v1/collections",
-            post(collection_operation).get(list_collections),
-        )
-        .route(
-            "/api/v1/collections/:collection_id",
-            get(get_collection).delete(delete_collection),
-        )
+    super::with_v1_compatibility_headers(
+        Router::new()
+            .route(
+                "/api/v1/collections",
+                post(collection_operation).get(list_collections),
+            )
+            .route(
+                "/api/v1/collections/:collection_id",
+                get(get_collection).delete(delete_collection),
+            ),
+    )
 }
 
 #[cfg(test)]

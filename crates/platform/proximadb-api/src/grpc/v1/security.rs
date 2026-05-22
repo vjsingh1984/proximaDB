@@ -35,11 +35,13 @@ impl SecurityServiceImpl {
     }
 
     fn not_configured() -> Status {
-        Status::not_found("Security service not configured on this node")
+        super::deprecated_status(Status::not_found(
+            "Security service not configured on this node",
+        ))
     }
 
     fn port_err(e: anyhow::Error) -> Status {
-        Status::internal(e.to_string())
+        super::deprecated_status(Status::internal(e.to_string()))
     }
 }
 
@@ -52,7 +54,7 @@ impl SecurityService for SecurityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.validate_access(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -63,7 +65,7 @@ impl SecurityService for SecurityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.batch_validate_access(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -74,7 +76,7 @@ impl SecurityService for SecurityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.create_role(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -85,7 +87,7 @@ impl SecurityService for SecurityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.list_roles(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -96,7 +98,7 @@ impl SecurityService for SecurityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.delete_role(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -107,7 +109,7 @@ impl SecurityService for SecurityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.assign_role(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -118,7 +120,7 @@ impl SecurityService for SecurityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.revoke_role(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -129,7 +131,7 @@ impl SecurityService for SecurityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.list_user_roles(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -140,7 +142,7 @@ impl SecurityService for SecurityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.list_audit_events(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -151,7 +153,7 @@ impl SecurityService for SecurityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.get_tenant_security_policy(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -162,7 +164,7 @@ impl SecurityService for SecurityServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.set_tenant_security_policy(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 }

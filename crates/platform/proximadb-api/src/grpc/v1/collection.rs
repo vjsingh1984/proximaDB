@@ -61,10 +61,16 @@ impl v1::collection_service_server::CollectionService for CollectionServiceImpl 
             .port
             .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
             .await
-            .map_err(|e| Status::internal(format!("CreateCollection failed: {e}")))?;
+            .map_err(|e| {
+                super::deprecated_status(Status::internal(format!("CreateCollection failed: {e}")))
+            })?;
         resp.collection
-            .ok_or_else(|| Status::internal("CreateCollection returned no collection"))
-            .map(Response::new)
+            .ok_or_else(|| {
+                super::deprecated_status(Status::internal(
+                    "CreateCollection returned no collection",
+                ))
+            })
+            .map(super::deprecated_response)
     }
 
     async fn get_collection(
@@ -85,10 +91,12 @@ impl v1::collection_service_server::CollectionService for CollectionServiceImpl 
             .port
             .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
             .await
-            .map_err(|e| Status::internal(format!("GetCollection failed: {e}")))?;
+            .map_err(|e| {
+                super::deprecated_status(Status::internal(format!("GetCollection failed: {e}")))
+            })?;
         resp.collection
-            .ok_or_else(|| Status::not_found("Collection not found"))
-            .map(Response::new)
+            .ok_or_else(|| super::deprecated_status(Status::not_found("Collection not found")))
+            .map(super::deprecated_response)
     }
 
     async fn list_collections(
@@ -108,8 +116,10 @@ impl v1::collection_service_server::CollectionService for CollectionServiceImpl 
             .port
             .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
             .await
-            .map_err(|e| Status::internal(format!("ListCollections failed: {e}")))?;
-        Ok(Response::new(v1::ListCollectionsResponse {
+            .map_err(|e| {
+                super::deprecated_status(Status::internal(format!("ListCollections failed: {e}")))
+            })?;
+        Ok(super::deprecated_response(v1::ListCollectionsResponse {
             collections: resp.collections,
         }))
     }
@@ -131,8 +141,10 @@ impl v1::collection_service_server::CollectionService for CollectionServiceImpl 
         self.port
             .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
             .await
-            .map_err(|e| Status::internal(format!("DeleteCollection failed: {e}")))?;
-        Ok(Response::new(v1::DeleteCollectionResponse {
+            .map_err(|e| {
+                super::deprecated_status(Status::internal(format!("DeleteCollection failed: {e}")))
+            })?;
+        Ok(super::deprecated_response(v1::DeleteCollectionResponse {
             success: true,
         }))
     }

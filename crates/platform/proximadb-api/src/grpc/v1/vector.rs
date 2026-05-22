@@ -54,8 +54,10 @@ impl VectorService for VectorServiceImpl {
         self.port
             .handle_vector_batch_v1_for_tenant(req, tenant_id.as_deref())
             .await
-            .map(Response::new)
-            .map_err(|e| Status::internal(format!("Vector batch failed: {e}")))
+            .map(super::deprecated_response)
+            .map_err(|e| {
+                super::deprecated_status(Status::internal(format!("Vector batch failed: {e}")))
+            })
     }
 
     async fn vector_search(
@@ -68,14 +70,18 @@ impl VectorService for VectorServiceImpl {
             self.port
                 .handle_vector_search_v1_for_tenant(req, tenant_id.as_deref())
                 .await
-                .map(Response::new)
-                .map_err(|e| Status::internal(format!("Vector search failed: {e}")))
+                .map(super::deprecated_response)
+                .map_err(|e| {
+                    super::deprecated_status(Status::internal(format!("Vector search failed: {e}")))
+                })
         } else {
             self.port
                 .handle_vector_search_v1(req)
                 .await
-                .map(Response::new)
-                .map_err(|e| Status::internal(format!("Vector search failed: {e}")))
+                .map(super::deprecated_response)
+                .map_err(|e| {
+                    super::deprecated_status(Status::internal(format!("Vector search failed: {e}")))
+                })
         }
     }
 
@@ -94,8 +100,10 @@ impl VectorService for VectorServiceImpl {
                 tenant_id.as_deref(),
             )
             .await
-            .map(Response::new)
-            .map_err(|e| Status::internal(format!("Vector get failed: {e}")))
+            .map(super::deprecated_response)
+            .map_err(|e| {
+                super::deprecated_status(Status::internal(format!("Vector get failed: {e}")))
+            })
     }
 
     type VectorSearchStreamStream = VectorSearchStreamStream;
@@ -104,9 +112,9 @@ impl VectorService for VectorServiceImpl {
         &self,
         _request: Request<v1::VectorSearchRequest>,
     ) -> Result<Response<Self::VectorSearchStreamStream>, Status> {
-        Err(Status::unimplemented(
+        Err(super::deprecated_status(Status::unimplemented(
             "Streaming vector search is not yet available via this endpoint",
-        ))
+        )))
     }
 }
 
@@ -131,13 +139,27 @@ mod tests {
         let service = VectorServiceImpl::new(port.clone());
         let _server = VectorServiceImpl::new(port.clone()).into_server();
 
-        service
+        let response = service
             .vector_search(Request::new(v1::VectorSearchRequest {
                 collection_id: "docs".to_string(),
                 ..v1::VectorSearchRequest::default()
             }))
             .await
             .unwrap();
+        assert_eq!(
+            response
+                .metadata()
+                .get("deprecation")
+                .and_then(|value| value.to_str().ok()),
+            Some("true")
+        );
+        assert_eq!(
+            response
+                .metadata()
+                .get("x-proximadb-api-status")
+                .and_then(|value| value.to_str().ok()),
+            Some("deprecated-compatibility")
+        );
         service
             .vector_search(tenant_request(v1::VectorSearchRequest {
                 collection_id: "tenant_docs".to_string(),
@@ -230,5 +252,11 @@ mod tests {
         };
         assert_eq!(err.code(), Code::Unimplemented);
         assert!(err.message().contains("Streaming vector search"));
+        assert_eq!(
+            err.metadata()
+                .get("deprecation")
+                .and_then(|value| value.to_str().ok()),
+            Some("true")
+        );
     }
 }

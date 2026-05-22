@@ -354,17 +354,19 @@ pub async fn vector_search_with_metadata(
 /// All routes are registered against `RestAppState`; callers `.with_state(state)` this
 /// before nesting it into the main application router.
 pub fn create_vector_router() -> Router<RestAppState> {
-    Router::new()
-        .route("/api/v1/search", post(vector_search))
-        .route(
-            "/api/v1/search/with_metadata",
-            post(vector_search_with_metadata),
-        )
-        .route("/api/v1/vectors/batch", post(vector_batch))
-        .route(
-            "/api/v1/vectors/:collection_id/:vector_id",
-            get(get_vector).delete(delete_vector),
-        )
+    super::with_v1_compatibility_headers(
+        Router::new()
+            .route("/api/v1/search", post(vector_search))
+            .route(
+                "/api/v1/search/with_metadata",
+                post(vector_search_with_metadata),
+            )
+            .route("/api/v1/vectors/batch", post(vector_batch))
+            .route(
+                "/api/v1/vectors/:collection_id/:vector_id",
+                get(get_vector).delete(delete_vector),
+            ),
+    )
 }
 
 #[cfg(test)]

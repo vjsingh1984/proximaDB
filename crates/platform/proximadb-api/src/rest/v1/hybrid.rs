@@ -357,14 +357,18 @@ pub async fn readiness_check(State(_state): State<RestAppState>) -> impl IntoRes
 
 /// Build the hybrid search router (BM25 + vector search and indexing).
 pub fn create_hybrid_search_router() -> Router<HybridRestState> {
-    Router::new()
-        .route("/api/v1/hybrid/search", post(hybrid_search))
-        .route("/api/v1/hybrid/index", post(hybrid_index))
+    super::with_v1_compatibility_headers(
+        Router::new()
+            .route("/api/v1/hybrid/search", post(hybrid_search))
+            .route("/api/v1/hybrid/index", post(hybrid_index)),
+    )
 }
 
 /// Build the SQL query router.
 pub fn create_sql_router() -> Router<RestAppState> {
-    Router::new().route("/api/v1/sql/execute", post(execute_sql))
+    super::with_v1_compatibility_headers(
+        Router::new().route("/api/v1/sql/execute", post(execute_sql)),
+    )
 }
 
 /// Build the health probe router.

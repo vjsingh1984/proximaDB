@@ -41,11 +41,13 @@ impl GraphServiceImpl {
     }
 
     fn not_configured() -> Status {
-        Status::unimplemented("Graph service not configured on this node")
+        super::deprecated_status(Status::unimplemented(
+            "Graph service not configured on this node",
+        ))
     }
 
     fn port_err(e: anyhow::Error) -> Status {
-        Status::internal(e.to_string())
+        super::deprecated_status(Status::internal(e.to_string()))
     }
 }
 
@@ -60,7 +62,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.create_node(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -68,7 +70,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.get_node(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -79,7 +81,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.update_node(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -90,7 +92,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.delete_node(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -103,7 +105,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.create_edge(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -111,7 +113,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.get_edge(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -122,7 +124,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.update_edge(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -133,7 +135,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.delete_edge(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -146,7 +148,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.query_nodes(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -157,7 +159,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.query_edges(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -168,7 +170,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.execute_query(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -179,7 +181,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.get_neighbors(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -192,7 +194,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.traverse_graph(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -217,7 +219,7 @@ impl GraphServiceTrait for GraphServiceImpl {
             }
         });
 
-        Ok(Response::new(ReceiverStream::new(rx)))
+        Ok(super::deprecated_response(ReceiverStream::new(rx)))
     }
 
     // ── Analytics ─────────────────────────────────────────────────────────
@@ -229,7 +231,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.get_graph_stats(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -240,7 +242,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.shortest_path(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -251,7 +253,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.get_connected_components(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -262,7 +264,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.has_cycle(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -275,7 +277,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.add_unique_constraint(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -286,7 +288,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.remove_unique_constraint(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -299,7 +301,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.batch_create_nodes(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -310,7 +312,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.batch_create_edges(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -323,7 +325,7 @@ impl GraphServiceTrait for GraphServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.execute_hybrid_query(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 }

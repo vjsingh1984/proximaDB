@@ -36,11 +36,13 @@ impl DocumentServiceImpl {
     }
 
     fn not_configured() -> Status {
-        Status::unimplemented("Document service not configured on this node")
+        super::deprecated_status(Status::unimplemented(
+            "Document service not configured on this node",
+        ))
     }
 
     fn port_err(e: anyhow::Error) -> Status {
-        Status::internal(e.to_string())
+        super::deprecated_status(Status::internal(e.to_string()))
     }
 }
 
@@ -55,7 +57,7 @@ impl DocumentService for DocumentServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.create_collection(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -66,7 +68,7 @@ impl DocumentService for DocumentServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.list_collections(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -77,7 +79,7 @@ impl DocumentService for DocumentServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.delete_collection(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -90,7 +92,7 @@ impl DocumentService for DocumentServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.insert_document(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -101,7 +103,7 @@ impl DocumentService for DocumentServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.get_document(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -112,7 +114,7 @@ impl DocumentService for DocumentServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.update_document(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -123,7 +125,7 @@ impl DocumentService for DocumentServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.delete_document(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -136,7 +138,7 @@ impl DocumentService for DocumentServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.query_documents(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -147,7 +149,7 @@ impl DocumentService for DocumentServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.aggregate_documents(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 }

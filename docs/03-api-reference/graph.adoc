@@ -4,12 +4,17 @@
 :icons: font
 
 [.lead]
-Graph API for nodes, edges, and traversal. Base path: `/api/v1/graph`.
+Graph API for nodes, edges, and traversal. Current REST graph routes are v1
+compatibility facades under `/api/v1/graph`; they remain available for existing
+clients while graph durability converges on canonical `ProximaRecord` and shared
+query surfaces.
 
 == Status Notes
 
 * ORION engine is the default (in‑memory CSR).
 * Graph metadata persistence and schema updates are in progress.
+* REST `/api/v1/graph/*` responses emit deprecation metadata. New cross-model
+  query work should prefer SQL/pgwire and record-backed graph projections.
 
 == Quick Reference
 
@@ -35,7 +40,7 @@ graph is too large to materialize subgraphs in the agent's context window.
 
 == Legacy Endpoint Deprecation And Migration
 
-Legacy compatibility endpoints are deprecated and redirect to canonical multi-graph routes.
+Legacy compatibility endpoints are deprecated and redirect to explicit multi-graph routes inside the v1 compatibility namespace.
 
 * Effective deprecation: March 2, 2026
 * Redirect behavior: `308 Permanent Redirect`
@@ -71,7 +76,7 @@ curl -i -X POST http://localhost:5678/api/v1/graph/nodes
 # X-ProximaDB-Canonical-Route: /api/v1/graph/graphs/default/nodes
 ----
 
-Direct canonical request (preferred):
+Direct multi-graph compatibility request (preferred when using the v1 graph facade):
 
 [source,bash]
 ----

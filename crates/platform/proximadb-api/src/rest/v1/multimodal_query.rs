@@ -395,16 +395,18 @@ async fn get_prepared_stats(
 /// All routes delegate to `UnifiedQueryPort`.  The root-crate implementation
 /// returns `501 Not Implemented` until Phase 9.9/9.10 is complete.
 pub fn create_multimodal_router() -> Router<UnifiedQueryRestState> {
-    Router::new()
-        .route("/execute", post(execute_query))
-        .route("/multi-model", post(execute_multi_model_query))
-        .route("/federated", post(execute_federated_query))
-        .route("/distributed", post(execute_distributed_query))
-        .route("/explain", post(explain_query))
-        .route("/prepare", post(prepare_statement))
-        .route("/execute/:statement_id", post(execute_prepared_statement))
-        .route("/prepared/:statement_id", delete(delete_prepared_statement))
-        .route("/prepared/stats", post(get_prepared_stats))
+    super::with_v1_compatibility_headers(
+        Router::new()
+            .route("/execute", post(execute_query))
+            .route("/multi-model", post(execute_multi_model_query))
+            .route("/federated", post(execute_federated_query))
+            .route("/distributed", post(execute_distributed_query))
+            .route("/explain", post(explain_query))
+            .route("/prepare", post(prepare_statement))
+            .route("/execute/:statement_id", post(execute_prepared_statement))
+            .route("/prepared/:statement_id", delete(delete_prepared_statement))
+            .route("/prepared/stats", post(get_prepared_stats)),
+    )
 }
 
 /// Build a standalone router for `POST /api/v1/sql/explain`.
@@ -413,7 +415,9 @@ pub fn create_multimodal_router() -> Router<UnifiedQueryRestState> {
 /// the same explanation plan as `/api/v1/unified/explain` but under
 /// the SQL-oriented URL that legacy clients expect.
 pub fn create_explain_router() -> Router<UnifiedQueryRestState> {
-    Router::new().route("/api/v1/sql/explain", post(explain_query))
+    super::with_v1_compatibility_headers(
+        Router::new().route("/api/v1/sql/explain", post(explain_query)),
+    )
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

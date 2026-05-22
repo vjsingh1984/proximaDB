@@ -8,13 +8,14 @@ Developer‑first REST API reference. Base URL: `http://localhost:5678`.
 
 == Status Notes
 
-* Vector APIs are stable.
+* Canonical REST record/table APIs live under `/api/v2`.
+* REST `/api/v1/*` routes are deprecated compatibility facades for existing clients and emit deprecation metadata.
 * Document, graph, and observability APIs are beta.
-* **Unified multi-model query is stable** - Cross-model SQL with VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY extensions.
+* Cross-model SQL should prefer pgwire/SQL. REST v1 unified query routes remain compatibility facades while record-native query APIs mature.
 
 === Key Differentiator
 
-ProximaDB's multi-model query engine enables cross-model joins that are impossible with single-model databases (Pinecone, Weaviate, Milvus). Use `POST /api/v1/unified/federated` for SQL with extensions.
+ProximaDB's multi-model query engine enables cross-model joins that are impossible with single-model databases (Pinecone, Weaviate, Milvus). Use pgwire SQL as the canonical query surface; `POST /api/v1/unified/federated` remains available only as a deprecated REST compatibility facade.
 
 == Quick Reference
 
@@ -22,20 +23,13 @@ ProximaDB's multi-model query engine enables cross-model joins that are impossib
 | Area | Method | Endpoint | Notes
 
 | Health | GET | `/health` | Server health check
-| Collections | POST | `/api/v1/collections` | Create vector collection
-| Vector search | POST | `/api/v1/search` | Single-model vector search
-| Documents | POST | `/api/v1/documents/collections/:collection/documents` | Document insert
-| Graph traversal | POST | `/api/v1/graph/graphs/:graph_id/traverse` | Graph traversal
-| Graph walk (agentic) | POST | `/api/v1/graph/graphs/:graph_id/walk` | Bounded BFS for LLM tool-calling (TD-046)
-| Graph step (agentic) | POST | `/api/v1/graph/graphs/:graph_id/step` | One-hop neighbors for LLM tool-calling (TD-046)
-| Entanglement Index | POST | `/api/v1/analytics/entanglement` | Compute EI over caller-supplied chunks (TD-043)
-| Log ingest | POST | `/api/v1/observability/namespaces/:namespace/logs` | Log ingestion
-| Log search | POST | `/api/v1/observability/namespaces/:namespace/logs/_search` | Log query
-| Metric aggregate | POST | `/api/v1/observability/namespaces/:namespace/metrics/_aggregate` | Metric aggregation
-| **Federated query** | POST | `/api/v1/unified/federated` | **Cross-model SQL with extensions**
-| Unified execute | POST | `/api/v1/unified/execute` | Auto-routing query
-| Multi-model | POST | `/api/v1/unified/multi-model` | Programmatic multi-model
-| Explain | POST | `/api/v1/unified/explain` | Query plan explanation
+| Collections | POST | `/api/v2/collections` | Canonical collection/table creation
+| Record batch | POST | `/api/v2/collections/:collection/records/batch` | Canonical ProximaRecord writes
+| Record fetch | GET | `/api/v2/collections/:collection/records/:record` | Canonical ProximaRecord fetch
+| Record delete | DELETE | `/api/v2/collections/:collection/records/:record` | Canonical ProximaRecord delete
+| Record/vector search | POST | `/api/v2/collections/:collection/search` | Canonical record search
+| Query facade | POST | `/api/v2/query` | Shared query facade
+| REST v1 compatibility | Various | `/api/v1/*` | Deprecated compatibility facades; new clients should avoid these
 |===
 
 ---
@@ -51,7 +45,61 @@ curl http://localhost:5678/health
 
 ---
 
-== Vector Collections
+== Canonical Record Collections
+
+=== POST /api/v2/collections
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v2/collections \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "docs",
+    "schema": {
+      "fields": [
+        {"name": "embedding", "type": "vector", "dimension": 768},
+        {"name": "category", "type": "string"}
+      ]
+    }
+  }'
+----
+
+=== POST /api/v2/collections/:collection/records/batch
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v2/collections/docs/records/batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "records": [
+      {
+        "id": "doc_1",
+        "embedding": [0.1, 0.2],
+        "props": {"category": "tech"}
+      }
+    ]
+  }'
+----
+
+=== POST /api/v2/collections/:collection/search
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v2/collections/docs/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vector": [0.1, 0.2],
+    "top_k": 10,
+    "filter": {"category": "tech"}
+  }'
+----
+
+== REST v1 Compatibility Examples
+
+These routes remain for existing clients. They are deprecated compatibility
+facades and responses include `Deprecation: true`,
+`X-ProximaDB-API-Status: deprecated-compatibility`, and replacement-surface
+headers.
 
 === POST /api/v1/collections
 
@@ -355,4 +403,3 @@ Response:
   "estimated_total_cost": 3.0
 }
 ----
-

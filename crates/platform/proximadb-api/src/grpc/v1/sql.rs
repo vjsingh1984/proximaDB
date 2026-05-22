@@ -48,8 +48,10 @@ impl SqlService for SqlServiceImpl {
         self.port
             .execute_sql_v1(req.query, parameters, req.collection)
             .await
-            .map(Response::new)
-            .map_err(|e| Status::internal(format!("SQL execution failed: {e}")))
+            .map(super::deprecated_response)
+            .map_err(|e| {
+                super::deprecated_status(Status::internal(format!("SQL execution failed: {e}")))
+            })
     }
 }
 

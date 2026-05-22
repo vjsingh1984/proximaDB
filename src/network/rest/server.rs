@@ -830,7 +830,9 @@ impl RestServer {
     /// Log available endpoints
     fn log_endpoints(bind_addr: &SocketAddr, tls: bool) {
         let protocol = if tls { "https" } else { "http" };
-        tracing::info!("REST server using v1 handlers with collection endpoints enabled");
+        tracing::info!(
+            "REST server using canonical v2 record routes plus v1 compatibility adapters"
+        );
         tracing::info!("REST server listening on {}://{}", protocol, bind_addr);
         tracing::info!("Compression enabled: deflate, gzip, zstd, brotli (in priority order)");
         tracing::info!("Available endpoints:");
@@ -839,13 +841,22 @@ impl RestServer {
         tracing::info!("   GET    /metrics                          - Prometheus metrics");
         tracing::info!("   GET    /metrics/json                     - JSON metrics");
         tracing::info!("   GET    /metrics/health                   - Metrics health check");
-        tracing::info!("   POST   /api/v1/search                    - Vector search");
         tracing::info!(
-            "   POST   /api/v1/vectors/batch             - Migration alias over record writes"
+            "   POST   /api/v2/collections/:id/search     - Canonical record/vector search"
+        );
+        tracing::info!(
+            "   POST   /api/v2/collections/:id/records/batch - Canonical ProximaRecord writes"
+        );
+        tracing::info!("Compatibility endpoints:");
+        tracing::info!(
+            "   POST   /api/v1/search                    - Deprecated vector search adapter"
+        );
+        tracing::info!(
+            "   POST   /api/v1/vectors/batch             - Deprecated alias over record writes"
         );
         tracing::info!("   POST   /api/v1/progressive/search/:id    - Progressive search (JSON)");
         tracing::info!(
-            "   POST   /api/v1/collections               - Unified collection operations"
+            "   POST   /api/v1/collections               - Deprecated collection compatibility"
         );
         tracing::info!("   GET    /api/v1/collections               - List collections");
         tracing::info!("   GET    /api/v1/collections/:id           - Get collection by ID");

@@ -36,11 +36,13 @@ impl HybridSearchServiceImpl {
     }
 
     fn not_configured() -> Status {
-        Status::unimplemented("Hybrid search service not configured on this node")
+        super::deprecated_status(Status::unimplemented(
+            "Hybrid search service not configured on this node",
+        ))
     }
 
     fn port_err(e: anyhow::Error) -> Status {
-        Status::internal(e.to_string())
+        super::deprecated_status(Status::internal(e.to_string()))
     }
 }
 
@@ -53,7 +55,7 @@ impl HybridSearchService for HybridSearchServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.hybrid_search(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -64,7 +66,7 @@ impl HybridSearchService for HybridSearchServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.list_fusion_strategies(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 }

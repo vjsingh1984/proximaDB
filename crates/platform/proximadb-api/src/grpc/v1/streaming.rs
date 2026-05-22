@@ -50,11 +50,13 @@ impl StreamingServiceImpl {
     }
 
     fn not_configured() -> Status {
-        Status::unimplemented("Streaming session management not configured on this node")
+        super::deprecated_status(Status::unimplemented(
+            "Streaming session management not configured on this node",
+        ))
     }
 
     fn port_err(e: anyhow::Error) -> Status {
-        Status::internal(e.to_string())
+        super::deprecated_status(Status::internal(e.to_string()))
     }
 }
 
@@ -68,9 +70,9 @@ impl StreamingService for StreamingServiceImpl {
         &self,
         _request: Request<tonic::Streaming<StreamInsertRequest>>,
     ) -> Result<Response<Self::StreamInsertStream>, Status> {
-        Err(Status::unimplemented(
+        Err(super::deprecated_status(Status::unimplemented(
             "stream_insert: bidirectional streaming not yet supported via port abstraction",
-        ))
+        )))
     }
 
     type SubscribeQueryStream = SubscribeQueryStream;
@@ -79,18 +81,18 @@ impl StreamingService for StreamingServiceImpl {
         &self,
         _request: Request<SubscribeRequest>,
     ) -> Result<Response<Self::SubscribeQueryStream>, Status> {
-        Err(Status::unimplemented(
+        Err(super::deprecated_status(Status::unimplemented(
             "subscribe_query: server streaming not yet supported via port abstraction",
-        ))
+        )))
     }
 
     async fn batch_stream(
         &self,
         _request: Request<tonic::Streaming<VectorBatch>>,
     ) -> Result<Response<BatchStreamResponse>, Status> {
-        Err(Status::unimplemented(
+        Err(super::deprecated_status(Status::unimplemented(
             "batch_stream: client streaming not yet supported via port abstraction",
-        ))
+        )))
     }
 
     // ── Unary session management RPCs (delegate through StreamingPort) ───────
@@ -102,7 +104,7 @@ impl StreamingService for StreamingServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.create_session(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -113,7 +115,7 @@ impl StreamingService for StreamingServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.close_session(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 
@@ -124,7 +126,7 @@ impl StreamingService for StreamingServiceImpl {
         let port = self.port.as_ref().ok_or_else(Self::not_configured)?;
         port.get_session_status(request.into_inner())
             .await
-            .map(Response::new)
+            .map(super::deprecated_response)
             .map_err(Self::port_err)
     }
 }

@@ -2,6 +2,10 @@
 
 **Running ProximaDB in production**
 
+Operational examples that still use `/api/v1/admin/*` are compatibility
+endpoints and emit deprecation metadata. Prefer canonical control-plane APIs as
+they are promoted.
+
 ```mermaid
 %%{init: {"theme": "neutral"}}%%
 flowchart TB

@@ -160,37 +160,39 @@ pub struct AggregateResponse {
 // ── Router ────────────────────────────────────────────────────────────────────
 
 pub fn create_document_router() -> Router<DocumentRestState> {
-    Router::new()
-        .route(
-            "/collections",
-            post(create_collection).get(list_collections),
-        )
-        .route(
-            "/collections/:collection",
-            get(get_collection_info).delete(delete_collection),
-        )
-        .route(
-            "/collections/:collection/documents",
-            post(insert_document).get(query_documents),
-        )
-        .route(
-            "/collections/:collection/documents/:id",
-            get(get_document)
-                .delete(delete_document)
-                .patch(update_document),
-        )
-        .route(
-            "/collections/:collection/documents/_batch",
-            post(batch_insert_documents),
-        )
-        .route(
-            "/collections/:collection/documents/_aggregate",
-            post(aggregate_documents),
-        )
-        .route(
-            "/collections/:collection/indexes",
-            post(create_index).get(list_indexes),
-        )
+    super::with_v1_compatibility_headers(
+        Router::new()
+            .route(
+                "/collections",
+                post(create_collection).get(list_collections),
+            )
+            .route(
+                "/collections/:collection",
+                get(get_collection_info).delete(delete_collection),
+            )
+            .route(
+                "/collections/:collection/documents",
+                post(insert_document).get(query_documents),
+            )
+            .route(
+                "/collections/:collection/documents/:id",
+                get(get_document)
+                    .delete(delete_document)
+                    .patch(update_document),
+            )
+            .route(
+                "/collections/:collection/documents/_batch",
+                post(batch_insert_documents),
+            )
+            .route(
+                "/collections/:collection/documents/_aggregate",
+                post(aggregate_documents),
+            )
+            .route(
+                "/collections/:collection/indexes",
+                post(create_index).get(list_indexes),
+            ),
+    )
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
