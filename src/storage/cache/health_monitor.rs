@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
-use crate::metrics::CacheCacheHealthMetricsSnapshot;
+use crate::metrics::CacheMetricsSnapshot;
 use crate::storage::cache::config::CacheConfig;
 use crate::storage::cache::{CacheType, CrossCacheOrchestrator};
 
@@ -24,7 +24,7 @@ pub struct CacheMonitoringDashboard {
     /// Historical metrics
     history: Arc<RwLock<MetricsHistory>>,
 
-    /// Alert manager
+    /// CacheHealthAlert manager
     alert_manager: Arc<AlertManager>,
 
     /// Performance profiler
@@ -51,7 +51,7 @@ pub struct CacheHealthMetricsSnapshot {
     /// When the snapshot was taken
     pub timestamp: SystemTime,
     /// Cache performance metrics
-    pub cache_metrics: CacheCacheHealthMetricsSnapshot,
+    pub cache_metrics: CacheMetricsSnapshot,
     /// Memory pressure (0.0-1.0)
     pub memory_pressure: f64,
     /// CPU usage (0.0-1.0)
@@ -60,17 +60,17 @@ pub struct CacheHealthMetricsSnapshot {
     pub io_wait: f64,
 }
 
-/// Alert manager for threshold monitoring
+/// CacheHealthAlert manager for threshold monitoring
 ///
 /// Monitors cache metrics and triggers alerts when thresholds are exceeded.
 pub struct AlertManager {
     /// Active alerts
-    active_alerts: Arc<RwLock<Vec<Alert>>>,
+    active_alerts: Arc<RwLock<Vec<CacheHealthAlert>>>,
 
-    /// Alert thresholds from config
+    /// CacheHealthAlert thresholds from config
     _thresholds: AlertThresholds,
 
-    /// Alert handlers
+    /// CacheHealthAlert handlers
     _handlers: Vec<Box<dyn AlertHandler + Send + Sync>>,
 }
 
@@ -78,10 +78,10 @@ pub struct AlertManager {
 ///
 /// Represents a cache-related alert triggered when a threshold is exceeded.
 #[derive(Debug, Clone)]
-pub struct Alert {
+pub struct CacheHealthAlert {
     /// Unique alert identifier
     pub id: String,
-    /// Alert severity level
+    /// CacheHealthAlert severity level
     pub severity: AlertSeverity,
     /// Human-readable alert message
     pub message: String,
@@ -95,7 +95,7 @@ pub struct Alert {
     pub threshold: f64,
 }
 
-/// Alert severity levels
+/// CacheHealthAlert severity levels
 ///
 /// Indicates the urgency and impact of an alert.
 #[derive(Debug, Clone)]
@@ -108,7 +108,7 @@ pub enum AlertSeverity {
     Critical,
 }
 
-/// Alert thresholds configuration
+/// CacheHealthAlert thresholds configuration
 ///
 /// Defines threshold values for triggering cache alerts.
 #[derive(Debug, Clone)]
@@ -125,13 +125,13 @@ pub struct AlertThresholds {
     _max_prefetch_queue: usize,
 }
 
-/// Alert handler trait
+/// CacheHealthAlert handler trait
 ///
 /// Defines the interface for handling cache alerts.
 trait AlertHandler: Send + Sync {
     /// Handle an alert
     #[allow(dead_code)]
-    fn handle_alert(&self, alert: &Alert);
+    fn handle_alert(&self, alert: &CacheHealthAlert);
 }
 
 /// Performance profiler for detailed analysis
@@ -213,12 +213,12 @@ impl CacheMonitoringDashboard {
             loop {
                 interval.tick().await;
 
-                // Collect metrics - convert from CacheMetrics to CacheCacheHealthMetricsSnapshot
+                // Collect metrics - convert from CacheMetrics to CacheMetricsSnapshot
                 let cache_metrics = orchestrator.metrics();
                 use crate::metrics::cache::{
                     CoordinationMetrics, EvictionMetrics, MemoryMetrics, TierMetrics,
                 };
-                let metrics = CacheCacheHealthMetricsSnapshot {
+                let metrics = CacheMetricsSnapshot {
                     overall_hit_rate: cache_metrics.hit_rate(),
                     l1_metrics: TierMetrics {
                         hits: cache_metrics
@@ -321,12 +321,12 @@ impl CacheMonitoringDashboard {
     pub async fn get_dashboard_state(&self) -> DashboardState {
         let history = self.history.read().await;
         let alerts = self.alert_manager.active_alerts.read().await;
-        // Convert from CacheMetrics to CacheCacheHealthMetricsSnapshot
+        // Convert from CacheMetrics to CacheMetricsSnapshot
         let cache_metrics = self.orchestrator.metrics();
         use crate::metrics::cache::{
             CoordinationMetrics, EvictionMetrics, MemoryMetrics, TierMetrics,
         };
-        let metrics = CacheCacheHealthMetricsSnapshot {
+        let metrics = CacheMetricsSnapshot {
             overall_hit_rate: cache_metrics.hit_rate() * 100.0,
             l1_metrics: TierMetrics {
                 hits: cache_metrics.tier_hits(crate::storage::cache::backend::CacheTier::L1),
@@ -437,7 +437,7 @@ impl CacheMonitoringDashboard {
     }
 
     /// Get optimization suggestions based on metrics
-    async fn get_optimization_suggestions(&self, metrics: &CacheCacheHealthMetricsSnapshot) -> Vec<String> {
+    async fn get_optimization_suggestions(&self, metrics: &CacheMetricsSnapshot) -> Vec<String> {
         let mut suggestions = Vec::new();
 
         if metrics.overall_hit_rate < 0.5 {
@@ -486,9 +486,9 @@ impl CacheMonitoringDashboard {
 #[derive(Debug, Clone)]
 pub struct DashboardState {
     /// Current cache metrics snapshot
-    pub current_metrics: CacheCacheHealthMetricsSnapshot,
+    pub current_metrics: CacheMetricsSnapshot,
     /// Currently active alerts
-    pub active_alerts: Vec<Alert>,
+    pub active_alerts: Vec<CacheHealthAlert>,
     /// Historical metrics data
     pub recent_history: Vec<CacheHealthMetricsSnapshot>,
     /// Per-cache status information
@@ -527,13 +527,13 @@ impl AlertManager {
         }
     }
 
-    pub async fn get_active_alerts(&self) -> Vec<Alert> {
+    pub async fn get_active_alerts(&self) -> Vec<CacheHealthAlert> {
         self.active_alerts.read().await.clone()
     }
 
     pub async fn check_alerts(
         &self,
-        metrics: &CacheCacheHealthMetricsSnapshot,
+        metrics: &CacheMetricsSnapshot,
         thresholds: &crate::storage::cache::config::AlertThresholds,
     ) {
         let mut alerts = self.active_alerts.write().await;
@@ -541,7 +541,7 @@ impl AlertManager {
 
         // Check hit rate
         if metrics.overall_hit_rate < thresholds.min_hit_rate {
-            alerts.push(Alert {
+            alerts.push(CacheHealthAlert {
                 id: "low_hit_rate".to_string(),
                 severity: AlertSeverity::Warning,
                 message: format!(
@@ -559,7 +559,7 @@ impl AlertManager {
         let memory_usage = metrics.memory_usage.used_bytes as f64
             / metrics.memory_usage.total_allocated_bytes as f64;
         if memory_usage > thresholds.max_memory_usage {
-            alerts.push(Alert {
+            alerts.push(CacheHealthAlert {
                 id: "high_memory_usage".to_string(),
                 severity: AlertSeverity::Critical,
                 message: format!(

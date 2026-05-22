@@ -23,7 +23,7 @@
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use tokio::sync::RwLock;
@@ -141,6 +141,14 @@ struct Inner {
     stats: PlanCacheStats,
 }
 
+/// Process-wide PlanCache singleton — lazy-initialized on first
+/// access. The cache is `Clone`-able (it wraps an `Arc<RwLock<…>>`)
+/// so the singleton stays cheap to hand to per-request handlers.
+///
+/// Production call sites use `global()` for a shared cache; tests
+/// construct their own with `default()` to keep test isolation.
+static GLOBAL_PLAN_CACHE: OnceLock<PlanCache> = OnceLock::new();
+
 impl PlanCache {
     pub fn new(config: PlanCacheConfig) -> Self {
         Self {
@@ -151,6 +159,13 @@ impl PlanCache {
             })),
             config,
         }
+    }
+
+    /// Process-wide singleton. First call constructs with
+    /// `PlanCacheConfig::default()`; subsequent calls return the same
+    /// instance.
+    pub fn global() -> &'static PlanCache {
+        GLOBAL_PLAN_CACHE.get_or_init(PlanCache::default)
     }
 
     /// Look up the plan for a key. Returns `None` on miss or when the

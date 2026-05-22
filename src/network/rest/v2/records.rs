@@ -1460,10 +1460,12 @@ pub async fn search_with_typed_filters(
             trace.candidate_count = results.len() as u32;
             trace.rerank_count = results.len() as u32;
 
-            // ── Phase 1: run the deterministic planner ───────────────────
-            // Bundles selectivity + GLS + filter-strategy + route choice into
-            // a single helper so this site stays declarative. The helper is
-            // tested independently — see plan_builder::tests.
+            // ── Phase 1: run the deterministic planner via the
+            // process-wide PlanCache ─────────────────────────────
+            // Bundles selectivity + GLS + filter-strategy + route
+            // choice + cache lookup. Identical query shapes within
+            // the same corpus version reuse the cached PlanOutput
+            // instead of recomputing.
             let predicates = match request.filters.as_ref() {
                 Some(filters) => typed_filters_to_predicates(filters.as_slice()),
                 None => Vec::new(),
@@ -1474,25 +1476,46 @@ pub async fn search_with_typed_filters(
                 crate::query::federated::optimizer::PredicateSelectivityPolicy::default();
             let tier_record =
                 crate::catalog::tenant_tier::TenantTierRecord::fail_safe(&tenant.tenant_id);
-            // GLS sampling requires neighborhood centroids that we don't yet
-            // surface in Phase 1; pass an empty slice until the stats
-            // refresher (Phase 5) populates real samples.
-            let plan_inputs = crate::query::federated::optimizer::plan_builder::PlanBuilderInputs {
-                predicates: &predicates,
-                field_stats: &field_stats,
-                policy: &plan_policy,
-                gls_samples: &[],
-                dim: request.vector.len(),
-                recall_target: 0.9,
-                collection_gb: 0.0,
-                tier: &tier_record,
-            };
-            let plan_output =
-                crate::query::federated::optimizer::plan_builder::build_for_search(&plan_inputs);
-            trace.filter_strategy = plan_output.filter_strategy;
-            trace.index_route = plan_output.index_route;
-            trace.estimated_selectivity = plan_output.estimated_selectivity;
-            trace.gls_score = plan_output.gls_score;
+            // GLS sampling requires neighborhood centroids that we
+            // don't yet surface; pass an empty slice. The cached
+            // planner short-circuits to a fresh compute when GLS
+            // samples are non-empty, so this contract holds when
+            // Phase 5's stats refresher lands.
+            let cached_inputs =
+                crate::query::federated::optimizer::cached_plan_builder::CachedPlanInputs {
+                    plan_inputs:
+                        crate::query::federated::optimizer::plan_builder::PlanBuilderInputs {
+                            predicates: &predicates,
+                            field_stats: &field_stats,
+                            policy: &plan_policy,
+                            gls_samples: &[],
+                            dim: request.vector.len(),
+                            recall_target: 0.9,
+                            collection_gb: 0.0,
+                            tier: &tier_record,
+                        },
+                    // corpus_version=1 until the catalog manifest
+                    // exposes a real version. Bumping the manifest
+                    // version invalidates the cache transparently.
+                    corpus_version: 1,
+                };
+            let cached_plan =
+                crate::query::federated::optimizer::cached_plan_builder::build_for_search_cached_with_collection(
+                    crate::query::cache::plan_cache::PlanCache::global(),
+                    &cached_inputs,
+                    &collection,
+                )
+                .await;
+            trace.filter_strategy = cached_plan.plan.filter_strategy;
+            trace.index_route = cached_plan.plan.index_route;
+            trace.estimated_selectivity = cached_plan.plan.estimated_selectivity;
+            trace.gls_score = cached_plan.plan.gls_score;
+            // Surface cache hit/miss on the trace so observability
+            // can track plan-cache hit rate per tenant.
+            if cached_plan.cache_hit {
+                trace.cache_result =
+                    crate::observability::search_plan_trace::CacheResult::Hit;
+            }
 
             let response = TypedSearchResponse {
                 results: results.clone(),
