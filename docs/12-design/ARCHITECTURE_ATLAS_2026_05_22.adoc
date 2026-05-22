@@ -216,29 +216,48 @@ Victor's Rust CCG construction previously resolved CALLS edges per-file only —
 built from a single file's nodes during `_build_calls_edges`, so any callee defined in another
 file resolved to the empty set and no edge was emitted. With cross-file CALLS empty,
 `ModuleAnalyzer._load_module_graph` (which only loads cross-file `graph_edge` rows) returned an
-empty module set and `graph_module_metric` stayed at zero rows. Both gaps closed after wiring a
-project-wide name index pass (`_resolve_cross_file_calls`) that runs after all nodes are persisted
-and emits CALLS edges via UPSERT; module metrics auto-materialize as a downstream effect.
+empty module set and `graph_module_metric` stayed at zero rows.
 
-Victor database scale after the 2026-05-22 cross-file CALLS fix:
+Two passes close both gaps. (1) A project-wide leaf-name index in
+`_resolve_cross_file_calls` runs after all nodes are persisted and emits CALLS edges via UPSERT;
+module metrics auto-materialize as a downstream effect. (2) A receiver-typed dispatch pass binds
+`obj.method()` to methods inside `impl T` whenever the Rust plugin can infer `obj`'s static type
+from local scope (parameter annotations, `let x: T = ...`, `let x = T::new()`, or `self` against
+the enclosing `impl T`). The typed pass runs first and bypasses the fanout cap; misses fall
+through to the leaf-name pass.
+
+Victor database scale after the 2026-05-22 fix (receiver-typed dispatch enabled):
 
 [cols="1,1",options="header"]
 |===
 | Metric | Value
-| `graph_node` rows | 857,092
-| `graph_edge` rows | 2,981,770
-| `graph_module_metric` rows | 1,675
-| `DDG_DEF_USE` edges | 1,555,792
-| `CFG_SUCCESSOR` edges | 518,755
-| `CALLS` edges | 480,632 (51,841 same-file, 428,791 cross-file)
-| `CDG` edges | 100,468
-| `CONTAINS` edges | 22,293
+| `graph_node` rows | 859,823
+| `graph_edge` rows | 2,976,347
+| `graph_module_metric` rows | 1,684
+| `DDG_DEF_USE` edges | 1,560,423
+| `CFG_SUCCESSOR` edges | 520,429
+| `CALLS` edges | 467,982 (52,194 same-file, 415,788 cross-file)
+| `CDG` edges | 100,698
+| `CONTAINS` edges | ~22,300
 |===
 
-Pre-fix snapshot for comparison: 851,159 nodes, 2,587,955 edges, 103,255 CALLS edges
-(102,855 same-file, 0 cross-file), 0 module-metric rows. The new resolver restricts the
-project-wide name index to callable symbol types (`function`, `method`, `impl`) and caps fanout
-per call site (default 25) to suppress noise from common leaf names (`new`, `default`, `from`).
+Evolution across the fix:
+
+[cols="2,1,1,1",options="header"]
+|===
+| Snapshot | CALLS total | CALLS cross-file | module metrics
+| Pre-fix (per-file resolution) | 103,255 | **0** | **0**
+| Name-only project-wide resolution | 480,632 | 428,791 | 1,675
+| Receiver-typed dispatch (current) | 467,982 | 415,788 | 1,684
+|===
+
+The 12,650 edge reduction between the name-only and receiver-typed snapshots is noise removed:
+method calls like `obj.method()` that previously bound to every `method` defined anywhere in the
+codebase now bind only to methods inside `impl <receiver_type>`. Cross-file ratio holds at ~89%
+because the receiver-typed pass is precise but doesn't expand coverage beyond what name-only
+could see. The remaining 5,423-edge net drop in `graph_edge` is dominated by this CALLS
+reduction plus minor variance in CCG output between runs (CFG/CDG/DDG counts are stable to
+~+/-1%).
 
 Top node kinds from Victor:
 
@@ -362,19 +381,22 @@ where edge.type = 'CALLS';
 
 Current interpretation:
 
-* `graph_module_metric` now contains 1,675 rows. Module-level PageRank, instability, cohesion,
+* `graph_module_metric` contains 1,684 rows. Module-level PageRank, instability, cohesion,
   hotspot, and TDD priority metrics are first-class signals; use them as gates alongside Cargo
   dependency centrality.
-* `CALLS` now resolves cross-file: 428,791 cross-file edges (89% of 480,632 total). Call-edge
-  PageRank and module-level coupling are real cross-module coupling signals — top
-  hotspots include `src/network/rest/v1/handlers.rs` (Ce=230, 2,231 symbols),
-  `src/network/multi_server.rs`, `src/network/arrow_ipc/service.rs`, and
-  `src/services/operations/vectors/legacy.rs` — the human-authored fan-out hubs the prior snapshot
-  could only infer indirectly.
-* The cross-file resolver is name-only with a fanout cap (default 25); ambiguous leaf names
-  like `new`/`default`/`from` skip resolution. Trait-method receiver typing is not yet modeled,
-  so `obj.method()` may bind to all impls of `method` within the cap. Treat call-edge counts as
-  upper bounds, not exact dispatch.
+* `CALLS` resolves cross-file (89%) and uses receiver-typed dispatch where the receiver's type
+  can be inferred from local scope. `obj.method()` calls with a known receiver type bind only to
+  methods inside `impl <type>` and bypass the leaf-name fanout cap. Top hotspots:
+  `src/network/rest/v1/handlers.rs` (Ce=230, 2,231 symbols), `src/network/multi_server.rs`,
+  `src/network/arrow_ipc/service.rs`, `src/services/operations/vectors/legacy.rs`.
+* Receiver-type inference is best-effort: it covers `let x: T = ...`, `let x = T::new()`, `self`
+  inside `impl T`, and `fn(arg: T)` annotations. Method chains (`a.foo().bar()`), struct-field
+  receivers (`self.field.method()`), and generic-parameter receivers fall back to name-only
+  resolution. Calls on tracked receivers whose type lookup misses every `impl` also fall back to
+  name-only (the resolver chose graceful degradation over silently dropping edges).
+* Leaf-name fallback retains the fanout cap (default 25), so common names (`new`, `default`,
+  `from`) still skip when ambiguous beyond the cap. Treat call-edge counts as a tight upper
+  bound: typed dispatch is exact; the name-only tail is bounded.
 * Statement-level nodes still dominate the graph. Use file/module aggregation first, then
   inspect human-authored hotspot files manually.
 
