@@ -134,16 +134,46 @@ impl Consumer {
         }
     }
 
-    /// Acknowledge messages as fully processed. In Phase 1B scaffold this
-    /// just clears the in-flight tracker; the disk-backed committed-offset
-    /// persistence lands with the offset_store module.
+    /// Acknowledge messages as fully processed. Clears them from the
+    /// in-flight tracker AND persists the new committed offset per
+    /// (topic, partition) via `offset_store::commit` so a process
+    /// restart resumes at the right cursor instead of re-delivering.
     pub async fn ack(&self, message_ids: &[MessageId]) -> Result<()> {
         let target_ids: HashSet<&MessageId> = message_ids.iter().collect();
+
+        // Walk in_flight entries; per (topic, partition), drop the
+        // acked messages AND track the max offset seen so we can commit
+        // it after we release the per-partition lock.
+        let mut to_commit: Vec<(String, PartitionId, u64)> = Vec::new();
         for entry in self.in_flight.iter() {
+            let (topic, partition) = entry.key().clone();
             let mut tracker = entry.value().lock().await;
-            tracker
-                .pending
-                .retain(|memo| !target_ids.contains(&memo.message_id));
+            let mut max_acked: Option<u64> = None;
+            tracker.pending.retain(|memo| {
+                if target_ids.contains(&memo.message_id) {
+                    max_acked = Some(max_acked.map_or(memo.offset, |m| m.max(memo.offset)));
+                    false
+                } else {
+                    true
+                }
+            });
+            if let Some(offset) = max_acked {
+                to_commit.push((topic, partition, offset));
+            }
+        }
+
+        // Persist outside the in_flight lock to keep contention minimal.
+        // Idempotent + monotonic; safe to retry on transient failure.
+        for (topic, partition, offset) in to_commit {
+            crate::offset_store::commit(
+                self.client.fs(),
+                self.client.root_path(),
+                &topic,
+                partition,
+                &self.group_id,
+                offset,
+            )
+            .await?;
         }
         Ok(())
     }
