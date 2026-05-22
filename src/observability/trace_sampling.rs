@@ -56,10 +56,22 @@ impl Default for TraceSamplingConfig {
     fn default() -> Self {
         Self {
             per_tier: vec![
-                TierSampleRate { tier: "free", rate: 0.10 },
-                TierSampleRate { tier: "community", rate: 0.50 },
-                TierSampleRate { tier: "business", rate: 1.00 },
-                TierSampleRate { tier: "enterprise", rate: 1.00 },
+                TierSampleRate {
+                    tier: "free",
+                    rate: 0.10,
+                },
+                TierSampleRate {
+                    tier: "community",
+                    rate: 0.50,
+                },
+                TierSampleRate {
+                    tier: "business",
+                    rate: 1.00,
+                },
+                TierSampleRate {
+                    tier: "enterprise",
+                    rate: 1.00,
+                },
             ],
             default_rate: 0.10,
             load_shed_threshold: 0.75,
@@ -138,7 +150,9 @@ impl TraceSamplingPolicy {
             // A trace without an id can't be sampled deterministically.
             // Drop rather than make a random call — the absence of an id
             // is itself a signal the gateway should fix.
-            return TraceSamplingDecision::Drop { reason: "no_trace_id" };
+            return TraceSamplingDecision::Drop {
+                reason: "no_trace_id",
+            };
         }
         let config = self.inner.read().await;
         let base_rate = lookup_rate(&config, inputs.tier_label);
@@ -147,7 +161,9 @@ impl TraceSamplingPolicy {
         if bucket < (effective_rate * 1_000_000.0).round() as u64 {
             TraceSamplingDecision::Sample
         } else if effective_rate < base_rate {
-            TraceSamplingDecision::Drop { reason: "load_shed" }
+            TraceSamplingDecision::Drop {
+                reason: "load_shed",
+            }
         } else {
             TraceSamplingDecision::Drop { reason: "rate" }
         }
@@ -181,11 +197,7 @@ fn lookup_rate(config: &TraceSamplingConfig, tier: TierLabel) -> f64 {
 /// Linear scale from full rate at threshold to zero at load=1.0. Load
 /// values at or below the threshold preserve the base rate; above it,
 /// the rate decays linearly.
-fn apply_load_shedding(
-    base_rate: f64,
-    current_load: f64,
-    config: &TraceSamplingConfig,
-) -> f64 {
+fn apply_load_shedding(base_rate: f64, current_load: f64, config: &TraceSamplingConfig) -> f64 {
     let load = current_load.clamp(0.0, 1.0);
     let threshold = config.load_shed_threshold.clamp(0.0, 1.0);
     if load <= threshold || threshold >= 1.0 {
@@ -277,7 +289,10 @@ mod tests {
         for i in 0..200 {
             let id = format!("trace-{i}");
             assert!(
-                policy.decide(&inputs("business", &id, 0.0)).await.is_sample(),
+                policy
+                    .decide(&inputs("business", &id, 0.0))
+                    .await
+                    .is_sample(),
                 "business must sample every trace"
             );
         }
@@ -291,12 +306,19 @@ mod tests {
         let n = 1000;
         for i in 0..n {
             let id = format!("trace-{i}");
-            if policy.decide(&inputs("legacy-tier", &id, 0.0)).await.is_sample() {
+            if policy
+                .decide(&inputs("legacy-tier", &id, 0.0))
+                .await
+                .is_sample()
+            {
                 samples += 1;
             }
         }
         let rate = samples as f64 / n as f64;
-        assert!((0.05..=0.15).contains(&rate), "default rate out of band: {rate}");
+        assert!(
+            (0.05..=0.15).contains(&rate),
+            "default rate out of band: {rate}"
+        );
     }
 
     #[tokio::test]
@@ -355,19 +377,28 @@ mod tests {
         let id = "trace-config-change";
         // Force a config where free tier always samples.
         let new_config = TraceSamplingConfig {
-            per_tier: vec![TierSampleRate { tier: "free", rate: 1.0 }],
+            per_tier: vec![TierSampleRate {
+                tier: "free",
+                rate: 1.0,
+            }],
             default_rate: 0.0,
             load_shed_threshold: 1.0,
         };
         policy.replace_config(new_config).await;
         let d = policy.decide(&inputs("free", id, 0.0)).await;
-        assert!(d.is_sample(), "after replace_config(rate=1.0), free must sample");
+        assert!(
+            d.is_sample(),
+            "after replace_config(rate=1.0), free must sample"
+        );
     }
 
     #[tokio::test]
     async fn out_of_range_rate_clamps_to_unit() {
         let policy = TraceSamplingPolicy::new(TraceSamplingConfig {
-            per_tier: vec![TierSampleRate { tier: "weird", rate: 5.0 }],
+            per_tier: vec![TierSampleRate {
+                tier: "weird",
+                rate: 5.0,
+            }],
             default_rate: 0.0,
             load_shed_threshold: 1.0,
         });
@@ -379,7 +410,10 @@ mod tests {
     #[tokio::test]
     async fn negative_rate_clamps_to_zero() {
         let policy = TraceSamplingPolicy::new(TraceSamplingConfig {
-            per_tier: vec![TierSampleRate { tier: "weird", rate: -0.5 }],
+            per_tier: vec![TierSampleRate {
+                tier: "weird",
+                rate: -0.5,
+            }],
             default_rate: 0.0,
             load_shed_threshold: 1.0,
         });

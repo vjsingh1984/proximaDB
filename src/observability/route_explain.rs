@@ -87,7 +87,11 @@ pub fn build(inputs: &ExplainInputs<'_>) -> RouteExplain {
     ];
     let hints = build_hints(trace, inputs.corpus_gb, inputs.recall_probe_open);
 
-    RouteExplain { summary, sections, hints }
+    RouteExplain {
+        summary,
+        sections,
+        hints,
+    }
 }
 
 fn build_summary(trace: &SearchPlanTrace, corpus_gb: f64) -> String {
@@ -116,7 +120,10 @@ fn build_summary(trace: &SearchPlanTrace, corpus_gb: f64) -> String {
 
 fn plan_section(trace: &SearchPlanTrace) -> ExplainSection {
     let mut lines = vec![
-        format!("filter strategy: {}", filter_strategy_label(&trace.filter_strategy)),
+        format!(
+            "filter strategy: {}",
+            filter_strategy_label(&trace.filter_strategy)
+        ),
         format!("index route: {}", index_route_label(&trace.index_route)),
     ];
     if let Some(est) = trace.estimated_selectivity {
@@ -128,11 +135,17 @@ fn plan_section(trace: &SearchPlanTrace) -> ExplainSection {
     if let Some(gls) = trace.gls_score {
         lines.push(format!("GLS score: {:+.3}", gls));
     }
-    ExplainSection { header: "Plan".to_string(), lines }
+    ExplainSection {
+        header: "Plan".to_string(),
+        lines,
+    }
 }
 
 fn cache_section(trace: &SearchPlanTrace) -> ExplainSection {
-    let mut lines = vec![format!("result: {}", cache_result_label(&trace.cache_result))];
+    let mut lines = vec![format!(
+        "result: {}",
+        cache_result_label(&trace.cache_result)
+    )];
     let hits = trace.index_stats.cache_hits;
     let misses = trace.index_stats.cache_misses;
     if hits + misses > 0 {
@@ -143,10 +156,15 @@ fn cache_section(trace: &SearchPlanTrace) -> ExplainSection {
         let record_ratio = trace.index_stats.record_hits as f64 / total as f64;
         lines.push(format!(
             "record-level vs page-level hits: {}/{} ({:.1}% record)",
-            trace.index_stats.record_hits, trace.index_stats.page_hits, record_ratio * 100.0
+            trace.index_stats.record_hits,
+            trace.index_stats.page_hits,
+            record_ratio * 100.0
         ));
     }
-    ExplainSection { header: "Cache".to_string(), lines }
+    ExplainSection {
+        header: "Cache".to_string(),
+        lines,
+    }
 }
 
 fn execution_section(trace: &SearchPlanTrace, corpus_gb: f64) -> ExplainSection {
@@ -158,21 +176,36 @@ fn execution_section(trace: &SearchPlanTrace, corpus_gb: f64) -> ExplainSection 
             scan_fraction(trace.actual_scan_gb, corpus_gb) * 100.0
         ),
         format!("latency: {:.2} ms", trace.latency_ms),
-        format!("candidates: {} → {} after rerank", trace.candidate_count, trace.rerank_count),
+        format!(
+            "candidates: {} → {} after rerank",
+            trace.candidate_count, trace.rerank_count
+        ),
     ];
     if trace.index_stats.block_fill_pct > 0.0 {
-        lines.push(format!("block fill: {:.1}%", trace.index_stats.block_fill_pct * 100.0));
+        lines.push(format!(
+            "block fill: {:.1}%",
+            trace.index_stats.block_fill_pct * 100.0
+        ));
     }
     if trace.index_stats.tunneled_nodes > 0 {
-        lines.push(format!("graph tunneling: {} nodes routed in memory", trace.index_stats.tunneled_nodes));
+        lines.push(format!(
+            "graph tunneling: {} nodes routed in memory",
+            trace.index_stats.tunneled_nodes
+        ));
     }
     if trace.index_stats.quantized_hops > 0 {
-        lines.push(format!("quantized hops: {}", trace.index_stats.quantized_hops));
+        lines.push(format!(
+            "quantized hops: {}",
+            trace.index_stats.quantized_hops
+        ));
     }
     if trace.index_stats.catapult_used {
         lines.push("catapult shortcut used".to_string());
     }
-    ExplainSection { header: "Execution".to_string(), lines }
+    ExplainSection {
+        header: "Execution".to_string(),
+        lines,
+    }
 }
 
 fn repair_section(trace: &SearchPlanTrace) -> ExplainSection {
@@ -192,7 +225,10 @@ fn repair_section(trace: &SearchPlanTrace) -> ExplainSection {
     if let Some(fc) = &trace.failure_class {
         lines.push(format!("failure: {}", failure_class_label(fc)));
     }
-    ExplainSection { header: "Repair".to_string(), lines }
+    ExplainSection {
+        header: "Repair".to_string(),
+        lines,
+    }
 }
 
 fn build_hints(
@@ -310,7 +346,11 @@ mod tests {
     }
 
     fn inputs<'a>(trace: &'a SearchPlanTrace, corpus_gb: f64) -> ExplainInputs<'a> {
-        ExplainInputs { trace, corpus_gb, recall_probe_open: None }
+        ExplainInputs {
+            trace,
+            corpus_gb,
+            recall_probe_open: None,
+        }
     }
 
     #[test]
@@ -361,7 +401,11 @@ mod tests {
         let t = trace_template();
         let e = build(&inputs(&t, 1.0));
         let plan = e.sections.iter().find(|s| s.header == "Plan").unwrap();
-        assert!(plan.lines.iter().any(|l| l.contains("estimated selectivity")));
+        assert!(
+            plan.lines
+                .iter()
+                .any(|l| l.contains("estimated selectivity"))
+        );
     }
 
     #[test]
@@ -378,7 +422,11 @@ mod tests {
         t.gls_score = Some(-0.72);
         let e = build(&inputs(&t, 1.0));
         let plan = e.sections.iter().find(|s| s.header == "Plan").unwrap();
-        assert!(plan.lines.iter().any(|l| l.contains("GLS score") && l.contains("-0.720")));
+        assert!(
+            plan.lines
+                .iter()
+                .any(|l| l.contains("GLS score") && l.contains("-0.720"))
+        );
     }
 
     #[test]
@@ -396,7 +444,11 @@ mod tests {
         t.index_stats.block_fill_pct = 0.42;
         let e = build(&inputs(&t, 1.0));
         let exec = e.sections.iter().find(|s| s.header == "Execution").unwrap();
-        assert!(exec.lines.iter().any(|l| l.contains("block fill") && l.contains("42.0%")));
+        assert!(
+            exec.lines
+                .iter()
+                .any(|l| l.contains("block fill") && l.contains("42.0%"))
+        );
     }
 
     #[test]

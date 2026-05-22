@@ -167,12 +167,7 @@ impl PyConsumer {
     /// Poll up to `max_batch` messages, waiting up to `max_wait_ms` for
     /// at least one. Returns a list of [`PyMessage`].
     #[pyo3(signature = (max_batch, max_wait_ms))]
-    fn poll(
-        &self,
-        py: Python<'_>,
-        max_batch: usize,
-        max_wait_ms: u64,
-    ) -> PyResult<Vec<PyMessage>> {
+    fn poll(&self, py: Python<'_>, max_batch: usize, max_wait_ms: u64) -> PyResult<Vec<PyMessage>> {
         let wait = Duration::from_millis(max_wait_ms);
         let msgs = py
             .allow_threads(|| rt().block_on(self.inner.poll(max_batch, wait)))

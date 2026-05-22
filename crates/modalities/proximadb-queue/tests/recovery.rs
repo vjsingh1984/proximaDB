@@ -260,10 +260,7 @@ async fn fresh_node_recovers_from_archive_when_disk_is_empty() {
     let mut received: Vec<u32> = Vec::new();
     let deadline = std::time::Instant::now() + Duration::from_secs(3);
     while received.is_empty() && std::time::Instant::now() < deadline {
-        let batch = consumer
-            .poll(8, Duration::from_millis(100))
-            .await
-            .unwrap();
+        let batch = consumer.poll(8, Duration::from_millis(100)).await.unwrap();
         for msg in batch {
             assert_eq!(msg.payload.len(), 4);
             let v = u32::from_be_bytes(msg.payload.as_slice().try_into().unwrap());

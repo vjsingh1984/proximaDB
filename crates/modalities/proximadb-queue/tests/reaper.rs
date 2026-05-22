@@ -112,14 +112,9 @@ async fn reaper_deletes_disk_after_upload_and_full_ack() {
 async fn reaper_keeps_disk_when_consumers_lag() {
     let disk_tmp = TempDir::new().expect("disk");
     let archive_tmp = TempDir::new().expect("archive");
-    let client = QueueClient::open(cfg(
-        disk_tmp.path(),
-        Some(archive_tmp.path()),
-        "t",
-        0,
-    ))
-    .await
-    .expect("open");
+    let client = QueueClient::open(cfg(disk_tmp.path(), Some(archive_tmp.path()), "t", 0))
+        .await
+        .expect("open");
 
     let producer = client.producer();
     for i in 0..3u32 {

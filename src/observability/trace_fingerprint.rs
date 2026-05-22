@@ -39,10 +39,10 @@ use crate::observability::search_plan_trace::{
 /// legend can show what each label means without re-deriving.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ScanBand {
-    Tiny,    // <10%
-    Small,   // <30%
-    Medium,  // <60%
-    Large,   // ≥60%
+    Tiny,   // <10%
+    Small,  // <30%
+    Medium, // <60%
+    Large,  // ≥60%
 }
 
 impl ScanBand {
@@ -164,10 +164,7 @@ impl TraceShape {
             scan_band: ScanBand::from_fraction(scan_fraction),
             latency_band: LatencyBand::from_ms(trace.latency_ms),
             repair_bucket: RepairBucket::from_count(trace.repair_count),
-            quantized_route_taken: matches!(
-                trace.index_route,
-                IndexRoute::QuantizedGraphThenExact
-            ),
+            quantized_route_taken: matches!(trace.index_route, IndexRoute::QuantizedGraphThenExact),
         }
     }
 
@@ -439,7 +436,10 @@ mod tests {
         let s = TraceShape::from_trace(&t, 1.0);
         let h = fingerprint_hex(&s);
         assert_eq!(h.len(), 16);
-        assert!(h.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(
+            h.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
     }
 
     #[test]
@@ -459,7 +459,10 @@ mod tests {
         let t = trace_template();
         let s = TraceShape::from_trace(&t, 1.0);
         let bytes = s.encode_for_hash();
-        assert!(bytes.contains(&0x1f), "encoding must include unit separator");
+        assert!(
+            bytes.contains(&0x1f),
+            "encoding must include unit separator"
+        );
     }
 
     #[test]

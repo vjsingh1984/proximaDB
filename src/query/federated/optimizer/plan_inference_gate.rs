@@ -38,7 +38,9 @@ pub struct InferenceGateConfig {
 
 impl Default for InferenceGateConfig {
     fn default() -> Self {
-        Self { confidence_threshold: 0.7 }
+        Self {
+            confidence_threshold: 0.7,
+        }
     }
 }
 
@@ -65,8 +67,12 @@ pub enum GateOutcome {
 impl GateOutcome {
     pub fn filter_strategy(&self) -> &FilterStrategy {
         match self {
-            GateOutcome::Honor { filter_strategy, .. } => filter_strategy,
-            GateOutcome::Fallback { filter_strategy, .. } => filter_strategy,
+            GateOutcome::Honor {
+                filter_strategy, ..
+            } => filter_strategy,
+            GateOutcome::Fallback {
+                filter_strategy, ..
+            } => filter_strategy,
         }
     }
     pub fn index_route(&self) -> &IndexRoute {
@@ -184,7 +190,9 @@ mod tests {
     }
 
     fn cfg(threshold: f64) -> InferenceGateConfig {
-        InferenceGateConfig { confidence_threshold: threshold }
+        InferenceGateConfig {
+            confidence_threshold: threshold,
+        }
     }
 
     #[test]
@@ -197,11 +205,19 @@ mod tests {
         );
         let v1 = v1();
         let out = decide(
-            &GateInputs { v2: &v2, v1: &v1, recall_probe_open: false },
+            &GateInputs {
+                v2: &v2,
+                v1: &v1,
+                recall_probe_open: false,
+            },
             &cfg(0.7),
         );
         match out {
-            GateOutcome::Fallback { reason, filter_strategy, index_route } => {
+            GateOutcome::Fallback {
+                reason,
+                filter_strategy,
+                index_route,
+            } => {
                 assert_eq!(reason, reason::PENDING_ARTIFACT);
                 assert_eq!(filter_strategy, FilterStrategy::HybridFilter);
                 assert_eq!(index_route, IndexRoute::FullPrecisionGraph);
@@ -220,7 +236,11 @@ mod tests {
         );
         let v1 = v1();
         let out = decide(
-            &GateInputs { v2: &v2, v1: &v1, recall_probe_open: true },
+            &GateInputs {
+                v2: &v2,
+                v1: &v1,
+                recall_probe_open: true,
+            },
             &cfg(0.7),
         );
         match out {
@@ -243,7 +263,11 @@ mod tests {
         );
         let v1 = v1();
         let out = decide(
-            &GateInputs { v2: &v2, v1: &v1, recall_probe_open: true },
+            &GateInputs {
+                v2: &v2,
+                v1: &v1,
+                recall_probe_open: true,
+            },
             &cfg(0.7),
         );
         assert!(out.is_honor());
@@ -259,7 +283,11 @@ mod tests {
         );
         let v1 = v1();
         let out = decide(
-            &GateInputs { v2: &v2, v1: &v1, recall_probe_open: false },
+            &GateInputs {
+                v2: &v2,
+                v1: &v1,
+                recall_probe_open: false,
+            },
             &cfg(0.5),
         );
         match out {
@@ -280,11 +308,19 @@ mod tests {
         );
         let v1 = v1();
         let out = decide(
-            &GateInputs { v2: &v2, v1: &v1, recall_probe_open: true },
+            &GateInputs {
+                v2: &v2,
+                v1: &v1,
+                recall_probe_open: true,
+            },
             &cfg(0.5),
         );
         match out {
-            GateOutcome::Honor { source, index_route, .. } => {
+            GateOutcome::Honor {
+                source,
+                index_route,
+                ..
+            } => {
                 assert_eq!(source, source::V2_HONORED);
                 assert_eq!(index_route, IndexRoute::QuantizedGraphThenExact);
             }
@@ -302,7 +338,11 @@ mod tests {
         );
         let v1 = v1();
         let out = decide(
-            &GateInputs { v2: &v2, v1: &v1, recall_probe_open: false },
+            &GateInputs {
+                v2: &v2,
+                v1: &v1,
+                recall_probe_open: false,
+            },
             &cfg(0.5),
         );
         match out {
@@ -323,7 +363,11 @@ mod tests {
         );
         let v1 = v1();
         let out = decide(
-            &GateInputs { v2: &v2, v1: &v1, recall_probe_open: false },
+            &GateInputs {
+                v2: &v2,
+                v1: &v1,
+                recall_probe_open: false,
+            },
             &cfg(0.5),
         );
         match out {
@@ -347,7 +391,11 @@ mod tests {
         );
         let v1 = v1();
         let out = decide(
-            &GateInputs { v2: &v2, v1: &v1, recall_probe_open: true },
+            &GateInputs {
+                v2: &v2,
+                v1: &v1,
+                recall_probe_open: true,
+            },
             &cfg(0.5),
         );
         match out {
@@ -368,7 +416,11 @@ mod tests {
         );
         let v1 = v1();
         let out = decide(
-            &GateInputs { v2: &v2, v1: &v1, recall_probe_open: true },
+            &GateInputs {
+                v2: &v2,
+                v1: &v1,
+                recall_probe_open: true,
+            },
             &cfg(0.5),
         );
         // Clamped to 0.0, which is below the 0.5 threshold.
@@ -393,7 +445,11 @@ mod tests {
         );
         let v1 = v1();
         let out = decide(
-            &GateInputs { v2: &v2, v1: &v1, recall_probe_open: true },
+            &GateInputs {
+                v2: &v2,
+                v1: &v1,
+                recall_probe_open: true,
+            },
             &cfg(0.5),
         );
         match out {
@@ -418,7 +474,11 @@ mod tests {
         );
         let v1 = v1();
         let out = decide(
-            &GateInputs { v2: &v2, v1: &v1, recall_probe_open: false },
+            &GateInputs {
+                v2: &v2,
+                v1: &v1,
+                recall_probe_open: false,
+            },
             &cfg(0.5),
         );
         match out {
@@ -439,7 +499,11 @@ mod tests {
         );
         let v1 = v1();
         let out = decide(
-            &GateInputs { v2: &v2, v1: &v1, recall_probe_open: true },
+            &GateInputs {
+                v2: &v2,
+                v1: &v1,
+                recall_probe_open: true,
+            },
             &cfg(0.5),
         );
         assert_eq!(out.filter_strategy(), &FilterStrategy::PreFilter);
@@ -457,7 +521,11 @@ mod tests {
         );
         let v1 = v1();
         let out = decide(
-            &GateInputs { v2: &v2, v1: &v1, recall_probe_open: true },
+            &GateInputs {
+                v2: &v2,
+                v1: &v1,
+                recall_probe_open: true,
+            },
             &cfg(0.5),
         );
         // Fallback emits the v1 plan, not v2's.
@@ -473,7 +541,10 @@ mod tests {
         assert_eq!(source::V2_HONORED, "v2-honored");
         assert_eq!(source::V2_AGREED_V1, "v2-agreed-v1");
         assert_eq!(reason::PENDING_ARTIFACT, "pending_artifact");
-        assert_eq!(reason::CONFIDENCE_BELOW_THRESHOLD, "confidence_below_threshold");
+        assert_eq!(
+            reason::CONFIDENCE_BELOW_THRESHOLD,
+            "confidence_below_threshold"
+        );
         assert_eq!(reason::QUANTIZED_ROUTE_BLOCKED, "quantized_route_blocked");
     }
 }

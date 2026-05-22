@@ -150,8 +150,7 @@ pub struct ExtractInputs<'a> {
 /// planner used.
 pub fn extract(inputs: &ExtractInputs<'_>, dim: usize, recall_target: f64) -> PlanV2TrainingRecord {
     let trace = inputs.trace;
-    let has_ground_truth =
-        trace.actual_selectivity.is_some() || trace.actual_scan_gb > 0.0;
+    let has_ground_truth = trace.actual_selectivity.is_some() || trace.actual_scan_gb > 0.0;
     let cache_served = matches!(trace.cache_result, CacheResult::Hit);
 
     let features = PlanFeatures {
@@ -180,7 +179,11 @@ pub fn extract(inputs: &ExtractInputs<'_>, dim: usize, recall_target: f64) -> Pl
         has_ground_truth,
     };
 
-    PlanV2TrainingRecord { features, label, metadata }
+    PlanV2TrainingRecord {
+        features,
+        label,
+        metadata,
+    }
 }
 
 /// Derive the optimal strategy from `actual_selectivity` when present;
@@ -207,10 +210,7 @@ fn derive_optimal_strategy(trace: &SearchPlanTrace) -> FilterStrategy {
 /// material amount, prefer `QuantizedGraphThenExact` (the route that
 /// scans less per candidate); otherwise keep the v1 choice. Returns
 /// `None` when we don't have either field.
-fn derive_optimal_route(
-    trace: &SearchPlanTrace,
-    collection_gb: Option<f64>,
-) -> Option<IndexRoute> {
+fn derive_optimal_route(trace: &SearchPlanTrace, collection_gb: Option<f64>) -> Option<IndexRoute> {
     let actual = trace.actual_scan_gb;
     if actual <= 0.0 {
         return None;
@@ -223,9 +223,7 @@ fn derive_optimal_route(
     // means the route was probably wrong — the v1 fallback was full
     // precision but the observed cost says quantize.
     let scan_fraction = (actual / collection).clamp(0.0, 1.0);
-    if scan_fraction > 0.25
-        && !matches!(trace.index_route, IndexRoute::QuantizedGraphThenExact)
-    {
+    if scan_fraction > 0.25 && !matches!(trace.index_route, IndexRoute::QuantizedGraphThenExact) {
         Some(IndexRoute::QuantizedGraphThenExact)
     } else {
         Some(trace.index_route.clone())
@@ -368,7 +366,10 @@ mod tests {
         t.actual_scan_gb = 0.4;
         let rec = extract(&inputs(&t), 768, 0.9);
         assert_eq!(rec.label.v1_route, IndexRoute::FullPrecisionGraph);
-        assert_eq!(rec.label.optimal_route, Some(IndexRoute::QuantizedGraphThenExact));
+        assert_eq!(
+            rec.label.optimal_route,
+            Some(IndexRoute::QuantizedGraphThenExact)
+        );
     }
 
     #[test]
@@ -376,7 +377,10 @@ mod tests {
         let mut t = trace_template();
         t.actual_scan_gb = 0.05; // 5% scan — fine
         let rec = extract(&inputs(&t), 768, 0.9);
-        assert_eq!(rec.label.optimal_route, Some(IndexRoute::FullPrecisionGraph));
+        assert_eq!(
+            rec.label.optimal_route,
+            Some(IndexRoute::FullPrecisionGraph)
+        );
     }
 
     #[test]

@@ -316,8 +316,12 @@ mod tests {
         );
         let r = inf.infer(&features(DimBucket::Medium, Some(0.05), None, Some(0.1)));
         // Same routing as fallback...
-        let direct = LinearV1FallbackInferencer::fail_safe()
-            .infer(&features(DimBucket::Medium, Some(0.05), None, Some(0.1)));
+        let direct = LinearV1FallbackInferencer::fail_safe().infer(&features(
+            DimBucket::Medium,
+            Some(0.05),
+            None,
+            Some(0.1),
+        ));
         assert_eq!(r.filter_strategy, direct.filter_strategy);
         assert_eq!(r.index_route, direct.index_route);
         // ...but the source reflects pending state so observability can
@@ -362,7 +366,10 @@ mod tests {
         reg.register(
             scope_a.clone(),
             Arc::new(ArtifactPlanInferencer::pending(
-                "/a", "a-model", TenantTierRecord::fail_safe("a"))),
+                "/a",
+                "a-model",
+                TenantTierRecord::fail_safe("a"),
+            )),
         )
         .await;
         // tenant-b same collection name → falls back to default.
@@ -380,7 +387,10 @@ mod tests {
         reg.register(
             s.clone(),
             Arc::new(ArtifactPlanInferencer::pending(
-                "/m", "m", TenantTierRecord::fail_safe("t"))),
+                "/m",
+                "m",
+                TenantTierRecord::fail_safe("t"),
+            )),
         )
         .await;
         assert_eq!(reg.registered_count().await, 1);
@@ -395,15 +405,22 @@ mod tests {
         let reg = InferenceArtifactRegistry::with_v1_default();
         let s = InferencerScope::new("t", "kb", "m");
         let first: Arc<dyn PlanInferencer> = Arc::new(ArtifactPlanInferencer::pending(
-            "/v1", "v1", TenantTierRecord::fail_safe("t"),
+            "/v1",
+            "v1",
+            TenantTierRecord::fail_safe("t"),
         ));
         let prev = reg.register(s.clone(), first).await;
         assert!(prev.is_none(), "first registration has no predecessor");
         let second: Arc<dyn PlanInferencer> = Arc::new(ArtifactPlanInferencer::pending(
-            "/v2", "v2", TenantTierRecord::fail_safe("t"),
+            "/v2",
+            "v2",
+            TenantTierRecord::fail_safe("t"),
         ));
         let prev = reg.register(s.clone(), second).await;
-        assert!(prev.is_some(), "second registration returns first as previous");
+        assert!(
+            prev.is_some(),
+            "second registration returns first as previous"
+        );
         assert_eq!(reg.registered_count().await, 1);
     }
 
@@ -432,7 +449,9 @@ mod tests {
                     source: "test",
                 }
             }
-            fn name(&self) -> &str { self.0 }
+            fn name(&self) -> &str {
+                self.0
+            }
         }
         let custom: Arc<dyn PlanInferencer> = Arc::new(NamedInferencer("custom-default"));
         let reg = InferenceArtifactRegistry::with_default(custom);

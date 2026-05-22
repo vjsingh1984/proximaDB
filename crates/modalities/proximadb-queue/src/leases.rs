@@ -60,7 +60,9 @@ const LEASE_FILE: &str = "lease.meta";
 static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn lease_path(root: &Path, topic: &str, partition: PartitionId) -> PathBuf {
-    root.join(topic).join(partition.to_string()).join(LEASE_FILE)
+    root.join(topic)
+        .join(partition.to_string())
+        .join(LEASE_FILE)
 }
 
 fn tmp_path(meta: &Path) -> PathBuf {
@@ -97,8 +99,7 @@ pub async fn try_acquire(
         if !bytes.is_empty() {
             match serde_json::from_slice::<LeaseMeta>(&bytes) {
                 Ok(existing)
-                    if existing.holder_id != holder_id
-                        && existing.expires_at_unix_nanos > now =>
+                    if existing.holder_id != holder_id && existing.expires_at_unix_nanos > now =>
                 {
                     return Err(QueueError::LeaseConflict {
                         topic: topic.to_string(),
@@ -162,10 +163,11 @@ pub(crate) async fn read_meta(
 ) -> crate::Result<Option<LeaseMeta>> {
     let path = lease_path(root, topic, partition);
     match fs.read(&path).await {
-        Ok(bytes) if !bytes.is_empty() => Ok(Some(
-            serde_json::from_slice(&bytes)
-                .map_err(|e| QueueError::Persistence(format!("lease read: {e}")))?,
-        )),
+        Ok(bytes) if !bytes.is_empty() => {
+            Ok(Some(serde_json::from_slice(&bytes).map_err(|e| {
+                QueueError::Persistence(format!("lease read: {e}"))
+            })?))
+        }
         _ => Ok(None),
     }
 }

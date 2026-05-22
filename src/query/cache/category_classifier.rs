@@ -77,13 +77,33 @@ pub struct ClassifierInputs<'a> {
 /// A set of low-cardinality keyword groups the classifier uses. Bounded
 /// arrays so the classifier allocates nothing on the hot path.
 const VOLATILE_KEYWORDS: &[&str] = &[
-    "stock", "price", "today", "tonight", "now", "latest", "breaking", "live",
-    "current", "headline", "intraday", "real-time", "realtime",
+    "stock",
+    "price",
+    "today",
+    "tonight",
+    "now",
+    "latest",
+    "breaking",
+    "live",
+    "current",
+    "headline",
+    "intraday",
+    "real-time",
+    "realtime",
 ];
 
 const CONVERSATIONAL_PREFIXES: &[&str] = &[
-    "how do i", "how to", "what is", "what's", "whats", "can you", "could you",
-    "please", "tell me", "explain", "show me",
+    "how do i",
+    "how to",
+    "what is",
+    "what's",
+    "whats",
+    "can you",
+    "could you",
+    "please",
+    "tell me",
+    "explain",
+    "show me",
 ];
 
 /// Classify a single request. Always returns a `Category` — defaults to
@@ -116,9 +136,7 @@ pub fn classify(inputs: &ClassifierInputs<'_>) -> Category {
 
     // 4. Conversational: short or starts with a conversational prefix.
     let word_count = lower.split_whitespace().count();
-    if word_count <= 4
-        || CONVERSATIONAL_PREFIXES.iter().any(|p| lower.starts_with(p))
-    {
+    if word_count <= 4 || CONVERSATIONAL_PREFIXES.iter().any(|p| lower.starts_with(p)) {
         return Category::Conversational;
     }
 
@@ -151,7 +169,8 @@ fn looks_like_code(text: &str) -> bool {
     }
     // CamelCase or snake_case identifier alongside parens — typical
     // code-search shape.
-    text.contains("()") || text.contains("::")
+    text.contains("()")
+        || text.contains("::")
         || (text.contains('_') && text.contains('(') && text.contains(')'))
 }
 
@@ -181,10 +200,11 @@ fn specialized_ratio(text: &str) -> f64 {
             let has_digit = t.chars().any(|c| c.is_ascii_digit());
             let has_hyphen = t.contains('-');
             let has_dot = t.contains('.');
-            let all_caps =
-                t.chars().all(|c| !c.is_ascii_alphabetic() || c.is_ascii_uppercase())
-                    && t.chars().any(|c| c.is_ascii_alphabetic())
-                    && t.len() >= 2;
+            let all_caps = t
+                .chars()
+                .all(|c| !c.is_ascii_alphabetic() || c.is_ascii_uppercase())
+                && t.chars().any(|c| c.is_ascii_alphabetic())
+                && t.len() >= 2;
             has_digit || has_hyphen || has_dot || all_caps
         })
         .count();
@@ -208,11 +228,17 @@ mod tests {
     use super::*;
 
     fn ci(text: &str) -> ClassifierInputs<'_> {
-        ClassifierInputs { query_text: text, freshness_hint: None }
+        ClassifierInputs {
+            query_text: text,
+            freshness_hint: None,
+        }
     }
 
     fn ci_with(text: &str, hint: FreshnessHint) -> ClassifierInputs<'_> {
-        ClassifierInputs { query_text: text, freshness_hint: Some(hint) }
+        ClassifierInputs {
+            query_text: text,
+            freshness_hint: Some(hint),
+        }
     }
 
     #[test]

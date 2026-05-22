@@ -334,10 +334,11 @@ fn _route_dim(route: EmbedRoute) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_embedding::config::{ChunkConfig, EmbeddingConfig};
+    use proximadb_embedding::config::{ByoAuth, ChunkConfig, EmbeddingConfig};
     use proximadb_embedding::scheduler::EmbedSchedulerConfig;
     use proximadb_queue::{Message, QueueConfig, TopicConfig};
     use std::collections::HashMap;
+    use std::io::{Read, Write};
     use tempfile::TempDir;
     use tokio::sync::Mutex;
 
@@ -354,10 +355,11 @@ mod tests {
             tenant_id: &str,
             records: Vec<EmbeddedRecord>,
         ) -> anyhow::Result<()> {
-            self.calls
-                .lock()
-                .await
-                .push((target_collection.to_string(), tenant_id.to_string(), records));
+            self.calls.lock().await.push((
+                target_collection.to_string(),
+                tenant_id.to_string(),
+                records,
+            ));
             Ok(())
         }
     }
@@ -392,6 +394,26 @@ mod tests {
         }
     }
 
+    fn start_byo_test_endpoint() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind BYO test server");
+        let addr = listener.local_addr().expect("local addr");
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let body = r#"{"embeddings":[[0.1,0.2,0.3],[0.4,0.5,0.6]],"model_version":"test"}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        format!("http://{}", addr)
+    }
+
     /// Producer sends one well-formed payload; drainer embeds + the
     /// sink receives a record with a non-empty vector.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -401,8 +423,17 @@ mod tests {
         let queue = QueueClient::open(queue_cfg(tmp.path()))
             .await
             .expect("queue open");
-        let embed_service =
-            proximadb_embedding::EmbeddingService::global();
+        let embed_service = proximadb_embedding::EmbeddingService::global();
+        embed_service.update_tenant_route(
+            "tenant-a",
+            EmbedRoute::Byo {
+                url: start_byo_test_endpoint(),
+                auth: ByoAuth::None,
+                declared_dim: 3,
+                batch_size: 8,
+                timeout_ms: 1_000,
+            },
+        );
         let sink = Arc::new(RecordingSink::default());
 
         let producer = queue.producer();
@@ -483,8 +514,7 @@ mod tests {
         ensure_embedding_singleton();
         let tmp = TempDir::new().expect("tempdir");
         let queue = QueueClient::open(queue_cfg(tmp.path())).await.unwrap();
-        let embed_service =
-            proximadb_embedding::EmbeddingService::global();
+        let embed_service = proximadb_embedding::EmbeddingService::global();
         let sink = Arc::new(RecordingSink::default());
 
         let producer = queue.producer();

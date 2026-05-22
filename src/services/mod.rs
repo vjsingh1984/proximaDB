@@ -197,8 +197,8 @@ pub use dml::{
     SqlValueLiteral, WhereClause,
 };
 pub use embedding_drainer::{
-    DrainerInsertSink, EMBED_INGEST_TOPIC, EmbedIngestPayload, EmbedIngestRecord,
-    EmbeddedRecord, EmbeddingDrainer, EmbeddingDrainerConfig,
+    DrainerInsertSink, EMBED_INGEST_TOPIC, EmbedIngestPayload, EmbedIngestRecord, EmbeddedRecord,
+    EmbeddingDrainer, EmbeddingDrainerConfig,
 };
 pub use events::EventLog;
 pub use graph_collection::GraphCollectionService;

@@ -27,6 +27,7 @@ pub mod cached_plan_builder;
 pub mod filter_strategy;
 pub mod gls;
 pub mod plan_builder;
+pub mod plan_calibration;
 pub mod plan_inference_gate;
 pub mod plan_quality;
 pub mod plan_v2_inference;

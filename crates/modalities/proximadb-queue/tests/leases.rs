@@ -41,12 +41,18 @@ async fn first_subscriber_acquires_lease() {
     consumer.subscribe("t", &[0]).await.expect("subscribe");
 
     let lease_path = tmp.path().join("t").join("0").join("lease.meta");
-    assert!(lease_path.exists(), "lease.meta should be written on subscribe");
+    assert!(
+        lease_path.exists(),
+        "lease.meta should be written on subscribe"
+    );
 
     let body = std::fs::read_to_string(&lease_path).expect("read lease");
     let parsed: serde_json::Value = serde_json::from_str(&body).expect("parse lease");
     let holder = parsed["holder_id"].as_str().expect("holder_id");
-    assert!(holder.starts_with("inst-"), "holder should be QueueClient instance id; got {holder}");
+    assert!(
+        holder.starts_with("inst-"),
+        "holder should be QueueClient instance id; got {holder}"
+    );
     assert!(parsed["expires_at_unix_nanos"].as_u64().is_some());
 
     client.shutdown().await.expect("shutdown");
@@ -74,10 +80,17 @@ async fn second_subscriber_gets_lease_conflict() {
         .await
         .expect_err("B must fail");
     match err {
-        QueueError::LeaseConflict { topic, partition, holder } => {
+        QueueError::LeaseConflict {
+            topic,
+            partition,
+            holder,
+        } => {
             assert_eq!(topic, "t");
             assert_eq!(partition, 0);
-            assert!(holder.starts_with("inst-"), "conflict reports A's instance id");
+            assert!(
+                holder.starts_with("inst-"),
+                "conflict reports A's instance id"
+            );
         }
         other => panic!("expected LeaseConflict, got {other:?}"),
     }
@@ -122,7 +135,10 @@ async fn expired_lease_is_reclaimable() {
         .await
         .expect("open B");
     let consumer_b = client_b.consumer("g");
-    consumer_b.subscribe("t", &[0]).await.expect("B should reclaim");
+    consumer_b
+        .subscribe("t", &[0])
+        .await
+        .expect("B should reclaim");
 
     // Verify the holder switched.
     let lease_body = std::fs::read_to_string(tmp.path().join("t").join("0").join("lease.meta"))
@@ -163,4 +179,3 @@ async fn lease_renewer_keeps_holder_alive() {
     client_a.shutdown().await.expect("shutdown A");
     client_b.shutdown().await.expect("shutdown B");
 }
-

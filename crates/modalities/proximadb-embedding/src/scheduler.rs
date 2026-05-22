@@ -154,7 +154,7 @@ impl EmbedScheduler {
             self.sync_pool.spawn(async move {
                 loop {
                     if let Some(task) = sync_queue.pop() {
-                        if let Err(e) = (task.work)() {
+                        if let Err(e) = tokio::task::block_in_place(task.work) {
                             warn!(worker = "sync", id = i, error = %e, "embed task failed");
                         }
                         continue;
@@ -163,7 +163,7 @@ impl EmbedScheduler {
                     tokio::time::sleep(work_steal_idle).await;
                     if let Some(task) = async_queue.pop() {
                         debug!(worker = "sync-steal", id = i, "stole async batch");
-                        if let Err(e) = (task.work)() {
+                        if let Err(e) = tokio::task::block_in_place(task.work) {
                             warn!(worker = "sync-steal", id = i, error = %e,
                                 "stolen async task failed");
                         }
@@ -179,7 +179,7 @@ impl EmbedScheduler {
             self.async_pool.spawn(async move {
                 loop {
                     if let Some(task) = async_queue.pop() {
-                        if let Err(e) = (task.work)() {
+                        if let Err(e) = tokio::task::block_in_place(task.work) {
                             warn!(worker = "async", id = i, error = %e, "embed task failed");
                         }
                     } else {

@@ -113,10 +113,7 @@ impl AppState {
     /// Inject a queue client for async ingest. Production wires this
     /// from `apps/proximadb-server` startup after opening the queue
     /// subsystem at the configured root path.
-    pub fn with_queue_client(
-        mut self,
-        client: Arc<proximadb_queue::QueueClient>,
-    ) -> Self {
+    pub fn with_queue_client(mut self, client: Arc<proximadb_queue::QueueClient>) -> Self {
         self.queue_client = Some(client);
         self
     }

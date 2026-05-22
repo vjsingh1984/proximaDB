@@ -19,7 +19,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::tenant_tier::{Tier, TenantTierRecord};
+use crate::catalog::tenant_tier::{TenantTierRecord, Tier};
 use crate::observability::workload_mix::{ConcentrationClass, WorkloadMix};
 
 /// Recommendation direction. Bounded enum.
@@ -148,7 +148,10 @@ pub struct RecommendationInputs<'a> {
 }
 
 /// Run the recommender. Pure given the policy.
-pub fn recommend(inputs: &RecommendationInputs<'_>, policy: &RecommendationPolicy) -> Recommendation {
+pub fn recommend(
+    inputs: &RecommendationInputs<'_>,
+    policy: &RecommendationPolicy,
+) -> Recommendation {
     let tenant = inputs.tenant;
     let mix = inputs.mix;
     let signals = inputs.signals;
@@ -308,7 +311,11 @@ mod tests {
         let m = mix(ConcentrationClass::HighlyConcentrated, Some("fp"), 10);
         let s = signals_with_count(10);
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         assert_eq!(r.kind, RecommendationKind::Hold);
@@ -322,7 +329,11 @@ mod tests {
         let mut s = signals_with_count(1_000);
         s.over_budget_rate = 0.25; // well above 0.10 threshold
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         assert_eq!(r.kind, RecommendationKind::Upgrade);
@@ -337,7 +348,11 @@ mod tests {
         let mut s = signals_with_count(5_000);
         s.latency_stall_rate = 0.30;
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         assert_eq!(r.kind, RecommendationKind::Upgrade);
@@ -351,7 +366,11 @@ mod tests {
         let m = mix(ConcentrationClass::HighlyConcentrated, Some("fp"), 1_000);
         let s = signals_with_count(1_000);
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         assert_eq!(r.kind, RecommendationKind::Upgrade);
@@ -368,7 +387,11 @@ mod tests {
         let m = mix(ConcentrationClass::HighlyConcentrated, Some("fp"), 1_000);
         let s = signals_with_count(1_000);
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         assert_eq!(r.kind, RecommendationKind::Hold);
@@ -383,7 +406,11 @@ mod tests {
         let mut s = signals_with_count(1_000);
         s.over_budget_rate = 0.50;
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         assert_eq!(r.kind, RecommendationKind::Hold);
@@ -400,7 +427,11 @@ mod tests {
         s.over_budget_rate = 0.0;
         s.latency_stall_rate = 0.0;
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         assert_eq!(r.kind, RecommendationKind::Downgrade);
@@ -415,7 +446,11 @@ mod tests {
         let mut s = signals_with_count(1_000);
         s.cache_hit_rate = 0.95;
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         // Underutilized but no lower tier — stays Hold but with the
@@ -436,7 +471,11 @@ mod tests {
         s.cache_hit_rate = 0.95;
         s.over_budget_rate = 0.05; // above downgrade ceiling 0.01
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         assert_eq!(r.kind, RecommendationKind::Hold);
@@ -448,7 +487,11 @@ mod tests {
         let m = mix(ConcentrationClass::Diverse, Some("fp"), 1_000);
         let s = signals_with_count(1_000);
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         assert_eq!(r.kind, RecommendationKind::Hold);
@@ -465,7 +508,11 @@ mod tests {
         s.cache_hit_rate = 0.95;
         s.latency_stall_rate = 0.30;
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         assert_eq!(r.kind, RecommendationKind::Upgrade);
@@ -478,7 +525,11 @@ mod tests {
         let m = mix(ConcentrationClass::Diverse, Some("abc123"), 1_000);
         let s = signals_with_count(1_000);
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         assert_eq!(r.dominant_fingerprint.as_deref(), Some("abc123"));
@@ -491,7 +542,11 @@ mod tests {
         m.dominant_shape = None;
         let s = signals_with_count(1_000);
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         let json = r.to_audit_json();
@@ -504,7 +559,11 @@ mod tests {
         let m = mix(ConcentrationClass::Diverse, Some("fp"), 1_000);
         let s = signals_with_count(1_000);
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         assert!(r.suggested_tier.is_none());
@@ -542,7 +601,11 @@ mod tests {
         let m = mix(ConcentrationClass::HighlyConcentrated, Some("fp"), 1_000);
         let s = signals_with_count(1_000);
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         let s_json = serde_json::to_string(&r).unwrap();
@@ -559,7 +622,11 @@ mod tests {
         let mut s = signals_with_count(1_000);
         s.over_budget_rate = 0.10;
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         assert_eq!(r.kind, RecommendationKind::Upgrade);
@@ -573,7 +640,11 @@ mod tests {
         let m = mix(ConcentrationClass::Diverse, Some("fp"), 100);
         let s = signals_with_count(100);
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         assert_ne!(r.reason, reason::INSUFFICIENT_SIGNAL);
@@ -585,7 +656,11 @@ mod tests {
         let m = mix(ConcentrationClass::Diverse, Some("fp"), 1_000);
         let s = signals_with_count(1_000);
         let r = recommend(
-            &RecommendationInputs { tenant: &t, mix: &m, signals: s },
+            &RecommendationInputs {
+                tenant: &t,
+                mix: &m,
+                signals: s,
+            },
             &cfg(),
         );
         assert_eq!(r.current_tier, "enterprise");

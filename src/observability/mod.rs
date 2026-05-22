@@ -72,27 +72,11 @@ pub mod ingestion;
 /// KRU metering event builder — converts SearchPlanTrace → AnvaiOps
 /// billing_events JSON shape so the data and control planes can't drift.
 pub mod metering_event;
-/// Trace sampling policy — LLD-anchored down-sampling by tier + load.
-pub mod trace_sampling;
-/// Trace retention policy — companion to trace_sampling; per-tier age
-/// windows + soft storage-budget shedding.
-pub mod trace_retention;
+/// Query engine for logs, metrics, and traces with PromQL support.
+pub mod query;
 /// Route explain builder — human-readable explanation derived from a
 /// populated SearchPlanTrace for the LLD §1 debug=true response.
 pub mod route_explain;
-/// Trace digest — stable FNV-1a hash for billing-event dedup +
-/// idempotency keys on the async sink.
-pub mod trace_digest;
-/// Trace fingerprint — shape-only hash for incident-triage grouping.
-pub mod trace_fingerprint;
-/// Trace batcher — bundles N populated traces into one POST payload
-/// for the async billing sink (digest-keyed dedup + fingerprint-aware).
-pub mod trace_batcher;
-/// Workload mix detector — aggregates fingerprint counts into a typed
-/// summary for tier-recommendation hints and cache-warm targeting.
-pub mod workload_mix;
-/// Query engine for logs, metrics, and traces with PromQL support.
-pub mod query;
 /// SearchPlanTrace — per-query telemetry envelope feeding KRU billing and the
 /// learned planner v2 (LLD §10).
 pub mod search_plan_trace;
@@ -100,6 +84,22 @@ pub mod search_plan_trace;
 pub mod search_plan_trace_builder;
 /// Time-partitioned storage for observability data with WAL durability.
 pub mod storage;
+/// Trace batcher — bundles N populated traces into one POST payload
+/// for the async billing sink (digest-keyed dedup + fingerprint-aware).
+pub mod trace_batcher;
+/// Trace digest — stable FNV-1a hash for billing-event dedup +
+/// idempotency keys on the async sink.
+pub mod trace_digest;
+/// Trace fingerprint — shape-only hash for incident-triage grouping.
+pub mod trace_fingerprint;
+/// Trace retention policy — companion to trace_sampling; per-tier age
+/// windows + soft storage-budget shedding.
+pub mod trace_retention;
+/// Trace sampling policy — LLD-anchored down-sampling by tier + load.
+pub mod trace_sampling;
+/// Workload mix detector — aggregates fingerprint counts into a typed
+/// summary for tier-recommendation hints and cache-warm targeting.
+pub mod workload_mix;
 
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -155,11 +155,8 @@ impl QueueClient {
         if let Some(archive_url) = client.config.object_archive.clone() {
             let archive_root = crate::object_tier::resolve_archive_root(&archive_url)?;
             client.fs.create_dir_all(&archive_root).await?;
-            let uploader = ObjectTierUploader::new(
-                client.fs.clone(),
-                client.root_path.clone(),
-                archive_root,
-            );
+            let uploader =
+                ObjectTierUploader::new(client.fs.clone(), client.root_path.clone(), archive_root);
             let pair = uploader.start(client.clone());
             client.background_tasks.lock().await.push(pair);
         }

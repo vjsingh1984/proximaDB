@@ -84,7 +84,12 @@ mod tests {
 
     #[test]
     fn deterministic_for_identical_inputs() {
-        let i = inp("tenant-a", "trace-1", 1_700_000_000_000, Duration::from_secs(1));
+        let i = inp(
+            "tenant-a",
+            "trace-1",
+            1_700_000_000_000,
+            Duration::from_secs(1),
+        );
         let a = digest(&i);
         let b = digest(&i);
         assert_eq!(a, b);
@@ -92,22 +97,52 @@ mod tests {
 
     #[test]
     fn distinct_tenants_produce_distinct_digests() {
-        let a = digest(&inp("tenant-a", "trace-1", 1_700_000_000_000, Duration::from_secs(1)));
-        let b = digest(&inp("tenant-b", "trace-1", 1_700_000_000_000, Duration::from_secs(1)));
+        let a = digest(&inp(
+            "tenant-a",
+            "trace-1",
+            1_700_000_000_000,
+            Duration::from_secs(1),
+        ));
+        let b = digest(&inp(
+            "tenant-b",
+            "trace-1",
+            1_700_000_000_000,
+            Duration::from_secs(1),
+        ));
         assert_ne!(a, b);
     }
 
     #[test]
     fn distinct_trace_ids_produce_distinct_digests() {
-        let a = digest(&inp("tenant-a", "trace-1", 1_700_000_000_000, Duration::from_secs(1)));
-        let b = digest(&inp("tenant-a", "trace-2", 1_700_000_000_000, Duration::from_secs(1)));
+        let a = digest(&inp(
+            "tenant-a",
+            "trace-1",
+            1_700_000_000_000,
+            Duration::from_secs(1),
+        ));
+        let b = digest(&inp(
+            "tenant-a",
+            "trace-2",
+            1_700_000_000_000,
+            Duration::from_secs(1),
+        ));
         assert_ne!(a, b);
     }
 
     #[test]
     fn distinct_timestamps_across_buckets_distinct() {
-        let a = digest(&inp("t", "trace-1", 1_700_000_000_000, Duration::from_secs(1)));
-        let b = digest(&inp("t", "trace-1", 1_700_000_002_000, Duration::from_secs(1)));
+        let a = digest(&inp(
+            "t",
+            "trace-1",
+            1_700_000_000_000,
+            Duration::from_secs(1),
+        ));
+        let b = digest(&inp(
+            "t",
+            "trace-1",
+            1_700_000_002_000,
+            Duration::from_secs(1),
+        ));
         assert_ne!(a, b, "different seconds must differ");
     }
 
@@ -160,14 +195,27 @@ mod tests {
 
     #[test]
     fn hex_encoding_is_16_chars_lowercase() {
-        let h = digest_hex(&inp("tenant-a", "trace-1", 1_700_000_000_000, Duration::from_secs(1)));
+        let h = digest_hex(&inp(
+            "tenant-a",
+            "trace-1",
+            1_700_000_000_000,
+            Duration::from_secs(1),
+        ));
         assert_eq!(h.len(), 16);
-        assert!(h.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(
+            h.chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
     }
 
     #[test]
     fn hex_round_trips_to_same_u64() {
-        let i = inp("tenant-a", "trace-1", 1_700_000_000_000, Duration::from_secs(1));
+        let i = inp(
+            "tenant-a",
+            "trace-1",
+            1_700_000_000_000,
+            Duration::from_secs(1),
+        );
         let n = digest(&i);
         let h = digest_hex(&i);
         let back = u64::from_str_radix(&h, 16).unwrap();
@@ -179,9 +227,24 @@ mod tests {
         // "tenant-a" vs "tenant-b" — single-char difference, FNV-1a's
         // multiplicative step propagates that across the rest of the
         // hash so we don't see adjacency-like collisions.
-        let a = digest(&inp("tenant-a", "trace-1", 1_700_000_000_000, Duration::from_secs(1)));
-        let b = digest(&inp("tenant-b", "trace-1", 1_700_000_000_000, Duration::from_secs(1)));
-        let c = digest(&inp("tenant-c", "trace-1", 1_700_000_000_000, Duration::from_secs(1)));
+        let a = digest(&inp(
+            "tenant-a",
+            "trace-1",
+            1_700_000_000_000,
+            Duration::from_secs(1),
+        ));
+        let b = digest(&inp(
+            "tenant-b",
+            "trace-1",
+            1_700_000_000_000,
+            Duration::from_secs(1),
+        ));
+        let c = digest(&inp(
+            "tenant-c",
+            "trace-1",
+            1_700_000_000_000,
+            Duration::from_secs(1),
+        ));
         assert_ne!(a, b);
         assert_ne!(b, c);
         assert_ne!(a, c);

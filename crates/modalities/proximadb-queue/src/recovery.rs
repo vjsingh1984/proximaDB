@@ -324,9 +324,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let state = topic_state(4, root.path()).await;
 
-        let replayed = replay_partition(&fs, &root.path().join("missing"), None, "orders", 0, &state)
-            .await
-            .unwrap();
+        let replayed =
+            replay_partition(&fs, &root.path().join("missing"), None, "orders", 0, &state)
+                .await
+                .unwrap();
 
         assert_eq!(replayed, 0);
         assert_eq!(state.memory[0].depth(), 0);

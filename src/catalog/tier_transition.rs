@@ -29,7 +29,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::tenant_tier::{Tier, TenantTierRecord};
+use crate::catalog::tenant_tier::{TenantTierRecord, Tier};
 
 /// Direction the transition moved on a single axis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -74,7 +74,11 @@ impl AxisDelta {
     }
 
     pub fn new(before: f64, after: f64) -> Self {
-        Self { before, after, direction: Self::classify(before, after) }
+        Self {
+            before,
+            after,
+            direction: Self::classify(before, after),
+        }
     }
 }
 
@@ -226,7 +230,12 @@ mod tests {
     use super::*;
     use crate::catalog::tenant_tier::{FeatureFlags, Tier};
 
-    fn record(tier: Tier, scan: Option<f64>, ef: Option<u32>, fresh: Option<u32>) -> TenantTierRecord {
+    fn record(
+        tier: Tier,
+        scan: Option<f64>,
+        ef: Option<u32>,
+        fresh: Option<u32>,
+    ) -> TenantTierRecord {
         TenantTierRecord {
             tenant_id: "tenant-a".into(),
             tier,

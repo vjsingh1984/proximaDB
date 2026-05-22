@@ -91,6 +91,38 @@ pub fn resolve_intra_op_threads(env_var: Option<&str>) -> Option<usize> {
         .filter(|n| *n >= 1)
 }
 
+/// Execution provider selection for the BGE ONNX session.
+///
+/// `Cpu` is the safe default and works everywhere. `CoreMl` is macOS-only
+/// (gated by the `coreml` cargo feature) and falls back to CPU if the
+/// runtime fails to load the framework. Future variants: `Cuda`, `Rocm`,
+/// `DirectMl`, etc., each behind their own feature flag.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EpKind {
+    /// Default. ORT's CPU execution provider — no special EP registered.
+    Cpu,
+    /// CoreML (macOS/iOS). Requires `--features coreml` and Apple silicon
+    /// or Intel macOS. Falls back transparently to CPU on unsupported
+    /// platforms; the registration is no-op without the feature.
+    CoreMl,
+}
+
+/// Parse `PROXIMADB_EMBED_PROVIDER` env var into an [`EpKind`].
+///
+/// Recognized values (case-insensitive, whitespace trimmed):
+/// - `cpu` (default if env is unset / empty / unknown)
+/// - `coreml`
+///
+/// Unknown / malformed values silently fall back to CPU so a typo in
+/// production deployments doesn't break the server.
+pub fn resolve_provider(env_var: Option<&str>) -> EpKind {
+    match env_var.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("coreml") => EpKind::CoreMl,
+        Some("cpu") | None | Some("") => EpKind::Cpu,
+        Some(_other) => EpKind::Cpu,
+    }
+}
+
 #[cfg(feature = "onnx")]
 pub struct BgeModel {
     variant: Variant,
@@ -125,15 +157,14 @@ impl BgeModel {
         #[cfg(feature = "onnx")]
         {
             let model_path = variant.onnx_path();
-            let tokenizer_path = std::env::var("PROXIMADB_TOKENIZER_PATH")
-                .unwrap_or_else(|_| {
-                    let root = std::env::var("PROXIMADB_EMBED_MODEL_DIR")
-                        .unwrap_or_else(|_| "/var/lib/proximadb/models".to_string());
-                    PathBuf::from(root)
-                        .join("tokenizer.json")
-                        .to_string_lossy()
-                        .into_owned()
-                });
+            let tokenizer_path = std::env::var("PROXIMADB_TOKENIZER_PATH").unwrap_or_else(|_| {
+                let root = std::env::var("PROXIMADB_EMBED_MODEL_DIR")
+                    .unwrap_or_else(|_| "/var/lib/proximadb/models".to_string());
+                PathBuf::from(root)
+                    .join("tokenizer.json")
+                    .to_string_lossy()
+                    .into_owned()
+            });
 
             // Pool size: PROXIMADB_EMBED_SESSIONS env var, default 1, clamped
             // to [1, 32]. Each session is one ONNX inference context; weights
@@ -158,12 +189,16 @@ impl BgeModel {
                     .as_deref(),
             );
 
+            let provider =
+                resolve_provider(std::env::var("PROXIMADB_EMBED_PROVIDER").ok().as_deref());
+
             tracing::info!(
                 variant = ?variant,
                 model = %model_path.display(),
                 tokenizer = %tokenizer_path,
                 pool_size,
                 intra_op_threads = ?intra_op_override,
+                provider = ?provider,
                 cores,
                 "loading BGE ONNX session pool"
             );
@@ -182,6 +217,19 @@ impl BgeModel {
                         ))
                     })?;
                 }
+                // Register execution providers in priority order. Each EP's
+                // `register` is a no-op without the corresponding cargo
+                // feature, so the binary stays portable across builds.
+                match provider {
+                    EpKind::Cpu => {}
+                    EpKind::CoreMl => {
+                        builder = register_coreml(builder).map_err(|e| {
+                            crate::EmbeddingError::ModelUnavailable(format!(
+                                "CoreML EP registration (session {idx}): {e}"
+                            ))
+                        })?;
+                    }
+                }
                 let session = builder.commit_from_file(&model_path).map_err(|e| {
                     crate::EmbeddingError::ModelUnavailable(format!(
                         "ort commit_from_file({}) (session {idx}): {e}",
@@ -191,11 +239,12 @@ impl BgeModel {
                 sessions.push(std::sync::Mutex::new(session));
             }
 
-            let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
-                .map_err(|e| crate::EmbeddingError::ModelUnavailable(format!(
+            let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path).map_err(|e| {
+                crate::EmbeddingError::ModelUnavailable(format!(
                     "tokenizer load({}): {e}",
                     tokenizer_path
-                )))?;
+                ))
+            })?;
 
             Ok(Self {
                 variant,
@@ -297,9 +346,7 @@ impl BgeModel {
             // This minimizes contention when sessions are unevenly busy
             // (e.g., one running a long batch).
             let pool_len = self.sessions.len();
-            let start_idx = self
-                .next
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let start_idx = self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let mut acquired: Option<std::sync::MutexGuard<'_, ort::session::Session>> = None;
             for i in 0..pool_len {
                 let idx = (start_idx.wrapping_add(i)) % pool_len;
@@ -311,10 +358,7 @@ impl BgeModel {
             let mut session = match acquired {
                 Some(guard) => guard,
                 None => self.sessions[start_idx % pool_len].lock().map_err(|e| {
-                    crate::EmbeddingError::Other(anyhow::anyhow!(
-                        "session mutex poisoned: {}",
-                        e
-                    ))
+                    crate::EmbeddingError::Other(anyhow::anyhow!("session mutex poisoned: {}", e))
                 })?,
             };
             let outputs = session.run(inputs).map_err(onnx_err)?;
@@ -390,6 +434,35 @@ impl BgeModel {
 #[cfg(feature = "onnx")]
 fn onnx_err(e: ort::Error) -> crate::EmbeddingError {
     crate::EmbeddingError::Other(anyhow::anyhow!("ort: {}", e))
+}
+
+/// Register the CoreML execution provider on an ort SessionBuilder.
+///
+/// With the `coreml` feature enabled (macOS-only), this attaches the
+/// CoreML EP. Without the feature, returns an error so the caller can
+/// surface the missing capability rather than silently fall through to
+/// CPU.
+#[cfg(feature = "onnx")]
+fn register_coreml(
+    mut builder: ort::session::builder::SessionBuilder,
+) -> std::result::Result<ort::session::builder::SessionBuilder, String> {
+    #[cfg(feature = "coreml")]
+    {
+        use ort::ep::ExecutionProvider;
+        let ep = ort::ep::CoreML::default();
+        ep.register(&mut builder)
+            .map_err(|e| format!("CoreML register: {e:?}"))?;
+        Ok(builder)
+    }
+    #[cfg(not(feature = "coreml"))]
+    {
+        let _ = &mut builder;
+        Err(
+            "PROXIMADB_EMBED_PROVIDER=coreml requires the embedding crate to be \
+             built with --features coreml (macOS only)"
+                .to_string(),
+        )
+    }
 }
 
 /// Test-only deterministic vector helpers.
@@ -541,5 +614,36 @@ mod policy_tests {
     #[test]
     fn intra_op_env_trims_whitespace() {
         assert_eq!(resolve_intra_op_threads(Some("  4  ")), Some(4));
+    }
+
+    // ---------- resolve_provider ----------
+
+    #[test]
+    fn provider_defaults_to_cpu_when_env_absent() {
+        assert_eq!(resolve_provider(None), EpKind::Cpu);
+    }
+
+    #[test]
+    fn provider_parses_cpu_explicitly() {
+        assert_eq!(resolve_provider(Some("cpu")), EpKind::Cpu);
+        assert_eq!(resolve_provider(Some("CPU")), EpKind::Cpu);
+        assert_eq!(resolve_provider(Some("  Cpu  ")), EpKind::Cpu);
+    }
+
+    #[test]
+    fn provider_parses_coreml() {
+        assert_eq!(resolve_provider(Some("coreml")), EpKind::CoreMl);
+        assert_eq!(resolve_provider(Some("CoreML")), EpKind::CoreMl);
+        assert_eq!(resolve_provider(Some("COREML")), EpKind::CoreMl);
+        assert_eq!(resolve_provider(Some("  coreml  ")), EpKind::CoreMl);
+    }
+
+    #[test]
+    fn provider_unknown_falls_back_to_cpu() {
+        // Typos and future EPs we don't yet support fall back to CPU.
+        assert_eq!(resolve_provider(Some("cuda")), EpKind::Cpu);
+        assert_eq!(resolve_provider(Some("rocm")), EpKind::Cpu);
+        assert_eq!(resolve_provider(Some("garbage")), EpKind::Cpu);
+        assert_eq!(resolve_provider(Some("")), EpKind::Cpu);
     }
 }

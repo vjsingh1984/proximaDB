@@ -1,13 +1,14 @@
 //! Smoke test for the embedding service singleton + scheduler.
 //!
-//! Runs without the `onnx` feature (the default in CI) — model inference
-//! returns deterministic synthetic vectors. The point is to verify the
-//! Arc-shared singleton, the dual-pool scheduler, and the resolve_route
-//! cache all work together.
+//! Runs without requiring staged ONNX model assets. The point is to verify
+//! the Arc-shared singleton, the dual-pool scheduler, and the resolve_route
+//! cache all work together; model calls may either return real vectors or the
+//! deliberate `ModelUnavailable` error from default builds.
 
 use std::sync::Arc;
 
 use proximadb_embedding::{
+    EmbeddingError,
     config::{ChunkConfig, EmbedRoute, EmbeddingConfig},
     scheduler::EmbedSchedulerConfig,
     scheduler::IngestMode,
@@ -55,7 +56,17 @@ async fn singleton_returns_same_arc() {
 async fn sync_embed_returns_vectors_of_correct_dim() {
     let svc = initialize();
     let batch = make_batch("tenant-a", 4, IngestMode::Sync);
-    let result = svc.embed_sync(batch).await.expect("sync embed");
+    let result = match svc.embed_sync(batch).await {
+        Ok(result) => result,
+        Err(EmbeddingError::ModelUnavailable(message)) => {
+            assert!(
+                message.contains("onnx") || message.contains("model"),
+                "unexpected model-unavailable message: {message}"
+            );
+            return;
+        }
+        Err(error) => panic!("unexpected sync embed error: {error}"),
+    };
     assert_eq!(result.vectors.len(), 4);
     for v in &result.vectors {
         assert_eq!(v.len(), 384, "bge-small dimension");
@@ -79,14 +90,23 @@ async fn async_embed_completes_via_callback() {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let batch = make_batch("tenant-b", 8, IngestMode::Async);
     svc.embed_async(batch, move |result| {
-        tx.send(result.is_ok()).ok();
+        tx.send(result).ok();
     })
     .expect("submit async");
-    let ok = tokio::time::timeout(std::time::Duration::from_secs(5), rx)
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), rx)
         .await
         .expect("async embed timed out")
         .expect("oneshot dropped");
-    assert!(ok, "async embed should succeed");
+    match result {
+        Ok(result) => assert_eq!(result.vectors.len(), 8),
+        Err(EmbeddingError::ModelUnavailable(message)) => {
+            assert!(
+                message.contains("onnx") || message.contains("model"),
+                "unexpected model-unavailable message: {message}"
+            );
+        }
+        Err(error) => panic!("unexpected async embed error: {error}"),
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -85,8 +85,7 @@ pub fn score(inputs: &QualityInputs<'_>) -> PlanQuality {
 
     let scan_economy = scan_economy_score(trace.actual_scan_gb, inputs.corpus_gb);
     let latency = latency_score(trace.latency_ms, inputs.latency_target_ms);
-    let repair_penalty =
-        (trace.repair_count as f64 * REPAIR_PENALTY_PER_PASS).clamp(0.0, 1.0);
+    let repair_penalty = (trace.repair_count as f64 * REPAIR_PENALTY_PER_PASS).clamp(0.0, 1.0);
 
     let weighted = W_SCAN * scan_economy + W_LATENCY * latency + W_NEUTRAL * 1.0;
     let total = (weighted - repair_penalty).clamp(0.0, 1.0);
@@ -167,7 +166,11 @@ mod tests {
     }
 
     fn inputs<'a>(trace: &'a SearchPlanTrace, corpus_gb: f64, target_ms: f64) -> QualityInputs<'a> {
-        QualityInputs { trace, corpus_gb, latency_target_ms: target_ms }
+        QualityInputs {
+            trace,
+            corpus_gb,
+            latency_target_ms: target_ms,
+        }
     }
 
     #[test]
@@ -234,7 +237,11 @@ mod tests {
         // 2.5x target → 50% headroom consumed → latency score = 0.5.
         t.latency_ms = 250.0;
         let q = score(&inputs(&t, 1.0, 100.0));
-        assert!((q.latency - 0.5).abs() < 1e-9, "expected 0.5, got {}", q.latency);
+        assert!(
+            (q.latency - 0.5).abs() < 1e-9,
+            "expected 0.5, got {}",
+            q.latency
+        );
     }
 
     #[test]

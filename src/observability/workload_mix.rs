@@ -139,7 +139,11 @@ pub fn detect(rows: &[(String, u64)], top_n: usize) -> WorkloadMix {
     let dominant_fraction = dominant.1 as f64 / total_f;
     let dominant_shape = Some(dominant.0.clone());
 
-    let take = if top_n == 0 { sorted.len() } else { top_n.min(sorted.len()) };
+    let take = if top_n == 0 {
+        sorted.len()
+    } else {
+        top_n.min(sorted.len())
+    };
     let top: Vec<WorkloadRow> = sorted
         .iter()
         .take(take)
@@ -230,9 +234,7 @@ mod tests {
     #[test]
     fn long_tail_is_broad() {
         // 100 fingerprints, each 1 count → dominant fraction 0.01.
-        let rows: Vec<(String, u64)> = (0..100)
-            .map(|i| (format!("fp-{i:03}"), 1))
-            .collect();
+        let rows: Vec<(String, u64)> = (0..100).map(|i| (format!("fp-{i:03}"), 1)).collect();
         let m = detect(&rows, 10);
         assert!(m.dominant_fraction < 0.20);
         assert_eq!(m.concentration, ConcentrationClass::Broad);
@@ -243,7 +245,10 @@ mod tests {
         let rows: Vec<(String, u64)> = (0..50).map(|i| (format!("fp-{i:03}"), i)).collect();
         let m = detect(&rows, 5);
         assert_eq!(m.top.len(), 5);
-        assert_eq!(m.distinct_shapes, 50, "distinct_shapes counts every input row");
+        assert_eq!(
+            m.distinct_shapes, 50,
+            "distinct_shapes counts every input row"
+        );
     }
 
     #[test]
@@ -303,22 +308,52 @@ mod tests {
 
     #[test]
     fn concentration_class_from_fraction_handles_invalid_input() {
-        assert_eq!(ConcentrationClass::from_fraction(f64::NAN), ConcentrationClass::Broad);
-        assert_eq!(ConcentrationClass::from_fraction(-0.5), ConcentrationClass::Broad);
-        assert_eq!(ConcentrationClass::from_fraction(2.0), ConcentrationClass::HighlyConcentrated);
-        assert_eq!(ConcentrationClass::from_fraction(0.0), ConcentrationClass::Broad);
+        assert_eq!(
+            ConcentrationClass::from_fraction(f64::NAN),
+            ConcentrationClass::Broad
+        );
+        assert_eq!(
+            ConcentrationClass::from_fraction(-0.5),
+            ConcentrationClass::Broad
+        );
+        assert_eq!(
+            ConcentrationClass::from_fraction(2.0),
+            ConcentrationClass::HighlyConcentrated
+        );
+        assert_eq!(
+            ConcentrationClass::from_fraction(0.0),
+            ConcentrationClass::Broad
+        );
     }
 
     #[test]
     fn concentration_class_boundaries_pin_to_doc_strings() {
         // Pin the boundary behavior so a future change must update both
         // the doc string and this test.
-        assert_eq!(ConcentrationClass::from_fraction(0.19), ConcentrationClass::Broad);
-        assert_eq!(ConcentrationClass::from_fraction(0.20), ConcentrationClass::Diverse);
-        assert_eq!(ConcentrationClass::from_fraction(0.49), ConcentrationClass::Diverse);
-        assert_eq!(ConcentrationClass::from_fraction(0.50), ConcentrationClass::Concentrated);
-        assert_eq!(ConcentrationClass::from_fraction(0.79), ConcentrationClass::Concentrated);
-        assert_eq!(ConcentrationClass::from_fraction(0.80), ConcentrationClass::HighlyConcentrated);
+        assert_eq!(
+            ConcentrationClass::from_fraction(0.19),
+            ConcentrationClass::Broad
+        );
+        assert_eq!(
+            ConcentrationClass::from_fraction(0.20),
+            ConcentrationClass::Diverse
+        );
+        assert_eq!(
+            ConcentrationClass::from_fraction(0.49),
+            ConcentrationClass::Diverse
+        );
+        assert_eq!(
+            ConcentrationClass::from_fraction(0.50),
+            ConcentrationClass::Concentrated
+        );
+        assert_eq!(
+            ConcentrationClass::from_fraction(0.79),
+            ConcentrationClass::Concentrated
+        );
+        assert_eq!(
+            ConcentrationClass::from_fraction(0.80),
+            ConcentrationClass::HighlyConcentrated
+        );
     }
 
     #[test]
@@ -346,7 +381,11 @@ mod tests {
 
     #[test]
     fn dominant_row_is_first_in_top_list() {
-        let rows = vec![("a".to_string(), 1), ("b".to_string(), 5), ("c".to_string(), 3)];
+        let rows = vec![
+            ("a".to_string(), 1),
+            ("b".to_string(), 5),
+            ("c".to_string(), 3),
+        ];
         let m = detect(&rows, 10);
         assert_eq!(m.dominant_shape.as_deref(), Some("b"));
         assert_eq!(m.top[0].fingerprint, "b");

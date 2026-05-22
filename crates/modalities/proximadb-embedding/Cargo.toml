@@ -20,6 +20,11 @@ default = []
 # production paths. Test code that needs a deterministic vector source uses
 # `test-synthetic` (test-cfg only).
 onnx = ["dep:ort", "dep:ndarray"]
+# CoreML execution provider (macOS / iOS). Opt-in because it links a macOS-
+# only framework and ort/coreml only builds on Apple targets. When enabled,
+# PROXIMADB_EMBED_PROVIDER=coreml routes inference through CoreML; otherwise
+# falls through to CPU.
+coreml = ["onnx", "ort/coreml"]
 # Deterministic hash-derived vector fallback. Visible only to `#[cfg(test)]`
 # code via the helper in `bge::testing` — never enabled in release builds.
 test-synthetic = []

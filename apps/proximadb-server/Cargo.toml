@@ -21,6 +21,10 @@ default = []
 # without it, `EmbeddingService` returns `ModelUnavailable` on first BGE
 # request. Pass through to the embedding crate's `onnx` feature.
 onnx = ["proximadb-embedding/onnx"]
+# CoreML execution provider (macOS / iOS). Implies `onnx`. Lets operators
+# set `PROXIMADB_EMBED_PROVIDER=coreml` to route BGE inference through the
+# Apple Neural Engine + GPU instead of CPU.
+coreml = ["onnx", "proximadb-embedding/coreml"]
 
 [dependencies]
 anyhow.workspace = true

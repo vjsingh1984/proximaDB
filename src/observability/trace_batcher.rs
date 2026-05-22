@@ -246,7 +246,11 @@ mod tests {
         // they're identical here, the trace_ids in the metering's
         // metadata should mirror input order via idempotency_key
         // uniqueness ordering — verify keys are all distinct.
-        let keys: HashSet<_> = b.records.iter().map(|r| r.idempotency_key.clone()).collect();
+        let keys: HashSet<_> = b
+            .records
+            .iter()
+            .map(|r| r.idempotency_key.clone())
+            .collect();
         assert_eq!(keys.len(), 5);
     }
 
@@ -262,7 +266,10 @@ mod tests {
         let inputs = vec![input(&t1), input(&t2), input(&t3)];
         let b = build_batch(&inputs);
         assert_eq!(b.count, 3);
-        assert_eq!(b.distinct_fingerprints, 2, "two t1/t2 share shape, t3 distinct");
+        assert_eq!(
+            b.distinct_fingerprints, 2,
+            "two t1/t2 share shape, t3 distinct"
+        );
     }
 
     #[test]
