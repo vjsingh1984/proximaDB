@@ -208,6 +208,79 @@ async fn ingest_documents_inner(
         });
     }
 
+    // Phase 2H: async mode + queue available → enqueue to embed-ingest
+    // topic and return 202 fast. Inline embedding only runs on the sync
+    // path or as a degradation when no queue is configured.
+    if mode == "async" && embed_source == "native" {
+        if let Some(queue) = state.queue_client.clone() {
+            let producer = queue.producer();
+            // Build the EmbedIngestPayload directly from `records`'
+            // props (where the text was hoisted during the build-loop
+            // above). The drainer (Phase 2G) deserializes this exact
+            // shape; the contract is frozen in
+            // `services::embedding_drainer::EmbedIngestPayload`.
+            let drainer_records: Vec<crate::services::EmbedIngestRecord> = records
+                .iter()
+                .map(|r| crate::services::EmbedIngestRecord {
+                    oid: r.oid.clone(),
+                    text: extract_text(r).unwrap_or_default(),
+                    metadata: HashMap::new(),
+                })
+                .collect();
+            let payload = crate::services::EmbedIngestPayload {
+                target_collection: collection.clone(),
+                tenant_id: tenant_id.clone(),
+                records: drainer_records,
+            };
+            let payload_bytes = serde_json::to_vec(&payload)
+                .map_err(|e| ApiError::Internal(format!("queue payload serialize: {e}")))?;
+            let msg = proximadb_queue::Message::new(
+                crate::services::EMBED_INGEST_TOPIC,
+                tenant_id.clone(),
+                payload_bytes,
+            );
+            match producer.send(msg).await {
+                Ok(_receipt) => {
+                    let response = IngestDocumentsResponse {
+                        mode: "async".to_string(),
+                        records: records
+                            .iter()
+                            .map(|r| IngestedRecord {
+                                id: r.oid.clone(),
+                                // Vector dim unknown until drainer
+                                // embeds; 0 = pending.
+                                dim: 0,
+                            })
+                            .collect(),
+                        retry_after_ms: None,
+                    };
+                    return Ok((StatusCode::ACCEPTED, response));
+                }
+                Err(proximadb_queue::QueueError::Backpressure {
+                    pct,
+                    retry_after_ms,
+                }) => {
+                    warn!(pct, retry_after_ms, "v3 async ingest: queue backpressure");
+                    // ResourceExhausted maps to HTTP 503 in the
+                    // existing ApiError IntoResponse; for queue
+                    // backpressure the convention is 429 — the response
+                    // body carries `retry_after_ms` so the SDK knows
+                    // how long to back off. Translating to 429
+                    // semantically is a follow-up touch on the
+                    // IntoResponse impl.
+                    return Err(ApiError::ResourceExhausted(format!(
+                        "queue at {pct:.0}% capacity; retry after {retry_after_ms}ms"
+                    )));
+                }
+                Err(e) => {
+                    warn!(error = %e, "v3 async ingest: queue.send failed");
+                    return Err(ApiError::Internal(format!("queue.send: {e}")));
+                }
+            }
+        }
+        // No queue configured — fall through to inline embed below.
+    }
+
     // Dispatch text-only records through the shared embedding helper. Records
     // that already carry an SDK-provided vector skip the dispatch entirely.
     if embed_source == "native" {
@@ -289,6 +362,18 @@ async fn ingest_documents_inner(
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+
+/// Extract a record's text from `props["text"]` if present. The async
+/// queue producer needs this to populate `EmbedIngestRecord::text` for
+/// the drainer to embed downstream.
+fn extract_text(record: &ProximaRecord) -> Option<String> {
+    let value = record.props.get("text")?;
+    if let ProximaTreeNode::Value(ProximaValue::String(s)) = value {
+        Some(s.clone())
+    } else {
+        None
+    }
+}
 
 fn json_to_proxima_value(value: serde_json::Value) -> ProximaValue {
     match value {
