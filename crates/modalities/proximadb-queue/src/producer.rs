@@ -69,17 +69,21 @@ impl Producer {
             });
         }
 
-        // Persist to disk first (memory rejection wouldn't leak).
+        // Persist to disk first (memory rejection wouldn't leak). The
+        // disk writer assigns + returns the offset; the memory tier uses
+        // that same offset so MessageId is stable across crash/replay.
         let outcome = disk_writer.append(&message).await?;
 
         let mut to_send = message;
-        let (entry, backpressure_hint) = part.try_enqueue(to_send.clone()).map_err(|m| {
-            to_send = m;
-            QueueError::Backpressure {
-                pct: part.depth_pct() * 100.0,
-                retry_after_ms: 100,
-            }
-        })?;
+        let (entry, backpressure_hint) = part
+            .enqueue_with_offset(to_send.clone(), outcome.offset)
+            .map_err(|m| {
+                to_send = m;
+                QueueError::Backpressure {
+                    pct: part.depth_pct() * 100.0,
+                    retry_after_ms: 100,
+                }
+            })?;
 
         // Strict mode: block on the group-commit fsync barrier so the
         // returned receipt's `fsynced_at` is a real guarantee.

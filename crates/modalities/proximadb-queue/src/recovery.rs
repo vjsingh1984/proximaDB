@@ -27,6 +27,13 @@ use crate::fs::QueueFs;
 use crate::message::Message;
 use crate::topic::PartitionId;
 
+/// Consumer-group key recovery uses to look up `offset.meta`. Phase 2C
+/// locks the design to one consumer group per topic (README invariant
+/// #4), so this is sufficient. When multi-group support lands, recovery
+/// will glob `offset.*.meta` and take the minimum committed offset
+/// across groups.
+const DEFAULT_GROUP_FOR_RECOVERY: &str = "g";
+
 const SEGMENT_EXT: &str = "qseg";
 
 /// Replay persisted segments back into the in-memory tier on startup.
@@ -104,8 +111,33 @@ async fn replay_partition(
             partition,
         })?
         .clone();
+    let disk_writer = state
+        .disk_writers
+        .get(partition as usize)
+        .ok_or(QueueError::PartitionNotFound {
+            topic: topic.to_string(),
+            partition,
+        })?
+        .clone();
+
+    // Read the per-partition committed offset for the default consumer
+    // group. None = no offset.meta on disk (cold start, replay all).
+    // Some(c) = skip messages whose frame-offset <= c (already acked).
+    let root_path = partition_dir
+        .parent()
+        .and_then(|topic_dir| topic_dir.parent())
+        .ok_or_else(|| {
+            QueueError::Persistence(format!(
+                "recovery: cannot derive queue root from {partition_dir:?}"
+            ))
+        })?;
+    let committed =
+        crate::offset_store::read(fs, root_path, topic, partition, DEFAULT_GROUP_FOR_RECOVERY)
+            .await?;
 
     let mut replayed = 0usize;
+    let mut skipped = 0usize;
+    let mut max_offset: Option<u64> = None;
     for (segment_id, path) in segments {
         let bytes = match fs.read(&path).await {
             Ok(b) => b,
@@ -120,11 +152,21 @@ async fn replay_partition(
 
         let mut cursor = Cursor::new(&bytes[..]);
         loop {
+            // Frame: [4 BE len][8 BE offset][len bytes bincode payload].
             let mut len_buf = [0u8; 4];
             if cursor.read_exact(&mut len_buf).is_err() {
                 break; // EOF
             }
             let len = u32::from_be_bytes(len_buf) as usize;
+            let mut offset_buf = [0u8; 8];
+            if cursor.read_exact(&mut offset_buf).is_err() {
+                debug!(
+                    ?path,
+                    "recovery: truncated offset header, stopping segment scan"
+                );
+                break;
+            }
+            let frame_offset = u64::from_be_bytes(offset_buf);
             // Defensive: bail if the declared length would overflow the
             // remaining segment bytes (truncated final frame from a
             // crashed producer).
@@ -149,10 +191,23 @@ async fn replay_partition(
                     continue;
                 }
             };
-            // Re-enqueue. Memory-full during replay is a config error
-            // (capacity is too small for the persisted backlog); surface
-            // it loudly rather than silently dropping.
-            if mem.try_enqueue(message).is_err() {
+
+            // Track the max frame_offset across ALL replayed frames
+            // (including skipped ones) so the disk writer's next_offset
+            // resumes past every previously-assigned offset.
+            max_offset = Some(max_offset.map_or(frame_offset, |m| m.max(frame_offset)));
+
+            // Skip if already acked by the consumer group.
+            if let Some(c) = committed {
+                if frame_offset <= c {
+                    skipped += 1;
+                    continue;
+                }
+            }
+
+            // Re-enqueue with the frame-recorded offset so MessageId is
+            // stable across crash/replay.
+            if mem.enqueue_with_offset(message, frame_offset).is_err() {
                 return Err(QueueError::Persistence(format!(
                     "recovery: memory tier full at topic={topic} partition={partition} \
                      segment={segment_id} replayed={replayed} — increase memory_capacity"
@@ -162,11 +217,19 @@ async fn replay_partition(
         }
     }
 
-    if replayed > 0 {
+    // Bump the disk writer past the highest observed offset so newly-
+    // appended messages don't collide with recovered ones.
+    if let Some(max) = max_offset {
+        disk_writer.set_next_offset(max + 1);
+    }
+
+    if replayed > 0 || skipped > 0 {
         debug!(
             topic = topic,
             partition = partition,
-            messages = replayed,
+            messages_replayed = replayed,
+            messages_skipped = skipped,
+            committed_offset = ?committed,
             "recovery: partition replayed"
         );
     }
@@ -180,22 +243,41 @@ mod tests {
     use crate::memory_tier::PartitionMemory;
     use crate::{TopicConfig, TopicState};
 
-    fn topic_state(capacity: usize) -> TopicState {
+    async fn topic_state(capacity: usize, root: &Path) -> TopicState {
+        // Open a real disk writer per partition since Phase 2C-b's
+        // replay_partition bumps the writer's next_offset after replay.
+        let fs: Arc<dyn QueueFs> = LocalFs::new_arc();
+        let cfg = TopicConfig {
+            partition_count: 1,
+            memory_capacity: capacity,
+            ..TopicConfig::default()
+        };
+        let writer = crate::disk_tier::PartitionDiskWriter::open(
+            "orders".to_string(),
+            0,
+            root.to_path_buf(),
+            fs,
+            cfg.clone(),
+        )
+        .await
+        .expect("open writer");
         TopicState {
-            config: TopicConfig {
-                partition_count: 1,
-                memory_capacity: capacity,
-                ..TopicConfig::default()
-            },
+            config: cfg,
             memory: vec![Arc::new(PartitionMemory::new(0, capacity))],
-            disk_writers: Vec::new(),
+            disk_writers: vec![writer],
         }
     }
 
-    fn frame(message: &Message) -> Vec<u8> {
+    /// Build a frame in the new format: [4 BE len][8 BE offset][payload].
+    /// The offset value here is what the disk writer would have assigned
+    /// when this message was originally written; tests pass it explicitly
+    /// so the recovery skip / max-offset behavior can be exercised
+    /// deterministically.
+    fn frame_with_offset(message: &Message, offset: u64) -> Vec<u8> {
         let encoded = bincode::serialize(message).unwrap();
-        let mut framed = Vec::with_capacity(4 + encoded.len());
+        let mut framed = Vec::with_capacity(4 + 8 + encoded.len());
         framed.extend_from_slice(&(encoded.len() as u32).to_be_bytes());
+        framed.extend_from_slice(&offset.to_be_bytes());
         framed.extend_from_slice(&encoded);
         framed
     }
@@ -204,7 +286,7 @@ mod tests {
     async fn replay_partition_returns_zero_for_missing_partition_dir() {
         let fs = LocalFs::new_arc();
         let root = tempfile::tempdir().unwrap();
-        let state = topic_state(4);
+        let state = topic_state(4, root.path()).await;
 
         let replayed = replay_partition(&fs, &root.path().join("missing"), "orders", 0, &state)
             .await
@@ -224,13 +306,17 @@ mod tests {
             .await
             .unwrap();
 
-        let mut segment_bytes = frame(&Message::new("orders", "tenant-a", b"survives".to_vec()));
+        let mut segment_bytes =
+            frame_with_offset(&Message::new("orders", "tenant-a", b"survives".to_vec()), 0);
+        // Append a truncated tail: length header claims 99 bytes, only
+        // 5 actually follow. Recovery must stop the scan cleanly.
         segment_bytes.extend_from_slice(&99u32.to_be_bytes());
+        segment_bytes.extend_from_slice(&0u64.to_be_bytes());
         segment_bytes.extend_from_slice(b"short");
         fs.append(&partition_dir.join("0000000000.qseg"), &segment_bytes)
             .await
             .unwrap();
-        let state = topic_state(4);
+        let state = topic_state(4, root.path()).await;
 
         let replayed = replay_partition(&fs, &partition_dir, "orders", 0, &state)
             .await
@@ -249,16 +335,16 @@ mod tests {
         let partition_dir = root.path().join("orders").join("0");
         fs.create_dir_all(&partition_dir).await.unwrap();
 
-        let mut segment_bytes = frame(&Message::new("orders", "tenant-a", b"first".to_vec()));
-        segment_bytes.extend_from_slice(&frame(&Message::new(
-            "orders",
-            "tenant-a",
-            b"second".to_vec(),
-        )));
+        let mut segment_bytes =
+            frame_with_offset(&Message::new("orders", "tenant-a", b"first".to_vec()), 0);
+        segment_bytes.extend_from_slice(&frame_with_offset(
+            &Message::new("orders", "tenant-a", b"second".to_vec()),
+            1,
+        ));
         fs.append(&partition_dir.join("0000000000.qseg"), &segment_bytes)
             .await
             .unwrap();
-        let state = topic_state(1);
+        let state = topic_state(1, root.path()).await;
 
         let error = replay_partition(&fs, &partition_dir, "orders", 0, &state)
             .await

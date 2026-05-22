@@ -88,33 +88,33 @@ pub async fn commit(
     Ok(())
 }
 
-/// Read the committed offset for `(topic, partition)`. Returns 0 (the
-/// safe replay-from-start default) when no offset.meta exists yet.
+/// Read the committed offset for `(topic, partition)`. Returns `None`
+/// when no `offset.meta` exists yet (cold start — recovery replays
+/// every persisted message). Returns `Some(n)` when an `offset.meta` is
+/// on disk: recovery skips frames whose `offset <= n`.
 ///
 /// The `group` parameter is verified — if the on-disk file was written
-/// by a different consumer group, returns 0 so we re-deliver from the
-/// start rather than silently honoring a stranger's commit.
+/// by a different consumer group, returns `None` so we re-deliver
+/// rather than silently honoring a stranger's commit.
 pub async fn read(
     fs: &Arc<dyn QueueFs>,
     root: &Path,
     topic: &str,
     partition: PartitionId,
     group: &str,
-) -> crate::Result<u64> {
+) -> crate::Result<Option<u64>> {
     let final_path = meta_path(root, topic, partition);
     let bytes = match fs.read(&final_path).await {
         Ok(b) => b,
-        // Missing file is the common case (cold start) — treat as 0.
-        Err(_) => return Ok(0),
+        Err(_) => return Ok(None),
     };
     if bytes.is_empty() {
-        return Ok(0);
+        return Ok(None);
     }
     let parsed: OffsetMeta = serde_json::from_slice(&bytes)
         .map_err(|e| QueueError::Persistence(format!("offset_store parse: {e}")))?;
     if parsed.group != group {
-        // Different consumer group's commit; ignore and re-deliver.
-        return Ok(0);
+        return Ok(None);
     }
-    Ok(parsed.committed_offset)
+    Ok(Some(parsed.committed_offset))
 }

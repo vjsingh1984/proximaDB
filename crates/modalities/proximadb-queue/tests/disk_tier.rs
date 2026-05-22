@@ -37,11 +37,22 @@ async fn append_writes_framed_message_and_waits_for_fsync() {
         .expect("fsync");
 
     assert_eq!(fs.fsync_calls(), 1);
+    // Frame format: [4 BE len][8 BE offset][len bytes bincode payload]
     let bytes = fs.read(&out.segment_path).await.expect("read segment");
-    assert!(bytes.len() > 4);
+    assert!(bytes.len() > 12);
     let payload_len = u32::from_be_bytes(bytes[0..4].try_into().unwrap()) as usize;
-    assert_eq!(payload_len, bytes.len() - 4);
-    let decoded: Message = bincode::deserialize(&bytes[4..]).expect("decode message");
+    assert_eq!(
+        payload_len,
+        bytes.len() - 12,
+        "frame body should be bytes after 12-byte header"
+    );
+    let frame_offset = u64::from_be_bytes(bytes[4..12].try_into().unwrap());
+    assert_eq!(
+        frame_offset, out.offset,
+        "frame offset must match AppendOutcome"
+    );
+    assert_eq!(frame_offset, 0, "first message gets offset 0");
+    let decoded: Message = bincode::deserialize(&bytes[12..]).expect("decode message");
     assert_eq!(decoded.topic, "embed-ingest");
     assert_eq!(decoded.tenant_id, "tenant-a");
     assert_eq!(decoded.payload, vec![1, 2, 3]);

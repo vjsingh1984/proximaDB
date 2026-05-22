@@ -48,7 +48,11 @@ async fn restart_recovers_unconsumed_messages() {
         let producer = client.producer();
         for i in 0..50u32 {
             producer
-                .send(Message::new("embed-ingest", "tenant-a", i.to_be_bytes().to_vec()))
+                .send(Message::new(
+                    "embed-ingest",
+                    "tenant-a",
+                    i.to_be_bytes().to_vec(),
+                ))
                 .await
                 .expect("send");
         }
@@ -77,10 +81,100 @@ async fn restart_recovers_unconsumed_messages() {
         }
     }
 
-    assert_eq!(received.len(), 50, "all 50 persisted messages must be recovered");
+    assert_eq!(
+        received.len(),
+        50,
+        "all 50 persisted messages must be recovered"
+    );
     // FIFO across the restart boundary.
     for (idx, &v) in received.iter().enumerate() {
         assert_eq!(v, idx as u32, "recovery broke FIFO at idx {idx}: got {v}");
+    }
+}
+
+/// Recovery skips messages already acked on the previous session. Send
+/// 50, ack 30, drop, reopen → poll returns exactly 20.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restart_skips_already_acked_messages() {
+    let tmp = TempDir::new().expect("tempdir");
+    let root = tmp.path();
+
+    // Session 1: send 50, poll all, ack the first 30.
+    {
+        let client = QueueClient::open(cfg_with_topic(root, "embed-ingest", 1))
+            .await
+            .expect("session1 open");
+        let producer = client.producer();
+        for i in 0..50u32 {
+            producer
+                .send(Message::new(
+                    "embed-ingest",
+                    "tenant-a",
+                    i.to_be_bytes().to_vec(),
+                ))
+                .await
+                .expect("send");
+        }
+        let consumer = client.consumer("g");
+        consumer
+            .subscribe("embed-ingest", &[0])
+            .await
+            .expect("subscribe");
+
+        // Drain at least 30 from the memory tier.
+        let mut polled = 0;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while polled < 30 && std::time::Instant::now() < deadline {
+            let batch = consumer
+                .poll(32, std::time::Duration::from_millis(50))
+                .await
+                .unwrap();
+            polled += batch.len();
+        }
+        assert!(polled >= 30, "should poll at least 30; got {polled}");
+
+        // Ack the first 30 offsets (0..29). Consumer.ack will commit
+        // max=29 to offset.meta.
+        let ack_ids: Vec<proximadb_queue::MessageId> = (0..30u64)
+            .map(|o| proximadb_queue::MessageId::new(0, 0, o))
+            .collect();
+        consumer.ack(&ack_ids).await.expect("ack");
+        client.shutdown().await.expect("shutdown");
+    }
+
+    // Session 2: open at the same root. Recovery must skip offsets
+    // 0..=29 and only enqueue 30..=49 → poll returns exactly 20.
+    let client = QueueClient::open(cfg_with_topic(root, "embed-ingest", 1))
+        .await
+        .expect("session2 open");
+    let consumer = client.consumer("g");
+    consumer
+        .subscribe("embed-ingest", &[0])
+        .await
+        .expect("subscribe");
+
+    let mut received: Vec<u32> = Vec::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while received.len() < 21 && std::time::Instant::now() < deadline {
+        let batch = consumer
+            .poll(32, std::time::Duration::from_millis(50))
+            .await
+            .unwrap();
+        for msg in batch {
+            assert_eq!(msg.payload.len(), 4);
+            let v = u32::from_be_bytes(msg.payload.as_slice().try_into().unwrap());
+            received.push(v);
+        }
+    }
+
+    assert_eq!(
+        received.len(),
+        20,
+        "should recover exactly 20 unacked messages"
+    );
+    // FIFO across the restart, starting at payload value 30.
+    for (idx, &v) in received.iter().enumerate() {
+        assert_eq!(v, (idx + 30) as u32, "expected {} got {v}", idx + 30);
     }
 }
 

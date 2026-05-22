@@ -31,6 +31,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::sync::Mutex;
 use tracing::trace;
@@ -66,6 +67,13 @@ pub struct PartitionDiskWriter {
     /// Mutex around (active_segment_id, active_segment_size_bytes).
     /// Locked briefly during append + rotation check.
     state: Mutex<DiskWriterState>,
+    /// Per-partition monotonic offset counter. Each `append` reserves
+    /// the next value atomically and writes it into the frame's
+    /// 8-byte big-endian offset header. After process restart,
+    /// `recovery::recover` bumps this past the replayed max via
+    /// `set_next_offset` so newly-appended messages don't collide with
+    /// recovered ones.
+    next_offset: AtomicU64,
 }
 
 #[derive(Debug)]
@@ -120,16 +128,38 @@ impl PartitionDiskWriter {
                 active_segment_path,
                 active_segment_size,
             }),
+            // Recovery overrides this via `set_next_offset` after
+            // scanning existing segments; cold-start leaves it at 0.
+            next_offset: AtomicU64::new(0),
         }))
     }
 
+    /// Recovery uses this after replaying disk segments to bump the
+    /// next-assigned offset past the highest one observed. Without this,
+    /// newly-appended messages on a recovered queue would re-use offsets
+    /// that already exist in old segments → consumer dedup confusion.
+    pub fn set_next_offset(&self, value: u64) {
+        self.next_offset.store(value, Ordering::Relaxed);
+    }
+
+    pub fn current_next_offset(&self) -> u64 {
+        self.next_offset.load(Ordering::Relaxed)
+    }
+
     /// Serialize + append + register fsync. Returns the segment path that
-    /// the caller should await on via `wait_for_fsync` (Strict mode).
+    /// the caller should await on via `wait_for_fsync` (Strict mode) plus
+    /// the offset assigned to this message.
+    ///
+    /// Frame format: `[4 BE: payload_len][8 BE: offset][payload]`. The
+    /// offset is durably colocated with the message so recovery can
+    /// reconstruct it without a side-channel.
     pub async fn append(self: &Arc<Self>, message: &Message) -> Result<AppendOutcome> {
+        let offset = self.next_offset.fetch_add(1, Ordering::Relaxed);
         let bytes = bincode::serialize(message)
             .map_err(|e| QueueError::Persistence(format!("serialize: {e}")))?;
-        let mut framed = Vec::with_capacity(4 + bytes.len());
+        let mut framed = Vec::with_capacity(4 + 8 + bytes.len());
         framed.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+        framed.extend_from_slice(&offset.to_be_bytes());
         framed.extend_from_slice(&bytes);
 
         let frame_len = framed.len() as u64;
@@ -163,6 +193,7 @@ impl PartitionDiskWriter {
 
         Ok(AppendOutcome {
             segment_path: active_path,
+            offset,
         })
     }
 
@@ -181,6 +212,7 @@ impl PartitionDiskWriter {
 #[derive(Debug)]
 pub struct AppendOutcome {
     pub segment_path: PathBuf,
+    pub offset: u64,
 }
 
 /// Build the segment file path for a given partition + segment_id.
@@ -217,4 +249,89 @@ async fn list_segments(
         });
     }
     Ok(segments)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fs::LocalFs;
+
+    fn rotating_config() -> TopicConfig {
+        TopicConfig {
+            partition_count: 1,
+            memory_capacity: 8,
+            disk_rotation_size_mb: 0,
+            ..TopicConfig::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn open_touches_initial_segment_and_reports_segment_metadata() {
+        let fs = LocalFs::new_arc();
+        let root = tempfile::tempdir().unwrap();
+        let writer = PartitionDiskWriter::open(
+            "orders".to_string(),
+            0,
+            root.path().to_path_buf(),
+            fs,
+            TopicConfig::default(),
+        )
+        .await
+        .unwrap();
+
+        let segments = writer.segments().await.unwrap();
+
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].topic, "orders");
+        assert_eq!(segments[0].partition, 0);
+        assert_eq!(segments[0].segment_id, 0);
+        assert_eq!(segments[0].size_bytes, 0);
+        assert!(!segments[0].sealed);
+        assert!(segments[0].path.ends_with("0000000000.qseg"));
+    }
+
+    #[tokio::test]
+    async fn append_frames_messages_and_rotates_when_threshold_is_exceeded() {
+        let fs = LocalFs::new_arc();
+        let root = tempfile::tempdir().unwrap();
+        let writer = PartitionDiskWriter::open(
+            "orders".to_string(),
+            0,
+            root.path().to_path_buf(),
+            fs.clone(),
+            rotating_config(),
+        )
+        .await
+        .unwrap();
+
+        let first_message = Message::new("orders", "tenant-a", b"first".to_vec());
+        let first = writer.append(&first_message).await.unwrap();
+        let second = writer
+            .append(&Message::new("orders", "tenant-a", b"second".to_vec()))
+            .await
+            .unwrap();
+
+        assert_ne!(first.segment_path, second.segment_path);
+        assert!(first.segment_path.ends_with("0000000000.qseg"));
+        assert!(second.segment_path.ends_with("0000000001.qseg"));
+
+        // Frame format: [4 BE: len][8 BE: offset][len bytes: bincode payload]
+        let first_bytes = fs.read(&first.segment_path).await.unwrap();
+        let len = u32::from_be_bytes(first_bytes[0..4].try_into().unwrap()) as usize;
+        let frame_offset = u64::from_be_bytes(first_bytes[4..12].try_into().unwrap());
+        let restored: Message = bincode::deserialize(&first_bytes[12..12 + len]).unwrap();
+        assert_eq!(restored.topic, "orders");
+        assert_eq!(restored.payload, b"first");
+        assert_eq!(frame_offset, first.offset);
+        assert_eq!(frame_offset, 0, "first message gets offset 0");
+
+        let segment_ids: Vec<u64> = writer
+            .segments()
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|segment| segment.segment_id)
+            .collect();
+        assert_eq!(segment_ids, vec![0, 1]);
+    }
 }
