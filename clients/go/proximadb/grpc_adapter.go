@@ -102,7 +102,27 @@ func (a *grpcAdapter) DeleteCollection(ctx context.Context, name string) error {
 	return nil
 }
 
+// InsertRecords inserts canonical records into a collection.
+func (a *grpcAdapter) InsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
+	innerRecords := convertProximaToGRPCRecords(records)
+	if err := a.inner.Insert(ctx, collection, innerRecords); err != nil {
+		return convertGRPCError(err)
+	}
+	return nil
+}
+
+// UpsertRecords inserts or updates canonical records in a collection.
+func (a *grpcAdapter) UpsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
+	innerRecords := convertProximaToGRPCRecords(records)
+	if err := a.inner.Upsert(ctx, collection, innerRecords); err != nil {
+		return convertGRPCError(err)
+	}
+	return nil
+}
+
 // Insert inserts vectors into a collection.
+//
+// Deprecated: use InsertRecords with ProximaRecord.
 func (a *grpcAdapter) Insert(ctx context.Context, collection string, records []*VectorRecord) error {
 	innerRecords := convertToGRPCRecords(records)
 	if err := a.inner.Insert(ctx, collection, innerRecords); err != nil {
@@ -112,6 +132,8 @@ func (a *grpcAdapter) Insert(ctx context.Context, collection string, records []*
 }
 
 // Upsert inserts or updates vectors in a collection.
+//
+// Deprecated: use UpsertRecords with ProximaRecord.
 func (a *grpcAdapter) Upsert(ctx context.Context, collection string, records []*VectorRecord) error {
 	innerRecords := convertToGRPCRecords(records)
 	if err := a.inner.Upsert(ctx, collection, innerRecords); err != nil {
@@ -201,6 +223,18 @@ func convertToGRPCRecords(records []*VectorRecord) []*igrpc.VectorRecord {
 			ID:       r.ID,
 			Vector:   r.Vector,
 			Metadata: r.Metadata,
+		}
+	}
+	return result
+}
+
+func convertProximaToGRPCRecords(records []*ProximaRecord) []*igrpc.VectorRecord {
+	result := make([]*igrpc.VectorRecord, len(records))
+	for i, r := range records {
+		result[i] = &igrpc.VectorRecord{
+			ID:       r.ID,
+			Vector:   r.Vector,
+			Metadata: r.Props,
 		}
 	}
 	return result

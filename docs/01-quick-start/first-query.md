@@ -31,7 +31,7 @@ We'll build a simple product search that finds similar items using embeddings.
 ## Step 1: Install Python SDK
 
 ```bash
-pip install proximadb
+pip install proximadb-sdk
 ```
 
 ---
@@ -59,20 +59,19 @@ curl http://localhost:5678/health
 ## Step 3: Create Collection
 
 ```python
-from proximadb import ProximaDB
-import numpy as np
+from proximadb_sdk import ProximaDBClient, ProximaRecord
 
 # Connect
-client = ProximaDB("http://localhost:5678")
+client = ProximaDBClient(url="http://localhost:5678")
 
 # Create collection for products
-collection = client.create_collection(
+client.create_collection(
     name="products",
     dimension=384,  # Sentence transformer dimension
-    metric="cosine"
+    distance_metric="cosine"
 )
 
-print(f"Created collection: {collection.name}")
+print("Created collection: products")
 ```
 
 ---
@@ -97,12 +96,12 @@ products = [
 texts = [p["name"] for p in products]
 embeddings = encoder.encode(texts)
 
-# Insert into ProximaDB
-collection.insert(
-    vectors=embeddings.tolist(),
-    ids=[p["id"] for p in products],
-    metadata=products
-)
+# Insert ProximaRecords into ProximaDB
+records = [
+    ProximaRecord(id=str(product["id"]), vector=embedding.tolist(), flexible_fields=product)
+    for product, embedding in zip(products, embeddings)
+]
+client.insert_records("products", records)
 
 print(f"Inserted {len(products)} products")
 ```
@@ -116,9 +115,10 @@ print(f"Inserted {len(products)} products")
 query = "audio accessories"
 query_embedding = encoder.encode([query])[0]
 
-results = collection.search(
-    query_vector=query_embedding.tolist(),
-    k=3,
+results = client.search(
+    collection="products",
+    vector=query_embedding.tolist(),
+    top_k=3,
     filter={"category": "Electronics"}  # Optional: filter by category
 )
 
@@ -154,9 +154,7 @@ Top results:
 
 ```python
 # Combine vector search with document lookup
-from proximadb import unified_query
-
-results = unified_query("""
+results = client.unified_query("""
     SELECT p.name, p.price, p.category
     FROM products p
     VECTOR_SEARCH(p.name, 'audio accessories', 3) AS v
@@ -173,16 +171,15 @@ for row in results:
 ## Complete Example
 
 ```python
-from proximadb import ProximaDB
+from proximadb_sdk import ProximaDBClient, ProximaRecord
 from sentence_transformers import SentenceTransformer
-import numpy as np
 
 # Setup
-client = ProximaDB("http://localhost:5678")
+client = ProximaDBClient(url="http://localhost:5678")
 encoder = SentenceTransformer('all-MiniLM-L6-v2')
 
 # Create collection
-collection = client.create_collection("products", dimension=384, metric="cosine")
+client.create_collection("products", dimension=384, distance_metric="cosine")
 
 # Sample data
 products = [
@@ -194,16 +191,15 @@ products = [
 # Insert
 texts = [p["name"] for p in products]
 embeddings = encoder.encode(texts)
-collection.insert(
-    vectors=embeddings.tolist(),
-    ids=[p["id"] for p in products],
-    metadata=products
-)
+client.insert_records("products", [
+    ProximaRecord(id=str(product["id"]), vector=embedding.tolist(), flexible_fields=product)
+    for product, embedding in zip(products, embeddings)
+])
 
 # Search
 query = "audio equipment"
 query_emb = encoder.encode([query])[0]
-results = collection.search(query_emb.tolist(), k=2)
+results = client.search("products", vector=query_emb.tolist(), top_k=2)
 
 for r in results:
     print(f"{r.metadata['name']}: ${r.metadata['price']} (score: {r.score:.3f})")
@@ -215,32 +211,31 @@ for r in results:
 
 ```bash
 # Create collection
-curl -X POST http://localhost:5678/api/v1/collections \
+curl -X POST http://localhost:5678/api/v2/collections \
   -H "Content-Type: application/json" \
   -d '{
     "name": "products",
     "dimension": 384,
-    "metric": "cosine"
+    "distance_metric": "cosine",
+    "enable_proxima_record": true
   }'
 
-# Insert vectors (get embeddings from Python first)
-curl -X POST http://localhost:5678/api/v1/collections/products/vectors \
+# Insert records with embeddings (get embeddings from Python first)
+curl -X POST http://localhost:5678/api/v2/collections/products/records/batch \
   -H "Content-Type: application/json" \
   -d '{
-    "vectors": [[0.1, 0.2, ...], [0.3, 0.4, ...]],
-    "ids": [1, 2],
-    "metadata": [
-      {"name": "Headphones", "price": 79.99},
-      {"name": "Shoes", "price": 89.99}
+    "records": [
+      {"id": "1", "vector": [0.1, 0.2, 0.3], "props": {"name": "Headphones", "price": 79.99}},
+      {"id": "2", "vector": [0.3, 0.4, 0.5], "props": {"name": "Shoes", "price": 89.99}}
     ]
   }'
 
 # Search
-curl -X POST http://localhost:5678/api/v1/collections/products/vectors/search \
+curl -X POST http://localhost:5678/api/v2/collections/products/search \
   -H "Content-Type: application/json" \
   -d '{
-    "vector": [0.1, 0.2, ...],
-    "k": 5,
+    "vector": [0.1, 0.2, 0.3],
+    "top_k": 5,
     "include_metadata": true
   }'
 ```

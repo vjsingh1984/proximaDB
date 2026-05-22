@@ -362,12 +362,12 @@ func (a *Adapter) DeleteCollection(ctx context.Context, name string) error {
 	return a.doRequest(ctx, http.MethodDelete, url, nil, nil)
 }
 
-// Insert inserts records into a collection.
-func (a *Adapter) Insert(ctx context.Context, collection string, records []*VectorRecord) error {
-	url := fmt.Sprintf("%s/api/v2/collections/%s/records/batch", a.baseURL, collection)
+// InsertRecords inserts canonical records into a collection.
+func (a *Adapter) InsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
+	url := fmt.Sprintf("%s/api/v2/collections/%s/records/batch", a.baseURL, url.PathEscape(collection))
 
 	body, err := json.Marshal(map[string]interface{}{
-		"records":         recordsToProximaRecords(records),
+		"records":         records,
 		"validate_schema": true,
 	})
 	if err != nil {
@@ -381,12 +381,12 @@ func (a *Adapter) Insert(ctx context.Context, collection string, records []*Vect
 	return a.doRequest(ctx, http.MethodPost, url, body, nil)
 }
 
-// Upsert inserts or updates records in a collection.
-func (a *Adapter) Upsert(ctx context.Context, collection string, records []*VectorRecord) error {
-	url := fmt.Sprintf("%s/api/v2/collections/%s/records/batch", a.baseURL, collection)
+// UpsertRecords inserts or updates canonical records in a collection.
+func (a *Adapter) UpsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
+	url := fmt.Sprintf("%s/api/v2/collections/%s/records/batch", a.baseURL, url.PathEscape(collection))
 
 	body, err := json.Marshal(map[string]interface{}{
-		"records":         recordsToProximaRecords(records),
+		"records":         records,
 		"validate_schema": true,
 		"upsert":          true,
 	})
@@ -399,6 +399,20 @@ func (a *Adapter) Upsert(ctx context.Context, collection string, records []*Vect
 	}
 
 	return a.doRequest(ctx, http.MethodPost, url, body, nil)
+}
+
+// Insert inserts records into a collection.
+//
+// Deprecated: use InsertRecords with ProximaRecord.
+func (a *Adapter) Insert(ctx context.Context, collection string, records []*VectorRecord) error {
+	return a.InsertRecords(ctx, collection, recordsToProximaRecords(records))
+}
+
+// Upsert inserts or updates records in a collection.
+//
+// Deprecated: use UpsertRecords with ProximaRecord.
+func (a *Adapter) Upsert(ctx context.Context, collection string, records []*VectorRecord) error {
+	return a.UpsertRecords(ctx, collection, recordsToProximaRecords(records))
 }
 
 func recordsToProximaRecords(records []*VectorRecord) []*ProximaRecord {

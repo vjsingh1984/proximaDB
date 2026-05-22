@@ -333,6 +333,21 @@ func TestMockServer(t *testing.T) {
 		}
 	})
 
+	// Test InsertRecords
+	t.Run("InsertRecords", func(t *testing.T) {
+		records := []*proximadb.ProximaRecord{
+			{
+				ID:     "record1",
+				Vector: make([]float32, 128),
+				Props:  map[string]interface{}{"category": "canonical"},
+			},
+		}
+		err := client.InsertRecords(ctx, "test_collection", records)
+		if err != nil {
+			t.Fatalf("InsertRecords failed: %v", err)
+		}
+	})
+
 	// Test Search
 	t.Run("Search", func(t *testing.T) {
 		resp, err := client.Search(ctx, "test_collection", &proximadb.SearchQuery{

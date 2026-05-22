@@ -36,9 +36,17 @@ type Client interface {
 
 	// Vector operations
 
+	// InsertRecords inserts canonical records into a collection.
+	InsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error
+	// UpsertRecords inserts or updates canonical records in a collection.
+	UpsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error
 	// Insert inserts vectors into a collection.
+	//
+	// Deprecated: use InsertRecords with ProximaRecord.
 	Insert(ctx context.Context, collection string, records []*VectorRecord) error
 	// Upsert inserts or updates vectors in a collection.
+	//
+	// Deprecated: use UpsertRecords with ProximaRecord.
 	Upsert(ctx context.Context, collection string, records []*VectorRecord) error
 	// Search performs a vector similarity search.
 	Search(ctx context.Context, collection string, query *SearchQuery) (*SearchResponse, error)
@@ -50,6 +58,8 @@ type Client interface {
 	// Batch operations
 
 	// BatchInsert inserts vectors in batches with progress tracking.
+	//
+	// Deprecated: use InsertRecords with ProximaRecord batches.
 	BatchInsert(ctx context.Context, collection string, records []*VectorRecord, opts *BatchOptions) (*BatchResult, error)
 	// BatchSearch performs multiple searches in parallel.
 	BatchSearch(ctx context.Context, collection string, queries []*SearchQuery, opts *BatchOptions) ([]*SearchResponse, error)
@@ -191,6 +201,8 @@ type Adapter interface {
 	DeleteCollection(ctx context.Context, name string) error
 
 	// Vector operations
+	InsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error
+	UpsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error
 	Insert(ctx context.Context, collection string, records []*VectorRecord) error
 	Upsert(ctx context.Context, collection string, records []*VectorRecord) error
 	Search(ctx context.Context, collection string, query *SearchQuery) (*SearchResponse, error)
@@ -330,7 +342,31 @@ func (c *client) DeleteCollection(ctx context.Context, name string) error {
 	return err
 }
 
+// InsertRecords inserts canonical records into a collection.
+func (c *client) InsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
+	if err := c.ensureOpen(); err != nil {
+		return err
+	}
+	_, err := withRetry(ctx, c.config, func() (struct{}, error) {
+		return struct{}{}, c.adapter.InsertRecords(ctx, collection, records)
+	})
+	return err
+}
+
+// UpsertRecords inserts or updates canonical records in a collection.
+func (c *client) UpsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
+	if err := c.ensureOpen(); err != nil {
+		return err
+	}
+	_, err := withRetry(ctx, c.config, func() (struct{}, error) {
+		return struct{}{}, c.adapter.UpsertRecords(ctx, collection, records)
+	})
+	return err
+}
+
 // Insert inserts vectors into a collection.
+//
+// Deprecated: use InsertRecords with ProximaRecord.
 func (c *client) Insert(ctx context.Context, collection string, records []*VectorRecord) error {
 	if err := c.ensureOpen(); err != nil {
 		return err
@@ -342,6 +378,8 @@ func (c *client) Insert(ctx context.Context, collection string, records []*Vecto
 }
 
 // Upsert inserts or updates vectors in a collection.
+//
+// Deprecated: use UpsertRecords with ProximaRecord.
 func (c *client) Upsert(ctx context.Context, collection string, records []*VectorRecord) error {
 	if err := c.ensureOpen(); err != nil {
 		return err

@@ -73,6 +73,8 @@ type ProximaRecord struct {
 }
 
 // VectorRecord represents a legacy vector-shaped compatibility payload.
+//
+// Deprecated: use ProximaRecord with Client.InsertRecords or Client.UpsertRecords.
 type VectorRecord struct {
 	// ID is the unique identifier for the vector.
 	ID string `json:"id"`

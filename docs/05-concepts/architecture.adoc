@@ -164,8 +164,8 @@ The FederatedQueryContext enables cross-model SQL queries with specialized exten
 %%{init: {"theme": "neutral"}}%%
 flowchart TB
   subgraph Client[Client Layer]
-    REST[REST /api/v1/unified/federated]
-    GRPC[gRPC SqlService]
+    REST[REST /api/v2/query]
+    GRPC[gRPC ProximaRecordService]
     PGWIRE[PostgreSQL Wire :5433]
   end
 
@@ -325,4 +325,3 @@ flowchart TB
 |===
 
 See link:vision.adoc[Vision Document (legacy)] and link:../00-product/VISION.adoc[Refined Vision Document] for phase definitions.
-

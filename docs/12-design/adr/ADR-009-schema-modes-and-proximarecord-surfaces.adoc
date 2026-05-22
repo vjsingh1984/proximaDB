@@ -206,6 +206,7 @@ Negative / migration cost:
    Completed: Go REST adapter insert/upsert now translates compatibility `VectorRecord` inputs into canonical record batches at `/api/v2/collections/{collection}/records/batch`, with public `ProximaRecord` available for new code.
    Completed: REST `/api/v1/*` now emits deprecation metadata, and unified-mode gRPC registers `proximadb.v2.ProximaRecordService` alongside v1 compatibility services so canonical record writes/search are available on both server modes.
    Completed: Platform REST v1 router builders and gRPC v1 success/error responses now apply deprecation metadata when used directly, and runtime/support-surface docs label v1 REST/gRPC as compatibility adapters rather than primary product APIs.
+   Completed: Active quick-start/vector/SDK guides now lead with `/api/v2` and `ProximaRecord`; Go SDK exposes `InsertRecords`/`UpsertRecords` over the existing `ProximaRecord` type while marking `VectorRecord` entry points as deprecated compatibility.
    Direction: no permanent dual endpoint strategy. The record-native implementation is the only maintained write contract; old v1 vector-shaped routes and clients are migration aliases until the final rename/removal phase promotes the record API as stable.
 3. [ ] Make Arrow Flight use xCatalog-derived `ProximaType` schemas and record batches. Status: in progress.
    Completed: catalog-backed relational Arrow schema derivation and multimodal schema facade exports.

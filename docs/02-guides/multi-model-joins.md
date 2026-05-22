@@ -112,9 +112,9 @@ JOIN METRICS('app-metrics', 'cpu_usage > 80') AS m
 ## Python SDK
 
 ```python
-from proximadb import ProximaDB
+from proximadb_sdk import ProximaDBClient
 
-client = ProximaDB("http://localhost:5678")
+client = ProximaDBClient(url="http://localhost:5678")
 
 # Multi-model query
 results = client.unified_query("""

@@ -101,7 +101,27 @@ func (a *restAdapter) DeleteCollection(ctx context.Context, name string) error {
 	return nil
 }
 
+// InsertRecords inserts canonical records into a collection.
+func (a *restAdapter) InsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
+	innerRecords := convertToRESTProximaRecords(records)
+	if err := a.inner.InsertRecords(ctx, collection, innerRecords); err != nil {
+		return convertRESTError(err)
+	}
+	return nil
+}
+
+// UpsertRecords inserts or updates canonical records in a collection.
+func (a *restAdapter) UpsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
+	innerRecords := convertToRESTProximaRecords(records)
+	if err := a.inner.UpsertRecords(ctx, collection, innerRecords); err != nil {
+		return convertRESTError(err)
+	}
+	return nil
+}
+
 // Insert inserts vectors into a collection.
+//
+// Deprecated: use InsertRecords with ProximaRecord.
 func (a *restAdapter) Insert(ctx context.Context, collection string, records []*VectorRecord) error {
 	innerRecords := convertToRESTRecords(records)
 	if err := a.inner.Insert(ctx, collection, innerRecords); err != nil {
@@ -111,6 +131,8 @@ func (a *restAdapter) Insert(ctx context.Context, collection string, records []*
 }
 
 // Upsert inserts or updates vectors in a collection.
+//
+// Deprecated: use UpsertRecords with ProximaRecord.
 func (a *restAdapter) Upsert(ctx context.Context, collection string, records []*VectorRecord) error {
 	innerRecords := convertToRESTRecords(records)
 	if err := a.inner.Upsert(ctx, collection, innerRecords); err != nil {
@@ -197,6 +219,19 @@ func convertToRESTRecords(records []*VectorRecord) []*rest.VectorRecord {
 			ID:       r.ID,
 			Vector:   r.Vector,
 			Metadata: r.Metadata,
+		}
+	}
+	return result
+}
+
+func convertToRESTProximaRecords(records []*ProximaRecord) []*rest.ProximaRecord {
+	result := make([]*rest.ProximaRecord, len(records))
+	for i, r := range records {
+		result[i] = &rest.ProximaRecord{
+			ID:     r.ID,
+			Vector: r.Vector,
+			Props:  r.Props,
+			Source: r.Source,
 		}
 	}
 	return result

@@ -265,17 +265,18 @@ curl http://localhost:5678/health
 ### Test Collection
 
 ```bash
-# Create a collection
-curl -X POST http://localhost:5678/api/v1/collections \
+# Create a canonical record collection
+curl -X POST http://localhost:5678/api/v2/collections \
   -H "Content-Type: application/json" \
   -d '{
     "name": "test",
     "dimension": 128,
-    "metric": "cosine"
+    "distance_metric": "cosine",
+    "enable_proxima_record": true
   }'
 
 # List collections
-curl http://localhost:5678/api/v1/collections
+curl http://localhost:5678/api/v2/collections
 ```
 
 ---

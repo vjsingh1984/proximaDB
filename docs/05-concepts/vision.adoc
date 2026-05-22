@@ -119,6 +119,11 @@ graph context, without moving data across multiple systems.
 
 === Builder Quickstart: AI Labeling + Hybrid Search
 
+This workflow uses canonical `/api/v2` record endpoints for embedding writes and
+search. Document and graph examples that still use `/api/v1/*` are deprecated
+compatibility facades while those modality routes converge on record-backed
+surfaces.
+
 [source,bash]
 ----
 # 1) Create a document collection for labeling assets
@@ -139,28 +144,29 @@ curl -X POST http://localhost:5678/api/v1/documents/collections/labeling_assets/
     }
   }'
 
-# 3) Create a vector collection for embeddings
-curl -X POST http://localhost:5678/api/v1/collections \
+# 3) Create a record collection for embeddings
+curl -X POST http://localhost:5678/api/v2/collections \
   -H "Content-Type: application/json" \
   -d '{
-    "collection_id": "labeling_embeddings",
-    "collection_config": {"dimension": 384, "storage_engine": "sst", "distance_metric": "cosine"}
+    "name": "labeling_embeddings",
+    "dimension": 2,
+    "engine": "sst",
+    "distance_metric": "cosine",
+    "enable_proxima_record": true
   }'
 
-# 4) Insert embeddings with metadata for hybrid filtering
-curl -X POST http://localhost:5678/api/v1/vectors/batch \
+# 4) Insert records with embeddings and props for hybrid filtering
+curl -X POST http://localhost:5678/api/v2/collections/labeling_embeddings/records/batch \
   -H "Content-Type: application/json" \
   -d '{
-    "collection_id": "labeling_embeddings",
-    "operation": "insert",
-    "vectors": [
+    "records": [
       {
         "id": "asset_1",
         "vector": [0.1, 0.2],
-        "metadata": {
-          "asset_id": {"stringValue": "asset_1"},
-          "label_status": {"stringValue": "unlabeled"},
-          "dataset": {"stringValue": "support"}
+        "props": {
+          "asset_id": "asset_1",
+          "label_status": "unlabeled",
+          "dataset": "support"
         }
       }
     ]
@@ -203,16 +209,15 @@ curl -X POST http://localhost:5678/api/v1/graph/graphs/label_taxonomy/edges \
   }'
 
 # 6) Hybrid search: semantic similarity + structured filters
-curl -X POST http://localhost:5678/api/v1/search \
+curl -X POST http://localhost:5678/api/v2/collections/labeling_embeddings/search \
   -H "Content-Type: application/json" \
   -d '{
-    "collection_id": "labeling_embeddings",
-    "query_vector": [0.1, 0.2],
+    "vector": [0.1, 0.2],
     "top_k": 10,
-    "metadata_filters": [
-      {"field": "label_status", "operator": "EQUALS", "value": {"stringValue": "unlabeled"}},
-      {"field": "dataset", "operator": "EQUALS", "value": {"stringValue": "support"}}
-    ]
+    "filter": {
+      "label_status": "unlabeled",
+      "dataset": "support"
+    }
   }'
 
 # 7) Optional: traverse taxonomy for label suggestions
@@ -223,7 +228,7 @@ curl -X POST http://localhost:5678/api/v1/graph/graphs/label_taxonomy/traverse \
 
 [source,python]
 ----
-from proximadb import ProximaDBClient
+from proximadb_sdk import ProximaDBClient
 
 client = ProximaDBClient("http://localhost:5678")
 
@@ -242,15 +247,15 @@ client.create_collection(
     distance_metric="cosine",
 )
 
-client.insert_vectors("labeling_embeddings", [
+client.insert_records("labeling_embeddings", [
     {
         "id": "asset_1",
         "vector": [0.1, 0.2],
-        "metadata": {"asset_id": "asset_1", "label_status": "unlabeled", "dataset": "support"},
+        "props": {"asset_id": "asset_1", "label_status": "unlabeled", "dataset": "support"},
     }
 ])
 
-results = client.search_vectors("labeling_embeddings", [0.1, 0.2], top_k=10)
+results = client.search("labeling_embeddings", vector=[0.1, 0.2], top_k=10)
 print(results)
 ----
 
@@ -279,21 +284,20 @@ curl -X POST http://localhost:5678/api/v1/documents/collections/labeling_decisio
   }'
 
 # 2) Update embedding metadata by delete + re-insert
-curl -X DELETE http://localhost:5678/api/v1/vectors/labeling_embeddings/asset_1
+curl -X DELETE http://localhost:5678/api/v2/collections/labeling_embeddings/records/asset_1
 
-curl -X POST http://localhost:5678/api/v1/vectors/batch \
+curl -X POST http://localhost:5678/api/v2/collections/labeling_embeddings/records/batch \
   -H "Content-Type: application/json" \
   -d '{
-    "collection_id": "labeling_embeddings",
-    "vectors": [
+    "records": [
       {
         "id": "asset_1",
         "vector": [0.1, 0.2],
-        "metadata": {
-          "asset_id": {"stringValue": "asset_1"},
-          "label_status": {"stringValue": "labeled"},
-          "label": {"stringValue": "Refund"},
-          "dataset": {"stringValue": "support"}
+        "props": {
+          "asset_id": "asset_1",
+          "label_status": "labeled",
+          "label": "Refund",
+          "dataset": "support"
         }
       }
     ]
@@ -322,33 +326,29 @@ curl -X POST http://localhost:5678/api/v1/graph/graphs/label_taxonomy/edges \
   }'
 
 # 4) Re-query for unlabeled items only
-curl -X POST http://localhost:5678/api/v1/search \
+curl -X POST http://localhost:5678/api/v2/collections/labeling_embeddings/search \
   -H "Content-Type: application/json" \
   -d '{
-    "collection_id": "labeling_embeddings",
-    "query_vector": [0.1, 0.2],
+    "vector": [0.1, 0.2],
     "top_k": 10,
-    "metadata_filters": [
-      {"field": "label_status", "operator": "EQUALS", "value": {"stringValue": "unlabeled"}}
-    ]
+    "filter": {"label_status": "unlabeled"}
   }'
 ----
 
 [source,python]
 ----
-from proximadb import ProximaDBClient, VectorRecord
+from proximadb_sdk import ProximaDBClient, ProximaRecord
 
 client = ProximaDBClient("http://localhost:5678")
 
-# Write back the label decision by updating vector metadata
-client.delete_vectors("labeling_embeddings", ["asset_1"])
-client.insert_vectors(
+# Write back the label decision by upserting the same record ID
+client.insert_records(
     "labeling_embeddings",
     records=[
-        VectorRecord(
+        ProximaRecord(
             id="asset_1",
             vector=[0.1, 0.2],
-            metadata={
+            flexible_fields={
                 "asset_id": "asset_1",
                 "label_status": "labeled",
                 "label": "Refund",
@@ -393,7 +393,8 @@ ORDER BY v.score DESC;
 
 [source,bash]
 ----
-# Execute via REST API
+# Execute through pgwire/SQL when possible. The REST v1 endpoint remains a
+# deprecated compatibility facade for existing automation.
 curl -X POST http://localhost:5678/api/v1/unified/federated \
   -H "Content-Type: application/json" \
   -d '{

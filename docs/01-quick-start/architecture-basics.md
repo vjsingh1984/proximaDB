@@ -62,8 +62,8 @@ Single port (`5678`) for multiple protocols:
 
 | Protocol | Use Case | Example |
 |----------|----------|---------|
-| **REST** | Web apps, curl | `POST /api/v1/collections` |
-| **gRPC** | High-performance services | `proto/CollectionService` |
+| **REST** | Web apps, curl | `POST /api/v2/collections` |
+| **gRPC** | High-performance services | `proximadb.v2.ProximaRecordService` |
 | **Arrow Flight** | Data analytics, BI tools | `do_put()` streaming |
 
 Plus PostgreSQL wire protocol on port `5433` for SQL clients.

@@ -428,8 +428,8 @@ vectors = client.get_all_vectors("old_collection")
 # Create new HELIX collection
 client.create_collection("new_collection", dimension=768, engine="helix")
 
-# Import vectors
-client.insert_vectors("new_collection", vectors)
+# Import through the canonical record API
+client.insert_records("new_collection", vectors)
 
 # Verify and switch
 assert client.get_collection_stats("new_collection")["vector_count"] == len(vectors)
