@@ -133,6 +133,11 @@ pub struct MultiServer {
     server_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     /// LLM engine for semantic operations
     llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
+    /// Optional queue client threaded into REST `AppState` so the v3
+    /// `/documents?mode=async` handler routes through the queue
+    /// producer instead of falling back to inline embed. None when
+    /// `PROXIMADB_QUEUE_ROOT` is unset.
+    queue_client: Option<Arc<proximadb_queue::QueueClient>>,
 }
 
 impl MultiServer {
@@ -146,12 +151,38 @@ impl MultiServer {
         rest_multi_tenant_required: bool,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
+        Self::new_with_queue_client(
+            config,
+            shared_services,
+            security_coordinator,
+            rest_auth_enabled,
+            rest_multi_tenant_required,
+            llm_engine,
+            None,
+        )
+    }
+
+    /// Variant of `new` that also receives the async-ingest queue
+    /// client. Production startup uses this; legacy callers continue
+    /// through `new` and pass `None`.
+    pub fn new_with_queue_client(
+        config: MultiServerConfig,
+        shared_services: SharedServices,
+        security_coordinator: Option<Arc<SecurityCoordinator>>,
+        rest_auth_enabled: bool,
+        rest_multi_tenant_required: bool,
+        llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
+        queue_client: Option<Arc<proximadb_queue::QueueClient>>,
+    ) -> Self {
         info!("🚀 MultiServer: Initializing network orchestrator");
         info!(
             "📡 MultiServer: gRPC port: {}, REST port: {}",
             config.grpc_config.port, config.http_config.port
         );
         info!("🔒 MultiServer: TLS enabled: {}", config.is_tls_enabled());
+        if queue_client.is_some() {
+            info!("📬 MultiServer: queue client threaded for async ingest");
+        }
 
         Self {
             config,
@@ -161,6 +192,7 @@ impl MultiServer {
             rest_multi_tenant_required,
             server_handles: Arc::new(Mutex::new(Vec::new())),
             llm_engine,
+            queue_client,
         }
     }
 
@@ -551,6 +583,11 @@ impl MultiServer {
             // Compression disabled by default (field doesn't exist in config)
             let enable_compression = false;
             let llm_engine = self.llm_engine.clone();
+            // Clone the queue client *before* the tokio::spawn so the spawned
+            // task doesn't borrow `self` across the `'static` boundary. The
+            // queue_client value is itself an Option<Arc<...>> so cloning is
+            // cheap and preserves the same handle for the spawned task.
+            let queue_client_for_rest = self.queue_client.clone();
             let rest_handle = tokio::spawn(async move {
                 use crate::network::rest::server::{RestServer, RestServerSecurityConfig};
 
@@ -579,6 +616,7 @@ impl MultiServer {
                     llm_engine,
                     rest_ports_opt,
                     Some(catalog_manager),
+                    queue_client_for_rest,
                 )
                 .start()
                 .await
@@ -767,6 +805,7 @@ impl MultiServer {
                 Some(rest_ports),
                 Some(services.segment_registry.clone()),
                 Some(services.catalog_manager.clone()),
+                self.queue_client.clone(),
             );
 
             info!(

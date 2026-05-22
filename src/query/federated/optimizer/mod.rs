@@ -34,6 +34,7 @@ pub mod plan_v2_inference;
 pub mod plan_v2_training;
 pub mod predicate_normalizer;
 pub mod selectivity;
+pub mod trace_replay;
 
 /// Physical plan node types
 #[derive(Debug, Clone)]
