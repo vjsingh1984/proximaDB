@@ -247,12 +247,12 @@ Victor database scale after the 2026-05-22 resolver, audit, and quality fixes:
 [cols="1,1",options="header"]
 |===
 | Metric | Value
-| `graph_node` rows | 863,803
-| `graph_edge` rows | 2,759,409
-| `graph_module_metric` rows | 1,713
-| `DDG_DEF_USE` edges | ~1,567,000
-| `CFG_SUCCESSOR` edges | ~522,000
-| `CALLS` edges | 239,097 (55,577 same-file, 183,520 cross-file)
+| `graph_node` rows | 864,017
+| `graph_edge` rows | 2,637,714
+| `graph_module_metric` rows | 1,714
+| `DDG_DEF_USE` edges | ~1,569,000
+| `CFG_SUCCESSOR` edges | ~523,000
+| `CALLS` edges | 116,910 (59,274 same-file, 57,636 cross-file)
 | `CDG` edges | ~101,000
 | `CONTAINS` edges | ~22,400
 |===
@@ -267,7 +267,8 @@ Evolution across the fix:
 | Receiver-typed dispatch (basic) | 467,982 | 415,788 | 1,684
 | Plus struct-field, method-chain, ``Self::`` | 1,262,182 | 1,203,169 | 1,706
 | Strict semantics + macro skip + method-drop | 1,034,444 | 979,795 | 1,707
-| Plus impl_item-as-implementing-type (audit fix) | **239,097** | **183,520** | 1,713
+| Plus impl_item-as-implementing-type | 239,097 | 183,520 | 1,713
+| Plus same-file preference for plain calls | **116,910** | **57,636** | 1,714
 |===
 
 The dramatic drop in the final snapshot is **noise removal, not coverage loss**. Audit
@@ -296,14 +297,23 @@ the fanout cap, because those are globally unambiguous in well-named codebases).
 removed ~140k speculative bindings on common leaf names like ``collect``, ``clone``,
 ``len`` that were fanning out to every user impl with the same leaf.
 
-Cross-file ratio settles at 77% (183,520 / 239,097), down from 95% in the inflated
-snapshots. The drop is expected: dropping method calls with no inferable receiver
-removes mostly cross-file edges (impls usually live in different files from their
-callers). The remaining cross-file edges are the precise ones -- bound via typed
-dispatch to a specific ``impl T::method``. Treat the new total as a tight lower bound
-on the true call graph; the speculative edges that previously inflated it are gone, and
-the gaps that remain (method chains crossing file boundaries, generics, trait objects)
-fall back gracefully rather than producing wrong edges.
+A subsequent spot-check audit (5 random src->src CALLS samples) caught a fourth
+quality issue: plain function calls to local test helpers like ``inputs(&t)`` were
+fanning out across all 11 same-leaf-name definitions in the codebase. The fix --
+*same-file preference for plain function calls* -- restricts the name-only candidate
+set to caller-file matches when any exist (Rust function name resolution is
+module-scoped; cross-file binding only makes sense when there's no local match).
+Removed 122k cross-file fanout edges while increasing same-file edges by 3.7k
+(the legitimate local bindings that were getting buried in the fanout).
+
+Cross-file ratio settles at 49% (57,636 / 116,910) -- intentionally lower than the
+inflated 95% in earlier snapshots. The earlier ratios were dominated by cross-file
+fanout to wrong files; the new ratio reflects real cross-module dispatch (typed methods
+binding to ``impl T::method`` in another file, and plain calls where no local match
+exists). Treat the new total as a tight lower bound on the true call graph; the
+speculative edges that previously inflated it are gone, and the gaps that remain
+(method chains crossing file boundaries, generics, trait objects) fall back gracefully
+rather than producing wrong edges.
 
 Top node kinds from Victor:
 
@@ -427,7 +437,7 @@ where edge.type = 'CALLS';
 
 Current interpretation:
 
-* `graph_module_metric` contains 1,713 rows. Module-level PageRank, instability, cohesion,
+* `graph_module_metric` contains 1,714 rows. Module-level PageRank, instability, cohesion,
   hotspot, and TDD priority metrics are first-class signals; use them as gates alongside Cargo
   dependency centrality. Hotspot rankings remain stable across the audit-fix rebuilds (top
   files: `src/network/rest/v1/handlers.rs`, `src/network/multi_server.rs`,
