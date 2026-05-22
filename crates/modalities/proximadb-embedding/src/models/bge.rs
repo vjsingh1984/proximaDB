@@ -465,9 +465,11 @@ impl BgeModel {
             let outputs = session.run(inputs).map_err(onnx_err)?;
             // BGE exports expose the last hidden state under the first output
             // (sometimes named `last_hidden_state`, sometimes `output_0`).
-            // Pick the first rank-3 f32 output.
+            // Models exported with `--dtype fp16` emit a `tensor(float16)`
+            // output; fp32 exports emit `tensor(float)`. Try each.
             let mut found: Option<(Vec<f32>, Vec<usize>)> = None;
             for (_, value) in outputs.iter() {
+                // fp32 path
                 if let Ok(arr) = value.try_extract_array::<f32>() {
                     let shape = arr.shape().to_vec();
                     if shape.len() == 3 {
@@ -476,10 +478,19 @@ impl BgeModel {
                         break;
                     }
                 }
+                // fp16 path — convert to f32 row-wise
+                if let Ok(arr) = value.try_extract_array::<half::f16>() {
+                    let shape = arr.shape().to_vec();
+                    if shape.len() == 3 {
+                        let data: Vec<f32> = arr.iter().map(|x| x.to_f32()).collect();
+                        found = Some((data, shape));
+                        break;
+                    }
+                }
             }
             found.ok_or_else(|| {
                 crate::EmbeddingError::Other(anyhow::anyhow!(
-                    "no rank-3 f32 output found in ONNX run"
+                    "no rank-3 f32 or f16 output found in ONNX run"
                 ))
             })?
         };

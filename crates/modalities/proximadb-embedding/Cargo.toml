@@ -19,7 +19,7 @@ default = []
 # crate compiles but `BgeModel::initialize` returns ModelUnavailable for
 # production paths. Test code that needs a deterministic vector source uses
 # `test-synthetic` (test-cfg only).
-onnx = ["dep:ort", "dep:ndarray"]
+onnx = ["dep:ort", "dep:ndarray", "dep:half"]
 # CoreML execution provider (macOS / iOS). Opt-in because it links a macOS-
 # only framework and ort/coreml only builds on Apple targets. When enabled,
 # PROXIMADB_EMBED_PROVIDER=coreml routes inference through CoreML; otherwise
@@ -111,7 +111,10 @@ ort = { version = "2.0.0-rc.10", optional = true, default-features = false, feat
     "download-binaries",
     "ndarray",
     "tls-rustls",
+    "half",
 ] }
+# half (`f16`/`bf16`) for fp16 ONNX output extraction.
+half = { version = "2.7", optional = true }
 
 # ndarray for tensor manipulation in the BGE inference path (mean-pool, L2 norm).
 # Pinned to 0.17 to match ort 2.0.0-rc.x; ndarray 0.16 lacks the `NdFloat` trait

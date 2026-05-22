@@ -1,0 +1,296 @@
+= End-to-End Embedding Precision (fp16 / int8 / binary) Roadmap
+:toc:
+:toclevels: 3
+:sectnums:
+
+Status: Design proposal +
+Date: 2026-05-22 +
+Scope: Make embedding precision a first-class collection attribute,
+plumbed end-to-end from the ONNX inference output through the WAL,
+record catalog, ANN index, and protocol surfaces. Companion to
+`artifacts/v3_bge_large_coreml_2026_05_22.md` and the fp16 inference
+work landed in commits `40efff2e0…` series.
+
+== Motivation
+
+The fp16 ONNX export of bge-large reduced model size 1337 MB → 669 MB
+(2×) and exercises AMX fp16 paths on Apple Silicon. **However, today
+the fp16 win is lost the moment the tensor leaves ORT.** Our Rust
+embedding service converts fp16 outputs to fp32 before returning
+`Vec<Vec<f32>>`, and the canonical `EmbeddingCell.values: Vec<f32>`
+in `crates/foundation/proximadb-records/src/lib.rs:130` is hardcoded
+fp32. Everything downstream — WAL serialization, memtable, PAX
+projection, HNSW index, REST/gRPC contracts — assumes fp32.
+
+End-to-end fp16 would unlock:
+
+[cols="2,1,3"]
+|===
+| Axis | Win | Notes
+
+| Storage size
+| 2×
+| 1024-dim BGE-large: 4096 B → 2048 B per vector. On a 100M-row
+collection, 800 GB → 400 GB.
+| WAL write throughput
+| ~2×
+| Smaller payload, less fsync data per batch.
+| Memtable cache density
+| 2×
+| Twice as many hot vectors per page; helps memtable-hit rates on
+search before flush.
+| Client→server bandwidth
+| 2×
+| REST JSON (with base64-encoded f16) or gRPC `bytes` payload halves.
+| Distance compute (CPU)
+| 1.3–1.8×
+| AMX has fp16 matmul; NEON has FCMLA fp16; AVX-512 has BF16. Less
+than 2× because the dominant cost is memory bandwidth at the index
+fan-out, which fp16 already halves.
+|===
+
+The cost is a real engineering effort: schema change, API contract
+update, ANN code paths, and a recall regression suite to confirm
+that the fp16 quantization error (`max diff ~0.0065` observed on
+bge-large per optimum export warning) doesn't degrade recall in
+practice.
+
+== Today's data flow (fp32 forced)
+
+[source]
+----
+HF/ONNX model (fp16 or fp32 weights)
+    │
+    ▼  ort::Session::run → tensor(float16) or tensor(float)
+ort SessionOutputs
+    │
+    ▼  BgeModel::embed_batch_onnx promotes to Vec<f32>
+Vec<Vec<f32>>
+    │
+    ▼  embed_text_only_records assigns to ProximaRecord
+ProximaRecord.embeddings[0].values: Vec<f32>   ← hardcoded fp32
+    │
+    ▼  WAL appender serializes (4 B / element)
+WAL on disk
+    │
+    ▼  memtable / PAX projection / HNSW index
+fp32 distance compute
+----
+
+== Target data flow (precision is a first-class attribute)
+
+[source]
+----
+HF/ONNX model (fp16 or fp32 weights)
+    │
+    ▼  ort::Session::run
+ort tensor (precision matches collection attribute)
+    │
+    ▼  BgeModel::embed_batch_onnx returns precision-aware payload
+EmbeddingPayload { precision: F16, bytes: [..2048..] }
+    │
+    ▼  ProximaRecord.embeddings[0] = EmbeddingCell {
+         precision: F16, values: EmbeddingValues::F16(Vec<f16>) }
+    │
+    ▼  WAL appender writes 2 B / element when precision=F16
+WAL on disk
+    │
+    ▼  memtable / PAX projection / HNSW index
+fp16 distance compute (or fp32 promotion at the inner loop)
+----
+
+== Schema changes
+
+=== `proximadb-records` crate
+
+[source,rust]
+----
+// crates/foundation/proximadb-records/src/lib.rs
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum VectorPrecision {
+    /// 4 bytes / element. Today's default.
+    F32,
+    /// 2 bytes / element. AMX/NEON/AVX-512 BF16 paths use this.
+    F16,
+    /// 1 byte / element + per-vector scale. Lossy. Future.
+    Int8,
+    /// 1 bit / element. Sign-only. Future (binary embeddings).
+    Binary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum EmbeddingValues {
+    F32(Vec<f32>),
+    F16(Vec<half::f16>),
+    Int8 { values: Vec<i8>, scale: f32 },
+    Binary(BitVec),
+}
+
+pub struct EmbeddingCell {
+    pub model_id: String,
+    pub modality: String,
+    pub dim: u32,
+    pub precision: VectorPrecision,
+    pub values: EmbeddingValues,
+    // legacy alias getter for existing code:
+    // fn values_f32(&self) -> Cow<[f32]> { ... } returns either ref
+    // or owned promotion as needed.
+}
+----
+
+=== `proximadb-catalog` collection schema
+
+`CatalogTableSchema` for vector collections gains a
+`vector_precision: VectorPrecision` field alongside `vector_dim`.
+Default at creation time: `F32` for compatibility; clients opt into
+`F16` at create. xCatalog validates that all writes match the
+collection's declared precision (or are auto-converted at the API
+boundary if the client sent a different type and the server is
+configured to allow it).
+
+== Conversion boundaries
+
+=== Ingest (client → storage)
+
+|===
+| Surface | Today | After fp16 work
+
+| REST v3 documents (text-only) | Server embeds, stores fp32 | Server embeds at collection's declared precision; stores native
+| REST v1 vectors/batch | Client sends fp32 array | Client sends fp32 or fp16 (precision field in request); server auto-converts if mismatch
+| gRPC v2 InsertRecords | proto `vector: repeated float` | Add `vector_f16: bytes` (2N bytes) alongside; server picks based on collection precision
+| Arrow Flight DoPut | Arrow `list<float32>` | Allow `list<float16>` (Arrow native type) and respect it
+| pgwire INSERT VECTOR | Vector literal `[0.1, 0.2, …]` | Same syntax; server parses to declared precision
+|===
+
+=== Distance compute (read path)
+
+Two strategies; we should support both:
+
+. **Native precision compute** — search uses the same precision as
+storage. Fastest. Implementations: HNSW with fp16 vectors and fp16
+matmul (NEON FCMLA, AMX fp16, AVX-512 BF16).
+. **Promote-at-compute** — load fp16 vector, promote to fp32 for the
+inner-loop dot product. Loses the compute-time win but keeps the
+storage/memory win. Easiest path for legacy ANN code that we don't
+want to fork.
+
+The HNSW index in `src/index/axis/` uses fp32 throughout. The
+incremental path is:
+
+. Add `VectorPrecision` to the HNSW node payload type.
+. Provide both `compute_dot_f32_f32` and `compute_dot_f16_f32`
+(loads fp16, promotes), gated on the collection precision.
+. Add `compute_dot_f16_f16` only after fp16-native is validated
+against fp32-promoted on recall benchmarks.
+
+== Recall validation
+
+The optimum export already warned that fp16 outputs differ from
+fp32 by `max diff = 0.0065`. That's tiny in absolute terms, but
+recall is the user-facing metric. Required gating before flipping
+fp16 to default:
+
+. Build a recall harness: index 100k vectors at fp32 and at fp16,
+run the same query set, compare top-10 / top-100 overlap.
+. Use SIFT-1M and ANN-Benchmarks GloVe-100 as reference datasets.
+. Pass criterion: recall@10 within 1% of fp32 baseline, recall@100
+within 0.5%.
+. If recall regresses more, fall back to int8 *with bias correction*
+(scaled int8 keeps recall closer than naive fp16 truncation on some
+distributions).
+
+== Phasing
+
+. **Phase 1 (immediate, this PR series)**: keep fp32 storage,
+permit fp16 inference output and promote internally. Confirms AMX
+speedup without touching anyone else's contracts.
+   _Status: in progress, this iteration._
+. **Phase 2**: add `VectorPrecision::F16` to EmbeddingValues and
+EmbeddingCell. Plumb through WAL serialization. Default `F32`.
+HNSW promotes fp16→fp32 at compute. Single-crate change.
+   _Status: not started._
+. **Phase 3**: extend REST/gRPC/Arrow Flight contracts with
+precision fields. Backward compat: requests without a precision
+field default to F32. Document with examples per protocol.
+   _Status: not started._
+. **Phase 4**: HNSW/PQ/IVF gain native fp16 distance kernels. AMX
+fp16 dot product on Apple Silicon. Recall harness gates the
+default flip.
+   _Status: not started._
+. **Phase 5**: pgwire `VECTOR(D, F16)` syntax extension. Catalog
+records precision so existing tables don't break on upgrade.
+   _Status: not started._
+. **Phase 6 (future)**: extend `EmbeddingValues::Int8` (with
+quantization scale) and `EmbeddingValues::Binary` for the full
+quantization ladder. ANN-side: PQ for int8, IndexBinaryFlat for
+binary.
+   _Status: design only._
+
+== Backward compatibility
+
+Strict requirement: existing fp32 collections keep working without
+client changes. Implementation contract:
+
+* If `EmbeddingCell.precision` is missing on the wire (old proto
+field default), deserialize as `F32`.
+* `EmbeddingValues::F32` is the on-disk default in the serialized
+format.
+* New clients that pass a precision field but target an old server
+get a `400 Precision unsupported` reject — not silent downgrade.
+* Existing collections cannot have their precision changed in place.
+Customers who want to switch must create a new collection with the
+new precision and reindex (matches the tier-downgrade pattern
+established in `crates/modalities/proximadb-embedding/src/config.rs`
+under `tier_allows_route`).
+
+== Test plan
+
+[cols="2,3"]
+|===
+| Test | Coverage
+
+| Unit (records crate) | Round-trip each `EmbeddingValues` variant through serde + bincode. Verify on-disk byte sizes (2N for F16, 4N for F32, N+4 for Int8 with scale).
+| Unit (HNSW) | `compute_dot_f16_f32` matches `compute_dot_f32_f32` within fp16 quantization noise on random vectors.
+| Integration (recall harness) | SIFT-1M + GloVe-100: recall@10/100 deltas under thresholds.
+| Bench (write throughput) | At collection precision F16, batch insert is ≥1.5× faster than F32 baseline at the same row count.
+| Bench (search latency) | F16 storage + fp32 promote has search latency within ±10% of F32 baseline.
+| Bench (memory) | Memtable holds ≥1.8× more vectors at F16 before flush trigger.
+|===
+
+== Open questions
+
+. **API contract for the wire**: do we expose `precision` as a
+collection attribute (set at create, immutable) or a per-row
+attribute (mixed-precision collection)? Per-row is more flexible
+but ANN indices typically want homogeneous precision. Recommend
+per-collection for v1.
+. **fp16 vs bf16**: bf16 has the same range as fp32 (better for
+distance compute) but only 7-bit mantissa. AVX-512 has dedicated
+BF16 instructions; NEON has fp16 but not bf16. Pick fp16 for cross-
+platform consistency, document bf16 as a future variant if Linux-
+on-Intel becomes important.
+. **Quantization at write vs read**: today the customer can ingest
+fp32 and we'd downconvert at write. Should we instead require fp16
+inputs when collection precision is F16? Trade-off: fp32 inputs
+are friendlier for clients with fp32-native libraries (PyTorch
+default); F16 inputs avoid double conversion. Recommend accepting
+both, downconverting at the API boundary with a single rounding
+step.
+. **Where does the conversion happen for distance compute when
+storage is F16 but query is sent as fp32?** Promote the query
+once on entry to search, then dot-product against fp16 vectors.
+Cheaper than promoting all stored vectors per query.
+
+== References
+
+* `artifacts/v3_bge_large_coreml_2026_05_22.md` — bge-large fp32
+benchmarks (the workload this targets).
+* `crates/foundation/proximadb-records/src/lib.rs` —
+`EmbeddingCell` definition we're extending.
+* `crates/modalities/proximadb-embedding/src/models/bge.rs` —
+ORT extraction site where fp16 is currently promoted to fp32.
+* https://onnxruntime.ai/docs/performance/float16.html — ORT fp16
+guidance.
+* https://github.com/erikbern/ann-benchmarks — recall harness
+reference datasets.
