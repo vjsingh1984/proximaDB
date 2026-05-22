@@ -242,17 +242,17 @@ Resolution now proceeds in three coordinated layers:
 Cross-file struct fields and return types are out of scope for this round; method chains and
 field receivers that cross file boundaries fall back to name-only.
 
-Victor database scale after the full 2026-05-22 resolver:
+Victor database scale after the 2026-05-22 resolver, audit, and quality fixes:
 
 [cols="1,1",options="header"]
 |===
 | Metric | Value
-| `graph_node` rows | 861,783
-| `graph_edge` rows | 3,776,395
-| `graph_module_metric` rows | 1,706
-| `DDG_DEF_USE` edges | ~1,565,000
-| `CFG_SUCCESSOR` edges | ~521,000
-| `CALLS` edges | 1,262,182 (59,013 same-file, 1,203,169 cross-file)
+| `graph_node` rows | 863,803
+| `graph_edge` rows | 2,759,409
+| `graph_module_metric` rows | 1,713
+| `DDG_DEF_USE` edges | ~1,567,000
+| `CFG_SUCCESSOR` edges | ~522,000
+| `CALLS` edges | 239,097 (55,577 same-file, 183,520 cross-file)
 | `CDG` edges | ~101,000
 | `CONTAINS` edges | ~22,400
 |===
@@ -265,18 +265,45 @@ Evolution across the fix:
 | Pre-fix (per-file resolution) | 103,255 | **0** | **0**
 | Name-only project-wide resolution | 480,632 | 428,791 | 1,675
 | Receiver-typed dispatch (basic) | 467,982 | 415,788 | 1,684
-| Plus struct-field, method-chain, ``Self::`` | **1,262,182** | **1,203,169** | 1,706
+| Plus struct-field, method-chain, ``Self::`` | 1,262,182 | 1,203,169 | 1,706
+| Strict semantics + macro skip + method-drop | 1,034,444 | 979,795 | 1,707
+| Plus impl_item-as-implementing-type (audit fix) | **239,097** | **183,520** | 1,713
 |===
 
-The 2.7x jump in CALLS between the basic and full receiver-typed snapshots is recovered
-edges, not new noise. Calls like ``self.field.method()``, ``a.foo().bar()``, and
-``Self::method()`` that previously had ``receiver_type=None`` would fall back to name-only
-resolution — and the leaf names involved (``iter``, ``format``, ``handle``, ``process``,
-``run``, ``execute``) routinely exceed the fanout cap of 25 candidates and got *skipped*
-entirely. With the new inferences, each of those calls now binds to a specific
-``impl <type>::<method>`` and is included again, this time precisely. Cross-file ratio
-climbs to 95% because typed dispatch overwhelmingly resolves to methods in other files
-(impl blocks are rarely co-located with every caller).
+The dramatic drop in the final snapshot is **noise removal, not coverage loss**. Audit
+of the round-4 graph (sampling top callees) surfaced three distinct quality issues that
+were each fixed under TDD:
+
+1. *Strict receiver-typed semantics* (~30k spurious edges removed). When the plugin
+   inferred a receiver type like ``Vec`` (stdlib) and the impl-type lookup missed, the
+   resolver was falling back to name-only and fanning out to all 12 user-defined ``iter``
+   methods. Now a typed miss means external/stdlib -- drop the call.
+2. *Macro invocations excluded* (~5k removed). ``println!``, ``format!``, ``vec!``,
+   ``write!`` are not function calls; they were being emitted as CALLS edges with the
+   macro name as callee and binding to user-defined functions of the same leaf name.
+3. *``impl_item`` name uses implementing type, not trait* (~795k removed). The
+   codingagent extractor was naming ``impl Default for Foo`` as ``Default`` (first
+   identifier scanned) instead of ``Foo`` (the ``type`` field). Every
+   ``Default::default()`` call across the codebase had ``receiver_type='Default'``, and
+   the impl-method index keyed by ``(Default, default)`` returned all 800,078 user
+   ``fn default`` methods. Fixed in ``_extract_name_from_node`` by trying the ``type``
+   field after ``name`` but before the first-identifier fallback.
+
+Method-syntax dispatch policy was also tightened: ``obj.method()`` calls with no
+inferable receiver type are now dropped instead of falling back to name-only matching
+(plain function calls ``func()`` and path calls ``Mod::func()`` still use name-only with
+the fanout cap, because those are globally unambiguous in well-named codebases). This
+removed ~140k speculative bindings on common leaf names like ``collect``, ``clone``,
+``len`` that were fanning out to every user impl with the same leaf.
+
+Cross-file ratio settles at 77% (183,520 / 239,097), down from 95% in the inflated
+snapshots. The drop is expected: dropping method calls with no inferable receiver
+removes mostly cross-file edges (impls usually live in different files from their
+callers). The remaining cross-file edges are the precise ones -- bound via typed
+dispatch to a specific ``impl T::method``. Treat the new total as a tight lower bound
+on the true call graph; the speculative edges that previously inflated it are gone, and
+the gaps that remain (method chains crossing file boundaries, generics, trait objects)
+fall back gracefully rather than producing wrong edges.
 
 Top node kinds from Victor:
 
@@ -400,14 +427,13 @@ where edge.type = 'CALLS';
 
 Current interpretation:
 
-* `graph_module_metric` contains 1,706 rows. Module-level PageRank, instability, cohesion,
+* `graph_module_metric` contains 1,713 rows. Module-level PageRank, instability, cohesion,
   hotspot, and TDD priority metrics are first-class signals; use them as gates alongside Cargo
-  dependency centrality. Current top hotspots: `src/network/rest/v1/handlers.rs` (Ce=550,
-  2,238 symbols), `src/network/multi_server.rs`, `src/network/arrow_ipc/service.rs`,
-  `src/services/operations/vectors/legacy.rs`, `src/services/dml/mod.rs`. Note that Ce
-  values have roughly tripled vs. the basic-receiver-typed snapshot — that's a true
-  reflection of the cross-module call graph, previously hidden behind name-only fanout
-  skips.
+  dependency centrality. Hotspot rankings remain stable across the audit-fix rebuilds (top
+  files: `src/network/rest/v1/handlers.rs`, `src/network/multi_server.rs`,
+  `src/network/arrow_ipc/service.rs`, `src/services/operations/vectors/legacy.rs`,
+  `src/services/dml/mod.rs`) -- the noise removal didn't change which modules are central,
+  only the absolute Ce values.
 * `CALLS` resolves cross-file at 95% (1.2M of 1.26M total). The resolver applies receiver-typed
   dispatch whenever the Rust plugin can infer the receiver from any of: ``self`` inside
   ``impl T``, ``Self::method()`` path calls, scope identifiers (parameter type, ``let`` binding),
