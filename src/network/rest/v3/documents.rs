@@ -16,7 +16,7 @@
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -29,6 +29,8 @@ use tracing::{debug, info, warn};
 use crate::api_handlers::RichRecordBatchRequest;
 use crate::errors::{ApiError, ApiResult};
 use crate::network::arrow_ipc::ProximaFlightService;
+use crate::network::auth::middleware::DataPlaneCapability;
+use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
 use crate::services::{
     WriteDurabilityRequirement, WriteIntent, WriteLaneRouter, WriteOperationKind,
@@ -78,10 +80,21 @@ pub struct IngestDocumentsResponse {
 pub async fn ingest_documents(
     Path(collection): Path<String>,
     State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
+    capability: Option<Extension<DataPlaneCapability>>,
     headers: HeaderMap,
     Json(request): Json<IngestDocumentsRequest>,
 ) -> Response {
-    match ingest_documents_inner(collection, state, headers, request).await {
+    match ingest_documents_inner(
+        collection,
+        state,
+        tenant,
+        capability.map(|ext| ext.0),
+        headers,
+        request,
+    )
+    .await
+    {
         Ok((status, response)) => (status, Json(response)).into_response(),
         Err(e) => e.into_response(),
     }
@@ -90,6 +103,8 @@ pub async fn ingest_documents(
 async fn ingest_documents_inner(
     collection: String,
     state: AppState,
+    tenant: TenantContext,
+    capability: Option<DataPlaneCapability>,
     headers: HeaderMap,
     request: IngestDocumentsRequest,
 ) -> ApiResult<(StatusCode, IngestDocumentsResponse)> {
@@ -103,11 +118,13 @@ async fn ingest_documents_inner(
             "At least one record is required".to_string(),
         ));
     }
+    if let Some(capability) = capability.as_ref() {
+        capability
+            .ensure_record_count(request.records.len())
+            .map_err(ApiError::InvalidArgument)?;
+    }
 
-    let tenant_id = headers
-        .get("X-Tenant-ID")
-        .and_then(|h| h.to_str().ok())
-        .map(str::to_string);
+    let tenant_id = tenant.tenant_id;
 
     let mode = headers
         .get("X-Ingest-Mode")
@@ -117,6 +134,14 @@ async fn ingest_documents_inner(
     if mode != "sync" && mode != "async" {
         return Err(ApiError::InvalidArgument(format!(
             "X-Ingest-Mode must be 'sync' or 'async', got {mode:?}"
+        )));
+    }
+    if let Some(capability) = capability.as_ref()
+        && let Some(capability_mode) = capability.mode.as_deref()
+        && capability_mode != mode
+    {
+        return Err(ApiError::InvalidArgument(format!(
+            "Capability token mode {capability_mode:?} does not match X-Ingest-Mode {mode:?}"
         )));
     }
 
@@ -133,7 +158,7 @@ async fn ingest_documents_inner(
 
     info!(
         collection = %collection,
-        tenant = ?tenant_id,
+        tenant = %tenant_id,
         mode = %mode,
         embed_source = %embed_source,
         records = request.records.len(),
@@ -173,7 +198,7 @@ async fn ingest_documents_inner(
         records.push(ProximaRecord {
             oid: doc.id.clone(),
             local_id: Some(doc.id),
-            tenant_id: tenant_id.clone().unwrap_or_default(),
+            tenant_id: tenant_id.clone(),
             created_at_ns: now_ns,
             updated_at_ns: now_ns,
             origin: Some("v3_documents".to_string()),
@@ -186,7 +211,7 @@ async fn ingest_documents_inner(
     // Dispatch text-only records through the shared embedding helper. Records
     // that already carry an SDK-provided vector skip the dispatch entirely.
     if embed_source == "native" {
-        ProximaFlightService::embed_text_only_records(&mut records, tenant_id.as_deref())
+        ProximaFlightService::embed_text_only_records(&mut records, Some(&tenant_id))
             .await
             .map_err(|e| {
                 warn!(error = %e, "v3 documents: embedding dispatch failed");
@@ -243,7 +268,7 @@ async fn ingest_documents_inner(
 
     match state
         .request_handlers
-        .handle_record_batch_for_tenant(batch_request, tenant_id.as_deref())
+        .handle_record_batch_for_tenant(batch_request, Some(&tenant_id))
         .await
     {
         Ok(_resp) => {

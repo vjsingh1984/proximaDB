@@ -245,6 +245,112 @@ fn map_header_to_auth_data(
     Ok(AuthenticationData::ApiKey(auth_header.to_string()))
 }
 
+fn validate_rest_data_plane_capability<B>(
+    capability: &DataPlaneCapability,
+    request: &Request<B>,
+) -> Result<(), (StatusCode, Json<AuthErrorResponse>)> {
+    if capability.protocol.as_deref() != Some("rest") {
+        return Err(authz_response(
+            StatusCode::FORBIDDEN,
+            "capability_protocol_mismatch",
+            "Capability token is not valid for REST",
+        ));
+    }
+
+    let path = request.uri().path();
+    let method = request.method().as_str();
+    let operation = infer_data_plane_operation(method, path).ok_or_else(|| {
+        authz_response(
+            StatusCode::FORBIDDEN,
+            "capability_endpoint_denied",
+            "Capability token is not valid for this endpoint",
+        )
+    })?;
+
+    if capability.operation.as_deref() != Some(operation) {
+        return Err(authz_response(
+            StatusCode::FORBIDDEN,
+            "capability_operation_mismatch",
+            "Capability token operation does not match the REST endpoint",
+        ));
+    }
+
+    if let Some(collection) = extract_collection_from_path(path)
+        && capability.collection.as_deref() != Some(collection)
+    {
+        return Err(authz_response(
+            StatusCode::FORBIDDEN,
+            "capability_collection_mismatch",
+            "Capability token collection does not match the REST endpoint",
+        ));
+    }
+
+    let scope_ok = match operation {
+        "ingest" => capability.has_scope("records:write"),
+        "search" => capability.has_scope("search:execute") || capability.has_scope("records:read"),
+        _ => false,
+    };
+    if !scope_ok {
+        return Err(authz_response(
+            StatusCode::FORBIDDEN,
+            "capability_scope_missing",
+            "Capability token lacks the required scope",
+        ));
+    }
+
+    if let Some(max_bytes) = capability.max_bytes
+        && let Some(content_length) = request
+            .headers()
+            .get(axum::http::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+        && content_length > max_bytes
+    {
+        return Err(authz_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "capability_byte_limit_exceeded",
+            "Request body exceeds the capability byte limit",
+        ));
+    }
+
+    Ok(())
+}
+
+fn infer_data_plane_operation(method: &str, path: &str) -> Option<&'static str> {
+    if method == "POST" && (path.ends_with("/documents") || path.ends_with("/records/batch")) {
+        return Some("ingest");
+    }
+    if method == "POST" && (path.ends_with("/search") || path.ends_with("/query")) {
+        return Some("search");
+    }
+    None
+}
+
+fn extract_collection_from_path(path: &str) -> Option<&str> {
+    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
+    while let Some(segment) = segments.next() {
+        if segment == "collections" {
+            return segments.next().filter(|value| !value.is_empty());
+        }
+    }
+    None
+}
+
+fn authz_response(
+    status: StatusCode,
+    error: &str,
+    message: &str,
+) -> (StatusCode, Json<AuthErrorResponse>) {
+    (
+        status,
+        Json(AuthErrorResponse {
+            error: error.to_string(),
+            message: message.to_string(),
+            code: status.as_u16(),
+        }),
+    )
+}
+
 /// Determine if authentication should be skipped for this path
 fn should_skip_auth(path: &str) -> bool {
     // Health endpoints

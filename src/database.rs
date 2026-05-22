@@ -175,8 +175,12 @@ impl ProximaDB {
         tracing::debug!("✅ ProximaDB::new - Multi-server config created successfully");
 
         // Initialize security coordinator if configured
+        let security_config = config
+            .security
+            .clone()
+            .filter(|sec_cfg| sec_cfg.enabled && sec_cfg.authentication.enabled);
         let security: Option<Arc<security::SecurityCoordinator>> = if let Some(sec_cfg) =
-            config.security.clone()
+            security_config.clone()
         {
             match security::initialize_security(sec_cfg).await {
                 Ok(coordinator) => Some(Arc::new(coordinator)),
@@ -207,15 +211,16 @@ impl ProximaDB {
 
         // Create MultiServer with SharedServices (network orchestrator)
         tracing::debug!("🔧 ProximaDB::new - Creating MultiServer...");
-        let rest_auth_enabled = config
-            .security
-            .as_ref()
-            .map_or(false, |s| s.authentication.enabled);
+        let rest_auth_enabled = security_config.is_some();
+        let rest_multi_tenant_required = security_config.as_ref().map_or(false, |s| {
+            s.authentication.require_authentication && s.mode != security::SecurityMode::Development
+        });
         let multi_server = network::MultiServer::new(
             multi_config,
             shared_services,
             security.clone(),
             rest_auth_enabled,
+            rest_multi_tenant_required,
             llm_engine,
         );
         tracing::debug!("✅ ProximaDB::new - MultiServer created");

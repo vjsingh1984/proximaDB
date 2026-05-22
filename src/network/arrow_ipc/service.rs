@@ -15,10 +15,10 @@ use anyhow::{Context, Result};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PutResult, SchemaResult, Ticket,
-    flight_service_server::FlightService,
+    decode::FlightRecordBatchStream, flight_service_server::FlightService,
 };
 use arrow_schema::Schema;
-use futures::{Stream, stream};
+use futures::{Stream, StreamExt, stream};
 use proximadb_embedding::{
     EmbeddingService,
     scheduler::IngestMode,
@@ -34,6 +34,7 @@ use crate::api_handlers::{
     RichRecordBatchRequest, RichRecordDeleteBatchRequest, request_handlers::UnifiedHandlers,
 };
 use crate::catalog::CatalogManager;
+use crate::network::auth::middleware::DataPlaneCapability;
 use crate::proto::proximadb_v1::VectorSearchRequest;
 use crate::security::{AuthenticationData, ClientCertificateData, SecurityCoordinator};
 use crate::services::operations::{
@@ -56,6 +57,12 @@ type TonicStreaming<T> = tonic::Streaming<T>;
 
 type TonicResult<T> = std::result::Result<TonicResponse<T>, TonicStatus>;
 type TonicStream<T> = Pin<Box<dyn Stream<Item = std::result::Result<T, TonicStatus>> + Send>>;
+
+#[derive(Debug, Clone, Default)]
+struct AuthenticatedFlightContext {
+    tenant_id: Option<String>,
+    capability: Option<DataPlaneCapability>,
+}
 
 /// ProximaDB Flight service implementation
 ///
@@ -319,14 +326,17 @@ impl ProximaFlightService {
         })
     }
 
-    async fn authenticated_tenant_id(
+    async fn authenticated_flight_context(
         &self,
         metadata: &tonic::metadata::MetadataMap,
         peer_certs: Option<Arc<Vec<tonic::transport::CertificateDer<'static>>>>,
-    ) -> std::result::Result<Option<String>, TonicStatus> {
+    ) -> std::result::Result<AuthenticatedFlightContext, TonicStatus> {
         let requested_tenant_id = Self::tenant_id_from_metadata(metadata);
         let Some(security_coordinator) = &self.security_coordinator else {
-            return Ok(requested_tenant_id);
+            return Ok(AuthenticatedFlightContext {
+                tenant_id: requested_tenant_id,
+                capability: None,
+            });
         };
 
         let auth_data = Self::auth_data_from_metadata(metadata)?
@@ -337,16 +347,133 @@ impl ProximaFlightService {
             .await
             .map_err(|e| TonicStatus::unauthenticated(format!("Authentication failed: {}", e)))?;
 
-        match (requested_tenant_id, user_context.tenant_id) {
+        let capability = DataPlaneCapability::from_user_context(&user_context);
+        let tenant_id = match (requested_tenant_id, user_context.tenant_id) {
             (Some(requested), Some(authenticated)) if requested != authenticated => {
-                Err(TonicStatus::permission_denied(format!(
+                return Err(TonicStatus::permission_denied(format!(
                     "Tenant '{}' does not match authenticated tenant '{}'",
                     requested, authenticated
-                )))
+                )));
             }
-            (Some(requested), _) => Ok(Some(requested)),
-            (None, authenticated) => Ok(authenticated),
+            (Some(requested), _) => Some(requested),
+            (None, authenticated) => authenticated,
+        };
+        Ok(AuthenticatedFlightContext {
+            tenant_id,
+            capability,
+        })
+    }
+
+    fn validate_flight_write_capability(
+        capability: Option<&DataPlaneCapability>,
+        collection_id: &str,
+        operation: FlightWriteOperation,
+        record_count: usize,
+    ) -> std::result::Result<(), TonicStatus> {
+        let Some(capability) = capability else {
+            return Ok(());
+        };
+        if capability.protocol.as_deref() != Some("arrow_flight") {
+            return Err(TonicStatus::permission_denied(
+                "Capability token is not valid for Arrow Flight",
+            ));
         }
+        if capability.collection.as_deref() != Some(collection_id) {
+            return Err(TonicStatus::permission_denied(
+                "Capability token collection does not match Flight descriptor",
+            ));
+        }
+        if !matches!(
+            operation,
+            FlightWriteOperation::Insert | FlightWriteOperation::Upsert
+        ) {
+            return Err(TonicStatus::permission_denied(
+                "Capability token does not allow this Flight write operation",
+            ));
+        }
+        if capability.operation.as_deref() != Some("ingest")
+            || !capability
+                .scopes
+                .iter()
+                .any(|scope| scope == "records:write")
+        {
+            return Err(TonicStatus::permission_denied(
+                "Capability token lacks ingest scope",
+            ));
+        }
+        capability
+            .ensure_record_count(record_count)
+            .map_err(TonicStatus::resource_exhausted)
+    }
+
+    fn validate_flight_search_capability(
+        capability: Option<&DataPlaneCapability>,
+        collection_id: &str,
+    ) -> std::result::Result<(), TonicStatus> {
+        let Some(capability) = capability else {
+            return Ok(());
+        };
+        if capability.protocol.as_deref() != Some("arrow_flight") {
+            return Err(TonicStatus::permission_denied(
+                "Capability token is not valid for Arrow Flight",
+            ));
+        }
+        if capability.collection.as_deref() != Some(collection_id) {
+            return Err(TonicStatus::permission_denied(
+                "Capability token collection does not match Flight ticket",
+            ));
+        }
+        if capability.operation.as_deref() != Some("search")
+            || !capability
+                .scopes
+                .iter()
+                .any(|scope| scope == "search:execute" || scope == "records:read")
+        {
+            return Err(TonicStatus::permission_denied(
+                "Capability token lacks search scope",
+            ));
+        }
+        Ok(())
+    }
+
+    fn record_batch_stream(
+        first_msg: FlightData,
+        stream: TonicStreaming<FlightData>,
+    ) -> FlightRecordBatchStream {
+        let first = if first_msg.data_header.is_empty() {
+            Vec::new()
+        } else {
+            vec![Ok(first_msg)]
+        };
+        let first_stream = stream::iter(first);
+        let remaining_stream = stream.filter_map(|message| async move {
+            match message {
+                Ok(data) if data.data_header.is_empty() => None,
+                Ok(data) => Some(Ok(data)),
+                Err(status) => Some(Err(arrow_flight::error::FlightError::from(status))),
+            }
+        });
+        FlightRecordBatchStream::new_from_flight_data(first_stream.chain(remaining_stream))
+    }
+
+    fn empty_batch_result() -> BatchOperationResult {
+        BatchOperationResult::success(Vec::new(), Default::default())
+    }
+
+    fn merge_batch_result(total: &mut BatchOperationResult, result: BatchOperationResult) {
+        total.success &= result.success;
+        total.vector_ids.extend(result.vector_ids);
+        total.errors.extend(result.errors);
+        if total.error_code.is_none() {
+            total.error_code = result.error_code;
+        }
+        total.metrics.total_processed += result.metrics.total_processed;
+        total.metrics.successful_count += result.metrics.successful_count;
+        total.metrics.failed_count += result.metrics.failed_count;
+        total.metrics.updated_count += result.metrics.updated_count;
+        total.metrics.processing_time_us += result.metrics.processing_time_us;
+        total.metrics.wal_write_time_us += result.metrics.wal_write_time_us;
+        total.metrics.index_update_time_us += result.metrics.index_update_time_us;
     }
 
     fn parse_exchange_descriptor(
@@ -580,31 +707,33 @@ impl ProximaFlightService {
         ArrowProtoCodec::batches_to_proxima_records(batches.to_vec()).map(|records| (records, None))
     }
 
-    /// Handle bulk vector insert (DoPut)
-    async fn handle_record_insert(
+    /// Convert and commit one Arrow write batch.
+    async fn handle_record_write_batch(
         &self,
-        collection_id: String,
-        table_fqn: Option<String>,
+        collection_id: &str,
+        table_fqn: Option<&str>,
         operation: FlightWriteOperation,
         write_mode: WriteMode,
-        trigger_compaction: bool,
-        tenant_id: Option<String>,
-        batches: Vec<arrow_array::RecordBatch>,
+        tenant_id: Option<&str>,
+        batch: arrow_array::RecordBatch,
+        insert_seen_ids: Option<&mut HashSet<String>>,
     ) -> Result<BatchOperationResult> {
+        let batch_rows = batch.num_rows();
         debug!(
             collection_id = %collection_id,
             write_mode = ?write_mode,
             tenant_id = ?tenant_id,
-            num_batches = batches.len(),
-            "Arrow IPC vector insert"
+            batch_rows = batch_rows,
+            "Arrow IPC write batch"
         );
 
         // Convert Arrow batches to canonical ProximaRecord envelopes so rich
         // scalar fields and modality columns survive the Flight boundary.
         // Relational/table descriptors additionally validate through xCatalog.
+        let batches = [batch];
         let (mut records, catalog_result) = Self::records_for_write_batches(
             self.catalog_manager.as_ref(),
-            table_fqn.as_deref(),
+            table_fqn,
             operation,
             write_mode,
             &batches,
@@ -628,7 +757,7 @@ impl ProximaFlightService {
             collection_id = %collection_id,
             table_fqn = ?table_fqn,
             records = records.len(),
-            "Converted Arrow batches to ProximaRecords"
+            "Converted Arrow batch to ProximaRecords"
         );
         if let Some(catalog_result) = catalog_result {
             debug!(
@@ -640,8 +769,15 @@ impl ProximaFlightService {
         }
 
         if operation == FlightWriteOperation::Insert {
-            let mut seen_ids = HashSet::with_capacity(records.len());
-            if let Some(result) = Self::insert_conflict_result(&records, &mut seen_ids) {
+            let mut local_seen_ids;
+            let seen_ids = match insert_seen_ids {
+                Some(seen_ids) => seen_ids,
+                None => {
+                    local_seen_ids = HashSet::with_capacity(records.len());
+                    &mut local_seen_ids
+                }
+            };
+            if let Some(result) = Self::insert_conflict_result(&records, seen_ids) {
                 return Ok(result);
             }
         }
@@ -650,7 +786,7 @@ impl ProximaFlightService {
         // canonical lane contract (ADR-009/ADR-010/blueprint).
         let op_kind = crate::services::WriteOperationKind::from(operation);
         let durability = crate::services::WriteDurabilityRequirement::from(write_mode);
-        let intent = crate::services::WriteIntent::new(&collection_id, op_kind)
+        let intent = crate::services::WriteIntent::new(collection_id, op_kind)
             .with_durability(durability)
             .with_row_count_hint(records.len() as u64);
         let lane_decision = crate::services::WriteLaneRouter::new().route(&intent);
@@ -671,69 +807,48 @@ impl ProximaFlightService {
         // BulkAppendCommit defers to WAL while direct-commit is not yet wired.
         let result = {
             let request = RichRecordBatchRequest {
-                collection_id: collection_id.clone(),
+                collection_id: collection_id.to_string(),
                 records,
             };
             if operation == FlightWriteOperation::Insert {
                 self.request_handlers
-                    .handle_record_insert_batch_for_tenant(request, tenant_id.as_deref())
+                    .handle_record_insert_batch_for_tenant(request, tenant_id)
                     .await?
             } else {
                 self.request_handlers
-                    .handle_record_batch_for_tenant(request, tenant_id.as_deref())
+                    .handle_record_batch_for_tenant(request, tenant_id)
                     .await?
             }
         };
 
-        // Trigger compaction if requested
-        if trigger_compaction {
-            info!(
-                collection_id = %collection_id,
-                "Arrow Flight: triggering compaction after record insert"
-            );
-            self.trigger_collection_compaction(&collection_id).await?;
-        }
-
         Ok(result)
     }
 
-    /// Handle rich record deletes (DoPut) by extracting id/oid from Arrow rows.
-    async fn handle_record_delete(
+    async fn handle_record_delete_batch(
         &self,
-        collection_id: String,
-        trigger_compaction: bool,
-        tenant_id: Option<String>,
-        batches: Vec<arrow_array::RecordBatch>,
+        collection_id: &str,
+        tenant_id: Option<&str>,
+        batch: arrow_array::RecordBatch,
     ) -> Result<BatchOperationResult> {
+        let batch_rows = batch.num_rows();
         debug!(
             collection_id = %collection_id,
             tenant_id = ?tenant_id,
-            num_batches = batches.len(),
-            "Arrow IPC record delete"
+            batch_rows = batch_rows,
+            "Arrow IPC delete batch"
         );
 
-        let record_ids = ArrowProtoCodec::batches_to_record_ids(batches)?;
+        let record_ids = ArrowProtoCodec::batches_to_record_ids(vec![batch])?;
 
-        let result = self
-            .request_handlers
+        self.request_handlers
             .handle_record_delete_batch_for_tenant(
                 RichRecordDeleteBatchRequest {
-                    collection_id: collection_id.clone(),
+                    collection_id: collection_id.to_string(),
                     record_ids,
                 },
-                tenant_id.as_deref(),
+                tenant_id,
             )
-            .await?;
-
-        if trigger_compaction {
-            info!(
-                collection_id = %collection_id,
-                "Arrow Flight: triggering compaction after record delete"
-            );
-            self.trigger_collection_compaction(&collection_id).await?;
-        }
-
-        Ok(result)
+            .await
     }
 
     /// Handle vector search (DoGet)
@@ -975,10 +1090,18 @@ impl FlightService for ProximaFlightService {
     }
 
     async fn do_get(&self, request: TonicRequest<Ticket>) -> TonicResult<Self::DoGetStream> {
+        let auth_context = self
+            .authenticated_flight_context(request.metadata(), request.peer_certs())
+            .await?;
         let ticket = request.into_inner();
 
         // Check if this is an arrow file export ticket
         if ArrowFileTicket::is_arrow_file_ticket(&ticket) {
+            if auth_context.capability.is_some() {
+                return Err(TonicStatus::permission_denied(
+                    "Capability tokens cannot export Arrow files",
+                ));
+            }
             let file_ticket = ArrowFileTicket::from_ticket(&ticket).map_err(|e| {
                 TonicStatus::invalid_argument(format!("Failed to parse file ticket: {}", e))
             })?;
@@ -1019,6 +1142,10 @@ impl FlightService for ProximaFlightService {
         let search_request = ArrowProtoCodec::ticket_to_search_request(&ticket).map_err(|e| {
             TonicStatus::invalid_argument(format!("Failed to parse search request: {}", e))
         })?;
+        Self::validate_flight_search_capability(
+            auth_context.capability.as_ref(),
+            &search_request.collection_id,
+        )?;
 
         // Execute search
         let batches = self
@@ -1037,8 +1164,8 @@ impl FlightService for ProximaFlightService {
         &self,
         request: TonicRequest<TonicStreaming<FlightData>>,
     ) -> TonicResult<Self::DoPutStream> {
-        let tenant_id = self
-            .authenticated_tenant_id(request.metadata(), request.peer_certs())
+        let auth_context = self
+            .authenticated_flight_context(request.metadata(), request.peer_certs())
             .await?;
         let mut stream = request.into_inner();
 
@@ -1064,50 +1191,75 @@ impl FlightService for ProximaFlightService {
             .clone()
             .unwrap_or_else(|| metadata.collection_id.clone());
 
-        // Collect all RecordBatches from stream
-        let mut flight_messages = vec![first_msg];
-        while let Some(data) = stream
-            .message()
-            .await
-            .map_err(|e| TonicStatus::internal(format!("Stream error: {}", e)))?
-        {
-            flight_messages.push(data);
-        }
+        let operation = metadata.operation;
+        Self::validate_flight_write_capability(
+            auth_context.capability.as_ref(),
+            &write_target,
+            operation,
+            0,
+        )?;
 
-        let batches = ArrowProtoCodec::flight_data_stream_to_batches(&flight_messages)
-            .map_err(|e| TonicStatus::internal(format!("Failed to parse batches: {}", e)))?;
+        let mut batch_stream = Self::record_batch_stream(first_msg, stream);
+        let mut total_rows = 0usize;
+        let mut total_batches = 0u64;
+        let mut result = Self::empty_batch_result();
+        let mut insert_seen_ids = HashSet::new();
+
+        while let Some(batch) = batch_stream.next().await {
+            let batch = batch.map_err(|e| TonicStatus::internal(format!("Stream error: {}", e)))?;
+            let batch_rows = batch.num_rows();
+            total_rows += batch_rows;
+            total_batches += 1;
+
+            Self::validate_flight_write_capability(
+                auth_context.capability.as_ref(),
+                &write_target,
+                operation,
+                total_rows,
+            )?;
+
+            let batch_result = match operation {
+                FlightWriteOperation::Upsert | FlightWriteOperation::Insert => {
+                    self.handle_record_write_batch(
+                        &write_target,
+                        table_fqn.as_deref(),
+                        operation,
+                        metadata.write_mode,
+                        auth_context.tenant_id.as_deref(),
+                        batch,
+                        (operation == FlightWriteOperation::Insert).then_some(&mut insert_seen_ids),
+                    )
+                    .await
+                }
+                FlightWriteOperation::Delete => {
+                    self.handle_record_delete_batch(
+                        &write_target,
+                        auth_context.tenant_id.as_deref(),
+                        batch,
+                    )
+                    .await
+                }
+            }
+            .map_err(|e| TonicStatus::internal(format!("{} failed: {}", operation.as_str(), e)))?;
+            Self::merge_batch_result(&mut result, batch_result);
+        }
 
         debug!(
             collection_id = %metadata.collection_id,
-            num_batches = batches.len(),
-            "Received all batches"
+            total_batches = total_batches,
+            total_rows = total_rows,
+            "Processed Flight DoPut stream"
         );
 
-        let operation = metadata.operation;
-        let result = match operation {
-            FlightWriteOperation::Upsert | FlightWriteOperation::Insert => {
-                self.handle_record_insert(
-                    write_target.clone(),
-                    table_fqn,
-                    operation,
-                    metadata.write_mode,
-                    metadata.trigger_compaction,
-                    tenant_id.clone(),
-                    batches,
-                )
+        if metadata.trigger_compaction {
+            info!(
+                collection_id = %write_target,
+                "Arrow Flight: triggering compaction after DoPut"
+            );
+            self.trigger_collection_compaction(&write_target)
                 .await
-            }
-            FlightWriteOperation::Delete => {
-                self.handle_record_delete(
-                    write_target.clone(),
-                    metadata.trigger_compaction,
-                    tenant_id.clone(),
-                    batches,
-                )
-                .await
-            }
+                .map_err(|e| TonicStatus::internal(format!("Compaction failed: {}", e)))?;
         }
-        .map_err(|e| TonicStatus::internal(format!("{} failed: {}", operation.as_str(), e)))?;
 
         // Return rich batch result metadata to Flight clients.
         let result_bytes = Self::batch_result_app_metadata(&result)
@@ -1955,8 +2107,8 @@ impl FlightService for ProximaFlightService {
         &self,
         request: TonicRequest<TonicStreaming<FlightData>>,
     ) -> TonicResult<Self::DoExchangeStream> {
-        let tenant_id = self
-            .authenticated_tenant_id(request.metadata(), request.peer_certs())
+        let auth_context = self
+            .authenticated_flight_context(request.metadata(), request.peer_certs())
             .await?;
         let mut stream = request.into_inner();
 
@@ -1994,7 +2146,8 @@ impl FlightService for ProximaFlightService {
                     write_target,
                     table_fqn,
                     operation,
-                    tenant_id,
+                    auth_context.tenant_id.clone(),
+                    auth_context.capability.clone(),
                     first_msg,
                     stream,
                 )
@@ -2005,17 +2158,27 @@ impl FlightService for ProximaFlightService {
                     write_target,
                     table_fqn,
                     FlightWriteOperation::Delete,
-                    tenant_id,
+                    auth_context.tenant_id.clone(),
+                    auth_context.capability.clone(),
                     first_msg,
                     stream,
                 )
                 .await
             }
             "bulk_search" => {
+                Self::validate_flight_search_capability(
+                    auth_context.capability.as_ref(),
+                    &collection_id,
+                )?;
                 self.handle_bulk_search_exchange(collection_id, first_msg, stream)
                     .await
             }
             "data_transfer" => {
+                if auth_context.capability.is_some() {
+                    return Err(TonicStatus::permission_denied(
+                        "Capability tokens cannot use data_transfer exchange",
+                    ));
+                }
                 self.handle_data_transfer_exchange(collection_id, first_msg, stream)
                     .await
             }
@@ -2035,34 +2198,24 @@ impl ProximaFlightService {
         table_fqn: Option<String>,
         operation: FlightWriteOperation,
         tenant_id: Option<String>,
+        capability: Option<DataPlaneCapability>,
         first_msg: FlightData,
-        mut stream: TonicStreaming<FlightData>,
+        stream: TonicStreaming<FlightData>,
     ) -> TonicResult<<Self as FlightService>::DoExchangeStream> {
         let mut total_records = 0u64;
         let mut total_failed = 0u64;
         let mut total_batches = 0u64;
         let mut all_success = true;
         let mut results = Vec::new();
-        let mut flight_messages = vec![first_msg];
         let mut insert_seen_ids = HashSet::new();
-
-        while let Some(data) = stream
-            .message()
-            .await
-            .map_err(|e| TonicStatus::internal(format!("Stream error: {}", e)))?
-        {
-            flight_messages.push(data);
-        }
-
-        let batches = ArrowProtoCodec::flight_data_stream_to_batches(&flight_messages)
-            .map_err(|e| TonicStatus::internal(format!("Failed to parse batches: {}", e)))?;
+        Self::validate_flight_write_capability(capability.as_ref(), &collection_id, operation, 0)?;
 
         // Resolve write lane once for the full exchange stream: DoExchange always
         // uses WAL durability because streaming batches require per-row ordering.
         let op_kind = crate::services::WriteOperationKind::from(operation);
         let exchange_intent = crate::services::WriteIntent::new(&collection_id, op_kind)
             .with_durability(crate::services::WriteDurabilityRequirement::WalRequired)
-            .with_row_count_hint(batches.len() as u64);
+            .with_row_count_hint(0);
         let exchange_lane = crate::services::WriteLaneRouter::new().route(&exchange_intent);
         debug!(
             collection_id = %collection_id,
@@ -2074,88 +2227,35 @@ impl ProximaFlightService {
             .require_wal_lane("Arrow Flight DoExchange")
             .map_err(|e| TonicStatus::invalid_argument(e.to_string()))?;
 
-        for batch in batches {
+        let mut batch_stream = Self::record_batch_stream(first_msg, stream);
+        let mut total_input_rows = 0usize;
+        while let Some(batch) = batch_stream.next().await {
+            let batch = batch.map_err(|e| TonicStatus::internal(format!("Stream error: {}", e)))?;
             let batch_rows = batch.num_rows();
+            total_input_rows += batch_rows;
             total_batches += 1;
+            Self::validate_flight_write_capability(
+                capability.as_ref(),
+                &collection_id,
+                operation,
+                total_input_rows,
+            )?;
 
             let result = match operation {
                 FlightWriteOperation::Upsert | FlightWriteOperation::Insert => {
-                    let batch_vec = vec![batch];
-                    let records = match Self::records_for_write_batches(
-                        self.catalog_manager.as_ref(),
+                    self.handle_record_write_batch(
+                        &collection_id,
                         table_fqn.as_deref(),
                         operation,
                         WriteMode::WAL,
-                        &batch_vec,
+                        tenant_id.as_deref(),
+                        batch,
+                        (operation == FlightWriteOperation::Insert).then_some(&mut insert_seen_ids),
                     )
                     .await
-                    {
-                        Ok((records, catalog_result)) => {
-                            if let Some(catalog_result) = catalog_result {
-                                debug!(
-                                    table_fqn = ?table_fqn,
-                                    table_created = catalog_result.table_created,
-                                    schema_evolved = catalog_result.schema_evolved,
-                                    records_prepared = catalog_result.records_written,
-                                    "Arrow Flight exchange catalog bulk write preparation completed"
-                                );
-                            }
-                            records
-                        }
-                        Err(e) => {
-                            warn!("Failed to convert batch {}: {}", total_batches, e);
-                            total_failed += batch_rows as u64;
-                            all_success = false;
-                            continue;
-                        }
-                    };
-
-                    if operation == FlightWriteOperation::Insert {
-                        match Self::insert_conflict_result(&records, &mut insert_seen_ids) {
-                            Some(result) => Ok(result),
-                            None => {
-                                self.request_handlers
-                                    .handle_record_insert_batch_for_tenant(
-                                        RichRecordBatchRequest {
-                                            collection_id: collection_id.clone(),
-                                            records,
-                                        },
-                                        tenant_id.as_deref(),
-                                    )
-                                    .await
-                            }
-                        }
-                    } else {
-                        self.request_handlers
-                            .handle_record_batch_for_tenant(
-                                RichRecordBatchRequest {
-                                    collection_id: collection_id.clone(),
-                                    records,
-                                },
-                                tenant_id.as_deref(),
-                            )
-                            .await
-                    }
                 }
                 FlightWriteOperation::Delete => {
-                    let record_ids = match ArrowProtoCodec::batches_to_record_ids(vec![batch]) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            warn!("Failed to convert delete batch {}: {}", total_batches, e);
-                            total_failed += batch_rows as u64;
-                            all_success = false;
-                            continue;
-                        }
-                    };
-
-                    self.request_handlers
-                        .handle_record_delete_batch_for_tenant(
-                            RichRecordDeleteBatchRequest {
-                                collection_id: collection_id.clone(),
-                                record_ids,
-                            },
-                            tenant_id.as_deref(),
-                        )
+                    self.handle_record_delete_batch(&collection_id, tenant_id.as_deref(), batch)
                         .await
                 }
             }

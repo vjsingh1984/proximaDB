@@ -744,6 +744,41 @@ impl UnifiedAuthService {
         &self,
         claims: crate::network::auth::Claims,
     ) -> UnifiedUserContext {
+        let mut metadata = HashMap::new();
+        if let Some(value) = claims.capability_type {
+            metadata.insert("capability_type".to_string(), value);
+        }
+        if let Some(value) = claims.collection {
+            metadata.insert("collection".to_string(), value);
+        }
+        if let Some(value) = claims.operation {
+            metadata.insert("operation".to_string(), value);
+        }
+        if let Some(value) = claims.protocol {
+            metadata.insert("protocol".to_string(), value);
+        }
+        if let Some(value) = claims.mode {
+            metadata.insert("mode".to_string(), value);
+        }
+        if !claims.scopes.is_empty() {
+            metadata.insert("scopes".to_string(), claims.scopes.join(" "));
+        }
+        if let Some(value) = claims.max_records {
+            metadata.insert("max_records".to_string(), value.to_string());
+        }
+        if let Some(value) = claims.max_bytes {
+            metadata.insert("max_bytes".to_string(), value.to_string());
+        }
+        if let Some(value) = claims.tier {
+            metadata.insert("tier".to_string(), value);
+        }
+        if let Some(value) = claims.route_visibility {
+            metadata.insert("route_visibility".to_string(), value);
+        }
+        if let Some(value) = claims.metering_required {
+            metadata.insert("metering_required".to_string(), value.to_string());
+        }
+
         UnifiedUserContext {
             user_id: claims.sub,
             tenant_id: claims.tenant_id,
@@ -753,7 +788,7 @@ impl UnifiedAuthService {
             session_id: claims.jti,
             expires_at: Some(DateTime::from_timestamp(claims.exp, 0).unwrap_or_else(Utc::now)),
             created_at: DateTime::from_timestamp(claims.iat, 0).unwrap_or_else(Utc::now),
-            metadata: HashMap::new(),
+            metadata,
         }
     }
 

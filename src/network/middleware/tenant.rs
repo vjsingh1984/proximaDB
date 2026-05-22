@@ -105,6 +105,14 @@ pub enum TenantIdSource {
     System,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TenantExtractionError {
+    HeaderAuthenticatedMismatch {
+        requested: String,
+        authenticated: String,
+    },
+}
+
 impl std::fmt::Display for TenantIdSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -216,31 +224,71 @@ impl TenantExtractor {
     }
 
     /// Extract tenant ID from request
-    fn extract_tenant_id(&self, req: &Request<Body>) -> Option<(String, TenantIdSource)> {
-        // Priority 1: Explicit X-Tenant-ID header
-        if let Some(header_value) = req.headers().get(X_TENANT_ID)
-            && let Ok(tenant_id) = header_value.to_str()
-        {
-            let tenant_id = tenant_id.trim();
-            if !tenant_id.is_empty() {
-                debug!("Extracted tenant_id from header: {}", tenant_id);
-                return Some((tenant_id.to_string(), TenantIdSource::Header));
+    fn extract_tenant_id(
+        &self,
+        req: &Request<Body>,
+    ) -> Result<Option<(String, TenantIdSource)>, TenantExtractionError> {
+        let requested_tenant = req
+            .headers()
+            .get(X_TENANT_ID)
+            .and_then(|header_value| header_value.to_str().ok())
+            .map(str::trim)
+            .filter(|tenant_id| !tenant_id.is_empty())
+            .map(ToOwned::to_owned);
+
+        if let Some((authenticated_tenant, source)) = Self::authenticated_tenant_id(req) {
+            if let Some(requested) = requested_tenant
+                && requested != authenticated_tenant
+            {
+                return Err(TenantExtractionError::HeaderAuthenticatedMismatch {
+                    requested,
+                    authenticated: authenticated_tenant,
+                });
             }
+            debug!(
+                "Extracted tenant_id from authenticated context: {}",
+                authenticated_tenant
+            );
+            return Ok(Some((authenticated_tenant, source)));
         }
 
-        // Priority 2: JWT claims (if auth middleware ran first)
-        // Check for UserInfo in extensions (set by auth middleware)
-        if let Some(user_info) = req.extensions().get::<super::auth::UserInfo>()
-            && let Some(ref tenant_id) = user_info.tenant_id
-        {
-            debug!("Extracted tenant_id from JWT: {}", tenant_id);
-            return Some((tenant_id.clone(), TenantIdSource::JwtClaim));
+        // Explicit tenant headers are accepted only when there is no
+        // authenticated tenant binding to compare against.
+        if let Some(tenant_id) = requested_tenant {
+            debug!("Extracted tenant_id from header: {}", tenant_id);
+            return Ok(Some((tenant_id, TenantIdSource::Header)));
         }
 
         // Priority 3: Default tenant (if configured)
         if let Some(ref default_tenant) = self.config.default_tenant {
             debug!("Using default tenant: {}", default_tenant);
-            return Some((default_tenant.clone(), TenantIdSource::Default));
+            return Ok(Some((default_tenant.clone(), TenantIdSource::Default)));
+        }
+
+        Ok(None)
+    }
+
+    fn authenticated_tenant_id(req: &Request<Body>) -> Option<(String, TenantIdSource)> {
+        if let Some(user_context) = req
+            .extensions()
+            .get::<crate::security::UnifiedUserContext>()
+            && let Some(tenant_id) = user_context.tenant_id.as_ref()
+        {
+            let source = if matches!(
+                &user_context.auth_method,
+                crate::security::UnifiedAuthMethod::ApiKey
+            ) {
+                TenantIdSource::ApiKey
+            } else {
+                TenantIdSource::JwtClaim
+            };
+            return Some((tenant_id.clone(), source));
+        }
+
+        if let Some(user_info) = req.extensions().get::<super::auth::UserInfo>()
+            && let Some(ref tenant_id) = user_info.tenant_id
+        {
+            return Some((tenant_id.clone(), TenantIdSource::ApiKey));
         }
 
         None
@@ -298,7 +346,7 @@ pub async fn tenant_middleware(
 ) -> Response {
     // Extract tenant ID
     match extractor.extract_tenant_id(&req) {
-        Some((tenant_id, source)) => {
+        Ok(Some((tenant_id, source))) => {
             // Validate tenant if configured
             if !extractor.validate_tenant(&tenant_id) {
                 return (
@@ -319,7 +367,7 @@ pub async fn tenant_middleware(
 
             next.run(req).await
         }
-        None => {
+        Ok(None) => {
             if extractor.config.require_tenant {
                 // Tenant required but not provided
                 (
@@ -337,6 +385,17 @@ pub async fn tenant_middleware(
                 next.run(req).await
             }
         }
+        Err(TenantExtractionError::HeaderAuthenticatedMismatch {
+            requested,
+            authenticated,
+        }) => (
+            StatusCode::FORBIDDEN,
+            format!(
+                "Tenant '{}' does not match authenticated tenant '{}'",
+                requested, authenticated
+            ),
+        )
+            .into_response(),
     }
 }
 

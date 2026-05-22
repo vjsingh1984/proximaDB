@@ -129,6 +129,7 @@ pub struct MultiServer {
     pub shared_services: SharedServices,
     security_coordinator: Option<Arc<SecurityCoordinator>>,
     rest_auth_enabled: bool,
+    rest_multi_tenant_required: bool,
     server_handles: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     /// LLM engine for semantic operations
     llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
@@ -142,6 +143,7 @@ impl MultiServer {
         shared_services: SharedServices,
         security_coordinator: Option<Arc<SecurityCoordinator>>,
         rest_auth_enabled: bool,
+        rest_multi_tenant_required: bool,
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
         info!("🚀 MultiServer: Initializing network orchestrator");
@@ -156,6 +158,7 @@ impl MultiServer {
             shared_services,
             security_coordinator,
             rest_auth_enabled,
+            rest_multi_tenant_required,
             server_handles: Arc::new(Mutex::new(Vec::new())),
             llm_engine,
         }
@@ -528,6 +531,7 @@ impl MultiServer {
             let metrics_collector = services.metrics_collector.clone();
             let security_coordinator = self.security_coordinator.clone();
             let rest_auth_enabled = self.rest_auth_enabled;
+            let rest_multi_tenant_required = self.rest_multi_tenant_required;
             let data_dir = self.config.data_dir.clone();
             let query_adapter = Some(services.query_adapter());
             let graph_execution_service = services.graph_execution_service.clone();
@@ -540,8 +544,12 @@ impl MultiServer {
                 use crate::network::rest::server::{RestServer, RestServerSecurityConfig};
 
                 let max_request_size_mb = api_config.map(|c| c.max_request_size_mb);
-                let mut rest_security = RestServerSecurityConfig::default();
                 let auth_enabled = security_coordinator.is_some() && rest_auth_enabled;
+                let mut rest_security = if auth_enabled && rest_multi_tenant_required {
+                    RestServerSecurityConfig::multi_tenant()
+                } else {
+                    RestServerSecurityConfig::default()
+                };
                 rest_security.auth.enabled = auth_enabled;
 
                 // Pass port objects so document/graph/observability routes use
@@ -1248,6 +1256,7 @@ impl MultiServer {
             let metrics_collector = services.metrics_collector.clone();
             let security_coordinator = self.security_coordinator.clone();
             let rest_auth_enabled = self.rest_auth_enabled;
+            let rest_multi_tenant_required = self.rest_multi_tenant_required;
             let data_dir = self.config.data_dir.clone();
             let query_adapter = Some(services.query_adapter());
             let graph_execution_service = services.graph_execution_service.clone();
@@ -1257,8 +1266,12 @@ impl MultiServer {
                 use crate::network::rest::server::{RestServer, RestServerSecurityConfig};
 
                 let max_request_size_mb = api_config.map(|c| c.max_request_size_mb);
-                let mut rest_security = RestServerSecurityConfig::default();
                 let auth_enabled = security_coordinator.is_some() && rest_auth_enabled;
+                let mut rest_security = if auth_enabled && rest_multi_tenant_required {
+                    RestServerSecurityConfig::multi_tenant()
+                } else {
+                    RestServerSecurityConfig::default()
+                };
                 rest_security.auth.enabled = auth_enabled;
 
                 match RestServer::with_security_and_config(

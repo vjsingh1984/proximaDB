@@ -44,6 +44,7 @@ use crate::api_handlers::{
     RichRecordGetRequest, RichSearchRequest,
 };
 use crate::errors::{ApiError, ApiResult};
+use crate::network::auth::middleware::DataPlaneCapability;
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
 use crate::services::{
@@ -834,7 +835,11 @@ fn typed_filters_to_predicates(
                 _ => return None,
             };
             let value = rest_value_to_predicate_value(&f.value);
-            Some(Predicate { column: f.field.clone(), op, value })
+            Some(Predicate {
+                column: f.field.clone(),
+                op,
+                value,
+            })
         })
         .collect()
 }
@@ -985,6 +990,7 @@ pub async fn insert_records(
     Path(collection): Path<String>,
     State(state): State<AppState>,
     Extension(tenant): Extension<TenantContext>,
+    capability: Option<Extension<DataPlaneCapability>>,
     Json(request): Json<InsertRecordsRequest>,
 ) -> ApiResult<Json<InsertRecordsResponse>> {
     info!(
@@ -1004,6 +1010,11 @@ pub async fn insert_records(
         return Err(ApiError::InvalidArgument(
             "At least one record is required".to_string(),
         ));
+    }
+    if let Some(Extension(capability)) = capability.as_ref() {
+        capability
+            .ensure_record_count(request.records.len())
+            .map_err(ApiError::InvalidArgument)?;
     }
 
     let validate_schema = request.validate_schema.unwrap_or_else(|| {
