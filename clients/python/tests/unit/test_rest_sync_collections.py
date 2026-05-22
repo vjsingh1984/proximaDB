@@ -50,7 +50,7 @@ def test_get_collection_parses_response(monkeypatch):
 
     def fake_make_request(method, endpoint, **kwargs):
         assert method == "GET"
-        assert endpoint.startswith("/api/v1/collections/")
+        assert endpoint.startswith("/api/v2/collections/")
         return FakeResponse(
             {
                 "id": "col-1",
@@ -74,7 +74,7 @@ def test_list_collections_parses_list(monkeypatch):
     client = ProximaDBClient(url="http://testserver")
 
     def fake_make_request(method, endpoint, **kwargs):
-        assert method == "GET" and endpoint == "/api/v1/collections"
+        assert method == "GET" and endpoint == "/api/v2/collections"
         return FakeResponse(
             {
                 "collections": [
@@ -108,7 +108,7 @@ def test_delete_collection(monkeypatch):
 
     def fake_make_request(method, endpoint, **kwargs):
         assert method == "DELETE"
-        assert endpoint == "/api/v1/collections/documents"
+        assert endpoint == "/api/v2/collections/documents"
         return FakeResponse({"success": True})
 
     monkeypatch.setattr(client, "_make_request", fake_make_request)

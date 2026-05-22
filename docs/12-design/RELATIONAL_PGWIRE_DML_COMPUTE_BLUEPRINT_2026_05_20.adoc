@@ -1373,9 +1373,27 @@ All 9 bulk_write_router tests pass with the new names. No false “bypasses WAL�
 `src/services/operations/catalog_bulk_write.rs`
 
 | T18
-| Pending
+| Partial
 | Cross-surface write conformance: same insert/upsert/update/delete/merge semantics and visibility
 through pgwire, REST, gRPC, Arrow Flight, and embedded mode for the same cataloged table.
+Unit-level conformance tests in `src/services/dml/mod.rs`:
+
+* `dml_and_fast_lane_agree_on_not_null_constraint` — runs a NOT NULL column through both the SQL
+DML path (`DmlService::execute` → SQL frontend → `build_mutation_record` → record store) and the
+fast-lane path (`validate_record_batch_against_schema` over a pre-built `ProximaRecord`); asserts
+both surfaces accept the conforming row and both reject the NULL violation with an error chain
+naming the constraint.
+
+* `dml_and_fast_lane_agree_on_type_mismatch` — runs the same schema through both paths with a
+string-into-INTEGER mismatch; asserts both surfaces reject (DML at `literal_to_i64`, fast-lane at
+`matches_catalog_type`) with error chains that mention integer-type context. Exact wording
+differs between the layers, but the semantic outcome — rejection with diagnostic context — is
+identical.
+
+These lock in REST/gRPC/Arrow Flight parity with SQL clients for the fundamental schema-on-write
+constraints already exercised in production traffic.
+Remaining: pgwire wire-protocol smoke tests against an external psql, surface-level upsert/delete
+parity, and embedded-mode crossings.
 | `tests/**`, `tools/pgwire/**`, Arrow Flight/gRPC/REST smoke scripts
 |===
 

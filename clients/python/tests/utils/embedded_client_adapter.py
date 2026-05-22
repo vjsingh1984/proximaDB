@@ -22,10 +22,10 @@ import numpy as np
 try:
     from proximadb import ProximaDB
 except ImportError as e:
-    raise ImportError(
-        "Native ProximaDB module not found. "
-        "Install with: pip install target/wheels/proximadb-*.whl"
-    ) from e
+    ProximaDB = None
+    PROXIMADB_IMPORT_ERROR = e
+else:
+    PROXIMADB_IMPORT_ERROR = None
 
 
 @dataclass
@@ -79,6 +79,12 @@ class EmbeddedClientAdapter:
             cache_size_mb: Cache size in MB
             default_engine: Default storage engine
         """
+        if ProximaDB is None:
+            raise RuntimeError(
+                "Native ProximaDB module not found. "
+                "Install with: pip install target/wheels/proximadb-*.whl"
+            ) from PROXIMADB_IMPORT_ERROR
+
         self._temp_dir = None
         if data_dir is None:
             self._temp_dir = tempfile.mkdtemp(prefix="proximadb_adapter_")

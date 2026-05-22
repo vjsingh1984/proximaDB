@@ -50,7 +50,11 @@ pub fn value_repr(value: &PredicateValue) -> String {
             if f.is_nan() {
                 "f64:nan".to_string()
             } else if f.is_infinite() {
-                if *f > 0.0 { "f64:+inf".into() } else { "f64:-inf".into() }
+                if *f > 0.0 {
+                    "f64:+inf".into()
+                } else {
+                    "f64:-inf".into()
+                }
             } else {
                 format!("{:?}", f)
             }
@@ -66,7 +70,11 @@ pub fn value_repr(value: &PredicateValue) -> String {
 
 /// Normalize one predicate into a triple.
 pub fn normalize_one(p: &Predicate) -> Triple {
-    (p.column.clone(), op_label(p.op_ref()).to_string(), value_repr(&p.value))
+    (
+        p.column.clone(),
+        op_label(p.op_ref()).to_string(),
+        value_repr(&p.value),
+    )
 }
 
 /// Helper trait extension so `Predicate.op` can be borrowed without making
@@ -95,7 +103,11 @@ mod tests {
     use crate::query::cache::plan_cache::digest_predicates;
 
     fn p(col: &str, op: PredicateOp, val: PredicateValue) -> Predicate {
-        Predicate { column: col.into(), op, value: val }
+        Predicate {
+            column: col.into(),
+            op,
+            value: val,
+        }
     }
 
     #[test]
@@ -135,8 +147,14 @@ mod tests {
     #[test]
     fn float_special_values_collapse_to_fixed_tokens() {
         assert_eq!(value_repr(&PredicateValue::Float(f64::NAN)), "f64:nan");
-        assert_eq!(value_repr(&PredicateValue::Float(f64::INFINITY)), "f64:+inf");
-        assert_eq!(value_repr(&PredicateValue::Float(f64::NEG_INFINITY)), "f64:-inf");
+        assert_eq!(
+            value_repr(&PredicateValue::Float(f64::INFINITY)),
+            "f64:+inf"
+        );
+        assert_eq!(
+            value_repr(&PredicateValue::Float(f64::NEG_INFINITY)),
+            "f64:-inf"
+        );
     }
 
     #[test]

@@ -34,8 +34,7 @@ pub struct FieldStatistics {
     /// 2-D co-occurrence matrix for label conjunctions.
     /// `(field_a, field_b) -> (value_a, value_b) -> count` — populated for
     /// labels the workload pre-classifies as correlated, not every pair.
-    pub two_label_cooccurrence:
-        HashMap<(String, String), HashMap<(String, String), u64>>,
+    pub two_label_cooccurrence: HashMap<(String, String), HashMap<(String, String), u64>>,
     /// Range histogram per numeric field. Buckets are non-overlapping and
     /// sorted by `lo`.
     pub range_histograms: HashMap<String, Vec<HistogramBucket>>,
@@ -139,15 +138,14 @@ impl<'a> SelectivityEstimator<'a> {
                 .stats
                 .categorical_selectivity(&p.column, &v.to_string())
                 .unwrap_or(self.fallback.eq),
-            (PredicateOp::Eq, PredicateValue::Float(_) | PredicateValue::Null) => {
-                self.fallback.eq
-            }
+            (PredicateOp::Eq, PredicateValue::Float(_) | PredicateValue::Null) => self.fallback.eq,
             // Eq against a list is unusual but possible (e.g. `tags = [...]`
             // exact-array match). Fall back to the eq policy default; the
             // estimator doesn't track array-equality histograms.
             (PredicateOp::Eq, PredicateValue::List(_)) => self.fallback.eq,
-            (PredicateOp::Ne, _) => (1.0 - self.estimate_no_clamp(p.column.as_str(), &p.op, &p.value))
-                .max(MIN_SELECTIVITY),
+            (PredicateOp::Ne, _) => (1.0
+                - self.estimate_no_clamp(p.column.as_str(), &p.op, &p.value))
+            .max(MIN_SELECTIVITY),
             (PredicateOp::In, PredicateValue::List(values)) => {
                 let unioned: f64 = values
                     .iter()
@@ -332,10 +330,26 @@ mod tests {
         s.range_histograms.insert(
             "age".to_string(),
             vec![
-                HistogramBucket { lo: 0.0, hi: 18.0, count: 100 },
-                HistogramBucket { lo: 18.0, hi: 35.0, count: 500 },
-                HistogramBucket { lo: 35.0, hi: 65.0, count: 350 },
-                HistogramBucket { lo: 65.0, hi: 120.0, count: 50 },
+                HistogramBucket {
+                    lo: 0.0,
+                    hi: 18.0,
+                    count: 100,
+                },
+                HistogramBucket {
+                    lo: 18.0,
+                    hi: 35.0,
+                    count: 500,
+                },
+                HistogramBucket {
+                    lo: 35.0,
+                    hi: 65.0,
+                    count: 350,
+                },
+                HistogramBucket {
+                    lo: 65.0,
+                    hi: 120.0,
+                    count: 50,
+                },
             ],
         );
         s
@@ -385,7 +399,11 @@ mod tests {
             op: PredicateOp::Eq,
             value: PredicateValue::String("nonexistent".to_string()),
         });
-        assert!((sel - p.eq).abs() < 1e-9, "expected fallback {}, got {sel}", p.eq);
+        assert!(
+            (sel - p.eq).abs() < 1e-9,
+            "expected fallback {}, got {sel}",
+            p.eq
+        );
     }
 
     #[test]
@@ -468,7 +486,10 @@ mod tests {
                 value: PredicateValue::String("enterprise".to_string()),
             },
         ]);
-        assert!((sel - 0.018).abs() < 1e-9, "expected 0.018 from matrix, got {sel}");
+        assert!(
+            (sel - 0.018).abs() < 1e-9,
+            "expected 0.018 from matrix, got {sel}"
+        );
     }
 
     #[test]
@@ -490,7 +511,10 @@ mod tests {
                 value: PredicateValue::String("anything".to_string()),
             },
         ]);
-        assert!((sel - 0.018).abs() < 1e-9, "expected 0.018 from independence, got {sel}");
+        assert!(
+            (sel - 0.018).abs() < 1e-9,
+            "expected 0.018 from independence, got {sel}"
+        );
     }
 
     #[test]

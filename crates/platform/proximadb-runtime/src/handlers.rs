@@ -373,3 +373,457 @@ fn json_to_sql_value(v: &serde_json::Value) -> SqlValue {
     };
     SqlValue { value: Some(inner) }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    use proximadb_proto::v1::{Collection, CollectionConfig, VectorRecord};
+    use serde_json::json;
+
+    #[derive(Default)]
+    struct MockCollectionPort {
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl CollectionPort for MockCollectionPort {
+        async fn get_collection(
+            &self,
+            identifier: &str,
+            tenant_id: Option<&str>,
+        ) -> Result<Option<Collection>> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("get:{identifier}:{tenant_id:?}"));
+            Ok(Some(Collection {
+                id: identifier.to_string(),
+                ..Collection::default()
+            }))
+        }
+
+        async fn create_collection(
+            &self,
+            config: CollectionConfig,
+            tenant_id: Option<&str>,
+        ) -> Result<Collection> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("create:{}:{tenant_id:?}", config.name));
+            Ok(Collection {
+                id: config.name.clone(),
+                config: Some(config),
+                ..Collection::default()
+            })
+        }
+
+        async fn update_collection(
+            &self,
+            id: &str,
+            config: CollectionConfig,
+            tenant_id: Option<&str>,
+        ) -> Result<Collection> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("update:{id}:{}:{tenant_id:?}", config.name));
+            Ok(Collection {
+                id: id.to_string(),
+                config: Some(config),
+                ..Collection::default()
+            })
+        }
+
+        async fn delete_collection(&self, id: &str, tenant_id: Option<&str>) -> Result<bool> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("delete:{id}:{tenant_id:?}"));
+            Ok(true)
+        }
+
+        async fn list_collections(&self, tenant_id: Option<&str>) -> Result<Vec<Collection>> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("list:{tenant_id:?}"));
+            Ok(vec![Collection {
+                id: "docs".to_string(),
+                ..Collection::default()
+            }])
+        }
+
+        async fn resolve_collection_id(&self, identifier: &str) -> Result<Option<String>> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("resolve:{identifier}"));
+            Ok(Some(format!("{identifier}-id")))
+        }
+    }
+
+    #[derive(Default)]
+    struct MockVectorOpsPort {
+        calls: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl VectorOpsPort for MockVectorOpsPort {
+        async fn search(
+            &self,
+            request: VectorSearchRequest,
+            tenant_id: Option<&str>,
+        ) -> Result<VectorOperationResponse> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push(format!("search:{}:{tenant_id:?}", request.collection_id));
+            Ok(VectorOperationResponse::default())
+        }
+
+        async fn batch_upsert(
+            &self,
+            request: VectorBatchRequest,
+            tenant_id: Option<&str>,
+        ) -> Result<VectorOperationResponse> {
+            self.calls.lock().unwrap().push(format!(
+                "batch:{}:{}:{tenant_id:?}",
+                request.collection_id,
+                request.vectors.len()
+            ));
+            Ok(VectorOperationResponse::default())
+        }
+
+        async fn get_vector(
+            &self,
+            collection_id: &str,
+            vector_id: &str,
+            include_vector: bool,
+            include_metadata: bool,
+            tenant_id: Option<&str>,
+        ) -> Result<VectorOperationResponse> {
+            self.calls.lock().unwrap().push(format!(
+                "get:{collection_id}:{vector_id}:{include_vector}:{include_metadata}:{tenant_id:?}"
+            ));
+            Ok(VectorOperationResponse::default())
+        }
+
+        async fn flush_all(&self) -> Result<()> {
+            Ok(())
+        }
+
+        async fn metrics(&self) -> Result<serde_json::Value> {
+            Ok(json!({"ok": true}))
+        }
+    }
+
+    #[derive(Default)]
+    struct MockQueryAdapterPort;
+
+    #[async_trait]
+    impl QueryAdapterPort for MockQueryAdapterPort {
+        async fn vector_search(
+            &self,
+            _request: VectorSearchRequest,
+        ) -> Result<VectorOperationResponse> {
+            Ok(VectorOperationResponse::default())
+        }
+
+        async fn execute_hybrid(
+            &self,
+            _request: HybridSearchRequest,
+        ) -> Result<HybridSearchResponse> {
+            Ok(HybridSearchResponse::default())
+        }
+
+        async fn execute_sql(
+            &self,
+            _query: String,
+            _collection: Option<String>,
+        ) -> Result<serde_json::Value> {
+            Ok(json!({
+                "columns": ["id", "score", "flag", "none", "obj"],
+                "total_count": 9,
+                "records": [{
+                    "id": "r1",
+                    "score": 1.5,
+                    "flag": true,
+                    "none": null,
+                    "obj": {"nested": 1}
+                }]
+            }))
+        }
+    }
+
+    fn make_handlers(
+        collection: Arc<MockCollectionPort>,
+        vector_ops: Arc<MockVectorOpsPort>,
+        query_adapter: Option<Arc<dyn QueryAdapterPort>>,
+    ) -> UnifiedHandlers {
+        UnifiedHandlers::new(collection, vector_ops, query_adapter)
+    }
+
+    fn collection_request(operation: CollectionOperation) -> CollectionRequest {
+        CollectionRequest {
+            operation: operation as i32,
+            collection_id: Some("docs".to_string()),
+            collection_config: Some(CollectionConfig {
+                name: "docs".to_string(),
+                ..CollectionConfig::default()
+            }),
+            ..CollectionRequest::default()
+        }
+    }
+
+    #[test]
+    fn request_ids_are_hex_length_stable_and_collection_id_cache_handles_ttl_and_eviction() {
+        let first = generate_request_id();
+        let second = generate_request_id();
+        assert_eq!(first.len(), 16);
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+
+        let cache = CollectionIdCache::new();
+        cache.put("docs".to_string(), "docs-id".to_string());
+        assert_eq!(cache.get("docs").as_deref(), Some("docs-id"));
+        assert_eq!(CollectionIdCache::default().get("missing"), None);
+
+        let expiring = CollectionIdCache {
+            cache: std::sync::RwLock::new(HashMap::new()),
+            ttl: Duration::from_nanos(0),
+            max_size: 1,
+        };
+        expiring.put("old".to_string(), "old-id".to_string());
+        assert_eq!(expiring.get("old"), None);
+
+        let bounded = CollectionIdCache {
+            cache: std::sync::RwLock::new(HashMap::new()),
+            ttl: Duration::from_secs(60),
+            max_size: 1,
+        };
+        bounded.put("a".to_string(), "a-id".to_string());
+        bounded.put("b".to_string(), "b-id".to_string());
+        assert_eq!(bounded.get("a"), None);
+        assert_eq!(bounded.get("b").as_deref(), Some("b-id"));
+    }
+
+    #[tokio::test]
+    async fn unified_handlers_route_collection_operations_to_collection_port() {
+        let collection = Arc::new(MockCollectionPort::default());
+        let vector_ops = Arc::new(MockVectorOpsPort::default());
+        let handlers = make_handlers(collection.clone(), vector_ops, None);
+
+        for operation in [
+            CollectionOperation::CollectionCreate,
+            CollectionOperation::CollectionUpdate,
+            CollectionOperation::CollectionGet,
+            CollectionOperation::CollectionList,
+            CollectionOperation::CollectionDelete,
+            CollectionOperation::CollectionGetIdByName,
+        ] {
+            let response = handlers
+                .handle_collection_operation_for_tenant(
+                    collection_request(operation),
+                    Some("tenant-a"),
+                )
+                .await
+                .unwrap();
+            assert!(response.success);
+            assert!(response.processing_time_us >= 0);
+        }
+
+        let calls = collection.calls.lock().unwrap().clone();
+        assert!(calls.iter().any(|call| call.starts_with("create:docs")));
+        assert!(calls.iter().any(|call| call.starts_with("update:docs")));
+        assert!(calls.iter().any(|call| call.starts_with("get:docs")));
+        assert!(calls.iter().any(|call| call.starts_with("list:")));
+        assert!(calls.iter().any(|call| call.starts_with("delete:docs")));
+        assert!(calls.iter().any(|call| call == "resolve:docs"));
+
+        let mut missing_config = collection_request(CollectionOperation::CollectionCreate);
+        missing_config.collection_config = None;
+        assert!(
+            handlers
+                .handle_collection_operation_for_tenant(missing_config, None)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("collection_config required")
+        );
+        assert!(
+            handlers
+                .handle_collection_operation_for_tenant(
+                    collection_request(CollectionOperation::Unspecified),
+                    None,
+                )
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("not implemented")
+        );
+    }
+
+    #[tokio::test]
+    async fn unified_handlers_route_vector_hybrid_and_sql_operations() {
+        let collection = Arc::new(MockCollectionPort::default());
+        let vector_ops = Arc::new(MockVectorOpsPort::default());
+        let handlers = make_handlers(
+            collection,
+            vector_ops.clone(),
+            Some(Arc::new(MockQueryAdapterPort)),
+        );
+
+        handlers
+            .handle_vector_search_v1(VectorSearchRequest {
+                collection_id: "global".to_string(),
+                ..VectorSearchRequest::default()
+            })
+            .await
+            .unwrap();
+        handlers
+            .handle_vector_search_v1_for_tenant(
+                VectorSearchRequest {
+                    collection_id: "tenant".to_string(),
+                    ..VectorSearchRequest::default()
+                },
+                Some("tenant-a"),
+            )
+            .await
+            .unwrap();
+        handlers
+            .handle_vector_batch_v1_for_tenant(
+                VectorBatchRequest {
+                    collection_id: "docs".to_string(),
+                    vectors: vec![VectorRecord {
+                        id: "v1".to_string(),
+                        vector: vec![0.1],
+                        ..VectorRecord::default()
+                    }],
+                },
+                Some("tenant-a"),
+            )
+            .await
+            .unwrap();
+        handlers
+            .handle_vector_v1_for_tenant("docs", "v1", true, false, Some("tenant-a"))
+            .await
+            .unwrap();
+
+        assert_eq!(vector_ops.calls.lock().unwrap().len(), 4);
+        assert!(
+            handlers
+                .execute_hybrid_query(HybridSearchRequest::default())
+                .await
+                .is_ok()
+        );
+
+        let sql = handlers
+            .execute_sql_v1(
+                "select * from docs".to_string(),
+                None,
+                Some("docs".to_string()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(sql.columns, vec!["id", "score", "flag", "none", "obj"]);
+        assert_eq!(sql.rows_scanned, 9);
+        assert_eq!(sql.rows_returned, 1);
+        let fields = &sql.rows[0].fields;
+        assert!(matches!(
+            fields.iter().find(|field| field.key == "id").and_then(|field| field.value.as_ref()).and_then(|value| value.value.as_ref()),
+            Some(sql_value::Value::StringValue(value)) if value == "r1"
+        ));
+        assert!(matches!(
+            fields.iter().find(|field| field.key == "score").and_then(|field| field.value.as_ref()).and_then(|value| value.value.as_ref()),
+            Some(sql_value::Value::NumberValue(value)) if (*value - 1.5).abs() < f64::EPSILON
+        ));
+        assert!(matches!(
+            fields
+                .iter()
+                .find(|field| field.key == "flag")
+                .and_then(|field| field.value.as_ref())
+                .and_then(|value| value.value.as_ref()),
+            Some(sql_value::Value::BoolValue(true))
+        ));
+        assert!(matches!(
+            fields
+                .iter()
+                .find(|field| field.key == "none")
+                .and_then(|field| field.value.as_ref())
+                .and_then(|value| value.value.as_ref()),
+            Some(sql_value::Value::NullValue(_))
+        ));
+        assert!(matches!(
+            fields.iter().find(|field| field.key == "obj").and_then(|field| field.value.as_ref()).and_then(|value| value.value.as_ref()),
+            Some(sql_value::Value::StringValue(value)) if value.contains("nested")
+        ));
+    }
+
+    #[tokio::test]
+    async fn unified_handlers_report_missing_query_adapter_explicitly_and_sql_arrays_lower() {
+        let handlers = make_handlers(
+            Arc::new(MockCollectionPort::default()),
+            Arc::new(MockVectorOpsPort::default()),
+            None,
+        );
+        assert!(
+            handlers
+                .execute_hybrid_query(HybridSearchRequest::default())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("QueryAdapterPort")
+        );
+        assert!(
+            handlers
+                .execute_sql_v1("select 1".to_string(), None, None)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("QueryAdapterPort")
+        );
+
+        struct ArrayQueryAdapter;
+
+        #[async_trait]
+        impl QueryAdapterPort for ArrayQueryAdapter {
+            async fn vector_search(
+                &self,
+                _request: VectorSearchRequest,
+            ) -> Result<VectorOperationResponse> {
+                Ok(VectorOperationResponse::default())
+            }
+
+            async fn execute_hybrid(
+                &self,
+                _request: HybridSearchRequest,
+            ) -> Result<HybridSearchResponse> {
+                Ok(HybridSearchResponse::default())
+            }
+
+            async fn execute_sql(
+                &self,
+                _query: String,
+                _collection: Option<String>,
+            ) -> Result<serde_json::Value> {
+                Ok(json!(["text", 7, false, null, {"shape": "object"}]))
+            }
+        }
+
+        let handlers = make_handlers(
+            Arc::new(MockCollectionPort::default()),
+            Arc::new(MockVectorOpsPort::default()),
+            Some(Arc::new(ArrayQueryAdapter)),
+        );
+        let sql = handlers
+            .execute_sql_v1("select values".to_string(), None, None)
+            .await
+            .unwrap();
+        assert_eq!(sql.rows_returned, 5);
+        assert!(sql.rows[..4].iter().all(|row| row.fields[0].key == "value"));
+        assert_eq!(sql.rows[4].fields[0].key, "shape");
+    }
+}

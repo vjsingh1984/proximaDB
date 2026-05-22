@@ -373,3 +373,151 @@ pub fn create_health_router() -> Router<RestAppState> {
         .route("/health/live", get(liveness_check))
         .route("/health/ready", get(readiness_check))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{ApiCall, RecordingApiPort};
+    use proximadb_proto::v1::{SqlArray, SqlObject, SqlRow, SqlRowField};
+    use std::collections::HashMap;
+
+    fn sql_value(value: proximadb_proto::v1::sql_value::Value) -> SqlValue {
+        SqlValue { value: Some(value) }
+    }
+
+    #[test]
+    fn default_top_k_and_legacy_handler_stubs_construct() {
+        assert_eq!(default_top_k(), 10);
+        let _hybrid = HybridSearchHandler::default();
+        let _progressive = ProgressiveSearchHandler::new();
+        let _hybrid_router = create_hybrid_search_router();
+    }
+
+    #[test]
+    fn sql_value_to_json_preserves_all_wire_value_shapes() {
+        use proximadb_proto::v1::sql_value::Value;
+
+        assert_eq!(
+            sql_value_to_json(&sql_value(Value::StringValue("doc".to_string()))),
+            serde_json::json!("doc")
+        );
+        assert_eq!(
+            sql_value_to_json(&sql_value(Value::NumberValue(1.5))),
+            serde_json::json!(1.5)
+        );
+        assert_eq!(
+            sql_value_to_json(&sql_value(Value::BoolValue(true))),
+            serde_json::json!(true)
+        );
+        assert_eq!(
+            sql_value_to_json(&sql_value(Value::Int64Value(42))),
+            serde_json::json!(42)
+        );
+        assert_eq!(
+            sql_value_to_json(&sql_value(Value::BytesValue(vec![1, 2]))),
+            serde_json::json!([1, 2])
+        );
+        assert_eq!(
+            sql_value_to_json(&sql_value(Value::NullValue(0))),
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            sql_value_to_json(&sql_value(Value::ArrayValue(SqlArray {
+                values: vec![sql_value(Value::StringValue("nested".to_string()))],
+            }))),
+            serde_json::json!(["nested"])
+        );
+
+        let mut fields = HashMap::new();
+        fields.insert("k".to_string(), sql_value(Value::Int64Value(7)));
+        assert_eq!(
+            sql_value_to_json(&sql_value(Value::ObjectValue(SqlObject { fields }))),
+            serde_json::json!({"k": 7})
+        );
+        assert_eq!(
+            sql_value_to_json(&SqlValue { value: None }),
+            serde_json::Value::Null
+        );
+    }
+
+    #[tokio::test]
+    async fn execute_sql_validates_empty_query_before_port_call() {
+        let port = RecordingApiPort::new();
+
+        let err = execute_sql(
+            State(RestAppState::new(port.clone())),
+            Json(SqlQueryRequest {
+                query: "   ".to_string(),
+                parameters: None,
+                collection: None,
+                timeout_ms: None,
+                seeding: None,
+            }),
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(err, RestError::InvalidArgument(_)));
+        assert!(port.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn execute_sql_routes_to_port_and_shapes_json_rows() {
+        use proximadb_proto::v1::sql_value::Value;
+
+        let port = RecordingApiPort::new();
+        *port.sql_response.lock().unwrap() = proximadb_proto::v1::ExecuteSqlResponse {
+            rows: vec![SqlRow {
+                fields: vec![SqlRowField {
+                    key: "answer".to_string(),
+                    value: Some(sql_value(Value::Int64Value(42))),
+                }],
+                similarity: None,
+            }],
+            rows_scanned: 10,
+            rows_returned: 1,
+            execution_time_ms: 99,
+            columns: vec!["answer".to_string()],
+            column_types: vec!["INT64".to_string()],
+        };
+
+        let Json(body) = execute_sql(
+            State(RestAppState::new(port.clone())),
+            Json(SqlQueryRequest {
+                query: "select answer from docs".to_string(),
+                parameters: Some(vec![sql_value(Value::StringValue("doc-1".to_string()))]),
+                collection: Some("docs".to_string()),
+                timeout_ms: Some(1000),
+                seeding: Some("average".to_string()),
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(body["rows"][0]["answer"], 42);
+        assert_eq!(body["columns"], serde_json::json!(["answer"]));
+        assert_eq!(body["rows_returned"], 1);
+        assert_eq!(
+            port.calls(),
+            vec![ApiCall::Sql {
+                query: "-- SEEDING: AVERAGE\nselect answer from docs".to_string(),
+                parameter_count: Some(1),
+                collection: Some("docs".to_string()),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn health_routes_return_success_and_routers_construct() {
+        let live = liveness_check().await.into_response();
+        assert_eq!(live.status(), StatusCode::OK);
+
+        let ready = readiness_check(State(RestAppState::new(RecordingApiPort::new())))
+            .await
+            .into_response();
+        assert_eq!(ready.status(), StatusCode::OK);
+
+        let _sql_router = create_sql_router();
+        let _health_router = create_health_router();
+    }
+}

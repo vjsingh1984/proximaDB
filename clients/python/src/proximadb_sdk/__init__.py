@@ -621,12 +621,12 @@ _OPTIONAL_EXPORTS = {
 
 _OPTIONAL_EXPORT_DEPENDENCIES = {
     "ProximaDBVectorStore": ("langchain_core",),
-    "ProximaDBEmbeddingProvider": ("victor",),
+    "ProximaDBEmbeddingProvider": ("victor", "victor_contracts"),
     "ProximaDBKnowledgeSource": ("crewai",),
     "ProximaDBSearchTool": ("crewai",),
     "create_langgraph_retriever": ("langchain_core",),
     "ProximaDBRM": ("dspy",),
-    "ProximaDBVectorDB": ("autogen_agentchat", "pyautogen"),
+    "ProximaDBVectorDB": (("autogen_agentchat", "pyautogen"),),
 }
 
 
@@ -638,14 +638,20 @@ def _optional_export_is_available(name: str) -> bool:
     if not dependencies:
         return True
     for dep in dependencies:
-        if importlib.util.find_spec(dep) is None:
-            continue
-        try:
-            importlib.import_module(dep)
-            return True
-        except Exception:
-            continue
-    return False
+        alternatives = dep if isinstance(dep, tuple) else (dep,)
+        found = False
+        for alternative in alternatives:
+            if importlib.util.find_spec(alternative) is None:
+                continue
+            try:
+                importlib.import_module(alternative)
+                found = True
+                break
+            except Exception:
+                continue
+        if not found:
+            return False
+    return True
 
 
 # Backwards compatibility aliases

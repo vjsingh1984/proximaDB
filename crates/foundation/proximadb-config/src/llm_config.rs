@@ -673,3 +673,318 @@ impl LLMRequestContext {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn token_usage() -> TokenUsage {
+        TokenUsage {
+            prompt_tokens: 100,
+            completion_tokens: 50,
+            total_tokens: 150,
+        }
+    }
+
+    fn response(provider: LLMProvider, finish_reason: FinishReason) -> LLMResponse {
+        LLMResponse {
+            content: "answer".to_string(),
+            provider,
+            model_used: "model".to_string(),
+            tokens_used: token_usage(),
+            confidence_score: Some(0.9),
+            finish_reason,
+            response_time_ms: 12,
+            created_at: Utc::now(),
+        }
+    }
+
+    #[test]
+    fn embedding_provider_defaults_names_dimensions_and_batch_sizes_are_stable() {
+        let default_provider = EmbeddingProvider::default();
+        assert_eq!(
+            default_provider.name(),
+            "sentence-transformers/BAAI/bge-small-en-v1.5"
+        );
+        assert_eq!(default_provider.dimension(), 384);
+        assert_eq!(default_provider.batch_size(), 32);
+
+        let sentence_cases = [
+            ("all-MiniLM-L12-v2", 384),
+            ("BAAI/bge-base-en-v1.5", 768),
+            ("BAAI/bge-large-en-v1.5", 1024),
+            ("sentence-transformers/all-mpnet-base-v2", 768),
+            ("unknown-local-model", 384),
+        ];
+        for (model_name, expected_dim) in sentence_cases {
+            let provider = EmbeddingProvider::SentenceTransformers {
+                model_name: model_name.to_string(),
+                dimension: None,
+                batch_size: 16,
+            };
+            assert_eq!(provider.dimension(), expected_dim);
+            assert_eq!(provider.batch_size(), 16);
+        }
+
+        let openai = EmbeddingProvider::OpenAI {
+            api_key: None,
+            model_name: "text-embedding-3-large".to_string(),
+            batch_size: 64,
+        };
+        assert_eq!(openai.name(), "openai/text-embedding-3-large");
+        assert_eq!(openai.dimension(), 3072);
+        assert_eq!(openai.batch_size(), 64);
+        assert_eq!(
+            EmbeddingProvider::OpenAI {
+                api_key: None,
+                model_name: "text-embedding-ada-002".to_string(),
+                batch_size: 1,
+            }
+            .dimension(),
+            1536
+        );
+
+        let cohere = EmbeddingProvider::Cohere {
+            api_key: None,
+            model_name: "embed-english-light-v3.0".to_string(),
+            batch_size: 96,
+        };
+        assert_eq!(cohere.name(), "cohere/embed-english-light-v3.0");
+        assert_eq!(cohere.dimension(), 384);
+        assert_eq!(cohere.batch_size(), 96);
+    }
+
+    #[test]
+    fn ollama_embedding_dimension_inference_and_serde_defaults_cover_known_models() {
+        let cases = [
+            ("qwen3-embedding:8b", 4096),
+            ("qwen3-embedding:4b", 2560),
+            ("gte-Qwen2-7B-instruct", 3584),
+            ("bge-m3", 1024),
+            ("mxbai-embed-large", 1024),
+            ("nomic-embed-text", 768),
+            ("all-minilm", 384),
+            ("custom-embedding", 1024),
+        ];
+
+        for (model_name, expected_dim) in cases {
+            let provider = EmbeddingProvider::Ollama {
+                base_url: "http://ollama".to_string(),
+                model_name: model_name.to_string(),
+                dimension: None,
+            };
+            assert_eq!(provider.name(), format!("ollama/{model_name}"));
+            assert_eq!(provider.dimension(), expected_dim);
+            assert_eq!(provider.batch_size(), 1);
+        }
+
+        let from_json: EmbeddingProvider =
+            serde_json::from_str(r#"{"type":"ollama","model_name":"nomic-embed-text"}"#).unwrap();
+        assert_eq!(from_json.dimension(), 768);
+        assert!(matches!(
+            from_json,
+            EmbeddingProvider::Ollama { base_url, .. } if base_url == "http://localhost:11434"
+        ));
+
+        let openai: EmbeddingProvider =
+            serde_json::from_str(r#"{"type":"openai","model_name":"text-embedding-3-small"}"#)
+                .unwrap();
+        assert_eq!(openai.batch_size(), 32);
+        assert_eq!(openai.dimension(), 1536);
+    }
+
+    #[test]
+    fn llm_and_rag_defaults_preserve_runtime_contracts() {
+        let config = LLMConfig::default();
+        assert!(config.enabled);
+        assert_eq!(config.default_collection, "embeddings");
+        assert_eq!(config.cache_ttl_hours, 24);
+        assert_eq!(config.timeout_seconds, 30);
+        assert_eq!(config.max_retries, 3);
+        assert_eq!(config.rate_limit_per_minute, 60);
+        assert!(config.enable_fallback);
+        assert!(config.enable_caching);
+        assert_eq!(config.provider_priority.len(), 9);
+        assert!(config.ollama_config.is_some());
+
+        let rag = RAGConfig::default();
+        assert!(rag.enabled);
+        assert_eq!(rag.retrieval_top_k, 10);
+        assert_eq!(rag.context_top_k, 5);
+        assert_eq!(rag.default_llm_provider, "ollama");
+        assert_eq!(rag.default_llm_model, "llama3.1:8b");
+
+        let cache = SemanticCacheConfig::default();
+        assert!(cache.enabled);
+        assert_eq!(cache.collection_name, "_rag_cache");
+        assert_eq!(cache.ttl_hours, 24);
+        assert_eq!(cache.min_query_length, 10);
+    }
+
+    #[test]
+    fn provider_specific_defaults_and_display_names_are_stable() {
+        let defaults = (
+            AWSBedrockConfig::default(),
+            AzureOpenAIConfig::default(),
+            GoogleVertexConfig::default(),
+            OllamaConfig::default(),
+            VLLMConfig::default(),
+            HuggingFaceConfig::default(),
+        );
+
+        assert_eq!(defaults.0.region, "us-east-1");
+        assert_eq!(defaults.0.model_id, "anthropic.claude-v2");
+        assert_eq!(defaults.1.deployment_name, "gpt-4");
+        assert_eq!(defaults.1.api_version, "2023-12-01-preview");
+        assert_eq!(defaults.2.location, "us-central1");
+        assert_eq!(defaults.2.model_name, "chat-bison");
+        assert_eq!(defaults.3.base_url, "http://localhost:11434");
+        assert_eq!(defaults.4.base_url, "http://localhost:8000");
+        assert_eq!(defaults.5.model_name, "microsoft/DialoGPT-large");
+        assert!(defaults.5.use_inference_api);
+
+        let display_names = [
+            (LLMProvider::OpenAI, "OpenAI"),
+            (LLMProvider::Anthropic, "Anthropic"),
+            (LLMProvider::Cohere, "Cohere"),
+            (LLMProvider::AWSBedrock, "AWS Bedrock"),
+            (LLMProvider::AzureOpenAI, "Azure OpenAI"),
+            (LLMProvider::GoogleVertexAI, "Google Vertex AI"),
+            (LLMProvider::Ollama, "Ollama"),
+            (LLMProvider::VLLM, "VLLM"),
+            (LLMProvider::HuggingFace, "HuggingFace"),
+        ];
+        for (provider, expected) in display_names {
+            assert_eq!(provider.to_string(), expected);
+        }
+    }
+
+    #[test]
+    fn llm_request_context_and_response_helpers_preserve_builder_values_and_costs() {
+        let request = LLMRequest::new("prompt".to_string())
+            .with_system_prompt("system".to_string())
+            .with_max_tokens(128)
+            .with_temperature(0.2)
+            .with_metadata("trace".to_string(), "abc".to_string());
+        assert_eq!(request.prompt, "prompt");
+        assert_eq!(request.system_prompt.as_deref(), Some("system"));
+        assert_eq!(request.max_tokens, Some(128));
+        assert_eq!(request.temperature, Some(0.2));
+        assert_eq!(
+            request.metadata.get("trace").map(String::as_str),
+            Some("abc")
+        );
+
+        let context = LLMRequestContext::new("req-1".to_string())
+            .with_user("user-1".to_string())
+            .with_tenant("tenant-1".to_string())
+            .with_priority(RequestPriority::Critical);
+        assert_eq!(context.request_id, "req-1");
+        assert_eq!(context.user_id.as_deref(), Some("user-1"));
+        assert_eq!(context.tenant_id.as_deref(), Some("tenant-1"));
+        assert!(matches!(context.priority, RequestPriority::Critical));
+        assert!(matches!(
+            RequestPriority::default(),
+            RequestPriority::Normal
+        ));
+
+        assert!(response(LLMProvider::OpenAI, FinishReason::Stop).is_successful());
+        assert!(!response(LLMProvider::OpenAI, FinishReason::Length).is_successful());
+
+        let cost_cases = [
+            (LLMProvider::OpenAI, 0.006),
+            (LLMProvider::Anthropic, 0.00525),
+            (LLMProvider::Cohere, 0.00225),
+            (LLMProvider::AWSBedrock, 0.003),
+            (LLMProvider::AzureOpenAI, 0.006),
+            (LLMProvider::GoogleVertexAI, 0.00375),
+            (LLMProvider::Ollama, 0.0),
+            (LLMProvider::VLLM, 0.0),
+            (LLMProvider::HuggingFace, 0.00075),
+        ];
+        for (provider, expected) in cost_cases {
+            let actual = response(provider, FinishReason::Stop).total_cost_estimate();
+            assert!((actual - expected).abs() < f64::EPSILON);
+        }
+    }
+
+    #[test]
+    fn llm_contracts_round_trip_json_and_error_messages_are_explicit() {
+        let request =
+            LLMRequest::new("hello".to_string()).with_metadata("k".to_string(), "v".to_string());
+        let decoded_request: LLMRequest =
+            serde_json::from_str(&serde_json::to_string(&request).unwrap()).unwrap();
+        assert_eq!(decoded_request.prompt, "hello");
+        assert_eq!(
+            decoded_request.metadata.get("k").map(String::as_str),
+            Some("v")
+        );
+
+        let response = response(LLMProvider::Cohere, FinishReason::ContentFilter);
+        let decoded_response: LLMResponse =
+            serde_json::from_str(&serde_json::to_string(&response).unwrap()).unwrap();
+        assert!(matches!(
+            decoded_response.finish_reason,
+            FinishReason::ContentFilter
+        ));
+        assert_eq!(decoded_response.provider, LLMProvider::Cohere);
+        assert_eq!(TokenUsage::default().total_tokens, 0);
+
+        let health = ProviderHealthStatus {
+            provider: LLMProvider::Ollama,
+            is_healthy: true,
+            last_check: Utc::now(),
+            response_time_ms: Some(9),
+            error_rate_percent: 0.0,
+            rate_limit_remaining: Some(100),
+        };
+        let decoded_health: ProviderHealthStatus =
+            serde_json::from_str(&serde_json::to_string(&health).unwrap()).unwrap();
+        assert!(decoded_health.is_healthy);
+        assert_eq!(decoded_health.rate_limit_remaining, Some(100));
+
+        let errors = vec![
+            LLMError::NetworkError("net".to_string()).to_string(),
+            LLMError::APIError {
+                provider: LLMProvider::OpenAI,
+                message: "api".to_string(),
+            }
+            .to_string(),
+            LLMError::AuthenticationFailed {
+                provider: LLMProvider::Anthropic,
+                reason: "key".to_string(),
+            }
+            .to_string(),
+            LLMError::RateLimitExceeded {
+                provider: LLMProvider::Cohere,
+                retry_after_seconds: 30,
+            }
+            .to_string(),
+            LLMError::Timeout {
+                timeout_seconds: 10,
+            }
+            .to_string(),
+            LLMError::InvalidRequest("bad".to_string()).to_string(),
+            LLMError::InvalidResponse {
+                provider: LLMProvider::AWSBedrock,
+                reason: "shape".to_string(),
+            }
+            .to_string(),
+            LLMError::ParseError("json".to_string()).to_string(),
+            LLMError::ProviderNotAvailable {
+                provider: LLMProvider::VLLM,
+            }
+            .to_string(),
+            LLMError::AllProvidersFailed.to_string(),
+            LLMError::ConfigurationError("missing".to_string()).to_string(),
+            LLMError::InternalError("boom".to_string()).to_string(),
+        ];
+        assert!(errors.iter().any(|msg| msg.contains("Network error")));
+        assert!(
+            errors
+                .iter()
+                .any(|msg| msg.contains("All configured providers failed"))
+        );
+        assert!(errors.iter().any(|msg| msg.contains("Internal error")));
+    }
+}

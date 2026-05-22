@@ -124,3 +124,86 @@ impl From<&str> for StreamError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stream_error_display_covers_all_streaming_failure_shapes() {
+        let messages = vec![
+            StreamError::TooManySessions {
+                max: 10,
+                current: 11,
+            }
+            .to_string(),
+            StreamError::SessionNotFound {
+                session_id: "s1".to_string(),
+            }
+            .to_string(),
+            StreamError::SessionClosed {
+                session_id: "s2".to_string(),
+            }
+            .to_string(),
+            StreamError::RateLimited {
+                current_rate: 50,
+                max_rate: 10,
+                retry_after_ms: 250,
+            }
+            .to_string(),
+            StreamError::BufferFull {
+                capacity: 1024,
+                dropped: 3,
+            }
+            .to_string(),
+            StreamError::InvalidConfig {
+                message: "bad".to_string(),
+            }
+            .to_string(),
+            StreamError::CollectionNotFound {
+                collection: "docs".to_string(),
+            }
+            .to_string(),
+            StreamError::StorageError {
+                message: "disk".to_string(),
+            }
+            .to_string(),
+            StreamError::SerializationError {
+                message: "json".to_string(),
+            }
+            .to_string(),
+            StreamError::ConnectionError {
+                message: "closed".to_string(),
+            }
+            .to_string(),
+            StreamError::Timeout {
+                operation: "flush".to_string(),
+                timeout_ms: 500,
+            }
+            .to_string(),
+            StreamError::Internal {
+                message: "boom".to_string(),
+            }
+            .to_string(),
+        ];
+
+        assert!(messages.iter().any(|msg| msg.contains("Too many")));
+        assert!(messages.iter().any(|msg| msg.contains("retry after 250ms")));
+        assert!(
+            messages
+                .iter()
+                .any(|msg| msg.contains("Timeout after 500ms"))
+        );
+    }
+
+    #[test]
+    fn stream_error_from_string_and_str_create_internal_errors() {
+        let from_string = StreamError::from("owned".to_string());
+        let from_str = StreamError::from("borrowed");
+        let result: StreamResult<()> = Err(from_str.clone());
+
+        assert!(matches!(from_string, StreamError::Internal { message } if message == "owned"));
+        assert!(matches!(from_str, StreamError::Internal { message } if message == "borrowed"));
+        assert!(result.unwrap_err().to_string().contains("borrowed"));
+    }
+}

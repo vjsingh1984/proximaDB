@@ -1804,6 +1804,339 @@ async fn get_graph_stats_legacy() -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::{Result, anyhow};
+    use async_trait::async_trait;
+    use proximadb_proto::v1 as proto;
+
+    #[derive(Clone, Copy)]
+    enum MockMode {
+        Ok,
+        NotFound,
+        Internal,
+    }
+
+    struct MockGraphPort {
+        mode: MockMode,
+    }
+
+    impl MockGraphPort {
+        fn state(mode: MockMode) -> State<GraphRestState> {
+            State(GraphRestState {
+                graph_port: Arc::new(Self { mode }),
+            })
+        }
+
+        fn ok_or_fail<T>(&self, value: T) -> Result<T> {
+            match self.mode {
+                MockMode::Ok => Ok(value),
+                MockMode::NotFound => Err(anyhow!("graph item not found")),
+                MockMode::Internal => Err(anyhow!("graph backend failed")),
+            }
+        }
+    }
+
+    fn sample_node(id: &str) -> Node {
+        let mut properties = HashMap::new();
+        properties.insert(
+            "name".to_string(),
+            PropertyValue {
+                value: Some(property_value::Value::StringValue("Alice".to_string())),
+            },
+        );
+        Node {
+            id: id.to_string(),
+            labels: vec!["Person".to_string()],
+            properties,
+            embedding: Some(EmbeddingVersion {
+                model_id: "text-embedding".to_string(),
+                model_version: "v1".to_string(),
+                vector: vec![0.1, 0.2],
+                dimension: 2,
+                created_at_ms: 0,
+                model_params: HashMap::new(),
+                modality: 0,
+            }),
+            created_at_ms: 0,
+            updated_at_ms: 1_000,
+        }
+    }
+
+    fn sample_edge(id: &str) -> Edge {
+        let mut properties = HashMap::new();
+        properties.insert(
+            "since".to_string(),
+            PropertyValue {
+                value: Some(property_value::Value::IntValue(2024)),
+            },
+        );
+        Edge {
+            id: id.to_string(),
+            from_node_id: "n1".to_string(),
+            to_node_id: "n2".to_string(),
+            edge_type: "KNOWS".to_string(),
+            properties,
+            weight: Some(0.7),
+            created_at_ms: 0,
+            updated_at_ms: 1_000,
+        }
+    }
+
+    fn batch_response() -> proto::BatchResponse {
+        proto::BatchResponse {
+            success: true,
+            nodes: vec![sample_node("n1")],
+            edges: vec![sample_edge("e1")],
+            error_message: None,
+            next_token: Some("offset:2".to_string()),
+            created_count: Some(1),
+            updated_count: Some(0),
+            failed_count: Some(0),
+            failed_ids: Vec::new(),
+            error_messages: Vec::new(),
+            errors: Vec::new(),
+        }
+    }
+
+    fn sample_graph_collection(graph_id: &str) -> proto::GraphCollection {
+        proto::GraphCollection {
+            graph_id: graph_id.to_string(),
+            name: "Knowledge Graph".to_string(),
+            description: "test graph".to_string(),
+            schema: Some(GraphSchema::default()),
+            storage_config: None,
+            engine_config: None,
+            access_control: None,
+            stats: None,
+            created_at: 0,
+            updated_at: 1_000,
+        }
+    }
+
+    #[async_trait]
+    impl GraphPort for MockGraphPort {
+        async fn create_node(&self, request: CreateNodeRequest) -> Result<Node> {
+            self.ok_or_fail(request.node.unwrap_or_else(|| sample_node("n1")))
+        }
+
+        async fn get_node(&self, _request: GetNodeRequest) -> Result<Node> {
+            self.ok_or_fail(sample_node("n1"))
+        }
+
+        async fn update_node(&self, request: UpdateNodeRequest) -> Result<Node> {
+            self.ok_or_fail(request.node.unwrap_or_else(|| sample_node("n1")))
+        }
+
+        async fn delete_node(&self, _request: DeleteNodeRequest) -> Result<Node> {
+            self.ok_or_fail(sample_node("n1"))
+        }
+
+        async fn create_edge(&self, request: CreateEdgeRequest) -> Result<Edge> {
+            self.ok_or_fail(request.edge.unwrap_or_else(|| sample_edge("e1")))
+        }
+
+        async fn get_edge(&self, _request: GetEdgeRequest) -> Result<Edge> {
+            self.ok_or_fail(sample_edge("e1"))
+        }
+
+        async fn update_edge(&self, request: UpdateEdgeRequest) -> Result<Edge> {
+            self.ok_or_fail(request.edge.unwrap_or_else(|| sample_edge("e1")))
+        }
+
+        async fn delete_edge(&self, _request: DeleteEdgeRequest) -> Result<Edge> {
+            self.ok_or_fail(sample_edge("e1"))
+        }
+
+        async fn query_nodes(&self, _request: NodeQuery) -> Result<proto::BatchResponse> {
+            self.ok_or_fail(batch_response())
+        }
+
+        async fn query_edges(&self, _request: EdgeQuery) -> Result<proto::BatchResponse> {
+            self.ok_or_fail(batch_response())
+        }
+
+        async fn execute_query(
+            &self,
+            _request: GraphQueryRequest,
+        ) -> Result<proto::GraphQueryResponse> {
+            let mut columns = HashMap::new();
+            columns.insert("n".to_string(), proto::QueryValue::default());
+            self.ok_or_fail(proto::GraphQueryResponse {
+                rows: vec![proto::ResultRow { columns }],
+                stats: None,
+                query_plan: None,
+                error_message: None,
+            })
+        }
+
+        async fn get_neighbors(
+            &self,
+            _request: GetNeighborsRequest,
+        ) -> Result<proto::BatchResponse> {
+            self.ok_or_fail(batch_response())
+        }
+
+        async fn traverse_graph(
+            &self,
+            _request: TraversalRequest,
+        ) -> Result<proto::TraversalResponse> {
+            self.ok_or_fail(proto::TraversalResponse {
+                nodes: vec![sample_node("n1"), sample_node("n2")],
+                edges: vec![sample_edge("e1")],
+                paths: vec![proto::GraphPath {
+                    entities: vec![
+                        proto::Entity {
+                            id: "n1".to_string(),
+                            ..proto::Entity::default()
+                        },
+                        proto::Entity {
+                            id: "n2".to_string(),
+                            ..proto::Entity::default()
+                        },
+                    ],
+                    relations: Vec::new(),
+                }],
+                stats: Some(proto::TraversalStats {
+                    nodes_visited: 2,
+                    edges_traversed: 1,
+                    max_depth_reached: 1,
+                    execution_time_microseconds: 4_000,
+                }),
+            })
+        }
+
+        async fn stream_traverse(
+            &self,
+            _request: TraversalRequest,
+        ) -> Result<Vec<proto::TraversalChunk>> {
+            self.ok_or_fail(Vec::new())
+        }
+
+        async fn get_graph_stats(&self, _request: GetStatsRequest) -> Result<proto::GraphStats> {
+            self.ok_or_fail(proto::GraphStats {
+                total_nodes: 2,
+                total_edges: 1,
+                label_stats: vec![proto::LabelStats {
+                    label: "Person".to_string(),
+                    count: 2,
+                }],
+                edge_type_stats: vec![proto::EdgeTypeStats {
+                    edge_type: "KNOWS".to_string(),
+                    count: 1,
+                }],
+                total_properties: 3,
+                memory_usage_bytes: 1024,
+                average_degree: 1.0,
+                max_degree: 2,
+                connected_components: 1,
+            })
+        }
+
+        async fn shortest_path(
+            &self,
+            _request: proto::ShortestPathRequest,
+        ) -> Result<proto::ShortestPathResponse> {
+            self.ok_or_fail(proto::ShortestPathResponse {
+                node_ids: vec!["n1".to_string(), "n2".to_string()],
+                total_weight: Some(0.7),
+            })
+        }
+
+        async fn get_connected_components(
+            &self,
+            _request: GetStatsRequest,
+        ) -> Result<proto::ConnectedComponentsResponse> {
+            self.ok_or_fail(proto::ConnectedComponentsResponse {
+                components: vec![proto::Component {
+                    node_ids: vec!["n1".to_string(), "n2".to_string()],
+                }],
+            })
+        }
+
+        async fn has_cycle(&self, _request: GetStatsRequest) -> Result<proto::CycleCheckResponse> {
+            self.ok_or_fail(proto::CycleCheckResponse { has_cycle: true })
+        }
+
+        async fn add_unique_constraint(
+            &self,
+            _request: UniqueConstraintRequest,
+        ) -> Result<proto::UniqueConstraintResponse> {
+            self.ok_or_fail(proto::UniqueConstraintResponse {
+                success: true,
+                error_message: None,
+            })
+        }
+
+        async fn remove_unique_constraint(
+            &self,
+            _request: UniqueConstraintRequest,
+        ) -> Result<proto::UniqueConstraintResponse> {
+            self.ok_or_fail(proto::UniqueConstraintResponse {
+                success: true,
+                error_message: None,
+            })
+        }
+
+        async fn batch_create_nodes(
+            &self,
+            _request: BatchNodeRequest,
+        ) -> Result<proto::BatchResponse> {
+            self.ok_or_fail(batch_response())
+        }
+
+        async fn batch_create_edges(
+            &self,
+            _request: BatchEdgeRequest,
+        ) -> Result<proto::BatchResponse> {
+            self.ok_or_fail(batch_response())
+        }
+
+        async fn execute_hybrid_query(
+            &self,
+            _request: proto::HybridSearchRequest,
+        ) -> Result<proto::HybridSearchResponse> {
+            self.ok_or_fail(proto::HybridSearchResponse::default())
+        }
+
+        async fn create_graph_collection(
+            &self,
+            request: CreateGraphRequest,
+        ) -> Result<proto::GraphCollection> {
+            self.ok_or_fail(sample_graph_collection(&request.graph_id))
+        }
+
+        async fn get_graph_collection(
+            &self,
+            graph_id: String,
+        ) -> Result<Option<proto::GraphCollection>> {
+            match self.mode {
+                MockMode::Ok => Ok(Some(sample_graph_collection(&graph_id))),
+                MockMode::NotFound => Ok(None),
+                MockMode::Internal => Err(anyhow!("graph backend failed")),
+            }
+        }
+
+        async fn delete_graph_collection(&self, _graph_id: String) -> Result<bool> {
+            match self.mode {
+                MockMode::Ok => Ok(true),
+                MockMode::NotFound => Ok(false),
+                MockMode::Internal => Err(anyhow!("graph backend failed")),
+            }
+        }
+
+        async fn list_graph_collections(&self) -> Result<Vec<proto::GraphCollection>> {
+            self.ok_or_fail(vec![sample_graph_collection("g1")])
+        }
+
+        async fn update_graph_schema(
+            &self,
+            graph_id: String,
+            schema: GraphSchema,
+        ) -> Result<proto::GraphCollection> {
+            let mut collection = sample_graph_collection(&graph_id);
+            collection.schema = Some(schema);
+            self.ok_or_fail(collection)
+        }
+    }
 
     #[test]
     fn test_graph_response_success() {
@@ -1860,5 +2193,487 @@ mod tests {
             parse_traversal_algorithm("unknown"),
             TraversalAlgorithm::Unspecified as i32
         );
+    }
+
+    #[test]
+    fn property_and_input_conversion_helpers_cover_nested_shapes() {
+        let mut props = HashMap::new();
+        props.insert("name".to_string(), serde_json::json!("Alice"));
+        props.insert("age".to_string(), serde_json::json!(30));
+        props.insert("score".to_string(), serde_json::json!(1.5));
+        props.insert("active".to_string(), serde_json::json!(true));
+        props.insert("bytes".to_string(), serde_json::json!([1, 2, 3]));
+        props.insert("nested".to_string(), serde_json::json!({"k": "v"}));
+        props.insert("drop_null".to_string(), serde_json::Value::Null);
+
+        let converted = json_to_props(props);
+        let restored = props_to_json(&converted);
+
+        assert_eq!(restored["name"], "Alice");
+        assert_eq!(restored["age"], 30);
+        assert_eq!(restored["score"], 1.5);
+        assert_eq!(restored["active"], true);
+        assert_eq!(restored["bytes"], serde_json::json!([1.0, 2.0, 3.0]));
+        assert_eq!(restored["nested"]["k"], "v");
+        assert!(!restored.contains_key("drop_null"));
+
+        assert_eq!(fmt_ts(0), "1970-01-01T00:00:00.000Z");
+        assert_eq!(
+            parse_sp_algorithm(Some("astar")),
+            Some(ShortestPathAlgorithm::Astar as i32)
+        );
+        assert_eq!(parse_sp_algorithm(Some("bad")), None);
+        assert_eq!(default_max_depth(), 5);
+        assert_eq!(default_algorithm(), "bfs");
+        assert_eq!(default_walk_depth(), 2);
+        assert_eq!(default_walk_limit(), 100);
+        assert_eq!(default_step_limit(), 50);
+        assert_eq!(default_query_limit(), 100);
+        assert_eq!(default_query_language(), "native");
+
+        let proto_node = rest_node_to_proto(RestNodeInput {
+            id: "n1".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: HashMap::new(),
+            embedding: Some(RestEmbeddingInput {
+                vector: vec![0.1, 0.2, 0.3],
+                version: "v1".to_string(),
+                model_id: "m".to_string(),
+            }),
+        });
+        assert_eq!(proto_node.embedding.unwrap().dimension, 3);
+
+        let proto_edge = rest_edge_to_proto(RestEdgeInput {
+            id: "e1".to_string(),
+            from_node_id: "n1".to_string(),
+            to_node_id: "n2".to_string(),
+            edge_type: "KNOWS".to_string(),
+            properties: HashMap::new(),
+            weight: Some(1.0),
+        });
+        assert_eq!(proto_edge.edge_type, "KNOWS");
+    }
+
+    #[tokio::test]
+    async fn graph_node_and_edge_crud_handlers_route_through_graph_port() {
+        let node_body = CreateNodeBody {
+            node: RestNodeInput {
+                id: "n1".to_string(),
+                labels: vec!["Person".to_string()],
+                properties: HashMap::new(),
+                embedding: None,
+            },
+        };
+        assert_eq!(
+            create_node(
+                MockGraphPort::state(MockMode::Ok),
+                Path("g1".to_string()),
+                Json(node_body),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::CREATED
+        );
+        assert_eq!(
+            get_node(
+                MockGraphPort::state(MockMode::Ok),
+                Path(("g1".to_string(), "n1".to_string())),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            update_node(
+                MockGraphPort::state(MockMode::Ok),
+                Path(("g1".to_string(), "n1".to_string())),
+                Json(RestNodeInput {
+                    id: "ignored".to_string(),
+                    labels: vec!["Person".to_string()],
+                    properties: HashMap::new(),
+                    embedding: None,
+                }),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            delete_node(
+                MockGraphPort::state(MockMode::Ok),
+                Path(("g1".to_string(), "n1".to_string())),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::OK
+        );
+
+        let edge_body = CreateEdgeBody {
+            edge: RestEdgeInput {
+                id: "e1".to_string(),
+                from_node_id: "n1".to_string(),
+                to_node_id: "n2".to_string(),
+                edge_type: "KNOWS".to_string(),
+                properties: HashMap::new(),
+                weight: Some(0.5),
+            },
+        };
+        assert_eq!(
+            create_edge(
+                MockGraphPort::state(MockMode::Ok),
+                Path("g1".to_string()),
+                Json(edge_body),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::CREATED
+        );
+        assert_eq!(
+            get_edge(
+                MockGraphPort::state(MockMode::Ok),
+                Path(("g1".to_string(), "e1".to_string())),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            update_edge(
+                MockGraphPort::state(MockMode::Ok),
+                Path(("g1".to_string(), "e1".to_string())),
+                Json(RestEdgeInput {
+                    id: "ignored".to_string(),
+                    from_node_id: "n1".to_string(),
+                    to_node_id: "n2".to_string(),
+                    edge_type: "KNOWS".to_string(),
+                    properties: HashMap::new(),
+                    weight: None,
+                }),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            delete_edge(
+                MockGraphPort::state(MockMode::Ok),
+                Path(("g1".to_string(), "e1".to_string())),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn graph_query_traversal_batch_analytics_and_constraint_handlers_succeed() {
+        for response in [
+            get_node_neighbors(
+                MockGraphPort::state(MockMode::Ok),
+                Path(("g1".to_string(), "n1".to_string())),
+            )
+            .await
+            .into_response(),
+            query_nodes(
+                MockGraphPort::state(MockMode::Ok),
+                Path("g1".to_string()),
+                Json(RestNodeQuery {
+                    labels: vec!["Person".to_string()],
+                    properties: HashMap::new(),
+                    limit: 1,
+                    offset: None,
+                    continuation_token: Some("offset:2".to_string()),
+                }),
+            )
+            .await
+            .into_response(),
+            query_edges(
+                MockGraphPort::state(MockMode::Ok),
+                Path("g1".to_string()),
+                Json(RestEdgeQuery {
+                    edge_type: "KNOWS".to_string(),
+                    from_node_id: Some("n1".to_string()),
+                    to_node_id: Some("n2".to_string()),
+                    properties: HashMap::new(),
+                    limit: 1,
+                    offset: None,
+                    continuation_token: Some("offset:2".to_string()),
+                }),
+            )
+            .await
+            .into_response(),
+            execute_graph_query(
+                MockGraphPort::state(MockMode::Ok),
+                Path("g1".to_string()),
+                Json(RestGraphQueryRequest {
+                    query: "MATCH (n) RETURN n".to_string(),
+                    language: "cypher".to_string(),
+                    timeout_ms: Some(100),
+                }),
+            )
+            .await
+            .into_response(),
+            traverse_graph(
+                MockGraphPort::state(MockMode::Ok),
+                Path("g1".to_string()),
+                Json(RestTraversalRequest {
+                    start_node_id: "n1".to_string(),
+                    max_depth: 2,
+                    edge_types: vec!["KNOWS".to_string()],
+                    node_labels: vec!["Person".to_string()],
+                    algorithm: "parallel".to_string(),
+                    limit: Some(10),
+                }),
+            )
+            .await
+            .into_response(),
+            walk_graph(
+                MockGraphPort::state(MockMode::Ok),
+                Path("g1".to_string()),
+                Json(WalkRequest {
+                    start_node_id: "n1".to_string(),
+                    max_depth: 2,
+                    limit: 10,
+                }),
+            )
+            .await
+            .into_response(),
+            step_graph(
+                MockGraphPort::state(MockMode::Ok),
+                Path("g1".to_string()),
+                Json(WalkStepRequest {
+                    node_id: "n1".to_string(),
+                    edge_type: Some("KNOWS".to_string()),
+                    limit: 5,
+                }),
+            )
+            .await
+            .into_response(),
+            get_graph_stats(MockGraphPort::state(MockMode::Ok), Path("g1".to_string()))
+                .await
+                .into_response(),
+            shortest_path(
+                MockGraphPort::state(MockMode::Ok),
+                Path("g1".to_string()),
+                HeaderMap::new(),
+                Json(RestShortestPathRequest {
+                    start_node_id: "n1".to_string(),
+                    target_node_id: "n2".to_string(),
+                    max_depth: Some(3),
+                    edge_types: vec!["KNOWS".to_string()],
+                    algorithm: Some("dijkstra".to_string()),
+                    k: Some(1),
+                }),
+            )
+            .await
+            .into_response(),
+            get_connected_components(MockGraphPort::state(MockMode::Ok), Path("g1".to_string()))
+                .await
+                .into_response(),
+            check_cycles(MockGraphPort::state(MockMode::Ok), Path("g1".to_string()))
+                .await
+                .into_response(),
+            add_unique_constraint(
+                MockGraphPort::state(MockMode::Ok),
+                Path("g1".to_string()),
+                Json(RestUniqueConstraintRequest {
+                    label: "Person".to_string(),
+                    property: "email".to_string(),
+                }),
+            )
+            .await
+            .into_response(),
+            remove_unique_constraint(
+                MockGraphPort::state(MockMode::Ok),
+                Path("g1".to_string()),
+                Json(RestUniqueConstraintRequest {
+                    label: "Person".to_string(),
+                    property: "email".to_string(),
+                }),
+            )
+            .await
+            .into_response(),
+            batch_create_nodes(
+                MockGraphPort::state(MockMode::Ok),
+                Path("g1".to_string()),
+                Json(BatchCreateNodesRequest {
+                    nodes: vec![RestNodeInput {
+                        id: "n1".to_string(),
+                        labels: Vec::new(),
+                        properties: HashMap::new(),
+                        embedding: None,
+                    }],
+                }),
+            )
+            .await
+            .into_response(),
+            batch_create_edges(
+                MockGraphPort::state(MockMode::Ok),
+                Path("g1".to_string()),
+                Json(BatchCreateEdgesRequest {
+                    edges: vec![RestEdgeInput {
+                        id: "e1".to_string(),
+                        from_node_id: "n1".to_string(),
+                        to_node_id: "n2".to_string(),
+                        edge_type: "KNOWS".to_string(),
+                        properties: HashMap::new(),
+                        weight: Some(1.0),
+                    }],
+                }),
+            )
+            .await
+            .into_response(),
+        ] {
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+    }
+
+    #[tokio::test]
+    async fn graph_collection_management_redirects_and_error_paths_are_explicit() {
+        assert_eq!(
+            create_graph_collection(
+                MockGraphPort::state(MockMode::Ok),
+                Json(CreateGraphCollectionBody {
+                    graph_id: "g1".to_string(),
+                    name: Some("Knowledge".to_string()),
+                    description: Some("docs".to_string()),
+                }),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::CREATED
+        );
+        assert_eq!(
+            list_graph_collections(MockGraphPort::state(MockMode::Ok))
+                .await
+                .into_response()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            get_graph_collection(MockGraphPort::state(MockMode::Ok), Path("g1".to_string()))
+                .await
+                .into_response()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            delete_graph_collection(MockGraphPort::state(MockMode::Ok), Path("g1".to_string()))
+                .await
+                .into_response()
+                .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            update_graph_schema(
+                MockGraphPort::state(MockMode::Ok),
+                Path("g1".to_string()),
+                Json(UpdateGraphSchemaBody {
+                    schema: serde_json::to_value(GraphSchema::default()).unwrap(),
+                }),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            update_graph_schema(
+                MockGraphPort::state(MockMode::Ok),
+                Path("g1".to_string()),
+                Json(UpdateGraphSchemaBody {
+                    schema: serde_json::json!("not a schema"),
+                }),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            get_graph_collection(
+                MockGraphPort::state(MockMode::NotFound),
+                Path("g1".to_string())
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            delete_graph_collection(
+                MockGraphPort::state(MockMode::NotFound),
+                Path("g1".to_string())
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            get_node(
+                MockGraphPort::state(MockMode::NotFound),
+                Path(("g1".to_string(), "missing".to_string())),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            create_node(
+                MockGraphPort::state(MockMode::Internal),
+                Path("g1".to_string()),
+                Json(CreateNodeBody {
+                    node: RestNodeInput {
+                        id: "n1".to_string(),
+                        labels: Vec::new(),
+                        properties: HashMap::new(),
+                        embedding: None,
+                    },
+                }),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+
+        let not_impl = not_implemented_handler().await.into_response();
+        assert_eq!(not_impl.status(), StatusCode::NOT_IMPLEMENTED);
+
+        let legacy = get_node_legacy(Path("n1".to_string()))
+            .await
+            .into_response();
+        assert_eq!(legacy.status(), StatusCode::PERMANENT_REDIRECT);
+        assert_eq!(
+            legacy.headers().get(header::LOCATION).unwrap(),
+            "/api/v1/graph/graphs/default/nodes/n1"
+        );
+        assert_eq!(
+            create_node_legacy().await.into_response().status(),
+            StatusCode::PERMANENT_REDIRECT
+        );
+        assert_eq!(
+            create_edge_legacy().await.into_response().status(),
+            StatusCode::PERMANENT_REDIRECT
+        );
+        assert_eq!(
+            get_graph_stats_legacy().await.into_response().status(),
+            StatusCode::PERMANENT_REDIRECT
+        );
+
+        let _router = create_graph_router();
+        let _graph_handler = GraphHandler::default();
+        let _traversal_handler = GraphTraversalHandler::new();
     }
 }

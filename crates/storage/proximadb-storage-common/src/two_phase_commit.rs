@@ -650,13 +650,95 @@ impl Default for TwoPhaseCommitProtocol {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+
+    struct ScriptedParticipant {
+        participant_type: ParticipantType,
+        prepare_results: Mutex<VecDeque<PrepareResult>>,
+        commit_results: Mutex<VecDeque<CommitResult>>,
+        abort_results: Mutex<VecDeque<CommitResult>>,
+    }
+
+    impl ScriptedParticipant {
+        fn new(participant_type: ParticipantType) -> Self {
+            Self {
+                participant_type,
+                prepare_results: Mutex::new(VecDeque::new()),
+                commit_results: Mutex::new(VecDeque::new()),
+                abort_results: Mutex::new(VecDeque::new()),
+            }
+        }
+
+        fn with_prepare(self, results: impl IntoIterator<Item = PrepareResult>) -> Self {
+            self.prepare_results
+                .lock()
+                .unwrap()
+                .extend(results.into_iter());
+            self
+        }
+
+        fn with_commit(self, results: impl IntoIterator<Item = CommitResult>) -> Self {
+            self.commit_results
+                .lock()
+                .unwrap()
+                .extend(results.into_iter());
+            self
+        }
+
+        fn with_abort(self, results: impl IntoIterator<Item = CommitResult>) -> Self {
+            self.abort_results
+                .lock()
+                .unwrap()
+                .extend(results.into_iter());
+            self
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl TwoPhaseParticipant for ScriptedParticipant {
+        async fn prepare(&self, transaction_id: &str) -> PrepareResult {
+            assert!(!transaction_id.is_empty());
+            self.prepare_results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(PrepareResult::Yes)
+        }
+
+        async fn commit(&self, transaction_id: &str) -> CommitResult {
+            assert!(!transaction_id.is_empty());
+            self.commit_results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(CommitResult::Success)
+        }
+
+        async fn abort(&self, transaction_id: &str) -> CommitResult {
+            assert!(!transaction_id.is_empty());
+            self.abort_results
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(CommitResult::Success)
+        }
+
+        fn participant_type(&self) -> ParticipantType {
+            self.participant_type
+        }
+    }
 
     #[test]
     fn test_transaction_state_terminal() {
         assert!(!TransactionState::Active.is_terminal());
         assert!(!TransactionState::Preparing.is_terminal());
+        assert!(!TransactionState::Prepared.is_terminal());
+        assert!(!TransactionState::Committing.is_terminal());
         assert!(TransactionState::Committed.is_terminal());
+        assert!(!TransactionState::Aborting.is_terminal());
         assert!(TransactionState::Aborted.is_terminal());
+        assert!(!TransactionState::Unknown.is_terminal());
     }
 
     #[test]
@@ -664,21 +746,50 @@ mod tests {
         assert!(TransactionState::Active.can_abort());
         assert!(TransactionState::Preparing.can_abort());
         assert!(TransactionState::Prepared.can_abort());
+        assert!(!TransactionState::Committing.can_abort());
         assert!(!TransactionState::Committed.can_abort());
+        assert!(TransactionState::Aborting.can_abort());
+        assert!(!TransactionState::Aborted.can_abort());
+        assert!(!TransactionState::Unknown.can_abort());
     }
 
     #[test]
     fn test_prepare_result() {
         assert!(PrepareResult::Yes.is_yes());
-        assert!(!PrepareResult::No("reason".to_string()).is_yes());
+        let no = PrepareResult::No("reason".to_string());
+        assert!(!no.is_yes());
+        assert!(matches!(no, PrepareResult::No(reason) if reason == "reason"));
         assert!(!PrepareResult::Timeout.is_yes());
+        let error = PrepareResult::Error("prepare failed".to_string());
+        assert!(!error.is_yes());
+        assert!(matches!(error, PrepareResult::Error(reason) if reason == "prepare failed"));
     }
 
     #[test]
     fn test_commit_result() {
         assert!(CommitResult::Success.is_success());
-        assert!(!CommitResult::Failed("reason".to_string()).is_success());
+        let failed = CommitResult::Failed("reason".to_string());
+        assert!(!failed.is_success());
+        assert!(matches!(failed, CommitResult::Failed(reason) if reason == "reason"));
         assert!(!CommitResult::Timeout.is_success());
+    }
+
+    #[test]
+    fn test_participant_type_names() {
+        assert_eq!(ParticipantType::Vector.name(), "vector");
+        assert_eq!(ParticipantType::Document.name(), "document");
+        assert_eq!(ParticipantType::Graph.name(), "graph");
+        assert_eq!(ParticipantType::RDBMS.name(), "rdbms");
+        assert_eq!(ParticipantType::Observability.name(), "observability");
+    }
+
+    #[test]
+    fn test_participant_state_defaults() {
+        let state = ParticipantState::new(ParticipantType::Graph);
+        assert_eq!(state.participant_type, ParticipantType::Graph);
+        assert_eq!(state.state, TransactionState::Active);
+        assert!(state.prepare_result.is_none());
+        assert!(state.commit_result.is_none());
     }
 
     #[test]
@@ -691,9 +802,17 @@ mod tests {
 
         txn.add_participant(ParticipantType::Vector);
         txn.add_participant(ParticipantType::Document);
+        txn.add_participant(ParticipantType::Vector);
 
         assert_eq!(txn.participants.len(), 2);
         assert!(!txn.all_prepared());
+        assert_eq!(txn.participant_types().len(), 2);
+        assert_eq!(txn.transaction_id, "txn1");
+        assert!(
+            txn.log
+                .iter()
+                .any(|(_, event)| event == "Transaction created")
+        );
     }
 
     #[test]
@@ -728,6 +847,37 @@ mod tests {
 
         assert!(!txn.all_prepared());
         assert!(txn.any_rejected());
+
+        txn.participants
+            .get_mut(&ParticipantType::Vector)
+            .unwrap()
+            .prepare_result = Some(PrepareResult::Error("prepare failed".to_string()));
+        assert!(txn.any_rejected());
+
+        txn.participants
+            .get_mut(&ParticipantType::Vector)
+            .unwrap()
+            .prepare_result = Some(PrepareResult::Timeout);
+        assert!(txn.any_rejected());
+    }
+
+    #[test]
+    fn test_two_phase_transaction_timeout_helpers() {
+        let mut txn = TwoPhaseTransaction::new(
+            "txn1".to_string(),
+            Duration::from_millis(10),
+            Duration::from_millis(20),
+        );
+
+        assert!(!txn.is_prepare_timeout());
+        assert!(!txn.is_commit_timeout());
+
+        txn.start_time = Instant::now() - Duration::from_millis(15);
+        assert!(txn.is_prepare_timeout());
+        assert!(!txn.is_commit_timeout());
+
+        txn.start_time = Instant::now() - Duration::from_millis(40);
+        assert!(txn.is_commit_timeout());
     }
 
     #[test]
@@ -736,6 +886,8 @@ mod tests {
         assert_eq!(config.prepare_timeout, Duration::from_secs(30));
         assert_eq!(config.commit_timeout, Duration::from_secs(60));
         assert_eq!(config.max_retries, 3);
+        assert_eq!(config.retry_delay, Duration::from_millis(100));
+        assert!(config.wal_enabled);
     }
 
     #[tokio::test]
@@ -781,5 +933,183 @@ mod tests {
         assert_eq!(stats.total_started, 1);
         assert_eq!(stats.total_committed, 0);
         assert_eq!(stats.total_aborted, 0);
+        assert_eq!(stats.prepare_timeouts, 0);
+        assert_eq!(stats.commit_timeouts, 0);
+        assert_eq!(stats.avg_prepare_time_ms, 0.0);
+        assert_eq!(stats.avg_commit_time_ms, 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_protocol_prepare_commit_success_with_retry() {
+        let config = TwoPhaseCommitConfig {
+            max_retries: 1,
+            retry_delay: Duration::from_millis(1),
+            ..TwoPhaseCommitConfig::default()
+        };
+        let protocol = TwoPhaseCommitProtocol::new(config);
+
+        protocol
+            .register_participant(Arc::new(ScriptedParticipant::new(ParticipantType::Vector)))
+            .await;
+        protocol
+            .register_participant(Arc::new(
+                ScriptedParticipant::new(ParticipantType::Document).with_commit([
+                    CommitResult::Failed("transient".to_string()),
+                    CommitResult::Success,
+                ]),
+            ))
+            .await;
+
+        protocol.begin("txn1").await.unwrap();
+        protocol
+            .enlist("txn1", ParticipantType::Vector)
+            .await
+            .unwrap();
+        protocol
+            .enlist("txn1", ParticipantType::Document)
+            .await
+            .unwrap();
+
+        assert!(protocol.prepare("txn1").await.unwrap());
+        assert_eq!(
+            protocol.get_state("txn1").await,
+            Some(TransactionState::Prepared)
+        );
+
+        protocol.commit("txn1").await.unwrap();
+        assert_eq!(
+            protocol.get_state("txn1").await,
+            Some(TransactionState::Committed)
+        );
+
+        let stats = protocol.stats().await;
+        assert_eq!(stats.total_started, 1);
+        assert_eq!(stats.total_committed, 1);
+
+        protocol.cleanup_completed(Duration::ZERO).await;
+        assert_eq!(protocol.get_state("txn1").await, None);
+    }
+
+    #[tokio::test]
+    async fn test_protocol_prepare_rejection_then_abort() {
+        let config = TwoPhaseCommitConfig {
+            max_retries: 1,
+            retry_delay: Duration::from_millis(1),
+            ..TwoPhaseCommitConfig::default()
+        };
+        let protocol = TwoPhaseCommitProtocol::new(config);
+
+        protocol
+            .register_participant(Arc::new(
+                ScriptedParticipant::new(ParticipantType::Graph)
+                    .with_prepare([PrepareResult::No("conflict".to_string())])
+                    .with_abort([
+                        CommitResult::Failed("transient".to_string()),
+                        CommitResult::Success,
+                    ]),
+            ))
+            .await;
+
+        protocol.begin("txn2").await.unwrap();
+        protocol
+            .enlist("txn2", ParticipantType::Graph)
+            .await
+            .unwrap();
+
+        assert!(!protocol.prepare("txn2").await.unwrap());
+        assert_eq!(
+            protocol.get_state("txn2").await,
+            Some(TransactionState::Aborting)
+        );
+
+        protocol.abort("txn2").await.unwrap();
+        assert_eq!(
+            protocol.get_state("txn2").await,
+            Some(TransactionState::Aborted)
+        );
+
+        let stats = protocol.stats().await;
+        assert_eq!(stats.total_aborted, 1);
+    }
+
+    #[tokio::test]
+    async fn test_protocol_missing_participant_and_invalid_commit() {
+        let protocol = TwoPhaseCommitProtocol::new(TwoPhaseCommitConfig::default());
+
+        protocol.begin("txn3").await.unwrap();
+        protocol
+            .enlist("txn3", ParticipantType::Observability)
+            .await
+            .unwrap();
+
+        assert!(!protocol.prepare("txn3").await.unwrap());
+        assert_eq!(
+            protocol.get_state("txn3").await,
+            Some(TransactionState::Aborting)
+        );
+
+        let commit_error = protocol.commit("txn3").await.unwrap_err();
+        assert!(commit_error.to_string().contains("Cannot commit"));
+    }
+
+    #[tokio::test]
+    async fn test_protocol_commit_failure_after_retries() {
+        let config = TwoPhaseCommitConfig {
+            max_retries: 1,
+            retry_delay: Duration::from_millis(1),
+            ..TwoPhaseCommitConfig::default()
+        };
+        let protocol = TwoPhaseCommitProtocol::new(config);
+
+        protocol
+            .register_participant(Arc::new(
+                ScriptedParticipant::new(ParticipantType::RDBMS).with_commit([
+                    CommitResult::Failed("first".to_string()),
+                    CommitResult::Failed("second".to_string()),
+                ]),
+            ))
+            .await;
+
+        protocol.begin("txn4").await.unwrap();
+        protocol
+            .enlist("txn4", ParticipantType::RDBMS)
+            .await
+            .unwrap();
+
+        assert!(protocol.prepare("txn4").await.unwrap());
+        let error = protocol.commit("txn4").await.unwrap_err();
+        assert!(error.to_string().contains("failed to commit"));
+        assert_eq!(
+            protocol.get_state("txn4").await,
+            Some(TransactionState::Committed)
+        );
+
+        let stats = protocol.stats().await;
+        assert_eq!(stats.total_committed, 1);
+    }
+
+    #[tokio::test]
+    async fn test_protocol_abort_rejects_terminal_state_and_config_accessor() {
+        let config = TwoPhaseCommitConfig {
+            prepare_timeout: Duration::from_secs(1),
+            commit_timeout: Duration::from_secs(2),
+            max_retries: 0,
+            retry_delay: Duration::from_millis(1),
+            wal_enabled: false,
+        };
+        let protocol = TwoPhaseCommitProtocol::new(config);
+
+        assert_eq!(protocol.config().prepare_timeout, Duration::from_secs(1));
+        assert_eq!(protocol.config().commit_timeout, Duration::from_secs(2));
+        assert!(!protocol.config().wal_enabled);
+
+        protocol.begin("txn5").await.unwrap();
+        {
+            let mut transactions = protocol.transactions.write().await;
+            transactions.get_mut("txn5").unwrap().state = TransactionState::Committed;
+        }
+
+        let error = protocol.abort("txn5").await.unwrap_err();
+        assert!(error.to_string().contains("Cannot abort"));
     }
 }

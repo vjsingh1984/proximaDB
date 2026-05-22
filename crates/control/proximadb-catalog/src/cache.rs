@@ -365,4 +365,110 @@ mod tests {
         cache.invalidate_table_in_catalog("default", &id);
         assert!(cache.get_table("default", &id).is_none());
     }
+
+    #[test]
+    fn namespace_index_and_statistics_paths_track_hits_misses_and_invalidations() {
+        let cache = CatalogCache::new(100, 60);
+        let namespace = vec!["db".to_string(), "public".to_string()];
+        let id = TableIdentifier::new(namespace.clone(), "users");
+
+        assert!(cache.get_namespace("main", &namespace).is_none());
+        cache.put_namespace(
+            "main",
+            &namespace,
+            CatalogNamespace::new(namespace.clone()).with_owner("owner"),
+        );
+        assert_eq!(
+            cache
+                .get_namespace("main", &namespace)
+                .unwrap()
+                .owner
+                .as_deref(),
+            Some("owner")
+        );
+
+        assert!(cache.get_indexes("main", &id).is_none());
+        cache.put_indexes(
+            "main",
+            &id,
+            vec![CatalogIndex::new(
+                "users_id_idx",
+                vec!["id".to_string()],
+                crate::CatalogIndexType::BTree,
+            )],
+        );
+        assert_eq!(
+            cache.get_indexes("main", &id).unwrap()[0].name,
+            "users_id_idx"
+        );
+
+        assert!(cache.get_statistics("main", &id).is_none());
+        cache.put_statistics(
+            "main",
+            &id,
+            CatalogTableStatistics {
+                row_count: 42,
+                ..CatalogTableStatistics::default()
+            },
+        );
+        assert_eq!(cache.get_statistics("main", &id).unwrap().row_count, 42);
+
+        let stats = cache.get_stats();
+        assert_eq!(stats.namespace_misses, 1);
+        assert_eq!(stats.namespace_hits, 1);
+        assert_eq!(stats.index_misses, 1);
+        assert_eq!(stats.index_hits, 1);
+        assert_eq!(stats.stats_misses, 1);
+        assert_eq!(stats.stats_hits, 1);
+        assert!((stats.hit_rate() - 0.5).abs() < f64::EPSILON);
+
+        cache.invalidate_namespace("main", &namespace);
+        assert!(cache.get_namespace("main", &namespace).is_none());
+        cache.invalidate_table(&id);
+        assert!(cache.get_indexes("main", &id).is_none());
+        assert!(cache.get_statistics("main", &id).is_none());
+        assert!(cache.get_stats().invalidations >= 2);
+    }
+
+    #[test]
+    fn cache_clear_expiration_and_lru_eviction_cover_all_cache_families() {
+        let cache = CatalogCache::default_cache();
+        assert_eq!(cache.size(), 0);
+
+        let id = TableIdentifier::new(vec!["db".into()], "t");
+        cache.put_table("default", &id, CatalogTableSchema::new("t"));
+        cache.put_indexes("default", &id, Vec::new());
+        cache.put_statistics("default", &id, CatalogTableStatistics::default());
+        cache.put_namespace(
+            "default",
+            &vec!["db".into()],
+            CatalogNamespace::new(vec!["db".into()]),
+        );
+        assert_eq!(cache.size(), 4);
+        cache.clear();
+        assert_eq!(cache.size(), 0);
+
+        let expired = CatalogCache::new(100, 0);
+        expired.put_table("default", &id, CatalogTableSchema::new("t"));
+        expired.put_indexes("default", &id, Vec::new());
+        expired.put_statistics("default", &id, CatalogTableStatistics::default());
+        expired.put_namespace(
+            "default",
+            &vec!["db".into()],
+            CatalogNamespace::new(vec!["db".into()]),
+        );
+        std::thread::sleep(Duration::from_millis(1));
+        expired.evict_expired();
+        assert_eq!(expired.size(), 0);
+        assert!(expired.get_stats().evictions >= 4);
+
+        let bounded = CatalogCache::new(1, 60);
+        let a = TableIdentifier::new(vec!["db".into()], "a");
+        let b = TableIdentifier::new(vec!["db".into()], "b");
+        bounded.put_table("default", &a, CatalogTableSchema::new("a"));
+        bounded.put_table("default", &b, CatalogTableSchema::new("b"));
+        assert!(bounded.get_table("default", &a).is_none());
+        assert!(bounded.get_table("default", &b).is_some());
+        assert_eq!(bounded.get_stats().evictions, 1);
+    }
 }

@@ -681,4 +681,194 @@ mod tests {
             FusionStrategy::Union
         ));
     }
+
+    #[test]
+    fn extract_document_helpers_cover_projection_sort_text_and_value_shapes() {
+        let decomposer = QueryDecomposer::default();
+        let query = "SELECT id, title, $.price FROM products \
+             WHERE $.category = 'electronics' \
+               AND $.price > 100 \
+               AND $.active = true \
+               AND $.archived = false \
+               AND $.deleted = null \
+               AND TEXT_SEARCH('portable workstation') \
+             ORDER BY $.price DESC LIMIT 25";
+
+        assert_eq!(
+            decomposer.extract_projection(query),
+            vec!["id".to_string(), "title".to_string(), "$.price".to_string()]
+        );
+        assert_eq!(
+            decomposer.extract_text_search(query),
+            Some("portable workstation".to_string())
+        );
+        let sort = decomposer
+            .extract_document_sort(query)
+            .expect("document sort");
+        assert_eq!(sort.path, "$.price");
+        assert!(!sort.ascending);
+
+        let filters = decomposer.extract_path_filters(query);
+        assert_eq!(filters.len(), 5);
+        assert!(
+            filters
+                .iter()
+                .any(|filter| matches!(filter.value, FilterValue::String(_)))
+        );
+        assert!(
+            filters
+                .iter()
+                .any(|filter| matches!(filter.value, FilterValue::Number(_)))
+        );
+        assert!(
+            filters
+                .iter()
+                .any(|filter| matches!(filter.value, FilterValue::Bool(true)))
+        );
+        assert!(
+            filters
+                .iter()
+                .any(|filter| matches!(filter.value, FilterValue::Bool(false)))
+        );
+        assert!(
+            filters
+                .iter()
+                .any(|filter| matches!(filter.value, FilterValue::Null))
+        );
+    }
+
+    #[test]
+    fn decompose_document_vector_and_graph_components_cover_defaults_and_dependencies() {
+        let decomposer = QueryDecomposer::new();
+
+        let document = decomposer
+            .decompose(
+                "SELECT id FROM docs WHERE $.category = 'electronics' \
+                 AND TEXT_SEARCH('laptop') ORDER BY $.category ASC LIMIT 4",
+            )
+            .unwrap();
+        assert_eq!(document.components.len(), 1);
+        assert!(matches!(document.components[0].model, DataModel::Document));
+        let ModelOperation::DocumentQuery(doc_query) = &document.components[0].operation else {
+            panic!("expected document query");
+        };
+        assert_eq!(doc_query.collection, "docs");
+        assert_eq!(doc_query.limit, Some(4));
+        assert_eq!(doc_query.text_search.as_deref(), Some("laptop"));
+        assert!(doc_query.sort.as_ref().is_some_and(|sort| sort.ascending));
+
+        let vector_distance = decomposer
+            .decompose(
+                "SELECT * FROM vectors.items \
+                 ORDER BY VECTOR_DISTANCE(embedding, ?) LIMIT 6",
+            )
+            .unwrap();
+        let ModelOperation::VectorSearch(vector_query) = &vector_distance.components[0].operation
+        else {
+            panic!("expected vector query");
+        };
+        assert_eq!(vector_query.top_k, 6);
+        assert!(matches!(vector_query.metric, DistanceMetric::Cosine));
+
+        let graph = decomposer
+            .decompose(
+                "SELECT path FROM vectors.items JOIN graph.edges ON id = start \
+                 WHERE VECTOR_SIMILAR(embedding, ?, 0.7) \
+                   AND GRAPH_TRAVERSE(knowledge, 'RELATED_TO', 3) LIMIT 9",
+            )
+            .unwrap();
+        assert!(
+            graph
+                .components
+                .iter()
+                .any(|component| component.model == DataModel::Vector)
+        );
+        let graph_component = graph
+            .components
+            .iter()
+            .find(|component| component.model == DataModel::Graph)
+            .expect("graph component");
+        assert_eq!(graph_component.dependencies.len(), 1);
+        let ModelOperation::GraphTraversal(graph_query) = &graph_component.operation else {
+            panic!("expected graph traversal");
+        };
+        assert_eq!(graph_query.graph_name, "knowledge");
+        assert_eq!(graph_query.edge_types, vec!["RELATED_TO".to_string()]);
+        assert_eq!(graph_query.max_depth, 3);
+        assert!(graph_query.return_paths);
+    }
+
+    #[test]
+    fn decompose_observability_components_cover_log_and_metric_aggregation_branches() {
+        let decomposer = QueryDecomposer::new();
+
+        let logs = decomposer.decompose("LOG_QUERY('app') LIMIT 7").unwrap();
+        assert_eq!(logs.components.len(), 1);
+        let ModelOperation::LogQuery(log_query) = &logs.components[0].operation else {
+            panic!("expected log query");
+        };
+        assert_eq!(log_query.namespace, "app");
+        assert_eq!(log_query.limit, 7);
+        assert!(log_query.end_time_ns >= log_query.start_time_ns);
+
+        for (agg, expected) in [
+            ("SUM", MetricAggregation::Sum),
+            ("AVG", MetricAggregation::Avg),
+            ("MIN", MetricAggregation::Min),
+            ("MAX", MetricAggregation::Max),
+            ("COUNT", MetricAggregation::Count),
+            ("P50", MetricAggregation::P50),
+            ("P90", MetricAggregation::P90),
+            ("P95", MetricAggregation::P95),
+            ("P99", MetricAggregation::P99),
+            ("RATE", MetricAggregation::Rate),
+            ("UNKNOWN", MetricAggregation::Avg),
+        ] {
+            let metric = decomposer
+                .decompose(&format!("METRIC_QUERY('app', 'latency', '{}')", agg))
+                .unwrap();
+            let ModelOperation::MetricQuery(metric_query) = &metric.components[0].operation else {
+                panic!("expected metric query");
+            };
+            assert_eq!(metric_query.namespace, "app");
+            assert_eq!(metric_query.metric_name, "latency");
+            assert_eq!(metric_query.aggregation, expected);
+        }
+    }
+
+    #[test]
+    fn infer_distance_order_and_error_paths_are_covered() {
+        let decomposer = QueryDecomposer::new();
+
+        assert!(matches!(
+            decomposer.infer_distance_metric("use cosine"),
+            DistanceMetric::Cosine
+        ));
+        assert!(matches!(
+            decomposer.infer_distance_metric("use euclidean l2"),
+            DistanceMetric::L2
+        ));
+        assert!(matches!(
+            decomposer.infer_distance_metric("use dot inner"),
+            DistanceMetric::InnerProduct
+        ));
+        assert!(matches!(
+            decomposer.infer_distance_metric("use manhattan l1"),
+            DistanceMetric::L1
+        ));
+
+        let descending = decomposer.extract_order_by("SELECT * FROM items ORDER BY score DESC");
+        assert!(descending.is_some_and(|order| order.field == "score" && !order.ascending));
+        let ascending = decomposer.extract_order_by("SELECT * FROM items ORDER BY score");
+        assert!(ascending.is_some_and(|order| order.field == "score" && order.ascending));
+        assert!(decomposer.extract_order_by("SELECT * FROM items").is_none());
+
+        let err = decomposer
+            .decompose("SELECT * FROM table WHERE id = 1")
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("No recognizable query components found")
+        );
+    }
 }

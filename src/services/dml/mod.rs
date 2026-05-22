@@ -4901,6 +4901,241 @@ mod tests {
         );
     }
 
+    /// T18: cross-surface conformance — DML SQL INSERT and fast-lane
+    /// `validate_record_batch_against_schema` must make the same accept/reject decision
+    /// for the same logical row, so REST/gRPC/Arrow Flight callers see the same constraint
+    /// behavior as SQL clients.
+    #[tokio::test]
+    async fn dml_and_fast_lane_agree_on_not_null_constraint() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("conformance.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE conf_tbl (id TEXT NOT NULL, label TEXT NOT NULL, PRIMARY KEY (id));",
+            )
+            .expect("parse ddl")
+            .expect("ddl");
+        DdlService::new(manager.clone())
+            .execute(ddl_stmt)
+            .await
+            .expect("create table");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(DirectWalTableRecordStore::new(
+                Arc::new(MemtableRecordStorage::new()),
+                Arc::new(
+                    FramedTableWalAppender::open(&wal_path)
+                        .await
+                        .expect("open WAL"),
+                ),
+            )),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        // -------- conforming row: both surfaces must accept --------
+        let dml_ok = parser
+            .parse_dml("INSERT INTO conf_tbl (id, label) VALUES ('k1', 'present');")
+            .expect("parse")
+            .expect("dml");
+        dml.execute(dml_ok)
+            .await
+            .expect("DML must accept conforming row");
+
+        let mut ok_props = std::collections::HashMap::new();
+        ok_props.insert(
+            "id".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("k2".to_string())),
+        );
+        ok_props.insert(
+            "label".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("present".to_string())),
+        );
+        let ok_record = ProximaRecord {
+            oid: "k2".to_string(),
+            props: ok_props,
+            ..Default::default()
+        };
+        dml.validate_record_batch_against_schema("conf_tbl", &[ok_record])
+            .await
+            .expect("fast-lane must accept conforming row");
+
+        // -------- violating row: both surfaces must reject --------
+        let dml_bad = parser
+            .parse_dml("INSERT INTO conf_tbl (id, label) VALUES ('k3', NULL);")
+            .expect("parse")
+            .expect("dml");
+        let dml_err = dml
+            .execute(dml_bad)
+            .await
+            .expect_err("DML must reject NULL for NOT NULL column");
+
+        let mut bad_props = std::collections::HashMap::new();
+        bad_props.insert(
+            "id".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("k4".to_string())),
+        );
+        bad_props.insert(
+            "label".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Null),
+        );
+        let bad_record = ProximaRecord {
+            oid: "k4".to_string(),
+            props: bad_props,
+            ..Default::default()
+        };
+        let fast_lane_err = dml
+            .validate_record_batch_against_schema("conf_tbl", &[bad_record])
+            .await
+            .expect_err("fast-lane must reject NULL for NOT NULL column");
+
+        // Both error chains must reference the constraint that was violated.
+        let dml_chain: String = dml_err
+            .chain()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join(": ");
+        let fast_lane_chain: String = fast_lane_err
+            .chain()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join(": ");
+        let mentions_constraint = |s: &str| {
+            s.contains("not nullable") || s.contains("cannot be NULL") || s.contains("NOT NULL")
+        };
+        assert!(
+            mentions_constraint(&dml_chain),
+            "DML error chain should explain NOT NULL violation: {dml_chain}"
+        );
+        assert!(
+            mentions_constraint(&fast_lane_chain),
+            "fast-lane error chain should explain NOT NULL violation: {fast_lane_chain}"
+        );
+    }
+
+    /// T18: cross-surface conformance — DML SQL INSERT and fast-lane validation must agree on
+    /// type mismatches. A string value in an integer column must be rejected by both surfaces
+    /// regardless of the exact error wording.
+    #[tokio::test]
+    async fn dml_and_fast_lane_agree_on_type_mismatch() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("type-conformance.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        DdlService::new(manager.clone())
+            .execute(DdlStatement::CreateNamespace {
+                namespace: vec!["default".to_string()],
+                if_not_exists: true,
+                properties: HashMap::new(),
+            })
+            .await
+            .expect("namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl(
+                "CREATE TABLE type_tbl (id TEXT NOT NULL, score INTEGER NOT NULL, PRIMARY KEY (id));",
+            )
+            .expect("parse ddl")
+            .expect("ddl");
+        DdlService::new(manager.clone())
+            .execute(ddl_stmt)
+            .await
+            .expect("create table");
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            Arc::new(DirectWalTableRecordStore::new(
+                Arc::new(MemtableRecordStorage::new()),
+                Arc::new(
+                    FramedTableWalAppender::open(&wal_path)
+                        .await
+                        .expect("open WAL"),
+                ),
+            )),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        // DML SQL path: 'not-an-int' in an INTEGER column must fail at literal coercion.
+        let dml_bad = parser
+            .parse_dml("INSERT INTO type_tbl (id, score) VALUES ('k1', 'not-an-int');")
+            .expect("parse")
+            .expect("dml");
+        let dml_err = dml
+            .execute(dml_bad)
+            .await
+            .expect_err("DML must reject string literal for INTEGER column");
+
+        // Fast-lane path: ProximaValue::String in an Int32 column must fail validation.
+        let mut bad_props = std::collections::HashMap::new();
+        bad_props.insert(
+            "id".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("k2".to_string())),
+        );
+        bad_props.insert(
+            "score".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("not-an-int".to_string())),
+        );
+        let bad_record = ProximaRecord {
+            oid: "k2".to_string(),
+            props: bad_props,
+            ..Default::default()
+        };
+        let fast_lane_err = dml
+            .validate_record_batch_against_schema("type_tbl", &[bad_record])
+            .await
+            .expect_err("fast-lane must reject ProximaValue::String for INTEGER column");
+
+        // Both error chains must mention the integer column or expected type so callers can
+        // diagnose the violation. Exact wording differs between paths; both must be informative.
+        let dml_chain: String = dml_err
+            .chain()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join(": ");
+        let fast_lane_chain: String = fast_lane_err
+            .chain()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join(": ");
+        let mentions_type = |s: &str| {
+            let lower = s.to_lowercase();
+            lower.contains("integer") || lower.contains("int32") || lower.contains("int64")
+        };
+        assert!(
+            mentions_type(&dml_chain),
+            "DML error chain should explain integer-type violation: {dml_chain}"
+        );
+        assert!(
+            mentions_type(&fast_lane_chain),
+            "fast-lane error chain should explain integer-type violation: {fast_lane_chain}"
+        );
+    }
+
     #[tokio::test]
     async fn insert_marks_statistics_with_last_analyzed_timestamp() {
         use crate::services::record_store::DirectWalTableRecordStore;

@@ -69,11 +69,7 @@ impl From<SureSignals> for TraceSureSignals {
 }
 
 fn clamp_unit(v: f64) -> f64 {
-    if v.is_nan() {
-        0.0
-    } else {
-        v.clamp(0.0, 1.0)
-    }
+    if v.is_nan() { 0.0 } else { v.clamp(0.0, 1.0) }
 }
 
 /// Aggregate pair verifications into set-level signals.
@@ -200,7 +196,12 @@ mod tests {
     use super::*;
 
     fn pair(claim_id: u32, label: RelationLabel, conf: f64) -> PairVerification {
-        PairVerification { claim_id, evidence_id: 0, label, confidence: conf }
+        PairVerification {
+            claim_id,
+            evidence_id: 0,
+            label,
+            confidence: conf,
+        }
     }
 
     #[test]
@@ -316,7 +317,7 @@ mod tests {
             coverage: 1.2,           // would clamp to 1.0
             relation_strength: -0.1, // clamps to 0.0
             disagreement: 0.5,
-            conflict: f64::NAN,      // collapses to 0.0
+            conflict: f64::NAN, // collapses to 0.0
             retrieval_uncertainty: 0.7,
         };
         let trace: TraceSureSignals = s.into();

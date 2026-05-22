@@ -38,3 +38,23 @@ impl PostgresServer {
         anyhow::bail!("PostgreSQL wire server migration in progress; use src/network/postgres")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::noop_unified_handlers;
+
+    #[tokio::test]
+    async fn server_preserves_bind_address_and_reports_migration_status() {
+        let bind_addr: SocketAddr = "127.0.0.1:5433".parse().unwrap();
+        let server = PostgresServer::new(noop_unified_handlers(), bind_addr);
+
+        assert_eq!(server.bind_addr, bind_addr);
+        let error = server.serve().await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("PostgreSQL wire server migration in progress")
+        );
+    }
+}

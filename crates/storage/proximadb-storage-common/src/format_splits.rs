@@ -676,12 +676,30 @@ impl SplitPlanner {
 mod tests {
     use super::*;
 
+    struct TestSplitGenerator;
+
+    impl SplitGenerator for TestSplitGenerator {
+        fn generate_splits(&self, file_path: &str) -> anyhow::Result<Vec<FileSplit>> {
+            Ok(vec![FileSplit::new_block(
+                file_path.to_string(),
+                0,
+                0,
+                128,
+                10,
+            )])
+        }
+    }
+
     #[test]
     fn test_block_split() {
         let split = FileSplit::new_block("/data/file.sst".to_string(), 0, 0, 1024, 100);
 
         assert_eq!(split.split_id, "/data/file.sst:block:0");
+        assert_eq!(split.file_path, "/data/file.sst");
+        assert_eq!(split.offset, 0);
+        assert_eq!(split.length, 1024);
         assert_eq!(split.statistics.row_count, Some(100));
+        assert_eq!(split.statistics.byte_size, Some(1024));
     }
 
     #[test]
@@ -689,6 +707,90 @@ mod tests {
         let split = FileSplit::new_row_group("/data/file.parquet".to_string(), 0, 0, 65536, 10000);
 
         assert!(matches!(split.split_type, SplitType::RowGroup { .. }));
+        assert_eq!(split.split_id, "/data/file.parquet:rg:0");
+        assert_eq!(split.statistics.row_count, Some(10000));
+    }
+
+    #[test]
+    fn test_hilbert_superblock_locality_and_cost_multipliers() {
+        let hilbert =
+            FileSplit::new_hilbert_range("/data/file.helix".to_string(), 10, 20, 8, 32, 256);
+        assert_eq!(hilbert.split_id, "/data/file.helix:hilbert:10:20");
+        assert!(matches!(
+            hilbert.statistics.spatial_bounds,
+            Some(SpatialBounds::Hilbert {
+                min_code: 10,
+                max_code: 20,
+                order: 8
+            })
+        ));
+        assert!((hilbert.split_cost().decode_complexity - 1.2).abs() < 0.01);
+
+        let superblock =
+            FileSplit::new_superblock("/data/file.swift".to_string(), 7, vec![1, 2, 3], 64, 512);
+        assert_eq!(superblock.split_id, "/data/file.swift:superblock:7");
+        assert!(matches!(
+            superblock.split_type,
+            SplitType::SuperBlock { block_count: 3, .. }
+        ));
+        assert!((superblock.split_cost().decode_complexity - 1.3).abs() < 0.01);
+
+        for (cache_status, expected) in [
+            (CacheStatus::Cached, 100),
+            (CacheStatus::Local, 200),
+            (CacheStatus::Remote, 1000),
+            (CacheStatus::Unknown, 500),
+        ] {
+            let split = FileSplit::new_block("/data/file.sst".to_string(), 0, 0, 100, 1)
+                .with_locality(SplitLocality {
+                    preferred_hosts: vec!["host1".to_string()],
+                    storage_tier: StorageTier::Warm,
+                    cache_status,
+                });
+            assert_eq!(split.estimated_cost(), expected);
+            assert_eq!(split.locality.preferred_hosts, vec!["host1".to_string()]);
+            assert_eq!(split.locality.storage_tier, StorageTier::Warm);
+        }
+    }
+
+    #[test]
+    fn test_manual_split_variants_and_defaults() {
+        assert_eq!(StorageTier::default(), StorageTier::Hot);
+        assert_eq!(CacheStatus::default(), CacheStatus::Unknown);
+
+        let zorder = FileSplit {
+            split_id: "z".to_string(),
+            file_path: "/z".to_string(),
+            offset: 0,
+            length: 10,
+            split_type: SplitType::ZOrderRange {
+                start_code: 1,
+                end_code: 9,
+            },
+            statistics: SplitStatistics::default(),
+            locality: SplitLocality::default(),
+        };
+        assert!((zorder.split_cost().decode_complexity - 1.3).abs() < 0.01);
+
+        let byte_range = FileSplit {
+            split_id: "b".to_string(),
+            file_path: "/b".to_string(),
+            offset: 5,
+            length: 20,
+            split_type: SplitType::ByteRange {
+                estimated_records: 2,
+            },
+            statistics: SplitStatistics::default(),
+            locality: SplitLocality {
+                preferred_hosts: vec![],
+                storage_tier: StorageTier::Archive,
+                cache_status: CacheStatus::Unknown,
+            },
+        };
+        let cost = byte_range.split_cost();
+        assert_eq!(cost.io_bytes, 20);
+        assert_eq!(cost.estimated_rows, 0);
+        assert_eq!(cost.total_cost(), 20.0);
     }
 
     #[test]
@@ -703,6 +805,10 @@ mod tests {
 
         let partitions = planner.plan_splits(splits, 2);
         assert_eq!(partitions.len(), 2);
+        assert!(planner.plan_splits(vec![], 0).is_empty());
+        assert_eq!(planner.max_split_size_bytes, 128 * 1024 * 1024);
+        assert_eq!(planner.min_splits_per_partition, 1);
+        assert!(planner.enable_split_combining);
     }
 
     #[test]
@@ -722,6 +828,8 @@ mod tests {
 
         // Value above range - can prune
         assert!(bounds.can_prune(&ScalarPredicate::Equal(ScalarValue::Int64(150))));
+
+        assert!(!bounds.can_prune(&ScalarPredicate::NotEqual(ScalarValue::Int64(50))));
     }
 
     #[test]
@@ -738,6 +846,9 @@ mod tests {
 
         // predicate: value < 50 (min is 10, cannot prune)
         assert!(!bounds.can_prune(&ScalarPredicate::LessThan(ScalarValue::Int64(50))));
+
+        assert!(bounds.can_prune(&ScalarPredicate::LessThanOrEqual(ScalarValue::Int64(9))));
+        assert!(!bounds.can_prune(&ScalarPredicate::LessThanOrEqual(ScalarValue::Int64(10))));
     }
 
     #[test]
@@ -754,6 +865,17 @@ mod tests {
 
         // predicate: value > 50 (max is 100, cannot prune)
         assert!(!bounds.can_prune(&ScalarPredicate::GreaterThan(ScalarValue::Int64(50))));
+
+        assert!(
+            bounds.can_prune(&ScalarPredicate::GreaterThanOrEqual(ScalarValue::Int64(
+                101
+            )))
+        );
+        assert!(
+            !bounds.can_prune(&ScalarPredicate::GreaterThanOrEqual(ScalarValue::Int64(
+                100
+            )))
+        );
     }
 
     #[test]
@@ -776,6 +898,15 @@ mod tests {
             ScalarValue::Int64(200),
             ScalarValue::Int64(300)
         )));
+
+        assert!(bounds.can_prune(&ScalarPredicate::In(vec![
+            ScalarValue::Int64(1),
+            ScalarValue::Int64(200)
+        ])));
+        assert!(!bounds.can_prune(&ScalarPredicate::In(vec![
+            ScalarValue::Int64(1),
+            ScalarValue::Int64(50)
+        ])));
     }
 
     #[test]
@@ -799,6 +930,7 @@ mod tests {
 
         // No nulls - can prune IS NULL
         assert!(bounds_no_nulls.can_prune(&ScalarPredicate::IsNull));
+        assert!(!bounds_no_nulls.can_prune(&ScalarPredicate::IsNotNull));
     }
 
     #[test]
@@ -832,6 +964,15 @@ mod tests {
         assert!(
             !split.can_prune_scalar("unknown", &ScalarPredicate::Equal(ScalarValue::Int64(50)))
         );
+
+        assert!(split.can_prune(
+            "price",
+            &serde_json::json!(200.0),
+            &serde_json::json!(300.0)
+        ));
+        assert!(split.can_prune("price", &serde_json::json!(0.0), &serde_json::json!(5.0)));
+        assert!(!split.can_prune("price", &serde_json::json!(50.0), &serde_json::json!(60.0)));
+        assert!(!split.can_prune("unknown", &serde_json::json!(0.0), &serde_json::json!(1.0)));
     }
 
     #[test]
@@ -852,6 +993,9 @@ mod tests {
         // Query very far from centroid - can prune
         let query_far = vec![100.0, 100.0, 100.0];
         assert!(split.can_prune_vector(&query_far, 1.0));
+
+        split.statistics.spatial_bounds = None;
+        assert!(!split.can_prune_vector(&query_far, 1.0));
     }
 
     #[test]
@@ -922,5 +1066,62 @@ mod tests {
             ScalarValue::from_json(&serde_json::Value::Null),
             Some(ScalarValue::Null)
         );
+        assert_eq!(ScalarValue::from_json(&serde_json::json!([1, 2])), None);
+        assert_eq!(ScalarValue::from_json(&serde_json::json!({"a": 1})), None);
+    }
+
+    #[test]
+    fn test_split_generator_default_methods() {
+        let generator = TestSplitGenerator;
+
+        let targeted = generator
+            .generate_splits_with_target("/data/a.sst", 4)
+            .unwrap();
+        assert_eq!(targeted.len(), 1);
+        assert_eq!(targeted[0].file_path, "/data/a.sst");
+
+        let files = vec!["/data/a.sst".to_string(), "/data/b.sst".to_string()];
+        let splits = generator.generate_splits_for_files(&files).unwrap();
+        assert_eq!(splits.len(), 2);
+        assert_eq!(splits[1].file_path, "/data/b.sst");
+    }
+
+    #[test]
+    fn test_with_statistics_and_spatial_bounds_variants() {
+        let stats = SplitStatistics {
+            row_count: Some(5),
+            byte_size: Some(32),
+            column_stats: HashMap::new(),
+            centroid: Some(vec![1.0, 2.0]),
+            spatial_bounds: Some(SpatialBounds::AdaCurve {
+                min_code: 10,
+                max_code: 20,
+            }),
+            bloom_filter: Some(vec![1, 2, 3]),
+        };
+
+        let split =
+            FileSplit::new_block("/data/file.sst".to_string(), 9, 0, 64, 99).with_statistics(stats);
+        assert_eq!(split.statistics.row_count, Some(5));
+        assert_eq!(split.statistics.byte_size, Some(32));
+        assert_eq!(split.statistics.bloom_filter, Some(vec![1, 2, 3]));
+        assert!(matches!(
+            split.statistics.spatial_bounds,
+            Some(SpatialBounds::AdaCurve {
+                min_code: 10,
+                max_code: 20
+            })
+        ));
+
+        let bounds = [
+            SpatialBounds::ZOrder {
+                min_code: 1,
+                max_code: 2,
+            },
+            SpatialBounds::ZoneMap {
+                bounds: HashMap::from([(0, (1.0, 2.0))]),
+            },
+        ];
+        assert_eq!(bounds.len(), 2);
     }
 }

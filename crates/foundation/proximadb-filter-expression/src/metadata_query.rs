@@ -490,4 +490,206 @@ mod tests {
 
         assert!(engine.evaluate(&query, &metadata).unwrap());
     }
+
+    #[test]
+    fn string_array_existence_and_regex_operators_cover_success_and_miss_paths() {
+        let mut engine = MetadataQueryEngine::default();
+        let mut metadata = create_test_metadata();
+        metadata.insert("nullable".to_string(), JsonValue::Null);
+
+        for (field, operator, value) in [
+            (
+                "description",
+                ComparisonOperator::Contains,
+                json!("electronics"),
+            ),
+            ("brand", ComparisonOperator::StartsWith, json!("Tech")),
+            ("brand", ComparisonOperator::EndsWith, json!("Corp")),
+        ] {
+            let query = MetadataQuery::Field(FieldQuery {
+                field: field.to_string(),
+                operator,
+                value,
+            });
+            assert!(engine.evaluate(&query, &metadata).unwrap());
+        }
+
+        let contains = MetadataQuery::field_contains("description", "professionals");
+        assert!(engine.evaluate(&contains, &metadata).unwrap());
+        let non_string_contains = MetadataQuery::field_contains("price", "99");
+        assert!(!engine.evaluate(&non_string_contains, &metadata).unwrap());
+
+        let in_query =
+            MetadataQuery::field_in("category", vec![json!("books"), json!("electronics")]);
+        assert!(engine.evaluate(&in_query, &metadata).unwrap());
+        let not_in_query = MetadataQuery::Field(FieldQuery {
+            field: "category".to_string(),
+            operator: ComparisonOperator::NotIn,
+            value: json!(["books", "music"]),
+        });
+        assert!(engine.evaluate(&not_in_query, &metadata).unwrap());
+        let malformed_in_query = MetadataQuery::Field(FieldQuery {
+            field: "category".to_string(),
+            operator: ComparisonOperator::In,
+            value: json!("electronics"),
+        });
+        assert!(!engine.evaluate(&malformed_in_query, &metadata).unwrap());
+
+        assert!(
+            engine
+                .evaluate(&MetadataQuery::field_exists("brand"), &metadata)
+                .unwrap()
+        );
+        assert!(
+            !engine
+                .evaluate(&MetadataQuery::field_exists("nullable"), &metadata)
+                .unwrap()
+        );
+        assert!(
+            engine
+                .evaluate(
+                    &MetadataQuery::Field(FieldQuery {
+                        field: "missing".to_string(),
+                        operator: ComparisonOperator::NotExists,
+                        value: JsonValue::Null,
+                    }),
+                    &metadata,
+                )
+                .unwrap()
+        );
+
+        let regex_query = MetadataQuery::Field(FieldQuery {
+            field: "brand".to_string(),
+            operator: ComparisonOperator::Regex,
+            value: json!("^Tech.*rp$"),
+        });
+        assert!(engine.evaluate(&regex_query, &metadata).unwrap());
+        assert!(engine.evaluate(&regex_query, &metadata).unwrap());
+
+        let regex_non_string_pattern = MetadataQuery::Field(FieldQuery {
+            field: "brand".to_string(),
+            operator: ComparisonOperator::Regex,
+            value: json!(42),
+        });
+        assert!(
+            !engine
+                .evaluate(&regex_non_string_pattern, &metadata)
+                .unwrap()
+        );
+        let invalid_regex = MetadataQuery::Field(FieldQuery {
+            field: "brand".to_string(),
+            operator: ComparisonOperator::Regex,
+            value: json!("["),
+        });
+        let err = engine.evaluate(&invalid_regex, &metadata).unwrap_err();
+        assert!(err.to_string().contains("Invalid regex pattern"));
+    }
+
+    #[test]
+    fn comparison_builder_and_logical_edge_cases_cover_all_branches() {
+        let mut engine = MetadataQueryEngine::new();
+        let metadata = create_test_metadata();
+
+        for (field, operator, value, expected) in [
+            (
+                "year",
+                ComparisonOperator::LessThanOrEqual,
+                json!(2023),
+                true,
+            ),
+            (
+                "year",
+                ComparisonOperator::GreaterThanOrEqual,
+                json!(2023),
+                true,
+            ),
+            ("brand", ComparisonOperator::LessThan, json!("Zoo"), true),
+            (
+                "brand",
+                ComparisonOperator::GreaterThan,
+                json!("Apple"),
+                true,
+            ),
+            (
+                "brand",
+                ComparisonOperator::LessThanOrEqual,
+                json!("TechCorp"),
+                true,
+            ),
+            (
+                "brand",
+                ComparisonOperator::GreaterThanOrEqual,
+                json!("TechCorp"),
+                true,
+            ),
+            (
+                "price",
+                ComparisonOperator::GreaterThan,
+                json!("bad"),
+                false,
+            ),
+            ("missing", ComparisonOperator::GreaterThan, json!(1), false),
+            (
+                "category",
+                ComparisonOperator::NotEqual,
+                json!("books"),
+                true,
+            ),
+            (
+                "category",
+                ComparisonOperator::NotEqual,
+                json!("electronics"),
+                false,
+            ),
+        ] {
+            let query = MetadataQuery::Field(FieldQuery {
+                field: field.to_string(),
+                operator,
+                value,
+            });
+            assert_eq!(engine.evaluate(&query, &metadata).unwrap(), expected);
+        }
+
+        assert!(engine.evaluate(&MetadataQuery::All, &metadata).unwrap());
+        assert!(!engine.evaluate(&MetadataQuery::None, &metadata).unwrap());
+        assert!(
+            engine
+                .evaluate(&MetadataQueryBuilder::and(Vec::new()), &metadata)
+                .unwrap()
+        );
+        assert!(
+            !engine
+                .evaluate(&MetadataQueryBuilder::or(Vec::new()), &metadata)
+                .unwrap()
+        );
+
+        let single = MetadataQuery::field_eq("category", json!("electronics"));
+        assert_eq!(
+            MetadataQueryBuilder::and(vec![single.clone()]),
+            single.clone()
+        );
+        assert_eq!(
+            MetadataQueryBuilder::or(vec![single.clone()]),
+            single.clone()
+        );
+        assert!(matches!(
+            MetadataQueryBuilder::and(vec![single.clone(), MetadataQuery::All]),
+            MetadataQuery::And(_)
+        ));
+        assert!(matches!(
+            MetadataQueryBuilder::or(vec![single.clone(), MetadataQuery::None]),
+            MetadataQuery::Or(_)
+        ));
+        assert!(matches!(
+            MetadataQueryBuilder::not_condition(single.clone()),
+            MetadataQuery::Not(_)
+        ));
+
+        let built = MetadataQueryBuilder::default()
+            .field_equals("category", json!("electronics"))
+            .field_compare("price", ComparisonOperator::LessThanOrEqual, json!(99.99))
+            .build();
+        assert!(matches!(built, MetadataQuery::And(_)));
+        assert!(engine.evaluate(&built, &metadata).unwrap());
+    }
 }

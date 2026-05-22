@@ -649,6 +649,58 @@ impl EnhancedRowGroupStats {
 mod tests {
     use super::*;
 
+    fn assert_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 0.0001,
+            "actual={actual}, expected={expected}"
+        );
+    }
+
+    fn enhanced_stat(
+        row_group_id: u32,
+        min_values: Vec<f32>,
+        max_values: Vec<f32>,
+        centroid: Vec<f32>,
+        estimated_selectivity: f32,
+        compression_ratio: f32,
+        latency_ms: f32,
+    ) -> EnhancedRowGroupStats {
+        let dimension = min_values.len();
+        EnhancedRowGroupStats {
+            row_group_id,
+            parquet_metadata: None,
+            vector_zone_map: ZoneMap {
+                min_values,
+                max_values,
+                centroid,
+                variance: vec![0.25; dimension],
+                norm_bounds: (1.0, 4.0),
+                dimension,
+            },
+            quantized_selectivity: QuantizedSelectivity {
+                binary_effectiveness: estimated_selectivity * 0.8,
+                int8_accuracy: estimated_selectivity * 0.9,
+                pq_quality: estimated_selectivity * 0.7,
+                progressive_efficiency: estimated_selectivity * 0.6,
+            },
+            compression_ratio,
+            search_cost_estimate: SearchCostEstimate {
+                io_cost: 10.0,
+                cpu_cost: 20.0,
+                memory_cost: 5.0,
+                estimated_latency_ms: latency_ms,
+                confidence: 0.8,
+            },
+            access_stats: AccessStats {
+                access_count: 3,
+                last_access: chrono::Utc::now(),
+                avg_selectivity: estimated_selectivity,
+                cache_hit_rate: 0.5,
+                access_frequency: 2.0,
+            },
+        }
+    }
+
     #[test]
     fn test_zone_map_creation() {
         let vectors = vec![
@@ -663,6 +715,23 @@ mod tests {
         assert_eq!(zone_map.max_values, vec![7.0, 8.0, 9.0]);
         assert_eq!(zone_map.centroid, vec![4.0, 5.0, 6.0]);
         assert_eq!(zone_map.dimension, 3);
+        assert_eq!(zone_map.norm_bounds.0, (1.0f32 + 4.0 + 9.0).sqrt());
+        assert_eq!(zone_map.norm_bounds.1, (49.0f32 + 64.0 + 81.0).sqrt());
+        assert!(zone_map.variance.iter().all(|value| *value > 0.0));
+    }
+
+    #[test]
+    fn test_zone_map_empty_and_metric_dispatch() {
+        assert!(ZoneMap::from_vectors(&[]).is_err());
+
+        let zone_map = ZoneMap::from_vectors(&[vec![1.0, -2.0], vec![3.0, 4.0]]).unwrap();
+
+        assert!(zone_map.intersects_query(&[2.0, 0.0], "euclidean".to_string(), 1.0));
+        assert!(!zone_map.intersects_query(&[20.0, 20.0], "euclidean".to_string(), 1.0));
+        assert!(zone_map.intersects_query(&[1.0, 1.0], "cosine".to_string(), 0.9));
+        assert!(zone_map.intersects_query(&[1.0, -1.0], "dot_product".to_string(), 10.0));
+        assert!(!zone_map.intersects_query(&[10.0, 10.0], "dot_product".to_string(), -100.0));
+        assert!(zone_map.intersects_query(&[0.0, 0.0], "unknown".to_string(), 0.0));
     }
 
     #[test]
@@ -715,5 +784,108 @@ mod tests {
         assert_eq!(superblock.id, 0);
         assert_eq!(superblock.row_groups, 0..10);
         assert_eq!(superblock.zone_map.dimension, 3);
+    }
+
+    #[test]
+    fn test_superblock_aggregates_costs_and_ordering() {
+        let stats = vec![
+            enhanced_stat(
+                0,
+                vec![0.0, 1.0],
+                vec![2.0, 3.0],
+                vec![1.0, 2.0],
+                0.5,
+                2.0,
+                30.0,
+            ),
+            enhanced_stat(
+                1,
+                vec![-1.0, 2.0],
+                vec![4.0, 5.0],
+                vec![1.5, 3.5],
+                0.8,
+                6.0,
+                10.0,
+            ),
+            enhanced_stat(
+                12,
+                vec![9.0, 9.0],
+                vec![10.0, 10.0],
+                vec![9.5, 9.5],
+                0.2,
+                1.0,
+                1.0,
+            ),
+        ];
+
+        assert!(SuperBlock::new(9, 0..10, &[]).is_err());
+        assert!(SuperBlock::aggregate_zone_maps(&[]).is_err());
+
+        let superblock = SuperBlock::new(9, 0..10, &stats[..2]).unwrap();
+        assert_eq!(superblock.id, 9);
+        assert_eq!(superblock.vector_count, 0);
+        assert_eq!(superblock.zone_map.min_values, vec![-1.0, 1.0]);
+        assert_eq!(superblock.zone_map.max_values, vec![4.0, 5.0]);
+        assert_eq!(superblock.zone_map.centroid, vec![1.25, 2.75]);
+        assert_eq!(superblock.quantization_stats.compression_ratio, 4.0);
+        assert_eq!(superblock.selectivity_hints.search_cost_estimate, 20.0);
+        assert_eq!(superblock.storage_stats.compressed_size, 0);
+        assert_eq!(superblock.storage_stats.avg_page_size, 0);
+
+        assert!(superblock.can_contain_candidates(&[2.0, 2.0], "euclidean".to_string(), 1.0));
+        assert_close(superblock.estimate_search_cost(0.5), 5.2);
+        assert_eq!(superblock.ordered_row_groups(&stats), vec![1, 0]);
+    }
+
+    #[test]
+    fn test_defaults_and_basic_row_group_stats() {
+        let quantization = QuantizationStats::default();
+        assert_eq!(quantization.binary_selectivity, 0.5);
+        assert_eq!(quantization.int8_reconstruction_error, 0.1);
+        assert_eq!(quantization.pq_selectivity, 0.8);
+        assert_eq!(quantization.compression_ratio, 4.0);
+        assert_eq!(quantization.quantization_overhead_ms, 10);
+
+        let hints = SelectivityHints::default();
+        assert_eq!(hints.binary_reduction_factor, 0.9);
+        assert_eq!(hints.int8_reduction_factor, 0.7);
+        assert_eq!(hints.pq_reduction_factor, 0.5);
+        assert_eq!(hints.search_cost_estimate, 100.0);
+        assert_eq!(hints.memory_requirement, 64 * 1024 * 1024);
+
+        let stats = EnhancedRowGroupStats::create_basic(
+            7,
+            2_000,
+            3,
+            vec![0.0, 1.0, 2.0],
+            vec![3.0, 4.0, 5.0],
+            vec![1.5, 2.5, 3.5],
+            vec![0, 0, 0],
+            0.4,
+            3.5,
+            12,
+        );
+
+        assert_eq!(stats.row_group_id, 7);
+        assert_eq!(stats.vector_zone_map.dimension, 3);
+        assert_close(stats.quantized_selectivity.binary_effectiveness, 0.32);
+        assert_close(stats.quantized_selectivity.progressive_efficiency, 0.3);
+        assert_eq!(stats.compression_ratio, 3.5);
+        assert_eq!(stats.search_cost_estimate.io_cost, 200.0);
+        assert_eq!(stats.search_cost_estimate.estimated_latency_ms, 2.0);
+        assert_eq!(stats.access_stats.access_frequency, 12.0);
+
+        let basic = BasicZoneMaps {
+            dimension_ranges: vec![DimensionRange {
+                dimension_index: 0,
+                min_value: 1.0,
+                max_value: 2.0,
+                selectivity: 0.25,
+            }],
+            total_vectors: 42,
+            creation_time: chrono::Utc::now(),
+        };
+        assert_eq!(basic.dimension_ranges[0].dimension_index, 0);
+        assert_eq!(basic.total_vectors, 42);
     }
 }

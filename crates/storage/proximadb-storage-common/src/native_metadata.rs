@@ -707,6 +707,7 @@ pub enum PredicateOperator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use arrow_array::{Array, BooleanArray, Float64Array, Int64Array, ListArray, StringArray};
     use serde_json::json;
 
     #[test]
@@ -772,6 +773,203 @@ mod tests {
             handler.get_common_field_type("tags"),
             Some(MetadataFieldType::List(Box::new(MetadataFieldType::String)))
         );
+
+        assert_eq!(
+            handler.get_common_field_type("has_embedding"),
+            Some(MetadataFieldType::Boolean)
+        );
+        assert_eq!(
+            handler.get_common_field_type("file_size"),
+            Some(MetadataFieldType::Integer)
+        );
+        assert_eq!(
+            handler.get_common_field_type("item_num"),
+            Some(MetadataFieldType::Integer)
+        );
+        assert_eq!(
+            handler.get_common_field_type("price"),
+            Some(MetadataFieldType::Float)
+        );
+        assert_eq!(
+            handler.get_common_field_type("probability"),
+            Some(MetadataFieldType::Float)
+        );
+        assert_eq!(
+            handler.get_common_field_type("categories"),
+            Some(MetadataFieldType::List(Box::new(MetadataFieldType::String)))
+        );
+        assert_eq!(
+            handler.get_common_field_type("keyword_array"),
+            Some(MetadataFieldType::List(Box::new(MetadataFieldType::String)))
+        );
+        assert_eq!(
+            handler.get_common_field_type("attributes"),
+            Some(MetadataFieldType::Map(Box::new(MetadataFieldType::String)))
+        );
+        assert_eq!(
+            handler.get_common_field_type("settings_dict"),
+            Some(MetadataFieldType::Map(Box::new(MetadataFieldType::String)))
+        );
+        assert_eq!(handler.get_common_field_type("plain_name"), None);
+    }
+
+    #[test]
+    fn test_native_arrow_arrays_and_fallback_json() {
+        let mut handler = NativeMetadataHandler::new();
+        let samples = vec![
+            json!({
+                "is_active": true,
+                "count": 42,
+                "score": 0.95,
+                "name": "test",
+                "tags": ["tag1", "tag2"],
+                "properties": {"key": "value"},
+                "payload": {"nested": true}
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+            json!({
+                "is_active": false,
+                "count": 7u64,
+                "score": "bad_float",
+                "name": 99,
+                "tags": ["tag3", 4],
+                "properties": "fallback-string",
+                "unmapped": "kept"
+            })
+            .as_object()
+            .unwrap()
+            .clone(),
+        ];
+
+        handler.analyze_metadata(&samples[..1]).unwrap();
+        let arrays = handler.metadata_to_arrow_arrays(&samples).unwrap();
+
+        let active = arrays["is_active"]
+            .as_any()
+            .downcast_ref::<BooleanArray>()
+            .unwrap();
+        assert_eq!(active.value(0), true);
+        assert_eq!(active.value(1), false);
+
+        let counts = arrays["count"]
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        assert_eq!(counts.value(0), 42);
+        assert_eq!(counts.value(1), 7);
+
+        let scores = arrays["score"]
+            .as_any()
+            .downcast_ref::<Float64Array>()
+            .unwrap();
+        assert_eq!(scores.value(0), 0.95);
+        assert!(scores.is_null(1));
+
+        let names = arrays["name"]
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(names.value(0), "test");
+        assert_eq!(names.value(1), "99");
+
+        let tags = arrays["tags"].as_any().downcast_ref::<ListArray>().unwrap();
+        assert_eq!(tags.len(), 2);
+        assert!(!tags.is_null(0));
+
+        let properties = arrays["properties"]
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert!(properties.value(0).contains("\"key\""));
+        assert_eq!(properties.value(1), "\"fallback-string\"");
+
+        let fallback = arrays["_metadata_json_fallback"]
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert!(fallback.value(1).contains("unmapped"));
+        assert!(
+            handler
+                .schema
+                .field_with_name("_metadata_json_fallback")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_inference_without_common_overrides_and_stats_shapes() {
+        let mut handler = NativeMetadataHandler::new();
+        handler.use_common_field_optimization = false;
+        handler.inference_confidence = 0.75;
+        handler.map_threshold = 2;
+
+        let mut stats = FieldStatistics::default();
+        NativeMetadataHandler::update_field_statistics(&mut stats, &JsonValue::Null);
+        NativeMetadataHandler::update_field_statistics(&mut stats, &json!(true));
+        NativeMetadataHandler::update_field_statistics(&mut stats, &json!(false));
+        NativeMetadataHandler::update_field_statistics(&mut stats, &json!(1));
+        NativeMetadataHandler::update_field_statistics(&mut stats, &json!(1.25));
+        NativeMetadataHandler::update_field_statistics(&mut stats, &json!("s"));
+        NativeMetadataHandler::update_field_statistics(&mut stats, &json!(["a", "b"]));
+        NativeMetadataHandler::update_field_statistics(&mut stats, &json!({"a": "b"}));
+
+        assert_eq!(stats.total_values, 8);
+        assert_eq!(stats.null_count, 1);
+        assert_eq!(stats.bool_count, 2);
+        assert_eq!(stats.int_count, 1);
+        assert_eq!(stats.float_count, 1);
+        assert_eq!(stats.string_count, 1);
+        assert_eq!(stats.list_count, 1);
+        assert_eq!(stats.object_count, 1);
+        assert_eq!(stats.max_list_size, 2);
+        assert!(stats.uniform_list_type);
+        assert!(stats.uniform_map_type);
+
+        assert_eq!(
+            NativeMetadataHandler::get_json_type(&JsonValue::Null),
+            "null"
+        );
+        assert_eq!(NativeMetadataHandler::get_json_type(&json!(true)), "bool");
+        assert_eq!(NativeMetadataHandler::get_json_type(&json!(1)), "int");
+        assert_eq!(NativeMetadataHandler::get_json_type(&json!(1.5)), "float");
+        assert_eq!(NativeMetadataHandler::get_json_type(&json!("x")), "string");
+        assert_eq!(NativeMetadataHandler::get_json_type(&json!([1])), "array");
+        assert_eq!(
+            NativeMetadataHandler::get_json_type(&json!({"x": 1})),
+            "object"
+        );
+
+        let empty_stats = FieldStatistics::default();
+        assert_eq!(
+            handler.infer_field_type("empty", &empty_stats).unwrap(),
+            MetadataFieldType::String
+        );
+
+        let bool_stats = FieldStatistics {
+            total_values: 4,
+            bool_count: 3,
+            ..Default::default()
+        };
+        assert_eq!(
+            handler.infer_field_type("flag", &bool_stats).unwrap(),
+            MetadataFieldType::Boolean
+        );
+
+        let mut large_map = FieldStatistics {
+            total_values: 4,
+            object_count: 4,
+            uniform_map_type: true,
+            ..Default::default()
+        };
+        large_map
+            .distinct_keys
+            .extend(["a", "b", "c"].map(String::from));
+        assert_eq!(
+            handler.infer_field_type("map", &large_map).unwrap(),
+            MetadataFieldType::Json
+        );
     }
 
     #[test]
@@ -801,5 +999,49 @@ mod tests {
         assert_eq!(optimized.native_predicates.len(), 3);
         assert_eq!(optimized.json_predicates.len(), 1);
         assert_eq!(optimized.pushdown_ratio, 0.75);
+        assert!(optimized.native_predicates.iter().any(|predicate| {
+            predicate.field == "tags"
+                && matches!(predicate.operator, PredicateOperator::Contains)
+                && predicate.value == json!("important")
+        }));
+        assert_eq!(optimized.json_predicates[0].0, "unknown_field");
+    }
+
+    #[test]
+    fn test_optimizer_json_fallback_and_operator_variants() {
+        let mut field_types = HashMap::new();
+        field_types.insert(
+            "properties".to_string(),
+            MetadataFieldType::Map(Box::new(MetadataFieldType::String)),
+        );
+        field_types.insert("payload".to_string(), MetadataFieldType::Json);
+
+        let optimizer = NativeMetadataQueryOptimizer::new(field_types);
+        let filter = json!({
+            "properties": {"a": "b"},
+            "payload": {"raw": true},
+            "missing": 1
+        })
+        .as_object()
+        .unwrap()
+        .clone();
+
+        let optimized = optimizer.optimize_filter(&filter).unwrap();
+        assert!(optimized.native_predicates.is_empty());
+        assert_eq!(optimized.json_predicates.len(), 3);
+        assert_eq!(optimized.pushdown_ratio, 0.0);
+
+        let operators = [
+            PredicateOperator::Equals,
+            PredicateOperator::NotEquals,
+            PredicateOperator::GreaterThan,
+            PredicateOperator::LessThan,
+            PredicateOperator::GreaterThanOrEqual,
+            PredicateOperator::LessThanOrEqual,
+            PredicateOperator::Contains,
+            PredicateOperator::StartsWith,
+            PredicateOperator::EndsWith,
+        ];
+        assert_eq!(operators.len(), 9);
     }
 }

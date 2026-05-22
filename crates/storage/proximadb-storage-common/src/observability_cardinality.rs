@@ -366,4 +366,136 @@ mod tests {
         assert!(CheckResult::Warning(vec![]).is_success());
         assert!(!CheckResult::Rejected("reason".to_string()).is_success());
     }
+
+    #[test]
+    fn label_stats_ratio_handles_empty_and_populated_stats() {
+        let empty = LabelStats::new("pod");
+        assert_eq!(empty.name, "pod");
+        assert_eq!(empty.cardinality_ratio(), 0.0);
+
+        let stats = LabelStats {
+            name: "user_id".to_string(),
+            unique_values: 25,
+            total_samples: 100,
+            is_high_cardinality: true,
+            overflow_count: 3,
+            top_values: vec![("u1".to_string(), 10)],
+        };
+        assert_eq!(stats.cardinality_ratio(), 0.25);
+        assert!(stats.is_high_cardinality);
+        assert_eq!(stats.overflow_count, 3);
+        assert_eq!(stats.top_values[0].0, "u1");
+    }
+
+    #[tokio::test]
+    async fn limit_actions_modify_warn_reject_or_drop_labels() {
+        for (action, expected) in [
+            (LimitAction::Truncate, "modified"),
+            (LimitAction::Replace, "modified"),
+            (LimitAction::Drop, "modified"),
+            (LimitAction::Warn, "warning"),
+            (LimitAction::Reject, "rejected"),
+        ] {
+            let limiter = CardinalityLimiter::new(CardinalityConfig {
+                max_cardinality_per_label: 1,
+                on_limit_exceeded: action,
+                auto_detect: false,
+                ..CardinalityConfig::default()
+            });
+
+            let mut first = HashMap::from([("pod".to_string(), "pod-1".to_string())]);
+            assert!(matches!(
+                limiter.check_labels(&mut first).await.unwrap(),
+                CheckResult::Passed
+            ));
+
+            let mut second = HashMap::from([("pod".to_string(), "pod-2".to_string())]);
+            let result = limiter.check_labels(&mut second).await.unwrap();
+
+            match expected {
+                "modified" => {
+                    let CheckResult::Modified(labels) = result else {
+                        panic!("expected modified result for {action:?}");
+                    };
+                    assert_eq!(labels, vec!["pod".to_string()]);
+                    match action {
+                        LimitAction::Truncate => assert!(second["pod"].starts_with("__hash_")),
+                        LimitAction::Replace => assert_eq!(second["pod"], "__overflow__"),
+                        LimitAction::Drop => assert!(!second.contains_key("pod")),
+                        _ => {}
+                    }
+                }
+                "warning" => {
+                    assert!(matches!(result, CheckResult::Modified(_)));
+                    let mut third = HashMap::from([("pod".to_string(), "pod-3".to_string())]);
+                    let result = limiter.check_labels(&mut third).await.unwrap();
+                    let CheckResult::Warning(warnings) = result else {
+                        panic!("expected warning result");
+                    };
+                    assert_eq!(warnings, vec!["High-cardinality label: pod".to_string()]);
+                    assert_eq!(third["pod"], "pod-3");
+                }
+                "rejected" => {
+                    assert!(matches!(result, CheckResult::Modified(_)));
+                    let mut third = HashMap::from([("pod".to_string(), "pod-3".to_string())]);
+                    let result = limiter.check_labels(&mut third).await.unwrap();
+                    let CheckResult::Rejected(reason) = result else {
+                        panic!("expected rejected result");
+                    };
+                    assert_eq!(reason, "High-cardinality label: pod");
+                }
+                _ => unreachable!(),
+            }
+
+            assert_eq!(
+                limiter.get_high_cardinality_labels().await,
+                vec!["pod".to_string()]
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn auto_detection_stats_accessors_config_and_reset_are_covered() {
+        let limiter = CardinalityLimiter::new(CardinalityConfig {
+            max_cardinality_per_label: 1_000,
+            high_cardinality_threshold: 0.9,
+            auto_detect: true,
+            ..CardinalityConfig::default()
+        });
+
+        for i in 0..101 {
+            let mut labels = HashMap::from([
+                ("namespace".to_string(), format!("ns-{i}")),
+                ("trace_id".to_string(), format!("trace-{i}")),
+            ]);
+            assert!(
+                limiter
+                    .check_labels(&mut labels)
+                    .await
+                    .unwrap()
+                    .is_success()
+            );
+        }
+
+        assert_eq!(limiter.total_samples(), 101);
+        assert_eq!(limiter.dropped_samples(), 0);
+        assert_eq!(limiter.config().max_cardinality_per_label, 1_000);
+
+        let stats = limiter.get_label_stats("trace_id").await.unwrap();
+        assert_eq!(stats.unique_values, 101);
+        assert_eq!(stats.total_samples, 101);
+        assert!(stats.is_high_cardinality);
+        assert!(limiter.get_label_stats("namespace").await.is_none());
+
+        let high = limiter.get_high_cardinality_labels().await;
+        assert_eq!(high, vec!["trace_id".to_string()]);
+
+        let all = limiter.get_all_stats().await;
+        assert_eq!(all.len(), 1);
+
+        limiter.reset().await;
+        assert_eq!(limiter.total_samples(), 0);
+        assert!(limiter.get_all_stats().await.is_empty());
+        assert!(limiter.get_high_cardinality_labels().await.is_empty());
+    }
 }

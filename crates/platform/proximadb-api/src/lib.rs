@@ -71,10 +71,525 @@ pub use middleware::{
 };
 
 #[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::{Arc, Mutex};
+
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use proximadb_data_model::ProximaValue;
+    use proximadb_proto::v1::{
+        Collection, CollectionConfig, CollectionRequest, CollectionResponse, ExecuteSqlResponse,
+        HybridSearchRequest, HybridSearchResponse, VectorBatchRequest, VectorOperationResponse,
+        VectorSearchRequest,
+    };
+    use proximadb_runtime::{
+        ApiHandlersPort, CollectionPort, QueryAdapterPort, UnifiedHandlers, VectorOpsPort,
+    };
+    use serde_json::Value as JsonValue;
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub(crate) enum ApiCall {
+        Collection {
+            operation: i32,
+            tenant_id: Option<String>,
+            collection_id: Option<String>,
+        },
+        VectorSearch {
+            tenant_id: Option<String>,
+            collection_id: String,
+            tenant_aware: bool,
+        },
+        VectorBatch {
+            tenant_id: Option<String>,
+            collection_id: String,
+            vector_count: usize,
+        },
+        VectorGet {
+            tenant_id: Option<String>,
+            collection_id: String,
+            vector_id: String,
+            include_vector: bool,
+            include_metadata: bool,
+        },
+        Sql {
+            query: String,
+            parameter_count: Option<usize>,
+            collection: Option<String>,
+        },
+        Hybrid,
+    }
+
+    pub(crate) struct RecordingApiPort {
+        calls: Mutex<Vec<ApiCall>>,
+        pub(crate) collection_response: Mutex<CollectionResponse>,
+        pub(crate) vector_response: Mutex<VectorOperationResponse>,
+        pub(crate) sql_response: Mutex<ExecuteSqlResponse>,
+    }
+
+    impl RecordingApiPort {
+        pub(crate) fn new() -> Arc<Self> {
+            Arc::new(Self {
+                calls: Mutex::new(Vec::new()),
+                collection_response: Mutex::new(CollectionResponse::default()),
+                vector_response: Mutex::new(VectorOperationResponse::default()),
+                sql_response: Mutex::new(ExecuteSqlResponse::default()),
+            })
+        }
+
+        pub(crate) fn calls(&self) -> Vec<ApiCall> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl ApiHandlersPort for RecordingApiPort {
+        async fn handle_collection_operation_for_tenant(
+            &self,
+            request: CollectionRequest,
+            tenant_id: Option<&str>,
+        ) -> Result<CollectionResponse> {
+            self.calls.lock().unwrap().push(ApiCall::Collection {
+                operation: request.operation,
+                tenant_id: tenant_id.map(ToOwned::to_owned),
+                collection_id: request.collection_id.clone(),
+            });
+            Ok(self.collection_response.lock().unwrap().clone())
+        }
+
+        async fn handle_vector_search_v1_for_tenant(
+            &self,
+            request: VectorSearchRequest,
+            tenant_id: Option<&str>,
+        ) -> Result<VectorOperationResponse> {
+            self.calls.lock().unwrap().push(ApiCall::VectorSearch {
+                tenant_id: tenant_id.map(ToOwned::to_owned),
+                collection_id: request.collection_id,
+                tenant_aware: true,
+            });
+            Ok(self.vector_response.lock().unwrap().clone())
+        }
+
+        async fn handle_vector_search_v1(
+            &self,
+            request: VectorSearchRequest,
+        ) -> Result<VectorOperationResponse> {
+            self.calls.lock().unwrap().push(ApiCall::VectorSearch {
+                tenant_id: None,
+                collection_id: request.collection_id,
+                tenant_aware: false,
+            });
+            Ok(self.vector_response.lock().unwrap().clone())
+        }
+
+        async fn handle_vector_batch_v1_for_tenant(
+            &self,
+            request: VectorBatchRequest,
+            tenant_id: Option<&str>,
+        ) -> Result<VectorOperationResponse> {
+            self.calls.lock().unwrap().push(ApiCall::VectorBatch {
+                tenant_id: tenant_id.map(ToOwned::to_owned),
+                collection_id: request.collection_id,
+                vector_count: request.vectors.len(),
+            });
+            Ok(self.vector_response.lock().unwrap().clone())
+        }
+
+        async fn handle_vector_v1_for_tenant(
+            &self,
+            collection_id: &str,
+            vector_id: &str,
+            include_vector: bool,
+            include_metadata: bool,
+            tenant_id: Option<&str>,
+        ) -> Result<VectorOperationResponse> {
+            self.calls.lock().unwrap().push(ApiCall::VectorGet {
+                tenant_id: tenant_id.map(ToOwned::to_owned),
+                collection_id: collection_id.to_string(),
+                vector_id: vector_id.to_string(),
+                include_vector,
+                include_metadata,
+            });
+            Ok(self.vector_response.lock().unwrap().clone())
+        }
+
+        async fn execute_hybrid_query(
+            &self,
+            _request: HybridSearchRequest,
+        ) -> Result<HybridSearchResponse> {
+            self.calls.lock().unwrap().push(ApiCall::Hybrid);
+            Ok(HybridSearchResponse::default())
+        }
+
+        async fn execute_sql_v1(
+            &self,
+            query: String,
+            parameters: Option<Vec<ProximaValue>>,
+            collection: Option<String>,
+        ) -> Result<ExecuteSqlResponse> {
+            self.calls.lock().unwrap().push(ApiCall::Sql {
+                query,
+                parameter_count: parameters.as_ref().map(Vec::len),
+                collection,
+            });
+            Ok(self.sql_response.lock().unwrap().clone())
+        }
+    }
+
+    struct NoopCollectionPort;
+
+    #[async_trait]
+    impl CollectionPort for NoopCollectionPort {
+        async fn get_collection(
+            &self,
+            _identifier: &str,
+            _tenant_id: Option<&str>,
+        ) -> Result<Option<Collection>> {
+            Ok(None)
+        }
+
+        async fn create_collection(
+            &self,
+            config: CollectionConfig,
+            _tenant_id: Option<&str>,
+        ) -> Result<Collection> {
+            Ok(Collection {
+                id: config.name.clone(),
+                config: Some(config),
+                ..Collection::default()
+            })
+        }
+
+        async fn update_collection(
+            &self,
+            id: &str,
+            config: CollectionConfig,
+            _tenant_id: Option<&str>,
+        ) -> Result<Collection> {
+            Ok(Collection {
+                id: id.to_string(),
+                config: Some(config),
+                ..Collection::default()
+            })
+        }
+
+        async fn delete_collection(&self, _id: &str, _tenant_id: Option<&str>) -> Result<bool> {
+            Ok(true)
+        }
+
+        async fn list_collections(&self, _tenant_id: Option<&str>) -> Result<Vec<Collection>> {
+            Ok(Vec::new())
+        }
+
+        async fn resolve_collection_id(&self, identifier: &str) -> Result<Option<String>> {
+            Ok(Some(identifier.to_string()))
+        }
+    }
+
+    struct NoopVectorOpsPort;
+
+    #[async_trait]
+    impl VectorOpsPort for NoopVectorOpsPort {
+        async fn search(
+            &self,
+            _request: VectorSearchRequest,
+            _tenant_id: Option<&str>,
+        ) -> Result<VectorOperationResponse> {
+            Ok(VectorOperationResponse::default())
+        }
+
+        async fn batch_upsert(
+            &self,
+            _request: VectorBatchRequest,
+            _tenant_id: Option<&str>,
+        ) -> Result<VectorOperationResponse> {
+            Ok(VectorOperationResponse::default())
+        }
+
+        async fn get_vector(
+            &self,
+            _collection_id: &str,
+            _vector_id: &str,
+            _include_vector: bool,
+            _include_metadata: bool,
+            _tenant_id: Option<&str>,
+        ) -> Result<VectorOperationResponse> {
+            Ok(VectorOperationResponse::default())
+        }
+
+        async fn flush_all(&self) -> Result<()> {
+            Ok(())
+        }
+
+        async fn metrics(&self) -> Result<JsonValue> {
+            Ok(JsonValue::Object(Default::default()))
+        }
+    }
+
+    struct NoopQueryAdapterPort;
+
+    #[async_trait]
+    impl QueryAdapterPort for NoopQueryAdapterPort {
+        async fn vector_search(
+            &self,
+            _request: VectorSearchRequest,
+        ) -> Result<VectorOperationResponse> {
+            Ok(VectorOperationResponse::default())
+        }
+
+        async fn execute_hybrid(
+            &self,
+            _request: HybridSearchRequest,
+        ) -> Result<HybridSearchResponse> {
+            Ok(HybridSearchResponse::default())
+        }
+
+        async fn execute_sql(
+            &self,
+            _query: String,
+            _collection: Option<String>,
+        ) -> Result<JsonValue> {
+            Ok(JsonValue::Array(Vec::new()))
+        }
+    }
+
+    pub(crate) fn noop_unified_handlers() -> Arc<UnifiedHandlers> {
+        Arc::new(UnifiedHandlers::new(
+            Arc::new(NoopCollectionPort),
+            Arc::new(NoopVectorOpsPort),
+            Some(Arc::new(NoopQueryAdapterPort)),
+        ))
+    }
+}
+
+#[cfg(test)]
 mod tests {
+    use proximadb_proto::v1::{
+        CollectionConfig, CollectionOperation, CollectionRequest, HybridSearchRequest,
+        VectorBatchRequest, VectorRecord, VectorSearchRequest,
+    };
+    use proximadb_runtime::ApiHandlersPort;
+
+    use super::test_support::{ApiCall, RecordingApiPort, noop_unified_handlers};
+
     #[test]
     fn test_api_module_imports() {
         // Basic test to verify the module structure is working
         // More comprehensive tests will be added as modules are extracted
+    }
+
+    #[tokio::test]
+    async fn recording_api_port_captures_all_protocol_dispatch_shapes() {
+        let port = RecordingApiPort::new();
+
+        port.handle_collection_operation_for_tenant(
+            CollectionRequest {
+                operation: CollectionOperation::CollectionCreate as i32,
+                collection_id: Some("docs".to_string()),
+                ..CollectionRequest::default()
+            },
+            Some("tenant-a"),
+        )
+        .await
+        .unwrap();
+        port.handle_vector_search_v1(VectorSearchRequest {
+            collection_id: "global_docs".to_string(),
+            ..VectorSearchRequest::default()
+        })
+        .await
+        .unwrap();
+        port.handle_vector_search_v1_for_tenant(
+            VectorSearchRequest {
+                collection_id: "tenant_docs".to_string(),
+                ..VectorSearchRequest::default()
+            },
+            Some("tenant-a"),
+        )
+        .await
+        .unwrap();
+        port.handle_vector_batch_v1_for_tenant(
+            VectorBatchRequest {
+                collection_id: "docs".to_string(),
+                vectors: vec![VectorRecord {
+                    id: "vec-1".to_string(),
+                    vector: vec![0.1, 0.2],
+                    ..VectorRecord::default()
+                }],
+            },
+            Some("tenant-a"),
+        )
+        .await
+        .unwrap();
+        port.handle_vector_v1_for_tenant("docs", "vec-1", true, false, Some("tenant-a"))
+            .await
+            .unwrap();
+        port.execute_hybrid_query(HybridSearchRequest::default())
+            .await
+            .unwrap();
+        port.execute_sql_v1(
+            "select * from docs".to_string(),
+            None,
+            Some("docs".to_string()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            port.calls(),
+            vec![
+                ApiCall::Collection {
+                    operation: CollectionOperation::CollectionCreate as i32,
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: Some("docs".to_string()),
+                },
+                ApiCall::VectorSearch {
+                    tenant_id: None,
+                    collection_id: "global_docs".to_string(),
+                    tenant_aware: false,
+                },
+                ApiCall::VectorSearch {
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: "tenant_docs".to_string(),
+                    tenant_aware: true,
+                },
+                ApiCall::VectorBatch {
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: "docs".to_string(),
+                    vector_count: 1,
+                },
+                ApiCall::VectorGet {
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: "docs".to_string(),
+                    vector_id: "vec-1".to_string(),
+                    include_vector: true,
+                    include_metadata: false,
+                },
+                ApiCall::Hybrid,
+                ApiCall::Sql {
+                    query: "select * from docs".to_string(),
+                    parameter_count: None,
+                    collection: Some("docs".to_string()),
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn noop_unified_handlers_exercise_all_injected_ports() {
+        let handlers = noop_unified_handlers();
+
+        assert!(
+            handlers
+                .collection
+                .get_collection("docs", Some("tenant-a"))
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            handlers
+                .collection
+                .create_collection(
+                    CollectionConfig {
+                        name: "docs".to_string(),
+                        ..CollectionConfig::default()
+                    },
+                    Some("tenant-a"),
+                )
+                .await
+                .unwrap()
+                .id,
+            "docs"
+        );
+        assert_eq!(
+            handlers
+                .collection
+                .update_collection(
+                    "docs",
+                    CollectionConfig {
+                        name: "docs-v2".to_string(),
+                        ..CollectionConfig::default()
+                    },
+                    None,
+                )
+                .await
+                .unwrap()
+                .id,
+            "docs"
+        );
+        assert!(
+            handlers
+                .collection
+                .delete_collection("docs", None)
+                .await
+                .unwrap()
+        );
+        assert!(
+            handlers
+                .collection
+                .list_collections(None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            handlers
+                .collection
+                .resolve_collection_id("docs")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("docs")
+        );
+
+        assert!(
+            handlers
+                .vector_ops
+                .search(VectorSearchRequest::default(), None)
+                .await
+                .unwrap()
+                .results
+                .is_none()
+        );
+        assert!(
+            handlers
+                .vector_ops
+                .batch_upsert(VectorBatchRequest::default(), Some("tenant-a"))
+                .await
+                .unwrap()
+                .results
+                .is_none()
+        );
+        assert!(
+            handlers
+                .vector_ops
+                .get_vector("docs", "vec-1", true, true, None)
+                .await
+                .unwrap()
+                .results
+                .is_none()
+        );
+        handlers.vector_ops.flush_all().await.unwrap();
+        assert!(handlers.vector_ops.metrics().await.unwrap().is_object());
+
+        let query = handlers.query_adapter.as_ref().unwrap();
+        assert!(
+            query
+                .vector_search(VectorSearchRequest::default())
+                .await
+                .unwrap()
+                .results
+                .is_none()
+        );
+        query
+            .execute_hybrid(HybridSearchRequest::default())
+            .await
+            .unwrap();
+        assert!(
+            query
+                .execute_sql("select 1".to_string(), Some("docs".to_string()))
+                .await
+                .unwrap()
+                .is_array()
+        );
     }
 }

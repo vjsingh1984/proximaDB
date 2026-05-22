@@ -438,6 +438,9 @@ impl MultiServer {
             let proxima_record_service = proxima_record_service_impl.into_server();
 
             // Build server with all services
+            warn!(
+                "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
+            );
             let server = server_builder
                 .add_service(vector_service)
                 .add_service(sql_service)
@@ -817,6 +820,13 @@ impl MultiServer {
             let hybrid_search_service = grpc_svcs.hybrid_search;
             let security_service = grpc_svcs.security;
 
+            // Add V2 ProximaRecordService for canonical record operations in unified mode too.
+            let proxima_record_service = crate::network::grpc::v2::ProximaRecordServiceImpl::new(
+                services.request_handlers.clone(),
+            )
+            .with_segment_registry(services.segment_registry.clone())
+            .into_server();
+
             // Arrow Flight service (HTTP/2-based, shares internal gRPC server)
             let flight_service = crate::network::arrow_ipc::service::ProximaFlightService::new(
                 services.request_handlers.clone(),
@@ -832,6 +842,9 @@ impl MultiServer {
                     .max_encoding_message_size(512 * 1024 * 1024)
                     .max_decoding_message_size(512 * 1024 * 1024);
 
+            warn!(
+                "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
+            );
             let server = tonic::transport::Server::builder()
                 .add_service(vector_service)
                 .add_service(sql_service)
@@ -839,6 +852,7 @@ impl MultiServer {
                 .add_service(graph_service)
                 .add_service(hybrid_search_service)
                 .add_service(security_service)
+                .add_service(proxima_record_service)
                 .add_service(flight_server);
 
             info!(
@@ -1149,15 +1163,24 @@ impl MultiServer {
             let graph_service = grpc_svcs.graph;
             let hybrid_search_service = grpc_svcs.hybrid_search;
             let security_service = grpc_svcs.security;
+            let proxima_record_service = crate::network::grpc::v2::ProximaRecordServiceImpl::new(
+                services.request_handlers.clone(),
+            )
+            .with_segment_registry(services.segment_registry.clone())
+            .into_server();
 
             // Build cluster services
+            warn!(
+                "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
+            );
             let mut server = server_builder
                 .add_service(vector_service)
                 .add_service(sql_service)
                 .add_service(col_service)
                 .add_service(graph_service)
                 .add_service(hybrid_search_service)
-                .add_service(security_service);
+                .add_service(security_service)
+                .add_service(proxima_record_service);
 
             // Add consensus service if enabled
             if cluster_config.enable_consensus {

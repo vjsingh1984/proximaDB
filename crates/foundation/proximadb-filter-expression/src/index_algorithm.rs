@@ -17,3 +17,22 @@ impl Default for IndexAlgorithmConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn default_index_algorithm_is_hnsw_and_parameters_are_owned() {
+        let mut config = IndexAlgorithmConfig::default();
+        assert_eq!(config.name, "hnsw");
+        assert!(config.parameters.is_empty());
+
+        config.parameters.insert("ef".to_string(), json!(128));
+        let cloned = config.clone();
+
+        assert_eq!(cloned.parameters.get("ef"), Some(&json!(128)));
+        assert!(format!("{:?}", cloned).contains("hnsw"));
+    }
+}

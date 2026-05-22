@@ -1047,6 +1047,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_bitmap_error_display_variants() {
+        assert_eq!(
+            BitmapError::InvalidValue.to_string(),
+            "Invalid value for bitmap operation"
+        );
+        assert_eq!(
+            BitmapError::SerializationError("bad".to_string()).to_string(),
+            "Serialization error: bad"
+        );
+        assert_eq!(
+            BitmapError::ContainerError("dense".to_string()).to_string(),
+            "Container error: dense"
+        );
+    }
+
+    #[test]
     fn test_basic_operations() {
         let mut bitmap = RoaringBitmap::new();
 
@@ -1293,5 +1309,121 @@ mod tests {
         }
 
         assert!(bitmap.cardinality() < 4096);
+    }
+
+    #[test]
+    fn test_assign_ops_aliases_default_and_serialized_size() {
+        let mut left = RoaringBitmap::from_iter([1, 2, 3, 65_536]);
+        let right = RoaringBitmap::from_iter([3, 4, 65_536]);
+
+        assert_eq!(RoaringBitmap::default().cardinality(), 0);
+        assert_eq!(left.and(&right).to_vec(), vec![3, 65_536]);
+        assert_eq!(left.or(&right).to_vec(), vec![1, 2, 3, 4, 65_536]);
+        assert!(left.serialized_size() > 0);
+
+        left |= &right;
+        assert_eq!(left.to_vec(), vec![1, 2, 3, 4, 65_536]);
+
+        left &= &RoaringBitmap::from_iter([2, 4]);
+        assert_eq!(left.to_vec(), vec![2, 4]);
+
+        left -= &RoaringBitmap::from_iter([2]);
+        assert_eq!(left.to_vec(), vec![4]);
+    }
+
+    #[test]
+    fn test_private_containers_run_bitmap_iterator_and_mixed_ops() {
+        let mut run = RunContainer::new();
+        assert!(run.insert(5));
+        assert!(run.insert(6));
+        assert!(run.insert(8));
+        assert!(run.insert(7));
+        assert!(!run.insert(6));
+        assert_eq!(run.cardinality(), 4);
+        assert_eq!(run.iter().collect::<Vec<_>>(), vec![5, 6, 7, 8]);
+        assert!(run.remove(6));
+        assert_eq!(run.iter().collect::<Vec<_>>(), vec![5, 7, 8]);
+        assert!(!run.remove(42));
+
+        let run_container = Container::Run(run.clone());
+        assert!(run_container.contains(5));
+        assert_eq!(run_container.cardinality(), 3);
+        assert_eq!(run_container.iter().collect::<Vec<_>>(), vec![5, 7, 8]);
+
+        let array_container = Container::Array(ArrayContainer {
+            values: vec![4, 5, 9],
+        });
+        assert_eq!(
+            run_container
+                .union(&array_container)
+                .iter()
+                .collect::<Vec<_>>(),
+            vec![4, 5, 7, 8, 9]
+        );
+        assert_eq!(
+            run_container
+                .intersect(&array_container)
+                .iter()
+                .collect::<Vec<_>>(),
+            vec![5]
+        );
+
+        let empty_bits = [0u64; 1024];
+        assert_eq!(BitmapIterator::new(&empty_bits).next(), None);
+
+        let mut bitmap_container = BitmapContainer::new();
+        bitmap_container.insert(1);
+        bitmap_container.insert(64);
+        assert_eq!(
+            BitmapIterator::new(&bitmap_container.bits).collect::<Vec<_>>(),
+            vec![1, 64]
+        );
+
+        let mut bitmap = RoaringBitmap::new();
+        let run_for_bitmap = match run_container.clone() {
+            Container::Run(run) => run,
+            _ => unreachable!(),
+        };
+        bitmap.containers.insert(0, Container::Run(run_for_bitmap));
+        assert_eq!(bitmap.to_vec(), vec![5, 7, 8]);
+        assert!(bitmap.serialized_size() >= 12);
+        let serialized = bitmap.serialize().unwrap();
+        assert!(matches!(
+            RoaringBitmap::deserialize(&serialized),
+            Err(BitmapError::SerializationError(_))
+        ));
+    }
+
+    #[test]
+    fn test_deserialize_error_paths() {
+        assert!(matches!(
+            RoaringBitmap::deserialize(&[1, 2, 3]),
+            Err(BitmapError::SerializationError(message)) if message == "Invalid data length"
+        ));
+
+        assert!(matches!(
+            RoaringBitmap::deserialize(&[1, 0, 0, 0]),
+            Err(BitmapError::SerializationError(message)) if message == "Unexpected end of data"
+        ));
+
+        assert!(matches!(
+            RoaringBitmap::deserialize(&[1, 0, 0, 0, 0, 0, 0, 1]),
+            Err(BitmapError::SerializationError(message)) if message == "Invalid array container"
+        ));
+
+        assert!(matches!(
+            RoaringBitmap::deserialize(&[1, 0, 0, 0, 0, 0, 0, 1, 0, 0]),
+            Err(BitmapError::SerializationError(message)) if message == "Invalid array data"
+        ));
+
+        assert!(matches!(
+            RoaringBitmap::deserialize(&[1, 0, 0, 0, 0, 0, 1, 0]),
+            Err(BitmapError::SerializationError(message)) if message == "Invalid bitmap container"
+        ));
+
+        assert!(matches!(
+            RoaringBitmap::deserialize(&[1, 0, 0, 0, 0, 0, 9, 0]),
+            Err(BitmapError::SerializationError(message)) if message == "Unknown container type"
+        ));
     }
 }

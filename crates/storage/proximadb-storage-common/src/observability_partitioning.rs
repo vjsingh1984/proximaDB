@@ -308,6 +308,9 @@ mod tests {
     fn test_partition_config_default() {
         let config = PartitionConfig::default();
         assert_eq!(config.granularity, PartitionGranularity::Daily);
+        assert_eq!(config.retention_secs, 7 * 86400);
+        assert_eq!(config.max_partitions, 30);
+        assert_eq!(config.pre_create_count, 3);
         assert!(config.auto_cleanup);
     }
 
@@ -328,6 +331,7 @@ mod tests {
 
         assert!(range1.overlaps(&range2));
         assert!(!range1.overlaps(&range3));
+        assert_eq!(range1.duration_ns(), 1000);
     }
 
     #[test]
@@ -346,6 +350,33 @@ mod tests {
             PartitionGranularity::Monthly.format_suffix(timestamp_secs),
             "202401"
         );
+        assert_eq!(
+            PartitionGranularity::Weekly.format_suffix(timestamp_secs),
+            "2024_W01"
+        );
+        assert_eq!(PartitionGranularity::Hourly.duration_secs(), 3600);
+        assert_eq!(PartitionGranularity::Daily.duration_secs(), 86400);
+        assert_eq!(PartitionGranularity::Weekly.duration_secs(), 604800);
+        assert_eq!(PartitionGranularity::Monthly.duration_secs(), 2592000);
+    }
+
+    #[test]
+    fn test_partition_creation_and_expiration() {
+        let range = PartitionRange::new(0, 1_000_000_000);
+        let partition = Partition::new(
+            "logs_19700101".to_string(),
+            range,
+            "/data/logs/19700101".to_string(),
+        );
+
+        assert_eq!(partition.name, "logs_19700101");
+        assert_eq!(partition.range, range);
+        assert_eq!(partition.record_count, 0);
+        assert_eq!(partition.size_bytes, 0);
+        assert!(!partition.is_compressed);
+        assert_eq!(partition.path, "/data/logs/19700101");
+        assert!(partition.created_at_secs > 0);
+        assert!(partition.is_expired(0));
     }
 
     #[tokio::test]
@@ -366,5 +397,89 @@ mod tests {
 
         assert!(partition.name.starts_with("logs_"));
         assert!(partition.range.contains(now_ns));
+    }
+
+    #[tokio::test]
+    async fn test_partitioner_reuses_lists_finds_updates_and_evicts() {
+        let config = PartitionConfig {
+            granularity: PartitionGranularity::Daily,
+            max_partitions: 2,
+            ..Default::default()
+        };
+        let partitioner = TimePartitioner::new("metrics".to_string(), config);
+
+        assert_eq!(partitioner.namespace(), "metrics");
+        assert_eq!(partitioner.config().max_partitions, 2);
+        assert_eq!(partitioner.total_records(), 0);
+
+        let day_ns = PartitionGranularity::Daily.duration_secs() * 1_000_000_000;
+        let first = partitioner.get_or_create_partition(0).await.unwrap();
+        let first_again = partitioner.get_or_create_partition(1).await.unwrap();
+        assert_eq!(first.name, first_again.name);
+
+        partitioner
+            .update_partition_stats(first.range.start_ns, 10, 1024)
+            .await
+            .unwrap();
+        assert_eq!(partitioner.total_records(), 10);
+        assert_eq!(partitioner.list_partitions().await[0].record_count, 10);
+
+        let second = partitioner
+            .get_or_create_partition(day_ns + 1)
+            .await
+            .unwrap();
+        let third = partitioner
+            .get_or_create_partition(day_ns * 2 + 1)
+            .await
+            .unwrap();
+
+        let names: Vec<_> = partitioner
+            .list_partitions()
+            .await
+            .into_iter()
+            .map(|partition| partition.name)
+            .collect();
+        assert_eq!(names.len(), 2);
+        assert!(!names.contains(&first.name));
+        assert!(names.contains(&second.name));
+        assert!(names.contains(&third.name));
+
+        let found = partitioner
+            .find_partitions(second.range.start_ns, third.range.end_ns)
+            .await;
+        assert_eq!(found.len(), 2);
+
+        partitioner
+            .update_partition_stats(123_456, 10, 10)
+            .await
+            .unwrap();
+        assert_eq!(partitioner.total_records(), 10);
+    }
+
+    #[tokio::test]
+    async fn test_cleanup_expired_respects_auto_cleanup_flag() {
+        let disabled = TimePartitioner::new(
+            "logs".to_string(),
+            PartitionConfig {
+                auto_cleanup: false,
+                retention_secs: 0,
+                ..Default::default()
+            },
+        );
+        disabled.get_or_create_partition(0).await.unwrap();
+        assert_eq!(disabled.cleanup_expired().await.unwrap(), 0);
+        assert_eq!(disabled.list_partitions().await.len(), 1);
+
+        let enabled = TimePartitioner::new(
+            "logs".to_string(),
+            PartitionConfig {
+                auto_cleanup: true,
+                retention_secs: 0,
+                ..Default::default()
+            },
+        );
+        enabled.get_or_create_partition(0).await.unwrap();
+        assert_eq!(enabled.cleanup_expired().await.unwrap(), 1);
+        assert!(enabled.list_partitions().await.is_empty());
     }
 }

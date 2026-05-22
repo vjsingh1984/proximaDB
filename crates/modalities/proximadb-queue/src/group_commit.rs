@@ -150,3 +150,118 @@ impl GroupCommitCoordinator {
         &self.fs
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fs::Metadata;
+    use async_trait::async_trait;
+    use std::sync::Mutex as StdMutex;
+
+    #[derive(Debug)]
+    struct RecordingFs {
+        fsyncs: StdMutex<Vec<PathBuf>>,
+        fail_fsync: bool,
+    }
+
+    impl RecordingFs {
+        fn new(fail_fsync: bool) -> Arc<Self> {
+            Arc::new(Self {
+                fsyncs: StdMutex::new(Vec::new()),
+                fail_fsync,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl QueueFs for RecordingFs {
+        async fn create_dir_all(&self, _path: &std::path::Path) -> Result<()> {
+            Ok(())
+        }
+
+        async fn append(&self, _path: &std::path::Path, _data: &[u8]) -> Result<()> {
+            Ok(())
+        }
+
+        async fn fsync(&self, path: &std::path::Path) -> Result<()> {
+            self.fsyncs.lock().unwrap().push(path.to_path_buf());
+            if self.fail_fsync {
+                Err(QueueError::Persistence("disk full".to_string()))
+            } else {
+                Ok(())
+            }
+        }
+
+        async fn read(&self, _path: &std::path::Path) -> Result<Vec<u8>> {
+            Ok(Vec::new())
+        }
+
+        async fn list(&self, _dir: &std::path::Path) -> Result<Vec<PathBuf>> {
+            Ok(Vec::new())
+        }
+
+        async fn rename(&self, _from: &std::path::Path, _to: &std::path::Path) -> Result<()> {
+            Ok(())
+        }
+
+        async fn delete(&self, _path: &std::path::Path) -> Result<()> {
+            Ok(())
+        }
+
+        async fn metadata(&self, _path: &std::path::Path) -> Result<Metadata> {
+            Ok(Metadata { size_bytes: 0 })
+        }
+    }
+
+    #[test]
+    fn default_group_commit_config_matches_queue_defaults() {
+        let config = GroupCommitConfig::default();
+
+        assert_eq!(config.max_wait, Duration::from_millis(5));
+        assert_eq!(config.max_batch, 64);
+    }
+
+    #[tokio::test]
+    async fn wait_for_fsync_batches_waiters_for_same_segment() {
+        let fs = RecordingFs::new(false);
+        let coordinator = GroupCommitCoordinator::new(
+            fs.clone(),
+            GroupCommitConfig {
+                max_wait: Duration::from_secs(60),
+                max_batch: 2,
+            },
+        );
+        let segment = PathBuf::from("/tmp/topic/0/0000000000.qseg");
+
+        let (first, second) = tokio::join!(
+            coordinator.wait_for_fsync(segment.clone()),
+            coordinator.wait_for_fsync(segment.clone())
+        );
+
+        first.unwrap();
+        second.unwrap();
+        assert_eq!(coordinator.config().max_batch, 2);
+        assert_eq!(fs.fsyncs.lock().unwrap().as_slice(), &[segment]);
+        let _ = coordinator.fs();
+    }
+
+    #[tokio::test]
+    async fn wait_for_fsync_propagates_persistence_errors() {
+        let fs = RecordingFs::new(true);
+        let coordinator = GroupCommitCoordinator::new(
+            fs.clone(),
+            GroupCommitConfig {
+                max_wait: Duration::from_secs(60),
+                max_batch: 1,
+            },
+        );
+
+        let error = coordinator
+            .wait_for_fsync(PathBuf::from("/tmp/topic/0/0000000000.qseg"))
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("disk full"));
+        assert_eq!(fs.fsyncs.lock().unwrap().len(), 1);
+    }
+}

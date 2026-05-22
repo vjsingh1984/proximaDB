@@ -41,7 +41,10 @@ mod tests {
             counts[partition_for(&t, pc) as usize] += 1;
         }
         for (idx, c) in counts.iter().enumerate() {
-            assert!(*c > 0, "partition {idx} got no tenants — hash distribution broken");
+            assert!(
+                *c > 0,
+                "partition {idx} got no tenants — hash distribution broken"
+            );
         }
     }
 }

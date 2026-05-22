@@ -6,11 +6,11 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use proximadb_queue::{
-    Message, QueueConfig, SyncMode, TopicConfig, QueueClient, partition_for,
-};
+use proximadb_queue::{Message, QueueClient, QueueConfig, SyncMode, TopicConfig, partition_for};
+use tempfile::TempDir;
 
-fn cfg_with_topic(name: &str, partition_count: u32) -> QueueConfig {
+fn cfg_with_topic(name: &str, partition_count: u32) -> (TempDir, QueueConfig) {
+    let tmp = tempfile::tempdir().expect("tempdir");
     let mut topics = HashMap::new();
     topics.insert(
         name.to_string(),
@@ -19,17 +19,18 @@ fn cfg_with_topic(name: &str, partition_count: u32) -> QueueConfig {
             ..Default::default()
         },
     );
-    QueueConfig {
+    let cfg = QueueConfig {
+        root: format!("file://{}", tmp.path().display()),
         topics,
         ..QueueConfig::default()
-    }
+    };
+    (tmp, cfg)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn produce_and_consume_round_trip() {
-    let client = QueueClient::open(cfg_with_topic("embed-ingest", 4))
-        .await
-        .expect("open");
+    let (_tmp, cfg) = cfg_with_topic("embed-ingest", 4);
+    let client = QueueClient::open(cfg).await.expect("open");
     let producer = client.producer();
     let consumer = client.consumer("test-group");
 
@@ -79,7 +80,7 @@ async fn produce_and_consume_round_trip() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn lazy_mode_returns_immediately_without_fsynced_at() {
-    let mut cfg = cfg_with_topic("billing", 2);
+    let (_tmp, mut cfg) = cfg_with_topic("billing", 2);
     cfg.default_sync_mode = SyncMode::Lazy;
     let client = QueueClient::open(cfg).await.expect("open");
     let producer = client.producer();
@@ -88,7 +89,10 @@ async fn lazy_mode_returns_immediately_without_fsynced_at() {
         .send(Message::new("billing", "tenant-a", vec![1, 2, 3]))
         .await
         .expect("send");
-    assert!(receipt.fsynced_at.is_none(), "Lazy mode should not stamp fsynced_at");
+    assert!(
+        receipt.fsynced_at.is_none(),
+        "Lazy mode should not stamp fsynced_at"
+    );
 }
 
 #[test]

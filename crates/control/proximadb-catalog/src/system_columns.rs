@@ -188,4 +188,66 @@ mod tests {
         assert_eq!(canonicalize_system_alias("_deleted"), Some(DELETED));
         assert_eq!(canonicalize_system_alias("_version"), Some(RECORD_VERSION));
     }
+
+    #[test]
+    fn canonicalizes_every_system_column_and_rejects_user_columns() {
+        for name in [
+            OID,
+            TENANT_ID,
+            RECORD_VERSION,
+            CREATED_AT_NS,
+            UPDATED_AT_NS,
+            VALID_FROM_NS,
+            VALID_TO_NS,
+            ACTOR,
+            ORIGIN,
+            DELETED,
+            BRANCH_ID,
+            SCHEMA_VERSION,
+        ] {
+            assert_eq!(canonicalize_system_alias(name), Some(name));
+            assert!(is_reserved_column_name(name));
+        }
+
+        assert_eq!(canonicalize_system_alias("user_column"), None);
+        assert!(!is_reserved_column_name("proxima_oid"));
+    }
+
+    #[test]
+    fn ordered_system_columns_describe_canonical_record_and_catalog_sources() {
+        let columns = system_columns();
+        assert_eq!(columns.len(), 12);
+        assert_eq!(columns[0].id, SystemColumnId::Oid);
+        assert_eq!(columns[0].name, OID);
+        assert_eq!(columns[0].data_type, CatalogDataType::String);
+        assert!(!columns[0].nullable);
+        assert_eq!(columns[0].source, "ProximaRecord.oid");
+
+        let tenant = columns
+            .iter()
+            .find(|column| column.id == SystemColumnId::TenantId)
+            .unwrap();
+        assert_eq!(tenant.source, "ProximaRecord.tenant_id");
+        assert!(!tenant.nullable);
+
+        let deleted = columns
+            .iter()
+            .find(|column| column.id == SystemColumnId::Deleted)
+            .unwrap();
+        assert_eq!(deleted.data_type, CatalogDataType::Boolean);
+        assert_eq!(deleted.source, "derived tombstone/visibility state");
+
+        let schema_version = columns
+            .iter()
+            .find(|column| column.id == SystemColumnId::SchemaVersion)
+            .unwrap();
+        assert_eq!(schema_version.data_type, CatalogDataType::Int32);
+        assert_eq!(schema_version.source, "xCatalog schema_version");
+
+        let serialized = serde_json::to_string(&SystemColumnId::RecordVersion).unwrap();
+        assert_eq!(
+            serde_json::from_str::<SystemColumnId>(&serialized).unwrap(),
+            SystemColumnId::RecordVersion
+        );
+    }
 }

@@ -421,6 +421,116 @@ pub fn create_explain_router() -> Router<UnifiedQueryRestState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::{Result, anyhow};
+    use async_trait::async_trait;
+
+    #[derive(Clone, Copy)]
+    enum MockMode {
+        Ok,
+        NotImplemented,
+        Internal,
+    }
+
+    struct MockUnifiedQueryPort {
+        mode: MockMode,
+    }
+
+    impl MockUnifiedQueryPort {
+        fn state(mode: MockMode) -> State<UnifiedQueryRestState> {
+            State(UnifiedQueryRestState {
+                unified_query_port: Arc::new(Self { mode }),
+            })
+        }
+
+        fn result(&self, op: &str) -> Result<serde_json::Value> {
+            match self.mode {
+                MockMode::Ok => Ok(serde_json::json!({ "op": op })),
+                MockMode::NotImplemented => Err(anyhow!("{op} not implemented")),
+                MockMode::Internal => Err(anyhow!("{op} failed")),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl UnifiedQueryPort for MockUnifiedQueryPort {
+        async fn execute_unified_query(
+            &self,
+            _query: String,
+            _parameters: Option<Vec<ProximaValue>>,
+            _collection: Option<String>,
+            _limit: Option<u32>,
+        ) -> Result<serde_json::Value> {
+            self.result("execute_unified_query")
+        }
+
+        async fn execute_multi_model_query(
+            &self,
+            _request: serde_json::Value,
+        ) -> Result<serde_json::Value> {
+            self.result("execute_multi_model_query")
+        }
+
+        async fn execute_federated_query(
+            &self,
+            _query: String,
+            _parameters: Option<Vec<ProximaValue>>,
+        ) -> Result<serde_json::Value> {
+            self.result("execute_federated_query")
+        }
+
+        async fn execute_distributed_query(
+            &self,
+            _request: serde_json::Value,
+        ) -> Result<serde_json::Value> {
+            self.result("execute_distributed_query")
+        }
+
+        async fn explain_unified_query(
+            &self,
+            _query: String,
+            _collection: Option<String>,
+        ) -> Result<serde_json::Value> {
+            self.result("explain_unified_query")
+        }
+
+        async fn prepare_statement(
+            &self,
+            _name: Option<String>,
+            _query: String,
+            _cache_results: bool,
+            _ttl_seconds: Option<u64>,
+        ) -> Result<String> {
+            match self.mode {
+                MockMode::Ok => Ok("stmt-1".to_string()),
+                MockMode::NotImplemented => Err(anyhow!("prepare_statement not implemented")),
+                MockMode::Internal => Err(anyhow!("prepare_statement failed")),
+            }
+        }
+
+        async fn execute_prepared(
+            &self,
+            _statement_id: String,
+            _parameters: Option<Vec<ProximaValue>>,
+            _collection: Option<String>,
+        ) -> Result<serde_json::Value> {
+            self.result("execute_prepared")
+        }
+
+        async fn delete_prepared(&self, _statement_id: String) -> Result<()> {
+            match self.mode {
+                MockMode::Ok => Ok(()),
+                MockMode::NotImplemented => Err(anyhow!("delete_prepared not implemented")),
+                MockMode::Internal => Err(anyhow!("delete_prepared failed")),
+            }
+        }
+
+        async fn get_prepared_stats(
+            &self,
+            _statement_ids: Vec<String>,
+        ) -> Result<serde_json::Value> {
+            self.result("get_prepared_stats")
+        }
+    }
 
     #[test]
     fn test_json_to_proxima_values_none() {
@@ -449,5 +559,166 @@ mod tests {
         })];
         let result = json_to_proxima_values(Some(params)).unwrap();
         assert!(matches!(result[0], ProximaValue::Map(_)));
+    }
+
+    #[tokio::test]
+    async fn handlers_validate_empty_queries_before_delegating() {
+        let execute = execute_query(
+            MockUnifiedQueryPort::state(MockMode::Ok),
+            Json(ExecuteQueryRequest {
+                query: " ".to_string(),
+                parameters: None,
+                collection: None,
+                limit: None,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(execute.status(), StatusCode::BAD_REQUEST);
+
+        let federated = execute_federated_query(
+            MockUnifiedQueryPort::state(MockMode::Ok),
+            Json(ExecuteFederatedRequest {
+                query: "\n".to_string(),
+                parameters: None,
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(federated.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn handlers_return_success_for_all_unified_query_port_methods() {
+        let state = MockUnifiedQueryPort::state(MockMode::Ok);
+
+        assert_eq!(
+            execute_query(
+                state.clone(),
+                Json(ExecuteQueryRequest {
+                    query: "select * from docs".to_string(),
+                    parameters: Some(vec![serde_json::json!("p1")]),
+                    collection: Some("docs".to_string()),
+                    limit: Some(10),
+                }),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            execute_multi_model_query(state.clone(), Json(serde_json::json!({"vector": {}})))
+                .await
+                .into_response()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            execute_federated_query(
+                state.clone(),
+                Json(ExecuteFederatedRequest {
+                    query: "select * from docs".to_string(),
+                    parameters: Some(vec![serde_json::json!(1)]),
+                }),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            execute_distributed_query(state.clone(), Json(serde_json::json!({"shards": []})))
+                .await
+                .into_response()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            explain_query(
+                state.clone(),
+                Json(ExplainQueryRequest {
+                    query: "select * from docs".to_string(),
+                    collection: Some("docs".to_string()),
+                }),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            prepare_statement(
+                state.clone(),
+                Json(PrepareStatementRequest {
+                    query: "select * from docs".to_string(),
+                    name: Some("q1".to_string()),
+                    cache_results: true,
+                    ttl_seconds: Some(60),
+                }),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::CREATED
+        );
+        assert_eq!(
+            execute_prepared_statement(
+                state.clone(),
+                Path("stmt-1".to_string()),
+                Json(ExecutePreparedRequest {
+                    parameters: Some(vec![serde_json::json!(true)]),
+                    collection: Some("docs".to_string()),
+                }),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            delete_prepared_statement(state.clone(), Path("stmt-1".to_string()))
+                .await
+                .into_response()
+                .status(),
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            get_prepared_stats(
+                state,
+                Json(PreparedStatsRequest {
+                    statement_ids: vec!["stmt-1".to_string()],
+                }),
+            )
+            .await
+            .into_response()
+            .status(),
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn handlers_map_not_implemented_and_internal_errors_to_expected_statuses() {
+        let not_implemented = execute_multi_model_query(
+            MockUnifiedQueryPort::state(MockMode::NotImplemented),
+            Json(serde_json::json!({})),
+        )
+        .await
+        .into_response();
+        assert_eq!(not_implemented.status(), StatusCode::NOT_IMPLEMENTED);
+
+        let internal = execute_distributed_query(
+            MockUnifiedQueryPort::state(MockMode::Internal),
+            Json(serde_json::json!({})),
+        )
+        .await
+        .into_response();
+        assert_eq!(internal.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    #[test]
+    fn unified_query_routers_construct() {
+        let _multimodal = create_multimodal_router();
+        let _explain = create_explain_router();
     }
 }

@@ -173,9 +173,18 @@ mod tests {
         }];
         // Local rate ≈ 0.8 (8/10 in each sample) → GLS = (0.8 - 0.1) / 0.9 ≈ 0.78.
         let gls = vec![
-            GlsSample { local_count: 10, local_matches: 8 },
-            GlsSample { local_count: 10, local_matches: 8 },
-            GlsSample { local_count: 10, local_matches: 8 },
+            GlsSample {
+                local_count: 10,
+                local_matches: 8,
+            },
+            GlsSample {
+                local_count: 10,
+                local_matches: 8,
+            },
+            GlsSample {
+                local_count: 10,
+                local_matches: 8,
+            },
         ];
         let stats = empty_stats();
         let p = policy();

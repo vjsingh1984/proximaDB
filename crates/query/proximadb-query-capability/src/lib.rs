@@ -445,6 +445,70 @@ impl Default for CapabilityRegistry {
 mod tests {
     use super::*;
 
+    fn all_capabilities() -> Vec<(Capability, &'static str)> {
+        vec![
+            (Capability::VectorSearch, "VectorSearch"),
+            (Capability::GraphQuery, "GraphQuery"),
+            (Capability::DocumentQuery, "DocumentQuery"),
+            (Capability::LogQuery, "LogQuery"),
+            (Capability::MetricsQuery, "MetricsQuery"),
+            (Capability::TimeSeriesQuery, "TimeSeriesQuery"),
+            (Capability::EventSourcingQuery, "EventSourcingQuery"),
+            (Capability::Scan, "Scan"),
+            (Capability::Filter, "Filter"),
+            (Capability::Project, "Project"),
+            (Capability::Join, "Join"),
+            (Capability::Aggregate, "Aggregate"),
+            (Capability::Sort, "Sort"),
+            (Capability::Limit, "Limit"),
+            (Capability::PredicatePushdown, "PredicatePushdown"),
+            (Capability::Quantization, "Quantization"),
+            (Capability::WALRecovery, "WALRecovery"),
+            (Capability::Replication, "Replication"),
+            (Capability::Sharding, "Sharding"),
+            (Capability::MultiRegion, "MultiRegion"),
+            (Capability::ColumnarAnalytics, "ColumnarAnalytics"),
+            (Capability::RowGroupPruning, "RowGroupPruning"),
+            (Capability::BloomFilter, "BloomFilter"),
+            (Capability::CachedQueries, "CachedQueries"),
+            (Capability::HNSWIndex, "HNSWIndex"),
+            (Capability::IVFIndex, "IVFIndex"),
+            (Capability::AnnoyIndex, "AnnoyIndex"),
+            (Capability::LSHIndex, "LSHIndex"),
+            (Capability::DiskANNIndex, "DiskANNIndex"),
+            (Capability::SparseVectorIndex, "SparseVectorIndex"),
+            (Capability::CosineDistance, "CosineDistance"),
+            (Capability::EuclideanDistance, "EuclideanDistance"),
+            (Capability::DotProduct, "DotProduct"),
+            (Capability::HybridSearch, "HybridSearch"),
+            (Capability::GraphTraversal, "GraphTraversal"),
+            (Capability::PatternMatching, "PatternMatching"),
+            (Capability::CypherFunctions, "CypherFunctions"),
+            (Capability::GraphAggregation, "GraphAggregation"),
+            (Capability::FullTextSearch, "FullTextSearch"),
+            (Capability::JSONPathQueries, "JSONPathQueries"),
+            (Capability::DocumentAggregation, "DocumentAggregation"),
+            (Capability::PromQLQuery, "PromQLQuery"),
+            (Capability::LogAggregation, "LogAggregation"),
+            (Capability::MetricAggregation, "MetricAggregation"),
+            (Capability::SIEMIntegration, "SIEMIntegration"),
+            (Capability::FederatedQuery, "FederatedQuery"),
+            (Capability::CrossModelJoin, "CrossModelJoin"),
+            (Capability::DistributedTransaction, "DistributedTransaction"),
+            (Capability::ConsensusProtocol, "ConsensusProtocol"),
+            (Capability::ChangeDataCapture, "ChangeDataCapture"),
+            (Capability::RealTimeStreaming, "RealTimeStreaming"),
+            (Capability::WebSocketStreaming, "WebSocketStreaming"),
+        ]
+    }
+
+    #[test]
+    fn capability_display_covers_every_declared_variant() {
+        for (capability, rendered) in all_capabilities() {
+            assert_eq!(capability.to_string(), rendered);
+        }
+    }
+
     #[test]
     fn test_capability_set_contains() {
         let set1 =
@@ -453,6 +517,41 @@ mod tests {
 
         assert!(set1.contains(&set2));
         assert!(!set2.contains(&set1));
+    }
+
+    #[test]
+    fn capability_set_helpers_cover_empty_add_iter_vec_and_intersection() {
+        let mut set = CapabilitySet::default();
+        assert!(set.is_empty());
+        assert_eq!(set.len(), 0);
+
+        set.add(Capability::Scan);
+        set.add(Capability::Filter);
+        set.add(Capability::Filter);
+
+        assert_eq!(set.len(), 2);
+        assert!(!set.is_empty());
+        assert!(set.contains_capability(&Capability::Scan));
+        assert!(!set.contains_capability(&Capability::Join));
+
+        let other = CapabilitySet::from_capabilities(&[Capability::Filter, Capability::Project]);
+        assert!(set.intersects(&other));
+        let intersection = set.intersection(&other);
+        assert_eq!(intersection.len(), 1);
+        assert!(intersection.contains_capability(&Capability::Filter));
+
+        let disjoint = CapabilitySet::from_capabilities(&[Capability::GraphQuery]);
+        assert!(!set.intersects(&disjoint));
+
+        let mut as_vec = set.to_vec();
+        as_vec.sort_by_key(|capability| capability.to_string());
+        assert_eq!(as_vec, vec![Capability::Filter, Capability::Scan]);
+
+        let rendered = set.to_string();
+        assert!(rendered.starts_with('['));
+        assert!(rendered.ends_with(']'));
+        assert!(rendered.contains("Scan"));
+        assert!(rendered.contains("Filter"));
     }
 
     #[test]
@@ -502,5 +601,106 @@ mod tests {
 
         let missing = CapabilitySet::from_capabilities(&[Capability::GraphQuery]);
         assert!(registry.check_support("SST", &missing).is_err());
+    }
+
+    #[test]
+    fn capability_check_errors_render_single_multiple_and_unknown_engine_cases() {
+        let registry = CapabilityRegistry::default();
+        let caps =
+            CapabilitySet::from_capabilities(&[Capability::VectorSearch, Capability::Filter]);
+        registry.register_capabilities("SST", caps);
+
+        let unknown = registry
+            .check_support(
+                "missing",
+                &CapabilitySet::from_capabilities(&[Capability::VectorSearch]),
+            )
+            .unwrap_err();
+        assert_eq!(unknown.to_string(), "Unsupported capability: missing");
+
+        let single_missing = registry
+            .check_support(
+                "SST",
+                &CapabilitySet::from_capabilities(&[
+                    Capability::VectorSearch,
+                    Capability::GraphQuery,
+                ]),
+            )
+            .unwrap_err();
+        let single_message = single_missing.to_string();
+        assert!(single_message.starts_with("Unsupported capability: GraphQuery"));
+        assert!(single_message.contains("Available alternatives:"));
+        assert!(single_message.contains("VectorSearch"));
+        assert!(single_message.contains("Filter"));
+
+        let multiple_missing = registry
+            .check_support(
+                "SST",
+                &CapabilitySet::from_capabilities(&[
+                    Capability::GraphQuery,
+                    Capability::DocumentQuery,
+                ]),
+            )
+            .unwrap_err();
+        let multiple_message = multiple_missing.to_string();
+        assert!(multiple_message.starts_with("Missing capabilities:"));
+        assert!(multiple_message.contains("GraphQuery"));
+        assert!(multiple_message.contains("DocumentQuery"));
+        assert!(multiple_message.contains("Available alternatives:"));
+
+        let explicit_no_alternatives = CapabilityCheckError::MultipleUnsupportedCapabilities {
+            missing_capabilities: vec!["A".to_string(), "B".to_string()],
+            available_alternatives: vec![],
+        };
+        assert_eq!(
+            explicit_no_alternatives.to_string(),
+            "Missing capabilities: A, B"
+        );
+    }
+
+    #[test]
+    fn registry_listing_and_capability_search_return_matching_engines() {
+        let registry = CapabilityRegistry::new();
+        registry.register_capabilities(
+            "vector",
+            CapabilitySet::from_capabilities(&[
+                Capability::VectorSearch,
+                Capability::Filter,
+                Capability::PredicatePushdown,
+            ]),
+        );
+        registry.register_capabilities(
+            "graph",
+            CapabilitySet::from_capabilities(&[Capability::GraphQuery, Capability::Filter]),
+        );
+
+        let mut engines = registry.registered_engines();
+        engines.sort();
+        assert_eq!(engines, vec!["graph".to_string(), "vector".to_string()]);
+
+        let mut listed = registry.list_registered_engines();
+        listed.sort();
+        assert_eq!(listed, engines);
+
+        let mut filter_engines =
+            registry.find_engines_with_capabilities(&CapabilitySet::from_capabilities(&[
+                Capability::Filter,
+            ]));
+        filter_engines.sort();
+        assert_eq!(
+            filter_engines,
+            vec!["graph".to_string(), "vector".to_string()]
+        );
+
+        let exact = registry.find_engines_with_capabilities(&CapabilitySet::from_capabilities(&[
+            Capability::VectorSearch,
+            Capability::PredicatePushdown,
+        ]));
+        assert_eq!(exact, vec!["vector".to_string()]);
+
+        let none = registry.find_engines_with_capabilities(&CapabilitySet::from_capabilities(&[
+            Capability::DistributedTransaction,
+        ]));
+        assert!(none.is_empty());
     }
 }

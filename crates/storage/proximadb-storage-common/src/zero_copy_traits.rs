@@ -442,6 +442,86 @@ impl QueryContext {
 mod tests {
     use super::*;
 
+    #[derive(Clone)]
+    struct TestMetadata {
+        file_size: u64,
+        selectivity: f32,
+    }
+
+    impl EngineMetadata for TestMetadata {
+        fn file_size(&self) -> u64 {
+            self.file_size
+        }
+
+        fn estimated_selectivity(&self, query_context: &QueryContext) -> f32 {
+            query_context.selectivity_hint.unwrap_or(self.selectivity)
+        }
+
+        fn memory_footprint(&self) -> usize {
+            std::mem::size_of::<Self>()
+        }
+
+        fn creation_timestamp(&self) -> Option<u64> {
+            Some(123)
+        }
+
+        fn compression_ratio(&self) -> Option<f32> {
+            Some(2.5)
+        }
+
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+
+        fn clone_box(&self) -> Box<dyn EngineMetadata> {
+            Box::new(self.clone())
+        }
+    }
+
+    struct TestSerializer;
+
+    impl MetadataSerializer for TestSerializer {
+        fn engine_id(&self) -> &'static str {
+            "TEST"
+        }
+
+        fn serialize_metadata(
+            &self,
+            file_path: &str,
+            collection_id: &str,
+        ) -> Result<Vec<u8>, ProximaDBError> {
+            Ok(format!("{collection_id}:{file_path}").into_bytes())
+        }
+
+        fn deserialize_metadata(
+            &self,
+            data: &[u8],
+        ) -> Result<Box<dyn EngineMetadata>, ProximaDBError> {
+            Ok(Box::new(TestMetadata {
+                file_size: data.len() as u64,
+                selectivity: 0.25,
+            }))
+        }
+
+        fn can_skip_file(
+            &self,
+            metadata: &dyn EngineMetadata,
+            query_context: &QueryContext,
+        ) -> bool {
+            metadata.estimated_selectivity(query_context) == 0.0
+        }
+
+        fn get_required_ranges(
+            &self,
+            _metadata: &dyn EngineMetadata,
+            query_context: &QueryContext,
+        ) -> Option<Vec<DataRange>> {
+            query_context
+                .is_point_query()
+                .then(|| vec![DataRange::new(10, 20, 200)])
+        }
+    }
+
     #[test]
     fn test_data_range_operations() {
         let range1 = DataRange::new(0, 100, 255);
@@ -451,6 +531,9 @@ mod tests {
         // Test contiguous ranges
         assert!(range1.is_contiguous_with(&range2));
         assert!(!range1.is_contiguous_with(&range3));
+        assert!(range1.overlaps_with(&DataRange::new(50, 10, 1)));
+        assert!(!range1.overlaps_with(&range3));
+        assert_eq!(range1.end_offset(), 100);
 
         // Test merging
         let merged = range1.try_merge(&range2).unwrap();
@@ -479,11 +562,179 @@ mod tests {
     }
 
     #[test]
+    fn test_query_context_collection_builders_and_classification() {
+        let point =
+            QueryContext::for_id_lookup_with_collection(vec!["id1".to_string()], "c1".to_string());
+        assert!(point.is_point_query());
+        assert!(!point.is_batch_query());
+        assert_eq!(point.collection_id, "c1");
+
+        let similarity = QueryContext::for_similarity_search_with_collection(
+            vec![1.0, 2.0],
+            5,
+            "vectors".to_string(),
+        );
+        assert_eq!(similarity.query_vector, Some(vec![1.0, 2.0]));
+        assert_eq!(similarity.top_k, Some(5));
+        assert_eq!(similarity.collection_id, "vectors");
+
+        let mut filters = HashMap::new();
+        filters.insert("status".to_string(), "active".to_string());
+        let filter_context =
+            QueryContext::for_metadata_filter_with_collection(filters, "docs".to_string());
+        assert_eq!(filter_context.collection_id, "docs");
+        assert_eq!(filter_context.metadata_filters["status"], "active");
+
+        let mut batch = QueryContext::default();
+        batch.query_type = QueryType::Batch;
+        assert!(batch.is_batch_query());
+    }
+
+    #[test]
     fn test_complexity_scoring() {
         let simple_context = QueryContext::for_id_lookup(vec!["id1".to_string()]);
         assert!(simple_context.complexity_score() < 0.1);
 
         let complex_context = QueryContext::for_similarity_search(vec![1.0; 768], 1000);
         assert!(complex_context.complexity_score() > 0.3);
+
+        let mut capped = QueryContext::for_similarity_search(vec![1.0; 32], 10_000);
+        capped.id_lookups = (0..1_000).map(|i| format!("id-{i}")).collect();
+        capped.metadata_filters = (0..100)
+            .map(|i| (format!("field-{i}"), "value".to_string()))
+            .collect();
+        assert_eq!(capped.complexity_score(), 1.0);
+    }
+
+    #[test]
+    fn test_metadata_traits_default_methods_and_serializer_helpers() {
+        let serializer = TestSerializer;
+        let mut context = QueryContext::for_id_lookup(vec!["id1".to_string()]);
+        context.selectivity_hint = Some(0.0);
+
+        let bytes = serializer
+            .serialize_metadata("/tmp/file", "collection")
+            .unwrap();
+        assert_eq!(serializer.engine_id(), "TEST");
+        assert_eq!(bytes, b"collection:/tmp/file");
+
+        let metadata = serializer.deserialize_metadata(&bytes).unwrap();
+        assert_eq!(metadata.file_size(), bytes.len() as u64);
+        assert_eq!(metadata.estimated_selectivity(&context), 0.0);
+        assert!(serializer.can_skip_file(metadata.as_ref(), &context));
+        assert_eq!(
+            serializer.get_required_ranges(metadata.as_ref(), &context),
+            Some(vec![DataRange::new(10, 20, 200)])
+        );
+        assert_eq!(
+            serializer.estimate_selectivity(metadata.as_ref(), &context),
+            0.0
+        );
+
+        let hash_a = serializer.hash_string("key");
+        assert_eq!(hash_a, serializer.hash_string("key"));
+        assert_eq!(serializer.hash_bytes(b"key"), serializer.hash_bytes(b"key"));
+        assert!(!serializer.check_bloom_simple(&[], b"key"));
+
+        let mut bloom = vec![0u8; 8];
+        let index = (serializer.hash_bytes(b"key") % bloom.len() as u64) as usize;
+        bloom[index] = 1;
+        assert!(serializer.check_bloom_simple(&bloom, b"key"));
+
+        assert_eq!(
+            metadata.memory_footprint(),
+            std::mem::size_of::<TestMetadata>()
+        );
+        assert_eq!(metadata.creation_timestamp(), Some(123));
+        assert_eq!(metadata.compression_ratio(), Some(2.5));
+        assert!(metadata.as_any().downcast_ref::<TestMetadata>().is_some());
+        assert_eq!(metadata.clone_box().file_size(), metadata.file_size());
+    }
+
+    #[test]
+    fn test_query_supports_all_types_and_public_request_shapes() {
+        let metadata = TestMetadata {
+            file_size: 1024,
+            selectivity: 0.5,
+        };
+
+        for query_type in [
+            QueryType::IdLookup,
+            QueryType::SimilaritySearch,
+            QueryType::MetadataFilter,
+            QueryType::Batch,
+            QueryType::VectorSearch,
+            QueryType::FullScan,
+        ] {
+            assert!(metadata.supports_query_type(&query_type));
+        }
+
+        let collection = CollectionContext {
+            collection_id: "c1".to_string(),
+            dimension: 384,
+            distance_metric: "cosine".to_string(),
+            query_patterns: vec![QueryType::VectorSearch],
+            access_frequency: AccessFrequency::High,
+        };
+        assert_eq!(collection.collection_id, "c1");
+        assert_eq!(collection.dimension, 384);
+        assert!(matches!(collection.access_frequency, AccessFrequency::High));
+
+        for frequency in [
+            AccessFrequency::VeryHigh,
+            AccessFrequency::High,
+            AccessFrequency::Medium,
+            AccessFrequency::Low,
+            AccessFrequency::VeryLow,
+        ] {
+            assert!(matches!(
+                frequency,
+                AccessFrequency::VeryHigh
+                    | AccessFrequency::High
+                    | AccessFrequency::Medium
+                    | AccessFrequency::Low
+                    | AccessFrequency::VeryLow
+            ));
+        }
+
+        assert!(RequestPriority::Critical > RequestPriority::High);
+        assert!(RequestPriority::High > RequestPriority::Normal);
+        assert!(RequestPriority::Normal > RequestPriority::Low);
+        assert!(RequestPriority::Low > RequestPriority::Background);
+        assert_eq!(CacheTemperature::Hot, CacheTemperature::Hot);
+        assert_ne!(CacheTemperature::Hot, CacheTemperature::Cold);
+
+        let query_context = QueryContext {
+            collection_context: Some(collection),
+            priority: RequestPriority::High,
+            estimated_result_size: Some(64),
+            concurrent_queries: Some(3),
+            cache_temperature: CacheTemperature::Hot,
+            ..QueryContext::default()
+        };
+
+        let request = FileAccessRequest {
+            file_path: "/data/file".to_string(),
+            collection_id: "c1".to_string(),
+            engine_type: "sst".to_string(),
+            query_context: query_context.clone(),
+            priority: RequestPriority::Critical,
+        };
+        assert_eq!(request.file_path, "/data/file");
+        assert_eq!(request.query_context.estimated_result_size, Some(64));
+        assert_eq!(request.priority, RequestPriority::Critical);
+
+        let analysis = MetadataAnalysisResult {
+            can_skip_file: true,
+            required_ranges: Some(vec![DataRange::new(0, 10, 1)]),
+            estimated_selectivity: 0.1,
+            confidence: 0.9,
+            rationale: "covered".to_string(),
+        };
+        assert!(analysis.can_skip_file);
+        assert_eq!(analysis.required_ranges.unwrap()[0].end_offset(), 10);
+        assert_eq!(analysis.estimated_selectivity, 0.1);
+        assert_eq!(analysis.confidence, 0.9);
+        assert_eq!(analysis.rationale, "covered");
     }
 }

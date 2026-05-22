@@ -414,6 +414,43 @@ mod tests {
     }
 
     #[test]
+    fn test_mmap_file_boundaries_views_and_advice() -> Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("boundaries.dat");
+        std::fs::write(&path, b"0123456789")?;
+
+        let mmap = MmapFile::open(&path)?;
+        assert!(!mmap.is_empty());
+        assert!(mmap.slice(0..11).is_err());
+
+        let mut buf = [0u8; 4];
+        assert_eq!(mmap.read_at(8, &mut buf)?, 2);
+        assert_eq!(&buf[..2], b"89");
+        assert_eq!(mmap.read_at(100, &mut buf)?, 0);
+
+        let empty = mmap.view_from(mmap.len())?;
+        assert!(empty.is_empty());
+        assert!(mmap.view_from(mmap.len() + 1).is_err());
+
+        let view = mmap.view_from(2)?;
+        assert_eq!(view.get(0..3)?, b"234");
+        assert!(view.get(0..20).is_err());
+
+        for advice in [
+            Advice::Normal,
+            Advice::Random,
+            Advice::Sequential,
+            Advice::WillNeed,
+            Advice::DontNeed,
+        ] {
+            let _: memmap2::Advice = advice.into();
+            mmap.advise(advice)?;
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn test_mmap_file_write() -> Result<()> {
         let dir = tempdir()?;
         let path = dir.path().join("test_write.dat");
@@ -436,6 +473,30 @@ mod tests {
     }
 
     #[test]
+    fn test_mmap_mut_file_open_resize_flush_async_and_bounds() -> Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("resize.dat");
+
+        let mut created = MmapMutFile::create(&path, 8)?;
+        assert_eq!(created.write_at(6, b"abcd")?, 2);
+        assert_eq!(created.write_at(64, b"x")?, 0);
+        created.flush_async()?;
+        drop(created);
+
+        let mut reopened = MmapMutFile::open(&path)?;
+        reopened.resize(16)?;
+        assert_eq!(reopened.write_at(8, b"tail")?, 4);
+        reopened.flush()?;
+
+        let contents = std::fs::read(&path)?;
+        assert_eq!(contents.len(), 16);
+        assert_eq!(&contents[6..8], b"ab");
+        assert_eq!(&contents[8..12], b"tail");
+
+        Ok(())
+    }
+
+    #[test]
     fn test_mmap_view() -> Result<()> {
         let dir = tempdir()?;
         let path = dir.path().join("test_view.dat");
@@ -448,6 +509,51 @@ mod tests {
 
         assert_eq!(view.len(), 11);
         assert_eq!(&view[0..3], b"567");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_mmap_sst_reader_offsets_blocks_and_advice() -> Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("test.sst");
+
+        let index_offset = 4100u64;
+        let data_offset = 4096u64;
+        let mut bytes = vec![0u8; 4096];
+        bytes[8..16].copy_from_slice(&index_offset.to_le_bytes());
+        bytes[16..24].copy_from_slice(&data_offset.to_le_bytes());
+        bytes.extend_from_slice(b"DATAIDX");
+        std::fs::write(&path, bytes)?;
+
+        let reader = MmapSstReader::open(&path)?;
+        assert_eq!(reader.read_block(0, 4)?, b"DATA");
+        assert_eq!(reader.index_view()?.get(0..3)?, b"IDX");
+        reader.advise_sequential()?;
+        reader.advise_random()?;
+
+        let short_path = dir.path().join("short.sst");
+        std::fs::write(&short_path, b"short")?;
+        assert!(MmapSstReader::open(&short_path).is_err());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_mmap_parquet_reader_row_group_bounds_and_views() -> Result<()> {
+        let dir = tempdir()?;
+        let path = dir.path().join("test.parquet");
+
+        let mut bytes = b"row-group-data".to_vec();
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        std::fs::write(&path, bytes)?;
+
+        let reader = MmapParquetReader::open(&path)?;
+        assert_eq!(reader.read_row_group(0)?, b"row-group-data");
+        assert!(reader.read_row_group(1).is_err());
+        assert_eq!(reader.column_chunk_view(0, 0)?.get(0..3)?, b"row");
+        assert!(reader.column_chunk_view(0, 99).is_err());
 
         Ok(())
     }
@@ -474,6 +580,24 @@ mod tests {
         // Get again - should return cached
         let mmap1_again = pool.get(&path1)?;
         assert!(Arc::ptr_eq(&mmap1, &mmap1_again));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_mmap_pool_evict_clear_and_missing_file() -> Result<()> {
+        let dir = tempdir()?;
+        let pool = MmapPool::new(1);
+        let path = dir.path().join("file.dat");
+        std::fs::write(&path, b"cached")?;
+
+        let first = pool.get(&path)?;
+        pool.evict(&path);
+        let second = pool.get(&path)?;
+        assert!(!Arc::ptr_eq(&first, &second));
+
+        pool.clear();
+        assert!(pool.get(dir.path().join("missing.dat")).is_err());
 
         Ok(())
     }

@@ -144,8 +144,14 @@ mod tests {
     fn no_request_substitutes_tier_defaults() {
         let r = record(Tier::Business, None, None);
         let ok = enforce(&r, None, None).expect("should succeed");
-        assert_eq!(ok.effective_scan_gb, Tier::Business.default_scan_budget_gb());
-        assert_eq!(ok.effective_ef_search, Tier::Business.default_ef_search_cap());
+        assert_eq!(
+            ok.effective_scan_gb,
+            Tier::Business.default_scan_budget_gb()
+        );
+        assert_eq!(
+            ok.effective_ef_search,
+            Tier::Business.default_ef_search_cap()
+        );
         assert_eq!(ok.tier_label, "business");
     }
 
@@ -173,7 +179,10 @@ mod tests {
         let r = record(Tier::Community, None, None);
         let err = enforce(&r, None, Some(10_000)).expect_err("should reject");
         assert_eq!(err.which, "ef_search_cap");
-        assert_eq!(err.limit, f64::from(Tier::Community.default_ef_search_cap()));
+        assert_eq!(
+            err.limit,
+            f64::from(Tier::Community.default_ef_search_cap())
+        );
         assert_eq!(err.requested, 10_000.0);
     }
 
@@ -224,11 +233,19 @@ mod tests {
     fn tier_label_is_bounded_string_set() {
         // The label must always be one of the four bounded values so
         // Prometheus cardinality stays safe.
-        for tier in [Tier::FreeTrial, Tier::Community, Tier::Business, Tier::Enterprise] {
+        for tier in [
+            Tier::FreeTrial,
+            Tier::Community,
+            Tier::Business,
+            Tier::Enterprise,
+        ] {
             let r = record(tier, None, None);
             let ok = enforce(&r, None, None).expect("default succeeds");
             assert!(
-                matches!(ok.tier_label, "free" | "community" | "business" | "enterprise"),
+                matches!(
+                    ok.tier_label,
+                    "free" | "community" | "business" | "enterprise"
+                ),
                 "label {} must be in the bounded set",
                 ok.tier_label
             );

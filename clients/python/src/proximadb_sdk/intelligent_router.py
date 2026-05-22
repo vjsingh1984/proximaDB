@@ -503,11 +503,9 @@ class IntelligentRouter:
                             return fallback
 
         elif self.config.strategy == RoutingStrategy.ROUND_ROBIN:
-            # Simple round-robin (exclude AUTO which is not a real protocol)
+            # Simple round-robin across protocols managed by this router.
             protocols = [
-                p
-                for p in Protocol
-                if p != Protocol.AUTO and self._is_protocol_healthy(p)
+                p for p in self._metrics.keys() if self._is_protocol_healthy(p)
             ]
             if protocols:
                 self._round_robin_index = (self._round_robin_index + 1) % len(protocols)

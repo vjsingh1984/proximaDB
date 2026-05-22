@@ -87,7 +87,10 @@ mod tests {
     use super::*;
 
     fn sample(local_matches: u64, local_count: u64) -> GlsSample {
-        GlsSample { local_count, local_matches }
+        GlsSample {
+            local_count,
+            local_matches,
+        }
     }
 
     #[test]
@@ -150,11 +153,17 @@ mod tests {
         // Extreme concentration — all matches in tiny sample.
         let samples = vec![sample(10, 10)];
         let g = gls_score(&samples, 0.5).expect("score");
-        assert!((g - 1.0).abs() < 1e-9, "expected exactly +1 for perfect concentration, got {g}");
+        assert!(
+            (g - 1.0).abs() < 1e-9,
+            "expected exactly +1 for perfect concentration, got {g}"
+        );
         // Extreme repulsion — no matches.
         let samples = vec![sample(0, 10)];
         let g = gls_score(&samples, 0.5).expect("score");
-        assert!((g - -1.0).abs() < 1e-9, "expected exactly -1 for perfect repulsion, got {g}");
+        assert!(
+            (g - -1.0).abs() < 1e-9,
+            "expected exactly -1 for perfect repulsion, got {g}"
+        );
     }
 
     #[test]

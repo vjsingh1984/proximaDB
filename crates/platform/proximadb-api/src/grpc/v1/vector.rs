@@ -109,3 +109,126 @@ impl VectorService for VectorServiceImpl {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{ApiCall, RecordingApiPort};
+    use tonic::Code;
+
+    fn tenant_request<T>(body: T) -> Request<T> {
+        let mut request = Request::new(body);
+        request
+            .metadata_mut()
+            .insert("x-tenant-id", "tenant-a".parse().unwrap());
+        request
+    }
+
+    #[tokio::test]
+    async fn vector_service_lowers_search_batch_and_get_to_runtime_port() {
+        let port = RecordingApiPort::new();
+        port.vector_response.lock().unwrap().success = true;
+        let service = VectorServiceImpl::new(port.clone());
+        let _server = VectorServiceImpl::new(port.clone()).into_server();
+
+        service
+            .vector_search(Request::new(v1::VectorSearchRequest {
+                collection_id: "docs".to_string(),
+                ..v1::VectorSearchRequest::default()
+            }))
+            .await
+            .unwrap();
+        service
+            .vector_search(tenant_request(v1::VectorSearchRequest {
+                collection_id: "tenant_docs".to_string(),
+                ..v1::VectorSearchRequest::default()
+            }))
+            .await
+            .unwrap();
+        service
+            .vector_batch(tenant_request(v1::VectorBatchRequest {
+                collection_id: "docs".to_string(),
+                vectors: vec![v1::VectorRecord {
+                    id: "vec-1".to_string(),
+                    vector: vec![0.1, 0.2],
+                    ..v1::VectorRecord::default()
+                }],
+            }))
+            .await
+            .unwrap();
+        service
+            .vector_get(tenant_request(v1::VectorGetRequest {
+                collection_id: "docs".to_string(),
+                vector_id: "vec-1".to_string(),
+                include_vector: Some(false),
+                include_metadata: Some(false),
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            port.calls(),
+            vec![
+                ApiCall::VectorSearch {
+                    tenant_id: None,
+                    collection_id: "docs".to_string(),
+                    tenant_aware: false,
+                },
+                ApiCall::VectorSearch {
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: "tenant_docs".to_string(),
+                    tenant_aware: true,
+                },
+                ApiCall::VectorBatch {
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: "docs".to_string(),
+                    vector_count: 1,
+                },
+                ApiCall::VectorGet {
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: "docs".to_string(),
+                    vector_id: "vec-1".to_string(),
+                    include_vector: false,
+                    include_metadata: false,
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn vector_get_defaults_optional_include_flags_and_streaming_is_explicitly_unimplemented()
+    {
+        let port = RecordingApiPort::new();
+        let service = VectorServiceImpl::new(port.clone());
+
+        service
+            .vector_get(Request::new(v1::VectorGetRequest {
+                collection_id: "docs".to_string(),
+                vector_id: "vec-1".to_string(),
+                include_vector: None,
+                include_metadata: None,
+            }))
+            .await
+            .unwrap();
+        assert_eq!(
+            port.calls(),
+            vec![ApiCall::VectorGet {
+                tenant_id: None,
+                collection_id: "docs".to_string(),
+                vector_id: "vec-1".to_string(),
+                include_vector: false,
+                include_metadata: true,
+            }]
+        );
+
+        let result = service
+            .vector_search_stream(Request::new(v1::VectorSearchRequest::default()))
+            .await;
+        let err = match result {
+            Ok(_) => panic!("streaming vector search should be unimplemented"),
+            Err(err) => err,
+        };
+        assert_eq!(err.code(), Code::Unimplemented);
+        assert!(err.message().contains("Streaming vector search"));
+    }
+}

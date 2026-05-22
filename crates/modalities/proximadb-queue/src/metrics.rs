@@ -45,3 +45,27 @@ pub static QUEUE_FSYNC_BATCH_SIZE: Lazy<HistogramVec> = Lazy::new(|| {
     )
     .expect("metric registration")
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn queue_metrics_register_and_accept_labeled_observations() {
+        let depth = QUEUE_DEPTH.with_label_values(&["orders", "0"]);
+        depth.set(7);
+        assert_eq!(depth.get(), 7);
+
+        let backpressure = QUEUE_BACKPRESSURE.with_label_values(&["orders", "soft"]);
+        let before = backpressure.get();
+        backpressure.inc();
+        assert_eq!(backpressure.get(), before + 1);
+
+        QUEUE_SEND_LATENCY_MS
+            .with_label_values(&["orders", "lazy"])
+            .observe(2.5);
+        QUEUE_FSYNC_BATCH_SIZE
+            .with_label_values(&["orders", "0"])
+            .observe(16.0);
+    }
+}

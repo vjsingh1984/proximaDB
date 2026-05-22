@@ -1138,4 +1138,428 @@ mod tests {
         let schema3 = ProximaSchema::vector_record_schema(1024);
         assert_ne!(schema1.fingerprint, schema3.fingerprint);
     }
+
+    #[test]
+    fn schema_builders_accessors_and_deleted_columns_are_explicit() {
+        let mut schema = ProximaSchema::with_metadata_columns(
+            "products".to_string(),
+            384,
+            vec![
+                ("category".to_string(), ProximaDataType::String),
+                ("score".to_string(), ProximaDataType::Float64),
+            ],
+        );
+        schema.columns.push(ProximaColumn {
+            id: 99,
+            name: "deleted".to_string(),
+            data_type: ProximaDataType::Boolean,
+            nullable: true,
+            default_value: None,
+            comment: None,
+            metadata: HashMap::new(),
+            is_deleted: true,
+            original_id: Some(4),
+        });
+
+        assert!(!schema.is_legacy_vector_record);
+        assert_eq!(schema.primary_key, vec![1]);
+        assert_eq!(schema.vector_dimension(), Some(384));
+        assert_eq!(schema.active_column_count(), 5);
+        assert_eq!(schema.next_column_id(), 100);
+        assert!(schema.column_by_id(1).is_some());
+        assert!(schema.column_by_id(99).is_none());
+        assert!(schema.column_by_name("deleted").is_none());
+
+        let arrow = schema.to_arrow_schema();
+        assert_eq!(arrow.fields().len(), 5);
+        assert!(arrow.field_with_name("category").is_ok());
+        assert!(arrow.field_with_name("deleted").is_err());
+    }
+
+    #[test]
+    fn proxima_data_type_arrow_mapping_covers_primitives_complex_vectors_and_fallbacks() {
+        let nested_field = ProximaColumn {
+            id: 1,
+            name: "nested".to_string(),
+            data_type: ProximaDataType::Int32,
+            nullable: false,
+            default_value: None,
+            comment: None,
+            metadata: HashMap::new(),
+            is_deleted: false,
+            original_id: None,
+        };
+
+        let cases = vec![
+            (ProximaDataType::Boolean, ArrowDataType::Boolean),
+            (ProximaDataType::Int8, ArrowDataType::Int8),
+            (ProximaDataType::Int16, ArrowDataType::Int16),
+            (ProximaDataType::Int32, ArrowDataType::Int32),
+            (ProximaDataType::Int64, ArrowDataType::Int64),
+            (ProximaDataType::UInt8, ArrowDataType::UInt8),
+            (ProximaDataType::UInt16, ArrowDataType::UInt16),
+            (ProximaDataType::UInt32, ArrowDataType::UInt32),
+            (ProximaDataType::UInt64, ArrowDataType::UInt64),
+            (ProximaDataType::Float32, ArrowDataType::Float32),
+            (ProximaDataType::Float64, ArrowDataType::Float64),
+            (
+                ProximaDataType::Decimal {
+                    precision: 12,
+                    scale: 2,
+                },
+                ArrowDataType::Decimal128(12, 2),
+            ),
+            (ProximaDataType::String, ArrowDataType::Utf8),
+            (ProximaDataType::Binary, ArrowDataType::Binary),
+            (ProximaDataType::Date, ArrowDataType::Date32),
+            (
+                ProximaDataType::Time {
+                    unit: TimeUnit::Nanosecond,
+                },
+                ArrowDataType::Time64(ArrowTimeUnit::Nanosecond),
+            ),
+            (
+                ProximaDataType::Timestamp {
+                    unit: TimeUnit::Microsecond,
+                    timezone: Some("UTC".to_string()),
+                },
+                ArrowDataType::Timestamp(ArrowTimeUnit::Microsecond, Some("UTC".into())),
+            ),
+            (ProximaDataType::Uuid, ArrowDataType::Utf8),
+            (ProximaDataType::Json, ArrowDataType::Utf8),
+            (
+                ProximaDataType::Vector {
+                    dimension: 3,
+                    element_type: VectorElementType::Float32,
+                },
+                ArrowDataType::FixedSizeBinary(12),
+            ),
+            (
+                ProximaDataType::BinaryVector { dimension: 17 },
+                ArrowDataType::FixedSizeBinary(3),
+            ),
+            (
+                ProximaDataType::QuantizedInt8Vector {
+                    dimension: 8,
+                    scale_factor: 100,
+                    zero_point: -1,
+                },
+                ArrowDataType::FixedSizeBinary(8),
+            ),
+            (
+                ProximaDataType::QuantizedPQVector {
+                    dimension: 128,
+                    segments: 16,
+                    bits: 8,
+                },
+                ArrowDataType::FixedSizeBinary(16),
+            ),
+            (
+                ProximaDataType::QuantizedBinaryVector { dimension: 9 },
+                ArrowDataType::FixedSizeBinary(2),
+            ),
+        ];
+
+        for (proxima, arrow) in cases {
+            assert_eq!(proxima.to_arrow_type(), arrow);
+        }
+
+        assert!(matches!(
+            ProximaDataType::List {
+                element: Box::new(ProximaDataType::String)
+            }
+            .to_arrow_type(),
+            ArrowDataType::List(_)
+        ));
+        assert!(matches!(
+            ProximaDataType::Map {
+                key: Box::new(ProximaDataType::String),
+                value: Box::new(ProximaDataType::Float64)
+            }
+            .to_arrow_type(),
+            ArrowDataType::Map(_, false)
+        ));
+        assert!(matches!(
+            ProximaDataType::Struct {
+                fields: vec![nested_field]
+            }
+            .to_arrow_type(),
+            ArrowDataType::Struct(_)
+        ));
+        assert!(matches!(
+            ProximaDataType::SparseVector {
+                max_dimension: Some(100)
+            }
+            .to_arrow_type(),
+            ArrowDataType::Map(_, false)
+        ));
+
+        for unit in [
+            ArrowTimeUnit::Second,
+            ArrowTimeUnit::Millisecond,
+            ArrowTimeUnit::Microsecond,
+            ArrowTimeUnit::Nanosecond,
+        ] {
+            assert_eq!(TimeUnit::from_arrow(unit).to_arrow_time_unit(), unit);
+        }
+
+        assert_eq!(
+            ProximaDataType::from_arrow_type(&ArrowDataType::LargeUtf8),
+            ProximaDataType::String
+        );
+        assert_eq!(
+            ProximaDataType::from_arrow_type(&ArrowDataType::LargeBinary),
+            ProximaDataType::Binary
+        );
+        assert_eq!(
+            ProximaDataType::from_arrow_type(&ArrowDataType::Date64),
+            ProximaDataType::Date
+        );
+        assert_eq!(
+            ProximaDataType::from_arrow_type(&ArrowDataType::Decimal256(20, 4)),
+            ProximaDataType::Decimal {
+                precision: 20,
+                scale: 4
+            }
+        );
+        assert_eq!(
+            ProximaDataType::from_arrow_type(&ArrowDataType::FixedSizeBinary(3)),
+            ProximaDataType::Binary
+        );
+        assert_eq!(
+            ProximaDataType::from_arrow_type(&ArrowDataType::Duration(ArrowTimeUnit::Second)),
+            ProximaDataType::Binary
+        );
+    }
+
+    #[test]
+    fn avro_style_roundtrip_defaults_and_error_paths_are_covered() {
+        let columns = vec![
+            ProximaColumn {
+                id: 10,
+                name: "id".to_string(),
+                data_type: ProximaDataType::String,
+                nullable: false,
+                default_value: Some(DefaultValue::Literal("\"p1\"".to_string())),
+                comment: Some("primary id".to_string()),
+                metadata: HashMap::from([("encoding".to_string(), "plain".to_string())]),
+                is_deleted: false,
+                original_id: None,
+            },
+            ProximaColumn {
+                id: 11,
+                name: "tags".to_string(),
+                data_type: ProximaDataType::List {
+                    element: Box::new(ProximaDataType::String),
+                },
+                nullable: true,
+                default_value: Some(DefaultValue::Expression("array[]".to_string())),
+                comment: None,
+                metadata: HashMap::new(),
+                is_deleted: false,
+                original_id: None,
+            },
+            ProximaColumn {
+                id: 12,
+                name: "embedding".to_string(),
+                data_type: ProximaDataType::Vector {
+                    dimension: 4,
+                    element_type: VectorElementType::Float32,
+                },
+                nullable: false,
+                default_value: Some(DefaultValue::AutoGenerate(AutoGenerateType::Uuid)),
+                comment: None,
+                metadata: HashMap::new(),
+                is_deleted: false,
+                original_id: None,
+            },
+            ProximaColumn {
+                id: 13,
+                name: "price".to_string(),
+                data_type: ProximaDataType::Decimal {
+                    precision: 8,
+                    scale: 2,
+                },
+                nullable: false,
+                default_value: None,
+                comment: None,
+                metadata: HashMap::new(),
+                is_deleted: false,
+                original_id: None,
+            },
+        ];
+        let mut schema = ProximaSchema::new("catalog.products".to_string(), columns, vec![10]);
+        schema
+            .metadata
+            .insert("owner".to_string(), "catalog".to_string());
+
+        let avro = schema.to_avro_style();
+        assert_eq!(avro.schema_type, "record");
+        assert_eq!(avro.namespace, "com.proximadb");
+        assert_eq!(avro.fields.len(), 4);
+        assert_eq!(avro.fields[0].default, Some(serde_json::json!("p1")));
+        assert_eq!(avro.fields[1].default, Some(serde_json::json!("array[]")));
+        assert_eq!(avro.fields[2].default, Some(JsonValue::Null));
+        assert_eq!(avro.metadata.get("owner"), Some(&"catalog".to_string()));
+
+        let json = schema.to_avro_json().unwrap();
+        let from_json = ProximaSchema::from_avro_json(&json).unwrap();
+        assert_eq!(from_json.schema_id, "catalog.products");
+        assert_eq!(from_json.primary_key, vec![1]);
+        assert_eq!(from_json.active_column_count(), 4);
+        assert!(matches!(
+            from_json.column_by_name("tags").unwrap().data_type,
+            ProximaDataType::List { .. }
+        ));
+        assert_eq!(from_json.vector_dimension(), Some(4));
+
+        assert!(ProximaSchema::from_avro_json("{not json").is_err());
+
+        let missing_array_items = AvroStyleSchema {
+            schema_type: "record".to_string(),
+            namespace: "n".to_string(),
+            name: "bad".to_string(),
+            fields: vec![AvroStyleField {
+                name: "items".to_string(),
+                field_type: AvroStyleType::Complex {
+                    type_name: "array".to_string(),
+                    items: None,
+                    values: None,
+                    dimension: None,
+                    precision: None,
+                    scale: None,
+                },
+                default: None,
+                doc: None,
+                column_id: None,
+            }],
+            aliases: None,
+            metadata: HashMap::new(),
+        };
+        assert!(
+            ProximaSchema::from_avro_style(&missing_array_items)
+                .unwrap_err()
+                .to_string()
+                .contains("missing items")
+        );
+
+        let missing_map_values = AvroStyleType::Complex {
+            type_name: "map".to_string(),
+            items: None,
+            values: None,
+            dimension: None,
+            precision: None,
+            scale: None,
+        };
+        assert!(
+            missing_map_values
+                .to_proxima_type()
+                .unwrap_err()
+                .to_string()
+                .contains("missing values")
+        );
+
+        let decimal_missing_scale = AvroStyleType::Complex {
+            type_name: "bytes".to_string(),
+            items: None,
+            values: None,
+            dimension: None,
+            precision: Some(8),
+            scale: None,
+        };
+        assert!(
+            decimal_missing_scale
+                .to_proxima_type()
+                .unwrap_err()
+                .to_string()
+                .contains("missing scale")
+        );
+
+        assert_eq!(
+            AvroStyleType::Union(vec!["null".to_string()])
+                .to_proxima_type()
+                .unwrap(),
+            (ProximaDataType::String, true)
+        );
+        assert_eq!(
+            AvroStyleType::Simple("unknown".to_string())
+                .to_proxima_type()
+                .unwrap(),
+            (ProximaDataType::String, false)
+        );
+    }
+
+    #[test]
+    fn proxima_type_equality_covers_nested_and_vector_variants() {
+        assert_eq!(
+            ProximaDataType::Struct {
+                fields: vec![ProximaColumn {
+                    id: 1,
+                    name: "a".to_string(),
+                    data_type: ProximaDataType::Int32,
+                    nullable: false,
+                    default_value: None,
+                    comment: None,
+                    metadata: HashMap::new(),
+                    is_deleted: false,
+                    original_id: None,
+                }]
+            },
+            ProximaDataType::Struct {
+                fields: vec![ProximaColumn {
+                    id: 1,
+                    name: "a".to_string(),
+                    data_type: ProximaDataType::String,
+                    nullable: true,
+                    default_value: None,
+                    comment: None,
+                    metadata: HashMap::new(),
+                    is_deleted: true,
+                    original_id: Some(99),
+                }]
+            }
+        );
+        assert_ne!(
+            ProximaDataType::Vector {
+                dimension: 3,
+                element_type: VectorElementType::Float32,
+            },
+            ProximaDataType::Vector {
+                dimension: 3,
+                element_type: VectorElementType::Float64,
+            }
+        );
+        assert_eq!(
+            ProximaDataType::QuantizedInt8Vector {
+                dimension: 4,
+                scale_factor: 10,
+                zero_point: 0,
+            },
+            ProximaDataType::QuantizedInt8Vector {
+                dimension: 4,
+                scale_factor: 10,
+                zero_point: 0,
+            }
+        );
+        assert_ne!(
+            ProximaDataType::QuantizedPQVector {
+                dimension: 8,
+                segments: 2,
+                bits: 8,
+            },
+            ProximaDataType::QuantizedPQVector {
+                dimension: 8,
+                segments: 4,
+                bits: 8,
+            }
+        );
+        assert_eq!(
+            ProximaDataType::SparseVector {
+                max_dimension: None
+            },
+            ProximaDataType::SparseVector {
+                max_dimension: None
+            }
+        );
+    }
 }

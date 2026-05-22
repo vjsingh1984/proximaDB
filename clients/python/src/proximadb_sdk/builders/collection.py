@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 
 from ..models import (
     CollectionConfig,
+    CompressionType,
     DistanceMetric,
     IndexingAlgorithm,
     StorageEngine,

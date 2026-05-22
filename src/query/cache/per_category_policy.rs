@@ -123,12 +123,18 @@ impl PerCategoryPolicy {
             .into_iter()
             .map(|(k, v)| (k.to_string(), v))
             .collect();
-        Self { table, fallback: CategoryPolicy::fallback() }
+        Self {
+            table,
+            fallback: CategoryPolicy::fallback(),
+        }
     }
 
     /// Build a policy from a custom table — used by tenant overrides.
     pub fn from_table(table: HashMap<String, CategoryPolicy>) -> Self {
-        Self { table, fallback: CategoryPolicy::fallback() }
+        Self {
+            table,
+            fallback: CategoryPolicy::fallback(),
+        }
     }
 
     /// Look up the policy for a category. Unknown categories return the
@@ -174,16 +180,30 @@ mod tests {
     fn code_has_high_threshold_and_long_ttl() {
         let p = PerCategoryPolicy::with_defaults();
         let code = p.lookup("code");
-        assert!(code.similarity_threshold >= 0.9, "code threshold {} too low", code.similarity_threshold);
-        assert!(code.ttl >= Duration::from_secs(7 * 24 * 3600), "code TTL too short");
+        assert!(
+            code.similarity_threshold >= 0.9,
+            "code threshold {} too low",
+            code.similarity_threshold
+        );
+        assert!(
+            code.ttl >= Duration::from_secs(7 * 24 * 3600),
+            "code TTL too short"
+        );
     }
 
     #[test]
     fn conversational_has_low_threshold_and_short_ttl() {
         let p = PerCategoryPolicy::with_defaults();
         let convo = p.lookup("conversational");
-        assert!(convo.similarity_threshold <= 0.80, "conversational threshold {} too high", convo.similarity_threshold);
-        assert!(convo.ttl <= Duration::from_secs(6 * 3600), "conversational TTL too long");
+        assert!(
+            convo.similarity_threshold <= 0.80,
+            "conversational threshold {} too high",
+            convo.similarity_threshold
+        );
+        assert!(
+            convo.ttl <= Duration::from_secs(6 * 3600),
+            "conversational TTL too long"
+        );
     }
 
     #[test]
@@ -227,10 +247,14 @@ mod tests {
         // Bounded-cardinality invariant — the label must be a `&'static str`
         // so Prometheus metric registration can use it without allocation.
         let p = PerCategoryPolicy::with_defaults();
-        let labels: Vec<&'static str> = ["code", "docs", "conversational", "specialized", "volatile"]
-            .iter()
-            .map(|name| p.lookup(name).prom_label)
-            .collect();
-        assert_eq!(labels, vec!["code", "docs", "conversational", "specialized", "volatile"]);
+        let labels: Vec<&'static str> =
+            ["code", "docs", "conversational", "specialized", "volatile"]
+                .iter()
+                .map(|name| p.lookup(name).prom_label)
+                .collect();
+        assert_eq!(
+            labels,
+            vec!["code", "docs", "conversational", "specialized", "volatile"]
+        );
     }
 }

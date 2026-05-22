@@ -1047,4 +1047,211 @@ mod tests {
         let stats = scheduler.get_stats().await;
         assert_eq!(stats.canceled, 1);
     }
+
+    #[test]
+    fn operation_type_display_status_and_result_shapes_cover_all_variants() {
+        assert_eq!(
+            OperationType::IndexOptimization.to_string(),
+            "index_optimization"
+        );
+        assert_eq!(
+            OperationType::StatsCollection.to_string(),
+            "stats_collection"
+        );
+        assert_eq!(OperationType::HealthCheck.to_string(), "health_check");
+
+        for status in [
+            OperationStatus::Pending,
+            OperationStatus::Running,
+            OperationStatus::Completed,
+            OperationStatus::Failed,
+            OperationStatus::Canceled,
+            OperationStatus::Skipped,
+        ] {
+            assert!(!format!("{:?}", status).is_empty());
+        }
+
+        let result = OperationResult {
+            operation_id: "op".to_string(),
+            success: false,
+            duration_ms: 42,
+            error: Some("failed".to_string()),
+            output: HashMap::from([("k".to_string(), "v".to_string())]),
+        };
+        assert_eq!(result.operation_id, "op");
+        assert!(!result.success);
+        assert_eq!(result.duration_ms, 42);
+        assert_eq!(result.error.as_deref(), Some("failed"));
+        assert_eq!(result.output.get("k"), Some(&"v".to_string()));
+    }
+
+    #[tokio::test]
+    async fn scheduler_lifecycle_queue_full_schedule_helpers_and_uptime_are_covered() {
+        let disabled = AutoScheduler::new(AutoSchedulerConfig {
+            enabled: false,
+            ..AutoSchedulerConfig::default()
+        });
+        disabled.start().await.unwrap();
+        assert!(disabled.started_at.read().await.is_none());
+
+        let scheduler = AutoScheduler::new(AutoSchedulerConfig {
+            max_queue_size: 1,
+            ..AutoSchedulerConfig::default()
+        });
+        scheduler.pause().await;
+        assert!(!*scheduler.is_running.read().await);
+        scheduler.resume().await;
+        assert!(*scheduler.is_running.read().await);
+        scheduler.stop().await.unwrap();
+        assert!(!*scheduler.is_running.read().await);
+
+        *scheduler.started_at.write().await = Some(Utc::now() - Duration::seconds(2));
+        let first = scheduler
+            .schedule_compaction("c1", OperationPriority::High)
+            .await
+            .unwrap();
+        assert!(first.starts_with("op_"));
+        let full = scheduler
+            .schedule_flush("c1", OperationPriority::High)
+            .await;
+        assert!(full.unwrap_err().to_string().contains("queue is full"));
+
+        let stats = scheduler.get_stats().await;
+        assert_eq!(stats.total_scheduled, 1);
+        assert_eq!(stats.pending, 1);
+        assert!(stats.uptime_secs >= 1);
+
+        assert!(!scheduler.cancel("missing").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn workload_metrics_history_and_trigger_paths_are_covered() {
+        let current_hour = Utc::now().hour() as u8;
+        let scheduler = AutoScheduler::new(AutoSchedulerConfig {
+            idle_threshold_ops_per_sec: 50.0,
+            low_activity_hours: vec![current_hour],
+            flush_policy: FlushPolicy {
+                memory_threshold_percent: 50.0,
+                ..FlushPolicy::default()
+            },
+            ..AutoSchedulerConfig::default()
+        });
+
+        for i in 0..65 {
+            scheduler
+                .update_metrics(SystemMetrics {
+                    ops_per_second: i as f64,
+                    memory_usage_percent: 25.0,
+                    disk_usage_percent: 40.0,
+                    active_io_operations: i,
+                    cpu_usage_percent: 10.0,
+                    collected_at: Utc::now(),
+                })
+                .await;
+        }
+        assert_eq!(scheduler.metrics_history.read().await.len(), 60);
+        let analysis = scheduler.get_workload_analysis().await;
+        assert!(analysis.peak_ops_per_sec >= 64.0);
+        assert!(analysis.avg_ops_per_sec > 0.0);
+        assert!(analysis.is_low_activity_window);
+        assert!(analysis.analyzed_at <= Utc::now());
+
+        assert!(
+            scheduler
+                .should_trigger_flush(&SystemMetrics {
+                    memory_usage_percent: 80.0,
+                    ..SystemMetrics::default()
+                })
+                .await
+        );
+        assert!(
+            !scheduler
+                .should_trigger_compaction(&SystemMetrics::default())
+                .await
+        );
+
+        scheduler.check_scheduled_triggers().await;
+        let pending = scheduler.get_stats().await.pending;
+        assert!(pending >= 2);
+    }
+
+    #[tokio::test]
+    async fn process_pending_completions_periodic_history_and_execute_branches_are_covered() {
+        let scheduler = AutoScheduler::new(AutoSchedulerConfig {
+            max_concurrent_operations: 2,
+            ..AutoSchedulerConfig::default()
+        });
+
+        let future = ScheduledOperation {
+            id: "future".to_string(),
+            operation_type: OperationType::Backup,
+            priority: OperationPriority::Critical,
+            collection_id: None,
+            scheduled_at: Utc::now(),
+            run_after: Utc::now() + Duration::hours(1),
+            deadline: Some(Utc::now() + Duration::hours(2)),
+            status: OperationStatus::Pending,
+            retry_count: 1,
+            max_retries: 5,
+            context: HashMap::from([("kind".to_string(), "future".to_string())]),
+        };
+        scheduler.schedule(future.clone()).await.unwrap();
+        scheduler.process_pending_operations().await;
+        assert_eq!(scheduler.get_stats().await.pending, 1);
+
+        let ready = scheduler
+            .create_operation(
+                OperationType::HealthCheck,
+                OperationPriority::Critical,
+                None,
+            )
+            .await
+            .unwrap();
+        scheduler.schedule(ready).await.unwrap();
+        scheduler.process_pending_operations().await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(20)).await;
+        scheduler.process_pending_operations().await;
+
+        let stats = scheduler.get_stats().await;
+        assert!(stats.completed >= 1);
+        assert!(stats.avg_duration_ms >= 0.0);
+        assert!(scheduler.completed_history.read().await.len() >= 1);
+
+        assert_eq!(
+            scheduler
+                .get_last_operation_time(OperationType::HealthCheck)
+                .await
+                .date_naive(),
+            Utc::now().date_naive()
+        );
+        assert!(
+            scheduler
+                .get_last_operation_time(OperationType::StatsCollection)
+                .await
+                < Utc::now()
+        );
+
+        scheduler.schedule_periodic_operations().await;
+        assert!(scheduler.get_stats().await.pending >= 1);
+
+        for op_type in [
+            OperationType::Compaction,
+            OperationType::Flush,
+            OperationType::IndexOptimization,
+            OperationType::StatsCollection,
+            OperationType::Backup,
+            OperationType::HealthCheck,
+        ] {
+            AutoScheduler::execute_operation(op_type, Some("collection"))
+                .await
+                .unwrap();
+        }
+
+        let deadline_delta = future.deadline.unwrap() - future.run_after;
+        assert!(deadline_delta >= Duration::hours(1));
+        assert!(deadline_delta < Duration::hours(1) + Duration::seconds(1));
+        assert_eq!(future.retry_count, 1);
+        assert_eq!(future.max_retries, 5);
+        assert_eq!(future.context.get("kind"), Some(&"future".to_string()));
+    }
 }

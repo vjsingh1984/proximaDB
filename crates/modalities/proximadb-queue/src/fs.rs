@@ -138,3 +138,47 @@ impl QueueFs for LocalFs {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn local_fs_round_trips_append_read_metadata_list_rename_and_delete() {
+        let fs = LocalFs;
+        let dir = tempfile::tempdir().unwrap();
+        let partition_dir = dir.path().join("topic").join("0");
+        let segment = partition_dir.join("0000000000.qseg");
+
+        fs.create_dir_all(&partition_dir).await.unwrap();
+        fs.append(&segment, b"hello").await.unwrap();
+        fs.append(&segment, b" world").await.unwrap();
+        fs.fsync(&segment).await.unwrap();
+
+        assert_eq!(fs.read(&segment).await.unwrap(), b"hello world");
+        assert_eq!(fs.metadata(&segment).await.unwrap().size_bytes, 11);
+
+        let listed = fs.list(&partition_dir).await.unwrap();
+        assert!(listed.iter().any(|path| path == &segment));
+
+        let renamed = partition_dir.join("0000000001.qseg");
+        fs.rename(&segment, &renamed).await.unwrap();
+        assert_eq!(fs.read(&renamed).await.unwrap(), b"hello world");
+
+        fs.delete(&renamed).await.unwrap();
+        let error = fs.metadata(&renamed).await.unwrap_err();
+        assert!(error.to_string().contains("metadata"));
+    }
+
+    #[tokio::test]
+    async fn local_fs_surfaces_context_on_missing_paths() {
+        let fs = LocalFs;
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.qseg");
+
+        let error = fs.read(&missing).await.unwrap_err();
+
+        assert!(error.to_string().contains("read"));
+        assert!(error.to_string().contains("missing.qseg"));
+    }
+}

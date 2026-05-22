@@ -135,7 +135,10 @@ mod tests {
     use tonic::Code;
 
     fn assert_unimplemented<T>(result: Result<Response<T>, Status>, expected: &str) {
-        let err = result.expect_err("streaming service should reject unsupported RPC");
+        let err = match result {
+            Ok(_) => panic!("streaming service should reject unsupported RPC"),
+            Err(err) => err,
+        };
         assert_eq!(err.code(), Code::Unimplemented);
         assert!(err.message().contains(expected));
     }

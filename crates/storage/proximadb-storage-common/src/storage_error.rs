@@ -599,6 +599,8 @@ mod tests {
         assert!(StorageErrorKind::Network.is_retryable());
         assert!(StorageErrorKind::Timeout.is_retryable());
         assert!(StorageErrorKind::LockFailed.is_retryable());
+        assert!(StorageErrorKind::Conflict.is_retryable());
+        assert!(StorageErrorKind::QueueFull.is_retryable());
 
         assert!(!StorageErrorKind::Corruption.is_retryable());
         assert!(!StorageErrorKind::NotFound.is_retryable());
@@ -621,6 +623,8 @@ mod tests {
         assert!(StorageErrorKind::CapacityExceeded.is_resource_limit());
         assert!(StorageErrorKind::DiskFull.is_resource_limit());
         assert!(StorageErrorKind::MemoryLimitExceeded.is_resource_limit());
+        assert!(StorageErrorKind::TooManyOpenFiles.is_resource_limit());
+        assert!(StorageErrorKind::QueueFull.is_resource_limit());
 
         assert!(!StorageErrorKind::Io.is_resource_limit());
     }
@@ -632,7 +636,81 @@ mod tests {
         assert_eq!(StorageErrorKind::CapacityExceeded.http_status_code(), 507);
         assert_eq!(StorageErrorKind::Conflict.http_status_code(), 409);
         assert_eq!(StorageErrorKind::NotSupported.http_status_code(), 501);
+        assert_eq!(
+            StorageErrorKind::InvalidConfiguration.http_status_code(),
+            400
+        );
+        assert_eq!(
+            StorageErrorKind::MissingConfiguration.http_status_code(),
+            400
+        );
+        assert_eq!(StorageErrorKind::LockFailed.http_status_code(), 409);
+        assert_eq!(StorageErrorKind::DiskFull.http_status_code(), 507);
+        assert_eq!(
+            StorageErrorKind::MemoryLimitExceeded.http_status_code(),
+            507
+        );
+        assert_eq!(StorageErrorKind::QueueFull.http_status_code(), 507);
+        assert_eq!(StorageErrorKind::Timeout.http_status_code(), 504);
         assert_eq!(StorageErrorKind::Internal.http_status_code(), 500);
+    }
+
+    #[test]
+    fn test_storage_error_kind_display_all_variants() {
+        let expected = [
+            (StorageErrorKind::Io, "I/O error"),
+            (StorageErrorKind::NotFound, "not found"),
+            (StorageErrorKind::PermissionDenied, "permission denied"),
+            (StorageErrorKind::DiskFull, "disk full"),
+            (StorageErrorKind::Network, "network error"),
+            (StorageErrorKind::Timeout, "timeout"),
+            (StorageErrorKind::Corruption, "data corruption"),
+            (StorageErrorKind::WalCorruption, "WAL corruption"),
+            (StorageErrorKind::IndexCorruption, "index corruption"),
+            (StorageErrorKind::ManifestCorruption, "manifest corruption"),
+            (StorageErrorKind::CapacityExceeded, "capacity exceeded"),
+            (StorageErrorKind::TooManyOpenFiles, "too many open files"),
+            (
+                StorageErrorKind::MemoryLimitExceeded,
+                "memory limit exceeded",
+            ),
+            (StorageErrorKind::QueueFull, "queue full"),
+            (
+                StorageErrorKind::InvalidConfiguration,
+                "invalid configuration",
+            ),
+            (
+                StorageErrorKind::MissingConfiguration,
+                "missing configuration",
+            ),
+            (
+                StorageErrorKind::IncompatibleConfiguration,
+                "incompatible configuration",
+            ),
+            (StorageErrorKind::CompactionFailed, "compaction failed"),
+            (StorageErrorKind::FlushFailed, "flush failed"),
+            (StorageErrorKind::RecoveryFailed, "recovery failed"),
+            (StorageErrorKind::BackupFailed, "backup failed"),
+            (StorageErrorKind::RestoreFailed, "restore failed"),
+            (StorageErrorKind::NotSupported, "not supported"),
+            (StorageErrorKind::Canceled, "canceled"),
+            (StorageErrorKind::LockFailed, "lock acquisition failed"),
+            (StorageErrorKind::Deadlock, "deadlock detected"),
+            (StorageErrorKind::Conflict, "conflict"),
+            (StorageErrorKind::StaleRead, "stale read"),
+            (StorageErrorKind::SstEngine, "SST engine error"),
+            (StorageErrorKind::ViperEngine, "VIPER engine error"),
+            (StorageErrorKind::HelixEngine, "HELIX engine error"),
+            (StorageErrorKind::NovaEngine, "NOVA engine error"),
+            (StorageErrorKind::SwiftEngine, "SWIFT engine error"),
+            (StorageErrorKind::RaptorEngine, "RAPTOR engine error"),
+            (StorageErrorKind::Internal, "internal error"),
+            (StorageErrorKind::Unknown, "unknown error"),
+        ];
+
+        for (kind, display) in expected {
+            assert_eq!(kind.to_string(), display);
+        }
     }
 
     #[test]
@@ -652,6 +730,27 @@ mod tests {
 
         let capacity = StorageError::capacity_exceeded(100, 50);
         assert_eq!(capacity.kind, StorageErrorKind::CapacityExceeded);
+
+        let flush = StorageError::flush_failed("c1", "flush bad");
+        assert_eq!(flush.kind(), StorageErrorKind::FlushFailed);
+        assert_eq!(flush.context.operation.as_deref(), Some("flush"));
+
+        let compaction = StorageError::compaction_failed("c1", "compact bad");
+        assert_eq!(compaction.kind, StorageErrorKind::CompactionFailed);
+        assert_eq!(compaction.context.collection_id.as_deref(), Some("c1"));
+
+        let recovery = StorageError::recovery_failed("replay bad");
+        assert_eq!(recovery.context.operation.as_deref(), Some("recovery"));
+
+        let backup = StorageError::backup_failed("snapshot bad");
+        assert_eq!(backup.context.operation.as_deref(), Some("backup"));
+
+        let lock = StorageError::lock_failed("manifest");
+        assert_eq!(lock.kind, StorageErrorKind::LockFailed);
+        assert!(lock.message.contains("manifest"));
+
+        let internal = StorageError::internal("bug");
+        assert_eq!(internal.kind, StorageErrorKind::Internal);
     }
 
     #[test]
@@ -662,15 +761,51 @@ mod tests {
 
         let viper_err = StorageError::engine_error("VIPER", "Parquet decode failed");
         assert_eq!(viper_err.kind, StorageErrorKind::ViperEngine);
+
+        assert_eq!(
+            StorageError::engine_error("HELIX", "hilbert failed").kind,
+            StorageErrorKind::HelixEngine
+        );
+        assert_eq!(
+            StorageError::engine_error("NOVA", "pax failed").kind,
+            StorageErrorKind::NovaEngine
+        );
+        assert_eq!(
+            StorageError::engine_error("SWIFT", "index failed").kind,
+            StorageErrorKind::SwiftEngine
+        );
+        assert_eq!(
+            StorageError::engine_error("RAPTOR", "adaptive failed").kind,
+            StorageErrorKind::RaptorEngine
+        );
+        assert_eq!(
+            StorageError::engine_error("unknown", "engine failed").kind,
+            StorageErrorKind::Unknown
+        );
     }
 
     #[test]
     fn test_error_display() {
-        let err = StorageError::flush_failed("my_collection", "Disk full");
+        let err = StorageError::flush_failed("my_collection", "Disk full").with_context(
+            ErrorContext::new()
+                .with_file_path("/data/file")
+                .with_collection("my_collection")
+                .with_lsn(7),
+        );
         let display = format!("{}", err);
         assert!(display.contains("flush failed"));
         assert!(display.contains("Disk full"));
         assert!(display.contains("my_collection"));
+        assert!(display.contains("/data/file"));
+        assert!(display.contains("LSN: 7"));
+
+        let sourced = StorageError::io(
+            "read failed",
+            Some(io::Error::new(io::ErrorKind::Other, "disk said no")),
+        );
+        let display = sourced.to_string();
+        assert!(display.contains("caused by: disk said no"));
+        assert!(std::error::Error::source(&sourced).is_none());
     }
 
     #[test]
@@ -678,6 +813,19 @@ mod tests {
         let io_err = io::Error::new(io::ErrorKind::NotFound, "File missing");
         let storage_err: StorageError = io_err.into();
         assert_eq!(storage_err.kind, StorageErrorKind::NotFound);
+
+        let storage_err: StorageError =
+            io::Error::new(io::ErrorKind::PermissionDenied, "denied").into();
+        assert_eq!(storage_err.kind, StorageErrorKind::PermissionDenied);
+
+        let storage_err: StorageError = io::Error::new(io::ErrorKind::TimedOut, "slow").into();
+        assert_eq!(storage_err.kind, StorageErrorKind::Timeout);
+
+        let storage_err: StorageError = io::Error::new(io::ErrorKind::WouldBlock, "busy").into();
+        assert_eq!(storage_err.kind, StorageErrorKind::LockFailed);
+
+        let storage_err: StorageError = io::Error::new(io::ErrorKind::Other, "other").into();
+        assert_eq!(storage_err.kind, StorageErrorKind::Io);
     }
 
     #[test]
@@ -696,6 +844,80 @@ mod tests {
             proximadb_kernel::error::StorageError::AlreadyExists("events".to_string()).into();
         assert_eq!(storage_err.kind, StorageErrorKind::Conflict);
         assert_eq!(storage_err.message, "Already exists: events");
+
+        let cases = vec![
+            (
+                proximadb_kernel::error::StorageError::SstEngine("sst".to_string()),
+                StorageErrorKind::SstEngine,
+                "sst".to_string(),
+            ),
+            (
+                proximadb_kernel::error::StorageError::Mmap("map".to_string()),
+                StorageErrorKind::Io,
+                "MMAP: map".to_string(),
+            ),
+            (
+                proximadb_kernel::error::StorageError::Serialization("ser".to_string()),
+                StorageErrorKind::Internal,
+                "Serialization: ser".to_string(),
+            ),
+            (
+                proximadb_kernel::error::StorageError::SerializationError("ser2".to_string()),
+                StorageErrorKind::Internal,
+                "Serialization: ser2".to_string(),
+            ),
+            (
+                proximadb_kernel::error::StorageError::Corruption("bad".to_string()),
+                StorageErrorKind::Corruption,
+                "bad".to_string(),
+            ),
+            (
+                proximadb_kernel::error::StorageError::NotFound("missing".to_string()),
+                StorageErrorKind::NotFound,
+                "missing".to_string(),
+            ),
+            (
+                proximadb_kernel::error::StorageError::KeyNotFound("key".to_string()),
+                StorageErrorKind::NotFound,
+                "key".to_string(),
+            ),
+            (
+                proximadb_kernel::error::StorageError::IndexError("index".to_string()),
+                StorageErrorKind::IndexCorruption,
+                "index".to_string(),
+            ),
+            (
+                proximadb_kernel::error::StorageError::InvalidDimension {
+                    expected: 3,
+                    actual: 4,
+                },
+                StorageErrorKind::InvalidConfiguration,
+                "Dimension mismatch: expected 3, got 4".to_string(),
+            ),
+            (
+                proximadb_kernel::error::StorageError::TransactionCommitFailed("txn".to_string()),
+                StorageErrorKind::Internal,
+                "Transaction commit failed: txn".to_string(),
+            ),
+        ];
+
+        for (kernel_error, expected_kind, expected_message) in cases {
+            let storage_err: StorageError = kernel_error.into();
+            assert_eq!(storage_err.kind, expected_kind);
+            assert_eq!(storage_err.message, expected_message);
+        }
+
+        let storage_err: StorageError = proximadb_kernel::error::StorageError::DiskIO(
+            io::Error::new(io::ErrorKind::Other, "disk"),
+        )
+        .into();
+        assert_eq!(storage_err.kind, StorageErrorKind::Io);
+        assert_eq!(storage_err.source.as_deref(), Some("disk"));
+
+        let storage_err: StorageError =
+            proximadb_kernel::error::StorageError::MetadataError(anyhow::anyhow!("meta")).into();
+        assert_eq!(storage_err.kind, StorageErrorKind::Internal);
+        assert_eq!(storage_err.message, "meta");
     }
 
     #[test]
@@ -714,5 +936,21 @@ mod tests {
         assert_eq!(ctx.operation.as_deref(), Some("compaction"));
         assert_eq!(ctx.engine.as_deref(), Some("SST"));
         assert_eq!(ctx.extra.get("level").map(|s| s.as_str()), Some("2"));
+    }
+
+    #[test]
+    fn test_from_anyhow_and_storage_result_alias() {
+        let original = StorageError::not_found("missing")
+            .with_context(ErrorContext::new().with_collection("c1"));
+        let converted: StorageError = anyhow::Error::new(original).into();
+        assert_eq!(converted.kind, StorageErrorKind::NotFound);
+        assert_eq!(converted.context.collection_id.as_deref(), Some("c1"));
+
+        let converted: StorageError = anyhow::anyhow!("generic").into();
+        assert_eq!(converted.kind, StorageErrorKind::Unknown);
+        assert_eq!(converted.message, "generic");
+
+        let result: StorageResult<u32> = Ok(42);
+        assert_eq!(result.unwrap(), 42);
     }
 }

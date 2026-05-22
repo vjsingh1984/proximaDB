@@ -697,3 +697,153 @@ where
         deserializer.deserialize_map(GenericResultVisitor(PhantomData))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generic_config_validates_defaults_and_round_trips_json() {
+        let config = GenericConfig::new(serde_json::json!({"mode": "test"}));
+        assert!(config.validate().is_ok());
+
+        let mut rules = HashMap::new();
+        rules.insert("required".to_string(), String::new());
+        let invalid = config.clone().with_validation(rules);
+        assert_eq!(invalid.validate().unwrap_err(), "Validation failed: ");
+
+        let encoded = serde_json::to_string(&config).unwrap();
+        let decoded: GenericConfig<serde_json::Value> = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded.data, serde_json::json!({"mode": "test"}));
+        assert!(decoded.validation_rules.is_empty());
+
+        let with_unknown: GenericConfig<u32> =
+            serde_json::from_str(r#"{"data":7,"extra":true}"#).unwrap();
+        assert_eq!(with_unknown.data, 7);
+        assert!(serde_json::from_str::<GenericConfig<u32>>(r#"{"validation_rules":{}}"#).is_err());
+        assert!(serde_json::from_str::<GenericConfig<u32>>(r#"{"data":1,"data":2}"#).is_err());
+    }
+
+    #[test]
+    fn generic_metadata_exposes_base_metadata_and_manual_serde_defaults() {
+        let metadata = GenericMetadata::new("meta-1".to_string(), 42_u32)
+            .with_tags(vec!["hot".to_string()])
+            .with_properties(HashMap::from([(
+                "owner".to_string(),
+                serde_json::json!("alice"),
+            )]));
+
+        assert_eq!(metadata.id(), "meta-1");
+        assert_eq!(metadata.version(), 1);
+        assert_eq!(metadata.created_at(), metadata.timestamp);
+        assert_eq!(metadata.updated_at(), metadata.updated_at);
+        assert_eq!(metadata.tags, vec!["hot"]);
+        assert_eq!(metadata.properties["owner"], serde_json::json!("alice"));
+
+        let encoded = serde_json::to_string(&metadata).unwrap();
+        let decoded: GenericMetadata<u32> = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded.id, "meta-1");
+        assert_eq!(decoded.data, 42);
+        assert_eq!(decoded.version, 1);
+        assert_eq!(decoded.tags, vec!["hot"]);
+
+        let minimal = serde_json::json!({
+            "id": "meta-2",
+            "data": 11,
+            "timestamp": metadata.timestamp,
+        });
+        let decoded_minimal: GenericMetadata<u32> = serde_json::from_value(minimal).unwrap();
+        assert_eq!(decoded_minimal.version, 1);
+        assert_eq!(decoded_minimal.updated_at, decoded_minimal.timestamp);
+        assert!(decoded_minimal.tags.is_empty());
+        assert!(decoded_minimal.properties.is_empty());
+
+        assert!(serde_json::from_str::<GenericMetadata<u32>>(r#"{"data":1}"#).is_err());
+        assert!(
+            serde_json::from_str::<GenericMetadata<u32>>(&format!(
+                r#"{{"id":"a","id":"b","data":1,"timestamp":"{}"}}"#,
+                metadata.timestamp.to_rfc3339()
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn generic_stats_aggregate_reset_update_and_round_trip() {
+        let mut stats = GenericStats::new(10_u32);
+        assert_eq!(stats.collection_count, 1);
+        assert_eq!(stats.reset_count, 0);
+        assert_eq!(stats.timestamp(), stats.timestamp);
+
+        stats.update_data(20);
+        assert_eq!(stats.data, 20);
+        stats.aggregate(&GenericStats {
+            data: 99,
+            timestamp: Utc::now(),
+            collection_count: 4,
+            reset_count: 0,
+        });
+        assert_eq!(stats.collection_count, 5);
+        stats.reset();
+        assert_eq!(stats.collection_count, 0);
+        assert_eq!(stats.reset_count, 1);
+
+        let encoded = serde_json::to_string(&stats).unwrap();
+        let decoded: GenericStats<u32> = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded.data, 20);
+        assert_eq!(decoded.collection_count, 0);
+        assert_eq!(decoded.reset_count, 1);
+
+        let minimal = serde_json::json!({
+            "data": 5,
+            "timestamp": Utc::now(),
+        });
+        let decoded_minimal: GenericStats<u32> = serde_json::from_value(minimal).unwrap();
+        assert_eq!(decoded_minimal.collection_count, 0);
+        assert_eq!(decoded_minimal.reset_count, 0);
+
+        assert!(serde_json::from_str::<GenericStats<u32>>(r#"{"collection_count":1}"#).is_err());
+        assert!(
+            serde_json::from_str::<GenericStats<u32>>(&format!(
+                r#"{{"data":1,"timestamp":"{}","reset_count":1,"reset_count":2}}"#,
+                Utc::now().to_rfc3339()
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn generic_result_success_error_metadata_and_manual_serde_defaults() {
+        let success = GenericResult::success("ok".to_string()).with_processing_time(33);
+        assert!(success.is_success());
+        assert_eq!(success.data().map(String::as_str), Some("ok"));
+        assert_eq!(success.error(), None);
+        assert_eq!(success.processing_time_us(), Some(33));
+
+        let error: GenericResult<String> =
+            GenericResult::error().with_error_code("E_BAD".to_string());
+        assert!(!error.is_success());
+        assert_eq!(error.data(), None);
+        assert_eq!(error.error(), Some("E_BAD"));
+
+        let encoded = serde_json::to_string(&success).unwrap();
+        let decoded: GenericResult<String> = serde_json::from_str(&encoded).unwrap();
+        assert!(decoded.success);
+        assert_eq!(decoded.data.as_deref(), Some("ok"));
+        assert_eq!(decoded.processing_time_us, Some(33));
+        assert!(decoded.metadata.is_empty());
+
+        let minimal: GenericResult<u32> = serde_json::from_str(r#"{"success":false}"#).unwrap();
+        assert!(!minimal.success);
+        assert_eq!(minimal.data, None);
+        assert_eq!(minimal.error_code, None);
+        assert_eq!(minimal.processing_time_us, None);
+        assert!(minimal.metadata.is_empty());
+
+        assert!(serde_json::from_str::<GenericResult<u32>>(r#"{"data":1}"#).is_err());
+        assert!(
+            serde_json::from_str::<GenericResult<u32>>(r#"{"success":true,"success":false}"#)
+                .is_err()
+        );
+    }
+}

@@ -124,3 +124,49 @@ impl FlightService for ProximaFlightService {
         Err(Status::unimplemented("Arrow Flight migration in progress"))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::noop_unified_handlers;
+    use tonic::Code;
+
+    fn assert_unimplemented<T>(result: Result<Response<T>, Status>) {
+        let err = match result {
+            Ok(_) => panic!("Arrow Flight placeholder should reject RPC"),
+            Err(err) => err,
+        };
+        assert_eq!(err.code(), Code::Unimplemented);
+        assert!(err.message().contains("Arrow Flight migration in progress"));
+    }
+
+    #[tokio::test]
+    async fn placeholder_flight_service_rejects_unary_and_output_streaming_rpcs() {
+        let service = ProximaFlightService::new(noop_unified_handlers());
+        let _server = ProximaFlightService::new(noop_unified_handlers()).into_server();
+
+        assert_unimplemented(
+            service
+                .list_flights(Request::new(Criteria::default()))
+                .await,
+        );
+        assert_unimplemented(
+            service
+                .get_flight_info(Request::new(FlightDescriptor::default()))
+                .await,
+        );
+        assert_unimplemented(
+            service
+                .poll_flight_info(Request::new(FlightDescriptor::default()))
+                .await,
+        );
+        assert_unimplemented(
+            service
+                .get_schema(Request::new(FlightDescriptor::default()))
+                .await,
+        );
+        assert_unimplemented(service.do_get(Request::new(Ticket::default())).await);
+        assert_unimplemented(service.do_action(Request::new(Action::default())).await);
+        assert_unimplemented(service.list_actions(Request::new(Empty {})).await);
+    }
+}

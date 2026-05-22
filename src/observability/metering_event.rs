@@ -132,10 +132,7 @@ pub fn build_kru(inputs: &MeteringInputs<'_>) -> MeteringEvent {
         "filter_strategy".into(),
         json!(strategy_label(&trace.filter_strategy)),
     );
-    metadata.insert(
-        "index_route".into(),
-        json!(route_label(&trace.index_route)),
-    );
+    metadata.insert("index_route".into(), json!(route_label(&trace.index_route)));
     metadata.insert(
         "cache_result".into(),
         json!(cache_result_label(&trace.cache_result)),

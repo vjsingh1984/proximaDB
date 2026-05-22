@@ -343,3 +343,176 @@ pub fn create_collection_router() -> Router<RestAppState> {
             get(get_collection).delete(delete_collection),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{ApiCall, RecordingApiPort};
+
+    fn tenant() -> Extension<TenantContext> {
+        Extension(TenantContext::new("tenant-a"))
+    }
+
+    fn state(port: std::sync::Arc<RecordingApiPort>) -> State<RestAppState> {
+        State(RestAppState::new(port))
+    }
+
+    fn request_with_config() -> CollectionRequest {
+        CollectionRequest {
+            operation: CollectionOperation::CollectionCreate as i32,
+            collection_id: Some("docs".to_string()),
+            collection_config: Some(proximadb_proto::v1::CollectionConfig {
+                name: "docs".to_string(),
+                dimension: 128,
+                ..proximadb_proto::v1::CollectionConfig::default()
+            }),
+            query_params: Default::default(),
+            options: Default::default(),
+            migration_config: Default::default(),
+        }
+    }
+
+    #[test]
+    fn proto_enum_workarounds_normalize_flat_wrapped_string_and_numeric_values() {
+        let mut request = request_with_config();
+        apply_proto_enum_workarounds(
+            &mut request,
+            &serde_json::json!({
+                "distance_metric": "manhattan",
+                "storage_engine": "viper"
+            }),
+        );
+        let config = request.collection_config.as_ref().unwrap();
+        assert_eq!(config.distance_metric, Some(5));
+        assert_eq!(config.storage_engine, Some(1));
+
+        apply_proto_enum_workarounds(
+            &mut request,
+            &serde_json::json!({
+                "collection_config": {
+                    "distance_metric": 2,
+                    "storage_engine": 3
+                }
+            }),
+        );
+        let config = request.collection_config.as_ref().unwrap();
+        assert_eq!(config.distance_metric, Some(2));
+        assert_eq!(config.storage_engine, Some(3));
+    }
+
+    #[test]
+    fn proto_enum_workarounds_default_unknown_names_and_ignore_missing_config() {
+        let mut request = request_with_config();
+        apply_proto_enum_workarounds(
+            &mut request,
+            &serde_json::json!({
+                "distance_metric": "unknown_metric",
+                "storage_engine": "unknown_engine"
+            }),
+        );
+        let config = request.collection_config.as_ref().unwrap();
+        assert_eq!(config.distance_metric, Some(1));
+        assert_eq!(config.storage_engine, Some(2));
+
+        let mut no_config = CollectionRequest {
+            collection_config: None,
+            ..request_with_config()
+        };
+        apply_proto_enum_workarounds(&mut no_config, &serde_json::json!({"distance_metric": 7}));
+        assert!(no_config.collection_config.is_none());
+    }
+
+    #[tokio::test]
+    async fn collection_operation_applies_workarounds_and_routes_to_tenant_port() {
+        let port = RecordingApiPort::new();
+
+        let _ = collection_operation(
+            state(port.clone()),
+            tenant(),
+            Json(serde_json::to_value(request_with_config()).unwrap()),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            port.calls(),
+            vec![ApiCall::Collection {
+                operation: CollectionOperation::CollectionCreate as i32,
+                tenant_id: Some("tenant-a".to_string()),
+                collection_id: Some("docs".to_string()),
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn collection_handlers_validate_empty_ids_and_route_list_get_delete() {
+        let port = RecordingApiPort::new();
+
+        let get_empty = get_collection(Path("".to_string()), state(port.clone()), tenant())
+            .await
+            .into_response();
+        assert_eq!(get_empty.status(), StatusCode::BAD_REQUEST);
+
+        let delete_empty = delete_collection(Path("".to_string()), state(port.clone()), tenant())
+            .await
+            .into_response();
+        assert_eq!(delete_empty.status(), StatusCode::BAD_REQUEST);
+
+        let get_ok = get_collection(Path("docs".to_string()), state(port.clone()), tenant())
+            .await
+            .into_response();
+        assert_eq!(get_ok.status(), StatusCode::OK);
+
+        let list_ok = list_collections(
+            state(port.clone()),
+            tenant(),
+            Query(ListCollectionsQuery {
+                limit: Some(10),
+                offset: Some(5),
+                include_stats: Some(true),
+            }),
+        )
+        .await
+        .into_response();
+        assert_eq!(list_ok.status(), StatusCode::OK);
+
+        let delete_ok = delete_collection(Path("docs".to_string()), state(port.clone()), tenant())
+            .await
+            .into_response();
+        assert_eq!(delete_ok.status(), StatusCode::OK);
+
+        assert_eq!(
+            port.calls(),
+            vec![
+                ApiCall::Collection {
+                    operation: CollectionOperation::CollectionGet as i32,
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: Some("docs".to_string()),
+                },
+                ApiCall::Collection {
+                    operation: CollectionOperation::CollectionList as i32,
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: None,
+                },
+                ApiCall::Collection {
+                    operation: CollectionOperation::CollectionDelete as i32,
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: Some("docs".to_string()),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn collection_router_and_legacy_stubs_construct() {
+        let _router = create_collection_router();
+        let _catalog = CatalogHandler::default();
+        let _collection = CollectionHandler::new();
+        let response = CollectionResponse {
+            name: "docs".to_string(),
+            dimension: 128,
+            metric: "cosine".to_string(),
+        };
+        assert_eq!(response.name, "docs");
+    }
+}

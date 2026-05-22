@@ -40,7 +40,10 @@ pub struct Region {
 
 impl Region {
     pub fn new(tenant_id: impl Into<String>, category: impl Into<String>) -> Self {
-        Self { tenant_id: tenant_id.into(), category: category.into() }
+        Self {
+            tenant_id: tenant_id.into(),
+            category: category.into(),
+        }
     }
 }
 
@@ -84,7 +87,11 @@ struct RegionStats {
 
 impl RegionStats {
     fn new() -> Self {
-        Self { samples: 0, cost_sum: 0.0, last_update: Instant::now() }
+        Self {
+            samples: 0,
+            cost_sum: 0.0,
+            last_update: Instant::now(),
+        }
     }
 
     fn mean_cost(&self) -> f64 {
@@ -214,7 +221,10 @@ impl MismatchCostLearner {
         }
         let clamped = cost.clamp(0.0, 1.0);
         let mut state = self.inner.write().await;
-        let entry = state.per_region.entry(region).or_insert_with(RegionStats::new);
+        let entry = state
+            .per_region
+            .entry(region)
+            .or_insert_with(RegionStats::new);
         entry.samples += 1;
         entry.cost_sum += clamped;
         entry.last_update = Instant::now();
@@ -238,7 +248,11 @@ mod tests {
     use super::*;
 
     fn cfg(similarity_floor: f64, allowed_cost: f64) -> MismatchConfig {
-        MismatchConfig { similarity_floor, allowed_cost, decay_seconds: 3600 }
+        MismatchConfig {
+            similarity_floor,
+            allowed_cost,
+            decay_seconds: 3600,
+        }
     }
 
     #[tokio::test]
@@ -283,7 +297,10 @@ mod tests {
         }
         let decision = learner.decide(&r, 0.9).await;
         match decision {
-            MismatchDecision::Reject { reason, ucb_mismatch_cost } => {
+            MismatchDecision::Reject {
+                reason,
+                ucb_mismatch_cost,
+            } => {
                 assert_eq!(reason, "above_allowed_cost");
                 assert!(ucb_mismatch_cost > 0.1);
             }
@@ -303,19 +320,35 @@ mod tests {
             learner.observe(r.clone(), 0.1).await;
         }
         let snap_few = match learner.decide(&r, 0.9).await {
-            MismatchDecision::Accept { ucb_mismatch_cost, .. } => ucb_mismatch_cost,
-            MismatchDecision::Reject { ucb_mismatch_cost, .. } => ucb_mismatch_cost,
+            MismatchDecision::Accept {
+                ucb_mismatch_cost, ..
+            } => ucb_mismatch_cost,
+            MismatchDecision::Reject {
+                ucb_mismatch_cost, ..
+            } => ucb_mismatch_cost,
         };
         for _ in 0..500 {
             learner.observe(r.clone(), 0.1).await;
         }
         let snap_many = match learner.decide(&r, 0.9).await {
-            MismatchDecision::Accept { ucb_mismatch_cost, .. } => ucb_mismatch_cost,
-            MismatchDecision::Reject { ucb_mismatch_cost, .. } => ucb_mismatch_cost,
+            MismatchDecision::Accept {
+                ucb_mismatch_cost, ..
+            } => ucb_mismatch_cost,
+            MismatchDecision::Reject {
+                ucb_mismatch_cost, ..
+            } => ucb_mismatch_cost,
         };
-        assert!(snap_many < snap_few, "UCB should shrink with more data: {} -> {}", snap_few, snap_many);
+        assert!(
+            snap_many < snap_few,
+            "UCB should shrink with more data: {} -> {}",
+            snap_few,
+            snap_many
+        );
         // Mean is 0.1; with 500+ samples UCB should be within ~0.3.
-        assert!(snap_many < 0.3, "UCB too wide after 500 samples: {snap_many}");
+        assert!(
+            snap_many < 0.3,
+            "UCB too wide after 500 samples: {snap_many}"
+        );
     }
 
     #[tokio::test]

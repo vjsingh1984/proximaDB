@@ -1932,4 +1932,358 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn tokenize_covers_comments_literals_keywords_and_error_paths() -> Result<()> {
+        let parser = UQLParser::new();
+        let tokens = parser.tokenize(
+            "-- comment\n\
+             SELECT name != 'x', -3.5, 42 FROM docs.items \
+             WHERE a <= 1 AND b >= 2 OR c <> 3 AND $.path[0] CONTAINS \"z\";",
+        )?;
+
+        assert!(tokens.iter().any(|token| matches!(token, Token::Ne)));
+        assert!(tokens.iter().any(|token| matches!(token, Token::Lte)));
+        assert!(tokens.iter().any(|token| matches!(token, Token::Gte)));
+        assert!(
+            tokens.iter().any(
+                |token| matches!(token, Token::NumberLit(n) if (*n - -3.5).abs() < f64::EPSILON)
+            )
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|token| matches!(token, Token::IntegerLit(42)))
+        );
+        assert!(
+            tokens
+                .iter()
+                .any(|token| matches!(token, Token::StringLit(s) if s == "z"))
+        );
+        assert!(tokens.iter().any(|token| matches!(token, Token::Dollar)));
+        assert!(tokens.iter().any(|token| matches!(token, Token::Semicolon)));
+
+        let keyword_tokens = parser.tokenize(
+            "LEFT RIGHT FULL CROSS AS MULTIMODAL VECTOR DOCUMENT GRAPH LOGS METRICS \
+             EXPLAIN SIMILAR DISTANCE CONNECTED TRAVERSE PATH JSON_PATH EXISTS \
+             RRF INTERSECTION UNION RANKED LIKE IN BETWEEN IS NULL",
+        )?;
+        assert!(
+            keyword_tokens
+                .iter()
+                .any(|token| matches!(token, Token::Left))
+        );
+        assert!(
+            keyword_tokens
+                .iter()
+                .any(|token| matches!(token, Token::Right))
+        );
+        assert!(
+            keyword_tokens
+                .iter()
+                .any(|token| matches!(token, Token::Full))
+        );
+        assert!(
+            keyword_tokens
+                .iter()
+                .any(|token| matches!(token, Token::Cross))
+        );
+        assert!(
+            keyword_tokens
+                .iter()
+                .any(|token| matches!(token, Token::MultiModal))
+        );
+        assert!(
+            keyword_tokens
+                .iter()
+                .any(|token| matches!(token, Token::GraphPath))
+        );
+        assert!(
+            keyword_tokens
+                .iter()
+                .any(|token| matches!(token, Token::JsonPath))
+        );
+        assert!(
+            keyword_tokens
+                .iter()
+                .any(|token| matches!(token, Token::Ranked))
+        );
+
+        let err = parser.tokenize("SELECT @ FROM vectors.items").unwrap_err();
+        assert!(err.to_string().contains("Unexpected character"));
+        Ok(())
+    }
+
+    #[test]
+    fn parse_join_alias_offset_and_fusion_variants() -> Result<()> {
+        for (join_sql, expected) in [
+            (
+                "INNER JOIN documents.meta d ON v.id = d.id",
+                JoinType::Inner,
+            ),
+            ("LEFT JOIN documents.meta d ON v.id = d.id", JoinType::Left),
+            (
+                "RIGHT JOIN documents.meta d ON v.id = d.id",
+                JoinType::Right,
+            ),
+            ("FULL JOIN documents.meta d ON v.id = d.id", JoinType::Full),
+            (
+                "CROSS JOIN documents.meta d ON v.id = d.id",
+                JoinType::Cross,
+            ),
+            ("JOIN documents.meta d ON v.id = d.id", JoinType::Inner),
+        ] {
+            let mut parser = UQLParser::new();
+            let parsed = parser.parse(&format!(
+                "SELECT v.id AS id FROM vectors.items AS v {} OFFSET 7 FUSION UNION",
+                join_sql
+            ))?;
+            let UQLStatement::Select(select) = parsed else {
+                return Err(anyhow!("Expected SELECT statement"));
+            };
+            assert_eq!(select.columns, vec!["v.id AS id"]);
+            assert_eq!(select.from.alias.as_deref(), Some("v"));
+            assert_eq!(select.offset, Some(7));
+            assert_eq!(select.joins[0].join_type, expected);
+            assert!(matches!(select.fusion, Some(FusionStrategy::Union)));
+            assert!(matches!(
+                select.joins[0].condition,
+                JoinCondition::On { .. }
+            ));
+        }
+
+        for (fusion_sql, expected) in [
+            ("FUSION RRF", FusionStrategy::ReciprocalRankFusion { k: 60 }),
+            ("FUSION INTERSECTION", FusionStrategy::Intersection),
+            ("FUSION UNION", FusionStrategy::Union),
+            (
+                "FUSION RANKED",
+                FusionStrategy::RankedFusion {
+                    weights: HashMap::new(),
+                    normalize: true,
+                },
+            ),
+            (
+                "FUSION custom_blend",
+                FusionStrategy::Custom("custom_blend".to_string()),
+            ),
+        ] {
+            let mut parser = UQLParser::new();
+            let parsed = parser.parse(&format!("SELECT * FROM vectors.items {}", fusion_sql))?;
+            let UQLStatement::Select(select) = parsed else {
+                return Err(anyhow!("Expected SELECT statement"));
+            };
+            assert_eq!(
+                format!("{:?}", select.fusion.unwrap()),
+                format!("{:?}", expected)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_condition_variants_and_value_shapes() -> Result<()> {
+        let condition_cases = [
+            (
+                "SELECT * FROM vectors.items WHERE VECTOR_DISTANCE(embedding, ?) <= 0.42",
+                "vector_distance",
+            ),
+            (
+                "SELECT * FROM graph.items WHERE GRAPH_CONNECTED(src, 'RELATED_TO', dst)",
+                "graph_connected",
+            ),
+            (
+                "SELECT * FROM graph.items WHERE GRAPH_TRAVERSE(src, 99, 4)",
+                "graph_traverse",
+            ),
+            (
+                "SELECT * FROM docs.items WHERE $.items[0] IN ('a', 1, true, null)",
+                "json_path",
+            ),
+            (
+                "SELECT * FROM docs.items WHERE NOT (status <> 'deleted' OR flag = false)",
+                "nested_not",
+            ),
+            (
+                "SELECT * FROM docs.items WHERE EXISTS (SELECT * FROM docs.child WHERE child_id = ?)",
+                "exists",
+            ),
+        ];
+
+        for (sql, expected) in condition_cases {
+            let mut parser = UQLParser::new();
+            let parsed = parser.parse(sql)?;
+            let UQLStatement::Select(select) = parsed else {
+                return Err(anyhow!("Expected SELECT statement"));
+            };
+            let condition = &select
+                .where_clause
+                .ok_or_else(|| anyhow!("Expected where clause"))?
+                .conditions[0];
+            match (expected, condition) {
+                (
+                    "vector_distance",
+                    Condition::VectorDistance {
+                        max_distance,
+                        query_param,
+                        ..
+                    },
+                ) => {
+                    assert_eq!(*query_param, 0);
+                    assert_eq!(*max_distance, 0.42);
+                }
+                ("graph_connected", Condition::GraphConnected { edge_type, .. }) => {
+                    assert_eq!(edge_type, "RELATED_TO");
+                }
+                (
+                    "graph_traverse",
+                    Condition::GraphTraverse {
+                        edge_types, depth, ..
+                    },
+                ) => {
+                    assert!(edge_types.is_empty());
+                    assert_eq!(*depth, 4);
+                }
+                ("json_path", Condition::JsonPath { path, value, .. }) => {
+                    assert_eq!(path, "$.items[0]");
+                    assert!(matches!(value, Value::Array(values) if values.len() == 4));
+                }
+                ("nested_not", Condition::Not(inner)) => {
+                    assert!(matches!(inner.as_ref(), Condition::Nested { .. }));
+                }
+                ("exists", Condition::Exists(subquery)) => {
+                    assert_eq!(subquery.from.collection, "child");
+                }
+                other => return Err(anyhow!("Unexpected condition shape: {:?}", other)),
+            }
+        }
+
+        for (operator_sql, expected) in [
+            ("field = 'x'", ComparisonOperator::Eq),
+            ("field != 'x'", ComparisonOperator::Ne),
+            ("field < 1", ComparisonOperator::Lt),
+            ("field <= 1", ComparisonOperator::Lte),
+            ("field > 1", ComparisonOperator::Gt),
+            ("field >= 1", ComparisonOperator::Gte),
+            ("field LIKE 'x%'", ComparisonOperator::Like),
+            ("field IN ('x')", ComparisonOperator::In),
+            ("field NOT IN ('x')", ComparisonOperator::NotIn),
+            ("field BETWEEN 1", ComparisonOperator::Between),
+            ("field CONTAINS 'x'", ComparisonOperator::Contains),
+        ] {
+            let mut parser = UQLParser::new();
+            let parsed =
+                parser.parse(&format!("SELECT * FROM docs.items WHERE {}", operator_sql))?;
+            let UQLStatement::Select(select) = parsed else {
+                return Err(anyhow!("Expected SELECT statement"));
+            };
+            let condition = &select.where_clause.unwrap().conditions[0];
+            let Condition::Comparison { operator, .. } = condition else {
+                return Err(anyhow!("Expected comparison"));
+            };
+            assert_eq!(*operator, expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parse_multimodal_and_lowering_cover_component_models() -> Result<()> {
+        let mut parser = UQLParser::new();
+        let parsed = parser.parse(
+            "MULTIMODAL { \
+             VECTOR: SELECT * FROM embeddings, \
+             DOCUMENT: SELECT * FROM docs, \
+             GRAPH: TRAVERSE FROM knowledge, \
+             LOGS: SELECT * FROM app_logs \
+             } FUSION UNION LIMIT 5",
+        )?;
+
+        let UQLStatement::MultiModal(statement) = parsed else {
+            return Err(anyhow!("Expected MULTIMODAL statement"));
+        };
+        assert_eq!(statement.components.len(), 4);
+        assert!(matches!(statement.fusion, FusionStrategy::Union));
+        assert_eq!(statement.limit, Some(5));
+        assert!(statement.post_filters.is_empty());
+
+        let query = parser.parse_to_multi_model_query(
+            "MULTIMODAL { VECTOR: SELECT * FROM embeddings, DOCUMENT: SELECT * FROM docs } LIMIT 2",
+        )?;
+        assert_eq!(query.components.len(), 2);
+        assert_eq!(query.limit, Some(2));
+        assert!(
+            query
+                .components
+                .iter()
+                .any(|component| component.model == DataModel::Vector)
+        );
+        assert!(
+            query
+                .components
+                .iter()
+                .any(|component| component.model == DataModel::Document)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn lower_select_covers_document_graph_and_observability_components() -> Result<()> {
+        for (sql, expected_model) in [
+            (
+                "SELECT * FROM docs.products WHERE $.active = true LIMIT 3",
+                DataModel::Document,
+            ),
+            ("SELECT * FROM graph.knowledge LIMIT 3", DataModel::Graph),
+            (
+                "SELECT * FROM logs.events LIMIT 3",
+                DataModel::Observability,
+            ),
+        ] {
+            let mut parser = UQLParser::new();
+            let query = parser.parse_to_multi_model_query(sql)?;
+            assert_eq!(query.components.len(), 1);
+            assert_eq!(query.components[0].model, expected_model);
+            assert_eq!(query.limit, Some(3));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn parser_error_paths_are_explicit() {
+        let mut parser = UQLParser::new();
+        assert!(parser.parse("DELETE FROM vectors.items").is_err());
+        assert!(parser.parse("SELECT * vectors.items").is_err());
+        assert!(parser.parse("SELECT * FROM vectors.").is_err());
+        assert!(parser.parse("SELECT * FROM unknown.items").is_err());
+        assert!(
+            parser
+                .parse("SELECT * FROM vectors.items LIMIT nope")
+                .is_err()
+        );
+        assert!(
+            parser
+                .parse("SELECT * FROM vectors.items OFFSET nope")
+                .is_err()
+        );
+        assert!(
+            parser
+                .parse("SELECT * FROM vectors.items WHERE field")
+                .is_err()
+        );
+        assert!(
+            parser
+                .parse("SELECT * FROM vectors.items WHERE field = 'x' trailing")
+                .is_err()
+        );
+        assert!(
+            parser
+                .parse("SELECT * FROM docs.items WHERE field IS NULL")
+                .is_err()
+        );
+        assert!(
+            parser
+                .parse("SELECT * FROM docs.items WHERE field IS NOT NULL")
+                .is_err()
+        );
+    }
 }

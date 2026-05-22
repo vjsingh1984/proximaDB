@@ -2134,6 +2134,423 @@ mod tests {
         }
     }
 
+    #[test]
+    fn catalog_data_type_proto_and_arrow_mappings_cover_all_variants() {
+        let all = [
+            (CatalogDataType::Boolean, 1),
+            (CatalogDataType::Int8, 2),
+            (CatalogDataType::Int16, 3),
+            (CatalogDataType::Int32, 4),
+            (CatalogDataType::Int64, 5),
+            (CatalogDataType::Float32, 6),
+            (CatalogDataType::Float64, 7),
+            (CatalogDataType::String, 8),
+            (CatalogDataType::Binary, 9),
+            (CatalogDataType::Date, 10),
+            (CatalogDataType::Time, 11),
+            (CatalogDataType::Timestamp, 12),
+            (CatalogDataType::TimestampTz, 13),
+            (CatalogDataType::Decimal, 14),
+            (CatalogDataType::Uuid, 15),
+            (CatalogDataType::Json, 16),
+            (CatalogDataType::Vector, 20),
+            (CatalogDataType::SparseVector, 21),
+            (CatalogDataType::BinaryVector, 22),
+        ];
+
+        for (data_type, proto_id) in all {
+            assert_eq!(data_type.to_proto_i32(), proto_id);
+            assert_eq!(CatalogDataType::from_proto_i32(proto_id), data_type);
+            let _ = data_type.to_arrow_datatype();
+        }
+        assert_eq!(
+            CatalogDataType::from_proto_i32(999),
+            CatalogDataType::String
+        );
+
+        assert_eq!(
+            CatalogDataType::Boolean.to_arrow_datatype(),
+            ArrowDataType::Boolean
+        );
+        assert_eq!(
+            CatalogDataType::Int8.to_arrow_datatype(),
+            ArrowDataType::Int8
+        );
+        assert_eq!(
+            CatalogDataType::Int16.to_arrow_datatype(),
+            ArrowDataType::Int16
+        );
+        assert_eq!(
+            CatalogDataType::Int32.to_arrow_datatype(),
+            ArrowDataType::Int32
+        );
+        assert_eq!(
+            CatalogDataType::Int64.to_arrow_datatype(),
+            ArrowDataType::Int64
+        );
+        assert_eq!(
+            CatalogDataType::Float32.to_arrow_datatype(),
+            ArrowDataType::Float32
+        );
+        assert_eq!(
+            CatalogDataType::Float64.to_arrow_datatype(),
+            ArrowDataType::Float64
+        );
+        assert_eq!(
+            CatalogDataType::String.to_arrow_datatype(),
+            ArrowDataType::Utf8
+        );
+        assert_eq!(
+            CatalogDataType::Binary.to_arrow_datatype(),
+            ArrowDataType::Binary
+        );
+        assert_eq!(
+            CatalogDataType::Date.to_arrow_datatype(),
+            ArrowDataType::Date32
+        );
+        assert!(matches!(
+            CatalogDataType::Vector.to_arrow_datatype(),
+            ArrowDataType::List(_)
+        ));
+        assert!(matches!(
+            CatalogDataType::SparseVector.to_arrow_datatype(),
+            ArrowDataType::Map(_, false)
+        ));
+    }
+
+    #[test]
+    fn workload_and_storage_specialization_options_parse_and_render_stable_names() {
+        let workload_cases = [
+            ("transactional", CatalogWorkloadProfile::Oltp, "oltp"),
+            ("analytics", CatalogWorkloadProfile::Olap, "olap"),
+            ("pax", CatalogWorkloadProfile::Htap, "htap"),
+            ("ann", CatalogWorkloadProfile::Vector, "vector"),
+            ("jsonb", CatalogWorkloadProfile::Document, "document"),
+            ("cypher", CatalogWorkloadProfile::Graph, "graph"),
+            (
+                "time_series",
+                CatalogWorkloadProfile::Observability,
+                "observability",
+            ),
+            ("multimodal", CatalogWorkloadProfile::Mixed, "mixed"),
+        ];
+        for (input, expected, rendered) in workload_cases {
+            assert_eq!(CatalogWorkloadProfile::parse(input), Some(expected));
+            assert_eq!(expected.as_str(), rendered);
+        }
+        assert_eq!(CatalogWorkloadProfile::parse("unknown"), None);
+
+        let specialization_cases = [
+            (
+                "row_record",
+                CatalogStorageSpecialization::GenericRelational,
+                "generic_relational",
+            ),
+            (
+                "pax",
+                CatalogStorageSpecialization::PaxRowFamily,
+                "pax_row_family",
+            ),
+            ("rowdir", CatalogStorageSpecialization::PaxOltp, "pax_oltp"),
+            (
+                "pax_olap",
+                CatalogStorageSpecialization::PaxOlap,
+                "pax_olap",
+            ),
+            (
+                "lsm",
+                CatalogStorageSpecialization::LsmWriteOptimized,
+                "lsm_write_optimized",
+            ),
+            (
+                "analytics",
+                CatalogStorageSpecialization::ColumnarAnalytics,
+                "columnar_analytics",
+            ),
+            (
+                "hnsw",
+                CatalogStorageSpecialization::VectorAnn,
+                "vector_ann",
+            ),
+            (
+                "json",
+                CatalogStorageSpecialization::DocumentJson,
+                "document_json",
+            ),
+            (
+                "csr",
+                CatalogStorageSpecialization::GraphTopology,
+                "graph_topology",
+            ),
+            (
+                "timeseries",
+                CatalogStorageSpecialization::ObservabilityTimeSeries,
+                "observability_time_series",
+            ),
+            (
+                "lakehouse",
+                CatalogStorageSpecialization::ExternalOpenTable,
+                "external_open_table",
+            ),
+        ];
+        for (input, expected, rendered) in specialization_cases {
+            assert_eq!(CatalogStorageSpecialization::parse(input), Some(expected));
+            assert_eq!(expected.as_str(), rendered);
+        }
+        assert_eq!(CatalogStorageSpecialization::parse("unknown"), None);
+    }
+
+    #[test]
+    fn authority_layout_projection_and_compression_contracts_cover_builder_surface() {
+        let authority_cases = [
+            (
+                CatalogAuthorityMode::InternalCanonical,
+                true,
+                false,
+                false,
+                "ProximaAuthoritative",
+            ),
+            (
+                CatalogAuthorityMode::ProximaAuthoritative,
+                true,
+                false,
+                false,
+                "ProximaAuthoritative",
+            ),
+            (
+                CatalogAuthorityMode::ExternalAuthoritative,
+                false,
+                true,
+                false,
+                "ExternalAuthoritative",
+            ),
+            (
+                CatalogAuthorityMode::ImportedSnapshot,
+                false,
+                false,
+                false,
+                "ImportedSnapshot",
+            ),
+            (
+                CatalogAuthorityMode::ExportedPublication,
+                false,
+                false,
+                true,
+                "ProjectionPublication",
+            ),
+            (
+                CatalogAuthorityMode::ProjectionPublication,
+                false,
+                false,
+                true,
+                "ProjectionPublication",
+            ),
+            (
+                CatalogAuthorityMode::RebuildableProjection,
+                false,
+                false,
+                true,
+                "RebuildableProjection",
+            ),
+            (
+                CatalogAuthorityMode::FederatedRead,
+                false,
+                false,
+                false,
+                "FederatedRead",
+            ),
+        ];
+        for (mode, proxima, external, rebuildable, name) in authority_cases {
+            assert_eq!(mode.is_proxima_authoritative(), proxima);
+            assert_eq!(mode.is_external_authoritative(), external);
+            assert_eq!(mode.is_rebuildable_or_publication(), rebuildable);
+            assert_eq!(mode.ownership_mode_name(), name);
+        }
+
+        let pax = CatalogStorageLayout::proxima_authoritative_pax("primary");
+        assert_eq!(pax.layout_kind, CatalogStorageLayoutKind::Pax);
+        assert_eq!(pax.snapshot_semantics.as_deref(), Some("mvcc"));
+        assert!(!pax.requires_external_contract());
+
+        let publication = CatalogStorageLayout::projection_publication(
+            "iceberg_pub",
+            CatalogPhysicalFormat::Iceberg,
+            "s3://pub",
+        );
+        assert_eq!(
+            publication.authority,
+            CatalogAuthorityMode::ProjectionPublication
+        );
+        assert_eq!(publication.write_mode, CatalogWriteMode::CopyOnWrite);
+
+        let specialty = CatalogStorageLayout::specialty_projection(
+            "hnsw",
+            CatalogStorageLayoutKind::VectorAnn,
+            CatalogPhysicalFormat::ProximaBlock,
+        );
+        assert_eq!(
+            specialty.authority,
+            CatalogAuthorityMode::RebuildableProjection
+        );
+
+        let imported = CatalogStorageLayout::imported_snapshot(
+            "import",
+            CatalogPhysicalFormat::Parquet,
+            "s3://import",
+        );
+        assert_eq!(imported.authority, CatalogAuthorityMode::ImportedSnapshot);
+
+        let federated =
+            CatalogStorageLayout::federated_read("fed", CatalogPhysicalFormat::Delta, "s3://delta");
+        assert!(federated.requires_external_contract());
+
+        let projection =
+            CatalogProjection::rebuildable("col", CatalogProjectionKind::Columnar, "primary")
+                .with_bounded_lag(1_000)
+                .with_rebuild_rto(RebuildRtoSpec::columnar_estimated())
+                .with_freshness_state(ProjectionFreshnessState::Updating)
+                .with_lineage("wal:1", "wal:2")
+                .with_policy_and_gate("engine", "smoke");
+        assert_eq!(projection.max_lag_ms, Some(1_000));
+        assert!(
+            projection
+                .rebuild_rto
+                .as_ref()
+                .unwrap()
+                .supports_incremental_rebuild
+        );
+        assert_eq!(
+            projection.freshness_state,
+            ProjectionFreshnessState::Updating
+        );
+        assert_eq!(projection.source_range.as_deref(), Some("wal:1"));
+        assert_eq!(projection.benchmark_gate.as_deref(), Some("smoke"));
+
+        let profile = CatalogCompressionStatsProfile::new("p", "codec", 0, 10, 0, true)
+            .with_layout_name("primary")
+            .with_projection_id("proj")
+            .with_decode_ns_per_value(4.0);
+        assert_eq!(profile.measured_ratio, 0.0);
+        assert_eq!(profile.bytes_per_value(), 0.0);
+        assert_eq!(profile.decode_ns_per_value, Some(4.0));
+    }
+
+    #[test]
+    fn ann_rto_props_observability_protocol_partition_and_health_helpers_are_covered() {
+        for (input, mode, rendered) in [
+            ("pre", AnnFilteringMode::PreFilter, "pre_filter"),
+            ("intra", AnnFilteringMode::Inline, "inline"),
+            ("post", AnnFilteringMode::PostFilter, "post_filter"),
+        ] {
+            assert_eq!(AnnFilteringMode::parse(input), Some(mode));
+            assert_eq!(mode.as_str(), rendered);
+        }
+        assert_eq!(AnnFilteringMode::parse("bad"), None);
+
+        let policy = AnnFilteringPolicy::default();
+        assert_eq!(policy.routing_mode(0.01), AnnFilteringMode::PreFilter);
+        assert_eq!(policy.routing_mode(0.20), AnnFilteringMode::Inline);
+        assert_eq!(policy.routing_mode(0.90), AnnFilteringMode::PostFilter);
+        assert_eq!(policy.effective_top_k_for_post_filter(5), 10);
+        let forced = AnnFilteringPolicy {
+            force_mode: Some(AnnFilteringMode::Inline),
+            ..AnnFilteringPolicy::default()
+        };
+        assert_eq!(forced.routing_mode(0.0), AnnFilteringMode::Inline);
+
+        let default_rto = RebuildRtoSpec::default();
+        assert_eq!(
+            default_rto.estimate_source,
+            RebuildEstimateSource::Unverified
+        );
+        assert_eq!(
+            RebuildRtoSpec::hnsw_benchmarked().estimate_source,
+            RebuildEstimateSource::Benchmarked
+        );
+        assert!(!RebuildRtoSpec::csr_estimated().degraded_scan_during_rebuild);
+        assert_eq!(
+            RebuildRtoSpec::columnar_estimated().estimated_rebuild_seconds(10 * 1024 * 1024 * 1024),
+            30.0
+        );
+        assert_eq!(RebuildEstimateSource::Benchmarked.as_str(), "benchmarked");
+        assert_eq!(RebuildEstimateSource::Estimated.as_str(), "estimated");
+        assert_eq!(RebuildEstimateSource::Unverified.as_str(), "unverified");
+
+        assert_eq!(
+            PropsEvaluationCadence::parse("auto"),
+            Some(PropsEvaluationCadence::Compaction)
+        );
+        assert_eq!(
+            PropsEvaluationCadence::parse("ddl"),
+            Some(PropsEvaluationCadence::Explicit)
+        );
+        assert_eq!(PropsEvaluationCadence::parse("bad"), None);
+        assert_eq!(PropsEvaluationCadence::Compaction.as_str(), "compaction");
+        assert_eq!(PropsEvaluationCadence::Explicit.as_str(), "explicit");
+        let document_policy = PropsAutoPromotionPolicy::document_default();
+        assert!(document_policy.enabled);
+        assert!(
+            document_policy
+                .eligible_types
+                .contains(&CatalogDataType::TimestampTz)
+        );
+
+        let observability = ObservabilityCompressionHint::default();
+        assert_eq!(observability.series_key_column, "series_key");
+        assert_eq!(observability.timestamp_ns_column, "__proxima_created_at_ns");
+        assert!(observability.sort_by_series_key);
+        assert!(observability.xor_float_encoding);
+
+        let notes = ProtocolTypeCoercionNote::standard_notes();
+        assert!(
+            notes
+                .iter()
+                .any(|note| note.protocol == "pgwire" && note.lossless)
+        );
+        assert!(std::ptr::eq(
+            notes.as_ptr(),
+            ProtocolTypeCoercionNote::standard_notes().as_ptr()
+        ));
+
+        for (input, expected, rendered) in [
+            ("identity", PartitionTransform::Identity, "identity"),
+            ("bucket[32]", PartitionTransform::Bucket(32), "bucket[32]"),
+            ("bucket[x]", PartitionTransform::Bucket(16), "bucket[16]"),
+            (
+                "truncate[8]",
+                PartitionTransform::Truncate(8),
+                "truncate[8]",
+            ),
+            (
+                "truncate[x]",
+                PartitionTransform::Truncate(16),
+                "truncate[16]",
+            ),
+            ("year", PartitionTransform::Year, "year"),
+            ("month", PartitionTransform::Month, "month"),
+            ("day", PartitionTransform::Day, "day"),
+            ("hour", PartitionTransform::Hour, "hour"),
+            ("void", PartitionTransform::Void, "void"),
+            ("unknown", PartitionTransform::Identity, "identity"),
+        ] {
+            let parsed = PartitionTransform::parse_from_iceberg_format(input);
+            assert_eq!(parsed, expected);
+            assert_eq!(parsed.to_string(), rendered);
+        }
+
+        assert_eq!(TableIdentifier::parse("table").to_fqn(), "table");
+        assert_eq!(
+            TableIdentifier::parse("db.schema.table").to_string(),
+            "db.schema.table"
+        );
+        let healthy = CatalogHealth::healthy(12);
+        assert!(healthy.is_healthy);
+        assert_eq!(healthy.latency_ms, 12);
+        let unhealthy = CatalogHealth::unhealthy("down");
+        assert!(!unhealthy.is_healthy);
+        assert_eq!(unhealthy.error.as_deref(), Some("down"));
+    }
+
     // ----- Phase A: catalog → ProximaType bridge tests -----
 
     #[test]

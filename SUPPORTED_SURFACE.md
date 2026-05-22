@@ -365,26 +365,29 @@ All protocols (REST, gRPC, PostgreSQL wire, Arrow Flight) use the same detection
 **Port**: 5678 (default unified port)  
 **Documentation**: `/api/docs` (OpenAPI/Swagger)
 
-**Supported Endpoints**:
-- `POST /api/v1/vector/search` - Vector similarity search
-- `POST /api/v1/graph/query` - Graph queries
-- `POST /api/v1/document/query` - Document queries
-- `GET /api/v1/logs` - Log search
-- `GET /api/v1/metrics` - Metrics query
-- `POST /api/v1/sql` - SQL queries (including extensions)
+**Canonical Endpoints**:
+- `POST /api/v2/collections` - Collection/table creation with typed schema
+- `POST /api/v2/collections/{collection}/records/batch` - ProximaRecord batch writes
+- `GET /api/v2/collections/{collection}/records/{record}` - ProximaRecord fetch
+- `DELETE /api/v2/collections/{collection}/records/{record}` - ProximaRecord delete
+- `POST /api/v2/collections/{collection}/search` - Typed record/vector search
+- `POST /api/v2/query` - Shared query facade
+
+**Compatibility Endpoints**:
+- `/api/v1/*` remains available for existing clients, but is compatibility-only and emits deprecation metadata. New clients should use `/api/v2`, pgwire, or Arrow Flight depending on workload.
 
 ---
 
 ### gRPC API
 
 **Port**: 5678 (default unified port)  
-**Protos**: `proto/proximadb/v1/proximadb.proto`
+**Canonical Protos**: `proto/proximadb/v2/record.proto`
 
-**Supported Services**:
-- `VectorSearch` - Vector similarity search
-- `GraphQuery` - Graph queries
-- `DocumentQuery` - Document queries
-- `QueryService` - SQL and federated queries
+**Canonical Services**:
+- `proximadb.v2.ProximaRecordService` - ProximaRecord writes, deletes, search, streaming write, and schema operations
+
+**Compatibility Services**:
+- `proximadb.v1.*` services remain registered for existing clients, but are compatibility adapters. New record write/search clients should use `proximadb.v2.ProximaRecordService`.
 
 ---
 

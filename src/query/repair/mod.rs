@@ -17,9 +17,5 @@
 pub mod decision;
 pub mod sure_aggregator;
 
-pub use decision::{
-    RepairAction, RepairBudget, RepairDecision, decide,
-};
-pub use sure_aggregator::{
-    PairVerification, RelationLabel, SureSignals, aggregate,
-};
+pub use decision::{RepairAction, RepairBudget, RepairDecision, decide};
+pub use sure_aggregator::{PairVerification, RelationLabel, SureSignals, aggregate};

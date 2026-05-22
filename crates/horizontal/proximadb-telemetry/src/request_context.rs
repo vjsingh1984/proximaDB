@@ -267,4 +267,43 @@ mod tests {
         assert_eq!(ctx.trace_id, Some("trace-123".to_string()));
         assert_eq!(ctx.span_id, Some("span-456".to_string()));
     }
+
+    #[test]
+    fn request_context_convenience_constructors_and_constants_are_stable() {
+        let explicit = RequestContext::with_request_id("req-1".to_string());
+        assert_eq!(explicit.request_id, "req-1");
+        assert!(explicit.trace_id.is_none());
+        assert!(explicit.span_id.is_none());
+
+        let via_free_fn = create_request_context(Some("req-2"));
+        assert_eq!(via_free_fn.request_id, "req-2");
+
+        let generated = RequestContext::default();
+        assert_eq!(generated.request_id.len(), 36);
+        assert_eq!(REQUEST_ID_HEADER, "x-request-id");
+        assert_eq!(REQUEST_ID_METADATA_KEY, "x-request-id");
+    }
+
+    #[test]
+    fn span_constructors_cover_every_operation_shape_without_subscriber() {
+        let ctx = RequestContext::with_request_id("req-span".to_string());
+        let _api = ctx.create_span("insert");
+        let _collection = ctx.create_collection_span("create", "collections");
+        let _vector_with_count = ctx.create_vector_span("upsert", "vectors", Some(3));
+        let _vector_without_count = ctx.create_vector_span("delete", "vectors", None);
+        let _search = ctx.create_search_span("vectors", 10, true);
+        let _sql = ctx.create_sql_span("select 1");
+        let _graph = ctx.create_graph_span("traverse", "graph");
+
+        assert_eq!(ctx.request_id, "req-span");
+    }
+
+    #[test]
+    fn trace_span_branch_constructs_api_span_without_subscriber() {
+        let ctx = RequestContext::with_request_id("req-trace".to_string())
+            .with_trace_id("trace-1".to_string());
+        let _span = ctx.create_span("search");
+
+        assert_eq!(ctx.trace_id.as_deref(), Some("trace-1"));
+    }
 }

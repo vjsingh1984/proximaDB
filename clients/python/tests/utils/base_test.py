@@ -21,7 +21,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from proximadb_sdk.models import VectorRecord
 
-from .embedded_client_adapter import EmbeddedClientAdapter, create_embedded_client
+from .embedded_client_adapter import (
+    PROXIMADB_IMPORT_ERROR,
+    EmbeddedClientAdapter,
+    create_embedded_client,
+)
 
 
 class BaseProximaDBTest:
@@ -43,6 +47,12 @@ class BaseProximaDBTest:
     @classmethod
     def setup_class(cls):
         """Initialize embedded database for tests"""
+        if PROXIMADB_IMPORT_ERROR is not None:
+            pytest.skip(
+                "Native ProximaDB embedded module is not installed",
+                allow_module_level=False,
+            )
+
         # Create temporary directory for test data
         cls._shared_data_dir = tempfile.mkdtemp(prefix="proximadb_test_")
 

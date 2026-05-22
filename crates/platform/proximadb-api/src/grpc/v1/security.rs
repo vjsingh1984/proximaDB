@@ -173,7 +173,10 @@ mod tests {
     use tonic::Code;
 
     fn assert_not_configured<T>(result: Result<Response<T>, Status>) {
-        let err = result.expect_err("backend-less security service should reject RPC");
+        let err = match result {
+            Ok(_) => panic!("backend-less security service should reject RPC"),
+            Err(err) => err,
+        };
         assert_eq!(err.code(), Code::NotFound);
         assert!(err.message().contains("Security service not configured"));
     }

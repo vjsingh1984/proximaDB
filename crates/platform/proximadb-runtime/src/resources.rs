@@ -111,4 +111,30 @@ mod tests {
         budget.release(100);
         assert_eq!(budget.available(), 900);
     }
+
+    #[test]
+    fn memory_budget_reserve_and_saturating_release_are_stable() {
+        let mut budget = MemoryBudget::new(512).with_reserve(128);
+        assert_eq!(budget.available(), 384);
+        assert!(budget.allocate(384));
+        assert_eq!(budget.available(), 0);
+        assert!(!budget.allocate(1));
+        budget.release(1_000);
+        assert_eq!(budget.available(), 512);
+    }
+
+    #[test]
+    fn resource_manager_reports_host_resources_and_recommends_threads() {
+        let manager = ResourceManager::new();
+        let _default = ResourceManager::default();
+
+        assert!(manager.total_memory_mb() > 0);
+        assert!(manager.available_memory_mb() > 0);
+        assert!(manager.cpu_count() > 0);
+        assert!(manager.recommended_threads(usize::MAX) >= 1);
+        assert!(manager.recommended_threads(1) <= manager.cpu_count());
+
+        manager.refresh_memory();
+        assert!(manager.available_memory_mb() > 0);
+    }
 }

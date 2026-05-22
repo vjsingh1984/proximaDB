@@ -207,6 +207,8 @@ pub mod datafusion;
 pub mod schema;
 // NOTE: schema_constants module removed - using hardcoded schema_types.rs instead
 // schema_types removed - use core::avro_unified instead
+/// Async ingest scheduler with P0–P4 priority lanes (LLD §7).
+pub mod ingest;
 /// Search primitives — hybrid search, BM25, fusion strategies
 #[allow(missing_docs)]
 pub mod search;
@@ -216,8 +218,6 @@ pub mod server;
 /// Service layer — collection management, vector operations, event log
 #[allow(missing_docs)]
 pub mod services;
-/// Async ingest scheduler with P0–P4 priority lanes (LLD §7).
-pub mod ingest;
 /// Storage engine layer — 6 engines, WAL, filesystem, cache, memtable, metadata
 #[allow(missing_docs)]
 pub mod storage;

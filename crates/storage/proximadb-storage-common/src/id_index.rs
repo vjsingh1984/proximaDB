@@ -314,9 +314,12 @@ impl ColumnarIdIndex {
         let mut candidates = Vec::new();
 
         for (idx, rg_index) in self.row_group_index.iter().enumerate() {
-            // Check bloom filter
-            if self.bloom_filters[idx].contains(id) {
-                // Check ID range
+            // Check bloom filter when present; direct indexes can be range-pruned only.
+            if self
+                .bloom_filters
+                .get(idx)
+                .is_none_or(|bloom| bloom.contains(id))
+            {
                 if id >= rg_index.id_range.0.as_str() && id <= rg_index.id_range.1.as_str() {
                     candidates.push(idx);
                 }
@@ -580,5 +583,138 @@ mod tests {
 
         assert_eq!(index.row_group_index[0].id_range.0, "id_000000");
         assert_eq!(index.row_group_index[1].id_range.0, "id_001000");
+    }
+
+    #[test]
+    fn bloom_filter_stats_cover_edge_cases_and_formulas() {
+        let mut tiny = BloomFilter::new(1, 0.1);
+        tiny.insert("one");
+        assert!(tiny.contains("one"));
+        assert!(!tiny.contains("two"));
+
+        let empty_stats = IndexStats {
+            total_ids: 0,
+            unique_ids: 0,
+            num_row_groups: 0,
+            total_pages: 0,
+            bloom_filter_size: 0,
+            file_path: "empty.parquet".to_string(),
+        };
+        assert_eq!(empty_stats.compression_ratio(), 1.0);
+        assert_eq!(empty_stats.avg_rows_per_group(), 0.0);
+        assert_eq!(empty_stats.bloom_filter_efficiency(), 0.0);
+
+        let populated = IndexStats {
+            total_ids: 1_000,
+            unique_ids: 900,
+            num_row_groups: 5,
+            total_pages: 20,
+            bloom_filter_size: 320,
+            file_path: "populated.parquet".to_string(),
+        };
+        assert_eq!(populated.compression_ratio(), 0.25);
+        assert_eq!(populated.avg_rows_per_group(), 200.0);
+        assert_eq!(populated.bloom_filter_efficiency(), 0.32);
+        assert_eq!(populated.unique_ids, 900);
+        assert_eq!(populated.file_path, "populated.parquet");
+    }
+
+    #[tokio::test]
+    async fn direct_lookup_range_pruning_stats_and_merge_cover_index_branches() {
+        let mut index = ColumnarIdIndex::new("left.parquet".to_string());
+        index.row_group_index.push(RowGroupIdIndex {
+            row_group_id: 0,
+            id_range: ("id_000000".to_string(), "id_000099".to_string()),
+            page_indexes: vec![PageIdIndex {
+                page_num: 0,
+                id_range: ("id_000000".to_string(), "id_000099".to_string()),
+                num_values: 100,
+                offset: 128,
+                compressed_size: 256,
+            }],
+            num_rows: 100,
+            compressed_size: 1_000,
+            uncompressed_size: 2_000,
+        });
+        index
+            .total_ids
+            .store(2, std::sync::atomic::Ordering::Relaxed);
+        index
+            .unique_ids
+            .store(2, std::sync::atomic::Ordering::Relaxed);
+
+        {
+            let mut map = index.id_to_location.write().await;
+            map.insert(
+                "id_000010".to_string(),
+                ParquetLocation {
+                    file_path: "left.parquet".to_string(),
+                    row_group_id: 0,
+                    row_offset: 10,
+                    page_num: None,
+                },
+            );
+        }
+
+        let location = index.lookup("id_000010").await.unwrap();
+        assert_eq!(location.file_path, "left.parquet");
+        assert_eq!(location.row_offset, 10);
+        assert_eq!(location.page_num, None);
+        assert!(index.lookup("missing").await.is_none());
+
+        assert_eq!(
+            index.row_groups_for_range("id_000001", "id_000020"),
+            vec![0]
+        );
+        assert!(
+            index
+                .row_groups_for_range("id_000200", "id_000300")
+                .is_empty()
+        );
+        assert_eq!(index.find_candidate_row_groups("id_000010"), vec![0]);
+        assert_eq!(
+            index.prune_row_groups(&["id_000010".to_string(), "missing".to_string()]),
+            vec![0]
+        );
+
+        let stats = index.stats();
+        assert_eq!(stats.total_ids, 2);
+        assert_eq!(stats.unique_ids, 2);
+        assert_eq!(stats.num_row_groups, 1);
+        assert_eq!(stats.total_pages, 1);
+
+        let mut other = ColumnarIdIndex::new("right.parquet".to_string());
+        other.row_group_index.push(RowGroupIdIndex {
+            row_group_id: 0,
+            id_range: ("id_000100".to_string(), "id_000199".to_string()),
+            page_indexes: vec![],
+            num_rows: 100,
+            compressed_size: 1_000,
+            uncompressed_size: 2_000,
+        });
+        other
+            .total_ids
+            .store(1, std::sync::atomic::Ordering::Relaxed);
+        other
+            .unique_ids
+            .store(1, std::sync::atomic::Ordering::Relaxed);
+        {
+            let mut map = other.id_to_location.write().await;
+            map.insert(
+                "id_000150".to_string(),
+                ParquetLocation {
+                    file_path: "right.parquet".to_string(),
+                    row_group_id: 0,
+                    row_offset: 50,
+                    page_num: Some(5),
+                },
+            );
+        }
+
+        index.merge_with(other).await.unwrap();
+        assert_eq!(index.row_group_index.len(), 2);
+        assert_eq!(index.row_group_index[1].row_group_id, 1);
+        assert_eq!(index.stats().total_ids, 3);
+        assert_eq!(index.lookup("id_000150").await.unwrap().page_num, Some(5));
     }
 }

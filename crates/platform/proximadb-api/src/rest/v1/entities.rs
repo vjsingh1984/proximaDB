@@ -366,3 +366,217 @@ pub fn create_vector_router() -> Router<RestAppState> {
             get(get_vector).delete(delete_vector),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{ApiCall, RecordingApiPort};
+
+    fn tenant() -> Extension<TenantContext> {
+        Extension(TenantContext::new("tenant-a"))
+    }
+
+    fn state(port: std::sync::Arc<RecordingApiPort>) -> State<RestAppState> {
+        State(RestAppState::new(port))
+    }
+
+    #[test]
+    fn parse_search_request_accepts_simple_and_proto_shapes() {
+        let simple = parse_search_request(serde_json::json!({
+            "collection": "docs",
+            "vector": [0.1, 0.2, "skip"],
+            "top_k": 3
+        }))
+        .unwrap();
+        assert_eq!(simple.collection_id, "docs");
+        assert_eq!(simple.top_k, 3);
+        assert_eq!(simple.queries[0].vector, vec![0.1, 0.2]);
+
+        let proto = parse_search_request(
+            serde_json::to_value(VectorSearchRequest {
+                collection_id: "proto_docs".to_string(),
+                queries: vec![SearchQuery {
+                    vector: vec![1.0],
+                    filters: HashMap::new(),
+                    advanced_filter: None,
+                }],
+                top_k: 2,
+                ..VectorSearchRequest::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(proto.collection_id, "proto_docs");
+        assert_eq!(proto.top_k, 2);
+    }
+
+    #[test]
+    fn parse_batch_request_accepts_simple_and_proto_shapes() {
+        let simple = parse_batch_request(serde_json::json!({
+            "collection": "docs",
+            "vectors": [{"id": "v1", "vector": [0.1, 0.2]}]
+        }))
+        .unwrap();
+        assert_eq!(simple.collection_id, "docs");
+        assert_eq!(simple.vectors.len(), 1);
+
+        let proto = parse_batch_request(
+            serde_json::to_value(VectorBatchRequest {
+                collection_id: "proto_docs".to_string(),
+                vectors: vec![VectorRecord {
+                    id: "v2".to_string(),
+                    vector: vec![1.0],
+                    ..VectorRecord::default()
+                }],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(proto.collection_id, "proto_docs");
+        assert_eq!(proto.vectors[0].id, "v2");
+    }
+
+    #[tokio::test]
+    async fn vector_handlers_validate_required_inputs_before_port_call() {
+        let port = RecordingApiPort::new();
+
+        let search = vector_search(
+            state(port.clone()),
+            tenant(),
+            Json(serde_json::json!({"vector": [0.1]})),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(search, RestError::InvalidArgument(_)));
+
+        let batch = vector_batch(
+            state(port.clone()),
+            tenant(),
+            Json(serde_json::json!({"collection": "docs", "vectors": []})),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(batch, RestError::InvalidArgument(_)));
+
+        let get = get_vector(
+            state(port.clone()),
+            tenant(),
+            Path(("".to_string(), "v1".to_string())),
+            Query(GetVectorParams {
+                include_vector: None,
+                include_metadata: None,
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(get, RestError::InvalidArgument(_)));
+
+        let delete = delete_vector(
+            state(port.clone()),
+            tenant(),
+            Path(("docs".to_string(), "".to_string())),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(delete, RestError::InvalidArgument(_)));
+
+        assert!(port.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn vector_handlers_route_successful_requests_through_tenant_scoped_port() {
+        let port = RecordingApiPort::new();
+        port.vector_response.lock().unwrap().success = true;
+
+        let _ = vector_search(
+            state(port.clone()),
+            tenant(),
+            Json(serde_json::json!({
+                "collection": "docs",
+                "vector": [0.1, 0.2],
+                "top_k": 2
+            })),
+        )
+        .await
+        .unwrap();
+        let _ = vector_batch(
+            state(port.clone()),
+            tenant(),
+            Json(serde_json::json!({
+                "collection": "docs",
+                "vectors": [{"id": "v1", "vector": [0.1, 0.2]}]
+            })),
+        )
+        .await
+        .unwrap();
+        let _ = get_vector(
+            state(port.clone()),
+            tenant(),
+            Path(("docs".to_string(), "v1".to_string())),
+            Query(GetVectorParams {
+                include_vector: Some(false),
+                include_metadata: Some(false),
+            }),
+        )
+        .await
+        .unwrap();
+        let _ = delete_vector(
+            state(port.clone()),
+            tenant(),
+            Path(("docs".to_string(), "v1".to_string())),
+        )
+        .await
+        .unwrap();
+        let _ = vector_search_with_metadata(
+            state(port.clone()),
+            tenant(),
+            Json(serde_json::json!({
+                "collection": "docs",
+                "vector": [1.0],
+                "top_k": 1
+            })),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            port.calls(),
+            vec![
+                ApiCall::VectorSearch {
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: "docs".to_string(),
+                    tenant_aware: true,
+                },
+                ApiCall::VectorBatch {
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: "docs".to_string(),
+                    vector_count: 1,
+                },
+                ApiCall::VectorGet {
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: "docs".to_string(),
+                    vector_id: "v1".to_string(),
+                    include_vector: false,
+                    include_metadata: false,
+                },
+                ApiCall::VectorBatch {
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: "docs".to_string(),
+                    vector_count: 1,
+                },
+                ApiCall::VectorSearch {
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: "docs".to_string(),
+                    tenant_aware: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn vector_router_registers_all_v1_vector_routes() {
+        let _router = create_vector_router();
+        let _entity_handler = EntityHandler::default();
+        let _vector_handler = VectorHandler::new();
+    }
+}

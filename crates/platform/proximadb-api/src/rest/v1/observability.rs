@@ -665,6 +665,161 @@ fn parse_aggregation(s: &str) -> MetricAggregation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use proximadb_proto::v1 as proto;
+
+    struct MockObservabilityPort;
+
+    #[async_trait]
+    impl ObservabilityPort for MockObservabilityPort {
+        async fn create_namespace(
+            &self,
+            _request: proto::CreateObservabilityNamespaceRequest,
+        ) -> Result<proto::CreateObservabilityNamespaceResponse> {
+            Ok(proto::CreateObservabilityNamespaceResponse::default())
+        }
+
+        async fn list_namespaces(
+            &self,
+            _request: proto::ListNamespacesRequest,
+        ) -> Result<proto::ListNamespacesResponse> {
+            Ok(proto::ListNamespacesResponse::default())
+        }
+
+        async fn delete_namespace(
+            &self,
+            _request: proto::DeleteNamespaceRequest,
+        ) -> Result<proto::DeleteNamespaceResponse> {
+            Ok(proto::DeleteNamespaceResponse::default())
+        }
+
+        async fn ingest_logs(
+            &self,
+            request: proto::IngestLogsRequest,
+        ) -> Result<proto::IngestLogsResponse> {
+            Ok(proto::IngestLogsResponse {
+                ingested: request.logs.len() as u64,
+                failed: 0,
+                errors: Vec::new(),
+                processing_time_ms: 1,
+            })
+        }
+
+        async fn query_logs(
+            &self,
+            _request: proto::QueryLogsRequest,
+        ) -> Result<proto::QueryLogsResponse> {
+            Ok(proto::QueryLogsResponse {
+                logs: vec![proto::LogEntry {
+                    timestamp_ns: 7,
+                    severity: proto::Severity::Warn as i32,
+                    message: "warned".to_string(),
+                    fields: HashMap::new(),
+                    source: Some("node-a".to_string()),
+                    service: Some("api".to_string()),
+                }],
+                next_cursor: Some("next".to_string()),
+                total_matched: 1,
+                query_time_ms: 2,
+            })
+        }
+
+        async fn stream_logs(
+            &self,
+            _request: proto::QueryLogsRequest,
+        ) -> Result<Vec<proto::LogEntry>> {
+            Ok(Vec::new())
+        }
+
+        async fn ingest_metrics(
+            &self,
+            request: proto::IngestMetricsRequest,
+        ) -> Result<proto::IngestMetricsResponse> {
+            Ok(proto::IngestMetricsResponse {
+                ingested: request.samples.len() as u64,
+                failed: 0,
+                processing_time_ms: 1,
+            })
+        }
+
+        async fn query_metrics(
+            &self,
+            _request: proto::QueryMetricsRequest,
+        ) -> Result<proto::QueryMetricsResponse> {
+            Ok(proto::QueryMetricsResponse::default())
+        }
+
+        async fn aggregate_metrics(
+            &self,
+            _request: proto::AggregateMetricsRequest,
+        ) -> Result<proto::AggregateMetricsResponse> {
+            let mut labels = HashMap::new();
+            labels.insert("service".to_string(), "api".to_string());
+            Ok(proto::AggregateMetricsResponse {
+                series: vec![proto::TimeSeriesResult {
+                    labels,
+                    points: vec![proto::DataPoint {
+                        timestamp_ns: 10,
+                        value: 99.0,
+                    }],
+                }],
+                query_time_ms: 3,
+            })
+        }
+
+        async fn ingest_traces(
+            &self,
+            request: proto::IngestTracesRequest,
+        ) -> Result<proto::IngestTracesResponse> {
+            Ok(proto::IngestTracesResponse {
+                ingested: request.traces.len() as u64,
+                failed: 0,
+                processing_time_ms: 1,
+            })
+        }
+
+        async fn query_traces(
+            &self,
+            _request: proto::QueryTracesRequest,
+        ) -> Result<proto::QueryTracesResponse> {
+            Ok(proto::QueryTracesResponse::default())
+        }
+
+        async fn get_trace(
+            &self,
+            _request: proto::GetTraceRequest,
+        ) -> Result<proto::GetTraceResponse> {
+            Ok(proto::GetTraceResponse::default())
+        }
+
+        async fn upsert_alert_rule(
+            &self,
+            _request: proto::UpsertAlertRuleRequest,
+        ) -> Result<proto::UpsertAlertRuleResponse> {
+            Ok(proto::UpsertAlertRuleResponse::default())
+        }
+
+        async fn delete_alert_rule(
+            &self,
+            _request: proto::DeleteAlertRuleRequest,
+        ) -> Result<proto::DeleteAlertRuleResponse> {
+            Ok(proto::DeleteAlertRuleResponse::default())
+        }
+
+        async fn list_alerts(
+            &self,
+            _request: proto::ListAlertsRequest,
+        ) -> Result<proto::ListAlertsResponse> {
+            Ok(proto::ListAlertsResponse::default())
+        }
+    }
+
+    fn state() -> State<ObservabilityRestState> {
+        State(ObservabilityRestState {
+            observability_port: Arc::new(MockObservabilityPort),
+        })
+    }
 
     #[test]
     fn test_parse_severity() {
@@ -673,5 +828,256 @@ mod tests {
         assert_eq!(parse_severity("warn"), Severity::Warn);
         assert_eq!(parse_severity("ERROR"), Severity::Error);
         assert_eq!(parse_severity("fatal"), Severity::Fatal);
+    }
+
+    #[test]
+    fn defaults_severity_and_aggregation_helpers_cover_all_wire_names() {
+        assert_eq!(default_hot(), 1);
+        assert_eq!(default_warm(), 7);
+        assert_eq!(default_cold(), 30);
+        assert_eq!(default_severity_str(), "info");
+        assert_eq!(default_limit(), 100);
+        assert_eq!(default_aggregation(), "avg");
+        assert_eq!(default_step(), 60);
+
+        assert_eq!(parse_severity("trace"), Severity::Trace);
+        assert_eq!(parse_severity("verbose"), Severity::Trace);
+        assert_eq!(parse_severity("information"), Severity::Info);
+        assert_eq!(parse_severity("warning"), Severity::Warn);
+        assert_eq!(parse_severity("err"), Severity::Error);
+        assert_eq!(parse_severity("critical"), Severity::Fatal);
+        assert_eq!(parse_severity("unknown"), Severity::Info);
+
+        for (severity, expected) in [
+            (Severity::Trace, "trace"),
+            (Severity::Debug, "debug"),
+            (Severity::Info, "info"),
+            (Severity::Warn, "warn"),
+            (Severity::Error, "error"),
+            (Severity::Fatal, "fatal"),
+            (Severity::Unspecified, "info"),
+        ] {
+            assert_eq!(severity_to_string(severity), expected);
+        }
+
+        for (name, expected) in [
+            ("sum", MetricAggregation::Sum),
+            ("min", MetricAggregation::Min),
+            ("max", MetricAggregation::Max),
+            ("count", MetricAggregation::Count),
+            ("rate", MetricAggregation::Rate),
+            ("p50", MetricAggregation::P50),
+            ("p90", MetricAggregation::P90),
+            ("p95", MetricAggregation::P95),
+            ("p99", MetricAggregation::P99),
+            ("avg", MetricAggregation::Avg),
+        ] {
+            assert_eq!(parse_aggregation(name), expected);
+        }
+    }
+
+    #[test]
+    fn log_and_metric_conversion_helpers_preserve_request_fields() {
+        let mut fields = HashMap::new();
+        fields.insert("text".to_string(), serde_json::json!("value"));
+        fields.insert("ok".to_string(), serde_json::json!(true));
+        fields.insert("count".to_string(), serde_json::json!(3));
+        fields.insert("ratio".to_string(), serde_json::json!(1.5));
+        fields.insert("nested".to_string(), serde_json::json!({"k": "v"}));
+
+        let entry = convert_log_request(&LogEntryRequest {
+            timestamp_ns: Some(123),
+            message: "hello".to_string(),
+            severity: "error".to_string(),
+            source: Some("node-a".to_string()),
+            service: Some("api".to_string()),
+            fields,
+        })
+        .unwrap();
+        assert_eq!(entry.timestamp_ns, 123);
+        assert_eq!(entry.severity, Severity::Error as i32);
+        assert_eq!(entry.fields.len(), 5);
+
+        let response = convert_log_to_response(entry);
+        assert_eq!(response.severity, "error");
+        assert_eq!(response.fields["text"], serde_json::json!("value"));
+        assert_eq!(response.fields["count"], serde_json::json!(3));
+
+        let mut labels = HashMap::new();
+        labels.insert("service".to_string(), "api".to_string());
+        let sample = convert_metric_request(&MetricSampleRequest {
+            name: "latency_ms".to_string(),
+            value: 12.5,
+            timestamp_ns: Some(999),
+            labels: labels.clone(),
+        });
+        assert_eq!(sample.name, "latency_ms");
+        assert_eq!(sample.value, 12.5);
+        assert_eq!(sample.timestamp_ns, 999);
+        assert_eq!(sample.labels, labels);
+    }
+
+    #[tokio::test]
+    async fn observability_handlers_route_successful_requests_through_port() {
+        let JsonResponse(namespace) = create_namespace(
+            state(),
+            Json(CreateNamespaceRequest {
+                name: "ops".to_string(),
+                hot_retention_days: 2,
+                warm_retention_days: 8,
+                cold_retention_days: 31,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(namespace["namespace"], "ops");
+
+        let JsonResponse(single_log) = ingest_log(
+            state(),
+            Path("ops".to_string()),
+            Json(LogEntryRequest {
+                timestamp_ns: Some(1),
+                message: "one".to_string(),
+                severity: "info".to_string(),
+                source: None,
+                service: None,
+                fields: HashMap::new(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(single_log.success);
+
+        let JsonResponse(bulk_logs) = ingest_logs(
+            state(),
+            Path("ops".to_string()),
+            Json(BulkLogRequest {
+                logs: vec![LogEntryRequest {
+                    timestamp_ns: Some(2),
+                    message: "two".to_string(),
+                    severity: "warn".to_string(),
+                    source: None,
+                    service: None,
+                    fields: HashMap::new(),
+                }],
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(bulk_logs.ingested, 1);
+
+        let JsonResponse(logs) = query_logs(
+            state(),
+            Path("ops".to_string()),
+            Json(LogQueryRequest {
+                start_time_ns: None,
+                end_time_ns: None,
+                query: Some("warned".to_string()),
+                severities: vec!["warn".to_string()],
+                services: vec!["api".to_string()],
+                sources: vec!["node-a".to_string()],
+                limit: 10,
+                cursor: Some("cursor".to_string()),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(logs.logs.len(), 1);
+        assert_eq!(logs.next_cursor.as_deref(), Some("next"));
+
+        let JsonResponse(single_metric) = ingest_metric(
+            state(),
+            Path("ops".to_string()),
+            Json(MetricSampleRequest {
+                name: "latency".to_string(),
+                value: 1.0,
+                timestamp_ns: Some(1),
+                labels: HashMap::new(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(single_metric.ingested, 1);
+
+        let JsonResponse(bulk_metrics) = ingest_metrics(
+            state(),
+            Path("ops".to_string()),
+            Json(BulkMetricRequest {
+                metrics: vec![MetricSampleRequest {
+                    name: "latency".to_string(),
+                    value: 2.0,
+                    timestamp_ns: Some(2),
+                    labels: HashMap::new(),
+                }],
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(bulk_metrics.ingested, 1);
+
+        let JsonResponse(aggregated) = aggregate_metrics(
+            state(),
+            Path("ops".to_string()),
+            Json(MetricAggregationRequest {
+                metric_name: "latency".to_string(),
+                start_time_ns: 1,
+                end_time_ns: 2,
+                aggregation: "p95".to_string(),
+                step_seconds: 60,
+                group_by: vec!["service".to_string()],
+                labels: HashMap::new(),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(aggregated.series[0].points[0].value, 99.0);
+    }
+
+    #[tokio::test]
+    async fn local_placeholder_handlers_return_empty_successful_shapes() {
+        let JsonResponse(promql) = query_promql(
+            state(),
+            Path("ops".to_string()),
+            Json(PromQLRequest {
+                query: "up".to_string(),
+                start_ns: Some(1),
+                end_ns: Some(2),
+                step_ms: Some(1000),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(promql.result_type, "vector");
+        assert!(promql.result.is_empty());
+
+        let JsonResponse(traces) = ingest_traces(
+            state(),
+            Path("ops".to_string()),
+            Json(TraceIngestRequest {
+                spans: vec![serde_json::json!({"span_id": "s1"})],
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(traces.ingested, 1);
+
+        let JsonResponse(query) = query_traces(
+            state(),
+            Path("ops".to_string()),
+            Json(TraceQueryRequest {
+                trace_id: Some("trace-1".to_string()),
+                service: Some("api".to_string()),
+                start_ns: 1,
+                end_ns: 2,
+                limit: Some(10),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(query.total, 0);
+
+        let _router = create_observability_router();
+        let _logs = LogsHandler::default();
+        let _metrics = MetricsHandler::new();
     }
 }

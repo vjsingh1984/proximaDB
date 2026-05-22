@@ -75,7 +75,10 @@ mod tests {
     use tonic::Code;
 
     fn assert_unimplemented<T>(result: Result<Response<T>, Status>) {
-        let err = result.expect_err("backend-less hybrid service should reject RPC");
+        let err = match result {
+            Ok(_) => panic!("backend-less hybrid service should reject RPC"),
+            Err(err) => err,
+        };
         assert_eq!(err.code(), Code::Unimplemented);
         assert!(
             err.message()

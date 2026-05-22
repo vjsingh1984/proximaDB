@@ -72,7 +72,7 @@ pub struct SelectivityBoundaries {
 impl Default for SelectivityBoundaries {
     fn default() -> Self {
         Self {
-            pre_filter_max:  0.01,
+            pre_filter_max: 0.01,
             tunnel_band_max: 0.10,
             post_filter_min: 0.60,
         }
@@ -212,11 +212,17 @@ mod tests {
         // Already PreFilter; +GLS shouldn't push past it (no PrePreFilter).
         let mut i = inputs(0.005);
         i.gls_score = Some(0.95);
-        assert_eq!(choose_plan(&i, &fail_safe()).strategy, FilterStrategy::PreFilter);
+        assert_eq!(
+            choose_plan(&i, &fail_safe()).strategy,
+            FilterStrategy::PreFilter
+        );
         // Already PostFilter; -GLS shouldn't push past it.
         let mut i = inputs(0.85);
         i.gls_score = Some(-0.95);
-        assert_eq!(choose_plan(&i, &fail_safe()).strategy, FilterStrategy::PostFilter);
+        assert_eq!(
+            choose_plan(&i, &fail_safe()).strategy,
+            FilterStrategy::PostFilter
+        );
     }
 
     #[test]

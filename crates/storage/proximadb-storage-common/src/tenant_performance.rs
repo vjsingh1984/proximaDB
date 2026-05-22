@@ -460,6 +460,51 @@ impl Default for PerformanceMonitoringConfig {
 mod tests {
     use super::*;
 
+    fn base_metrics(tenant_id: &str) -> TenantMetrics {
+        TenantMetrics {
+            tenant_id: tenant_id.to_string(),
+            current_qps: 100.0,
+            avg_response_time_ms: 50.0,
+            memory_usage_bytes: 128 * 1024 * 1024,
+            storage_used_bytes: 1024 * 1024 * 1024,
+            concurrent_operations: 4,
+            cache_hit_rate: 90.0,
+            error_rate: 0.01,
+            last_updated: Utc::now(),
+            uptime_minutes: 120,
+        }
+    }
+
+    fn tight_sla(tenant_id: &str) -> TenantSLA {
+        TenantSLA {
+            tenant_id: tenant_id.to_string(),
+            max_qps: 200,
+            max_response_time_ms: 100,
+            min_uptime_percent: 99.0,
+            max_memory_bytes: 256 * 1024 * 1024,
+            max_storage_bytes: 2 * 1024 * 1024 * 1024,
+            max_concurrent_operations: 8,
+            guaranteed_cache_hit_rate: Some(80.0),
+        }
+    }
+
+    async fn install_tenant(
+        monitor: &TenantPerformanceMonitor,
+        metrics: TenantMetrics,
+        sla: Option<TenantSLA>,
+    ) {
+        let tenant_id = metrics.tenant_id.clone();
+        monitor
+            .tenant_metrics
+            .write()
+            .await
+            .insert(tenant_id.clone(), metrics);
+
+        if let Some(sla) = sla {
+            monitor.sla_config.write().await.insert(tenant_id, sla);
+        }
+    }
+
     #[tokio::test]
     async fn test_sla_check_qps_limit() {
         let monitor = TenantPerformanceMonitor::new(PerformanceMonitoringConfig::default());
@@ -498,6 +543,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_sla_check_response_time_limit() {
+        let monitor = TenantPerformanceMonitor::new(PerformanceMonitoringConfig::default());
+        let mut metrics = base_metrics("slow_tenant");
+        metrics.avg_response_time_ms = 125.0;
+
+        install_tenant(&monitor, metrics, Some(tight_sla("slow_tenant"))).await;
+
+        let sla_check = monitor
+            .check_operation_sla("slow_tenant", "search")
+            .await
+            .unwrap();
+
+        assert!(!sla_check.allowed);
+        assert!(matches!(
+            sla_check.violation_type,
+            Some(SLAViolationType::ResponseTimeExceeded)
+        ));
+        assert_eq!(sla_check.current_value, 125.0);
+        assert_eq!(sla_check.limit_value, 100.0);
+        assert_eq!(sla_check.retry_after_seconds, Some(10));
+    }
+
+    #[tokio::test]
+    async fn test_sla_check_concurrency_limit() {
+        let monitor = TenantPerformanceMonitor::new(PerformanceMonitoringConfig::default());
+        let mut metrics = base_metrics("busy_tenant");
+        metrics.concurrent_operations = 9;
+
+        install_tenant(&monitor, metrics, Some(tight_sla("busy_tenant"))).await;
+
+        let sla_check = monitor
+            .check_operation_sla("busy_tenant", "insert")
+            .await
+            .unwrap();
+
+        assert!(!sla_check.allowed);
+        assert!(matches!(
+            sla_check.violation_type,
+            Some(SLAViolationType::ConcurrencyLimitExceeded)
+        ));
+        assert_eq!(sla_check.current_value, 9.0);
+        assert_eq!(sla_check.limit_value, 8.0);
+        assert_eq!(sla_check.retry_after_seconds, Some(5));
+    }
+
+    #[tokio::test]
+    async fn test_sla_check_memory_limit() {
+        let monitor = TenantPerformanceMonitor::new(PerformanceMonitoringConfig::default());
+        let mut metrics = base_metrics("memory_tenant");
+        metrics.memory_usage_bytes = 300 * 1024 * 1024;
+
+        install_tenant(&monitor, metrics, Some(tight_sla("memory_tenant"))).await;
+
+        let sla_check = monitor
+            .check_operation_sla("memory_tenant", "compaction")
+            .await
+            .unwrap();
+
+        assert!(!sla_check.allowed);
+        assert!(matches!(
+            sla_check.violation_type,
+            Some(SLAViolationType::MemoryLimitExceeded)
+        ));
+        assert_eq!(sla_check.current_value, (300 * 1024 * 1024) as f64);
+        assert_eq!(sla_check.limit_value, (256 * 1024 * 1024) as f64);
+        assert_eq!(sla_check.retry_after_seconds, Some(30));
+    }
+
+    #[tokio::test]
     async fn test_sla_check_compliance() {
         let monitor = TenantPerformanceMonitor::new(PerformanceMonitoringConfig::default());
 
@@ -530,6 +644,105 @@ mod tests {
         assert_eq!(sla_check.reason, "SLA compliance verified");
     }
 
+    #[tokio::test]
+    async fn test_monitoring_helpers_and_default_sla_fallback() {
+        let monitor = TenantPerformanceMonitor::new(PerformanceMonitoringConfig::default());
+
+        assert!(monitor.get_tenant_metrics("missing").await.is_err());
+
+        install_tenant(&monitor, base_metrics("fallback_tenant"), None).await;
+
+        let sla = monitor.get_tenant_sla("fallback_tenant").await.unwrap();
+        assert_eq!(sla.tenant_id, "fallback_tenant");
+        assert_eq!(sla.max_qps, 1000);
+
+        let sla_check = monitor
+            .check_operation_sla("fallback_tenant", "search")
+            .await
+            .unwrap();
+        assert!(sla_check.allowed);
+
+        monitor
+            .update_tenant_metrics("generated_tenant")
+            .await
+            .unwrap();
+        let generated = monitor
+            .get_tenant_metrics("generated_tenant")
+            .await
+            .unwrap();
+        assert_eq!(generated.tenant_id, "generated_tenant");
+        assert_eq!(generated.current_qps, 0.0);
+        assert_eq!(generated.avg_response_time_ms, 0.0);
+        assert_eq!(generated.memory_usage_bytes, 0);
+        assert_eq!(generated.storage_used_bytes, 0);
+        assert_eq!(generated.concurrent_operations, 0);
+        assert_eq!(generated.cache_hit_rate, 0.0);
+        assert_eq!(generated.error_rate, 0.0);
+        assert_eq!(generated.uptime_minutes, 0);
+
+        assert_eq!(
+            monitor.get_active_tenants().await.unwrap(),
+            vec!["tenant_1".to_string(), "tenant_2".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sla_violation_handling_paths() {
+        let monitor = TenantPerformanceMonitor::new(PerformanceMonitoringConfig::default());
+
+        for violation_type in [
+            SLAViolationType::QPSLimitExceeded,
+            SLAViolationType::MemoryLimitExceeded,
+            SLAViolationType::ConcurrencyLimitExceeded,
+            SLAViolationType::ResponseTimeExceeded,
+            SLAViolationType::StorageLimitExceeded,
+            SLAViolationType::UptimeBelowThreshold,
+        ] {
+            let violation = SLACheckResult {
+                allowed: false,
+                violation_type: Some(violation_type),
+                current_value: 20.0,
+                limit_value: 10.0,
+                retry_after_seconds: Some(1),
+                reason: "test violation".to_string(),
+            };
+
+            monitor
+                .handle_sla_violation("tenant", &violation)
+                .await
+                .unwrap();
+        }
+
+        let no_type = SLACheckResult {
+            allowed: false,
+            violation_type: None,
+            current_value: 0.0,
+            limit_value: 0.0,
+            retry_after_seconds: None,
+            reason: "unknown violation".to_string(),
+        };
+        monitor
+            .handle_sla_violation("tenant", &no_type)
+            .await
+            .unwrap();
+
+        monitor.apply_qps_throttling("tenant", 10).await.unwrap();
+        monitor.apply_memory_pressure("tenant").await.unwrap();
+        monitor.apply_concurrency_limits("tenant", 2).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_check_sla_compliance_invokes_violation_handler() {
+        let monitor = TenantPerformanceMonitor::new(PerformanceMonitoringConfig::default());
+        let mut metrics = base_metrics("over_qps");
+        metrics.current_qps = 250.0;
+
+        install_tenant(&monitor, metrics, Some(tight_sla("over_qps"))).await;
+
+        monitor.check_sla_compliance("over_qps").await.unwrap();
+        assert!(monitor.check_sla_compliance("missing").await.is_err());
+    }
+
     #[test]
     fn test_tenant_sla_defaults() {
         let sla = TenantSLA::default_for_tenant("test_tenant");
@@ -543,5 +756,15 @@ mod tests {
         assert_eq!(enterprise_sla.max_qps, 5000);
         assert_eq!(enterprise_sla.max_response_time_ms, 100);
         assert_eq!(enterprise_sla.min_uptime_percent, 99.95);
+    }
+
+    #[test]
+    fn test_monitoring_config_default() {
+        let config = PerformanceMonitoringConfig::default();
+        assert_eq!(config.monitoring_interval_ms, 1000);
+        assert_eq!(config.metrics_retention_hours, 24 * 7);
+        assert!(config.enable_real_time_alerting);
+        assert!(config.enable_sla_enforcement);
+        assert_eq!(config.violation_threshold_count, 3);
     }
 }

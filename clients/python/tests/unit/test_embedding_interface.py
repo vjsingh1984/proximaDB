@@ -312,7 +312,7 @@ class TestEmbeddingProviderFactory:
         assert provider.is_available() == True
 
         if isinstance(provider, BERTEmbeddingProvider):
-            assert provider.model_name == "all-MiniLM-L6-v2"
+            assert provider.model_name == "BAAI/bge-small-en-v1.5"
         else:
             assert isinstance(provider, SimulatedEmbeddingProvider)
 

@@ -51,7 +51,10 @@ pub struct RepairBudget {
 
 impl Default for RepairBudget {
     fn default() -> Self {
-        Self { passes_used: 0, max_passes: 1 }
+        Self {
+            passes_used: 0,
+            max_passes: 1,
+        }
     }
 }
 
@@ -174,7 +177,10 @@ mod tests {
     }
 
     fn budget(passes_used: u8) -> RepairBudget {
-        RepairBudget { passes_used, max_passes: 1 }
+        RepairBudget {
+            passes_used,
+            max_passes: 1,
+        }
     }
 
     fn t() -> DecisionThresholds {
@@ -260,9 +266,15 @@ mod tests {
 
     #[test]
     fn budget_has_budget_helper_checks_strictly_less_than() {
-        let b = RepairBudget { passes_used: 0, max_passes: 1 };
+        let b = RepairBudget {
+            passes_used: 0,
+            max_passes: 1,
+        };
         assert!(b.has_budget());
-        let b2 = RepairBudget { passes_used: 1, max_passes: 1 };
+        let b2 = RepairBudget {
+            passes_used: 1,
+            max_passes: 1,
+        };
         assert!(!b2.has_budget());
     }
 

@@ -775,6 +775,127 @@ fn json_to_aggregation_stage(value: &serde_json::Value) -> RestResult<Aggregatio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use proximadb_proto::v1::{
+        AggregateDocumentsResponse, CreateDocumentCollectionResponse,
+        DeleteDocumentCollectionResponse, DeleteDocumentResponse, DocumentCollectionInfo,
+        DocumentResult, GetDocumentResponse, InsertDocumentResponse,
+        ListDocumentCollectionsResponse, QueryDocumentsResponse, UpdateDocumentResponse,
+    };
+
+    struct MockDocumentPort;
+
+    fn sample_object() -> SqlObject {
+        json_to_sql_object(&serde_json::json!({"name": "doc", "count": 1})).unwrap()
+    }
+
+    #[async_trait]
+    impl DocumentPort for MockDocumentPort {
+        async fn create_collection(
+            &self,
+            _request: CreateDocumentCollectionRequest,
+        ) -> Result<CreateDocumentCollectionResponse> {
+            Ok(CreateDocumentCollectionResponse {
+                collection_id: "docs".to_string(),
+                success: true,
+            })
+        }
+
+        async fn list_collections(
+            &self,
+            _request: ListDocumentCollectionsRequest,
+        ) -> Result<ListDocumentCollectionsResponse> {
+            Ok(ListDocumentCollectionsResponse {
+                collections: vec![DocumentCollectionInfo {
+                    name: "docs".to_string(),
+                    document_count: 2,
+                    storage_size_bytes: 256,
+                    indexes: vec![IndexDefinition {
+                        name: Some("by_name".to_string()),
+                        path: "name".to_string(),
+                        index_type: DocIndexType::Btree as i32,
+                        unique: false,
+                        sparse: true,
+                    }],
+                }],
+            })
+        }
+
+        async fn delete_collection(
+            &self,
+            _request: DeleteDocumentCollectionRequest,
+        ) -> Result<DeleteDocumentCollectionResponse> {
+            Ok(DeleteDocumentCollectionResponse { success: true })
+        }
+
+        async fn insert_document(
+            &self,
+            request: InsertDocumentRequest,
+        ) -> Result<InsertDocumentResponse> {
+            Ok(InsertDocumentResponse {
+                id: request.id.unwrap_or_else(|| "generated".to_string()),
+                version: 2,
+            })
+        }
+
+        async fn get_document(&self, _request: GetDocumentRequest) -> Result<GetDocumentResponse> {
+            Ok(GetDocumentResponse {
+                document: Some(sample_object()),
+                version: 3,
+                found: true,
+            })
+        }
+
+        async fn update_document(
+            &self,
+            _request: UpdateDocumentRequest,
+        ) -> Result<UpdateDocumentResponse> {
+            Ok(UpdateDocumentResponse {
+                new_version: 4,
+                success: true,
+            })
+        }
+
+        async fn delete_document(
+            &self,
+            _request: DeleteDocumentRequest,
+        ) -> Result<DeleteDocumentResponse> {
+            Ok(DeleteDocumentResponse { deleted: true })
+        }
+
+        async fn query_documents(
+            &self,
+            _request: QueryDocumentsRequest,
+        ) -> Result<QueryDocumentsResponse> {
+            Ok(QueryDocumentsResponse {
+                documents: vec![DocumentResult {
+                    id: "doc-1".to_string(),
+                    document: Some(sample_object()),
+                    version: 5,
+                    score: Some(0.9),
+                }],
+                total_count: Some(1),
+                query_time_ms: 7,
+            })
+        }
+
+        async fn aggregate_documents(
+            &self,
+            _request: AggregateDocumentsRequest,
+        ) -> Result<AggregateDocumentsResponse> {
+            Ok(AggregateDocumentsResponse {
+                results: vec![sample_object()],
+                query_time_ms: 8,
+            })
+        }
+    }
+
+    fn state() -> State<DocumentRestState> {
+        State(DocumentRestState {
+            document_port: Arc::new(MockDocumentPort),
+        })
+    }
 
     #[test]
     fn test_json_to_sql_value() {
@@ -793,5 +914,245 @@ mod tests {
         assert_eq!(original["x"], roundtripped["x"]);
         assert_eq!(original["y"], roundtripped["y"]);
         assert_eq!(original["z"], roundtripped["z"]);
+    }
+
+    #[test]
+    fn json_sql_value_conversions_cover_nested_and_binary_values() {
+        let value = serde_json::json!({
+            "null": null,
+            "array": [1, "two", false],
+            "object": {"nested": true}
+        });
+        let object = json_to_sql_object(&value).unwrap();
+        let restored = sql_object_to_json(&object);
+        assert_eq!(restored["null"], serde_json::Value::Null);
+        assert_eq!(restored["array"][1], "two");
+        assert_eq!(restored["object"]["nested"], true);
+
+        let bytes = SqlValue {
+            value: Some(proximadb_proto::v1::sql_value::Value::BytesValue(vec![
+                0xab, 0xcd,
+            ])),
+        };
+        assert_eq!(sql_value_to_json(&bytes), serde_json::json!("abcd"));
+        assert!(matches!(
+            json_to_sql_object(&serde_json::json!(["not", "object"])),
+            Err(RestError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn aggregation_stage_parser_accepts_supported_stage_aliases() {
+        assert!(matches!(
+            json_to_aggregation_stage(&serde_json::json!({"$limit": 10}))
+                .unwrap()
+                .stage,
+            Some(AggStage::Limit(LimitStage { limit: 10 }))
+        ));
+        assert!(matches!(
+            json_to_aggregation_stage(&serde_json::json!({"skip": 3}))
+                .unwrap()
+                .stage,
+            Some(AggStage::Skip(SkipStage { skip: 3 }))
+        ));
+        assert!(matches!(
+            json_to_aggregation_stage(&serde_json::json!({"$unwind": "tags"}))
+                .unwrap()
+                .stage,
+            Some(AggStage::Unwind(UnwindStage { ref path, preserve_null: false })) if path == "tags"
+        ));
+        assert!(matches!(
+            json_to_aggregation_stage(&serde_json::json!({
+                "$lookup": {
+                    "from_collection": "other",
+                    "local_field": "id",
+                    "foreign_field": "doc_id",
+                    "as_field": "matches"
+                }
+            }))
+            .unwrap()
+            .stage,
+            Some(AggStage::Lookup(LookupStage { ref from_collection, .. })) if from_collection == "other"
+        ));
+        assert!(matches!(
+            json_to_aggregation_stage(&serde_json::json!("bad")),
+            Err(RestError::InvalidArgument(_))
+        ));
+        assert!(matches!(
+            json_to_aggregation_stage(&serde_json::json!({"unknown": {}})),
+            Err(RestError::InvalidArgument(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn document_collection_handlers_route_through_document_port() {
+        let JsonResponse(created) = create_collection(
+            state(),
+            Json(CreateCollectionRequest {
+                name: "docs".to_string(),
+                indexes: vec![
+                    IndexDefinitionRequest {
+                        name: Some("hash".to_string()),
+                        path: "id".to_string(),
+                        index_type: "hash".to_string(),
+                        unique: true,
+                        sparse: false,
+                    },
+                    IndexDefinitionRequest {
+                        name: Some("unknown".to_string()),
+                        path: "fallback".to_string(),
+                        index_type: "unknown".to_string(),
+                        unique: false,
+                        sparse: false,
+                    },
+                ],
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(created["collection"], "docs");
+
+        let JsonResponse(listed) = list_collections(state()).await.unwrap();
+        assert_eq!(listed["collections"][0]["name"], "docs");
+
+        let JsonResponse(info) = get_collection_info(state(), Path("docs".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(info["document_count"], 2);
+
+        let JsonResponse(indexes) = list_indexes(state(), Path("docs".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(indexes["indexes"][0]["path"], "name");
+
+        let JsonResponse(deleted) = delete_collection(state(), Path("docs".to_string()))
+            .await
+            .unwrap();
+        assert_eq!(deleted["success"], true);
+
+        let err = create_index(
+            state(),
+            Path("docs".to_string()),
+            Json(IndexDefinitionRequest {
+                name: None,
+                path: "field".to_string(),
+                index_type: "btree".to_string(),
+                unique: false,
+                sparse: false,
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert!(matches!(err, RestError::InvalidArgument(_)));
+    }
+
+    #[tokio::test]
+    async fn document_crud_query_batch_and_aggregate_handlers_return_expected_shapes() {
+        let JsonResponse(inserted) = insert_document(
+            state(),
+            Path("docs".to_string()),
+            Json(CreateDocumentRequest {
+                id: Some("doc-1".to_string()),
+                document: serde_json::json!({"name": "doc"}),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(inserted.id, "doc-1");
+        assert_eq!(inserted.version, 2);
+
+        let JsonResponse(got) = get_document(
+            state(),
+            Path(("docs".to_string(), "doc-1".to_string())),
+            Query(DocumentQueryParams {
+                projection: Some("name,count".to_string()),
+                limit: 100,
+                filter: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(got.version, 3);
+        assert_eq!(got.document["name"], "doc");
+
+        let JsonResponse(query) = query_documents(
+            state(),
+            Path("docs".to_string()),
+            Query(DocumentQueryParams {
+                projection: Some("name".to_string()),
+                limit: 1,
+                filter: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(query.has_more);
+        assert_eq!(query.total_count, Some(1));
+
+        let JsonResponse(updated) = update_document(
+            state(),
+            Path(("docs".to_string(), "doc-1".to_string())),
+            Json(UpdateDocumentBody {
+                updates: vec![
+                    serde_json::json!({"operation": "set", "path": "name", "value": "new"}),
+                    serde_json::json!({"operation": "unset", "path": "old"}),
+                    serde_json::json!({"operation": "inc", "path": "count", "value": 1}),
+                    serde_json::json!({"operation": "push", "path": "tags", "value": "a"}),
+                    serde_json::json!({"operation": "pull", "path": "tags", "value": "b"}),
+                    serde_json::json!({"operation": "unknown", "path": "fallback"}),
+                ],
+                expected_version: Some(3),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(updated["new_version"], 4);
+
+        let JsonResponse(deleted) =
+            delete_document(state(), Path(("docs".to_string(), "doc-1".to_string())))
+                .await
+                .unwrap();
+        assert_eq!(deleted["id"], "doc-1");
+
+        let JsonResponse(batch) = batch_insert_documents(
+            state(),
+            Path("docs".to_string()),
+            Json(BatchInsertRequest {
+                documents: vec![
+                    CreateDocumentRequest {
+                        id: Some("doc-1".to_string()),
+                        document: serde_json::json!({"ok": true}),
+                    },
+                    CreateDocumentRequest {
+                        id: Some("bad".to_string()),
+                        document: serde_json::json!(["not", "object"]),
+                    },
+                ],
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(batch.inserted, 1);
+        assert_eq!(batch.failed, 1);
+
+        let JsonResponse(aggregate) = aggregate_documents(
+            state(),
+            Path("docs".to_string()),
+            Json(AggregateRequest {
+                pipeline: vec![
+                    serde_json::json!({"$limit": 10}),
+                    serde_json::json!({"unknown": {}}),
+                ],
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(aggregate.results[0]["name"], "doc");
+
+        let _router = create_document_router();
+        let _handler = DocumentHandler::default();
+        let _query_handler = DocumentQueryHandler::new();
+        assert_eq!(default_limit(), 100);
+        assert_eq!(default_index_type(), "btree");
     }
 }

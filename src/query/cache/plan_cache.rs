@@ -333,7 +333,10 @@ mod tests {
         cache.get(&a, 1).await;
         cache.put(c.clone(), plan(), 1).await;
         assert!(cache.get(&a, 1).await.is_some());
-        assert!(cache.get(&b, 1).await.is_none(), "b should have been evicted");
+        assert!(
+            cache.get(&b, 1).await.is_none(),
+            "b should have been evicted"
+        );
         assert!(cache.get(&c, 1).await.is_some());
     }
 
@@ -394,7 +397,11 @@ mod tests {
             cache.get(&k, 1).await;
         }
         let stats = cache.stats().await;
-        assert!(stats.ema_hit_rate > 0.95, "EMA should be near 1.0, got {}", stats.ema_hit_rate);
+        assert!(
+            stats.ema_hit_rate > 0.95,
+            "EMA should be near 1.0, got {}",
+            stats.ema_hit_rate
+        );
     }
 
     #[tokio::test]

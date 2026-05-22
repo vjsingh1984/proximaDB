@@ -45,8 +45,8 @@ This matrix is the support contract.
 
 | Vector CRUD and search
 | Supported
-| REST and gRPC vector batch/search/get flows, tenant-aware routing, filters, and streaming search on the canonical single-node path.
-| Keep hybrid retrieval and distributed search claims separate from the supported vector surface.
+| Canonical REST v2 record batch/search/get flows and gRPC `proximadb.v2.ProximaRecordService` record operations. REST/gRPC v1 vector-shaped flows remain compatibility adapters for existing clients and must lower into canonical records.
+| Keep hybrid retrieval and distributed search claims separate from the supported vector surface. New clients should not target v1 `VectorRecord`/`SqlValue` payloads.
 
 | Federated SQL over function-backed sources
 | Beta

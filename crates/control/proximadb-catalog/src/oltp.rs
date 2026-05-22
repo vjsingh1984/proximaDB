@@ -783,4 +783,232 @@ mod tests {
         assert!(!cat.table_exists(&from).await.unwrap());
         assert!(cat.table_exists(&to).await.unwrap());
     }
+
+    #[test]
+    fn config_constructors_backend_detection_and_ddl_generation_cover_all_backends() {
+        let default = OltpCatalogConfig::default();
+        assert_eq!(default.connection_string, "sqlite::memory:");
+        assert_eq!(default.pool_max_connections, 10);
+        assert_eq!(default.table_prefix, "xcatalog_");
+        assert!(default.auto_migrate);
+        assert_eq!(default.size_threshold_bytes, 1_073_741_824);
+
+        let postgres = OltpCatalogConfig::postgres("postgresql://localhost/db");
+        let mysql = OltpCatalogConfig::mysql("mariadb://localhost/db");
+        let sqlite = OltpCatalogConfig::sqlite("sqlite:///tmp/catalog.db");
+        assert_eq!(
+            detect_backend(&postgres.connection_string),
+            OltpBackend::Postgres
+        );
+        assert_eq!(detect_backend(&mysql.connection_string), OltpBackend::Mysql);
+        assert_eq!(
+            detect_backend(&sqlite.connection_string),
+            OltpBackend::Sqlite
+        );
+        assert_eq!(
+            detect_backend("postgres://localhost/db"),
+            OltpBackend::Postgres
+        );
+        assert_eq!(detect_backend("mysql://localhost/db"), OltpBackend::Mysql);
+        assert_eq!(detect_backend("file.db"), OltpBackend::Sqlite);
+
+        for (backend, expected_fragment) in [
+            (OltpBackend::Postgres, "JSONB"),
+            (OltpBackend::Mysql, "AUTO_INCREMENT"),
+            (OltpBackend::Sqlite, "AUTOINCREMENT"),
+        ] {
+            let catalog = OltpCatalog {
+                name: "ddl".to_string(),
+                backend,
+                config: OltpCatalogConfig {
+                    table_prefix: "test_".to_string(),
+                    auto_migrate: false,
+                    ..OltpCatalogConfig::default()
+                },
+                cache: Arc::new(CatalogCache::new(10, 60)),
+                namespaces: RwLock::new(HashMap::new()),
+                tables: RwLock::new(HashMap::new()),
+            };
+            let ddl = catalog.generate_ddl();
+            assert_eq!(ddl.len(), 5);
+            assert!(ddl.iter().all(|stmt| stmt.contains("test_")));
+            assert!(ddl.iter().any(|stmt| stmt.contains(expected_fragment)));
+            assert_eq!(catalog.prefix(), "test_");
+        }
+    }
+
+    #[tokio::test]
+    async fn namespace_lifecycle_errors_and_property_updates_are_explicit() {
+        let cat = make_catalog().await;
+        assert_eq!(cat.name(), "test");
+        assert_eq!(cat.catalog_type(), "oltp-sqlite");
+
+        let namespace = vec!["db".to_string(), "analytics".to_string()];
+        let ns = cat
+            .create_namespace(
+                &namespace,
+                HashMap::from([("owner".to_string(), "catalog".to_string())]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ns.fqn(), "db.analytics");
+        assert_eq!(
+            ns.properties.get("owner").map(String::as_str),
+            Some("catalog")
+        );
+        assert!(
+            cat.create_namespace(&namespace, HashMap::new())
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("already exists")
+        );
+
+        cat.update_namespace_properties(
+            &namespace,
+            HashMap::from([("tier".to_string(), "gold".to_string())]),
+            vec!["owner".to_string()],
+        )
+        .await
+        .unwrap();
+        let updated = cat.get_namespace(&namespace).await.unwrap();
+        assert_eq!(
+            updated.properties.get("tier").map(String::as_str),
+            Some("gold")
+        );
+        assert!(!updated.properties.contains_key("owner"));
+
+        assert!(
+            cat.get_namespace(&["missing".to_string()])
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("not found")
+        );
+        assert!(
+            cat.update_namespace_properties(&["missing".to_string()], HashMap::new(), Vec::new())
+                .await
+                .is_err()
+        );
+        assert!(cat.drop_namespace(&namespace, false).await.unwrap());
+        assert!(!cat.drop_namespace(&namespace, false).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn table_schema_index_statistics_and_health_paths_cover_success_and_miss_cases() {
+        let cat = make_catalog().await;
+        let id = TableIdentifier::new(vec!["db".to_string()], "events");
+        let schema = CatalogTableSchema::new("events")
+            .with_column(crate::CatalogColumn::new(
+                1,
+                "id",
+                crate::CatalogDataType::Int64,
+            ))
+            .with_column(crate::CatalogColumn::new(
+                2,
+                "body",
+                crate::CatalogDataType::String,
+            ));
+
+        let created = cat.create_table(&id, schema).await.unwrap();
+        assert_eq!(created.name, "events");
+        assert!(cat.namespace_exists(&id.namespace).await.unwrap());
+        assert!(
+            cat.create_table(&id, CatalogTableSchema::new("events"))
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("already exists")
+        );
+        assert!(
+            cat.get_table(&TableIdentifier::new(vec!["db".to_string()], "missing"))
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("not found")
+        );
+
+        let evolved = cat
+            .evolve_schema(
+                &id,
+                CatalogSchemaEvolution {
+                    changes: vec![crate::SchemaChange::AddColumn {
+                        name: "ts".to_string(),
+                        data_type: crate::CatalogDataType::Timestamp,
+                        nullable: true,
+                        default_value: None,
+                        comment: None,
+                        after: None,
+                    }],
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(evolved.schema_version, 2);
+        assert_eq!(cat.get_schema_version(&id).await.unwrap(), 2);
+        assert_eq!(
+            cat.get_schema_by_version(&id, 1)
+                .await
+                .unwrap()
+                .schema_version,
+            2
+        );
+        assert!(
+            cat.evolve_schema(
+                &TableIdentifier::new(vec!["db".to_string()], "missing"),
+                CatalogSchemaEvolution { changes: vec![] },
+            )
+            .await
+            .is_err()
+        );
+
+        let index = CatalogIndex::new(
+            "events_id_idx",
+            vec!["id".to_string()],
+            crate::CatalogIndexType::BTree,
+        );
+        assert_eq!(
+            cat.create_index(&id, index).await.unwrap().name,
+            "events_id_idx"
+        );
+        assert_eq!(cat.list_indexes(&id).await.unwrap().len(), 1);
+        assert!(cat.drop_index(&id, "events_id_idx").await.unwrap());
+        assert!(!cat.drop_index(&id, "events_id_idx").await.unwrap());
+        assert!(
+            cat.create_index(
+                &TableIdentifier::new(vec!["db".to_string()], "missing"),
+                CatalogIndex::new(
+                    "bad",
+                    vec!["id".to_string()],
+                    crate::CatalogIndexType::BTree
+                ),
+            )
+            .await
+            .is_err()
+        );
+
+        cat.update_statistics(
+            &id,
+            CatalogTableStatistics {
+                row_count: 7,
+                size_bytes: 128,
+                ..CatalogTableStatistics::default()
+            },
+        )
+        .await
+        .unwrap();
+        let stats = cat.get_statistics(&id).await.unwrap();
+        assert_eq!(stats.row_count, 7);
+        assert_eq!(stats.size_bytes, 128);
+        assert!(
+            cat.get_statistics(&TableIdentifier::new(vec!["db".to_string()], "missing"))
+                .await
+                .is_err()
+        );
+
+        let health = cat.health_check().await.unwrap();
+        assert!(health.is_healthy);
+        assert!(health.latency_ms >= 1);
+        cat.close().await.unwrap();
+    }
 }

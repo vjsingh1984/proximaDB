@@ -137,3 +137,126 @@ impl v1::collection_service_server::CollectionService for CollectionServiceImpl 
         }))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::test_support::{ApiCall, RecordingApiPort};
+    use tonic::Code;
+    use v1::collection_service_server::CollectionService;
+
+    fn collection(name: &str) -> v1::Collection {
+        v1::Collection {
+            id: format!("{name}-id"),
+            config: Some(v1::CollectionConfig {
+                name: name.to_string(),
+                dimension: 128,
+                ..v1::CollectionConfig::default()
+            }),
+            ..v1::Collection::default()
+        }
+    }
+
+    fn tenant_request<T>(body: T) -> Request<T> {
+        let mut request = Request::new(body);
+        request
+            .metadata_mut()
+            .insert("x-tenant-id", "tenant-a".parse().unwrap());
+        request
+    }
+
+    #[tokio::test]
+    async fn collection_service_lowers_crud_rpcs_to_collection_port_operations() {
+        let port = RecordingApiPort::new();
+        let docs = collection("docs");
+        *port.collection_response.lock().unwrap() = v1::CollectionResponse {
+            success: true,
+            collection: Some(docs.clone()),
+            collections: vec![docs.clone()],
+            ..v1::CollectionResponse::default()
+        };
+        let service = CollectionServiceImpl::new(port.clone());
+        let _server = CollectionServiceImpl::new(port.clone()).into_server();
+
+        let created = service
+            .create_collection(tenant_request(v1::CollectionConfig {
+                name: "docs".to_string(),
+                dimension: 128,
+                ..v1::CollectionConfig::default()
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(created.id, "docs-id");
+
+        let fetched = service
+            .get_collection(tenant_request(v1::GetCollectionRequest {
+                collection_id: "docs".to_string(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(fetched.id, "docs-id");
+
+        let listed = service
+            .list_collections(tenant_request(v1::ListCollectionsRequest::default()))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(listed.collections.len(), 1);
+
+        assert!(
+            service
+                .delete_collection(tenant_request(v1::DeleteCollectionRequest {
+                    collection_id: "docs".to_string(),
+                }))
+                .await
+                .unwrap()
+                .into_inner()
+                .success
+        );
+
+        assert_eq!(
+            port.calls(),
+            vec![
+                ApiCall::Collection {
+                    operation: CollectionOperation::CollectionCreate as i32,
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: Some("docs".to_string()),
+                },
+                ApiCall::Collection {
+                    operation: CollectionOperation::CollectionGet as i32,
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: Some("docs".to_string()),
+                },
+                ApiCall::Collection {
+                    operation: CollectionOperation::CollectionList as i32,
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: None,
+                },
+                ApiCall::Collection {
+                    operation: CollectionOperation::CollectionDelete as i32,
+                    tenant_id: Some("tenant-a".to_string()),
+                    collection_id: Some("docs".to_string()),
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn get_collection_maps_missing_collection_to_not_found() {
+        let service = CollectionServiceImpl::new(RecordingApiPort::new());
+
+        let result = service
+            .get_collection(Request::new(v1::GetCollectionRequest {
+                collection_id: "missing".to_string(),
+            }))
+            .await;
+        let err = match result {
+            Ok(_) => panic!("missing collection should map to not_found"),
+            Err(err) => err,
+        };
+
+        assert_eq!(err.code(), Code::NotFound);
+    }
+}

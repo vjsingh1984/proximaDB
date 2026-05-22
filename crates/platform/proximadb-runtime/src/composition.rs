@@ -37,3 +37,16 @@ impl Default for DIContainer {
 }
 
 // TODO: Move service composition logic from src/services/mod.rs
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn composer_and_container_default_to_empty_runtime_shells() {
+        let _composer = ServiceComposer::new();
+        let _default_composer = ServiceComposer::default();
+        let _container = DIContainer::new();
+        let _default_container = DIContainer::default();
+    }
+}

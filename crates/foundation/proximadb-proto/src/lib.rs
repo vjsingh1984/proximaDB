@@ -118,3 +118,29 @@ pub mod proto {
 
 #[path = "proto/serde_impls.rs"]
 pub mod serde_impls;
+
+#[cfg(test)]
+mod tests {
+    use super::proximadb_v1::StorageEngine;
+
+    #[test]
+    fn storage_engine_helper_contracts_cover_all_protocol_engines() {
+        let all = StorageEngine::all();
+        assert_eq!(all.len(), 12);
+        assert!(all.contains(&StorageEngine::Viper));
+        assert!(all.contains(&StorageEngine::Sst));
+        assert!(all.contains(&StorageEngine::Titan));
+
+        for engine in all {
+            assert!(engine.is_persistent());
+        }
+
+        assert!(StorageEngine::Viper.supports_compression());
+        assert!(StorageEngine::Sst.supports_compression());
+        assert!(!StorageEngine::Helix.supports_compression());
+
+        assert!(StorageEngine::Sst.supports_transactions());
+        assert!(StorageEngine::Hybrid.supports_transactions());
+        assert!(!StorageEngine::Nova.supports_transactions());
+    }
+}

@@ -435,6 +435,7 @@ pub struct GrpcServices {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::RecordingApiPort;
 
     #[test]
     fn test_builder_creation() {
@@ -470,5 +471,70 @@ mod tests {
             config.max_encoding_message_size,
             GrpcServiceConfig::DEFAULT_MAX_MESSAGE_SIZE
         );
+    }
+
+    #[test]
+    fn builder_supports_independent_encoding_and_decoding_limits() {
+        let builder = GrpcServiceBuilder::default()
+            .with_max_decoding_message_size(8 * 1024)
+            .with_max_encoding_message_size(16 * 1024);
+
+        assert_eq!(builder.config.max_decoding_message_size, 8 * 1024);
+        assert_eq!(builder.config.max_encoding_message_size, 16 * 1024);
+    }
+
+    #[test]
+    fn builder_creates_all_service_server_types_with_default_placeholder_backends() {
+        let builder = GrpcServiceBuilder::new().with_compression(true);
+        let port = RecordingApiPort::new();
+
+        let _vector = builder.build_vector_service(port.clone());
+        let _collection = builder.build_collection_service(port.clone());
+        let _document = builder.build_document_service(None);
+        let _entity = builder.build_entity_service(None);
+        let _graph = builder.build_graph_service(None);
+        let _hybrid = builder.build_hybrid_search_service(None);
+        let _sql = builder.build_sql_service(port);
+        let _streaming = builder.build_streaming_service(None);
+        let _observability = builder.build_observability_service(None);
+        let _security = builder.build_security_service(None);
+    }
+
+    #[tokio::test]
+    async fn factory_creates_complete_service_bundle_sync_and_async() {
+        let config = GrpcServiceConfig {
+            compression_enabled: true,
+            max_decoding_message_size: 1024,
+            max_encoding_message_size: 2048,
+        };
+        let factory = GrpcServiceFactory::new(RecordingApiPort::new()).with_config(config);
+
+        let sync_services = factory.create_all_services_sync();
+        let GrpcServices {
+            vector: _,
+            collection: _,
+            document: _,
+            entity: _,
+            graph: _,
+            hybrid_search: _,
+            sql: _,
+            streaming: _,
+            observability: _,
+            security: _,
+        } = sync_services;
+
+        let async_services = factory.create_all_services().await.unwrap();
+        let GrpcServices {
+            vector: _,
+            collection: _,
+            document: _,
+            entity: _,
+            graph: _,
+            hybrid_search: _,
+            sql: _,
+            streaming: _,
+            observability: _,
+            security: _,
+        } = async_services;
     }
 }

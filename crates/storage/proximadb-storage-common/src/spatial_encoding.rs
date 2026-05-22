@@ -553,4 +553,138 @@ mod tests {
         assert_eq!(CodeType::select(32, 8), CodeType::Bits256);
         assert_eq!(CodeType::select(64, 8), CodeType::Bits512);
     }
+
+    #[test]
+    fn u512_covers_cross_part_carry_borrow_abs_diff_and_serde_errors() {
+        assert_eq!(U512::from_u64(7), U512::new([7, 0, 0, 0]));
+        assert_eq!(U512::from_u128(9), U512::new([9, 0, 0, 0]));
+
+        let carry = U512::new([u128::MAX, 0, 0, 0]).saturating_add(&U512::from_u64(1));
+        assert_eq!(carry, U512::new([0, 1, 0, 0]));
+
+        let borrow = U512::new([0, 1, 0, 0]).saturating_sub(&U512::from_u64(1));
+        assert_eq!(borrow, U512::new([u128::MAX, 0, 0, 0]));
+
+        let high = U512::new([0, 0, 0, 1]);
+        let low = U512::new([u128::MAX, u128::MAX, u128::MAX, 0]);
+        assert!(high > low);
+        assert_eq!(low.abs_diff(&high), high.saturating_sub(&low));
+
+        let encoded = bincode::serialize(&high).unwrap();
+        let decoded: U512 = bincode::deserialize(&encoded).unwrap();
+        assert_eq!(decoded, high);
+
+        let invalid = bincode::serialize(&vec![1_u8, 2, 3]).unwrap();
+        let err = bincode::deserialize::<U512>(&invalid).unwrap_err();
+        assert!(err.to_string().contains("Expected 64 bytes"));
+    }
+
+    #[test]
+    fn spatial_code_covers_all_widths_ordering_arithmetic_display_and_type_mismatch() {
+        let c64 = SpatialCode::Code64(10);
+        let c128 = SpatialCode::Code128(20);
+        let c256 = SpatialCode::Code256 { low: 5, high: 1 };
+        let c512 = SpatialCode::Code512(U512::new([7, 0, 0, 0]));
+
+        assert_eq!(c64.code_type(), CodeType::Bits64);
+        assert_eq!(c128.code_type(), CodeType::Bits128);
+        assert_eq!(c256.code_type(), CodeType::Bits256);
+        assert_eq!(c512.code_type(), CodeType::Bits512);
+        assert!(c64 < c128);
+        assert!(c128 < c256);
+        assert!(c256 < c512);
+
+        assert!(
+            SpatialCode::Code128(15).in_range(&SpatialCode::Code128(10), &SpatialCode::Code128(20))
+        );
+        assert!(SpatialCode::Code256 { low: 7, high: 1 }.in_range(
+            &SpatialCode::Code256 { low: 5, high: 1 },
+            &SpatialCode::Code256 { low: 9, high: 1 }
+        ));
+        assert!(SpatialCode::Code512(U512::from_u64(15)).in_range(
+            &SpatialCode::Code512(U512::from_u64(10)),
+            &SpatialCode::Code512(U512::from_u64(20))
+        ));
+        assert!(
+            !SpatialCode::Code64(1).in_range(&SpatialCode::Code128(1), &SpatialCode::Code128(2))
+        );
+
+        assert_eq!(
+            SpatialCode::Code128(100).epsilon(&SpatialCode::Code128(300), 25.0, 10),
+            SpatialCode::Code128(50)
+        );
+        assert_eq!(
+            SpatialCode::Code256 { low: 0, high: 100 }.epsilon(
+                &SpatialCode::Code256 { low: 0, high: 300 },
+                10.0,
+                5
+            ),
+            SpatialCode::Code256 { low: 0, high: 20 }
+        );
+        assert_eq!(
+            SpatialCode::Code512(U512::from_u64(100)).epsilon(
+                &SpatialCode::Code512(U512::from_u64(200)),
+                10.0,
+                20
+            ),
+            SpatialCode::Code512(U512::from_u64(20))
+        );
+        assert_eq!(c64.epsilon(&c128, 10.0, 1), c64);
+
+        assert_eq!(
+            SpatialCode::Code256 { low: 0, high: 1 }
+                .saturating_sub(&SpatialCode::Code256 { low: 1, high: 0 }),
+            SpatialCode::Code256 {
+                low: u128::MAX,
+                high: 0
+            }
+        );
+        assert_eq!(
+            SpatialCode::Code256 {
+                low: u128::MAX,
+                high: 0
+            }
+            .saturating_add(&SpatialCode::Code256 { low: 1, high: 0 }),
+            SpatialCode::Code256 { low: 0, high: 1 }
+        );
+        assert_eq!(c64.saturating_add(&c128), c64);
+        assert_eq!(c64.saturating_sub(&c128), c64);
+
+        assert!(format!("{}", c64).contains("Code64"));
+        assert!(format!("{}", c128).contains("Code128"));
+        assert!(format!("{}", c256).contains("Code256"));
+        assert!(format!("{}", c512).contains("Code512"));
+    }
+
+    #[test]
+    fn spatial_code_serde_roundtrips_and_rejects_bad_tags_and_lengths() {
+        for code in [
+            SpatialCode::Code64(42),
+            SpatialCode::Code128(42),
+            SpatialCode::Code256 { low: 1, high: 2 },
+            SpatialCode::Code512(U512::new([1, 2, 3, 4])),
+        ] {
+            let encoded = bincode::serialize(&code).unwrap();
+            let decoded: SpatialCode = bincode::deserialize(&encoded).unwrap();
+            assert_eq!(decoded, code);
+        }
+
+        for bytes in [
+            Vec::<u8>::new(),
+            vec![1, 0],
+            vec![2, 0],
+            vec![3, 0],
+            vec![4, 0],
+            vec![9, 0, 0],
+        ] {
+            let encoded = bincode::serialize(&bytes).unwrap();
+            assert!(bincode::deserialize::<SpatialCode>(&encoded).is_err());
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "exceeds maximum")]
+    fn code_type_selection_panics_when_dimensions_exceed_architectural_limit() {
+        let _ = CodeType::select(65, 8);
+    }
 }

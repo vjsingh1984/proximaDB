@@ -453,8 +453,8 @@ pub fn sql_type_name(data_type: CatalogDataType) -> &'static str {
 mod tests {
     use super::*;
     use crate::{
-        CatalogColumn, CatalogDataType, CatalogPhysicalFormat, CatalogStorageLayout,
-        CatalogTableSchema,
+        CatalogColumn, CatalogDataType, CatalogPhysicalFormat, CatalogProjection,
+        CatalogStorageLayout, CatalogTableSchema,
     };
 
     fn base_schema() -> CatalogTableSchema {
@@ -528,6 +528,402 @@ mod tests {
         assert!(!is_compatible_type_change(
             CatalogDataType::String,
             CatalogDataType::Int64
+        ));
+    }
+
+    #[test]
+    fn validate_schema_rejects_structural_storage_and_projection_contract_violations() {
+        let mut empty_columns = CatalogTableSchema::new("t");
+        empty_columns.columns.clear();
+        assert!(
+            validate_schema(&empty_columns)
+                .unwrap_err()
+                .to_string()
+                .contains("at least one column")
+        );
+
+        let empty_column_name = CatalogTableSchema::new("t").with_column(CatalogColumn::new(
+            1,
+            "",
+            CatalogDataType::Int64,
+        ));
+        assert!(
+            validate_schema(&empty_column_name)
+                .unwrap_err()
+                .to_string()
+                .contains("Column name cannot be empty")
+        );
+
+        let duplicate =
+            base_schema().with_column(CatalogColumn::new(3, "id", CatalogDataType::Int64));
+        assert!(
+            validate_schema(&duplicate)
+                .unwrap_err()
+                .to_string()
+                .contains("Duplicate column")
+        );
+
+        let missing_pk = base_schema().with_primary_key(vec!["missing".to_string()]);
+        assert!(
+            validate_schema(&missing_pk)
+                .unwrap_err()
+                .to_string()
+                .contains("Primary key column")
+        );
+
+        let missing_index_col = base_schema().with_index(CatalogIndex::new(
+            "bad_idx",
+            vec!["missing".to_string()],
+            CatalogIndexType::BTree,
+        ));
+        assert!(
+            validate_schema(&missing_index_col)
+                .unwrap_err()
+                .to_string()
+                .contains("references non-existent column")
+        );
+
+        let vector_missing_dimension =
+            base_schema().with_column(CatalogColumn::new(3, "embedding", CatalogDataType::Vector));
+        assert!(
+            validate_schema(&vector_missing_dimension)
+                .unwrap_err()
+                .to_string()
+                .contains("dimension")
+        );
+
+        let mut vector_col = CatalogColumn::new(3, "embedding", CatalogDataType::Vector);
+        vector_col
+            .properties
+            .insert("dimension".to_string(), "384".to_string());
+        assert!(validate_schema(&base_schema().with_column(vector_col)).is_ok());
+
+        let mut external = CatalogStorageLayout::federated_read(
+            "raw",
+            CatalogPhysicalFormat::Parquet,
+            "s3://bucket/raw",
+        );
+        external.location = None;
+        assert!(
+            validate_schema(&base_schema().with_storage_layout(external))
+                .unwrap_err()
+                .to_string()
+                .contains("must declare a location")
+        );
+
+        let mut external = CatalogStorageLayout::federated_read(
+            "raw",
+            CatalogPhysicalFormat::Parquet,
+            "s3://bucket/raw",
+        );
+        external.snapshot_semantics = None;
+        assert!(
+            validate_schema(&base_schema().with_storage_layout(external))
+                .unwrap_err()
+                .to_string()
+                .contains("snapshot semantics")
+        );
+
+        let mut projection = CatalogProjection::rebuildable(
+            "ann",
+            crate::CatalogProjectionKind::VectorAnn,
+            "primary",
+        );
+        projection.rebuild_source.clear();
+        assert!(
+            validate_schema(&base_schema().with_projection(projection))
+                .unwrap_err()
+                .to_string()
+                .contains("rebuild source")
+        );
+    }
+
+    #[test]
+    fn apply_evolution_covers_column_mutation_and_error_paths() {
+        let schema = base_schema()
+            .with_primary_key(vec!["id".to_string()])
+            .with_index(CatalogIndex::new(
+                "name_idx",
+                vec!["name".to_string()],
+                CatalogIndexType::BTree,
+            ));
+
+        let evolved = apply_evolution(
+            &schema,
+            &CatalogSchemaEvolution {
+                changes: vec![
+                    SchemaChange::AddColumn {
+                        name: "age".to_string(),
+                        data_type: CatalogDataType::Int32,
+                        nullable: true,
+                        default_value: Some("0".to_string()),
+                        comment: Some("Age".to_string()),
+                        after: Some("id".to_string()),
+                    },
+                    SchemaChange::UpdateComment {
+                        name: "age".to_string(),
+                        comment: "Years".to_string(),
+                    },
+                    SchemaChange::MakeNotNullable {
+                        name: "age".to_string(),
+                    },
+                    SchemaChange::SetDefault {
+                        name: "age".to_string(),
+                        default_value: "18".to_string(),
+                    },
+                    SchemaChange::MakeNullable {
+                        name: "age".to_string(),
+                    },
+                    SchemaChange::DropDefault {
+                        name: "age".to_string(),
+                    },
+                    SchemaChange::MoveColumn {
+                        name: "age".to_string(),
+                        after: None,
+                    },
+                    SchemaChange::RenameColumn {
+                        old_name: "name".to_string(),
+                        new_name: "display_name".to_string(),
+                    },
+                    SchemaChange::ChangeType {
+                        name: "age".to_string(),
+                        new_type: CatalogDataType::Int64,
+                    },
+                ],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(evolved.columns[0].name, "age");
+        let age = evolved
+            .columns
+            .iter()
+            .find(|col| col.name == "age")
+            .unwrap();
+        assert_eq!(age.data_type, CatalogDataType::Int64);
+        assert!(age.nullable);
+        assert_eq!(age.default_value, None);
+        assert_eq!(age.comment.as_deref(), Some("Years"));
+        assert_eq!(evolved.indexes[0].columns, vec!["display_name"]);
+
+        let dropped = apply_evolution(
+            &evolved,
+            &CatalogSchemaEvolution {
+                changes: vec![SchemaChange::DropColumn {
+                    name: "display_name".to_string(),
+                }],
+            },
+        )
+        .unwrap();
+        assert!(!dropped.columns.iter().any(|col| col.name == "display_name"));
+        assert!(dropped.indexes.is_empty());
+
+        for change in [
+            SchemaChange::AddColumn {
+                name: "id".to_string(),
+                data_type: CatalogDataType::Int64,
+                nullable: false,
+                default_value: None,
+                comment: None,
+                after: None,
+            },
+            SchemaChange::DropColumn {
+                name: "id".to_string(),
+            },
+            SchemaChange::RenameColumn {
+                old_name: "missing".to_string(),
+                new_name: "x".to_string(),
+            },
+            SchemaChange::ChangeType {
+                name: "name".to_string(),
+                new_type: CatalogDataType::Binary,
+            },
+            SchemaChange::MoveColumn {
+                name: "name".to_string(),
+                after: Some("missing".to_string()),
+            },
+        ] {
+            assert!(
+                apply_evolution(
+                    &schema,
+                    &CatalogSchemaEvolution {
+                        changes: vec![change]
+                    }
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn apply_evolution_covers_constraints_props_promotion_and_table_options() {
+        let schema = base_schema();
+        let evolved = apply_evolution(
+            &schema,
+            &CatalogSchemaEvolution {
+                changes: vec![
+                    SchemaChange::AddConstraint {
+                        constraint_name: Some("uniq_name".to_string()),
+                        constraint: ColumnConstraint::Unique {
+                            columns: vec!["name".to_string()],
+                        },
+                    },
+                    SchemaChange::AddConstraint {
+                        constraint_name: Some("check_name".to_string()),
+                        constraint: ColumnConstraint::Check {
+                            expression: "name <> ''".to_string(),
+                        },
+                    },
+                    SchemaChange::AddConstraint {
+                        constraint_name: Some("fk_name".to_string()),
+                        constraint: ColumnConstraint::ForeignKey {
+                            columns: vec!["name".to_string()],
+                            references_table: "other".to_string(),
+                            references_columns: vec!["name".to_string()],
+                            on_delete: None,
+                            on_update: None,
+                        },
+                    },
+                    SchemaChange::PromotePropsKey {
+                        key: "status".to_string(),
+                        column_type: CatalogDataType::String,
+                        comment: Some("Promoted status".to_string()),
+                    },
+                    SchemaChange::SetTableOption {
+                        key: "props_auto_promotion".to_string(),
+                        value: "enabled".to_string(),
+                    },
+                    SchemaChange::SetTableOption {
+                        key: "custom_option".to_string(),
+                        value: "custom_value".to_string(),
+                    },
+                ],
+            },
+        )
+        .unwrap();
+
+        assert!(
+            evolved
+                .indexes
+                .iter()
+                .any(|idx| idx.name == "uniq_name" && idx.is_unique)
+        );
+        assert!(
+            evolved
+                .properties
+                .keys()
+                .any(|key| key.starts_with("constraint:check"))
+        );
+        assert!(
+            evolved
+                .properties
+                .keys()
+                .any(|key| key.starts_with("constraint:fk"))
+        );
+        assert_eq!(
+            evolved
+                .props_auto_promotion
+                .promoted_keys
+                .get("status")
+                .map(String::as_str),
+            Some("props__status")
+        );
+        assert!(evolved.props_auto_promotion.enabled);
+        assert_eq!(
+            evolved.properties.get("custom_option").map(String::as_str),
+            Some("custom_value")
+        );
+
+        let dropped = apply_evolution(
+            &evolved,
+            &CatalogSchemaEvolution {
+                changes: vec![SchemaChange::DropConstraint {
+                    constraint_name: "uniq_name".to_string(),
+                }],
+            },
+        )
+        .unwrap();
+        assert!(!dropped.indexes.iter().any(|idx| idx.name == "uniq_name"));
+
+        for change in [
+            SchemaChange::AddConstraint {
+                constraint_name: Some("bad_unique".to_string()),
+                constraint: ColumnConstraint::Unique {
+                    columns: vec!["missing".to_string()],
+                },
+            },
+            SchemaChange::DropConstraint {
+                constraint_name: "missing".to_string(),
+            },
+            SchemaChange::PromotePropsKey {
+                key: "status".to_string(),
+                column_type: CatalogDataType::String,
+                comment: None,
+            },
+        ] {
+            assert!(
+                apply_evolution(
+                    &evolved,
+                    &CatalogSchemaEvolution {
+                        changes: vec![change]
+                    }
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn sql_type_names_cover_every_catalog_type() {
+        let names = [
+            (CatalogDataType::Boolean, "BOOLEAN"),
+            (CatalogDataType::Int8, "TINYINT"),
+            (CatalogDataType::Int16, "SMALLINT"),
+            (CatalogDataType::Int32, "INTEGER"),
+            (CatalogDataType::Int64, "BIGINT"),
+            (CatalogDataType::Float32, "REAL"),
+            (CatalogDataType::Float64, "DOUBLE PRECISION"),
+            (CatalogDataType::String, "TEXT"),
+            (CatalogDataType::Binary, "BYTEA"),
+            (CatalogDataType::Date, "DATE"),
+            (CatalogDataType::Timestamp, "TIMESTAMP"),
+            (CatalogDataType::TimestampTz, "TIMESTAMP WITH TIME ZONE"),
+            (CatalogDataType::Time, "TIME"),
+            (CatalogDataType::Uuid, "UUID"),
+            (CatalogDataType::Json, "JSONB"),
+            (CatalogDataType::Decimal, "DECIMAL"),
+            (CatalogDataType::Vector, "VECTOR"),
+            (CatalogDataType::SparseVector, "SPARSE_VECTOR"),
+            (CatalogDataType::BinaryVector, "BINARY_VECTOR"),
+        ];
+
+        for (data_type, expected) in names {
+            assert_eq!(sql_type_name(data_type), expected);
+        }
+
+        assert!(is_compatible_type_change(
+            CatalogDataType::Int8,
+            CatalogDataType::Int16
+        ));
+        assert!(is_compatible_type_change(
+            CatalogDataType::Int8,
+            CatalogDataType::Int32
+        ));
+        assert!(is_compatible_type_change(
+            CatalogDataType::Int8,
+            CatalogDataType::Int64
+        ));
+        assert!(is_compatible_type_change(
+            CatalogDataType::Int16,
+            CatalogDataType::Int32
+        ));
+        assert!(is_compatible_type_change(
+            CatalogDataType::Int16,
+            CatalogDataType::Int64
+        ));
+        assert!(is_compatible_type_change(
+            CatalogDataType::Int64,
+            CatalogDataType::Float64
         ));
     }
 }

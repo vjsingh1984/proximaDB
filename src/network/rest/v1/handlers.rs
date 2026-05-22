@@ -6,9 +6,11 @@
 //! 3. Use unified ApiError for consistent error handling
 
 use axum::{
+    body::Body,
     extract::{Extension, Json, Query, State},
-    http::StatusCode,
-    response::Json as JsonResponse,
+    http::{HeaderValue, Request, StatusCode, header},
+    middleware::Next,
+    response::{Json as JsonResponse, Response},
 };
 use proximadb_graph_query::service::GraphExecutionService;
 use std::sync::Arc;
@@ -69,6 +71,54 @@ pub struct AppState {
     /// go through `CollectionPort`/`VectorOpsPort` trait objects rather than the
     /// concrete root-crate `UnifiedHandlers`.
     pub api_handlers: Option<Arc<dyn proximadb_runtime::ApiHandlersPort>>,
+}
+
+const REST_V1_REPLACEMENT_SURFACE: &str = "/api/v2, proximadb.v2.ProximaRecordService, pgwire";
+const REST_V1_DEPRECATION_MESSAGE: &str =
+    "REST /api/v1 is compatibility-only; use canonical ProximaRecord APIs for new clients";
+
+async fn add_v1_deprecation_headers(request: Request<Body>, next: Next<Body>) -> Response {
+    let is_rest_v1 = request.uri().path().starts_with("/api/v1/");
+    let mut response = next.run(request).await;
+
+    if is_rest_v1 {
+        let headers = response.headers_mut();
+
+        let deprecation = header::HeaderName::from_static("deprecation");
+        if !headers.contains_key(&deprecation) {
+            headers.insert(deprecation, HeaderValue::from_static("true"));
+        }
+
+        if !headers.contains_key(header::LINK) {
+            headers.insert(
+                header::LINK,
+                HeaderValue::from_static("</api/v2>; rel=\"successor-version\""),
+            );
+        }
+
+        let status = header::HeaderName::from_static("x-proximadb-api-status");
+        if !headers.contains_key(&status) {
+            headers.insert(status, HeaderValue::from_static("deprecated-compatibility"));
+        }
+
+        let replacement = header::HeaderName::from_static("x-proximadb-replacement");
+        if !headers.contains_key(&replacement) {
+            headers.insert(
+                replacement,
+                HeaderValue::from_static(REST_V1_REPLACEMENT_SURFACE),
+            );
+        }
+
+        let message = header::HeaderName::from_static("x-proximadb-deprecation-message");
+        if !headers.contains_key(&message) {
+            headers.insert(
+                message,
+                HeaderValue::from_static(REST_V1_DEPRECATION_MESSAGE),
+            );
+        }
+    }
+
+    response
 }
 
 impl AppState {
@@ -1038,7 +1088,8 @@ pub fn create_router(state: AppState) -> axum::Router {
     let router = router
         .with_state(state)
         .layer(Extension(default_tenant))
-        .layer(axum::Extension(default_api_tenant));
+        .layer(axum::Extension(default_api_tenant))
+        .layer(axum::middleware::from_fn(add_v1_deprecation_headers));
 
     // Optional AI endpoints (disabled by default; enable with `--features ai_endpoints`)
     #[cfg(feature = "ai_endpoints")]
@@ -1135,6 +1186,52 @@ mod tests {
     use std::path::Path;
     use tempfile::TempDir;
     use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn v1_deprecation_middleware_marks_api_v1_only() {
+        let router = axum::Router::new()
+            .route("/api/v1/ping", axum::routing::get(|| async { "ok" }))
+            .route("/api/v2/ping", axum::routing::get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn(add_v1_deprecation_headers));
+
+        let v1_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/ping")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(v1_response.status(), StatusCode::OK);
+        assert_eq!(
+            v1_response
+                .headers()
+                .get("deprecation")
+                .and_then(|value| value.to_str().ok()),
+            Some("true")
+        );
+        assert_eq!(
+            v1_response
+                .headers()
+                .get("x-proximadb-api-status")
+                .and_then(|value| value.to_str().ok()),
+            Some("deprecated-compatibility")
+        );
+
+        let v2_response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v2/ping")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(v2_response.status(), StatusCode::OK);
+        assert!(v2_response.headers().get("deprecation").is_none());
+    }
 
     fn file_url(path: &Path) -> String {
         format!("file://{}", path.to_string_lossy())
