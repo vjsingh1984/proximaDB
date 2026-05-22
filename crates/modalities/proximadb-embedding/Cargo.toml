@@ -25,6 +25,35 @@ onnx = ["dep:ort", "dep:ndarray"]
 # PROXIMADB_EMBED_PROVIDER=coreml routes inference through CoreML; otherwise
 # falls through to CPU.
 coreml = ["onnx", "ort/coreml"]
+# NVIDIA CUDA execution provider. Requires CUDA toolkit + matching cuDNN
+# on the host. Set PROXIMADB_EMBED_PROVIDER=cuda after building with this.
+cuda = ["onnx", "ort/cuda"]
+# NVIDIA TensorRT (deeper graph optimization on top of CUDA). Stricter
+# requirements (TensorRT runtime + matching CUDA). Use for production
+# Nvidia inference where peak throughput matters.
+tensorrt = ["onnx", "ort/tensorrt"]
+# AMD ROCm execution provider. Requires ROCm + HIP runtime on host.
+rocm = ["onnx", "ort/rocm"]
+# AMD MIGraphX (AMD's graph-optimizing EP, alternative to ROCm direct).
+migraphx = ["onnx", "ort/migraphx"]
+# Intel OpenVINO execution provider. Targets Intel CPU/iGPU/VPU.
+openvino = ["onnx", "ort/openvino"]
+# Intel oneDNN CPU optimizations. Works on x86_64 servers without a GPU.
+onednn = ["onnx", "ort/onednn"]
+# Microsoft DirectML (Windows). Cross-vendor GPU compute on D3D12.
+directml = ["onnx", "ort/directml"]
+# Google XNNPACK — quantized inference path, useful on edge/ARM.
+xnnpack = ["onnx", "ort/xnnpack"]
+# WebGPU (browser + native). Cross-platform GPU compute.
+webgpu = ["onnx", "ort/webgpu"]
+# Convenience meta-features for typical deployments.
+gpu-nvidia = ["cuda", "tensorrt"]
+gpu-amd = ["rocm", "migraphx"]
+gpu-intel = ["openvino"]
+gpu-apple = ["coreml"]
+gpu-windows = ["directml"]
+cpu-intel = ["onednn"]
+cpu-edge = ["xnnpack"]
 # Deterministic hash-derived vector fallback. Visible only to `#[cfg(test)]`
 # code via the helper in `bge::testing` — never enabled in release builds.
 test-synthetic = []

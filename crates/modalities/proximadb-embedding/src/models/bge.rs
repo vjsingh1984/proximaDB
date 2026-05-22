@@ -93,31 +93,109 @@ pub fn resolve_intra_op_threads(env_var: Option<&str>) -> Option<usize> {
 
 /// Execution provider selection for the BGE ONNX session.
 ///
-/// `Cpu` is the safe default and works everywhere. `CoreMl` is macOS-only
-/// (gated by the `coreml` cargo feature) and falls back to CPU if the
-/// runtime fails to load the framework. Future variants: `Cuda`, `Rocm`,
-/// `DirectMl`, etc., each behind their own feature flag.
+/// `Cpu` is the safe default and works everywhere. Other variants each
+/// require both (a) the corresponding cargo feature on the embedding
+/// crate (`coreml`, `cuda`, `rocm`, `openvino`, `directml`, `tensorrt`,
+/// `migraphx`, `onednn`, `xnnpack`, `webgpu`) AND (b) the matching
+/// host-side runtime / drivers. Attempting to register an EP without
+/// its feature compiled in returns `ModelUnavailable` with a clear
+/// message — no silent fallback to CPU, no silent runtime panic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EpKind {
-    /// Default. ORT's CPU execution provider — no special EP registered.
+    /// ORT's default CPU EP. On `aarch64` Apple/Linux this transparently
+    /// uses NEON SIMD (and AMX on Apple Silicon). On `x86_64` it uses
+    /// AVX2/AVX-512.
     Cpu,
-    /// CoreML (macOS/iOS). Requires `--features coreml` and Apple silicon
-    /// or Intel macOS. Falls back transparently to CPU on unsupported
-    /// platforms; the registration is no-op without the feature.
+    /// CoreML — Apple Neural Engine + GPU + CPU dispatched dynamically.
+    /// macOS/iOS only.
     CoreMl,
+    /// NVIDIA CUDA. Requires CUDA toolkit + cuDNN on host.
+    Cuda,
+    /// NVIDIA TensorRT. Deeper graph optimization on top of CUDA;
+    /// requires TensorRT runtime.
+    TensorRt,
+    /// AMD ROCm/HIP. Requires ROCm runtime on host.
+    Rocm,
+    /// AMD MIGraphX (graph-optimizing EP on top of ROCm).
+    MiGraphX,
+    /// Intel OpenVINO — CPU/iGPU/VPU. Requires OpenVINO runtime.
+    OpenVino,
+    /// Intel oneDNN CPU optimizations.
+    OneDnn,
+    /// Microsoft DirectML — cross-vendor GPU on Windows.
+    DirectMl,
+    /// XNNPACK — quantized inference, useful on edge/ARM.
+    XnnPack,
+    /// WebGPU — cross-platform GPU compute.
+    WebGpu,
+}
+
+/// Human-readable description of which hardware path a given execution
+/// provider exercises on the current host. Logged at session-pool init
+/// so deployments can see exactly what acceleration is in play.
+///
+/// The CPU EP description is target-arch-aware: on `aarch64` Apple
+/// targets the CPU EP transparently uses AMX (Apple Matrix Extension)
+/// for f32 matmuls; on `x86_64` it uses AVX2/AVX-512 vector intrinsics.
+/// The CoreML EP description is fixed because CoreML dispatches to
+/// ANE / GPU / CPU dynamically at runtime — operators can use the
+/// PROXIMADB_EMBED_PROVIDER=coreml log line plus Activity Monitor /
+/// `powermetrics` to confirm ANE engagement on macOS.
+pub fn accel_description(provider: EpKind) -> &'static str {
+    match provider {
+        EpKind::Cpu => {
+            if cfg!(all(target_arch = "aarch64", target_os = "macos")) {
+                "CPU + AMX (Apple Matrix Extension) + NEON via ort CPU EP"
+            } else if cfg!(target_arch = "aarch64") {
+                "CPU + NEON SIMD via ort CPU EP (consider --features xnnpack for quantized speedup)"
+            } else if cfg!(target_arch = "x86_64") {
+                "CPU + AVX2/AVX-512 SIMD via ort CPU EP (consider --features onednn for Intel-tuned kernels)"
+            } else {
+                "CPU via ort CPU EP"
+            }
+        }
+        EpKind::CoreMl => {
+            "CoreML EP — ANE/GPU/CPU dispatched dynamically by CoreML (verify via `powermetrics --samplers ane_power,gpu_power` on macOS)"
+        }
+        EpKind::Cuda => "NVIDIA CUDA EP — requires CUDA toolkit + cuDNN on host",
+        EpKind::TensorRt => {
+            "NVIDIA TensorRT EP — fused/quantized graph on top of CUDA; needs TensorRT runtime"
+        }
+        EpKind::Rocm => "AMD ROCm/HIP EP — requires ROCm runtime on host",
+        EpKind::MiGraphX => "AMD MIGraphX EP — graph-optimized inference on top of ROCm",
+        EpKind::OpenVino => {
+            "Intel OpenVINO EP — targets CPU/iGPU/VPU; requires OpenVINO runtime"
+        }
+        EpKind::OneDnn => "Intel oneDNN CPU EP — Intel-tuned matmul kernels on x86_64",
+        EpKind::DirectMl => "Microsoft DirectML EP — cross-vendor GPU on D3D12 (Windows)",
+        EpKind::XnnPack => "XNNPACK EP — quantized inference, edge/ARM tuned",
+        EpKind::WebGpu => "WebGPU EP — cross-platform GPU compute",
+    }
 }
 
 /// Parse `PROXIMADB_EMBED_PROVIDER` env var into an [`EpKind`].
 ///
 /// Recognized values (case-insensitive, whitespace trimmed):
-/// - `cpu` (default if env is unset / empty / unknown)
-/// - `coreml`
+/// `cpu`, `coreml`, `cuda`, `tensorrt`, `rocm`, `migraphx`, `openvino`,
+/// `onednn`, `directml`, `xnnpack`, `webgpu`.
 ///
 /// Unknown / malformed values silently fall back to CPU so a typo in
-/// production deployments doesn't break the server.
+/// production deployments doesn't break the server. To validate a
+/// specific provider is actually in use, check the startup log: each
+/// pool init line reports both `provider=` and a human-readable
+/// `accel=` description.
 pub fn resolve_provider(env_var: Option<&str>) -> EpKind {
     match env_var.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
         Some("coreml") => EpKind::CoreMl,
+        Some("cuda") => EpKind::Cuda,
+        Some("tensorrt") | Some("trt") => EpKind::TensorRt,
+        Some("rocm") | Some("hip") => EpKind::Rocm,
+        Some("migraphx") => EpKind::MiGraphX,
+        Some("openvino") | Some("ov") => EpKind::OpenVino,
+        Some("onednn") | Some("dnnl") => EpKind::OneDnn,
+        Some("directml") | Some("dml") => EpKind::DirectMl,
+        Some("xnnpack") => EpKind::XnnPack,
+        Some("webgpu") => EpKind::WebGpu,
         Some("cpu") | None | Some("") => EpKind::Cpu,
         Some(_other) => EpKind::Cpu,
     }
@@ -192,6 +270,12 @@ impl BgeModel {
             let provider =
                 resolve_provider(std::env::var("PROXIMADB_EMBED_PROVIDER").ok().as_deref());
 
+            // Resolve the human-readable hardware notes for the chosen
+            // provider. This makes the active acceleration backend
+            // explicit in the startup log instead of leaving operators
+            // to guess.
+            let accel = accel_description(provider);
+
             tracing::info!(
                 variant = ?variant,
                 model = %model_path.display(),
@@ -199,7 +283,12 @@ impl BgeModel {
                 pool_size,
                 intra_op_threads = ?intra_op_override,
                 provider = ?provider,
+                accel = %accel,
+                ort_crate_version = env!("CARGO_PKG_VERSION"),
                 cores,
+                target_arch = std::env::consts::ARCH,
+                target_os = std::env::consts::OS,
+                coreml_feature = cfg!(feature = "coreml"),
                 "loading BGE ONNX session pool"
             );
 
@@ -217,18 +306,17 @@ impl BgeModel {
                         ))
                     })?;
                 }
-                // Register execution providers in priority order. Each EP's
-                // `register` is a no-op without the corresponding cargo
-                // feature, so the binary stays portable across builds.
-                match provider {
-                    EpKind::Cpu => {}
-                    EpKind::CoreMl => {
-                        builder = register_coreml(builder).map_err(|e| {
-                            crate::EmbeddingError::ModelUnavailable(format!(
-                                "CoreML EP registration (session {idx}): {e}"
-                            ))
-                        })?;
-                    }
+                // Register the selected execution provider. EpKind::Cpu is
+                // a no-op (ort uses CPU EP by default). Any other EP requires
+                // its cargo feature to be enabled at build time; otherwise
+                // register_provider returns ModelUnavailable with a clear
+                // message rather than silently falling through to CPU.
+                if provider != EpKind::Cpu {
+                    builder = register_provider(builder, provider).map_err(|e| {
+                        crate::EmbeddingError::ModelUnavailable(format!(
+                            "{provider:?} EP registration (session {idx}): {e}"
+                        ))
+                    })?;
                 }
                 let session = builder.commit_from_file(&model_path).map_err(|e| {
                     crate::EmbeddingError::ModelUnavailable(format!(
@@ -436,33 +524,139 @@ fn onnx_err(e: ort::Error) -> crate::EmbeddingError {
     crate::EmbeddingError::Other(anyhow::anyhow!("ort: {}", e))
 }
 
-/// Register the CoreML execution provider on an ort SessionBuilder.
+/// Register the requested execution provider on an ort SessionBuilder.
 ///
-/// With the `coreml` feature enabled (macOS-only), this attaches the
-/// CoreML EP. Without the feature, returns an error so the caller can
-/// surface the missing capability rather than silently fall through to
-/// CPU.
+/// Each provider arm is `#[cfg(feature = "...")]` gated. If the
+/// requested provider's feature isn't compiled in, returns
+/// `Err(msg)` so the caller can surface `ModelUnavailable` cleanly.
+/// `EpKind::Cpu` is never passed here (the caller short-circuits).
 #[cfg(feature = "onnx")]
-fn register_coreml(
+fn register_provider(
     mut builder: ort::session::builder::SessionBuilder,
+    provider: EpKind,
 ) -> std::result::Result<ort::session::builder::SessionBuilder, String> {
-    #[cfg(feature = "coreml")]
-    {
-        use ort::ep::ExecutionProvider;
-        let ep = ort::ep::CoreML::default();
-        ep.register(&mut builder)
-            .map_err(|e| format!("CoreML register: {e:?}"))?;
-        Ok(builder)
+    use ort::ep::ExecutionProvider;
+    match provider {
+        EpKind::Cpu => Ok(builder),
+        EpKind::CoreMl => {
+            #[cfg(feature = "coreml")]
+            {
+                ort::ep::CoreML::default()
+                    .register(&mut builder)
+                    .map_err(|e| format!("CoreML register: {e:?}"))?;
+                Ok(builder)
+            }
+            #[cfg(not(feature = "coreml"))]
+            Err(feature_missing_msg("coreml", "coreml", "macOS / iOS"))
+        }
+        EpKind::Cuda => {
+            #[cfg(feature = "cuda")]
+            {
+                ort::ep::CUDA::default()
+                    .register(&mut builder)
+                    .map_err(|e| format!("CUDA register: {e:?}"))?;
+                Ok(builder)
+            }
+            #[cfg(not(feature = "cuda"))]
+            Err(feature_missing_msg("cuda", "cuda", "NVIDIA CUDA + cuDNN"))
+        }
+        EpKind::TensorRt => {
+            #[cfg(feature = "tensorrt")]
+            {
+                ort::ep::TensorRT::default()
+                    .register(&mut builder)
+                    .map_err(|e| format!("TensorRT register: {e:?}"))?;
+                Ok(builder)
+            }
+            #[cfg(not(feature = "tensorrt"))]
+            Err(feature_missing_msg("tensorrt", "tensorrt", "NVIDIA TensorRT"))
+        }
+        EpKind::Rocm => {
+            #[cfg(feature = "rocm")]
+            {
+                ort::ep::ROCm::default()
+                    .register(&mut builder)
+                    .map_err(|e| format!("ROCm register: {e:?}"))?;
+                Ok(builder)
+            }
+            #[cfg(not(feature = "rocm"))]
+            Err(feature_missing_msg("rocm", "rocm", "AMD ROCm/HIP runtime"))
+        }
+        EpKind::MiGraphX => {
+            #[cfg(feature = "migraphx")]
+            {
+                ort::ep::MIGraphX::default()
+                    .register(&mut builder)
+                    .map_err(|e| format!("MIGraphX register: {e:?}"))?;
+                Ok(builder)
+            }
+            #[cfg(not(feature = "migraphx"))]
+            Err(feature_missing_msg("migraphx", "migraphx", "AMD MIGraphX runtime"))
+        }
+        EpKind::OpenVino => {
+            #[cfg(feature = "openvino")]
+            {
+                ort::ep::OpenVINO::default()
+                    .register(&mut builder)
+                    .map_err(|e| format!("OpenVINO register: {e:?}"))?;
+                Ok(builder)
+            }
+            #[cfg(not(feature = "openvino"))]
+            Err(feature_missing_msg("openvino", "openvino", "Intel OpenVINO runtime"))
+        }
+        EpKind::OneDnn => {
+            #[cfg(feature = "onednn")]
+            {
+                ort::ep::OneDNN::default()
+                    .register(&mut builder)
+                    .map_err(|e| format!("oneDNN register: {e:?}"))?;
+                Ok(builder)
+            }
+            #[cfg(not(feature = "onednn"))]
+            Err(feature_missing_msg("onednn", "onednn", "Intel x86_64 host"))
+        }
+        EpKind::DirectMl => {
+            #[cfg(feature = "directml")]
+            {
+                ort::ep::DirectML::default()
+                    .register(&mut builder)
+                    .map_err(|e| format!("DirectML register: {e:?}"))?;
+                Ok(builder)
+            }
+            #[cfg(not(feature = "directml"))]
+            Err(feature_missing_msg("directml", "directml", "Windows + D3D12"))
+        }
+        EpKind::XnnPack => {
+            #[cfg(feature = "xnnpack")]
+            {
+                ort::ep::XNNPACK::default()
+                    .register(&mut builder)
+                    .map_err(|e| format!("XNNPACK register: {e:?}"))?;
+                Ok(builder)
+            }
+            #[cfg(not(feature = "xnnpack"))]
+            Err(feature_missing_msg("xnnpack", "xnnpack", "any (CPU)"))
+        }
+        EpKind::WebGpu => {
+            #[cfg(feature = "webgpu")]
+            {
+                ort::ep::WebGPU::default()
+                    .register(&mut builder)
+                    .map_err(|e| format!("WebGPU register: {e:?}"))?;
+                Ok(builder)
+            }
+            #[cfg(not(feature = "webgpu"))]
+            Err(feature_missing_msg("webgpu", "webgpu", "any with WebGPU runtime"))
+        }
     }
-    #[cfg(not(feature = "coreml"))]
-    {
-        let _ = &mut builder;
-        Err(
-            "PROXIMADB_EMBED_PROVIDER=coreml requires the embedding crate to be \
-             built with --features coreml (macOS only)"
-                .to_string(),
-        )
-    }
+}
+
+#[cfg(feature = "onnx")]
+fn feature_missing_msg(env_value: &str, cargo_feature: &str, host_req: &str) -> String {
+    format!(
+        "PROXIMADB_EMBED_PROVIDER={env_value} requires the embedding crate to be \
+         built with --features {cargo_feature} (host requirement: {host_req})"
+    )
 }
 
 /// Test-only deterministic vector helpers.
@@ -639,11 +833,59 @@ mod policy_tests {
     }
 
     #[test]
+    fn provider_parses_all_known_eps() {
+        // Each variant has at least one canonical name.
+        assert_eq!(resolve_provider(Some("cuda")), EpKind::Cuda);
+        assert_eq!(resolve_provider(Some("tensorrt")), EpKind::TensorRt);
+        assert_eq!(resolve_provider(Some("rocm")), EpKind::Rocm);
+        assert_eq!(resolve_provider(Some("migraphx")), EpKind::MiGraphX);
+        assert_eq!(resolve_provider(Some("openvino")), EpKind::OpenVino);
+        assert_eq!(resolve_provider(Some("onednn")), EpKind::OneDnn);
+        assert_eq!(resolve_provider(Some("directml")), EpKind::DirectMl);
+        assert_eq!(resolve_provider(Some("xnnpack")), EpKind::XnnPack);
+        assert_eq!(resolve_provider(Some("webgpu")), EpKind::WebGpu);
+    }
+
+    #[test]
+    fn provider_parses_short_aliases() {
+        // Common shorthands operators may type.
+        assert_eq!(resolve_provider(Some("trt")), EpKind::TensorRt);
+        assert_eq!(resolve_provider(Some("hip")), EpKind::Rocm);
+        assert_eq!(resolve_provider(Some("ov")), EpKind::OpenVino);
+        assert_eq!(resolve_provider(Some("dnnl")), EpKind::OneDnn);
+        assert_eq!(resolve_provider(Some("dml")), EpKind::DirectMl);
+    }
+
+    #[test]
     fn provider_unknown_falls_back_to_cpu() {
-        // Typos and future EPs we don't yet support fall back to CPU.
-        assert_eq!(resolve_provider(Some("cuda")), EpKind::Cpu);
-        assert_eq!(resolve_provider(Some("rocm")), EpKind::Cpu);
+        // Typos and EPs we haven't wired fall back to CPU rather than panic.
+        assert_eq!(resolve_provider(Some("vulkan")), EpKind::Cpu);
         assert_eq!(resolve_provider(Some("garbage")), EpKind::Cpu);
         assert_eq!(resolve_provider(Some("")), EpKind::Cpu);
+    }
+
+    // ---------- accel_description ----------
+
+    #[test]
+    fn accel_description_cpu_arch_specific() {
+        // Just confirm we get *some* non-empty string for every variant —
+        // the exact wording depends on target_arch / target_os which we
+        // don't want to pin in tests across hosts.
+        for ep in [
+            EpKind::Cpu,
+            EpKind::CoreMl,
+            EpKind::Cuda,
+            EpKind::TensorRt,
+            EpKind::Rocm,
+            EpKind::MiGraphX,
+            EpKind::OpenVino,
+            EpKind::OneDnn,
+            EpKind::DirectMl,
+            EpKind::XnnPack,
+            EpKind::WebGpu,
+        ] {
+            let s = accel_description(ep);
+            assert!(!s.is_empty(), "accel_description({ep:?}) returned empty");
+        }
     }
 }
