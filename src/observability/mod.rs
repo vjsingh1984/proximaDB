@@ -77,6 +77,9 @@ pub mod trace_sampling;
 /// Trace retention policy — companion to trace_sampling; per-tier age
 /// windows + soft storage-budget shedding.
 pub mod trace_retention;
+/// Route explain builder — human-readable explanation derived from a
+/// populated SearchPlanTrace for the LLD §1 debug=true response.
+pub mod route_explain;
 /// Query engine for logs, metrics, and traces with PromQL support.
 pub mod query;
 /// SearchPlanTrace — per-query telemetry envelope feeding KRU billing and the
