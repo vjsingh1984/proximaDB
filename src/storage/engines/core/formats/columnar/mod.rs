@@ -284,7 +284,7 @@ pub use fulltext_index::{
     PostingList,
     // Search types
     SearchOptions,
-    SearchResult as FullTextSearchResult,
+    FulltextSearchResult as FullTextSearchResult,
     // Statistics
     TextStatistics,
     // Tokenization

@@ -52,7 +52,7 @@ type Result<T> = std::result::Result<T, ProximaDBError>;
 
 /// Search result with node ID and distance
 #[derive(Debug, Clone)]
-pub struct SearchResult {
+pub struct DiskAnnSearchResult {
     /// Node ID (original vector index)
     pub node_id: usize,
 
@@ -60,7 +60,7 @@ pub struct SearchResult {
     pub distance: f32,
 }
 
-impl SearchResult {
+impl DiskAnnSearchResult {
     /// Create a new search result
     pub fn new(node_id: usize, distance: f32) -> Self {
         Self { node_id, distance }
@@ -68,7 +68,7 @@ impl SearchResult {
 }
 
 // Implement PartialEq manually to handle NaN
-impl PartialEq for SearchResult {
+impl PartialEq for DiskAnnSearchResult {
     fn eq(&self, other: &Self) -> bool {
         // NaN != NaN, so use total comparison
         self.node_id == other.node_id
@@ -78,16 +78,16 @@ impl PartialEq for SearchResult {
 }
 
 // Implement Eq for Ord requirement
-impl Eq for SearchResult {}
+impl Eq for DiskAnnSearchResult {}
 
 // Implement PartialOrd for BinaryHeap
-impl PartialOrd for SearchResult {
+impl PartialOrd for DiskAnnSearchResult {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for SearchResult {
+impl Ord for DiskAnnSearchResult {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // Reverse order for min-heap (smaller distance = higher priority)
         other
@@ -191,7 +191,7 @@ impl DiskANNSearch {
         query: &[f32],
         vectors: &[Vec<f32>],
         config: &SearchConfig,
-    ) -> Result<(Vec<SearchResult>, SearchStats)> {
+    ) -> Result<(Vec<DiskAnnSearchResult>, SearchStats)> {
         let start_time = std::time::Instant::now();
 
         // Validate inputs
@@ -238,7 +238,7 @@ impl DiskANNSearch {
         stats.distance_computations += 1;
 
         let mut beam = BinaryHeap::new();
-        beam.push(SearchResult::new(medoid, medoid_dist));
+        beam.push(DiskAnnSearchResult::new(medoid, medoid_dist));
         stats.nodes_visited += 1;
 
         let mut visited = HashSet::new();
@@ -303,7 +303,7 @@ impl DiskANNSearch {
                         }
 
                         // Add to beam
-                        beam.push(SearchResult::new(neighbor_id, distance));
+                        beam.push(DiskAnnSearchResult::new(neighbor_id, distance));
 
                         // Track cache hit if using node ordering
                         if config.use_node_ordering
@@ -387,7 +387,7 @@ impl DiskANNSearch {
         queries: &[Vec<f32>],
         vectors: &[Vec<f32>],
         config: &SearchConfig,
-    ) -> Result<Vec<(Vec<SearchResult>, SearchStats)>> {
+    ) -> Result<Vec<(Vec<DiskAnnSearchResult>, SearchStats)>> {
         queries
             .iter()
             .map(|query| self.search(query, vectors, config))
@@ -454,16 +454,16 @@ mod tests {
 
     #[test]
     fn test_search_result_creation() {
-        let result = SearchResult::new(5, 0.123);
+        let result = DiskAnnSearchResult::new(5, 0.123);
         assert_eq!(result.node_id, 5);
         assert_eq!(result.distance, 0.123);
     }
 
     #[test]
     fn test_search_result_comparison() {
-        let result1 = SearchResult::new(1, 0.5);
-        let result2 = SearchResult::new(2, 0.3);
-        let result3 = SearchResult::new(3, 0.7);
+        let result1 = DiskAnnSearchResult::new(1, 0.5);
+        let result2 = DiskAnnSearchResult::new(2, 0.3);
+        let result3 = DiskAnnSearchResult::new(3, 0.7);
 
         // result2 has smallest distance, should be "greater" in min-heap
         assert!(result2 > result1);

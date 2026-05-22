@@ -57,7 +57,7 @@ pub use legacy::{
     RichSearchResult, VectorOperationsService,
 };
 pub use search::{
-    executor::{SearchResult, proto_results_to_vector_records},
+    executor::{VectorSearchExecutorResult, proto_results_to_vector_records},
     pipeline::{ProgressiveSearchPipeline, StageResult, default_progressive_stages},
 };
 pub use validation::{

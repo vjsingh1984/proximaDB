@@ -69,7 +69,7 @@ pub use consensus::{ConsensusConfig, ConsensusState, RaftConsensus};
 pub use distributed_ops::{
     ConsistencyLevel, DistributedCollectionOps, DistributedOpsConfig, DistributedSearchRequest,
     DistributedSearchResult, DistributedWriteRequest, DistributedWriteResult, QueryContext,
-    RetryConfig, SearchResult, WriteRecord,
+    RetryConfig, ShardSearchResult, WriteRecord,
 };
 pub use metadata_service::{ClusterMetadata, MetadataService, MetadataServiceConfig};
 pub use node_registry::{

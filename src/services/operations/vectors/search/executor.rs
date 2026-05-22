@@ -9,7 +9,7 @@ use proximadb_data_model::ProximaValue;
 
 /// Search result with similarity scores.
 #[derive(Debug, Clone)]
-pub struct SearchResult {
+pub struct VectorSearchExecutorResult {
     /// Vector ID
     pub id: String,
     /// Vector data

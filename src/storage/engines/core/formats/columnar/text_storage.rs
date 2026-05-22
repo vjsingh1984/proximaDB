@@ -71,8 +71,8 @@ use crate::storage::document::sdp::{SdpChunker, SdpConfig};
 
 // Import full-text search index types
 use super::fulltext_index::{
-    BM25Config, FullTextIndex, FullTextIndexError, SearchOptions,
-    SearchResult as FullTextSearchResult, TokenizerConfig,
+    BM25Config, FullTextIndex, FullTextIndexError, FulltextSearchResult as FullTextSearchResult,
+    SearchOptions, TokenizerConfig,
 };
 
 /// Thresholds for storage strategy selection

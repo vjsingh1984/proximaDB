@@ -26,9 +26,9 @@ use tracing::{debug, info};
 
 use crate::core::hardware_capabilities::HardwareCapabilities;
 
-/// Local SearchResult type for sparse HNSW
+/// Local SparseHnswSearchResult type for sparse HNSW
 #[derive(Debug, Clone, Default)]
-pub struct SearchResult {
+pub struct SparseHnswSearchResult {
     pub id: String,
     pub score: f32,
 }
@@ -308,7 +308,7 @@ impl SparseHNSWIndex {
     }
 
     /// Search for similar sparse vectors
-    pub fn search(&self, query: &SparseVector, top_k: usize) -> Result<Vec<SearchResult>> {
+    pub fn search(&self, query: &SparseVector, top_k: usize) -> Result<Vec<SparseHnswSearchResult>> {
         if self.vectors.is_empty() {
             return Ok(Vec::new());
         }
@@ -369,9 +369,9 @@ impl SparseHNSWIndex {
         let elapsed = start.elapsed();
 
         // Convert to search results
-        let search_results: Vec<SearchResult> = scored_results
+        let search_results: Vec<SparseHnswSearchResult> = scored_results
             .into_iter()
-            .map(|(similarity, id)| SearchResult {
+            .map(|(similarity, id)| SparseHnswSearchResult {
                 id,
                 score: similarity,
             })

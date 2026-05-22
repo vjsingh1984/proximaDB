@@ -310,7 +310,7 @@ impl StorageLocationConfig {
 
 /// Search result from embedded database
 #[derive(Debug, Clone)]
-pub struct SearchResult {
+pub struct EmbeddedSearchResult {
     /// Vector ID
     pub id: String,
     /// Similarity score (lower is more similar for distance metrics)
@@ -334,7 +334,7 @@ pub struct CollectionInfo {
     pub disk_usage_bytes: u64,
 }
 
-/// Convert a ProximaValue to a plain String for the Python-exposed SearchResult.metadata map.
+/// Convert a ProximaValue to a plain String for the Python-exposed EmbeddedSearchResult.metadata map.
 /// Rich types (Map, Array, Json, Jsonb) are JSON-serialised so no data is lost.
 pub(crate) fn proxima_value_to_string(v: proximadb_data_model::ProximaValue) -> String {
     use proximadb_data_model::ProximaValue;
@@ -1584,7 +1584,7 @@ impl EmbeddedProximaDB {
         query_vector: Vec<f32>,
         top_k: usize,
         _filter: Option<&str>,
-    ) -> Result<Vec<SearchResult>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<EmbeddedSearchResult>, Box<dyn std::error::Error + Send + Sync>> {
         self.search_with_mode(collection, query_vector, top_k, _filter, None)
     }
 
@@ -1620,7 +1620,7 @@ impl EmbeddedProximaDB {
         top_k: usize,
         filter: Option<&str>,
         search_mode: Option<&str>,
-    ) -> Result<Vec<SearchResult>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<EmbeddedSearchResult>, Box<dyn std::error::Error + Send + Sync>> {
         // Parse filter into (field, value) predicate pairs and push them to the storage
         // layer via VectorSearchRequest.filters — the SST engine applies predicate pushdown
         // during ANN search, so top_k already reflects post-filter cardinality.
@@ -1680,7 +1680,7 @@ impl EmbeddedProximaDB {
                         result_set
                             .results
                             .into_iter()
-                            .map(|r| SearchResult {
+                            .map(|r| EmbeddedSearchResult {
                                 id: r.id,
                                 score: r.score as f32,
                                 metadata: r
@@ -1751,10 +1751,10 @@ impl EmbeddedProximaDB {
                     Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
-            // Convert to embedded SearchResult format
+            // Convert to embedded EmbeddedSearchResult format
             Ok(results
                 .into_iter()
-                .map(|r| SearchResult {
+                .map(|r| EmbeddedSearchResult {
                     id: r.id,
                     score: r.score,
                     metadata: r

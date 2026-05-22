@@ -7,5 +7,5 @@
 pub mod executor;
 pub mod pipeline;
 
-pub use executor::SearchResult;
+pub use executor::VectorSearchExecutorResult;
 pub use pipeline::{ProgressiveSearchPipeline, StageResult, default_progressive_stages};

@@ -42,7 +42,7 @@ pub struct ProximaDBConfig {
 
 /// Search result
 #[napi(object)]
-pub struct SearchResult {
+pub struct NodejsSearchResult {
     /// Vector ID
     pub id: String,
     /// Similarity score
@@ -284,7 +284,7 @@ impl ProximaDB {
         query: Vec<f64>,
         top_k: Option<i32>,
         filter: Option<String>,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<NodejsSearchResult>> {
         let f32_query: Vec<f32> = query.into_iter().map(|x| x as f32).collect();
         let k = top_k.unwrap_or(10) as usize;
 
@@ -293,7 +293,7 @@ impl ProximaDB {
             .map(|results| {
                 results
                     .into_iter()
-                    .map(|r| SearchResult {
+                    .map(|r| NodejsSearchResult {
                         id: r.id,
                         score: r.score as f64,
                         metadata: Some(r.metadata),

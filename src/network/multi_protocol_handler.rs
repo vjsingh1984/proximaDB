@@ -291,7 +291,7 @@ pub struct UnifiedQueryResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ResponseData {
     /// Vector search results
-    SearchResults(Vec<SearchResult>),
+    NetworkSearchResults(Vec<NetworkSearchResult>),
     /// Batch operation result
     BatchResult {
         /// Number of vectors inserted
@@ -332,7 +332,7 @@ pub enum ResponseData {
 
 /// Search result (normalized)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchResult {
+pub struct NetworkSearchResult {
     /// Vector ID
     pub id: String,
     /// Similarity score
@@ -725,7 +725,7 @@ impl UnifiedQueryResponse {
         }
 
         match self.data {
-            ResponseData::SearchResults(results) => {
+            ResponseData::NetworkSearchResults(results) => {
                 let proto_results: Vec<proximadb_v1::SearchVectorRecord> = results
                     .into_iter()
                     .map(|r| proximadb_v1::SearchVectorRecord {
@@ -824,7 +824,7 @@ impl UnifiedQueryResponse {
     /// Convert to PostgreSQL row format for wire protocol
     pub fn into_postgres_rows(self) -> Result<PostgresResult> {
         match self.data {
-            ResponseData::SearchResults(results) => {
+            ResponseData::NetworkSearchResults(results) => {
                 let columns = vec![
                     PostgresColumn::new("id", PostgresType::Text),
                     PostgresColumn::new("score", PostgresType::Float8),
@@ -1124,7 +1124,7 @@ impl UnifiedQueryHandler {
             .map(|r| {
                 r.results
                     .into_iter()
-                    .map(|sr| SearchResult {
+                    .map(|sr| NetworkSearchResult {
                         id: sr.id,
                         score: sr.score,
                         vector: if sr.vector.is_empty() {
@@ -1145,7 +1145,7 @@ impl UnifiedQueryHandler {
         Ok(UnifiedQueryResponse {
             success: true,
             error: None,
-            data: ResponseData::SearchResults(results),
+            data: ResponseData::NetworkSearchResults(results),
             metadata: ResponseMetadata::default(),
         })
     }
@@ -1198,7 +1198,7 @@ impl UnifiedQueryHandler {
             .map_err(|e| anyhow!("Vector search via trait failed: {:?}", e))?;
 
         // Convert VectorSearchResult to UnifiedQueryResponse
-        let results: Vec<SearchResult> = response
+        let results: Vec<NetworkSearchResult> = response
             .results
             .into_iter()
             .map(|record| {
@@ -1208,7 +1208,7 @@ impl UnifiedQueryHandler {
                     .first()
                     .map(|embedding| embedding.values.clone());
 
-                SearchResult {
+                NetworkSearchResult {
                     id: record.oid,
                     score,
                     vector,
@@ -1224,7 +1224,7 @@ impl UnifiedQueryHandler {
         Ok(UnifiedQueryResponse {
             success: true,
             error: None,
-            data: ResponseData::SearchResults(results),
+            data: ResponseData::NetworkSearchResults(results),
             metadata: ResponseMetadata {
                 execution_time_ms: response.execution_time_ms,
                 ..Default::default()
@@ -1258,7 +1258,7 @@ impl UnifiedQueryHandler {
             .map(|r| {
                 r.results
                     .into_iter()
-                    .map(|sr| SearchResult {
+                    .map(|sr| NetworkSearchResult {
                         id: sr.id,
                         score: sr.score,
                         vector: if sr.vector.is_empty() {
@@ -1279,7 +1279,7 @@ impl UnifiedQueryHandler {
         Ok(UnifiedQueryResponse {
             success: true,
             error: None,
-            data: ResponseData::SearchResults(results),
+            data: ResponseData::NetworkSearchResults(results),
             metadata: ResponseMetadata::default(),
         })
     }
@@ -1645,14 +1645,14 @@ mod tests {
         let response = UnifiedQueryResponse {
             success: true,
             error: None,
-            data: ResponseData::SearchResults(vec![
-                SearchResult {
+            data: ResponseData::NetworkSearchResults(vec![
+                NetworkSearchResult {
                     id: "vec1".to_string(),
                     score: 0.95,
                     vector: None,
                     metadata: HashMap::new(),
                 },
-                SearchResult {
+                NetworkSearchResult {
                     id: "vec2".to_string(),
                     score: 0.85,
                     vector: None,

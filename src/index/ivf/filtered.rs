@@ -41,28 +41,28 @@ use tracing::{debug, trace};
 
 use crate::core::search::filter_contract::{FilterContract, MetadataLookup};
 
-/// Local SearchResult type for IVF filtered search
+/// Local IvfFilteredSearchResult type for IVF filtered search
 #[derive(Debug, Clone, Default)]
-pub struct SearchResult {
+pub struct IvfFilteredSearchResult {
     pub id: String,
     pub score: f32,
 }
 
-impl PartialEq for SearchResult {
+impl PartialEq for IvfFilteredSearchResult {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id && self.score.to_bits() == other.score.to_bits()
     }
 }
 
-impl Eq for SearchResult {}
+impl Eq for IvfFilteredSearchResult {}
 
-impl PartialOrd for SearchResult {
+impl PartialOrd for IvfFilteredSearchResult {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for SearchResult {
+impl Ord for IvfFilteredSearchResult {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match self.score.partial_cmp(&other.score) {
             Some(std::cmp::Ordering::Equal) | None => self.id.cmp(&other.id),
@@ -143,7 +143,7 @@ impl Default for IVFFilteredSearchParams {
 #[derive(Debug, Clone)]
 pub struct IVFFilteredResult {
     /// Top search results
-    pub results: Vec<SearchResult>,
+    pub results: Vec<IvfFilteredSearchResult>,
 
     /// Number of inverted lists processed
     pub lists_processed: usize,
@@ -277,7 +277,7 @@ impl FilteredIVFIndex {
         let ranked_candidates = self.rank_candidates(&params.query_vector, &all_candidates)?;
 
         // Extract top k results
-        let results: Vec<SearchResult> = ranked_candidates.into_iter().take(params.top_k).collect();
+        let results: Vec<IvfFilteredSearchResult> = ranked_candidates.into_iter().take(params.top_k).collect();
 
         let execution_time = start.elapsed().as_micros() as u64;
 
@@ -367,13 +367,13 @@ impl FilteredIVFIndex {
         &self,
         query: &[f32],
         candidates: &[IVFVector],
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<IvfFilteredSearchResult>> {
         let mut ranked = BinaryHeap::new();
 
         for candidate in candidates {
             let similarity = self.calculate_similarity(query, &candidate.vector);
 
-            ranked.push(SearchResult {
+            ranked.push(IvfFilteredSearchResult {
                 id: candidate.id.clone(),
                 score: similarity,
             });

@@ -93,7 +93,7 @@ pub enum ConsistencyLevel {
 #[derive(Debug, Clone)]
 pub struct DistributedSearchResult {
     /// Merged results from all shards
-    pub results: Vec<SearchResult>,
+    pub results: Vec<ShardSearchResult>,
     /// Number of shards queried
     pub shards_queried: usize,
     /// Number of shards that succeeded
@@ -106,7 +106,7 @@ pub struct DistributedSearchResult {
 
 /// Individual search result
 #[derive(Debug, Clone)]
-pub struct SearchResult {
+pub struct ShardSearchResult {
     /// Record ID
     pub id: String,
     /// Distance/similarity score
@@ -420,7 +420,7 @@ impl DistributedCollectionOps {
         shards: &[Shard],
         request: &DistributedSearchRequest,
         timings: &mut HashMap<String, u64>,
-    ) -> Result<Vec<Vec<SearchResult>>> {
+    ) -> Result<Vec<Vec<ShardSearchResult>>> {
         use futures::future::join_all;
 
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.config.max_concurrent_ops));
@@ -490,7 +490,7 @@ impl DistributedCollectionOps {
         shards: &[Shard],
         request: &DistributedSearchRequest,
         timings: &mut HashMap<String, u64>,
-    ) -> Result<Vec<Vec<SearchResult>>> {
+    ) -> Result<Vec<Vec<ShardSearchResult>>> {
         let mut results = Vec::new();
 
         for shard in shards {
@@ -537,7 +537,7 @@ impl DistributedCollectionOps {
         fanout: Option<&dyn SearchFanout>,
         node_registry: &NodeRegistry,
         timeout_ms: u64,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<ShardSearchResult>> {
         // Check if shard is on local node
         let is_local =
             shard.primary_node() == Some(local_node) || shard.replica_nodes().contains(&local_node);
@@ -563,7 +563,7 @@ impl DistributedCollectionOps {
         fanout: Option<&dyn SearchFanout>,
         node_registry: &NodeRegistry,
         timeout_ms: u64,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<ShardSearchResult>> {
         // Get the target node ID
         let target_node = shard
             .primary_node()
@@ -626,11 +626,11 @@ impl DistributedCollectionOps {
         let vectors_scanned = response.vectors_scanned;
         let latency = response.latency;
 
-        // Convert RPC results to SearchResult
-        let results: Vec<SearchResult> = response
+        // Convert RPC results to ShardSearchResult
+        let results: Vec<ShardSearchResult> = response
             .results
             .into_iter()
-            .map(|r| SearchResult {
+            .map(|r| ShardSearchResult {
                 id: r.id,
                 distance: r.score,
                 shard_id: shard.id.id().to_string(),
@@ -653,10 +653,10 @@ impl DistributedCollectionOps {
     /// Merge search results from multiple shards
     fn merge_search_results(
         &self,
-        shard_results: Vec<Vec<SearchResult>>,
+        shard_results: Vec<Vec<ShardSearchResult>>,
         top_k: usize,
-    ) -> Vec<SearchResult> {
-        let mut all_results: Vec<SearchResult> = shard_results.into_iter().flatten().collect();
+    ) -> Vec<ShardSearchResult> {
+        let mut all_results: Vec<ShardSearchResult> = shard_results.into_iter().flatten().collect();
 
         // Sort by distance (ascending - lower is better)
         all_results.sort_by(|a, b| {
@@ -1385,20 +1385,20 @@ mod tests {
 
         let shard_results = vec![
             vec![
-                SearchResult {
+                ShardSearchResult {
                     id: "r1".to_string(),
                     distance: 0.5,
                     shard_id: "shard1".to_string(),
                     metadata: HashMap::new(),
                 },
-                SearchResult {
+                ShardSearchResult {
                     id: "r2".to_string(),
                     distance: 1.0,
                     shard_id: "shard1".to_string(),
                     metadata: HashMap::new(),
                 },
             ],
-            vec![SearchResult {
+            vec![ShardSearchResult {
                 id: "r3".to_string(),
                 distance: 0.3,
                 shard_id: "shard2".to_string(),

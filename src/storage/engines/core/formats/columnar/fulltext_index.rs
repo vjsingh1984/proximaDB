@@ -17,7 +17,7 @@
 //! │  │  - N-gram       │  │  - Frequencies   │  │  - Avg length  │ │
 //! │  └─────────────────┘  └──────────────────┘  └────────────────┘ │
 //! ├─────────────────────────────────────────────────────────────────┤
-//! │  FullTextIndex │ TextStatistics │ SearchResult │ IndexBuilder  │
+//! │  FullTextIndex │ TextStatistics │ FulltextSearchResult │ IndexBuilder  │
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 //!
@@ -787,7 +787,7 @@ impl BM25Scorer {
 
 /// A search result with score
 #[derive(Debug, Clone)]
-pub struct SearchResult {
+pub struct FulltextSearchResult {
     /// Document ID
     pub doc_id: String,
     /// Relevance score
@@ -800,7 +800,7 @@ pub struct SearchResult {
     pub highlight_positions: HashMap<String, Vec<u32>>,
 }
 
-impl SearchResult {
+impl FulltextSearchResult {
     /// Create a new search result
     pub fn new(doc_id: String, score: f64) -> Self {
         Self {
@@ -1079,12 +1079,12 @@ impl FullTextIndex {
     }
 
     /// Search the index with default options
-    pub fn search(&self, query: &str, limit: usize) -> Vec<SearchResult> {
+    pub fn search(&self, query: &str, limit: usize) -> Vec<FulltextSearchResult> {
         self.search_with_options(query, SearchOptions::top_k(limit))
     }
 
     /// Search the index with custom options
-    pub fn search_with_options(&self, query: &str, options: SearchOptions) -> Vec<SearchResult> {
+    pub fn search_with_options(&self, query: &str, options: SearchOptions) -> Vec<FulltextSearchResult> {
         if self.documents.is_empty() {
             return Vec::new();
         }
@@ -1140,7 +1140,7 @@ impl FullTextIndex {
         }
 
         // Filter and collect results
-        let mut results: Vec<SearchResult> = doc_scores
+        let mut results: Vec<FulltextSearchResult> = doc_scores
             .into_iter()
             .filter(|(_, (score, matched_terms, _, _))| {
                 // Filter by minimum score
@@ -1157,7 +1157,7 @@ impl FullTextIndex {
             })
             .map(
                 |(doc_id, (score, matched_terms, term_frequencies, highlight_positions))| {
-                    SearchResult {
+                    FulltextSearchResult {
                         doc_id,
                         score,
                         matched_terms,

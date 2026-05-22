@@ -41,30 +41,30 @@ use tracing::debug;
 
 use crate::core::search::filter_contract::{FilterContract, MetadataLookup};
 
-/// Local SearchResult type for HNSW filtered search
+/// Local HnswFilteredSearchResult type for HNSW filtered search
 #[derive(Debug, Clone, Default)]
-pub struct SearchResult {
+pub struct HnswFilteredSearchResult {
     pub id: String,
     pub score: f32,
 }
 
 // Manual implementation of PartialEq for f32 score comparison
-impl PartialEq for SearchResult {
+impl PartialEq for HnswFilteredSearchResult {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id && self.score.to_bits() == other.score.to_bits()
     }
 }
 
-impl Eq for SearchResult {}
+impl Eq for HnswFilteredSearchResult {}
 
-impl PartialOrd for SearchResult {
+impl PartialOrd for HnswFilteredSearchResult {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
 // Manual implementation of Ord for consistent ordering (handles NaN)
-impl Ord for SearchResult {
+impl Ord for HnswFilteredSearchResult {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match self.score.partial_cmp(&other.score) {
             Some(std::cmp::Ordering::Equal) => self.id.cmp(&other.id),
@@ -150,7 +150,7 @@ impl Default for HNSWFilteredSearchParams {
 #[derive(Debug, Clone)]
 pub struct HNSWFilteredResult {
     /// Top search results
-    pub results: Vec<SearchResult>,
+    pub results: Vec<HnswFilteredSearchResult>,
 
     /// Number of nodes visited during traversal
     pub nodes_visited: usize,
@@ -297,7 +297,7 @@ impl FilteredHNSWIndex {
         entry_point: &str,
         params: &HNSWFilteredSearchParams,
         metadata_lookup: &dyn MetadataLookup,
-    ) -> Result<(Vec<SearchResult>, usize, usize)> {
+    ) -> Result<(Vec<HnswFilteredSearchResult>, usize, usize)> {
         let mut visited = HashSet::new();
         let mut candidates = BinaryHeap::new();
         let mut nodes_visited = 0;
@@ -316,7 +316,7 @@ impl FilteredHNSWIndex {
                 // Calculate similarity to query
                 let similarity =
                     self.calculate_similarity(&params.query_vector, &entry_node.vector);
-                candidates.push(SearchResult {
+                candidates.push(HnswFilteredSearchResult {
                     id: entry_node.id.clone(),
                     score: similarity,
                 });
@@ -356,7 +356,7 @@ impl FilteredHNSWIndex {
         params: &HNSWFilteredSearchParams,
         metadata_lookup: &dyn MetadataLookup,
         visited: &mut HashSet<String>,
-        candidates: &mut BinaryHeap<SearchResult>,
+        candidates: &mut BinaryHeap<HnswFilteredSearchResult>,
         nodes_visited: &mut usize,
         nodes_pruned: &mut usize,
     ) -> Result<()> {
@@ -384,7 +384,7 @@ impl FilteredHNSWIndex {
                     let similarity =
                         self.calculate_similarity(&params.query_vector, &neighbor_node.vector);
 
-                    candidates.push(SearchResult {
+                    candidates.push(HnswFilteredSearchResult {
                         id: neighbor_node.id.clone(),
                         score: similarity,
                     });
