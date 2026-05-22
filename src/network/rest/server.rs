@@ -349,6 +349,7 @@ impl RestServer {
             llm_engine,
             None,
             None,
+            None,
         )
     }
 
@@ -356,6 +357,8 @@ impl RestServer {
     ///
     /// When `ports` is `Some`, document/graph/observability routes are served
     /// by handlers from `proximadb-api` that delegate to the port trait objects.
+    /// When `queue_client` is `Some`, the v3 `/documents?mode=async` handler
+    /// routes through `producer.send`; otherwise it falls back to inline embed.
     pub fn with_security_and_config_and_ports(
         bind_addr: SocketAddr,
         request_handlers: Arc<UnifiedHandlers>,
@@ -370,6 +373,7 @@ impl RestServer {
         llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
         ports: Option<RestServerPorts>,
         catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
+        queue_client: Option<Arc<proximadb_queue::QueueClient>>,
     ) -> Self {
         let mut base_state = AppState::new(
             request_handlers,
@@ -381,6 +385,9 @@ impl RestServer {
         );
         if let Some(manager) = catalog_manager {
             base_state = base_state.with_catalog_manager(manager);
+        }
+        if let Some(qc) = queue_client {
+            base_state = base_state.with_queue_client(qc);
         }
         let state = if let Some(p) = ports {
             let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);
@@ -604,6 +611,7 @@ impl RestServer {
         ports: Option<RestServerPorts>,
         segment_registry: Option<Arc<crate::catalog::SegmentRegistry>>,
         catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
+        queue_client: Option<Arc<proximadb_queue::QueueClient>>,
     ) -> Router {
         let mut base_state = AppState::new(
             request_handlers,
@@ -618,6 +626,9 @@ impl RestServer {
         }
         if let Some(manager) = catalog_manager {
             base_state = base_state.with_catalog_manager(manager);
+        }
+        if let Some(qc) = queue_client {
+            base_state = base_state.with_queue_client(qc);
         }
         let state = if let Some(p) = ports {
             let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);

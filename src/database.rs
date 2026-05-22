@@ -234,22 +234,32 @@ impl ProximaDB {
         // BulkLoadDrainerSink wrapper.
         let handlers_for_drainer = shared_services.request_handlers.clone();
 
-        let multi_server = network::MultiServer::new(
+        // Open the queue subsystem BEFORE MultiServer so its Arc can
+        // thread into AppState (so the v3 `/documents?mode=async` REST
+        // handler routes through `producer.send`). The drainer is
+        // spawned AFTER MultiServer because it needs the same handlers
+        // the REST/gRPC stacks consume.
+        let queue_client = open_queue_client_if_configured().await?;
+
+        let multi_server = network::MultiServer::new_with_queue_client(
             multi_config,
             shared_services,
             security.clone(),
             rest_auth_enabled,
             rest_multi_tenant_required,
             llm_engine,
+            queue_client.clone(),
         );
         tracing::debug!("✅ ProximaDB::new - MultiServer created");
 
-        // Phase 2H wiring: when PROXIMADB_QUEUE_ROOT is set, open the
-        // queue subsystem and spawn the embedding drainer with the
-        // production BulkLoadDrainerSink. Otherwise leave both `None`
-        // and the v3 REST handler async path falls back to inline
-        // embedding (its documented degradation).
-        let (queue_client, drainer) = init_async_ingest_subsystem(handlers_for_drainer).await?;
+        // Phase 2H wiring (drainer half): spawn the drainer only when
+        // queue_client is Some — otherwise async ingest degrades to
+        // inline embed in the REST handler.
+        let drainer = if let Some(ref qc) = queue_client {
+            Some(spawn_embedding_drainer(qc.clone(), handlers_for_drainer).await?)
+        } else {
+            None
+        };
 
         Ok(Self {
             storage,
@@ -785,18 +795,16 @@ impl ProximaDB {
 /// - `PROXIMADB_EMBED_DRAINER_PARTITIONS` (optional, default "0..16"):
 ///   partition range this replica drains. Single-replica deployments
 ///   leave it default; multi-replica needs disjoint per-pod ranges.
-async fn init_async_ingest_subsystem(
-    handlers: Arc<crate::api_handlers::request_handlers::UnifiedHandlers>,
-) -> anyhow::Result<(
-    Option<Arc<proximadb_queue::QueueClient>>,
-    Option<(
-        tokio::task::JoinHandle<()>,
-        tokio::sync::oneshot::Sender<()>,
-    )>,
-)> {
+/// Open the queue client when `PROXIMADB_QUEUE_ROOT` is set. Returns
+/// `None` otherwise — deployments not opted into async ingest see no
+/// behavior change. Split from drainer spawn so the queue's Arc can
+/// thread into `MultiServer` (and therefore `AppState`) before the
+/// drainer needs to start.
+async fn open_queue_client_if_configured()
+-> anyhow::Result<Option<Arc<proximadb_queue::QueueClient>>> {
     let Some(root) = std::env::var("PROXIMADB_QUEUE_ROOT").ok() else {
         tracing::info!("PROXIMADB_QUEUE_ROOT not set; async ingest will degrade to inline embed");
-        return Ok((None, None));
+        return Ok(None);
     };
     tracing::info!(queue_root = %root, "Opening queue subsystem for async ingest");
 
@@ -813,11 +821,20 @@ async fn init_async_ingest_subsystem(
         .await
         .map_err(|e| anyhow::anyhow!("queue open: {}", e))?;
     tracing::info!("✅ Queue subsystem opened");
+    Ok(Some(queue))
+}
 
-    // Wire the drainer with the production BulkLoadDrainerSink. The
-    // drainer subscribes to `0..partition_count` by default. For
-    // multi-replica deployments, set PROXIMADB_EMBED_DRAINER_PARTITIONS
-    // to a disjoint slice per pod.
+/// Spawn the embedding drainer with the production
+/// `BulkLoadDrainerSink`. The drainer subscribes to
+/// `0..partition_count` by default. For multi-replica deployments,
+/// `PROXIMADB_EMBED_DRAINER_PARTITIONS` carves out a per-pod range.
+async fn spawn_embedding_drainer(
+    queue: Arc<proximadb_queue::QueueClient>,
+    handlers: Arc<crate::api_handlers::request_handlers::UnifiedHandlers>,
+) -> anyhow::Result<(
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Sender<()>,
+)> {
     let bulk_loader = Arc::new(crate::services::bulk_load::BulkLoader::new(handlers));
     let sink: Arc<dyn crate::services::DrainerInsertSink> = Arc::new(
         crate::services::bulk_load::BulkLoadDrainerSink::new(bulk_loader),
@@ -825,7 +842,7 @@ async fn init_async_ingest_subsystem(
     let embed_service = proximadb_embedding::EmbeddingService::global();
     let drainer_cfg = crate::services::EmbeddingDrainerConfig::default();
     let drainer =
-        crate::services::EmbeddingDrainer::new(queue.clone(), embed_service, sink, drainer_cfg);
+        crate::services::EmbeddingDrainer::new(queue, embed_service, sink, drainer_cfg);
 
     let partitions: Vec<u32> = std::env::var("PROXIMADB_EMBED_DRAINER_PARTITIONS")
         .ok()
@@ -833,7 +850,7 @@ async fn init_async_ingest_subsystem(
         .unwrap_or_else(|| (0..16u32).collect());
     let pair = drainer.start(partitions);
     tracing::info!("✅ Embedding drainer started");
-    Ok((Some(queue), Some(pair)))
+    Ok(pair)
 }
 
 /// Parse "0,1,2" or "0..4" or "0,3..6,9" into a Vec<u32>.
