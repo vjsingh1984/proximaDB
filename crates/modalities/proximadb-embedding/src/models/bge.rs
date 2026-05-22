@@ -55,12 +55,19 @@ impl Variant {
 #[cfg(feature = "onnx")]
 pub struct BgeModel {
     variant: Variant,
-    /// Wrapped in a Mutex because ort 2.0.0-rc.x exposes `Session::run` as
-    /// `&mut self`. The underlying ONNX Runtime supports concurrent inference
-    /// from multiple threads, but the Rust API serializes through the lock.
-    /// For higher throughput per node, instantiate multiple BgeModel and
-    /// round-robin (left as a follow-up — see PROXIMADB_EMBED_SESSIONS env).
-    session: std::sync::Mutex<ort::session::Session>,
+    /// Pool of N independent ONNX sessions for the same variant. Each session
+    /// is wrapped in its own `Mutex` because `ort::Session::run` is `&mut self`
+    /// in ort 2.0.0-rc.x. With N sessions, up to N concurrent inferences can
+    /// run in parallel (limited by CPU cores in practice).
+    ///
+    /// Pool size is controlled by `PROXIMADB_EMBED_SESSIONS` at process start.
+    /// Default is 1 to preserve the conservative memory profile; bump to
+    /// `num_cpus / 2` (or `4`) on dedicated embedding nodes for ~Nx throughput.
+    /// Each additional session adds the model's runtime state to RAM (a few MB
+    /// on top of the mmapped weights which are shared across sessions).
+    sessions: Vec<std::sync::Mutex<ort::session::Session>>,
+    /// Round-robin pointer for session selection. Wraps modulo `sessions.len()`.
+    next: std::sync::atomic::AtomicUsize,
     tokenizer: std::sync::Arc<tokenizers::Tokenizer>,
 }
 
@@ -89,22 +96,37 @@ impl BgeModel {
                         .into_owned()
                 });
 
+            // Pool size: PROXIMADB_EMBED_SESSIONS env var, default 1, clamped
+            // to [1, 32]. Each session is one ONNX inference context; weights
+            // are shared via mmap so memory cost is mostly the per-session
+            // runtime arenas (single-digit MB on bge-small).
+            let pool_size = std::env::var("PROXIMADB_EMBED_SESSIONS")
+                .ok()
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(1)
+                .clamp(1, 32);
+
             tracing::info!(
                 variant = ?variant,
                 model = %model_path.display(),
                 tokenizer = %tokenizer_path,
-                "loading BGE ONNX session"
+                pool_size,
+                "loading BGE ONNX session pool"
             );
 
-            let session = ort::session::Session::builder()
-                .map_err(|e| crate::EmbeddingError::ModelUnavailable(format!(
-                    "ort builder: {e}"
-                )))?
-                .commit_from_file(&model_path)
-                .map_err(|e| crate::EmbeddingError::ModelUnavailable(format!(
-                    "ort commit_from_file({}): {e}",
-                    model_path.display()
-                )))?;
+            let mut sessions = Vec::with_capacity(pool_size);
+            for idx in 0..pool_size {
+                let session = ort::session::Session::builder()
+                    .map_err(|e| crate::EmbeddingError::ModelUnavailable(format!(
+                        "ort builder (session {idx}): {e}"
+                    )))?
+                    .commit_from_file(&model_path)
+                    .map_err(|e| crate::EmbeddingError::ModelUnavailable(format!(
+                        "ort commit_from_file({}) (session {idx}): {e}",
+                        model_path.display()
+                    )))?;
+                sessions.push(std::sync::Mutex::new(session));
+            }
 
             let tokenizer = tokenizers::Tokenizer::from_file(&tokenizer_path)
                 .map_err(|e| crate::EmbeddingError::ModelUnavailable(format!(
@@ -114,7 +136,8 @@ impl BgeModel {
 
             Ok(Self {
                 variant,
-                session: std::sync::Mutex::new(session),
+                sessions,
+                next: std::sync::atomic::AtomicUsize::new(0),
                 tokenizer: std::sync::Arc::new(tokenizer),
             })
         }
@@ -205,9 +228,32 @@ impl BgeModel {
         // Materialize the hidden tensor into an owned Vec<f32> + shape so it
         // outlives the SessionOutputs borrow (which dies at end of scope).
         let (hidden_data, hidden_shape) = {
-            let mut session = self.session.lock().map_err(|e| {
-                crate::EmbeddingError::Other(anyhow::anyhow!("session mutex poisoned: {}", e))
-            })?;
+            // Pool selection: bump the round-robin pointer once, then probe
+            // each session with try_lock starting at that index. First idle
+            // session wins; if all are busy, block on the round-robin slot.
+            // This minimizes contention when sessions are unevenly busy
+            // (e.g., one running a long batch).
+            let pool_len = self.sessions.len();
+            let start_idx = self
+                .next
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let mut acquired: Option<std::sync::MutexGuard<'_, ort::session::Session>> = None;
+            for i in 0..pool_len {
+                let idx = (start_idx.wrapping_add(i)) % pool_len;
+                if let Ok(guard) = self.sessions[idx].try_lock() {
+                    acquired = Some(guard);
+                    break;
+                }
+            }
+            let mut session = match acquired {
+                Some(guard) => guard,
+                None => self.sessions[start_idx % pool_len].lock().map_err(|e| {
+                    crate::EmbeddingError::Other(anyhow::anyhow!(
+                        "session mutex poisoned: {}",
+                        e
+                    ))
+                })?,
+            };
             let outputs = session.run(inputs).map_err(onnx_err)?;
             // BGE exports expose the last hidden state under the first output
             // (sometimes named `last_hidden_state`, sometimes `output_0`).
