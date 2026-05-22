@@ -178,6 +178,119 @@ async fn restart_skips_already_acked_messages() {
     }
 }
 
+/// Phase 2D-c: fresh-node rebuild. Simulates ECS pod reschedule onto a
+/// new node with empty local disk but a populated object archive.
+/// Recovery must load segments straight from the archive when the disk
+/// has nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn fresh_node_recovers_from_archive_when_disk_is_empty() {
+    let disk_tmp = TempDir::new().expect("disk");
+    let archive_tmp = TempDir::new().expect("archive");
+    let disk_root = disk_tmp.path();
+    let archive_root = archive_tmp.path();
+
+    let mut topics = HashMap::new();
+    topics.insert(
+        "embed-ingest".to_string(),
+        TopicConfig {
+            partition_count: 1,
+            disk_rotation_size_mb: 0, // force rotation to seal segments
+            ..Default::default()
+        },
+    );
+    let cfg = |root: &std::path::Path| QueueConfig {
+        root: format!("file://{}", root.display()),
+        object_archive: Some(format!("file://{}", archive_root.display())),
+        topics: topics.clone(),
+        ..QueueConfig::default()
+    };
+
+    // Session 1: send messages on the original "node", wait for upload
+    // to mirror sealed segments to the archive.
+    {
+        let client = QueueClient::open(cfg(disk_root)).await.expect("session1");
+        let producer = client.producer();
+        for i in 0..5u32 {
+            producer
+                .send(Message::new(
+                    "embed-ingest",
+                    "tenant-a",
+                    i.to_be_bytes().to_vec(),
+                ))
+                .await
+                .expect("send");
+        }
+        // Wait for at least segment 0 to mirror.
+        let arch_seg0 = archive_root
+            .join("embed-ingest")
+            .join("0")
+            .join("0000000000.qseg");
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while !arch_seg0.exists() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(arch_seg0.exists(), "upload must mirror segment 0");
+        client.shutdown().await.expect("shutdown");
+    }
+
+    // Simulate "fresh node": brand-new disk_root with NOTHING on it.
+    // The archive_root persists (it's a separate TempDir). Recovery on
+    // the new disk_root must pull segments from the archive.
+    let fresh_disk_tmp = TempDir::new().expect("fresh disk");
+    let fresh_disk = fresh_disk_tmp.path();
+
+    let client = QueueClient::open(cfg(fresh_disk))
+        .await
+        .expect("fresh node open");
+    let consumer = client.consumer("g");
+    consumer
+        .subscribe("embed-ingest", &[0])
+        .await
+        .expect("subscribe");
+
+    // Drain until we've received the messages from the archive. Only
+    // segment 0 was guaranteed mirrored above; the test asserts at
+    // least 1 message comes back — proving the archive fallback works.
+    let mut received: Vec<u32> = Vec::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while received.is_empty() && std::time::Instant::now() < deadline {
+        let batch = consumer
+            .poll(8, Duration::from_millis(100))
+            .await
+            .unwrap();
+        for msg in batch {
+            assert_eq!(msg.payload.len(), 4);
+            let v = u32::from_be_bytes(msg.payload.as_slice().try_into().unwrap());
+            received.push(v);
+        }
+    }
+    // The core archive-fallback proof: with an empty local disk,
+    // recovery still surfaced messages — they could only have come
+    // from the archive. Exactly which subset of [0..5) we get depends
+    // on the upload+rotation race in session 1 (this test doesn't
+    // attempt to control that; it only asserts the fallback path
+    // works at all).
+    assert!(
+        !received.is_empty(),
+        "fresh-node recovery must pull messages from archive when disk is empty",
+    );
+    for (idx, &v) in received.iter().enumerate() {
+        assert!(
+            (v as usize) < 5,
+            "recovered value {v} out of range; received={received:?}",
+        );
+        if idx > 0 {
+            assert!(
+                v > received[idx - 1],
+                "FIFO broken at idx {idx}: {} → {v}; received={received:?}",
+                received[idx - 1],
+            );
+        }
+    }
+
+    client.shutdown().await.expect("shutdown");
+}
+
 /// Recovery on a fresh empty root is a clean no-op — no errors, no
 /// surprises. Useful for the first deployment / dev-container case.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

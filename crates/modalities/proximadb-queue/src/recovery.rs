@@ -36,6 +36,16 @@ const DEFAULT_GROUP_FOR_RECOVERY: &str = "g";
 
 const SEGMENT_EXT: &str = "qseg";
 
+/// Extract `(segment_id, path)` from a directory entry whose filename
+/// looks like `0000000123.qseg`. Returns None for any other entry
+/// (the marker sidecars, hidden files, etc.).
+fn parse_segment_entry(path: std::path::PathBuf) -> Option<(u64, std::path::PathBuf)> {
+    let name = path.file_name()?.to_str()?.to_owned();
+    let stem = name.strip_suffix(&format!(".{SEGMENT_EXT}"))?;
+    let segment_id = stem.parse::<u64>().ok()?;
+    Some((segment_id, path))
+}
+
 /// Replay persisted segments back into the in-memory tier on startup.
 ///
 /// Walks every registered topic, iterates its declared partitions,
@@ -52,6 +62,14 @@ pub async fn recover(client: &QueueClient) -> crate::Result<usize> {
         return Ok(0);
     }
 
+    // Compute the archive root once (None when not configured).
+    let archive_root: Option<std::path::PathBuf> = client
+        .config()
+        .object_archive
+        .as_deref()
+        .map(crate::object_tier::resolve_archive_root)
+        .transpose()?;
+
     let mut total_replayed = 0usize;
     for topic in topic_names {
         let Some(state) = client.topic_state(&topic).await else {
@@ -62,8 +80,18 @@ pub async fn recover(client: &QueueClient) -> crate::Result<usize> {
                 .root_path()
                 .join(&topic)
                 .join(partition_id.to_string());
-            let count =
-                replay_partition(client.fs(), &partition_dir, &topic, partition_id, &state).await?;
+            let archive_partition_dir = archive_root
+                .as_ref()
+                .map(|root| root.join(&topic).join(partition_id.to_string()));
+            let count = replay_partition(
+                client.fs(),
+                &partition_dir,
+                archive_partition_dir.as_deref(),
+                &topic,
+                partition_id,
+                &state,
+            )
+            .await?;
             total_replayed += count;
         }
     }
@@ -75,29 +103,37 @@ pub async fn recover(client: &QueueClient) -> crate::Result<usize> {
 async fn replay_partition(
     fs: &Arc<dyn QueueFs>,
     partition_dir: &Path,
+    archive_partition_dir: Option<&Path>,
     topic: &str,
     partition: PartitionId,
     state: &crate::TopicState,
 ) -> crate::Result<usize> {
-    // List + filter segments under this partition.
-    let entries = match fs.list(partition_dir).await {
-        Ok(list) => list,
-        Err(_) => {
-            // Directory may not exist on a fresh root — that's not an
-            // error, just nothing to recover.
-            return Ok(0);
+    // Merge segments from local disk + (optionally) the archive. For
+    // each segment_id, prefer the local disk copy (faster); fall back
+    // to the archive only when the disk copy is missing. This is the
+    // fresh-node-rebuild path: ECS pod reschedules onto a new node
+    // with empty NVMe; recovery loads segments straight from the
+    // archive.
+    let mut segments: std::collections::BTreeMap<u64, std::path::PathBuf> =
+        std::collections::BTreeMap::new();
+    let local_entries = fs.list(partition_dir).await.unwrap_or_default();
+    for path in local_entries {
+        if let Some((id, p)) = parse_segment_entry(path) {
+            segments.insert(id, p);
         }
-    };
-    let mut segments: Vec<(u64, std::path::PathBuf)> = entries
-        .into_iter()
-        .filter_map(|path| {
-            let name = path.file_name()?.to_str()?.to_owned();
-            let stem = name.strip_suffix(&format!(".{SEGMENT_EXT}"))?;
-            let segment_id = stem.parse::<u64>().ok()?;
-            Some((segment_id, path))
-        })
-        .collect();
-    segments.sort_by_key(|(id, _)| *id);
+    }
+    if let Some(archive_dir) = archive_partition_dir {
+        let archive_entries = fs.list(archive_dir).await.unwrap_or_default();
+        for path in archive_entries {
+            if let Some((id, p)) = parse_segment_entry(path) {
+                // Archive is the fallback — only insert if disk had nothing.
+                segments.entry(id).or_insert(p);
+            }
+        }
+    }
+    // BTreeMap iterator is already sorted by segment_id ascending,
+    // which is the order replay needs (lower offsets first).
+    let segments: Vec<(u64, std::path::PathBuf)> = segments.into_iter().collect();
 
     if segments.is_empty() {
         return Ok(0);
@@ -288,7 +324,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let state = topic_state(4, root.path()).await;
 
-        let replayed = replay_partition(&fs, &root.path().join("missing"), "orders", 0, &state)
+        let replayed = replay_partition(&fs, &root.path().join("missing"), None, "orders", 0, &state)
             .await
             .unwrap();
 
@@ -318,7 +354,7 @@ mod tests {
             .unwrap();
         let state = topic_state(4, root.path()).await;
 
-        let replayed = replay_partition(&fs, &partition_dir, "orders", 0, &state)
+        let replayed = replay_partition(&fs, &partition_dir, None, "orders", 0, &state)
             .await
             .unwrap();
 
@@ -346,7 +382,7 @@ mod tests {
             .unwrap();
         let state = topic_state(1, root.path()).await;
 
-        let error = replay_partition(&fs, &partition_dir, "orders", 0, &state)
+        let error = replay_partition(&fs, &partition_dir, None, "orders", 0, &state)
             .await
             .unwrap_err();
 
