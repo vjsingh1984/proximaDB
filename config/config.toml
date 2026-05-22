@@ -462,3 +462,50 @@ failure_threshold = 3
 auto_remove_failed = false
 # Time before removing failed node (seconds)
 removal_delay_seconds = 300
+
+# ============================================================================
+# Async-ingest queue (proximadb-queue)
+# ============================================================================
+# When this section is present (with at least `root` set), ProximaDB opens
+# the tiered persistent queue at startup, threads the client into the v3
+# REST `/documents?mode=async` handler, and spawns the embedding drainer
+# with the production BulkLoadDrainerSink.
+#
+# Override precedence (highest wins):
+#   1. CLI flag (none today; reserved for future)
+#   2. Environment variable (PROXIMADB_QUEUE_ROOT,
+#      PROXIMADB_QUEUE_OBJECT_ARCHIVE, PROXIMADB_QUEUE_SYNC_MODE,
+#      PROXIMADB_EMBED_DRAINER_PARTITIONS) — emergency per-pod tuning
+#   3. TOML [queue] section — the canonical declarative artifact
+#   4. Compiled-in defaults
+#
+# Why TOML is authoritative: this file is checked into version control
+# and downloadable from object store, identical across replicas, and
+# survives container restarts. Env vars are ephemeral and intended only
+# for emergency per-pod overrides without rebuilding the artifact.
+#
+# Leave the entire [queue] section commented out to keep async ingest
+# disabled. The v3 handler then falls back to inline embed.
+#
+# [queue]
+# # Filesystem URL where queue segments live. Required to enable async
+# # ingest. Typical k8s: a PVC-backed local path; ECS with object-store-
+# # direct: adls://... or s3://... once the proximadb-filesystem
+# # extraction lands.
+# root = "file:///var/lib/proximadb/queue"
+#
+# # Optional second-tier archive URL. Sealed segments are mirrored here
+# # so the queue survives ECS pod loss / k8s reschedule onto a fresh-disk
+# # node. Highly recommended for production.
+# # object_archive = "adls://anvaiops/queue-cold"
+#
+# # "strict" (default, fsync-before-ack — embed events cannot be re-
+# # derived if lost) or "lazy" (memory-only ack; higher throughput,
+# # acceptable for events the producer can replay).
+# sync_mode = "strict"
+#
+# # Partition range this replica drains, e.g. "0..16" (default) or
+# # "0,3..6,9". Single-replica leaves it unset; multi-replica deployments
+# # pass disjoint ranges per pod (the queue's cross-process leases then
+# # enforce ownership).
+# drainer_partitions = "0..16"

@@ -239,7 +239,22 @@ impl ProximaDB {
         // handler routes through `producer.send`). The drainer is
         // spawned AFTER MultiServer because it needs the same handlers
         // the REST/gRPC stacks consume.
-        let queue_client = open_queue_client_if_configured().await?;
+        //
+        // Configuration is resolved through `QueueRuntimeConfig::resolve`
+        // which folds env > TOML > defaults (see `core::config` for the
+        // documented precedence pyramid). Passing `config.queue.as_ref()`
+        // means the TOML `[queue]` section is the canonical source and
+        // env vars exist for emergency per-pod overrides.
+        let resolved_queue = core::config::QueueRuntimeConfig::resolve(config.queue.as_ref());
+        let queue_client = if let Some(ref rq) = resolved_queue {
+            Some(open_queue_client_from_resolved(rq).await?)
+        } else {
+            tracing::info!(
+                "no [queue] section and PROXIMADB_QUEUE_ROOT unset; async ingest \
+                 will degrade to inline embed"
+            );
+            None
+        };
 
         let multi_server = network::MultiServer::new_with_queue_client(
             multi_config,
@@ -256,7 +271,11 @@ impl ProximaDB {
         // queue_client is Some — otherwise async ingest degrades to
         // inline embed in the REST handler.
         let drainer = if let Some(ref qc) = queue_client {
-            Some(spawn_embedding_drainer(qc.clone(), handlers_for_drainer).await?)
+            // resolved_queue is always Some when queue_client is Some
+            // (they're built from the same condition), so unwrapping
+            // here is safe.
+            let rq = resolved_queue.as_ref().expect("queue_client → resolved_queue");
+            Some(spawn_embedding_drainer_from_resolved(qc.clone(), handlers_for_drainer, rq).await?)
         } else {
             None
         };
@@ -795,11 +814,85 @@ impl ProximaDB {
 /// - `PROXIMADB_EMBED_DRAINER_PARTITIONS` (optional, default "0..16"):
 ///   partition range this replica drains. Single-replica deployments
 ///   leave it default; multi-replica needs disjoint per-pod ranges.
+/// Open the queue client from an already-resolved config. The
+/// `resolve()` step (see `core::config::QueueRuntimeConfig::resolve`)
+/// has already folded env > TOML > defaults into a `ResolvedQueueConfig`,
+/// so this function only does the I/O.
+async fn open_queue_client_from_resolved(
+    rq: &core::config::ResolvedQueueConfig,
+) -> anyhow::Result<Arc<proximadb_queue::QueueClient>> {
+    tracing::info!(
+        queue_root = %rq.root,
+        object_archive = ?rq.object_archive,
+        sync_mode = %rq.sync_mode,
+        "Opening queue subsystem for async ingest"
+    );
+
+    let mut topics = std::collections::HashMap::new();
+    topics.insert(
+        crate::services::EMBED_INGEST_TOPIC.to_string(),
+        proximadb_queue::TopicConfig::default(),
+    );
+    let sync_mode = if rq.sync_mode == "lazy" {
+        proximadb_queue::SyncMode::Lazy
+    } else {
+        proximadb_queue::SyncMode::Strict
+    };
+    let queue_cfg = proximadb_queue::QueueConfig {
+        root: rq.root.clone(),
+        object_archive: rq.object_archive.clone(),
+        default_sync_mode: sync_mode,
+        topics,
+    };
+
+    let queue = proximadb_queue::QueueClient::open(queue_cfg)
+        .await
+        .map_err(|e| anyhow::anyhow!("queue open: {}", e))?;
+    tracing::info!("✅ Queue subsystem opened");
+    Ok(queue)
+}
+
+/// Spawn the embedding drainer using partitions from the resolved
+/// queue config. The `drainer_partitions` field is the string form
+/// (e.g. `"0..16"` or `"0,3..6,9"`); `parse_partition_list` turns it
+/// into a `Vec<u32>`.
+async fn spawn_embedding_drainer_from_resolved(
+    queue: Arc<proximadb_queue::QueueClient>,
+    handlers: Arc<crate::api_handlers::request_handlers::UnifiedHandlers>,
+    rq: &core::config::ResolvedQueueConfig,
+) -> anyhow::Result<(
+    tokio::task::JoinHandle<()>,
+    tokio::sync::oneshot::Sender<()>,
+)> {
+    let bulk_loader = Arc::new(crate::services::bulk_load::BulkLoader::new(handlers));
+    let sink: Arc<dyn crate::services::DrainerInsertSink> = Arc::new(
+        crate::services::bulk_load::BulkLoadDrainerSink::new(bulk_loader),
+    );
+    let embed_service = proximadb_embedding::EmbeddingService::global();
+    let drainer_cfg = crate::services::EmbeddingDrainerConfig::default();
+    let drainer =
+        crate::services::EmbeddingDrainer::new(queue, embed_service, sink, drainer_cfg);
+
+    let partitions: Vec<u32> = parse_partition_list(&rq.drainer_partitions).unwrap_or_else(|| {
+        tracing::warn!(
+            range = %rq.drainer_partitions,
+            "failed to parse drainer partitions; falling back to 0..16"
+        );
+        (0..16u32).collect()
+    });
+    let pair = drainer.start(partitions);
+    tracing::info!("✅ Embedding drainer started");
+    Ok(pair)
+}
+
 /// Open the queue client when `PROXIMADB_QUEUE_ROOT` is set. Returns
 /// `None` otherwise — deployments not opted into async ingest see no
-/// behavior change. Split from drainer spawn so the queue's Arc can
-/// thread into `MultiServer` (and therefore `AppState`) before the
-/// drainer needs to start.
+/// behavior change.
+///
+/// **DEPRECATED**: prefer `QueueRuntimeConfig::resolve` +
+/// `open_queue_client_from_resolved` for proper precedence handling.
+/// This helper is retained until callers migrate.
+#[allow(dead_code)]
 async fn open_queue_client_if_configured()
 -> anyhow::Result<Option<Arc<proximadb_queue::QueueClient>>> {
     let Some(root) = std::env::var("PROXIMADB_QUEUE_ROOT").ok() else {

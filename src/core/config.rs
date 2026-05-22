@@ -40,6 +40,27 @@ pub struct Config {
     pub query: Option<QueryConfig>,
     /// LLM integration configuration (optional)
     pub llm: Option<LLMConfig>,
+    /// Async-ingest queue runtime configuration (optional).
+    ///
+    /// When present, ProximaDB opens the queue subsystem at startup
+    /// and async ingest (`/v3/documents?mode=async`) routes through
+    /// `producer.send` → background drainer → bulk-load. When absent,
+    /// async ingest degrades to inline embed.
+    ///
+    /// Override precedence (highest wins) — see
+    /// [`QueueRuntimeConfig::resolve`] for the implementation:
+    ///   1. CLI flag (none today; reserved)
+    ///   2. Environment variable (`PROXIMADB_QUEUE_ROOT`,
+    ///      `PROXIMADB_QUEUE_OBJECT_ARCHIVE`, `PROXIMADB_QUEUE_SYNC_MODE`,
+    ///      `PROXIMADB_EMBED_DRAINER_PARTITIONS`)
+    ///   3. TOML `[queue]` section (this field) — the canonical artifact
+    ///   4. Built-in defaults
+    ///
+    /// The TOML is intentionally the authoritative declarative source
+    /// (downloadable from object store, version-controlled, identical
+    /// across replicas). Env vars exist for per-pod emergency tuning
+    /// without rebuilding the artifact.
+    pub queue: Option<QueueRuntimeConfig>,
 }
 
 pub use proximadb_config::{HardwareConfig, SksConfig, TlsConfig};
@@ -62,7 +83,255 @@ impl Default for Config {
             hybrid: Some(HybridRuntimeConfig::default()),
             query: None, // Uses default RL planner settings when None
             llm: None,
+            queue: None,
         }
+    }
+}
+
+/// Queue subsystem runtime configuration. Lives at the `[queue]` TOML
+/// section. See `Config.queue` for the precedence rules — short version:
+/// the TOML is the canonical declarative source; env vars exist for
+/// per-pod emergency overrides; defaults fill in the gaps.
+///
+/// Wire-format example:
+///
+/// ```toml
+/// [queue]
+/// root = "file:///var/lib/proximadb/queue"
+/// object_archive = "adls://anvaiops/queue-cold"   # optional
+/// sync_mode = "strict"                             # "strict" or "lazy"
+/// drainer_partitions = "0..16"                    # this replica's range
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QueueRuntimeConfig {
+    /// Filesystem URL where queue segments live (e.g.
+    /// `file:///var/lib/proximadb/queue`, `adls://...`, `s3://...`).
+    /// Required to enable async ingest.
+    pub root: Option<String>,
+    /// Optional second-tier archive URL. Sealed segments are mirrored
+    /// here so the queue survives ECS pod loss / k8s reschedule onto a
+    /// fresh-disk node.
+    pub object_archive: Option<String>,
+    /// `"strict"` (default, fsync-before-ack) or `"lazy"`.
+    pub sync_mode: Option<String>,
+    /// Partition range this replica drains, e.g. `"0..16"` or
+    /// `"0,3..6,9"`. Single-replica deployments leave it unset; multi-
+    /// replica deployments pass disjoint ranges per pod (the cross-
+    /// process leases enforce ownership).
+    pub drainer_partitions: Option<String>,
+}
+
+impl QueueRuntimeConfig {
+    /// Build the runtime queue settings by layering env over TOML over
+    /// defaults. Returns `None` when none of the layers supplied a
+    /// `root` URL — that's the explicit signal that async ingest is
+    /// disabled.
+    ///
+    /// Precedence (highest wins):
+    /// 1. **Environment variable** (`PROXIMADB_QUEUE_*`) — per-pod
+    ///    emergency override. Set in the k8s/ECS task spec.
+    /// 2. **TOML `[queue]` section** — canonical declarative artifact.
+    ///    Downloadable from object store; identical across replicas.
+    /// 3. **Compiled-in defaults** — `sync_mode = "strict"`,
+    ///    `drainer_partitions = "0..16"`.
+    ///
+    /// A future CLI-flag layer (e.g. `--queue-root <url>`) would slot
+    /// above env without changing the return type.
+    pub fn resolve(toml_section: Option<&QueueRuntimeConfig>) -> Option<ResolvedQueueConfig> {
+        let from_toml = toml_section.cloned().unwrap_or_default();
+        let root = std::env::var("PROXIMADB_QUEUE_ROOT")
+            .ok()
+            .or(from_toml.root.clone());
+        // No root anywhere → async ingest stays off entirely.
+        let root = root?;
+
+        let object_archive = std::env::var("PROXIMADB_QUEUE_OBJECT_ARCHIVE")
+            .ok()
+            .or(from_toml.object_archive.clone());
+        let sync_mode = std::env::var("PROXIMADB_QUEUE_SYNC_MODE")
+            .ok()
+            .or(from_toml.sync_mode.clone())
+            .unwrap_or_else(|| "strict".to_string());
+        let drainer_partitions = std::env::var("PROXIMADB_EMBED_DRAINER_PARTITIONS")
+            .ok()
+            .or(from_toml.drainer_partitions.clone())
+            .unwrap_or_else(|| "0..16".to_string());
+
+        Some(ResolvedQueueConfig {
+            root,
+            object_archive,
+            sync_mode,
+            drainer_partitions,
+        })
+    }
+}
+
+/// Resolved queue configuration after the precedence layers are
+/// folded. All fields are populated (no Options) so callers can
+/// consume directly without per-field defaulting.
+#[derive(Debug, Clone)]
+pub struct ResolvedQueueConfig {
+    pub root: String,
+    pub object_archive: Option<String>,
+    pub sync_mode: String,
+    pub drainer_partitions: String,
+}
+
+#[cfg(test)]
+mod queue_config_tests {
+    use super::*;
+
+    /// Restoring env vars after a test mutates them is fragile (other
+    /// tests run in the same process and see the changes). Each test
+    /// scopes its env reads via this guard, which restores the value
+    /// on drop.
+    struct EnvGuard {
+        key: String,
+        original: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &str, value: Option<&str>) -> Self {
+            let original = std::env::var(key).ok();
+            match value {
+                Some(v) => unsafe { std::env::set_var(key, v) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+            EnvGuard {
+                key: key.to_string(),
+                original,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.original.take() {
+                Some(v) => unsafe { std::env::set_var(&self.key, v) },
+                None => unsafe { std::env::remove_var(&self.key) },
+            }
+        }
+    }
+
+    /// Without any TOML section AND without env vars, async ingest is
+    /// disabled — resolve returns None. This is the "no behavior
+    /// change for unaware deployments" guarantee.
+    #[test]
+    fn resolve_returns_none_when_no_toml_and_no_env() {
+        let _g_root = EnvGuard::set("PROXIMADB_QUEUE_ROOT", None);
+        let _g_arc = EnvGuard::set("PROXIMADB_QUEUE_OBJECT_ARCHIVE", None);
+        let _g_sync = EnvGuard::set("PROXIMADB_QUEUE_SYNC_MODE", None);
+        let _g_part = EnvGuard::set("PROXIMADB_EMBED_DRAINER_PARTITIONS", None);
+        assert!(QueueRuntimeConfig::resolve(None).is_none());
+        assert!(QueueRuntimeConfig::resolve(Some(&QueueRuntimeConfig::default())).is_none());
+    }
+
+    /// TOML-only flow: a TOML `[queue]` section with `root` set
+    /// activates the queue. Defaults fill in everything else.
+    #[test]
+    fn resolve_uses_toml_when_env_unset() {
+        let _g_root = EnvGuard::set("PROXIMADB_QUEUE_ROOT", None);
+        let _g_arc = EnvGuard::set("PROXIMADB_QUEUE_OBJECT_ARCHIVE", None);
+        let _g_sync = EnvGuard::set("PROXIMADB_QUEUE_SYNC_MODE", None);
+        let _g_part = EnvGuard::set("PROXIMADB_EMBED_DRAINER_PARTITIONS", None);
+        let toml = QueueRuntimeConfig {
+            root: Some("file:///srv/queue".to_string()),
+            object_archive: Some("adls://anvaiops/archive".to_string()),
+            sync_mode: Some("lazy".to_string()),
+            drainer_partitions: Some("0..4".to_string()),
+        };
+        let resolved = QueueRuntimeConfig::resolve(Some(&toml)).expect("resolved");
+        assert_eq!(resolved.root, "file:///srv/queue");
+        assert_eq!(resolved.object_archive.as_deref(), Some("adls://anvaiops/archive"));
+        assert_eq!(resolved.sync_mode, "lazy");
+        assert_eq!(resolved.drainer_partitions, "0..4");
+    }
+
+    /// Env beats TOML — the documented precedence in `Config.queue`.
+    /// All four fields swap when env is set even when TOML provided a
+    /// different value.
+    #[test]
+    fn resolve_env_overrides_toml() {
+        let _g_root = EnvGuard::set("PROXIMADB_QUEUE_ROOT", Some("file:///emergency"));
+        let _g_arc = EnvGuard::set("PROXIMADB_QUEUE_OBJECT_ARCHIVE", Some("s3://hotfix"));
+        let _g_sync = EnvGuard::set("PROXIMADB_QUEUE_SYNC_MODE", Some("strict"));
+        let _g_part = EnvGuard::set("PROXIMADB_EMBED_DRAINER_PARTITIONS", Some("8..16"));
+        let toml = QueueRuntimeConfig {
+            root: Some("file:///canonical".to_string()),
+            object_archive: Some("adls://canonical".to_string()),
+            sync_mode: Some("lazy".to_string()),
+            drainer_partitions: Some("0..16".to_string()),
+        };
+        let resolved = QueueRuntimeConfig::resolve(Some(&toml)).expect("resolved");
+        assert_eq!(resolved.root, "file:///emergency");
+        assert_eq!(resolved.object_archive.as_deref(), Some("s3://hotfix"));
+        assert_eq!(resolved.sync_mode, "strict");
+        assert_eq!(resolved.drainer_partitions, "8..16");
+    }
+
+    /// Env-only flow: when there's no TOML section at all, env vars
+    /// can still activate the queue (useful for ad-hoc local runs).
+    #[test]
+    fn resolve_env_alone_activates_queue() {
+        let _g_root = EnvGuard::set("PROXIMADB_QUEUE_ROOT", Some("file:///env-only"));
+        let _g_arc = EnvGuard::set("PROXIMADB_QUEUE_OBJECT_ARCHIVE", None);
+        let _g_sync = EnvGuard::set("PROXIMADB_QUEUE_SYNC_MODE", None);
+        let _g_part = EnvGuard::set("PROXIMADB_EMBED_DRAINER_PARTITIONS", None);
+        let resolved = QueueRuntimeConfig::resolve(None).expect("resolved");
+        assert_eq!(resolved.root, "file:///env-only");
+        assert!(resolved.object_archive.is_none());
+        assert_eq!(resolved.sync_mode, "strict", "default fills in");
+        assert_eq!(resolved.drainer_partitions, "0..16", "default fills in");
+    }
+
+    /// Per-field precedence: env can override SOME fields while TOML
+    /// supplies others. This is the "partial emergency tuning" case —
+    /// e.g., a hot pod gets a different partition range without
+    /// touching the canonical TOML.
+    #[test]
+    fn resolve_per_field_override() {
+        let _g_root = EnvGuard::set("PROXIMADB_QUEUE_ROOT", None);
+        let _g_arc = EnvGuard::set("PROXIMADB_QUEUE_OBJECT_ARCHIVE", None);
+        let _g_sync = EnvGuard::set("PROXIMADB_QUEUE_SYNC_MODE", None);
+        let _g_part =
+            EnvGuard::set("PROXIMADB_EMBED_DRAINER_PARTITIONS", Some("12..16"));
+        let toml = QueueRuntimeConfig {
+            root: Some("file:///canonical".to_string()),
+            object_archive: Some("adls://canonical".to_string()),
+            sync_mode: Some("strict".to_string()),
+            drainer_partitions: Some("0..16".to_string()),
+        };
+        let resolved = QueueRuntimeConfig::resolve(Some(&toml)).expect("resolved");
+        // TOML wins for the unmasked fields...
+        assert_eq!(resolved.root, "file:///canonical");
+        assert_eq!(resolved.object_archive.as_deref(), Some("adls://canonical"));
+        assert_eq!(resolved.sync_mode, "strict");
+        // ...env wins for the one field that's set.
+        assert_eq!(resolved.drainer_partitions, "12..16");
+    }
+
+    /// Round-trip the [queue] section through serde + TOML to lock the
+    /// wire format. Future renames will fail this test loudly.
+    #[test]
+    fn queue_section_round_trips_through_toml() {
+        let original = QueueRuntimeConfig {
+            root: Some("file:///canonical".to_string()),
+            object_archive: Some("adls://anvaiops/archive".to_string()),
+            sync_mode: Some("strict".to_string()),
+            drainer_partitions: Some("0..16".to_string()),
+        };
+        let serialized = toml::to_string(&original).expect("ser");
+        // Lock the literal field names — these are the public TOML
+        // surface and changing them is a breaking config-file change.
+        assert!(serialized.contains("root ="));
+        assert!(serialized.contains("object_archive ="));
+        assert!(serialized.contains("sync_mode ="));
+        assert!(serialized.contains("drainer_partitions ="));
+        let restored: QueueRuntimeConfig = toml::from_str(&serialized).expect("de");
+        assert_eq!(restored.root, original.root);
+        assert_eq!(restored.object_archive, original.object_archive);
+        assert_eq!(restored.sync_mode, original.sync_mode);
+        assert_eq!(restored.drainer_partitions, original.drainer_partitions);
     }
 }
 
