@@ -26,6 +26,7 @@ mod vector_query_parsing;
 pub mod filter_strategy;
 pub mod gls;
 pub mod plan_builder;
+pub mod predicate_normalizer;
 pub mod selectivity;
 
 /// Physical plan node types

@@ -20,7 +20,7 @@ use crate::network::auth::{
     AuthError, AuthResult, AuthService, Permission, PermissionContext, ResourceType,
 };
 use crate::network::tls::ClientCertificateInfo;
-use crate::security::{AuthenticationData, SecurityCoordinator};
+use crate::security::{AuthenticationData, SecurityCoordinator, UnifiedUserContext};
 use axum::{
     extract::State,
     http::{Request, StatusCode},
@@ -46,6 +46,70 @@ pub struct AuthErrorResponse {
     pub message: String,
     /// HTTP status code
     pub code: u16,
+}
+
+/// Narrow data-plane capability carried by an authenticated JWT.
+///
+/// This keeps ProximaDB generic: an external control plane can issue scoped
+/// route tokens, while ProximaDB only validates transport, collection,
+/// operation, byte, and record limits from additive JWT claims.
+#[derive(Debug, Clone)]
+pub struct DataPlaneCapability {
+    pub capability_type: String,
+    pub collection: Option<String>,
+    pub operation: Option<String>,
+    pub protocol: Option<String>,
+    pub mode: Option<String>,
+    pub scopes: Vec<String>,
+    pub max_records: Option<u64>,
+    pub max_bytes: Option<u64>,
+}
+
+impl DataPlaneCapability {
+    pub fn from_user_context(user_context: &UnifiedUserContext) -> Option<Self> {
+        let capability_type = user_context.metadata.get("capability_type")?.clone();
+        Some(Self {
+            capability_type,
+            collection: user_context.metadata.get("collection").cloned(),
+            operation: user_context.metadata.get("operation").cloned(),
+            protocol: user_context.metadata.get("protocol").cloned(),
+            mode: user_context.metadata.get("mode").cloned(),
+            scopes: user_context
+                .metadata
+                .get("scopes")
+                .map(|scopes| {
+                    scopes
+                        .split_whitespace()
+                        .map(ToOwned::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+            max_records: user_context
+                .metadata
+                .get("max_records")
+                .and_then(|value| value.parse::<u64>().ok()),
+            max_bytes: user_context
+                .metadata
+                .get("max_bytes")
+                .and_then(|value| value.parse::<u64>().ok()),
+        })
+    }
+
+    pub fn ensure_record_count(&self, count: usize) -> Result<(), String> {
+        if let Some(max_records) = self.max_records
+            && count as u64 > max_records
+        {
+            return Err(format!(
+                "Request has {} records, exceeding capability limit {}",
+                count, max_records
+            ));
+        }
+        Ok(())
+    }
+
+    fn has_scope(&self, scope: &str) -> bool {
+        self.scopes.iter().any(|candidate| candidate == scope)
+    }
 }
 
 /// Unified auth middleware using SecurityCoordinator
@@ -77,6 +141,10 @@ pub async fn auth_middleware_unified<B>(
             )
         })?;
 
+    if let Some(capability) = DataPlaneCapability::from_user_context(&user_context) {
+        validate_rest_data_plane_capability(&capability, &request)?;
+        request.extensions_mut().insert(capability);
+    }
     request.extensions_mut().insert(user_context);
     Ok(next.run(request).await)
 }
@@ -1103,6 +1171,19 @@ mod tests {
             tenant_id: None,
             roles: vec!["reader".to_string()],
             typ: crate::network::auth::jwt::TokenType::Access,
+            // New control-plane capability fields — defaulted in this
+            // test because expiry is the only thing under test.
+            capability_type: None,
+            collection: None,
+            operation: None,
+            protocol: None,
+            mode: None,
+            scopes: Vec::new(),
+            max_records: None,
+            max_bytes: None,
+            tier: None,
+            route_visibility: None,
+            metering_required: None,
         };
         let expired_token = jsonwebtoken::encode(
             &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
