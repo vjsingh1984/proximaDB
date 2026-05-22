@@ -820,13 +820,35 @@ impl UnifiedHandlers {
             }
         };
 
-        self.vector_operations_service
+        let collection_name = request.collection_id.clone();
+        if let Err(e) = enforce_wal_lane_for_record_batch(
+            &collection_name,
+            WriteOperationKind::Delete,
+            request.record_ids.len() as u64,
+            "REST/gRPC handle_record_delete_batch_for_tenant",
+        ) {
+            return Ok(BatchOperationResult::failure(
+                e,
+                "WAL_LANE_REJECTED".to_string(),
+            ));
+        }
+        let result = self
+            .vector_operations_service
             .delete_records_with_tenant_context(
                 &collection_id,
                 request.record_ids,
                 tenant_context.as_ref(),
             )
-            .await
+            .await?;
+        if result.success {
+            let n = result.vector_ids.len() as i64;
+            if n > 0 {
+                if let Some(dml_svc) = self.get_dml_service() {
+                    dml_svc.bump_row_count_stats(&collection_name, -n).await;
+                }
+            }
+        }
+        Ok(result)
     }
 
     /// Canonical rich-record batch handler used by v2 REST/gRPC/internal callers.
@@ -3774,6 +3796,20 @@ mod wal_lane_enforcement_tests {
         assert!(
             result.is_ok(),
             "row-level UPSERT must be accepted by WAL-lane enforcement: {result:?}"
+        );
+    }
+
+    #[test]
+    fn enforce_wal_lane_accepts_typical_delete() {
+        let result = enforce_wal_lane_for_record_batch(
+            "tenants/t1/collections/c1",
+            WriteOperationKind::Delete,
+            3,
+            "unit test",
+        );
+        assert!(
+            result.is_ok(),
+            "row-level DELETE must be accepted by WAL-lane enforcement: {result:?}"
         );
     }
 

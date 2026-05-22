@@ -1325,9 +1325,30 @@ collections remain unrestricted). Arrow Flight writes inherit this validation tr
 since DoPut/DoExchange route through the same handlers. New `RelationalWriteProfile::fast_lane()`
 profile added to `crates/control/proximadb-catalog/src/relational.rs`. Two unit tests:
 `fast_lane_schema_validation_rejects_null_for_not_null_column` and
-`fast_lane_schema_validation_skips_non_relational_collections`. Total DML tests: 33.
-Remaining: RLS/tenant coercion wiring, WAL-policy enforcement at the record-batch level,
-Arrow Flight stats parity via Arrow Flight path (not yet bumped for DoPut/DoExchange directly).
+`fast_lane_schema_validation_skips_non_relational_collections`.
+WAL-policy enforcement at record-batch level added: free function
+`enforce_wal_lane_for_record_batch(collection_id, op_kind, row_count, context) -> Result<(), String>`
+in `request_handlers.rs` builds a `WriteIntent` with `WalRequired` durability, routes via
+`WriteLaneRouter::new().route()`, then calls `decision.require_wal_lane(context)`.
+`handle_record_batch_for_tenant`, `handle_record_insert_batch_for_tenant`, and
+`handle_record_delete_batch_for_tenant` call it before dispatching to vector-ops; a non-WAL lane
+(e.g. ProjectionOnly for ProjectionRefresh) returns
+`BatchOperationResult::failure(reason, "WAL_LANE_REJECTED")` without touching storage. Delete
+batches also decrement catalog row-count statistics after successful vector deletes. This brings
+REST callers - which go directly to these handlers and previously skipped the gRPC pre-check
+(`network/grpc/v2/record_service.rs::require_wal_lane`) - to lane parity with gRPC and Arrow Flight
+(T14). Four unit tests cover Insert/Upsert/Delete accept and ProjectionRefresh reject with context
+propagation.
+DELETE stats parity added: `handle_record_delete_batch_for_tenant` now calls
+`DmlService::bump_row_count_stats(&collection_name, -n)` after successful delete (where
+`n = result.vector_ids.len()`). gRPC `DeleteRecords` and Arrow Flight `DoPut(Delete)` both route
+through this handler, so all three surfaces decrement `row_count` and refresh `last_analyzed_ms`
+consistently. INSERT/UPSERT already routed through `handle_record_batch_for_tenant` /
+`handle_record_insert_batch_for_tenant` and inherited stats bumping transitively, so the DELETE
+wiring closes the last fast-lane stats gap.
+Total DML tests: 37; 4 wal_lane_enforcement_tests in `request_handlers.rs`.
+Remaining: RLS/tenant coercion wiring (catalog `TenantRlsCoercion` guard is declared but the
+fast-lane handlers do not yet enforce per-tenant column rewriting / row filtering).
 | `src/api_handlers/request_handlers.rs`, `src/services/dml/mod.rs`,
 `crates/control/proximadb-catalog/src/relational.rs`,
 `src/network/grpc/v2/record_service.rs`, `src/network/arrow_ipc/service.rs`,
