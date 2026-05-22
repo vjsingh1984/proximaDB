@@ -39,6 +39,32 @@ AQL) and the storage engine. From the customer's perspective the
 distinction between "queue → WAL" and "WAL only" is just
 `X-Ingest-Mode: sync` vs `X-Ingest-Mode: async`.
 
+### Locked decisions
+
+These are non-negotiable architectural constraints. New code must
+respect them; deviations require explicit revision of this document.
+
+1. **Sync ingest never touches the queue.** When
+   `X-Ingest-Mode: sync` (default), the request handler calls the
+   in-process `EmbeddingService` inline and writes to the WAL directly.
+   No `queue.send` on this path, ever. Adding a queue hop to sync would
+   break the <2s p99 sync SLA and double the failure surface area.
+2. **The queue is internal-only.** No customer-direct `publish` /
+   `subscribe` API is exposed. All access is mediated through the
+   existing public ingest surfaces (REST, gRPC, Arrow Flight, UQL,
+   AQL). Customers using ProximaDB as a generic message broker is
+   explicitly out of scope; if that demand emerges, build a dedicated
+   product on top of this crate.
+3. **`partition_for(tenant_id)` is the single source of truth for
+   partition routing.** Producers cannot override the partition;
+   tenant_id → partition is deterministic per the topic's
+   `partition_count`. This guarantees per-tenant FIFO and prevents
+   accidental cross-tenant ordering bugs.
+4. **At most one consumer per `(consumer_group, partition)`.** The
+   in-process `DashMap`-backed lease enforces this within a single
+   ProximaDB process; cross-process disk-backed leases extend the same
+   guarantee across replicas when the disk tier lands.
+
 ## Architecture (one-screen)
 
 ```
