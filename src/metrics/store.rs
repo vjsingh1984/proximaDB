@@ -33,7 +33,7 @@ pub struct MetricsPersistenceLayer {
     /// Unified cache orchestrator for metrics snapshots
     cache_orchestrator: Option<Arc<CrossCacheOrchestrator>>,
     /// Legacy in-memory cache for backwards compatibility
-    snapshot_cache: Arc<RwLock<HashMap<String, MetricsSnapshot>>>,
+    snapshot_cache: Arc<RwLock<HashMap<String, MetricsStoreSnapshot>>>,
 
     /// Pending updates buffer
     pending_updates: Arc<RwLock<Vec<MetricsUpdate>>>,
@@ -44,7 +44,7 @@ pub struct MetricsPersistenceLayer {
 
 /// A snapshot of metrics at a point in time
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct MetricsSnapshot {
+pub struct MetricsStoreSnapshot {
     pub collection_id: String,
     pub metrics: CollectionMetrics,
     pub timestamp: i64,
@@ -53,7 +53,7 @@ pub struct MetricsSnapshot {
 
 /// Global metrics snapshot
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct GlobalMetricsSnapshot {
+pub struct GlobalMetricsStoreSnapshot {
     pub metrics: GlobalMetrics,
     pub timestamp: i64,
     pub version: u32,
@@ -181,7 +181,7 @@ impl MetricsPersistenceLayer {
     }
 
     /// Load latest snapshot for a collection
-    pub async fn load_snapshot(&self, collection_id: &str) -> Result<Option<MetricsSnapshot>> {
+    pub async fn load_snapshot(&self, collection_id: &str) -> Result<Option<MetricsStoreSnapshot>> {
         let path = format!(
             "{}/snapshots/collections/{}/snapshot_latest.bincode",
             self.base_path, collection_id
@@ -198,7 +198,7 @@ impl MetricsPersistenceLayer {
     }
 
     /// Load all collection snapshots
-    pub async fn load_all_snapshots(&self) -> Result<HashMap<String, MetricsSnapshot>> {
+    pub async fn load_all_snapshots(&self) -> Result<HashMap<String, MetricsStoreSnapshot>> {
         let collections_path = format!("{}/snapshots/collections", self.base_path);
         let entries = self.filesystem_factory.list(&collections_path).await?;
 
@@ -269,7 +269,7 @@ impl MetricsPersistenceLayer {
         let mut cache = self.snapshot_cache.write().await;
         cache.insert(
             collection_id.clone(),
-            MetricsSnapshot {
+            MetricsStoreSnapshot {
                 collection_id,
                 metrics,
                 timestamp: chrono::Utc::now().timestamp_millis(),
@@ -285,7 +285,7 @@ impl MetricsPersistenceLayer {
             .await;
 
         // Create immediate snapshot for persistence
-        let snapshot = MetricsSnapshot {
+        let snapshot = MetricsStoreSnapshot {
             collection_id: metrics.collection_id.clone(),
             metrics: metrics.clone(),
             timestamp: chrono::Utc::now().timestamp_millis(),
@@ -409,7 +409,7 @@ impl MetricsPersistenceLayer {
     }
 
     /// Serialize a snapshot to Avro format
-    fn serialize_snapshot(&self, snapshot: &MetricsSnapshot) -> Result<Vec<u8>> {
+    fn serialize_snapshot(&self, snapshot: &MetricsStoreSnapshot) -> Result<Vec<u8>> {
         // Use Bincode for optimal performance (3-5x faster than Avro, 20-30% smaller)
         let serialized = bincode::serialize(snapshot)
             .context("Failed to serialize metrics snapshot with Bincode")?;
@@ -422,7 +422,7 @@ impl MetricsPersistenceLayer {
     }
 
     /// Deserialize a snapshot from Bincode format (3-5x faster than Avro)
-    fn deserialize_snapshot(&self, data: &[u8]) -> Result<MetricsSnapshot> {
+    fn deserialize_snapshot(&self, data: &[u8]) -> Result<MetricsStoreSnapshot> {
         // Decompress first
         let decompressed = zstd::bulk::decompress(data, 10 * 1024 * 1024) // 10MB limit
             .context("Failed to decompress metrics snapshot")?;

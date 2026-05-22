@@ -1027,7 +1027,7 @@ impl UnifiedIvfIndex {
 
             async fn metrics(
                 &self,
-            ) -> crate::infrastructure::concurrent_structures::MetricsSnapshot {
+            ) -> crate::infrastructure::concurrent_structures::ConcurrentMetricsSnapshot {
                 Default::default()
             }
 

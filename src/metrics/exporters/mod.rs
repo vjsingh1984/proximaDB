@@ -12,7 +12,7 @@ pub use prometheus::PrometheusExporter;
 /// Trait for all metric exporters
 pub trait MetricsExporter: Send + Sync {
     /// Export metrics to the specific format
-    fn export(&self, metrics: &MetricsSnapshot) -> Result<String>;
+    fn export(&self, metrics: &MetricsExportSnapshot) -> Result<String>;
 
     /// Get the content type for HTTP responses
     fn content_type(&self) -> &'static str;
@@ -23,7 +23,7 @@ pub trait MetricsExporter: Send + Sync {
 
 /// Unified metrics snapshot for export
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct MetricsSnapshot {
+pub struct MetricsExportSnapshot {
     pub timestamp: i64,
     pub system: SystemMetrics,
     pub collections: HashMap<String, CollectionMetrics>,

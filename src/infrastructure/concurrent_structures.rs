@@ -259,7 +259,7 @@ where
     }
 
     /// Get metrics snapshot
-    pub fn metrics(&self) -> MetricsSnapshot {
+    pub fn metrics(&self) -> ConcurrentMetricsSnapshot {
         self.metrics.snapshot()
     }
 
@@ -449,8 +449,8 @@ impl AtomicMetrics {
     }
 
     /// Capture a consistent point-in-time snapshot of all metrics
-    pub fn snapshot(&self) -> MetricsSnapshot {
-        MetricsSnapshot {
+    pub fn snapshot(&self) -> ConcurrentMetricsSnapshot {
+        ConcurrentMetricsSnapshot {
             entries: self.entries(),
             memory_bytes: self.memory_bytes(),
             operations: self.operations.load(Ordering::Relaxed),
@@ -479,7 +479,7 @@ impl Default for AtomicMetrics {
 
 /// Snapshot of metrics at a point in time
 #[derive(Debug, Clone, Default)]
-pub struct MetricsSnapshot {
+pub struct ConcurrentMetricsSnapshot {
     /// Number of entries currently stored
     pub entries: usize,
     /// Estimated total memory consumption in bytes
@@ -585,7 +585,7 @@ where
     }
 
     /// Return a point-in-time metrics snapshot for this mapping
-    pub fn metrics(&self) -> MetricsSnapshot {
+    pub fn metrics(&self) -> ConcurrentMetricsSnapshot {
         self.metrics.snapshot()
     }
 }
@@ -661,7 +661,7 @@ where
     }
 
     /// Return a point-in-time metrics snapshot
-    pub fn metrics(&self) -> MetricsSnapshot {
+    pub fn metrics(&self) -> ConcurrentMetricsSnapshot {
         self.inner.metrics()
     }
 

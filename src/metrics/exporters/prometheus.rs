@@ -3,7 +3,7 @@
 //! Exports ProximaDB metrics in Prometheus text format (version 0.0.4).
 //! All metrics are prefixed with `proximadb_` to avoid naming collisions.
 
-use super::{MetricsExporter, MetricsSnapshot};
+use super::{MetricsExporter, MetricsExportSnapshot};
 use anyhow::Result;
 use std::fmt::Write;
 
@@ -203,7 +203,7 @@ impl Default for PrometheusExporter {
 }
 
 impl MetricsExporter for PrometheusExporter {
-    fn export(&self, metrics: &MetricsSnapshot) -> Result<String> {
+    fn export(&self, metrics: &MetricsExportSnapshot) -> Result<String> {
         let mut output = String::new();
 
         // System metrics - CPU

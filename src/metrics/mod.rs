@@ -209,5 +209,5 @@ pub use updater::{
 
 // Re-export common types for compatibility
 pub use self::schema::Alert;
-pub use exporters::{MetricsSnapshot, SystemMetrics};
+pub use exporters::{MetricsExportSnapshot, SystemMetrics};
 pub use proximadb_config::MetricsConfig;

@@ -504,7 +504,7 @@ impl GraphMonitor {
     }
 
     /// Get current metrics snapshot
-    pub fn get_metrics_snapshot(&self) -> Result<MetricsSnapshot, ProximaDBError> {
+    pub fn get_metrics_snapshot(&self) -> Result<GraphMetricsSnapshot, ProximaDBError> {
         let operation_counts = self
             .metrics_collector
             .operation_counts
@@ -540,7 +540,7 @@ impl GraphMonitor {
             .map_err(|_| ProximaDBError::Internal("Failed to read cache metrics".to_string()))?
             .clone();
 
-        Ok(MetricsSnapshot {
+        Ok(GraphMetricsSnapshot {
             timestamp: SystemTime::now(),
             operation_counts,
             error_counts,
@@ -850,7 +850,7 @@ impl GraphMonitor {
 
 /// Snapshot of all graph monitoring metrics at a point in time.
 #[derive(Debug, Clone)]
-pub struct MetricsSnapshot {
+pub struct GraphMetricsSnapshot {
     /// When this snapshot was captured.
     pub timestamp: SystemTime,
     /// Cumulative operation counts keyed by operation name.

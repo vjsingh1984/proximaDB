@@ -167,7 +167,7 @@ impl CdcMetrics {
     }
 
     /// Get all source metrics
-    pub async fn source_metrics(&self) -> HashMap<String, SourceMetricsSnapshot> {
+    pub async fn source_metrics(&self) -> HashMap<String, SourceCdcMetricsSnapshot> {
         let sources = self.sources.read().await;
         sources
             .iter()
@@ -176,7 +176,7 @@ impl CdcMetrics {
     }
 
     /// Get all sink metrics
-    pub async fn sink_metrics(&self) -> HashMap<String, SinkMetricsSnapshot> {
+    pub async fn sink_metrics(&self) -> HashMap<String, SinkCdcMetricsSnapshot> {
         let sinks = self.sinks.read().await;
         sinks
             .iter()
@@ -185,7 +185,7 @@ impl CdcMetrics {
     }
 
     /// Get all transform metrics
-    pub async fn transform_metrics(&self) -> HashMap<String, TransformMetricsSnapshot> {
+    pub async fn transform_metrics(&self) -> HashMap<String, TransformCdcMetricsSnapshot> {
         let transforms = self.transforms.read().await;
         transforms
             .iter()
@@ -194,8 +194,8 @@ impl CdcMetrics {
     }
 
     /// Get complete metrics snapshot
-    pub async fn snapshot(&self) -> MetricsSnapshot {
-        MetricsSnapshot {
+    pub async fn snapshot(&self) -> CdcMetricsSnapshot {
+        CdcMetricsSnapshot {
             uptime: self.uptime(),
             total_events: self.coordinator.total_events.load(Ordering::Relaxed),
             dropped_events: self.coordinator.dropped_events.load(Ordering::Relaxed),
@@ -239,8 +239,8 @@ impl SourceMetrics {
         }
     }
 
-    fn snapshot(&self) -> SourceMetricsSnapshot {
-        SourceMetricsSnapshot {
+    fn snapshot(&self) -> SourceCdcMetricsSnapshot {
+        SourceCdcMetricsSnapshot {
             events_received: self.events_received.load(Ordering::Relaxed),
             bytes_received: self.bytes_received.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
@@ -251,7 +251,7 @@ impl SourceMetrics {
 
 /// Source metrics snapshot
 #[derive(Debug, Clone)]
-pub struct SourceMetricsSnapshot {
+pub struct SourceCdcMetricsSnapshot {
     /// Total events received from this source.
     pub events_received: u64,
     /// Total bytes received from this source.
@@ -289,8 +289,8 @@ impl SinkMetrics {
         }
     }
 
-    fn snapshot(&self) -> SinkMetricsSnapshot {
-        SinkMetricsSnapshot {
+    fn snapshot(&self) -> SinkCdcMetricsSnapshot {
+        SinkCdcMetricsSnapshot {
             events_sent: self.events_sent.load(Ordering::Relaxed),
             bytes_sent: self.bytes_sent.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
@@ -301,7 +301,7 @@ impl SinkMetrics {
 
 /// Sink metrics snapshot
 #[derive(Debug, Clone)]
-pub struct SinkMetricsSnapshot {
+pub struct SinkCdcMetricsSnapshot {
     /// Total events sent to this sink.
     pub events_sent: u64,
     /// Total bytes sent to this sink.
@@ -336,10 +336,10 @@ impl TransformMetrics {
         }
     }
 
-    fn snapshot(&self) -> TransformMetricsSnapshot {
+    fn snapshot(&self) -> TransformCdcMetricsSnapshot {
         let events = self.events_processed.load(Ordering::Relaxed);
         let time_us = self.processing_time_us.load(Ordering::Relaxed);
-        TransformMetricsSnapshot {
+        TransformCdcMetricsSnapshot {
             events_processed: events,
             processing_time_us: time_us,
             avg_latency_us: if events > 0 { time_us / events } else { 0 },
@@ -350,7 +350,7 @@ impl TransformMetrics {
 
 /// Transform metrics snapshot
 #[derive(Debug, Clone)]
-pub struct TransformMetricsSnapshot {
+pub struct TransformCdcMetricsSnapshot {
     /// Total events processed by this transform.
     pub events_processed: u64,
     /// Cumulative processing time in microseconds.
@@ -391,7 +391,7 @@ impl CoordinatorMetrics {
 
 /// Complete metrics snapshot
 #[derive(Debug, Clone)]
-pub struct MetricsSnapshot {
+pub struct CdcMetricsSnapshot {
     /// Time since the CDC pipeline started.
     pub uptime: Duration,
     /// Total events processed across all sources.
@@ -399,14 +399,14 @@ pub struct MetricsSnapshot {
     /// Total events dropped due to errors or backpressure.
     pub dropped_events: u64,
     /// Per-source metrics keyed by source name.
-    pub sources: HashMap<String, SourceMetricsSnapshot>,
+    pub sources: HashMap<String, SourceCdcMetricsSnapshot>,
     /// Per-sink metrics keyed by sink name.
-    pub sinks: HashMap<String, SinkMetricsSnapshot>,
+    pub sinks: HashMap<String, SinkCdcMetricsSnapshot>,
     /// Per-transform metrics keyed by transform name.
-    pub transforms: HashMap<String, TransformMetricsSnapshot>,
+    pub transforms: HashMap<String, TransformCdcMetricsSnapshot>,
 }
 
-impl MetricsSnapshot {
+impl CdcMetricsSnapshot {
     /// Calculate total events/second throughput
     pub fn events_per_second(&self) -> f64 {
         if self.uptime.as_secs() > 0 {
@@ -527,7 +527,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_calculations() {
-        let snapshot = MetricsSnapshot {
+        let snapshot = CdcMetricsSnapshot {
             uptime: Duration::from_secs(100),
             total_events: 10_000,
             dropped_events: 100,

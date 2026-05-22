@@ -1,6 +1,6 @@
 //! JSON format metrics exporter
 
-use super::{MetricsExporter, MetricsSnapshot};
+use super::{MetricsExporter, MetricsExportSnapshot};
 use anyhow::Result;
 use serde_json;
 
@@ -19,7 +19,7 @@ impl JsonExporter {
 }
 
 impl MetricsExporter for JsonExporter {
-    fn export(&self, metrics: &MetricsSnapshot) -> Result<String> {
+    fn export(&self, metrics: &MetricsExportSnapshot) -> Result<String> {
         if self.pretty {
             Ok(serde_json::to_string_pretty(metrics)?)
         } else {

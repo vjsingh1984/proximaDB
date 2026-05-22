@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock;
 
-use crate::metrics::CacheMetricsSnapshot;
+use crate::metrics::CacheCacheHealthMetricsSnapshot;
 use crate::storage::cache::config::CacheConfig;
 use crate::storage::cache::{CacheType, CrossCacheOrchestrator};
 
@@ -37,7 +37,7 @@ pub struct CacheMonitoringDashboard {
 #[derive(Debug, Clone, Default)]
 struct MetricsHistory {
     /// Time series data points
-    time_series: Vec<MetricsSnapshot>,
+    time_series: Vec<CacheHealthMetricsSnapshot>,
 
     /// Maximum history size
     max_size: usize,
@@ -47,11 +47,11 @@ struct MetricsHistory {
 ///
 /// Captures cache metrics and system resource usage at a specific moment in time.
 #[derive(Debug, Clone)]
-pub struct MetricsSnapshot {
+pub struct CacheHealthMetricsSnapshot {
     /// When the snapshot was taken
     pub timestamp: SystemTime,
     /// Cache performance metrics
-    pub cache_metrics: CacheMetricsSnapshot,
+    pub cache_metrics: CacheCacheHealthMetricsSnapshot,
     /// Memory pressure (0.0-1.0)
     pub memory_pressure: f64,
     /// CPU usage (0.0-1.0)
@@ -213,12 +213,12 @@ impl CacheMonitoringDashboard {
             loop {
                 interval.tick().await;
 
-                // Collect metrics - convert from CacheMetrics to CacheMetricsSnapshot
+                // Collect metrics - convert from CacheMetrics to CacheCacheHealthMetricsSnapshot
                 let cache_metrics = orchestrator.metrics();
                 use crate::metrics::cache::{
                     CoordinationMetrics, EvictionMetrics, MemoryMetrics, TierMetrics,
                 };
-                let metrics = CacheMetricsSnapshot {
+                let metrics = CacheCacheHealthMetricsSnapshot {
                     overall_hit_rate: cache_metrics.hit_rate(),
                     l1_metrics: TierMetrics {
                         hits: cache_metrics
@@ -292,7 +292,7 @@ impl CacheMonitoringDashboard {
                 };
 
                 // Create snapshot
-                let snapshot = MetricsSnapshot {
+                let snapshot = CacheHealthMetricsSnapshot {
                     timestamp: SystemTime::now(),
                     cache_metrics: metrics.clone(),
                     memory_pressure: Self::get_memory_pressure(),
@@ -321,12 +321,12 @@ impl CacheMonitoringDashboard {
     pub async fn get_dashboard_state(&self) -> DashboardState {
         let history = self.history.read().await;
         let alerts = self.alert_manager.active_alerts.read().await;
-        // Convert from CacheMetrics to CacheMetricsSnapshot
+        // Convert from CacheMetrics to CacheCacheHealthMetricsSnapshot
         let cache_metrics = self.orchestrator.metrics();
         use crate::metrics::cache::{
             CoordinationMetrics, EvictionMetrics, MemoryMetrics, TierMetrics,
         };
-        let metrics = CacheMetricsSnapshot {
+        let metrics = CacheCacheHealthMetricsSnapshot {
             overall_hit_rate: cache_metrics.hit_rate() * 100.0,
             l1_metrics: TierMetrics {
                 hits: cache_metrics.tier_hits(crate::storage::cache::backend::CacheTier::L1),
@@ -437,7 +437,7 @@ impl CacheMonitoringDashboard {
     }
 
     /// Get optimization suggestions based on metrics
-    async fn get_optimization_suggestions(&self, metrics: &CacheMetricsSnapshot) -> Vec<String> {
+    async fn get_optimization_suggestions(&self, metrics: &CacheCacheHealthMetricsSnapshot) -> Vec<String> {
         let mut suggestions = Vec::new();
 
         if metrics.overall_hit_rate < 0.5 {
@@ -486,11 +486,11 @@ impl CacheMonitoringDashboard {
 #[derive(Debug, Clone)]
 pub struct DashboardState {
     /// Current cache metrics snapshot
-    pub current_metrics: CacheMetricsSnapshot,
+    pub current_metrics: CacheCacheHealthMetricsSnapshot,
     /// Currently active alerts
     pub active_alerts: Vec<Alert>,
     /// Historical metrics data
-    pub recent_history: Vec<MetricsSnapshot>,
+    pub recent_history: Vec<CacheHealthMetricsSnapshot>,
     /// Per-cache status information
     pub cache_status: HashMap<String, CacheStatus>,
     /// Optimization suggestions
@@ -533,7 +533,7 @@ impl AlertManager {
 
     pub async fn check_alerts(
         &self,
-        metrics: &CacheMetricsSnapshot,
+        metrics: &CacheCacheHealthMetricsSnapshot,
         thresholds: &crate::storage::cache::config::AlertThresholds,
     ) {
         let mut alerts = self.active_alerts.write().await;

@@ -56,7 +56,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use crate::infrastructure::concurrent_structures::{AtomicMetrics, MetricsSnapshot};
+use crate::infrastructure::concurrent_structures::{AtomicMetrics, ConcurrentMetricsSnapshot};
 use crate::infrastructure::tier_policy_engine::{
     CollectionStorageConfig, CollectionStorageLimits, GlobalTier, InfrastructureTier,
     SmartTierPolicy, WorkloadMetrics, WorkloadPattern,
@@ -94,7 +94,7 @@ where
     async fn clear(&self);
 
     /// Get performance metrics
-    async fn metrics(&self) -> MetricsSnapshot;
+    async fn metrics(&self) -> ConcurrentMetricsSnapshot;
 
     /// Get workload metrics for analysis
     async fn workload_metrics(&self) -> WorkloadMetrics;
@@ -406,7 +406,7 @@ impl UniversalTier {
     }
 
     /// Get performance metrics
-    pub fn metrics(&self) -> MetricsSnapshot {
+    pub fn metrics(&self) -> ConcurrentMetricsSnapshot {
         self.performance_metrics.snapshot()
     }
 }
@@ -1153,7 +1153,7 @@ where
         );
     }
 
-    async fn metrics(&self) -> MetricsSnapshot {
+    async fn metrics(&self) -> ConcurrentMetricsSnapshot {
         self.metrics.snapshot()
     }
 
@@ -1296,7 +1296,7 @@ where
         );
     }
 
-    async fn metrics(&self) -> MetricsSnapshot {
+    async fn metrics(&self) -> ConcurrentMetricsSnapshot {
         self.metrics.snapshot()
     }
 
@@ -1408,7 +1408,7 @@ where
         // Note: AtomicMetrics doesn't have a reset method, metrics will continue accumulating
     }
 
-    async fn metrics(&self) -> MetricsSnapshot {
+    async fn metrics(&self) -> ConcurrentMetricsSnapshot {
         self.metrics.snapshot()
     }
 

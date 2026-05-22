@@ -235,7 +235,7 @@ impl UnifiedMetricsCollector {
         });
     }
 
-    pub async fn get_snapshot(&self) -> MetricsSnapshot {
+    pub async fn get_snapshot(&self) -> StorageTraitMetricsSnapshot {
         let metrics = self.metrics.read().await;
         metrics.to_snapshot()
     }
@@ -373,7 +373,7 @@ impl MetricsData {
         self.latencies_ms.push_back(duration_ms);
     }
 
-    fn to_snapshot(&self) -> MetricsSnapshot {
+    fn to_snapshot(&self) -> StorageTraitMetricsSnapshot {
         let avg_latency = if !self.latencies_ms.is_empty() {
             self.latencies_ms.iter().sum::<u64>() as f64 / self.latencies_ms.len() as f64
         } else {
@@ -382,7 +382,7 @@ impl MetricsData {
 
         let (p50, p95, p99) = self.calculate_percentiles();
 
-        MetricsSnapshot {
+        StorageTraitMetricsSnapshot {
             total_operations: self.total_operations,
             successful_operations: self.successful_operations,
             failed_operations: self.failed_operations,
@@ -434,7 +434,7 @@ pub enum MetricsOperationType {
 
 /// Snapshot of current metrics
 #[derive(Debug, Clone, Default)]
-pub struct MetricsSnapshot {
+pub struct StorageTraitMetricsSnapshot {
     pub total_operations: u64,
     pub successful_operations: u64,
     pub failed_operations: u64,
