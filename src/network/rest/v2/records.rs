@@ -1449,38 +1449,38 @@ pub async fn search_with_typed_filters(
             trace.rerank_count = results.len() as u32;
 
             // ── Phase 1: run the deterministic planner ───────────────────
-            // Convert TypedFilter list → optimizer::Predicate so the estimator
-            // can run. The conversion is best-effort; unknown ops fall back
-            // through the policy defaults inside the estimator.
+            // Bundles selectivity + GLS + filter-strategy + route choice into
+            // a single helper so this site stays declarative. The helper is
+            // tested independently — see plan_builder::tests.
             let predicates = match request.filters.as_ref() {
                 Some(filters) => typed_filters_to_predicates(filters.as_slice()),
                 None => Vec::new(),
             };
-            let stats = crate::query::federated::optimizer::selectivity::FieldStatistics::default();
-            let policy =
+            let field_stats =
+                crate::query::federated::optimizer::selectivity::FieldStatistics::default();
+            let plan_policy =
                 crate::query::federated::optimizer::PredicateSelectivityPolicy::default();
-            let estimator =
-                crate::query::federated::optimizer::selectivity::SelectivityEstimator::new(
-                    &stats, &policy,
-                );
-            let selectivity_estimate = estimator.estimate_and(&predicates);
+            let tier_record =
+                crate::catalog::tenant_tier::TenantTierRecord::fail_safe(&tenant.tenant_id);
             // GLS sampling requires neighborhood centroids that we don't yet
-            // surface in Phase 1; leave the score `None` until Phase 5 wires
-            // the stats refresher.
-            let plan_inputs = crate::query::federated::optimizer::filter_strategy::PlanInputs {
-                selectivity: selectivity_estimate,
-                gls_score: None,
+            // surface in Phase 1; pass an empty slice until the stats
+            // refresher (Phase 5) populates real samples.
+            let plan_inputs = crate::query::federated::optimizer::plan_builder::PlanBuilderInputs {
+                predicates: &predicates,
+                field_stats: &field_stats,
+                policy: &plan_policy,
+                gls_samples: &[],
                 dim: request.vector.len(),
                 recall_target: 0.9,
                 collection_gb: 0.0,
+                tier: &tier_record,
             };
-            let tier_record =
-                crate::catalog::tenant_tier::TenantTierRecord::fail_safe(&tenant.tenant_id);
-            let plan_choice =
-                crate::query::federated::optimizer::filter_strategy::choose_plan(&plan_inputs, &tier_record);
-            trace.filter_strategy = plan_choice.strategy;
-            trace.index_route = plan_choice.route;
-            trace.estimated_selectivity = Some(selectivity_estimate);
+            let plan_output =
+                crate::query::federated::optimizer::plan_builder::build_for_search(&plan_inputs);
+            trace.filter_strategy = plan_output.filter_strategy;
+            trace.index_route = plan_output.index_route;
+            trace.estimated_selectivity = plan_output.estimated_selectivity;
+            trace.gls_score = plan_output.gls_score;
 
             let response = TypedSearchResponse {
                 results: results.clone(),
