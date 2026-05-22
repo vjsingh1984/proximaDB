@@ -867,7 +867,7 @@ Solution:
 ## References
 
 - link:../../README.adoc[ProximaDB README]
-- link:../concepts/observability.adoc[Observability Concepts]
+- link:../05-concepts/architecture.adoc[Architecture Overview]
 - link:https://prometheus.io/docs/prometheus/latest/configuration/configuration/[Prometheus Configuration]
 - link:https://opentelemetry.io/docs/reference/specification/protocol/otlp/[OTLP Specification]
 - link:https://grafana.com/docs/grafana/latest/developers/plugins/datasources/[Grafana Datasource Plugins]

@@ -1440,9 +1440,9 @@ cargo bench
 
 == Related Documentation
 
-* link:../../../_internal/roadmap/completed/077-distributed-operations.adoc[Distributed Operations]
-* link:../../../_internal/archive/architecture/storage_architecture.adoc[Storage Architecture]
-* link:../../../_internal/roadmap/implementation/active/Q4_2025_IMPLEMENTATION.adoc[Q4 2025 Implementation Guide]
+* link:../../_internal/roadmap/completed/077-distributed-operations.adoc[Distributed Operations]
+* link:../../_internal/archive/architecture/storage_architecture.adoc[Storage Architecture]
+* link:../../_internal/roadmap/implementation/active/Q4_2025_IMPLEMENTATION.adoc[Q4 2025 Implementation Guide]
 
 ---
 

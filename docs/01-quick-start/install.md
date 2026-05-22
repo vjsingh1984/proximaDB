@@ -358,8 +358,8 @@ rm -rf /usr/local/var/proximadb
 
 - [Quick Start](./index.md) - 5-minute overview
 - [First Query](./first-query.md) - Tutorial
-- [Configuration](../03-api-reference/configuration.md) - Full config reference
-- [Deployment](../04-operations/deployment.md) - Production setup
+- [Configuration](../03-api-reference/configuration.adoc) - Full config reference
+- [Deployment](../04-operations/deployment.adoc) - Production setup
 
 ---
 

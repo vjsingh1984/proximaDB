@@ -764,6 +764,6 @@ for component in components {
 
 - link:../INDEX.adoc[Documentation Index]
 - link:observability-grafana-prometheus.adoc[Prometheus + Grafana Integration]
-- link:../concepts/vision.adoc[ProximaDB Vision]
+- link:../00-product/VISION.adoc[ProximaDB Vision]
 - https://github.com/vjsingh1984/proximadb[ProximaDB GitHub]
 - https://github.com/[victor-repo][Victor GitHub]

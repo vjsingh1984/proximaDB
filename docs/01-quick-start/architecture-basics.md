@@ -364,10 +364,10 @@ flowchart TB
 
 ## Next Steps
 
-- [Storage Engines Guide](../05-concepts/storage-engines.md) - Deep dive on each engine
-- [Graph Engines Guide](../05-concepts/graph-engines.md) - Graph internals
+- [Storage Engines Guide](../05-concepts/storage-engines.adoc) - Deep dive on each engine
+- [Graph Engines Guide](../05-concepts/graph-engines.adoc) - Graph internals
 - [Query Planner](../05-concepts/query-planner.md) - How queries are optimized
-- [Configuration](../03-api-reference/configuration.md) - Tuning parameters
+- [Configuration](../03-api-reference/configuration.adoc) - Tuning parameters
 
 ---
 

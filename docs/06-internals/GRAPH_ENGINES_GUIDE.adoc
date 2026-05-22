@@ -684,7 +684,7 @@ If you encounter issues with PULSAR or QUASAR:
 
 == References
 
-* link:../concepts/architecture.adoc[Architecture Overview]
-* link:../api/graph-api.adoc[Graph API Reference]
-* link:../examples/graph-examples.adoc[Graph Code Examples]
+* link:../05-concepts/architecture.adoc[Architecture Overview]
+* link:../03-api-reference/graph.adoc[Graph API Reference]
+* link:../05-concepts/graph-engines.adoc[Graph Engine Selection Guide]
 * https://github.com/proximadb/proximdb[ProximaDB GitHub]

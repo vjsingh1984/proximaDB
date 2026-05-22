@@ -334,7 +334,7 @@ See these files for complete TDD examples:
 
 - [Effective Testing with Rust](https://doc.rust-lang.org/book/ch11-00-testing.html)
 - [TDD Best Practices](https://martinfowler.com/bliki/TestPyramid.html)
-- [ProximaDB CLAUDE.md](../../CLAUDE.md) - Project instructions
+- [ProximaDB CLAUDE.md](../../../CLAUDE.md) - Project instructions
 
 ## Questions?
 

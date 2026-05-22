@@ -368,9 +368,9 @@ if results[0].score > 0.8:
 
 ## Next Steps
 
-- [Storage Engines](../05-concepts/storage-engines.md) - Engine internals
+- [Storage Engines](../05-concepts/storage-engines.adoc) - Engine internals
 - [Multi-Model Joins](./multi-model-joins.md) - Combine vectors + documents
-- [Graph Queries](./graph-queries.md) - Add relationships
+- [Graph API](../03-api-reference/graph.adoc) - Add relationships
 - [API Reference](../03-api-reference/) - Complete API docs
 
 ---

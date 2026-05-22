@@ -102,12 +102,14 @@ Duplicate or potentially superseded stems detected:
 | Stem | Current locations | Recommendation
 
 | `graph-engines`
-| `docs/05-concepts/graph-engines.md`, `docs/05-concepts/graph-engines.adoc`
-| Pick one current format; archive the other after link scan.
+| Active: `docs/05-concepts/graph-engines.adoc`; archived:
+  `docs/_archive/concepts/2026-05-22/graph-engines.md`
+| Completed 2026-05-22. AsciiDoc guide is canonical.
 
 | `storage-engines`
-| `docs/05-concepts/storage-engines.md`, `docs/05-concepts/storage-engines.adoc`
-| Pick one current format; archive the other after link scan.
+| Active: `docs/05-concepts/storage-engines.adoc`; archived:
+  `docs/_archive/concepts/2026-05-22/storage-engines.md`
+| Completed 2026-05-22. AsciiDoc guide is canonical.
 
 | Engine deep dives
 | Current `docs/06-internals/deep-dives/*` plus older copies under `docs/_internal/archive/*`
@@ -151,11 +153,11 @@ Batch 1: safe public-doc cleanup. Status: first legacy quick-start move complete
   `first-query.md`.
 * Kept a manifest in `docs/_archive/quick-start/2026-05-22/README.adoc`.
 
-Batch 2: duplicate concept format cleanup.
+Batch 2: duplicate concept format cleanup. Status: completed 2026-05-22.
 
-* Decide canonical format for `graph-engines` and `storage-engines`.
-* Keep one current doc in `docs/05-concepts/`.
-* Move the other into `docs/_archive/concepts/2026-05-22/`.
+* Kept `docs/05-concepts/graph-engines.adoc` and `docs/05-concepts/storage-engines.adoc`.
+* Moved duplicate Markdown guides into `docs/_archive/concepts/2026-05-22/`.
+* Updated active public links to the canonical AsciiDoc guides.
 
 Batch 3: internal roadmap/status cleanup.
 

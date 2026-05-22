@@ -220,34 +220,65 @@ The local Victor graph is useful, but it has two important limitations in this s
   Use Cargo dependency edges for workspace coupling until Victor cross-file call resolution is
   refreshed.
 
-Victor database scale:
+Victor database scale from the 2026-05-22 snapshot:
 
 [cols="1,1",options="header"]
 |===
 | Metric | Value
-| `graph_node` rows | 170,424
-| `graph_edge` rows | 3,611,701
-| `CALLS` edges | 102,855
-| `CDG` edges | 2,582,217
-| `CFG_SUCCESSOR` edges | 112,538
-| `DDG_DEF_USE` edges | 3,298
+| `graph_node` rows | 851,159
+| `graph_edge` rows | 2,587,955
+| `DDG_DEF_USE` edges | 1,545,263
+| `CFG_SUCCESSOR` edges | 514,957
+| `CALLS` edges | 103,255
+| `CDG` edges | 100,012
+| `CONTAINS` edges | 22,219
 |===
 
-Top symbol-heavy files from Victor:
+Top node kinds from Victor:
+
+[cols="1,1",options="header"]
+|===
+| Node kind | Count
+| `statement` | 804,928
+| `function` | 35,071
+| `struct` | 5,101
+| `impl` | 4,071
+| `class` | 1,238
+| `trait` | 231
+|===
+
+Top path prefixes by Victor node count:
+
+[cols="1,1",options="header"]
+|===
+| Prefix | Nodes
+| `src` | 435,258
+| `clients` | 132,243
+| `crates` | 112,328
+| `tests` | 80,994
+| `benches` | 51,582
+| `demo` | 14,490
+| `examples` | 8,034
+| `scripts` | 6,475
+| `apps` | 5,588
+| `ui` | 2,078
+|===
+
+Top node-dense files from Victor:
 
 [cols="3,1",options="header"]
 |===
-| File | Symbols
-| `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs` | 1279
-| `clients/python/src/proximadb_sdk/chunking_strategies/code.py` | 278
-| `crates/foundation/proximadb-proto/src/proto/proximadb.cluster.v1.rs` | 213
-| `src/query/federated/optimizer/mod.rs` | 192
-| `src/embedded/python.rs` | 185
-| `src/api_handlers/request_handlers.rs` | 172
-| `src/query/explain.rs` | 170
-| `src/embedded/mod.rs` | 170
-| `crates/platform/proximadb-api/src/rest/v1/graph.rs` | 168
-| `crates/control/proximadb-catalog/src/lib.rs` | 166
+| File | Nodes
+| `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs` | 13,234
+| `src/network/postgres/protocol.rs` | 5,514
+| `src/query/federated/execution/mod.rs` | 5,453
+| `src/services/dml/mod.rs` | 5,305
+| `clients/python/tests/embedded_consolidated_benchmark.py` | 5,028
+| `clients/python/src/proximadb_sdk/chunking_strategies/code.py` | 5,022
+| `clients/python/src/proximadb_sdk/unified_client.py` | 4,948
+| `apps/proximadb-bench/src/main.rs` | 4,850
+| `src/query/federated/optimizer/mod.rs` | 4,468
+| `src/embedded/mod.rs` | 4,267
 |===
 
 Top workspace crates by Cargo dependency PageRank:
@@ -274,11 +305,63 @@ Interpretation:
   migration shell but should continue shrinking as platform/runtime/query/modality crates mature.
 * `proximadb-query`, `proximadb-uql`, and `proximadb-multimodel-query` are expected integration
   hubs. Their public contracts should stay small and test-heavy.
-* Generated proto files dominate symbol and call counts. Treat them as generated artifacts, not
+* Generated proto files dominate raw node counts. Treat them as generated artifacts, not
   refactor targets.
 * `src/query/federated/optimizer`, `src/api_handlers/request_handlers.rs`,
   `src/network/postgres/protocol.rs`, `src/services/dml/mod.rs`, and `proximadb-catalog` are real
   human-authored hotspots and should be first-class consolidation targets.
+
+== Victor Reproducibility Queries
+
+Use read-only SQLite queries against `.victor/project.db` after each expansion/consolidation cycle.
+The schema columns used here are `graph_node.file`, `graph_node.type`, and `graph_edge.type`.
+
+[source,sql]
+----
+select count(*) from graph_module_metric;
+select count(*) from graph_node;
+select count(*) from graph_edge;
+
+select type, count(*)
+from graph_edge
+group by type
+order by count(*) desc;
+
+select type, count(*)
+from graph_node
+group by type
+order by count(*) desc
+limit 20;
+
+select substr(file, 1, instr(file || '/', '/') - 1) as prefix, count(*)
+from graph_node
+group by prefix
+order by count(*) desc
+limit 20;
+
+select file, count(*) as nodes
+from graph_node
+group by file
+order by nodes desc
+limit 20;
+
+select
+  sum(case when src_node.file = dst_node.file then 1 else 0 end) as same_file_calls,
+  sum(case when src_node.file <> dst_node.file then 1 else 0 end) as cross_file_calls
+from graph_edge edge
+join graph_node src_node on edge.src = src_node.node_id
+join graph_node dst_node on edge.dst = dst_node.node_id
+where edge.type = 'CALLS';
+----
+
+Current interpretation:
+
+* `graph_module_metric` is still empty, so module PageRank/cohesion metrics must either be computed
+  from Cargo/workspace edges or materialized into Victor before becoming a gate.
+* `CALLS` still resolves as same-file only (`103,255` same-file, `0` cross-file), so call-edge
+  PageRank is not a cross-module coupling signal yet.
+* Statement-level nodes dominate the graph. Use file/module aggregation first, then inspect
+  human-authored hotspot files manually.
 
 == Consolidation / Expansion Zigzag
 
@@ -294,4 +377,3 @@ Use this cycle for feature growth:
 
 This keeps the system from drifting into parallel protocol, storage, or modality paths while still
 allowing rapid feature expansion.
-

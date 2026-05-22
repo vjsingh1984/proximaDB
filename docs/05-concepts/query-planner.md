@@ -485,8 +485,8 @@ result_cache.enabled = false  # Don't cache, just execute
 ## Next Steps
 
 - [Multi-Model Joins](../02-guides/multi-model-joins.md) - Query patterns
-- [SQL Extensions](../03-api-reference/sql.md) - SQL reference
-- [Performance Tuning](../02-guides/performance-tuning.md) - Optimization guide
+- [API Reference](../03-api-reference/) - SQL and protocol reference
+- [API Surface and Performance](../02-guides/api-surface-performance-guide.md) - Optimization guide
 
 ---
 

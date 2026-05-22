@@ -428,5 +428,5 @@ RUST_LOG=proximadb::graph::engines::quasar::tiering=debug
 
 **See Also**:
 
-* link:../storage/sst-engine-deep-dive.adoc[SST Engine] - QUASAR cold tier backend
-* link:../03-reference/graph_api_reference.adoc[Graph API Reference]
+* link:sst-engine-deep-dive.adoc[SST Engine] - QUASAR cold tier backend
+* link:../../03-api-reference/graph.adoc[Graph API Reference]

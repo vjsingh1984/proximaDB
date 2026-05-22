@@ -445,6 +445,6 @@ grpcurl -plaintext localhost:5678 list
 
 == See Also
 
-* link:../03-reference/api-reference.adoc[API Reference]
-* link:../04-architecture/network-architecture.adoc[Network Architecture]
-* link:security-guide.adoc[Security Guide] (TLS configuration)
+* link:../03-api-reference/index.md[API Reference]
+* link:../12-design/ARCHITECTURE_ATLAS_2026_05_22.adoc[Architecture Atlas]
+* link:../04-operations/security.adoc[Security Guide] (TLS configuration)

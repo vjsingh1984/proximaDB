@@ -384,9 +384,9 @@ METRICS(
 ## Next Steps
 
 - [Vector Search](./vector-search.md) - Vector search deep dive
-- [Graph Queries](./graph-queries.md) - Graph patterns
-- [Document Store](./document-store.md) - JSON queries
-- [SQL Extensions](../03-api-reference/sql-extensions.md) - Full reference
+- [Graph API](../03-api-reference/graph.adoc) - Graph patterns
+- [REST API](../03-api-reference/rest.adoc) - Document and JSON APIs
+- [API Reference](../03-api-reference/) - Full reference
 
 ---
 

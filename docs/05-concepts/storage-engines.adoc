@@ -437,9 +437,9 @@ assert client.get_collection_stats("new_collection")["vector_count"] == len(vect
 
 == Related Documentation
 
-* xref:../internals/sst-engine-deep-dive.adoc[SST Engine Deep Dive]
-* xref:../internals/helix-engine-deep-dive.adoc[HELIX Engine Deep Dive]
-* xref:../internals/viper-engine-deep-dive.adoc[VIPER Engine Deep Dive]
-* xref:../internals/swift-engine-deep-dive.adoc[SWIFT Engine Deep Dive]
-* xref:../internals/nova-engine-deep-dive.adoc[NOVA Engine Deep Dive]
-* xref:../internals/raptor-engine-deep-dive.adoc[RAPTOR Engine Deep Dive]
+* xref:../06-internals/deep-dives/sst-engine-deep-dive.adoc[SST Engine Deep Dive]
+* xref:../06-internals/deep-dives/helix-engine-deep-dive.adoc[HELIX Engine Deep Dive]
+* xref:../06-internals/deep-dives/viper-engine-deep-dive.adoc[VIPER Engine Deep Dive]
+* xref:../06-internals/deep-dives/swift-engine-deep-dive.adoc[SWIFT Engine Deep Dive]
+* xref:../06-internals/deep-dives/nova-engine-deep-dive.adoc[NOVA Engine Deep Dive]
+* xref:../06-internals/deep-dives/raptor-engine-deep-dive.adoc[RAPTOR Engine Deep Dive]

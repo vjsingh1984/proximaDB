@@ -339,7 +339,7 @@ correlation_threshold = 0.7
 **Documentation**:
 - link:observability-grafana-prometheus.adoc[Observability Integration]
 - link:unified-rust-ecosystem-strategy.adoc[Unified Ecosystem Strategy]
-- link:../ibkrtrading/docs/PROXIMADB_INTEGRATION.md[ibkrtrading Integration]
+- link:../11-usecases/IBKRTRADING_DOGFOOD.adoc[ibkrtrading Dogfood]
 
 **Discord**: (to be created)
 **Email**: singhvjd@gmail.com

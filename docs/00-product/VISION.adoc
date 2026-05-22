@@ -465,7 +465,7 @@ organization-wide adoption.
 
 * link:PRD.adoc[Product Requirements Document]
 * link:COMPETITIVE_LANDSCAPE.adoc[Competitive Landscape]
-* link:../concepts/architecture.adoc[Architecture Overview]
+* link:../05-concepts/architecture.adoc[Architecture Overview]
 * link:../_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategic Roadmap]
 
 '''

@@ -661,7 +661,7 @@ finally:
 
 == Related Documentation
 
-* xref:../concepts/storage-engines.adoc[Storage Engine Selection Guide]
-* xref:../concepts/graph-engines.adoc[Graph Engine Selection Guide]
-* xref:../03-reference/api/rest.adoc[REST API Reference]
-* xref:../03-reference/api/grpc.adoc[gRPC API Reference]
+* xref:../05-concepts/storage-engines.adoc[Storage Engine Selection Guide]
+* xref:../05-concepts/graph-engines.adoc[Graph Engine Selection Guide]
+* xref:../03-api-reference/rest.adoc[REST API Reference]
+* xref:../03-api-reference/index.md[API Reference Index]

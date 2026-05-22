@@ -172,7 +172,7 @@ results = collection.search(
 )
 ```
 
-**Full docs**: [Python SDK Guide](../02-guides/sdk-python-guide.md)
+**Full docs**: [Python SDK Guide](../02-guides/sdk-python-guide.adoc)
 
 ---
 
@@ -208,7 +208,7 @@ metrics_enabled = true
 prometheus_port = 9090
 ```
 
-**Full docs**: [Configuration Reference](./configuration.md)
+**Full docs**: [Configuration Reference](./configuration.adoc)
 
 ---
 
@@ -284,9 +284,8 @@ client = ProximaDB(
 ## Next Steps
 
 - [REST API](./rest.adoc) - Complete REST reference
-- [SQL Extensions](./sql-extensions.md) - Custom SQL functions
-- [Python SDK](../02-guides/sdk-python-guide.md) - Python client guide
-- [Configuration](./configuration.md) - All config options
+- [Python SDK](../02-guides/sdk-python-guide.adoc) - Python client guide
+- [Configuration](./configuration.adoc) - All config options
 
 ---
 

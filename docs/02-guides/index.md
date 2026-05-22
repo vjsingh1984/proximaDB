@@ -42,23 +42,21 @@ flowchart TB
 
 | Guide | Description | Time |
 |-------|-------------|------|
-| [Graph Queries](./graph-queries.md) | Traversals, patterns, algorithms | 15 min |
-| [Document Store](./document-store.md) | JSON storage, full-text search | 10 min |
-| [Observability](./observability.md) | Logs, metrics, traces ingest | 15 min |
+| [Graph API](../03-api-reference/graph.adoc) | Traversals, patterns, algorithms | 15 min |
+| [REST API](../03-api-reference/rest.adoc) | JSON/document operations and API patterns | 10 min |
+| [Observability Operations](../04-operations/monitoring.adoc) | Logs, metrics, traces, and monitoring | 15 min |
 
 ## Advanced Guides
 
 | Guide | Description | Time |
 |-------|-------------|------|
-| [SQL Extensions](./sql-extensions.md) | Custom SQL functions reference | 20 min |
 | [API Surface Performance](./api-surface-performance-guide.md) | Which SDK, query, and protocol path to choose | 15 min |
-| [Performance Tuning](./performance-tuning.md) | Engine selection, indexing, caching | 30 min |
 
 ## Quick Links
 
 - [Platform Packages](./platform-packages.md) - RPM/DEB/MSI installation
-- [Unified Port Migration](./unified-port-migration.md) - Migrate from multi-port
-- [Python SDK](./sdk-python-guide.md) - Python client library
+- [Unified Port Migration](./unified-port-migration.adoc) - Migrate from multi-port
+- [Python SDK](./sdk-python-guide.adoc) - Python client library
 - [API Surface Performance](./api-surface-performance-guide.md) - Choose embedded, SQL, UQL, Cypher, REST/gRPC, pgwire, or Arrow Flight
 
 ---
@@ -79,15 +77,15 @@ Start with:
 - [Multi-Model Joins](./multi-model-joins.md) - Reviews + products
 
 ### Social Apps
-- [Graph Queries](./graph-queries.md) - Friends, followers, connections
+- [Graph API](../03-api-reference/graph.adoc) - Friends, followers, connections
 - [Vector Search](./vector-search.md) - Content recommendations
 
 ### Observability
-- [Observability](./observability.md) - Log aggregation
+- [Observability Operations](../04-operations/monitoring.adoc) - Log aggregation
 - [Multi-Model Joins](./multi-model-joins.md) - Logs + metrics correlation
 
 ### Search
-- [Document Store](./document-store.md) - Full-text search
+- [REST API](../03-api-reference/rest.adoc) - Document and full-text APIs
 - [Vector Search](./vector-search.md) - Semantic search
 - [Hybrid Search](./vector-search.md#hybrid-search) - Combined
 

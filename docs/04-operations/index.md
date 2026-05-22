@@ -36,10 +36,10 @@ flowchart TB
 
 | Platform | Guide | Complexity |
 |----------|-------|------------|
-| **Kubernetes** | [Deployment Guide](./deployment.md) | Medium |
-| **Docker Compose** | [Docker Guide](./deployment.md#docker) | Low |
+| **Kubernetes** | [Deployment Guide](./deployment.adoc) | Medium |
+| **Docker Compose** | [Docker Guide](./deployment.adoc#docker) | Low |
 | **Platform Packages** | [Platform Packages](../02-guides/platform-packages.md) | Low |
-| **Bare Metal** | [Bare Metal](./deployment.md#bare-metal) | Medium |
+| **Bare Metal** | [Bare Metal](./deployment.adoc#bare-metal) | Medium |
 
 ### Quick Start (Docker)
 
@@ -376,10 +376,10 @@ sudo journalctl -u proximadb -n 50
 
 ## Next Steps
 
-- [Deployment Guide](./deployment.md) - Detailed deployment options
-- [Monitoring](./monitoring.md) - Monitoring deep dive
-- [Security](./security.md) - Security hardening
-- [Performance Tuning](../02-guides/performance-tuning.md) - Optimization guide
+- [Deployment Guide](./deployment.adoc) - Detailed deployment options
+- [Monitoring](./monitoring.adoc) - Monitoring deep dive
+- [Security](./security.adoc) - Security hardening
+- [API Surface and Performance](../02-guides/api-surface-performance-guide.md) - Optimization guide
 
 ---
 

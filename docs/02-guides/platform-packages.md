@@ -10,7 +10,7 @@ This guide covers installing ProximaDB v0.2.0 using native platform packages on 
 - [Post-Installation](#post-installation)
 - [Service Management](#service-management)
 - [Configuration](#configuration)
-- [Troubleshooting]((#troubleshooting)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -435,7 +435,7 @@ MemoryMax=2G
 
 ### Documentation
 
-- [Configuration Guide](../config/README.md)
+- [Configuration Guide](../03-api-reference/configuration.adoc)
 - [API Documentation](../03-api-reference/index.md)
 - [Architecture](../05-concepts/architecture.adoc)
 

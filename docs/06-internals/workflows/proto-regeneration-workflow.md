@@ -200,7 +200,7 @@ implicitly.
 
 - [Protocol Buffers Guide](https://protobuf.dev/programming-guides/proto3/)
 - [tonic-build Documentation](https://docs.rs/tonic-build/)
-- [ProximaDB Architecture](../concepts/architecture.adoc)
+- [ProximaDB Architecture](../../05-concepts/architecture.adoc)
 
 ## Example: Adding a New gRPC Method
 

@@ -492,4 +492,4 @@ RUST_LOG=proximadb::storage::engines::impls::sst::flush=debug
 
 * link:helix-engine-deep-dive.adoc[HELIX Engine] - Spatial locality optimization
 * link:viper-engine-deep-dive.adoc[VIPER Engine] - Pure columnar analytics
-* link:../technical/unified-quantization-guide.adoc[Quantization Guide] - Compression strategies
+* link:../../05-concepts/quantization.md[Quantization Guide] - Compression strategies

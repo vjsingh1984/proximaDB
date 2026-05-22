@@ -18,6 +18,101 @@ where a change belongs.
 * Outputs: downstream contracts or side effects.
 * Consolidation gate: what must be checked before expanding this module.
 
+== LLD Component Diagrams
+
+=== Foundation To Authority
+
+[source,mermaid]
+----
+flowchart TB
+  Kernel["proximadb-kernel\nerrors, traits, base contracts"]
+  DataModel["proximadb-data-model\ntyped shared model"]
+  Proto["proximadb-proto\ngenerated wire artifacts"]
+  Records["proximadb-records\nProximaRecord / ProximaValue"]
+  Filters["proximadb-filter-expression\nnormalized predicates"]
+  Catalog["proximadb-catalog\nxCatalog metadata and route knobs"]
+  StorageCommon["proximadb-storage-common\nengine contracts"]
+  BlockFormat["proximadb-block-format\nPAX/block layout"]
+
+  Kernel --> DataModel
+  DataModel --> Records
+  Proto --> Records
+  Filters --> Catalog
+  Records --> Catalog
+  Records --> StorageCommon
+  StorageCommon --> BlockFormat
+----
+
+=== Protocol To Execution
+
+[source,mermaid]
+----
+flowchart LR
+  SDK["SDKs and embedded bindings"]
+  API["proximadb-api\nREST / gRPC / pgwire / Flight"]
+  Runtime["proximadb-runtime\ncomposition and resources"]
+  Handlers["src/api_handlers\nrequest orchestration"]
+  Services["src/services\nDDL / DML / record store / operations"]
+  Planner["query crates + src/query\nplans, routes, EXPLAIN"]
+  Catalog["xCatalog"]
+  WAL["WAL / log / manifest"]
+
+  SDK --> API
+  API --> Runtime
+  Runtime --> Handlers
+  Handlers --> Planner
+  Planner --> Catalog
+  Planner --> Services
+  Services --> WAL
+----
+
+=== Storage And Modality Projections
+
+[source,mermaid]
+----
+flowchart TB
+  RecordStore["record store\ncanonical read/write bridge"]
+  WAL["WAL / current-state / manifest"]
+  Blocks["PAX/block format"]
+  Engines["src/storage engines\nSST / VIPER / NOVA / HELIX / RAPTOR / SWIFT"]
+  Vector["vector modality\nANN/index projections"]
+  Document["document modality\nJSON/path projections"]
+  Graph["graph modality\ntopology projections"]
+  Observability["observability modality\nlogs/metrics/traces rollups"]
+  Queue["queue modality\nmessage durability"]
+
+  RecordStore --> WAL
+  WAL --> Blocks
+  Blocks --> Engines
+  Engines --> Vector
+  Engines --> Document
+  Engines --> Graph
+  Engines --> Observability
+  Queue --> RecordStore
+----
+
+=== SaaS Control Plane Boundary
+
+[source,mermaid]
+----
+flowchart LR
+  Tenant["tenant/org/project"]
+  Auth["auth, RLS, policy"]
+  Budget["budget guard and metering"]
+  Audit["audit and request context"]
+  API["core API adapters"]
+  Catalog["xCatalog policy boundary"]
+  Explain["EXPLAIN / trace metadata"]
+
+  Tenant --> Auth
+  Auth --> Budget
+  Budget --> API
+  API --> Catalog
+  Catalog --> Explain
+  API --> Audit
+  Audit --> Budget
+----
+
 == Foundation Layer
 
 [cols="1,2,2,2,2",options="header"]
@@ -355,10 +450,11 @@ where a change belongs.
   `proximadb-proto`, `proximadb-query-filter`, and `proximadb-records`.
 * Root crate still depends on 42 workspace crates. Treat it as integration shell and continue
   migrating stable ownership downward.
-* Human-authored hotspots from Victor: `src/query/federated/optimizer/mod.rs`,
-  `src/api_handlers/request_handlers.rs`, `src/network/postgres/protocol.rs`,
-  `src/services/dml/mod.rs`, and `crates/control/proximadb-catalog/src/lib.rs`.
-* Generated proto files dominate raw symbol/call counts and should be excluded from manual
+* Human-authored hotspots from Victor: `src/network/postgres/protocol.rs`,
+  `src/query/federated/execution/mod.rs`, `src/services/dml/mod.rs`,
+  `src/query/federated/optimizer/mod.rs`, `src/embedded/mod.rs`,
+  `src/api_handlers/request_handlers.rs`, and selected large Python SDK files.
+* Generated proto files dominate raw node counts and should be excluded from manual
   complexity refactor queues.
 * Victor cross-file call centrality is not currently available; regenerate or fix Victor's
   cross-file resolution before using call PageRank as a release gate.
@@ -374,4 +470,3 @@ Every feature-level implementation should answer:
 * Which projection/index/cache paths are derived and rebuildable?
 * Which EXPLAIN or trace metadata proves the route?
 * Which supported-surface status applies: supported, beta, experimental, internal, or archived?
-

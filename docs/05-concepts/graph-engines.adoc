@@ -534,5 +534,5 @@ assert stats["node_count"] == len(nodes)
 == Related Documentation
 
 * xref:storage-engines.adoc[Storage Engine Selection Guide]
-* xref:../02-guides/tutorials/knowledge-graph-search.adoc[Knowledge Graph + Semantic Search Tutorial]
-* xref:../03-reference/graph/gql.adoc[Graph Query Language Reference]
+* xref:../03-api-reference/graph.adoc[Graph API Reference]
+* xref:../06-internals/deep-dives/graph-engines-deep-dive.adoc[Graph Engines Deep Dive]

@@ -473,4 +473,4 @@ RUST_LOG=proximadb::cdc=debug ./proximadb-server
 
 * https://debezium.io/documentation/[Debezium Documentation]
 * https://kafka.apache.org/documentation/[Apache Kafka Documentation]
-* link:../api/cdc.adoc[ProximaDB CDC API Reference]
+* link:../03-api-reference/index.md[ProximaDB API Reference]

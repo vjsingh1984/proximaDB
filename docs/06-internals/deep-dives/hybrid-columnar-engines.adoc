@@ -7,8 +7,8 @@
 [NOTE]
 ====
 For up-to-date REST/Graph endpoints and example requests, refer to:
-- link:../03-reference/rest-api-specification.adoc[REST API Specification]
-- link:../03-reference/graph_api_reference.adoc[Graph API Reference]
+- link:../../03-api-reference/rest.adoc[REST API Reference]
+- link:../../03-api-reference/graph.adoc[Graph API Reference]
 ====
 
 == Overview
