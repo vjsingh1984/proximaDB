@@ -918,4 +918,41 @@ port = 6789
 
         Ok(())
     }
+
+    #[test]
+    fn test_env_placeholders_are_expanded() -> anyhow::Result<()> {
+        // `set_var` / `remove_var` are `unsafe` in the 2024 edition because
+        // they race with other threads reading the environment. This test
+        // is single-threaded by Cargo's per-test-binary execution model;
+        // wrap the calls in `unsafe` to acknowledge the safety contract.
+        unsafe {
+            env::set_var("PROXIMADB_TEST_NODE_ID", "node-from-env");
+            env::set_var("PROXIMADB_TEST_LOG_LEVEL", "warn");
+        }
+
+        let config_content = r#"
+[server]
+node_id = "${PROXIMADB_TEST_NODE_ID}"
+
+[monitoring]
+log_level = "${PROXIMADB_TEST_LOG_LEVEL}"
+"#;
+
+        let temp_dir = TempDir::new()?;
+        let config_path = temp_dir.path().join("env_config.toml");
+        fs::write(&config_path, config_content)?;
+
+        let config = ConfigLoader::load_with_defaults(config_path.to_string_lossy().as_ref())
+            .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
+
+        assert_eq!(config.server.node_id, "node-from-env");
+        assert_eq!(config.monitoring.log_level, "warn");
+
+        unsafe {
+            env::remove_var("PROXIMADB_TEST_NODE_ID");
+            env::remove_var("PROXIMADB_TEST_LOG_LEVEL");
+        }
+
+        Ok(())
+    }
 }

@@ -120,6 +120,7 @@
 pub mod adaptive_cache;
 pub mod batch_group;
 pub mod invalidation;
+pub mod invalidation_coordinator;
 pub mod mismatch_cost;
 pub mod per_category_policy;
 pub mod plan_cache;
