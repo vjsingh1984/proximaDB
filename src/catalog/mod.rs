@@ -62,6 +62,14 @@ pub use recall_probe::{ProbeConfig, ProbeOutcome, ProbeScope, ProbeState, Recall
 pub mod budget_guard;
 pub use budget_guard::{BudgetRejection, EnforcedBudget, enforce as enforce_budget};
 
+/// Tenant tier transition detector — classifies before/after tier
+/// record pairs as upgrade / downgrade / lateral / no-change for the
+/// audit log + billing reconciliation.
+pub mod tier_transition;
+pub use tier_transition::{
+    AxisDelta, AxisDirection, TierTransitionEvent, TransitionClass, detect as detect_transition,
+};
+
 // Feature-gated implementations
 #[cfg(feature = "delta-lake")]
 pub mod delta;
