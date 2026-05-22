@@ -58,7 +58,7 @@
 
 pub mod adjacency_projection;
 pub mod canonical;
-/// Catapult shortcut table (LLD §6.3, arXiv 2603.02164).
+/// Catapult shortcut table (LLD 6.3, arXiv 2603.02164).
 pub mod catapult;
 pub mod engines;
 pub mod merge;

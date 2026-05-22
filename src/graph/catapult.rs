@@ -1,14 +1,14 @@
-// Catapult shortcut table — LLD §6.3, anchored on CatapultDB arXiv 2603.02164.
+// Catapult shortcut table - LLD 6.3, anchored on CatapultDB arXiv 2603.02164.
 //
 // Real-world ANN workloads exhibit strong spatial and temporal query
 // locality, yet every search starts from a fixed (or random) entry point
 // and re-traverses the same intermediate hops. CatapultDB's insight:
 // observe successful search trajectories, then inject shortcut edges from
 // query regions to frequently-visited destination nodes so future similar
-// queries skip the redundant hops. The paper reports up to 2.51× higher
+// queries skip the redundant hops. The paper reports up to 2.51x higher
 // throughput and +11% recall vs DiskANN, layerable on existing indexes.
 //
-// This module ships the **per-collection** shortcut table — observation
+// This module ships the **per-collection** shortcut table - observation
 // recording, lookup, hit-counting, and capacity-bounded eviction. The
 // runtime integration (record observations on successful searches, consult
 // the table for the entry node on incoming queries) lives outside this
@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::RwLock;
 
-/// Composite scope key — pairs tenant + collection so a catapult edge
+/// Composite scope key - pairs tenant + collection so a catapult edge
 /// never crosses tenants by construction.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct CatapultScope {
@@ -42,7 +42,7 @@ impl CatapultScope {
     }
 }
 
-/// One observed-trajectory shortcut edge — "queries near this query_region
+/// One observed-trajectory shortcut edge - "queries near this query_region
 /// often want destination_node as their entry point."
 #[derive(Debug, Clone, PartialEq)]
 pub struct CatapultEdge {
@@ -62,7 +62,7 @@ pub struct CatapultEdge {
 pub struct CatapultConfig {
     /// Hard ceiling on shortcuts per scope. The paper recommends keeping
     /// the table small (proportional to active query regions, not corpus
-    /// size). Default 1024 matches the LLD §6.3 capacity hint.
+    /// size). Default 1024 matches the LLD 6.3 capacity hint.
     pub max_edges_per_scope: usize,
     /// Minimum hits before an edge survives an eviction round. Below this
     /// the LRU-ish sweep treats the edge as cold.
@@ -121,7 +121,7 @@ impl CatapultTable {
         }
     }
 
-    /// Observe a successful trajectory — `query_region` was satisfied by a
+    /// Observe a successful trajectory - `query_region` was satisfied by a
     /// search that profitably used `destination_node` as its entry. The
     /// scope is tenant+collection; cross-scope inserts panic in debug
     /// builds so a misuse fails the test rather than poisoning the table.
@@ -148,13 +148,13 @@ impl CatapultTable {
                 last_seen: now,
             });
         // If the existing entry pointed at a different destination, keep
-        // the higher-hit one (CatapultDB's "stable destination" insight —
+        // the higher-hit one (CatapultDB's "stable destination" insight -
         // flapping shortcuts hurt cache locality).
         if entry.destination_node == destination_node {
             entry.hits = entry.hits.saturating_add(1);
             entry.last_seen = now;
         } else if entry.hits < 1 {
-            // Existing entry never paid off — replace it.
+            // Existing entry never paid off - replace it.
             *entry = CatapultEdge {
                 query_region,
                 destination_node,
@@ -170,7 +170,7 @@ impl CatapultTable {
 
     /// Look up the shortcut for a query region. Returns `Some(destination)`
     /// when a shortcut exists for this scope; `None` otherwise. Increments
-    /// the hit counter on success — the runtime can use lookup counts to
+    /// the hit counter on success - the runtime can use lookup counts to
     /// decide whether to keep the edge.
     pub async fn lookup(&self, scope: &CatapultScope, query_region: u64) -> Option<u64> {
         let mut g = self.inner.write().await;
@@ -178,7 +178,7 @@ impl CatapultTable {
         state.stats.total_lookups += 1;
         let now = Instant::now();
         if let Some(edge) = state.edges_by_region.get_mut(&query_region) {
-            // Age-out — even hot edges go stale if the workload shifts.
+            // Age-out - even hot edges go stale if the workload shifts.
             if now.duration_since(edge.last_seen) > self.config.max_age {
                 state.edges_by_region.remove(&query_region);
                 state.stats.evictions += 1;
@@ -194,7 +194,7 @@ impl CatapultTable {
 
     /// Look up a shortcut and block the response if the supplied
     /// `expected_scope` doesn't match the stored edge's scope. Returns
-    /// `None` and increments `cross_scope_lookups_blocked` — the runtime
+    /// `None` and increments `cross_scope_lookups_blocked` - the runtime
     /// can alert on a non-zero counter.
     ///
     /// In practice the scope is keyed at lookup time so this can't trigger
@@ -225,7 +225,7 @@ impl CatapultTable {
             return CatapultStats::default();
         };
         let mut stats = state.stats.clone();
-        // Edge count is the live size, not a counter — refresh from the map.
+        // Edge count is the live size, not a counter - refresh from the map.
         stats.edges = state.edges_by_region.len();
         stats
     }
@@ -257,7 +257,7 @@ impl Default for CatapultTable {
 
 fn evict_one(state: &mut ScopeState, min_hits_to_survive: u64) {
     // Capacity-driven eviction: the table is over its hard ceiling, so we
-    // must evict *something* — prefer edges below the configured survival
+    // must evict *something* - prefer edges below the configured survival
     // threshold, then use lowest hits + oldest last_seen as tie-breakers.
     let victim = state
         .edges_by_region
@@ -365,7 +365,7 @@ mod tests {
         for _ in 0..3 {
             table.lookup(&s, 1).await;
         }
-        // Third observation forces eviction — edge 2 is cold (only 1 hit
+        // Third observation forces eviction - edge 2 is cold (only 1 hit
         // from its initial observation) so it should be the victim.
         table.observe(&s, 3, 300).await;
         let stats = table.stats_for(&s).await;
