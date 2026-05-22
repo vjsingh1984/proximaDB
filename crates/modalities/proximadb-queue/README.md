@@ -155,6 +155,36 @@ replay queue (idempotent via `message_id`) → re-derive the SST segment.
 This is the LSM bulk-load pattern used by RocksDB `IngestExternalFile`,
 Cassandra `SSTableLoader`, and DuckDB COPY.
 
+### Throughput economics — why the queue path is structurally cheaper
+
+The two paths take different LSM routes, but the larger cost difference
+lives in the embedding inference stage. The queue absorbs bursty
+customer traffic so the embedding worker runs at its optimal sustained
+throughput; the sync path has no such buffer.
+
+| Concern | Sync (inline) | Async (queue + drainer) |
+|---|---|---|
+| Batch size at inference | 1 record per request | 32-128 per drainer pull |
+| Per-record GPU/CPU setup | Full per call | Amortized over the batch |
+| Effective throughput | ~50ms p99 single inference | ~5ms p99 amortized in batch |
+| Capacity sizing | Reserved per-tenant for p99 burst | Pooled across all tenants' async traffic |
+| Backpressure surface | **Customer-facing** (HTTP 429, latency tail) | **Internal** (drainer slows, queue depth grows) |
+| Cross-tenant batching | Impossible (one call = one tenant) | Possible (one drainer batch can pull from many tenants on the same partition) |
+| GPU/CPU utilization | Bursty, idle between requests | Steady-state, saturates the embedding worker |
+
+A 32-record drainer batch costs ~1.5× a single-record inference (model
+load + tokenizer setup amortized) → **~21× more records per unit of
+compute** vs the sync path. This is the structural reason async ingest
+is roughly 5-10× cheaper per record at the inference layer alone (the
+LSM bulk-load on top adds further savings at the storage layer).
+
+This throughput differential is the architectural basis for the higher
+sync price tier in AnvaiOps pricing (the public-facing rate uses a +33%
+premium on sync ingest vs async — that's the customer-visible
+translation of "you're consuming reserved capacity that can't be
+amortized"). See `docs/PRICING_INTERNAL.md` in the AnvaiOps repo for the
+business model that points back to this architectural cost profile.
+
 ### Per-tenant routing aligns queue partitions with storage assignment
 
 The drainer **must not** ship records to a different instance — the SST
