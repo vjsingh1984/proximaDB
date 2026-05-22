@@ -80,6 +80,9 @@ pub mod trace_retention;
 /// Route explain builder — human-readable explanation derived from a
 /// populated SearchPlanTrace for the LLD §1 debug=true response.
 pub mod route_explain;
+/// Trace digest — stable FNV-1a hash for billing-event dedup +
+/// idempotency keys on the async sink.
+pub mod trace_digest;
 /// Query engine for logs, metrics, and traces with PromQL support.
 pub mod query;
 /// SearchPlanTrace — per-query telemetry envelope feeding KRU billing and the
