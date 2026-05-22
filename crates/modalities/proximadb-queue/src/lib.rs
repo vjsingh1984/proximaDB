@@ -43,6 +43,8 @@ pub mod metrics;
 pub mod object_tier;
 pub mod offset_store;
 pub mod producer;
+#[cfg(feature = "python")]
+pub mod python;
 pub mod reaper;
 pub mod recovery;
 pub mod topic;
