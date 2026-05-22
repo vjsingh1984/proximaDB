@@ -74,6 +74,9 @@ pub mod ingestion;
 pub mod metering_event;
 /// Trace sampling policy — LLD-anchored down-sampling by tier + load.
 pub mod trace_sampling;
+/// Trace retention policy — companion to trace_sampling; per-tier age
+/// windows + soft storage-budget shedding.
+pub mod trace_retention;
 /// Query engine for logs, metrics, and traces with PromQL support.
 pub mod query;
 /// SearchPlanTrace — per-query telemetry envelope feeding KRU billing and the
