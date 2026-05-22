@@ -221,6 +221,9 @@ use crate::services::operations::vectors::{
     RichRecordBatchRequest, RichRecordDeleteBatchRequest, RichRecordGetRequest,
     RichRecordGetResponse, RichSearchRequest, RichSearchResponse, VectorOperationsService,
 };
+use crate::services::{
+    WriteDurabilityRequirement, WriteIntent, WriteLaneRouter, WriteOperationKind,
+};
 use crate::storage::document::DocumentService;
 
 /// Unified handlers that implement all business logic for API operations
@@ -858,6 +861,17 @@ impl UnifiedHandlers {
                 ));
             }
         }
+        if let Err(e) = enforce_wal_lane_for_record_batch(
+            &collection_name,
+            WriteOperationKind::Insert,
+            request.records.len() as u64,
+            "REST/gRPC handle_record_batch_for_tenant",
+        ) {
+            return Ok(BatchOperationResult::failure(
+                e,
+                "WAL_LANE_REJECTED".to_string(),
+            ));
+        }
         match self
             .vector_operations_service
             .insert_records_with_tenant_context(
@@ -918,6 +932,17 @@ impl UnifiedHandlers {
                     "SCHEMA_VALIDATION_FAILED".to_string(),
                 ));
             }
+        }
+        if let Err(e) = enforce_wal_lane_for_record_batch(
+            &collection_name,
+            WriteOperationKind::Insert,
+            request.records.len() as u64,
+            "REST/gRPC handle_record_insert_batch_for_tenant",
+        ) {
+            return Ok(BatchOperationResult::failure(
+                e,
+                "WAL_LANE_REJECTED".to_string(),
+            ));
         }
         match self
             .vector_operations_service
@@ -2453,6 +2478,29 @@ impl UnifiedHandlers {
     }
 }
 
+/// Compute the WAL-lane decision for a fast-lane record batch and reject the write if the
+/// router selects a non-WAL lane (such as ProjectionOnly) that this
+/// adapter does not yet commit. Mirrors the gRPC path's pre-check (see
+/// `network/grpc/v2/record_service.rs::insert_records`) so REST callers - which go directly
+/// to `handle_record_batch_for_tenant` without a pre-check - get the same enforcement.
+///
+/// Returns the rejection reason string on failure. Callers wrap it in a
+/// `BatchOperationResult::failure(reason, "WAL_LANE_REJECTED")`.
+fn enforce_wal_lane_for_record_batch(
+    collection_id: &str,
+    operation_kind: WriteOperationKind,
+    row_count: u64,
+    context: &str,
+) -> Result<(), String> {
+    let intent = WriteIntent::new(collection_id, operation_kind)
+        .with_durability(WriteDurabilityRequirement::WalRequired)
+        .with_row_count_hint(row_count);
+    let decision = WriteLaneRouter::new().route(&intent);
+    decision
+        .require_wal_lane(context)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod hybrid_tests {
     use super::*;
@@ -3669,10 +3717,9 @@ mod explain_prefix_tests {
 
     #[test]
     fn parse_explain_kind_detects_bare_analyze() {
-        let (is_analyze, inner) = UnifiedHandlers::parse_explain_kind(
-            "EXPLAIN ANALYZE INSERT INTO t SELECT * FROM s;",
-        )
-        .expect("should parse");
+        let (is_analyze, inner) =
+            UnifiedHandlers::parse_explain_kind("EXPLAIN ANALYZE INSERT INTO t SELECT * FROM s;")
+                .expect("should parse");
         assert!(is_analyze);
         assert_eq!(inner, "INSERT INTO t SELECT * FROM s;");
     }
@@ -3694,5 +3741,61 @@ mod explain_prefix_tests {
                 .expect("should parse");
         assert!(!is_analyze);
         assert_eq!(inner, "INSERT INTO t SELECT * FROM s;");
+    }
+}
+
+#[cfg(test)]
+mod wal_lane_enforcement_tests {
+    use super::*;
+
+    #[test]
+    fn enforce_wal_lane_accepts_typical_row_level_insert() {
+        // A modest INSERT batch routes to WalCurrentState and must be accepted.
+        let result = enforce_wal_lane_for_record_batch(
+            "tenants/t1/collections/c1",
+            WriteOperationKind::Insert,
+            10,
+            "unit test",
+        );
+        assert!(
+            result.is_ok(),
+            "row-level INSERT must be accepted by WAL-lane enforcement: {result:?}"
+        );
+    }
+
+    #[test]
+    fn enforce_wal_lane_accepts_typical_upsert() {
+        let result = enforce_wal_lane_for_record_batch(
+            "tenants/t1/collections/c1",
+            WriteOperationKind::Upsert,
+            5,
+            "unit test",
+        );
+        assert!(
+            result.is_ok(),
+            "row-level UPSERT must be accepted by WAL-lane enforcement: {result:?}"
+        );
+    }
+
+    #[test]
+    fn enforce_wal_lane_rejects_projection_refresh() {
+        // ProjectionRefresh always routes to ProjectionOnly regardless of durability;
+        // the fast-lane REST/gRPC adapter does not commit projection state, so reject explicitly
+        // rather than letting the call silently fall through to the wrong lane.
+        let result = enforce_wal_lane_for_record_batch(
+            "tenants/t1/collections/c1",
+            WriteOperationKind::ProjectionRefresh,
+            10,
+            "unit test",
+        );
+        assert!(
+            result.is_err(),
+            "ProjectionRefresh must be rejected by fast-lane WAL enforcement"
+        );
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("unit test"),
+            "rejection message should carry the call-site context: {msg}"
+        );
     }
 }
