@@ -212,27 +212,33 @@ Client request
 
 == Victor Graph Findings
 
-The local Victor graph is useful, but it has two important limitations in this snapshot:
+Victor's Rust CCG construction previously resolved CALLS edges per-file only — `name_to_ids` was
+built from a single file's nodes during `_build_calls_edges`, so any callee defined in another
+file resolved to the empty set and no edge was emitted. With cross-file CALLS empty,
+`ModuleAnalyzer._load_module_graph` (which only loads cross-file `graph_edge` rows) returned an
+empty module set and `graph_module_metric` stayed at zero rows. Both gaps closed after wiring a
+project-wide name index pass (`_resolve_cross_file_calls`) that runs after all nodes are persisted
+and emits CALLS edges via UPSERT; module metrics auto-materialize as a downstream effect.
 
-* `graph_module_metric` contains 0 rows, so Victor has not materialized module-level PageRank,
-  LCOM, hotspot, or TDD priority metrics into the database.
-* `CALLS` edges are all same-file in this snapshot: 102,855 same-file calls and 0 cross-file calls.
-  Use Cargo dependency edges for workspace coupling until Victor cross-file call resolution is
-  refreshed.
-
-Victor database scale from the 2026-05-22 snapshot:
+Victor database scale after the 2026-05-22 cross-file CALLS fix:
 
 [cols="1,1",options="header"]
 |===
 | Metric | Value
-| `graph_node` rows | 851,159
-| `graph_edge` rows | 2,587,955
-| `DDG_DEF_USE` edges | 1,545,263
-| `CFG_SUCCESSOR` edges | 514,957
-| `CALLS` edges | 103,255
-| `CDG` edges | 100,012
-| `CONTAINS` edges | 22,219
+| `graph_node` rows | 857,092
+| `graph_edge` rows | 2,981,770
+| `graph_module_metric` rows | 1,675
+| `DDG_DEF_USE` edges | 1,555,792
+| `CFG_SUCCESSOR` edges | 518,755
+| `CALLS` edges | 480,632 (51,841 same-file, 428,791 cross-file)
+| `CDG` edges | 100,468
+| `CONTAINS` edges | 22,293
 |===
+
+Pre-fix snapshot for comparison: 851,159 nodes, 2,587,955 edges, 103,255 CALLS edges
+(102,855 same-file, 0 cross-file), 0 module-metric rows. The new resolver restricts the
+project-wide name index to callable symbol types (`function`, `method`, `impl`) and caps fanout
+per call site (default 25) to suppress noise from common leaf names (`new`, `default`, `from`).
 
 Top node kinds from Victor:
 
@@ -356,12 +362,21 @@ where edge.type = 'CALLS';
 
 Current interpretation:
 
-* `graph_module_metric` is still empty, so module PageRank/cohesion metrics must either be computed
-  from Cargo/workspace edges or materialized into Victor before becoming a gate.
-* `CALLS` still resolves as same-file only (`103,255` same-file, `0` cross-file), so call-edge
-  PageRank is not a cross-module coupling signal yet.
-* Statement-level nodes dominate the graph. Use file/module aggregation first, then inspect
-  human-authored hotspot files manually.
+* `graph_module_metric` now contains 1,675 rows. Module-level PageRank, instability, cohesion,
+  hotspot, and TDD priority metrics are first-class signals; use them as gates alongside Cargo
+  dependency centrality.
+* `CALLS` now resolves cross-file: 428,791 cross-file edges (89% of 480,632 total). Call-edge
+  PageRank and module-level coupling are real cross-module coupling signals — top
+  hotspots include `src/network/rest/v1/handlers.rs` (Ce=230, 2,231 symbols),
+  `src/network/multi_server.rs`, `src/network/arrow_ipc/service.rs`, and
+  `src/services/operations/vectors/legacy.rs` — the human-authored fan-out hubs the prior snapshot
+  could only infer indirectly.
+* The cross-file resolver is name-only with a fanout cap (default 25); ambiguous leaf names
+  like `new`/`default`/`from` skip resolution. Trait-method receiver typing is not yet modeled,
+  so `obj.method()` may bind to all impls of `method` within the cap. Treat call-edge counts as
+  upper bounds, not exact dispatch.
+* Statement-level nodes still dominate the graph. Use file/module aggregation first, then
+  inspect human-authored hotspot files manually.
 
 == Consolidation / Expansion Zigzag
 
