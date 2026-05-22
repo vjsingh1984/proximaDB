@@ -85,6 +85,28 @@ respect them; deviations require explicit revision of this document.
    cross-instance writes entirely in steady state. Scaling events
    trigger lease handoff: old owner drains in-flight, then new owner
    picks up.
+7. **Queue files live under `{queue_root}`; collection files live
+   under `{collection_root}`. The two trees never intersect.** Search
+   enumerates collections via `CatalogManager` and only sees
+   `{collection_root}`. `FilesystemFactory` operations from the queue
+   are scoped to `{queue_root}`. Even hosting them on different
+   physical storage (local NVMe for queue, ADLS for collections) is
+   supported. This prevents any chance of a queue segment leaking
+   into a vector search result.
+8. **At-least-once delivery + idempotent consumer is the durability
+   contract** (NOT exactly-once). Drainers may legitimately re-write
+   a record after a crash between SST commit and queue ack. The LSM
+   compaction in the target collection folds duplicates by oid, so
+   customers see the record exactly once in search. Producers MUST
+   supply a deterministic `source_record_id` for this to hold — fresh
+   UUIDs per call defeat the dedup. This trade-off is deliberate;
+   true exactly-once requires distributed transactions we don't build.
+9. **Messages are reaped at the segment level, not per-message.** Ack
+   commits an offset; sealed segments are deleted only after all
+   consumers have committed past their last offset AND (if configured)
+   the segment is uploaded to the object archive. Trade-off: ack'd
+   messages occupy disk space until the segment rotates. Acceptable
+   because the offset.meta is the authoritative cursor.
 
 ## Architecture (LSM-aware)
 
@@ -154,6 +176,138 @@ already been fsync'd. On drainer crash mid-SST-write, recovery is:
 replay queue (idempotent via `message_id`) → re-derive the SST segment.
 This is the LSM bulk-load pattern used by RocksDB `IngestExternalFile`,
 Cassandra `SSTableLoader`, and DuckDB COPY.
+
+### Storage isolation — queue files never reach the search index
+
+The queue and the collection storage live in **completely separate file
+trees**, both backed by `FilesystemFactory` but with different roots:
+
+```
+{queue_root}/                           ← e.g. file:///var/lib/proximadb/queue
+  embed-ingest/                         ← vector modality
+    0/0000001.qseg
+    0/offset.meta
+    0/lease.meta
+    ...
+  billing-events/                       ← cross-cutting
+    ...
+  doc-index/                            ← document modality
+    ...
+  graph-edge-discovery/                 ← graph modality
+    ...
+  dlq.embed-ingest/                     ← dead-letter queue
+    ...
+
+{collection_root}/                      ← e.g. file:///var/lib/proximadb/collections
+  knowledge/
+    sst/00000abc.sst                    ← actual vector data, .sst
+    wal/0000001.bcwal                   ← LSM WAL
+    manifest.json
+  ...
+```
+
+ProximaDB search enumerates collections via `CatalogManager` and only
+lists files under `{collection_root}`. It has **no knowledge** of
+`{queue_root}` and cannot accidentally scan queue segments. Similarly,
+the queue's `FilesystemFactory` operations are scoped to `{queue_root}`
+only. The two roots can even live on different physical storage
+(local NVMe for queue, ADLS for collections) without affecting each
+other.
+
+#### Topic naming convention by modality
+
+Each ProximaDB modality owns dedicated topic names; they share the
+`{queue_root}` filesystem but cannot interfere because each topic lives
+in its own subdirectory:
+
+| Modality | Topic name | Use |
+|---|---|---|
+| Vector | `embed-ingest` | text → vector embedding before SST bulk-load |
+| Document | `doc-index` | tokenize + chunk before document collection write |
+| Graph | `graph-edge-discovery` | edge inference before graph mutation |
+| Observability | `obs-aggregation` | rollup events before observability collection write |
+| Cross-cutting | `billing-events` | meter ticks for KRU/KIU/KSU |
+| Cross-cutting | `dlq.{original_topic}` | dead-letter for failed messages from `{original_topic}` |
+
+### Drainer atomicity — process-then-commit + at-least-once semantics
+
+The drainer wraps each batch in a four-step boundary:
+
+```
+loop:
+  msgs    = consumer.poll(batch_size)        # [A] in-flight; not deleted
+  vectors = EmbeddingService.embed(msgs)     # [B] pure compute, no side effect
+  sst     = bulk_load_sst(vectors, msgs)     # [C] write SST + atomic manifest swap
+  consumer.ack(msg_ids)                      # [D] offset commit → segment reapable
+```
+
+The atomic boundary is `[C]`: the SST file is staged as a temp file
+under `{collection_root}/{name}/sst/.tmp/`, then a single
+compare-and-swap on the collection's manifest publishes it. Either the
+segment is committed or it isn't — there's no half-state.
+
+#### Crash recovery scenarios
+
+| Crash between | Outcome on restart |
+|---|---|
+| `[A]` and `[B]` | Message stays in queue; visibility timeout (or lease expiry) makes it available again; another consumer re-embeds + re-writes |
+| `[B]` and `[C]` | Same — inference is pure compute with no committed state; safe to redo |
+| `[C]` and `[D]` | SST is already in target collection; message still in queue (not yet ack'd); on restart, drainer re-embeds + writes again → **at-least-once duplicate** → LSM compaction folds records with the same oid |
+
+State is split deliberately:
+- **Queue state** (offset commits, in-flight tracking, lease metadata)
+  lives in `{queue_root}/...`.
+- **Collection state** (SST segments, manifest) lives in the collection
+  service via `CatalogManager`.
+- The drainer is the **only** component that touches both.
+
+The queue's `Consumer::ack` is the single source of truth for "did
+processing complete." The collection service doesn't know about queue
+messages — it just sees SST writes arrive.
+
+#### Exactly-once vs at-least-once — picked at-least-once + idempotent consumer
+
+True exactly-once requires distributed transactions (2PC between the
+queue and the collection storage). We don't build that; instead we
+commit to **at-least-once delivery + idempotent consumer**, which gives
+the same observable behavior to customers:
+
+| Property | How we achieve it |
+|---|---|
+| Message durability before delivery | Queue Strict-mode fsync before producer ack |
+| At-least-once delivery | Visibility timeout + lease expiry on crash means unacked messages are re-delivered |
+| Idempotent consumer | Drainer uses `tenant_id + source_record_id` as the SST oid; duplicate writes are folded by LSM compaction (same oid = single record) |
+| End-to-end exactly-once *behavior* | Customer sees the record exactly once in search because LSM dedup absorbs the duplicate writes from at-least-once delivery |
+
+**Producer contract.** The customer's `source_record_id` must be
+deterministic per logical record. If a customer generates a fresh UUID
+on every API call for the same logical document, duplicates land as
+distinct oids and won't be folded. Idempotent producers are a
+prerequisite for our exactly-once-by-content guarantee — this matches
+how Kafka+Cassandra, Pulsar+ScyllaDB, and every other production
+queue+storage pipeline works.
+
+#### Message removal — segment-level reaping, not per-message delete
+
+We do not delete individual messages on ack. The lifecycle is:
+
+```
+1. Producer writes message → appended to active disk segment
+2. Drainer ack → offset committed (small write to offset.meta)
+3. Active segment fills (16 MB default) → sealed; new active segment created
+4. Sealed segment eligible for archive after all partition consumers
+   have committed past its last offset
+5. Object tier uploader copies sealed segment to object archive
+6. Reaper deletes the on-disk sealed segment only after upload + all
+   acks past its end
+```
+
+Per-message deletion would be O(messages) random disk I/O — catastrophic
+for throughput. Segment-level deletion is one `unlink()` call per 16 MB
+chunk. The trade-off: a small window where ack'd messages still occupy
+disk space until the segment rotates. Acceptable because consumers never
+re-deliver ack'd messages, and the offset.meta is the authoritative
+cursor — segment retention is just storage, not state.
 
 ### Throughput economics — why the queue path is structurally cheaper
 
