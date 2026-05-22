@@ -118,6 +118,7 @@
 //! - **Real-time OLTP**: <20% hit rate (invalidation-heavy)
 
 pub mod adaptive_cache;
+pub mod batch_group;
 pub mod invalidation;
 pub mod mismatch_cost;
 pub mod per_category_policy;
