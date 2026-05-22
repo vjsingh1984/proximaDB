@@ -31,18 +31,40 @@ const SEGMENT_EXT: &str = "qseg";
 
 /// Replay persisted segments back into the in-memory tier on startup.
 ///
-/// Phase-staged: the `QueueClient` accessors that earlier drafts of this
-/// function depended on (`topic_names`, `topic_state`, `root_path`, `fs`)
-/// are being moved behind a new public surface. Until that lands, this
-/// function is a no-op stub so the workspace compiles end-to-end and the
-/// recovery wire-up is preserved in one place for the follow-up. Any
-/// downstream caller (e.g. lib.rs startup) keeps the same signature.
-pub async fn recover(_client: &QueueClient) -> crate::Result<usize> {
-    debug!("recovery: noop while QueueClient public accessors land");
-    Ok(0)
+/// Walks every registered topic, iterates its declared partitions,
+/// reads each partition directory's `.qseg` files in segment-id order,
+/// and pushes deserialized messages into the partition's
+/// `PartitionMemory`. Auto-created topics (registered lazily after
+/// startup) don't have segments to recover, so the lazy path skips
+/// recovery — only topics declared in `QueueConfig::topics` go through
+/// here.
+pub async fn recover(client: &QueueClient) -> crate::Result<usize> {
+    let topic_names = client.topic_names().await;
+    if topic_names.is_empty() {
+        debug!("recovery: no topics registered; nothing to replay");
+        return Ok(0);
+    }
+
+    let mut total_replayed = 0usize;
+    for topic in topic_names {
+        let Some(state) = client.topic_state(&topic).await else {
+            continue;
+        };
+        for partition_id in 0..state.config.partition_count {
+            let partition_dir = client
+                .root_path()
+                .join(&topic)
+                .join(partition_id.to_string());
+            let count =
+                replay_partition(client.fs(), &partition_dir, &topic, partition_id, &state).await?;
+            total_replayed += count;
+        }
+    }
+
+    info!(messages_replayed = total_replayed, "recovery complete");
+    Ok(total_replayed)
 }
 
-#[allow(dead_code)]
 async fn replay_partition(
     fs: &Arc<dyn QueueFs>,
     partition_dir: &Path,
@@ -149,4 +171,99 @@ async fn replay_partition(
         );
     }
     Ok(replayed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fs::LocalFs;
+    use crate::memory_tier::PartitionMemory;
+    use crate::{TopicConfig, TopicState};
+
+    fn topic_state(capacity: usize) -> TopicState {
+        TopicState {
+            config: TopicConfig {
+                partition_count: 1,
+                memory_capacity: capacity,
+                ..TopicConfig::default()
+            },
+            memory: vec![Arc::new(PartitionMemory::new(0, capacity))],
+            disk_writers: Vec::new(),
+        }
+    }
+
+    fn frame(message: &Message) -> Vec<u8> {
+        let encoded = bincode::serialize(message).unwrap();
+        let mut framed = Vec::with_capacity(4 + encoded.len());
+        framed.extend_from_slice(&(encoded.len() as u32).to_be_bytes());
+        framed.extend_from_slice(&encoded);
+        framed
+    }
+
+    #[tokio::test]
+    async fn replay_partition_returns_zero_for_missing_partition_dir() {
+        let fs = LocalFs::new_arc();
+        let root = tempfile::tempdir().unwrap();
+        let state = topic_state(4);
+
+        let replayed = replay_partition(&fs, &root.path().join("missing"), "orders", 0, &state)
+            .await
+            .unwrap();
+
+        assert_eq!(replayed, 0);
+        assert_eq!(state.memory[0].depth(), 0);
+    }
+
+    #[tokio::test]
+    async fn replay_partition_replays_valid_frames_and_stops_at_truncated_tail() {
+        let fs = LocalFs::new_arc();
+        let root = tempfile::tempdir().unwrap();
+        let partition_dir = root.path().join("orders").join("0");
+        fs.create_dir_all(&partition_dir).await.unwrap();
+        fs.append(&partition_dir.join("ignore.txt"), b"not a segment")
+            .await
+            .unwrap();
+
+        let mut segment_bytes = frame(&Message::new("orders", "tenant-a", b"survives".to_vec()));
+        segment_bytes.extend_from_slice(&99u32.to_be_bytes());
+        segment_bytes.extend_from_slice(b"short");
+        fs.append(&partition_dir.join("0000000000.qseg"), &segment_bytes)
+            .await
+            .unwrap();
+        let state = topic_state(4);
+
+        let replayed = replay_partition(&fs, &partition_dir, "orders", 0, &state)
+            .await
+            .unwrap();
+
+        assert_eq!(replayed, 1);
+        let restored = state.memory[0].try_pop_batch(10);
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].message.payload, b"survives");
+    }
+
+    #[tokio::test]
+    async fn replay_partition_surfaces_memory_full_as_persistence_error() {
+        let fs = LocalFs::new_arc();
+        let root = tempfile::tempdir().unwrap();
+        let partition_dir = root.path().join("orders").join("0");
+        fs.create_dir_all(&partition_dir).await.unwrap();
+
+        let mut segment_bytes = frame(&Message::new("orders", "tenant-a", b"first".to_vec()));
+        segment_bytes.extend_from_slice(&frame(&Message::new(
+            "orders",
+            "tenant-a",
+            b"second".to_vec(),
+        )));
+        fs.append(&partition_dir.join("0000000000.qseg"), &segment_bytes)
+            .await
+            .unwrap();
+        let state = topic_state(1);
+
+        let error = replay_partition(&fs, &partition_dir, "orders", 0, &state)
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("memory tier full"));
+    }
 }

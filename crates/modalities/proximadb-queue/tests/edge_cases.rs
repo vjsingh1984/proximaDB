@@ -12,11 +12,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use proximadb_queue::{
-    Message, QueueClient, QueueConfig, QueueError, TopicConfig, partition_for,
-};
+use proximadb_queue::{Message, QueueClient, QueueConfig, QueueError, TopicConfig, partition_for};
+use tempfile::TempDir;
 
-fn cfg(name: &str, partition_count: u32, memory_capacity: usize) -> QueueConfig {
+/// Per-test config backed by a fresh `TempDir` so each test gets a
+/// hermetic queue root. The TempDir handle is returned so the caller can
+/// keep it alive for the duration of the test — when it drops, the temp
+/// directory is removed.
+fn cfg(name: &str, partition_count: u32, memory_capacity: usize) -> (TempDir, QueueConfig) {
+    let tmp = tempfile::tempdir().expect("tempdir");
     let mut topics = HashMap::new();
     topics.insert(
         name.to_string(),
@@ -26,10 +30,23 @@ fn cfg(name: &str, partition_count: u32, memory_capacity: usize) -> QueueConfig 
             ..Default::default()
         },
     );
-    QueueConfig {
+    let cfg = QueueConfig {
+        root: format!("file://{}", tmp.path().display()),
         topics,
         ..QueueConfig::default()
-    }
+    };
+    (tmp, cfg)
+}
+
+/// Empty config variant — for the auto-create-on-first-send and
+/// no-subscription-poll tests that don't declare topics upfront.
+fn empty_cfg() -> (TempDir, QueueConfig) {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cfg = QueueConfig {
+        root: format!("file://{}", tmp.path().display()),
+        ..QueueConfig::default()
+    };
+    (tmp, cfg)
 }
 
 /// Soft pressure: hint surfaces at >= 75% memory tier fill. At this level
@@ -38,7 +55,8 @@ fn cfg(name: &str, partition_count: u32, memory_capacity: usize) -> QueueConfig 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn backpressure_soft_hint_surfaces_at_75_percent() {
     // Single partition, capacity 4. Soft threshold is 75% → 3 entries.
-    let client = QueueClient::open(cfg("t", 1, 4)).await.unwrap();
+    let (_tmp, cfg) = cfg("t", 1, 4);
+    let client = QueueClient::open(cfg).await.unwrap();
     let producer = client.producer();
 
     let mut last_hint = None;
@@ -51,7 +69,10 @@ async fn backpressure_soft_hint_surfaces_at_75_percent() {
     }
     // 3rd send pushed depth to 3/4 = 75% exactly → soft hint expected
     assert!(
-        matches!(last_hint, Some(proximadb_queue::message::BackpressureHint::Soft)),
+        matches!(
+            last_hint,
+            Some(proximadb_queue::message::BackpressureHint::Soft)
+        ),
         "soft pressure hint expected at 75% fill, got {:?}",
         last_hint
     );
@@ -62,7 +83,8 @@ async fn backpressure_soft_hint_surfaces_at_75_percent() {
 /// HTTP 429 + `Retry-After`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn backpressure_hard_errors_when_partition_full() {
-    let client = QueueClient::open(cfg("t", 1, 2)).await.unwrap();
+    let (_tmp, cfg) = cfg("t", 1, 2);
+    let client = QueueClient::open(cfg).await.unwrap();
     let producer = client.producer();
 
     // Fill the partition completely.
@@ -76,11 +98,12 @@ async fn backpressure_hard_errors_when_partition_full() {
         .expect("send 2");
 
     // Next send must hit hard pressure (memory tier at 100%, ≥ 95% threshold).
-    let result = producer
-        .send(Message::new("t", "tenant-a", vec![3]))
-        .await;
+    let result = producer.send(Message::new("t", "tenant-a", vec![3])).await;
     match result {
-        Err(QueueError::Backpressure { pct, retry_after_ms }) => {
+        Err(QueueError::Backpressure {
+            pct,
+            retry_after_ms,
+        }) => {
             assert!(pct >= 95.0, "expected pct ≥ 95, got {pct}");
             assert!(retry_after_ms > 0, "retry_after_ms should be non-zero");
         }
@@ -92,7 +115,8 @@ async fn backpressure_hard_errors_when_partition_full() {
 /// land on the same partition; pulled in send order.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ordering_preserved_within_a_partition() {
-    let client = QueueClient::open(cfg("t", 4, 256)).await.unwrap();
+    let (_tmp, cfg) = cfg("t", 4, 256);
+    let client = QueueClient::open(cfg).await.unwrap();
     let producer = client.producer();
     let consumer = client.consumer("g");
     consumer.subscribe("t", &[0, 1, 2, 3]).await.unwrap();
@@ -126,7 +150,8 @@ async fn ordering_preserved_within_a_partition() {
 /// messages. Spawn 8 tasks, each sending 32 messages → 256 total.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn concurrent_producers_are_race_safe() {
-    let client = QueueClient::open(cfg("t", 8, 1024)).await.unwrap();
+    let (_tmp, cfg) = cfg("t", 8, 1024);
+    let client = QueueClient::open(cfg).await.unwrap();
     let mut handles = Vec::new();
     for task_id in 0..8u32 {
         let p = client.producer();
@@ -145,20 +170,27 @@ async fn concurrent_producers_are_race_safe() {
 
     // Drain everything through one consumer and confirm 256 messages received.
     let consumer = client.consumer("g");
-    consumer.subscribe("t", &(0..8u32).collect::<Vec<_>>()).await.unwrap();
+    consumer
+        .subscribe("t", &(0..8u32).collect::<Vec<_>>())
+        .await
+        .unwrap();
     let mut total = 0;
     let deadline = Instant::now() + Duration::from_secs(2);
     while total < 256 && Instant::now() < deadline {
         let batch = consumer.poll(64, Duration::from_millis(50)).await.unwrap();
         total += batch.len();
     }
-    assert_eq!(total, 256, "should receive all concurrent sends, got {total}");
+    assert_eq!(
+        total, 256,
+        "should receive all concurrent sends, got {total}"
+    );
 }
 
 /// Consumer respects `max_batch`. Send 16, poll 4 — get 4 back (not 16).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn consumer_max_batch_caps_returned_size() {
-    let client = QueueClient::open(cfg("t", 2, 64)).await.unwrap();
+    let (_tmp, cfg) = cfg("t", 2, 64);
+    let client = QueueClient::open(cfg).await.unwrap();
     let producer = client.producer();
     let consumer = client.consumer("g");
     consumer.subscribe("t", &[0, 1]).await.unwrap();
@@ -171,20 +203,27 @@ async fn consumer_max_batch_caps_returned_size() {
 
     let batch = consumer.poll(4, Duration::from_millis(100)).await.unwrap();
     assert!(batch.len() <= 4, "poll(4) returned {} > 4", batch.len());
-    assert!(!batch.is_empty(), "poll(4) returned empty despite 16 enqueued");
+    assert!(
+        !batch.is_empty(),
+        "poll(4) returned empty despite 16 enqueued"
+    );
 }
 
 /// Poll returns empty after `max_wait` when no messages arrive.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn consumer_poll_timeout_returns_empty() {
-    let client = QueueClient::open(cfg("t", 1, 16)).await.unwrap();
+    let (_tmp, cfg) = cfg("t", 1, 16);
+    let client = QueueClient::open(cfg).await.unwrap();
     let consumer = client.consumer("g");
     consumer.subscribe("t", &[0]).await.unwrap();
 
     let start = Instant::now();
     let batch = consumer.poll(8, Duration::from_millis(100)).await.unwrap();
     let elapsed = start.elapsed();
-    assert!(batch.is_empty(), "should return empty on no-message timeout");
+    assert!(
+        batch.is_empty(),
+        "should return empty on no-message timeout"
+    );
     assert!(
         elapsed >= Duration::from_millis(80),
         "should wait approximately the full timeout, got {:?}",
@@ -202,7 +241,8 @@ async fn consumer_poll_timeout_returns_empty() {
 /// Subscribing to an out-of-range partition errors cleanly.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn subscribe_to_unknown_partition_errors() {
-    let client = QueueClient::open(cfg("t", 2, 16)).await.unwrap();
+    let (_tmp, cfg) = cfg("t", 2, 16);
+    let client = QueueClient::open(cfg).await.unwrap();
     let consumer = client.consumer("g");
     let err = consumer.subscribe("t", &[0, 5, 999]).await.unwrap_err();
     match err {
@@ -220,7 +260,8 @@ async fn subscribe_to_unknown_partition_errors() {
 /// upfront — first call wins.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn auto_create_topic_on_first_send() {
-    let client = QueueClient::open(QueueConfig::default()).await.unwrap();
+    let (_tmp, cfg) = empty_cfg();
+    let client = QueueClient::open(cfg).await.unwrap();
     let producer = client.producer();
     let receipt = producer
         .send(Message::new("never-declared", "tenant-x", vec![42]))
@@ -236,12 +277,16 @@ async fn auto_create_topic_on_first_send() {
 /// network failure and the second ack should be safe.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn ack_unknown_message_id_is_noop() {
-    let client = QueueClient::open(cfg("t", 1, 8)).await.unwrap();
+    let (_tmp, cfg) = cfg("t", 1, 8);
+    let client = QueueClient::open(cfg).await.unwrap();
     let consumer = client.consumer("g");
     consumer.subscribe("t", &[0]).await.unwrap();
 
     let bogus = proximadb_queue::MessageId::new(0, 0, 999_999);
-    consumer.ack(&[bogus]).await.expect("noop ack must not error");
+    consumer
+        .ack(&[bogus])
+        .await
+        .expect("noop ack must not error");
 }
 
 /// `partition_for` is consistent regardless of partition_count not changing,
@@ -262,7 +307,8 @@ async fn partition_for_always_in_range() {
 /// before subscribing.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn poll_without_subscription_returns_empty_quickly() {
-    let client = QueueClient::open(QueueConfig::default()).await.unwrap();
+    let (_tmp, cfg) = empty_cfg();
+    let client = QueueClient::open(cfg).await.unwrap();
     let consumer = client.consumer("g");
 
     let start = Instant::now();
@@ -281,7 +327,8 @@ async fn poll_without_subscription_returns_empty_quickly() {
 /// (Phase 1B in-process leasing; cross-process disk leases land later.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn second_consumer_sees_remaining_messages_after_first_drains() {
-    let client = QueueClient::open(cfg("t", 1, 16)).await.unwrap();
+    let (_tmp, cfg) = cfg("t", 1, 16);
+    let client = QueueClient::open(cfg).await.unwrap();
     let producer = client.producer();
     for i in 0..8u32 {
         producer
@@ -298,13 +345,18 @@ async fn second_consumer_sees_remaining_messages_after_first_drains() {
     let c2 = client.consumer("g");
     c2.subscribe("t", &[0]).await.unwrap();
     let batch2 = c2.poll(8, Duration::from_millis(50)).await.unwrap();
-    assert_eq!(batch2.len(), 4, "second consumer should see the remaining 4");
+    assert_eq!(
+        batch2.len(),
+        4,
+        "second consumer should see the remaining 4"
+    );
 }
 
 /// Shutdown is idempotent and doesn't panic when called twice.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_is_idempotent() {
-    let client = QueueClient::open(QueueConfig::default()).await.unwrap();
+    let (_tmp, cfg) = empty_cfg();
+    let client = QueueClient::open(cfg).await.unwrap();
     client.shutdown().await.unwrap();
     client.shutdown().await.unwrap();
 }
@@ -313,7 +365,8 @@ async fn shutdown_is_idempotent() {
 /// `consumer()` don't deep-copy state. Sanity check for hot-path use.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn producer_and_consumer_handles_are_cheap_to_create() {
-    let client = QueueClient::open(QueueConfig::default()).await.unwrap();
+    let (_tmp, cfg) = empty_cfg();
+    let client = QueueClient::open(cfg).await.unwrap();
     for _ in 0..1000 {
         let _p = client.producer();
         let _c = client.consumer("g");

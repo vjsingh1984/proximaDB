@@ -44,8 +44,15 @@ pub struct QueueConfig {
 
 impl Default for QueueConfig {
     fn default() -> Self {
+        // Use the OS temp dir as the default root so cargo test, dev
+        // shells, and unit benchmarks work out of the box without root
+        // privileges. Production deployments override this via the
+        // `PROXIMADB_QUEUE_ROOT` env var (see `from_env`) or by setting
+        // `root` explicitly in config — `/var/lib/proximadb/queue` is
+        // typical for systemd-managed nodes.
+        let temp_root = std::env::temp_dir().join("proximadb-queue");
         Self {
-            root: "file:///var/lib/proximadb/queue".to_string(),
+            root: format!("file://{}", temp_root.display()),
             object_archive: None,
             default_sync_mode: SyncMode::Strict,
             topics: HashMap::new(),
@@ -98,5 +105,90 @@ impl QueueConfig {
             };
         }
         cfg
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_queue_config_is_local_strict_and_has_no_declared_topics() {
+        let cfg = QueueConfig::default();
+
+        assert!(cfg.root.starts_with("file://"));
+        assert!(cfg.root.contains("proximadb-queue"));
+        assert_eq!(cfg.object_archive, None);
+        assert_eq!(cfg.default_sync_mode, SyncMode::Strict);
+        assert!(cfg.topics.is_empty());
+    }
+
+    #[test]
+    fn default_topic_config_matches_queue_operational_profile() {
+        let cfg = TopicConfig::default();
+
+        assert_eq!(cfg.partition_count, 16);
+        assert_eq!(cfg.memory_capacity, 4096);
+        assert_eq!(cfg.disk_rotation_size_mb, 16);
+        assert_eq!(cfg.archive_after, None);
+        assert_eq!(cfg.max_attempts, 5);
+        assert_eq!(cfg.sync_mode_override, None);
+        assert_eq!(cfg.group_commit_max_wait, Duration::from_millis(5));
+        assert_eq!(cfg.group_commit_max_batch, 64);
+    }
+
+    #[test]
+    fn sync_mode_uses_lowercase_wire_names() {
+        assert_eq!(
+            serde_json::to_string(&SyncMode::Strict).unwrap(),
+            "\"strict\""
+        );
+        assert_eq!(serde_json::to_string(&SyncMode::Lazy).unwrap(), "\"lazy\"");
+        assert_eq!(
+            serde_json::from_str::<SyncMode>("\"strict\"").unwrap(),
+            SyncMode::Strict
+        );
+        assert_eq!(
+            serde_json::from_str::<SyncMode>("\"lazy\"").unwrap(),
+            SyncMode::Lazy
+        );
+    }
+
+    #[test]
+    fn queue_config_round_trips_with_topic_overrides() {
+        let mut topics = HashMap::new();
+        topics.insert(
+            "ingest".to_string(),
+            TopicConfig {
+                partition_count: 4,
+                memory_capacity: 128,
+                disk_rotation_size_mb: 8,
+                archive_after: Some(Duration::from_secs(60)),
+                max_attempts: 3,
+                sync_mode_override: Some(SyncMode::Lazy),
+                group_commit_max_wait: Duration::from_millis(10),
+                group_commit_max_batch: 32,
+            },
+        );
+        let cfg = QueueConfig {
+            root: "file:///tmp/proximadb-queue-test".to_string(),
+            object_archive: Some("s3://bucket/archive".to_string()),
+            default_sync_mode: SyncMode::Strict,
+            topics,
+        };
+
+        let restored: QueueConfig =
+            serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+
+        assert_eq!(restored.root, "file:///tmp/proximadb-queue-test");
+        assert_eq!(
+            restored.object_archive.as_deref(),
+            Some("s3://bucket/archive")
+        );
+        assert_eq!(restored.default_sync_mode, SyncMode::Strict);
+        let topic = restored.topics.get("ingest").unwrap();
+        assert_eq!(topic.partition_count, 4);
+        assert_eq!(topic.sync_mode_override, Some(SyncMode::Lazy));
+        assert_eq!(topic.group_commit_max_wait, Duration::from_millis(10));
     }
 }

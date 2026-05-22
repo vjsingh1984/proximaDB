@@ -52,44 +52,74 @@ pub use message::{Message, MessageId, MessageReceipt};
 pub use producer::Producer;
 pub use topic::{PartitionId, partition_for};
 
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use dashmap::DashMap;
+use tokio::sync::RwLock;
 use tracing::info;
 
+use crate::disk_tier::PartitionDiskWriter;
+use crate::fs::{LocalFs, QueueFs};
 use crate::memory_tier::PartitionMemory;
 
 /// Handle to the running queue subsystem. Holds per-topic state and serves
 /// `Producer` / `Consumer` handles to callers.
 pub struct QueueClient {
     config: QueueConfig,
-    // topic -> partition_id -> memory tier
-    topics: DashMap<String, Arc<TopicState>>,
+    /// Resolved filesystem root (URL parsed to a local PathBuf for the
+    /// `file://` scheme; full URL preserved in `config.root` for the
+    /// adapter case once `proximadb-filesystem` is extracted).
+    root_path: PathBuf,
+    fs: Arc<dyn QueueFs>,
+    topics: RwLock<HashMap<String, Arc<TopicState>>>,
 }
 
 pub(crate) struct TopicState {
     pub(crate) config: TopicConfig,
     pub(crate) memory: Vec<Arc<PartitionMemory>>,
+    pub(crate) disk_writers: Vec<Arc<PartitionDiskWriter>>,
 }
 
 impl QueueClient {
     /// Open (or initialize) a queue subsystem from the given config.
     ///
-    /// Phase 1B scaffold: initializes the memory tier only. Disk recovery
-    /// hook and object-tier upload start are wired in follow-up commits.
+    /// Pre-creates topics declared in `config.topics`, opens their disk
+    /// writers, and runs `recovery::recover` to replay any segments left
+    /// on disk from a previous run. Topics not declared in config get
+    /// auto-created lazily on first send/subscribe.
     pub async fn open(config: QueueConfig) -> Result<Arc<Self>> {
+        let root_path = resolve_local_root(&config.root)?;
+        let fs: Arc<dyn QueueFs> = LocalFs::new_arc();
+        fs.create_dir_all(&root_path).await?;
+
         let client = Arc::new(Self {
             config,
-            topics: DashMap::new(),
+            root_path,
+            fs,
+            topics: RwLock::new(HashMap::new()),
         });
-        // Pre-create the topic states declared in config so producers and
-        // consumers don't race on first use.
-        for (name, topic_cfg) in client.config.topics.iter() {
-            client.ensure_topic(name, topic_cfg.clone());
+
+        // Snapshot the configured topic names to drop the borrow on
+        // client.config before the async ensure_topic_async calls.
+        let topic_specs: Vec<(String, TopicConfig)> = client
+            .config
+            .topics
+            .iter()
+            .map(|(name, cfg)| (name.clone(), cfg.clone()))
+            .collect();
+        for (name, topic_cfg) in topic_specs {
+            client.ensure_topic_async(&name, topic_cfg).await?;
         }
+
+        // Replay any segments left on disk from a previous run. Recovery
+        // is per-topic; topics auto-created later don't have any segments
+        // to recover, so the lazy path skips recovery.
+        recovery::recover(&client).await?;
+
         info!(
             root = %client.config.root,
-            topics = client.topics.len(),
+            topics = client.topics.read().await.len(),
             "proximadb-queue opened"
         );
         Ok(client)
@@ -106,7 +136,8 @@ impl QueueClient {
     }
 
     /// Graceful shutdown. Phase 1B scaffold: no background workers to stop
-    /// yet; will drain in-flight fsync batches once the disk tier lands.
+    /// yet beyond the group-commit drainer (which exits on its own when
+    /// the QueueClient is dropped).
     pub async fn shutdown(&self) -> Result<()> {
         info!("proximadb-queue shutdown");
         Ok(())
@@ -116,15 +147,45 @@ impl QueueClient {
         &self.config
     }
 
-    pub(crate) fn topic_state(&self, topic: &str) -> Option<Arc<TopicState>> {
-        self.topics.get(topic).map(|e| e.value().clone())
+    pub(crate) fn fs(&self) -> &Arc<dyn QueueFs> {
+        &self.fs
+    }
+
+    pub(crate) fn root_path(&self) -> &PathBuf {
+        &self.root_path
+    }
+
+    pub(crate) async fn topic_state(&self, topic: &str) -> Option<Arc<TopicState>> {
+        self.topics.read().await.get(topic).cloned()
+    }
+
+    pub(crate) async fn topic_names(&self) -> Vec<String> {
+        self.topics.read().await.keys().cloned().collect()
     }
 
     /// Auto-create a topic at first use with default config if it's not
-    /// explicitly declared in `QueueConfig::topics`.
-    pub(crate) fn ensure_topic(&self, topic: &str, cfg: TopicConfig) -> Arc<TopicState> {
-        if let Some(entry) = self.topics.get(topic) {
-            return entry.value().clone();
+    /// explicitly declared in `QueueConfig::topics`. Opens disk writers
+    /// for every partition.
+    pub(crate) async fn ensure_topic_async(
+        &self,
+        topic: &str,
+        cfg: TopicConfig,
+    ) -> Result<Arc<TopicState>> {
+        if let Some(existing) = self.topics.read().await.get(topic) {
+            return Ok(existing.clone());
+        }
+
+        let mut disk_writers = Vec::with_capacity(cfg.partition_count as usize);
+        for p in 0..cfg.partition_count {
+            let writer = PartitionDiskWriter::open(
+                topic.to_string(),
+                p,
+                self.root_path.clone(),
+                self.fs.clone(),
+                cfg.clone(),
+            )
+            .await?;
+            disk_writers.push(writer);
         }
         let partitions: Vec<Arc<PartitionMemory>> = (0..cfg.partition_count)
             .map(|p| Arc::new(PartitionMemory::new(p, cfg.memory_capacity)))
@@ -132,8 +193,151 @@ impl QueueClient {
         let state = Arc::new(TopicState {
             config: cfg,
             memory: partitions,
+            disk_writers,
         });
-        self.topics.insert(topic.to_string(), state.clone());
-        state
+
+        let mut topics = self.topics.write().await;
+        // Double-check after re-acquiring the write lock — another caller
+        // may have created the topic in the gap.
+        if let Some(existing) = topics.get(topic) {
+            return Ok(existing.clone());
+        }
+        topics.insert(topic.to_string(), state.clone());
+        Ok(state)
+    }
+}
+
+/// Parse `config.root` (a URL like `file:///var/lib/proximadb/queue` or a
+/// bare path) into a local PathBuf. Object-store schemes (`adls://`,
+/// `s3://`, etc.) are not supported until the proximadb-filesystem
+/// extraction lands and the adapter path is wired.
+fn resolve_local_root(root: &str) -> Result<PathBuf> {
+    if let Some(stripped) = root.strip_prefix("file://") {
+        Ok(PathBuf::from(stripped))
+    } else if root.contains("://") {
+        Err(QueueError::Persistence(format!(
+            "queue root scheme not supported by LocalFs: {root}; \
+             wait for proximadb-filesystem extraction"
+        )))
+    } else {
+        Ok(PathBuf::from(root))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn test_config(root: String) -> QueueConfig {
+        let mut config = QueueConfig {
+            root,
+            default_sync_mode: SyncMode::Lazy,
+            ..QueueConfig::default()
+        };
+        config.topics.insert(
+            "ingest".to_string(),
+            TopicConfig {
+                partition_count: 2,
+                memory_capacity: 4,
+                sync_mode_override: Some(SyncMode::Lazy),
+                ..TopicConfig::default()
+            },
+        );
+        config
+    }
+
+    #[test]
+    fn resolve_local_root_accepts_file_urls_and_bare_paths() {
+        assert_eq!(
+            resolve_local_root("file:///tmp/proximadb-queue").unwrap(),
+            PathBuf::from("/tmp/proximadb-queue")
+        );
+        assert_eq!(
+            resolve_local_root("/var/lib/proximadb/queue").unwrap(),
+            PathBuf::from("/var/lib/proximadb/queue")
+        );
+    }
+
+    #[test]
+    fn resolve_local_root_rejects_non_local_url_schemes() {
+        let error = resolve_local_root("s3://bucket/queue").unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("queue root scheme not supported")
+        );
+        assert!(error.to_string().contains("s3://bucket/queue"));
+    }
+
+    #[tokio::test]
+    async fn open_precreates_declared_topics_and_exposes_lightweight_handles() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = QueueClient::open(test_config(format!("file://{}", dir.path().display())))
+            .await
+            .unwrap();
+
+        assert_eq!(client.root_path(), &dir.path().to_path_buf());
+        assert_eq!(client.topic_names().await, vec!["ingest".to_string()]);
+        let topic = client.topic_state("ingest").await.unwrap();
+        assert_eq!(topic.config.partition_count, 2);
+        assert_eq!(topic.memory.len(), 2);
+        assert_eq!(topic.disk_writers.len(), 2);
+        assert_eq!(client.consumer("group-a").group_id(), "group-a");
+        client.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn lazy_send_subscribe_poll_and_ack_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = QueueClient::open(test_config(format!("file://{}", dir.path().display())))
+            .await
+            .unwrap();
+        let producer = client.producer();
+        let message = Message::new("ingest", "tenant-a", b"payload".to_vec());
+
+        let receipt = producer.send(message).await.unwrap();
+        assert!(receipt.fsynced_at.is_none());
+        assert_eq!(receipt.message_id.partition(), Some(receipt.partition));
+
+        let consumer = client.consumer("group-a");
+        consumer
+            .subscribe("ingest", &[receipt.partition])
+            .await
+            .unwrap();
+        let polled = consumer.poll(10, Duration::from_millis(1)).await.unwrap();
+        assert_eq!(polled.len(), 1);
+        assert_eq!(polled[0].payload, b"payload");
+
+        consumer.ack(&[receipt.message_id]).await.unwrap();
+        assert!(
+            consumer
+                .poll(10, Duration::from_millis(1))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn producer_auto_creates_missing_topic_with_default_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = QueueClient::open(QueueConfig {
+            root: format!("file://{}", dir.path().display()),
+            default_sync_mode: SyncMode::Lazy,
+            ..QueueConfig::default()
+        })
+        .await
+        .unwrap();
+
+        let receipt = client
+            .producer()
+            .send(Message::new("auto", "tenant-a", vec![1]))
+            .await
+            .unwrap();
+
+        assert!(client.topic_state("auto").await.is_some());
+        assert_eq!(receipt.message_id.partition(), Some(receipt.partition));
     }
 }

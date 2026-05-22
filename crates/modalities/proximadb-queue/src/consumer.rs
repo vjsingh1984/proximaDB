@@ -11,11 +11,11 @@ use dashmap::DashMap;
 use tokio::sync::Mutex;
 use tracing::debug;
 
+use crate::QueueClient;
 use crate::error::{QueueError, Result};
 use crate::memory_tier::MemoryEntry;
 use crate::message::{Message, MessageId};
 use crate::topic::PartitionId;
-use crate::QueueClient;
 
 #[derive(Clone)]
 pub struct Consumer {
@@ -52,11 +52,14 @@ impl Consumer {
     /// disk-backed lease files lands when the disk tier is wired.
     pub async fn subscribe(&self, topic: &str, partitions: &[PartitionId]) -> Result<()> {
         // Auto-create the topic if missing (same shape as Producer::send).
-        let state = self
-            .client
-            .topic_state(topic)
-            .or_else(|| Some(self.client.ensure_topic(topic, Default::default())))
-            .ok_or_else(|| QueueError::TopicNotFound(topic.to_string()))?;
+        let state = match self.client.topic_state(topic).await {
+            Some(s) => s,
+            None => {
+                self.client
+                    .ensure_topic_async(topic, Default::default())
+                    .await?
+            }
+        };
         for &p in partitions {
             if (p as usize) >= state.memory.len() {
                 return Err(QueueError::PartitionNotFound {
@@ -85,7 +88,7 @@ impl Consumer {
             let mut out = Vec::with_capacity(max_batch);
             for entry in self.in_flight.iter() {
                 let (topic, partition) = entry.key().clone();
-                let state = match self.client.topic_state(&topic) {
+                let state = match self.client.topic_state(&topic).await {
                     Some(s) => s,
                     None => continue,
                 };
@@ -119,7 +122,7 @@ impl Consumer {
             }
             if let Some(entry) = self.in_flight.iter().next() {
                 let (topic, partition) = entry.key().clone();
-                if let Some(state) = self.client.topic_state(&topic) {
+                if let Some(state) = self.client.topic_state(&topic).await {
                     if let Some(part) = state.memory.get(partition as usize).cloned() {
                         let _ = tokio::time::timeout_at(deadline, part.notify.notified()).await;
                     }
