@@ -124,6 +124,7 @@ pub mod mismatch_cost;
 pub mod per_category_policy;
 pub mod plan_cache;
 pub mod query_result_cache;
+pub mod result_cache_gate;
 
 // Re-export main types
 pub use adaptive_cache::{
