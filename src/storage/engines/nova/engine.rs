@@ -1402,6 +1402,7 @@ impl UnifiedStorageEngine for NovaEngine {
                 engine: 0, // engine enum slot — flush_ops doesn't read this
                 engine_config: std::collections::HashMap::new(),
                 base_location: base_path.to_string(),
+                assigned_at: 0,
             }),
         });
 
