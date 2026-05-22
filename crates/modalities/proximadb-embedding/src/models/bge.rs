@@ -52,6 +52,19 @@ impl Variant {
     }
 }
 
+/// Resolve the BGE variant from an optional env-var string.
+///
+/// Recognized values (case-insensitive, whitespace trimmed):
+/// `small` (default, 384-dim), `large` (1024-dim), `m3` (1024-dim,
+/// multilingual). Unknown / malformed values fall back to `Small`.
+pub fn resolve_variant(env_var: Option<&str>) -> Variant {
+    match env_var.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
+        Some("large") | Some("bge-large") | Some("bge-large-en-v1.5") => Variant::Large,
+        Some("m3") | Some("bge-m3") => Variant::M3,
+        _ => Variant::Small,
+    }
+}
+
 /// Resolve the BGE session pool size from an optional env-var string.
 ///
 /// Default 1, parsed as usize, clamped to [1, 32]. Garbage input falls back
@@ -862,6 +875,42 @@ mod policy_tests {
         assert_eq!(resolve_provider(Some("vulkan")), EpKind::Cpu);
         assert_eq!(resolve_provider(Some("garbage")), EpKind::Cpu);
         assert_eq!(resolve_provider(Some("")), EpKind::Cpu);
+    }
+
+    // ---------- resolve_variant ----------
+
+    #[test]
+    fn variant_defaults_to_small() {
+        assert!(matches!(resolve_variant(None), Variant::Small));
+        assert!(matches!(resolve_variant(Some("")), Variant::Small));
+        assert!(matches!(resolve_variant(Some("small")), Variant::Small));
+    }
+
+    #[test]
+    fn variant_parses_large() {
+        assert!(matches!(resolve_variant(Some("large")), Variant::Large));
+        assert!(matches!(resolve_variant(Some("LARGE")), Variant::Large));
+        assert!(matches!(resolve_variant(Some("  large  ")), Variant::Large));
+        assert!(matches!(resolve_variant(Some("bge-large")), Variant::Large));
+        assert!(matches!(
+            resolve_variant(Some("bge-large-en-v1.5")),
+            Variant::Large
+        ));
+        // dimension must match the route table.
+        assert_eq!(resolve_variant(Some("large")).dimension(), 1024);
+    }
+
+    #[test]
+    fn variant_parses_m3() {
+        assert!(matches!(resolve_variant(Some("m3")), Variant::M3));
+        assert!(matches!(resolve_variant(Some("bge-m3")), Variant::M3));
+        assert_eq!(resolve_variant(Some("m3")).dimension(), 1024);
+    }
+
+    #[test]
+    fn variant_unknown_falls_back_to_small() {
+        assert!(matches!(resolve_variant(Some("garbage")), Variant::Small));
+        assert!(matches!(resolve_variant(Some("medium")), Variant::Small));
     }
 
     // ---------- accel_description ----------

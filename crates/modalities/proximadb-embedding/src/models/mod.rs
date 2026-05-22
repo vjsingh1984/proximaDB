@@ -81,6 +81,14 @@ impl ModelRegistry {
                     )
                 })?
                 .embed_batch(model, texts),
+            EmbedRoute::OpenAi { model } => Err(EmbeddingError::ModelUnavailable(format!(
+                "Direct OpenAI route (model={model:?}) is declared but the HTTP client is not yet \
+                 implemented; configure as Azure OpenAI or BYO endpoint in the meantime."
+            ))),
+            EmbedRoute::Cohere { model } => Err(EmbeddingError::ModelUnavailable(format!(
+                "Cohere route (model={model:?}) is declared but the HTTP client is not yet \
+                 implemented; use BYO endpoint pointing at the Cohere proxy in the meantime."
+            ))),
             EmbedRoute::Byo {
                 url,
                 auth,

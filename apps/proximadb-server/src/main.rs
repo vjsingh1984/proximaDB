@@ -211,8 +211,29 @@ async fn main() -> anyhow::Result<()> {
     // async tokio runtimes, and registers Prometheus instruments. Crashing
     // here is intentional — embedding is part of the data plane, not optional.
     info!("🧠 Initializing embedding service (in-process, Arc-shared)...");
+    // Resolve the BGE variant from PROXIMADB_EMBED_VARIANT (small/large/m3,
+    // default small). Maps to the corresponding EmbedRoute and ONNX file
+    // resolved by Variant::onnx_path.
+    let variant = proximadb_embedding::models::bge::resolve_variant(
+        std::env::var("PROXIMADB_EMBED_VARIANT").ok().as_deref(),
+    );
+    let route = match variant {
+        proximadb_embedding::models::bge::Variant::Small => {
+            proximadb_embedding::config::EmbedRoute::BgeSmall
+        }
+        proximadb_embedding::models::bge::Variant::Large => {
+            proximadb_embedding::config::EmbedRoute::BgeLarge
+        }
+        proximadb_embedding::models::bge::Variant::M3 => {
+            proximadb_embedding::config::EmbedRoute::BgeM3
+        }
+    };
+    info!(?variant, ?route, "selected BGE variant from PROXIMADB_EMBED_VARIANT");
     proximadb_embedding::EmbeddingService::initialize(
-        proximadb_embedding::config::EmbeddingConfig::default(),
+        proximadb_embedding::config::EmbeddingConfig {
+            route,
+            chunk: proximadb_embedding::config::ChunkConfig::default(),
+        },
         proximadb_embedding::scheduler::EmbedSchedulerConfig::from_env(),
     )
     .map_err(|e| anyhow::anyhow!("embedding service init: {}", e))?;
