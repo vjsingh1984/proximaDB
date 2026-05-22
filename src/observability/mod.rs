@@ -74,6 +74,8 @@ pub mod query;
 /// SearchPlanTrace — per-query telemetry envelope feeding KRU billing and the
 /// learned planner v2 (LLD §10).
 pub mod search_plan_trace;
+/// Post-execution SearchPlanTrace builder.
+pub mod search_plan_trace_builder;
 /// Time-partitioned storage for observability data with WAL durability.
 pub mod storage;
 
