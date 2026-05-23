@@ -23,6 +23,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 use crate::config::EmbedRoute;
+use proximadb_records::EmbeddingScalarType;
 use crate::{EmbeddingError, Result};
 
 pub struct ModelRegistry {
@@ -179,5 +180,71 @@ impl BatchConversionSummary {
     /// doesn't inflate the metric.
     pub fn was_converted(&self) -> bool {
         self.from != self.to
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proximadb_records::EmbeddingValues;
+
+    #[test]
+    fn batch_conversion_summary_was_converted_only_on_mismatch() {
+        let same = BatchConversionSummary {
+            from: EmbeddingScalarType::Fp32,
+            to: EmbeddingScalarType::Fp32,
+            element_count: 1024,
+            batch_count: 1,
+        };
+        assert!(!same.was_converted(), "fp32→fp32 must not be flagged as a conversion");
+
+        let narrowed = BatchConversionSummary {
+            from: EmbeddingScalarType::Fp32,
+            to: EmbeddingScalarType::Fp16,
+            element_count: 1024,
+            batch_count: 1,
+        };
+        assert!(narrowed.was_converted());
+    }
+
+    // The Models::embed_batch_at_precision integration test exercises
+    // EVERY route's native_precision contract by going through the
+    // ModelRegistry. The synthetic test below covers the projection
+    // math without needing a real ONNX session.
+    //
+    // Live BGE / Azure / OpenAI / Cohere paths are exercised by
+    // higher-level integration tests that own those sessions; this
+    // unit test pins the projection contract.
+
+    #[test]
+    fn projection_to_fp16_round_trips_within_fp16_epsilon() {
+        // Mirror what embed_batch_at_precision does internally for one
+        // batch element. If this drifts, embed_batch_at_precision's
+        // contract changes too.
+        let raw: Vec<f32> = (0..16).map(|i| (i as f32) * 0.05).collect();
+        let projected = crate::precision::boundary::project_to_canonical(
+            crate::precision::boundary::EmbeddingOutput::Fp32(raw.clone()),
+            EmbeddingScalarType::Fp16,
+        );
+        let back = match projected {
+            EmbeddingValues::Fp16(v) => v.iter().map(|x| x.to_f32()).collect::<Vec<f32>>(),
+            _ => panic!("expected Fp16 variant"),
+        };
+        for (got, want) in back.iter().zip(raw.iter()) {
+            assert!((got - want).abs() < 1e-3, "fp16 round-trip too lossy");
+        }
+    }
+
+    #[test]
+    fn projection_to_fp32_is_identity_clone() {
+        let raw: Vec<f32> = vec![0.1, 0.2, 0.3, 0.4];
+        let projected = crate::precision::boundary::project_to_canonical(
+            crate::precision::boundary::EmbeddingOutput::Fp32(raw.clone()),
+            EmbeddingScalarType::Fp32,
+        );
+        match projected {
+            EmbeddingValues::Fp32(v) => assert_eq!(v, raw),
+            _ => panic!("expected Fp32 variant"),
+        }
     }
 }

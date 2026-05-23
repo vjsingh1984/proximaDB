@@ -1773,7 +1773,29 @@ impl DmlService {
         stats.last_analyzed_ms = Some(Self::now_unix_ms());
         if let Err(e) = catalog.update_statistics(&table_id, stats).await {
             warn!(table = %table_name, error = %e, "Failed to update row-count statistics after DML");
+        } else {
+            Self::bump_corpus_version_for_stats(&table_id).await;
         }
+    }
+
+    /// Bump the process-wide corpus_version after a successful stats
+    /// refresh so cached planner outputs invalidate against the new
+    /// selectivity numbers. Extracts tenant from `namespace[0]` per
+    /// the catalog convention; skips when the table isn't
+    /// tenant-scoped.
+    async fn bump_corpus_version_for_stats(table_id: &crate::catalog::TableIdentifier) {
+        let Some(tenant_id) = table_id.namespace.first() else {
+            return;
+        };
+        let version = crate::catalog::CorpusVersionRegistry::global()
+            .bump(tenant_id, &table_id.name)
+            .await;
+        tracing::debug!(
+            table = %table_id.name,
+            tenant = %tenant_id,
+            version,
+            "🔄 corpus_version bumped after stats refresh"
+        );
     }
 
     /// Increment per-column null counts in catalog statistics after a successful INSERT.
@@ -1802,6 +1824,8 @@ impl DmlService {
         stats.last_analyzed_ms = Some(Self::now_unix_ms());
         if let Err(e) = catalog.update_statistics(&table_id, stats).await {
             warn!(table = %table_name, error = %e, "Failed to update column-null statistics after INSERT");
+        } else {
+            Self::bump_corpus_version_for_stats(&table_id).await;
         }
     }
 
@@ -1883,6 +1907,8 @@ impl DmlService {
         stats.last_analyzed_ms = Some(Self::now_unix_ms());
         if let Err(e) = catalog.update_statistics(&table_id, stats).await {
             warn!(table = %table_name, error = %e, "Failed to update column min/max statistics after INSERT");
+        } else {
+            Self::bump_corpus_version_for_stats(&table_id).await;
         }
     }
 
@@ -1948,6 +1974,8 @@ impl DmlService {
         stats.last_analyzed_ms = Some(Self::now_unix_ms());
         if let Err(e) = catalog.update_statistics(&table_id, stats).await {
             warn!(table = %table_name, error = %e, "Failed to update column NDV statistics after INSERT");
+        } else {
+            Self::bump_corpus_version_for_stats(&table_id).await;
         }
     }
 

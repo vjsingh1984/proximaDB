@@ -55,7 +55,12 @@ pub mod service;
 pub mod tokenizer;
 
 pub use config::{ChunkConfig, EmbedRoute, EmbeddingConfig};
-pub use models::ModelRegistry;
+pub use models::{BatchConversionSummary, ModelRegistry};
+// INT-1 (mini-phase): typed embedding values for native-precision
+// inference output. Re-exported from proximadb-records so callers don't
+// need to add the records crate as a direct dep just to consume
+// embed_batch_at_precision.
+pub use proximadb_records::{EmbeddingScalarType, EmbeddingValues};
 pub use scheduler::{EmbedScheduler, IngestMode, Priority};
 pub use service::{EmbedBatch, EmbedRecord, EmbedResult, EmbeddingService};
 
