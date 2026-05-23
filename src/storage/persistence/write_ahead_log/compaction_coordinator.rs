@@ -44,7 +44,7 @@ pub struct CompactionCoordinator {
     sst_engine: Arc<SstEngine>,
 
     /// Compaction configuration
-    config: Option<CompactionConfig>,
+    config: Option<WalCompactionConfig>,
 
     /// Active compaction tracking
     active_compactions: Arc<Mutex<HashMap<String, CompactionTask>>>,
@@ -91,9 +91,12 @@ impl Default for CollectionCompactionState {
     }
 }
 
+/// Backwards-compat alias for [`WalCompactionConfig`].
+pub type CompactionConfig = WalCompactionConfig;
+
 /// Compaction configuration
 #[derive(Debug, Clone)]
-pub struct CompactionConfig {
+pub struct WalCompactionConfig {
     /// Maximum files before triggering compaction
     pub max_files_before_compaction: usize,
 
@@ -113,7 +116,7 @@ pub struct CompactionConfig {
     pub max_concurrent_compactions: usize,
 }
 
-impl Default for CompactionConfig {
+impl Default for WalCompactionConfig {
     fn default() -> Self {
         Self {
             max_files_before_compaction: 5, // Reduced from 10 to be more aggressive
@@ -197,7 +200,7 @@ impl CompactionCoordinator {
     pub fn new(
         viper_engine: Arc<crate::storage::engines::viper::engine::ViperEngine>,
         sst_engine: Arc<SstEngine>,
-        config: Option<CompactionConfig>,
+        config: Option<WalCompactionConfig>,
         axis_manager: Option<Arc<AxisManager>>,
     ) -> Self {
         let config_ref = config.as_ref();
@@ -877,7 +880,7 @@ mod tests {
 
     #[test]
     fn test_compaction_config() {
-        let config = CompactionConfig::default();
+        let config = WalCompactionConfig::default();
         assert_eq!(config.max_files_before_compaction, 5); // Changed from 10 to 5 to match actual default
         assert_eq!(config.max_size_before_compaction, 100 * 1024 * 1024);
         assert_eq!(config.max_flushes_before_compaction, 5);

@@ -106,7 +106,7 @@ pub trait StorageEngine: Send + Sync {
     fn file_extension(&self) -> &str;
 
     /// Get compaction configuration for this engine
-    fn compaction_config(&self) -> CompactionConfig;
+    fn compaction_config(&self) -> OrchestratorCompactionConfig;
 
     /// Create a compaction task from discovered files
     fn create_compaction_task(
@@ -126,9 +126,12 @@ pub trait StorageEngine: Send + Sync {
     ) -> Result<Self::CompactionResult>;
 }
 
+/// Backwards-compat alias for [`OrchestratorCompactionConfig`].
+pub type CompactionConfig = OrchestratorCompactionConfig;
+
 /// Configuration for compaction behavior
 #[derive(Debug, Clone)]
-pub struct CompactionConfig {
+pub struct OrchestratorCompactionConfig {
     /// Threshold for Level 0 compaction (number of files)
     pub level0_threshold: usize,
     /// Threshold for higher level compaction (number of files)
@@ -149,7 +152,7 @@ pub struct CompactionConfig {
     pub urgency_threshold: f64,
 }
 
-impl Default for CompactionConfig {
+impl Default for OrchestratorCompactionConfig {
     fn default() -> Self {
         Self {
             level0_threshold: 5,
@@ -285,7 +288,7 @@ pub struct CompactionCoordinator {
     /// Global state protected by RwLock
     global_state: RwLock<GlobalCompactionState>,
     /// Configuration
-    pub config: CompactionConfig,
+    pub config: OrchestratorCompactionConfig,
     /// EventLog service for AXIS integration (replaces deprecated QueueManager)
     ///
     /// Architecture Note: ProximaDB uses an event log pattern where:
@@ -302,7 +305,7 @@ pub struct CompactionCoordinator {
 }
 
 impl CompactionCoordinator {
-    pub fn new(config: CompactionConfig) -> Self {
+    pub fn new(config: OrchestratorCompactionConfig) -> Self {
         Self {
             active_operations: DashMap::new(),
             global_state: RwLock::new(GlobalCompactionState::default()),
@@ -318,7 +321,7 @@ impl CompactionCoordinator {
     /// It provides can_compact() functionality to ensure files are not
     /// compacted until all indexes have been properly hydrated.
     pub fn new_with_event_log(
-        config: CompactionConfig,
+        config: OrchestratorCompactionConfig,
         event_log_service: Arc<dyn crate::index::axis::eventlog::EventLogService>,
     ) -> Self {
         Self {
@@ -866,7 +869,7 @@ pub struct CompactionOrchestrator {
 }
 
 impl CompactionOrchestrator {
-    pub fn new(filesystem: Arc<FilesystemFactory>, config: CompactionConfig) -> Self {
+    pub fn new(filesystem: Arc<FilesystemFactory>, config: OrchestratorCompactionConfig) -> Self {
         Self {
             coordinator: Arc::new(CompactionCoordinator::new(config)),
             registry: TieredFileRegistry::new(),
@@ -1069,7 +1072,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_limits() {
-        let config = CompactionConfig {
+        let config = OrchestratorCompactionConfig {
             max_concurrent_per_collection: 1,
             global_max_concurrent: 2,
             ..Default::default()

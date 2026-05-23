@@ -16,7 +16,7 @@
 //! queue ack thousands of concurrent producers per fsync call instead of
 //! one fsync per producer.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -92,7 +92,18 @@ impl GroupCommitCoordinator {
                         .push(item.reply);
                 }
                 for (path, replies) in by_path {
+                    let batch_size = replies.len();
                     let result = drain_fs.fsync(&path).await;
+                    // Group-commit amortization metric: how many waiters
+                    // shared this single fsync. Higher is better (more
+                    // saturated batching = lower per-message fsync cost).
+                    // Extract topic + partition labels from the segment
+                    // path layout `{root}/{topic}/{partition}/{segment_id}.qseg`.
+                    if let Some((topic, partition)) = topic_partition_from_segment_path(&path) {
+                        crate::metrics::QUEUE_FSYNC_BATCH_SIZE
+                            .with_label_values(&[&topic, &partition])
+                            .observe(batch_size as f64);
+                    }
                     // QueueError isn't Clone (anyhow::Error inside Other isn't),
                     // so materialize the error string once and rebuild a fresh
                     // QueueError::Persistence per waiter.
@@ -149,6 +160,20 @@ impl GroupCommitCoordinator {
     pub fn fs(&self) -> &Arc<dyn QueueFs> {
         &self.fs
     }
+}
+
+/// Extract `(topic, partition)` from a segment path with the layout
+/// `{root}/{topic}/{partition}/{segment_id}.qseg`. Used by the
+/// group-commit metric to label fsync batch-size observations.
+/// Returns `None` for paths that don't match the expected layout
+/// (e.g. test fixtures or partially-formed paths) — the metric is
+/// then silently dropped rather than panicking.
+fn topic_partition_from_segment_path(path: &Path) -> Option<(String, String)> {
+    let partition_dir = path.parent()?;
+    let topic_dir = partition_dir.parent()?;
+    let partition = partition_dir.file_name()?.to_str()?.to_string();
+    let topic = topic_dir.file_name()?.to_str()?.to_string();
+    Some((topic, partition))
 }
 
 #[cfg(test)]

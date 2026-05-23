@@ -80,7 +80,7 @@ pub struct RowGroupStats {
     pub compressed_size: u64,
 
     /// Fine-grained statistics for pruning
-    pub column_stats: HashMap<String, ColumnStats>,
+    pub column_stats: HashMap<String, NovaCacheColumnStats>,
 
     /// Inverted index hints
     pub indexed_columns: Vec<String>,
@@ -114,8 +114,11 @@ pub struct ValueRange {
     pub distinct_count: Option<u64>,
 }
 
+/// Backwards-compat alias for [`NovaCacheColumnStats`].
+pub type ColumnStats = NovaCacheColumnStats;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ColumnStats {
+pub struct NovaCacheColumnStats {
     pub min_value: serde_json::Value,
     pub max_value: serde_json::Value,
     pub null_count: u64,

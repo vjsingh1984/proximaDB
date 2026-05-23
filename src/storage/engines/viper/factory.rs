@@ -65,7 +65,7 @@ pub struct ViperConfiguration {
     pub ttl_config: TTLConfig,
 
     /// Compaction configuration
-    pub compaction_config: CompactionConfig,
+    pub compaction_config: ViperFactoryCompactionConfig,
 
     /// Performance optimization settings
     pub optimization_config: OptimizationConfig,
@@ -179,10 +179,13 @@ pub struct TTLConfig {
 
 /// Compaction configuration
 ///
+/// Backwards-compat alias for [`ViperFactoryCompactionConfig`].
+pub type CompactionConfig = ViperFactoryCompactionConfig;
+
 /// Controls automatic compaction of Parquet files for optimal query performance
 /// and storage efficiency.
 #[derive(Debug, Clone)]
-pub struct CompactionConfig {
+pub struct ViperFactoryCompactionConfig {
     /// Enable automatic compaction
     pub enabled: bool,
 
@@ -943,7 +946,7 @@ impl Default for TTLConfig {
     }
 }
 
-impl Default for CompactionConfig {
+impl Default for ViperFactoryCompactionConfig {
     fn default() -> Self {
         Self {
             enabled: true,

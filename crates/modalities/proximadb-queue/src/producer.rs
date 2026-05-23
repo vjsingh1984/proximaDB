@@ -3,7 +3,7 @@
 //! the group-commit fsync before returning.
 
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use tracing::trace;
 
@@ -11,6 +11,7 @@ use crate::QueueClient;
 use crate::config::SyncMode;
 use crate::error::{QueueError, Result};
 use crate::message::{Message, MessageReceipt};
+use crate::metrics::{QUEUE_BACKPRESSURE, QUEUE_DEPTH, QUEUE_SEND_LATENCY_MS};
 use crate::topic::partition_for;
 
 #[derive(Clone)]
@@ -32,6 +33,7 @@ impl Producer {
     /// wait_for_fsync. We append to disk *before* memory so a memory-tier
     /// full rejection doesn't leak phantom messages to consumers.
     pub async fn send(&self, message: Message) -> Result<MessageReceipt> {
+        let send_started = Instant::now();
         let topic_name = message.topic.clone();
         let state = match self.client.topic_state(&topic_name).await {
             Some(s) => s,
@@ -43,6 +45,7 @@ impl Producer {
         };
 
         let partition_id = partition_for(&message.tenant_id, state.config.partition_count);
+        let partition_label = partition_id.to_string();
         let part = state
             .memory
             .get(partition_id as usize)
@@ -63,6 +66,9 @@ impl Producer {
         // Hard backpressure check before any I/O. Memory-full rejection
         // would later leak phantom disk writes — fail fast instead.
         if let Some(crate::memory_tier::PressureLevel::Hard(pct)) = part.pressure() {
+            QUEUE_BACKPRESSURE
+                .with_label_values(&[&topic_name, "hard"])
+                .inc();
             return Err(QueueError::Backpressure {
                 pct: pct * 100.0,
                 retry_after_ms: 100,
@@ -79,11 +85,20 @@ impl Producer {
             .enqueue_with_offset(to_send.clone(), outcome.offset)
             .map_err(|m| {
                 to_send = m;
+                QUEUE_BACKPRESSURE
+                    .with_label_values(&[&topic_name, "soft"])
+                    .inc();
                 QueueError::Backpressure {
                     pct: part.depth_pct() * 100.0,
                     retry_after_ms: 100,
                 }
             })?;
+
+        // Memory tier depth gauge — reflects the post-enqueue state.
+        // Consumer drains will set it back down via the same gauge.
+        QUEUE_DEPTH
+            .with_label_values(&[&topic_name, &partition_label])
+            .set(part.depth() as i64);
 
         // Strict mode: block on the group-commit fsync barrier so the
         // returned receipt's `fsynced_at` is a real guarantee.
@@ -101,6 +116,18 @@ impl Producer {
             }
             SyncMode::Lazy => None,
         };
+
+        // Latency histogram — total time from `send` entry to receipt
+        // return. In Strict mode this includes the fsync wait; in Lazy
+        // mode it's just the in-process enqueue path. The `sync_mode`
+        // label lets dashboards plot them separately.
+        let sync_mode_label = match sync_mode {
+            SyncMode::Strict => "strict",
+            SyncMode::Lazy => "lazy",
+        };
+        QUEUE_SEND_LATENCY_MS
+            .with_label_values(&[&topic_name, sync_mode_label])
+            .observe(send_started.elapsed().as_secs_f64() * 1000.0);
 
         trace!(
             topic = %to_send.topic,

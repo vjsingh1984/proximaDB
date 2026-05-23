@@ -87,7 +87,7 @@ pub struct RaptorConfig {
     pub compaction_threshold_files: usize,
     pub compaction_min_size_mb: usize,
     pub enable_clustering_aware_compaction: bool,
-    pub compaction_config: Option<CompactionConfig>,
+    pub compaction_config: Option<RaptorCompactionConfig>,
     pub clustering_config: Option<ClusteringConfig>,
 
     // Performance settings
@@ -138,8 +138,11 @@ pub enum EvictionPolicy {
     Cost, // Cost-aware eviction based on I/O cost
 }
 
+/// Backwards-compat alias for [`RaptorCompactionConfig`].
+pub type CompactionConfig = RaptorCompactionConfig;
+
 #[derive(Debug, Clone)]
-pub struct CompactionConfig {
+pub struct RaptorCompactionConfig {
     pub max_level: usize,             // For RAPTOR: always 0 (single level)
     pub l0_trigger_file_count: usize, // For RAPTOR: 2 (compact when > 1 file)
     pub target_file_size: usize,      // For RAPTOR: usize::MAX (single file)
@@ -205,7 +208,7 @@ impl Default for RaptorConfig {
             compaction_threshold_files: constants::io::COMPACTION_THRESHOLD_FILES,
             compaction_min_size_mb: constants::io::COMPACTION_MIN_SIZE_MB,
             enable_clustering_aware_compaction: true,
-            compaction_config: Some(CompactionConfig {
+            compaction_config: Some(RaptorCompactionConfig {
                 max_level: constants::io::MAX_LSM_LEVEL,
                 l0_trigger_file_count: constants::io::COMPACTION_THRESHOLD_FILES,
                 target_file_size: constants::io::TARGET_FILE_SIZE,

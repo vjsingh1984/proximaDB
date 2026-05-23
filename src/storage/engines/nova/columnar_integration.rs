@@ -188,7 +188,7 @@ pub struct HierarchicalStatistics {
     pub row_group_stats: Vec<RowGroupStats>,
 
     /// Column statistics
-    pub column_stats: HashMap<String, ColumnStats>,
+    pub column_stats: HashMap<String, NovaColumnarColumnStats>,
 
     /// Global statistics
     pub global_stats: GlobalStats,
@@ -218,9 +218,12 @@ pub struct RowGroupStats {
     pub variance: f32,
 }
 
+/// Backwards-compat alias for [`NovaColumnarColumnStats`].
+pub type ColumnStats = NovaColumnarColumnStats;
+
 /// Column statistics
 #[derive(Debug, Clone)]
-pub struct ColumnStats {
+pub struct NovaColumnarColumnStats {
     pub name: String,
     pub null_count: usize,
     pub distinct_count: usize,

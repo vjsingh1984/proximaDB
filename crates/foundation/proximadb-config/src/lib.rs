@@ -963,6 +963,73 @@ impl Default for WalStorageConfig {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Embedding-precision rollout (PR 3 of EMBEDDING_PRECISION_LLD_2026_05_22)
+// ---------------------------------------------------------------------------
+
+/// Feature-flag control for the embedding-precision rollout.
+///
+/// During Phase 2 deploy, operators flip `schema_v2_enabled` to `true` only
+/// after every node in the cluster runs a binary that supports both v1 and v2
+/// reads (PR 2 plumbing). The server `/version` endpoint reports
+/// `precision_schema_v2_capable: true` so operators can verify before
+/// flipping. PR 4 wires this flag into the WAL segment-header writer; PR 3
+/// makes the flag the gate that rejects non-Fp32 records while the cluster
+/// is still on the v1 wire shape.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EmbeddingPrecisionConfig {
+    /// When `true`, the WAL writer is allowed to emit schema-v2 records
+    /// (precision-aware `EmbeddingValues`). When `false` (default), the
+    /// writer stays on schema-v1 (Vec<f32> only) and the validation guard
+    /// rejects records whose `EmbeddingCell.precision` is non-Fp32 with
+    /// `unsupported_precision_schema_v1_only`.
+    pub schema_v2_enabled: bool,
+}
+
+impl Default for EmbeddingPrecisionConfig {
+    fn default() -> Self {
+        Self {
+            schema_v2_enabled: false,
+        }
+    }
+}
+
+impl EmbeddingPrecisionConfig {
+    /// Environment variable that overrides the configured flag at startup.
+    pub const ENV_VAR: &'static str = "PROXIMADB_EMBED_PRECISION_SCHEMA_V2";
+
+    /// Apply the env-var override on top of the config-file value.
+    ///
+    /// Parsing matches the convention of other ProximaDB boolean flags:
+    /// `true|1|yes|on` (case-insensitive) → on; `false|0|no|off` → off.
+    /// Any other value returns an error so deploys fail loudly instead of
+    /// silently picking the default.
+    pub fn with_env_override(mut self) -> anyhow::Result<Self> {
+        match std::env::var(Self::ENV_VAR) {
+            Ok(raw) => {
+                self.schema_v2_enabled = parse_bool_flag(&raw, Self::ENV_VAR)?;
+            }
+            Err(std::env::VarError::NotPresent) => {}
+            Err(std::env::VarError::NotUnicode(_)) => {
+                anyhow::bail!("{} env var contains non-UTF-8 bytes", Self::ENV_VAR);
+            }
+        }
+        Ok(self)
+    }
+}
+
+/// Parse a boolean feature-flag value from an env-var-style string.
+fn parse_bool_flag(raw: &str, env_name: &str) -> anyhow::Result<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        other => anyhow::bail!(
+            "{env_name} must be true|false|1|0|yes|no|on|off, got {other:?}"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1186,5 +1253,80 @@ mod tests {
         assert!(config.min_keep.is_none());
         assert!(config.max_keep.is_none());
         assert!(config.ratio.is_none());
+    }
+
+    // === PR 3: EmbeddingPrecisionConfig ===
+
+    #[test]
+    fn embedding_precision_default_is_off() {
+        // PR 3: rolling deploy default is V1-only; operator must opt in
+        // after every node is V2-capable.
+        let cfg = EmbeddingPrecisionConfig::default();
+        assert!(!cfg.schema_v2_enabled);
+    }
+
+    #[test]
+    fn embedding_precision_env_var_name_matches_lld() {
+        assert_eq!(
+            EmbeddingPrecisionConfig::ENV_VAR,
+            "PROXIMADB_EMBED_PRECISION_SCHEMA_V2"
+        );
+    }
+
+    #[test]
+    fn parse_bool_flag_accepts_canonical_true_forms() {
+        for raw in ["true", "TRUE", "True", "1", "yes", "YES", "on", "ON", " true "] {
+            assert_eq!(
+                parse_bool_flag(raw, "X").unwrap(),
+                true,
+                "expected {raw:?} to parse as true"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_bool_flag_accepts_canonical_false_forms() {
+        for raw in ["false", "FALSE", "0", "no", "NO", "off", "OFF", " false "] {
+            assert_eq!(
+                parse_bool_flag(raw, "X").unwrap(),
+                false,
+                "expected {raw:?} to parse as false"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_bool_flag_rejects_garbage_to_avoid_silent_default() {
+        for raw in ["maybe", "2", "y", "", "enabled"] {
+            assert!(
+                parse_bool_flag(raw, "X").is_err(),
+                "expected {raw:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn embedding_precision_serde_roundtrip_v2_off() {
+        let cfg = EmbeddingPrecisionConfig::default();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: EmbeddingPrecisionConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cfg);
+    }
+
+    #[test]
+    fn embedding_precision_serde_roundtrip_v2_on() {
+        let cfg = EmbeddingPrecisionConfig {
+            schema_v2_enabled: true,
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: EmbeddingPrecisionConfig = serde_json::from_str(&json).unwrap();
+        assert!(back.schema_v2_enabled);
+    }
+
+    #[test]
+    fn embedding_precision_serde_defaults_missing_field_to_off() {
+        // Back-compat with config files that pre-date PR 3.
+        let cfg: EmbeddingPrecisionConfig = serde_json::from_str("{}").unwrap();
+        assert!(!cfg.schema_v2_enabled);
     }
 }

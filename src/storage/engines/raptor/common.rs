@@ -39,7 +39,7 @@ pub struct RowGroup {
 
     // Statistics
     pub vector_stats: VectorStats,
-    pub metadata_stats: HashMap<String, ColumnStats>,
+    pub metadata_stats: HashMap<String, RaptorColumnStats>,
 
     // Bloom filter for this row group's vector IDs
     pub bloom_filter: Option<RowGroupBloomFilter>,
@@ -283,7 +283,7 @@ pub struct RowGroupMetadata {
 
     // Statistics
     pub vector_stats: VectorStats,
-    pub metadata_stats: HashMap<String, ColumnStats>,
+    pub metadata_stats: HashMap<String, RaptorColumnStats>,
 
     // Timestamps
     pub min_timestamp: Option<i64>,
@@ -442,8 +442,11 @@ pub enum VectorEncoding {
 
 // ====== Column Statistics (unified from reader.rs and rowgroup.rs) ======
 
+/// Backwards-compat alias for [`RaptorColumnStats`].
+pub type ColumnStats = RaptorColumnStats;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ColumnStats {
+pub struct RaptorColumnStats {
     pub null_count: usize,
     pub distinct_count: Option<usize>,
     pub min_value: Option<MetadataValue>,
@@ -470,7 +473,7 @@ pub struct MetadataColumn {
     pub name: String,
     pub data_type: MetadataData,
     pub encoding: ColumnEncoding,
-    pub stats: ColumnStats,
+    pub stats: RaptorColumnStats,
     pub dictionary: Option<Vec<String>>, // For dictionary encoding
     pub offset: u64,
     pub size: u64,

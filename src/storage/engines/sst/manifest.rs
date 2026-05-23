@@ -46,7 +46,7 @@ pub struct SstableFileInfo {
     /// Bloom filter false positive rate (actual)
     pub bloom_fpr: f64,
     /// Metadata column statistics
-    pub metadata_columns: HashMap<String, ColumnStats>,
+    pub metadata_columns: HashMap<String, SstManifestColumnStats>,
     /// Whether this file is marked for deletion
     pub marked_for_deletion: bool,
     /// Sequence number range
@@ -54,9 +54,12 @@ pub struct SstableFileInfo {
     pub max_sequence: u64,
 }
 
+/// Backwards-compat alias for [`SstManifestColumnStats`].
+pub type ColumnStats = SstManifestColumnStats;
+
 /// Column statistics for metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ColumnStats {
+pub struct SstManifestColumnStats {
     pub min_value: serde_json::Value,
     pub max_value: serde_json::Value,
     pub null_count: u64,

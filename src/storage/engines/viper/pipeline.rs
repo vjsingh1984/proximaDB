@@ -74,7 +74,7 @@ pub struct ViperPipelineConfig {
     pub flushing_config: FlushingConfig,
 
     /// Compaction configuration
-    pub compaction_config: CompactionConfig,
+    pub compaction_config: ViperPipelineCompactionConfig,
 
     /// Enable background processing
     pub enable_background_processing: bool,
@@ -128,9 +128,12 @@ pub struct FlushingConfig {
     pub enable_statistics: bool,
 }
 
+/// Backwards-compat alias for [`ViperPipelineCompactionConfig`].
+pub type CompactionConfig = ViperPipelineCompactionConfig;
+
 /// Compaction configuration
 #[derive(Debug, Clone)]
-pub struct CompactionConfig {
+pub struct ViperPipelineCompactionConfig {
     /// Enable ML-guided compaction
     pub enable_ml_compaction: bool,
 
@@ -411,7 +414,7 @@ pub struct FlushResult {
 /// Background compaction engine with ML-guided optimization
 pub struct CompactionEngine {
     /// Configuration
-    config: CompactionConfig,
+    config: ViperPipelineCompactionConfig,
 
     /// Task queue for compaction operations
     task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
@@ -2394,7 +2397,7 @@ impl ParquetFlusher {
 }
 
 impl CompactionEngine {
-    async fn new(config: CompactionConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
+    async fn new(config: ViperPipelineCompactionConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
         Ok(Self {
             config,
             task_queue: Arc::new(Mutex::new(VecDeque::new())),
@@ -3641,7 +3644,7 @@ impl Default for ViperPipelineConfig {
                 write_batch_size: 8192,
                 enable_statistics: true,
             },
-            compaction_config: CompactionConfig {
+            compaction_config: ViperPipelineCompactionConfig {
                 enable_ml_compaction: true,
                 worker_count: 2,
                 compaction_interval_secs: 3600,

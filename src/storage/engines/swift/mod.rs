@@ -595,9 +595,12 @@ pub struct Codebook {
 // SuperBlock and DataBlock are now imported from proximablocks common module
 // Additional SWIFT-specific fields can be added via composition if needed
 
+/// Backwards-compat alias for [`SwiftColumnStats`].
+pub type ColumnStats = SwiftColumnStats;
+
 /// Column statistics for metadata filtering
 #[derive(Debug, Clone)]
-pub struct ColumnStats {
+pub struct SwiftColumnStats {
     pub column_name: String,
     pub null_count: u32,
     pub distinct_count: u32,

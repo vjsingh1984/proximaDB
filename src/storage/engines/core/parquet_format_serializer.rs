@@ -40,7 +40,7 @@ pub struct ViperCachedMetadata {
     pub row_groups: Vec<RowGroupMetadata>,
 
     /// Column statistics
-    pub column_stats: HashMap<String, ColumnStats>,
+    pub column_stats: HashMap<String, ParquetColumnStats>,
 
     /// Cluster metadata for vector search optimization
     pub cluster_metadata: Option<Vec<ClusterInfo>>,
@@ -71,8 +71,11 @@ pub struct RowGroupMetadata {
     pub radius: Option<f32>,
 }
 
+/// Backwards-compat alias for [`ParquetColumnStats`].
+pub type ColumnStats = ParquetColumnStats;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ColumnStats {
+pub struct ParquetColumnStats {
     pub null_count: usize,
     pub distinct_count: Option<usize>,
     pub min_value: Option<serde_json::Value>,

@@ -520,12 +520,15 @@ pub struct FilterCollectionStats {
     /// Total number of vectors in the collection
     pub total_vectors: usize,
     /// Per-column statistics keyed by column name
-    pub column_stats: HashMap<String, ColumnStats>,
+    pub column_stats: HashMap<String, PushdownColumnStats>,
 }
+
+/// Backwards-compat alias for [`PushdownColumnStats`].
+pub type ColumnStats = PushdownColumnStats;
 
 /// Per-column statistics for filter cost estimation
 #[derive(Debug, Clone)]
-pub struct ColumnStats {
+pub struct PushdownColumnStats {
     /// Number of distinct values in the column
     pub distinct_values: usize,
     /// Number of null values in the column

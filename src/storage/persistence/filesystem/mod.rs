@@ -306,7 +306,7 @@ pub struct FileOptions {
 
 /// Authentication configuration for cloud providers
 #[derive(Debug, Clone)]
-pub struct AuthConfig {
+pub struct FilesystemAuthConfig {
     /// AWS authentication method
     pub aws_auth: Option<AwsAuthMethod>,
 
@@ -775,7 +775,7 @@ pub struct FilesystemConfig {
     pub global_options: FileOptions,
 
     /// Authentication configuration
-    pub auth_config: Option<AuthConfig>,
+    pub auth_config: Option<FilesystemAuthConfig>,
 
     /// Performance optimization settings
     pub performance_config: FilesystemPerformanceConfig,

@@ -64,9 +64,12 @@ pub enum CompactionStrategy {
     None,
 }
 
+/// Backwards-compat alias for [`ServiceCompactionConfig`].
+pub type CompactionConfig = ServiceCompactionConfig;
+
 /// Compaction configuration for storage engines
 #[derive(Debug, Clone)]
-pub struct CompactionConfig {
+pub struct ServiceCompactionConfig {
     /// Maximum SSTable file size in megabytes before splitting
     pub max_sstable_size_mb: u64,
     /// Maximum total size per level in megabytes
@@ -79,7 +82,7 @@ pub struct CompactionConfig {
     pub compaction_interval_seconds: u64,
 }
 
-impl Default for CompactionConfig {
+impl Default for ServiceCompactionConfig {
     fn default() -> Self {
         Self {
             // strategy removed -  CompactionStrategy::SizeTiered,
