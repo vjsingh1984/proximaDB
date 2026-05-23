@@ -1,0 +1,45 @@
+name: Pricing Config Fingerprint
+
+# Asserts config/pricing.json byte-matches its committed SHA256 fingerprint.
+# This is the cross-repo drift guard for the anvaiops/proximaDB pricing
+# config — both repos hold a copy, this CI step makes drift loud.
+#
+# When this fails: someone edited config/pricing.json directly without
+# running scripts/sync_pricing_to_proximadb.sh from the anvaiops repo.
+# Resolve by re-running that script (which copies the canonical file +
+# rewrites the fingerprint) and committing both files together.
+#
+# This job is cheap (<5s) so it runs on every push/PR rather than
+# path-gating, ensuring no future commit can sneak past the guard.
+
+on:
+  push:
+    branches: [main, develop, 'feature/**', 'proximadb-**']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+jobs:
+  fingerprint-check:
+    name: Verify pricing.json fingerprint
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run fingerprint check
+        run: bash scripts/check_pricing_fingerprint.sh
+
+      - name: Failure hint
+        if: failure()
+        run: |
+          echo ""
+          echo "::error::config/pricing.json drifted from its committed SHA256 fingerprint."
+          echo ""
+          echo "Resolve by running the sync helper from the anvaiops repo:"
+          echo "  cd /path/to/anvaiops"
+          echo "  bash scripts/sync_pricing_to_proximadb.sh"
+          echo ""
+          echo "Then commit BOTH the updated config/pricing.json AND"
+          echo "config/pricing.json.sha256 together (single commit)."
