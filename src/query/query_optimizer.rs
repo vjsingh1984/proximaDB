@@ -32,7 +32,7 @@ use crate::storage::engines::core::formats::columnar::common::EarlyTerminationCo
 pub struct UnifiedQueryOptimizer {
     /// Shared metadata caches (consolidated from both systems)
     #[allow(dead_code)]
-    file_metadata_cache: Arc<dashmap::DashMap<String, FileMetadata>>,
+    file_metadata_cache: Arc<dashmap::DashMap<String, OptimizerFileMetadata>>,
     #[allow(dead_code)]
     column_metadata_cache: Arc<dashmap::DashMap<String, ColumnMetadata>>,
 
@@ -1677,9 +1677,12 @@ pub enum TriggerCondition {
     },
 }
 
+/// Backwards-compat alias for [`OptimizerFileMetadata`].
+pub type FileMetadata = OptimizerFileMetadata;
+
 /// File metadata
 #[derive(Debug, Clone)]
-pub struct FileMetadata {
+pub struct OptimizerFileMetadata {
     /// Path to the data file
     pub file_path: String,
     /// Size of the file in bytes

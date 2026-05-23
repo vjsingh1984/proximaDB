@@ -28,7 +28,7 @@
 //!
 //! ```rust,ignore
 //! use crate::storage::operations::compaction::{
-//!     CompactionScheduler, CompactionStrategyRegistry, FileMetadata,
+//!     CompactionScheduler, CompactionStrategyRegistry, CompactionFileMetadata,
 //! };
 //!
 //! // Create scheduler
@@ -75,7 +75,7 @@ mod tests {
         // Verify all types are exported correctly
         let _scheduler = CompactionScheduler::new();
         let _registry = CompactionStrategyRegistry::new();
-        let _file = FileMetadata::new("test", "/path", 1024);
+        let _file = CompactionFileMetadata::new("test", "/path", 1024);
         let _leveled = LeveledCompactionStrategy::new();
         let _tiered = TieredCompactionStrategy::new();
     }
@@ -86,10 +86,10 @@ mod tests {
 
         // Create test files
         let files = vec![
-            FileMetadata::new("f1", "/data/f1.sst", 32 * 1024 * 1024).with_level(0),
-            FileMetadata::new("f2", "/data/f2.sst", 32 * 1024 * 1024).with_level(0),
-            FileMetadata::new("f3", "/data/f3.sst", 32 * 1024 * 1024).with_level(0),
-            FileMetadata::new("f4", "/data/f4.sst", 32 * 1024 * 1024).with_level(0),
+            CompactionFileMetadata::new("f1", "/data/f1.sst", 32 * 1024 * 1024).with_level(0),
+            CompactionFileMetadata::new("f2", "/data/f2.sst", 32 * 1024 * 1024).with_level(0),
+            CompactionFileMetadata::new("f3", "/data/f3.sst", 32 * 1024 * 1024).with_level(0),
+            CompactionFileMetadata::new("f4", "/data/f4.sst", 32 * 1024 * 1024).with_level(0),
         ];
 
         // Check and schedule
@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn test_file_metadata_builder() {
-        let file = FileMetadata::new("file1", "/path/to/file.sst", 1024 * 1024)
+        let file = CompactionFileMetadata::new("file1", "/path/to/file.sst", 1024 * 1024)
             .with_level(2)
             .with_entries(1000)
             .with_key_range("aaa", "zzz");
@@ -128,9 +128,12 @@ mod tests {
     }
 }
 
+/// Backwards-compat alias for [`CompactionFileMetadata`].
+pub type FileMetadata = CompactionFileMetadata;
+
 /// Metadata about a storage file for compaction decisions
 #[derive(Debug, Clone)]
-pub struct FileMetadata {
+pub struct CompactionFileMetadata {
     /// Unique file identifier
     pub file_id: String,
     /// File path or URL
@@ -153,7 +156,7 @@ pub struct FileMetadata {
     pub read_amplification: f64,
 }
 
-impl FileMetadata {
+impl CompactionFileMetadata {
     pub fn new(file_id: impl Into<String>, path: impl Into<String>, size_bytes: u64) -> Self {
         Self {
             file_id: file_id.into(),
@@ -194,7 +197,7 @@ pub struct CompactionPlan {
     /// Collection being compacted
     pub collection_id: String,
     /// Files to be compacted
-    pub input_files: Vec<FileMetadata>,
+    pub input_files: Vec<CompactionFileMetadata>,
     /// Target level for output (for leveled)
     pub target_level: u32,
     /// Estimated output size
@@ -230,7 +233,7 @@ pub struct CompactionExecutionResult {
     /// Files that were removed
     pub files_removed: Vec<String>,
     /// Files that were created
-    pub files_created: Vec<FileMetadata>,
+    pub files_created: Vec<CompactionFileMetadata>,
     /// Bytes reclaimed
     pub bytes_freed: u64,
     /// Time taken
@@ -294,7 +297,7 @@ pub trait CompactionStrategy: Send + Sync + Debug {
     async fn select_files(
         &self,
         collection_id: &str,
-        files: &[FileMetadata],
+        files: &[CompactionFileMetadata],
     ) -> Result<Option<CompactionPlan>>;
 
     /// Calculate priority score for a potential compaction
@@ -377,7 +380,7 @@ impl CompactionStrategyRegistry {
         &self,
         collection_id: &str,
         engine_name: &str,
-        files: &[FileMetadata],
+        files: &[CompactionFileMetadata],
     ) -> Result<Option<CompactionPlan>> {
         let mut best_plan: Option<(CompactionPlan, f64)> = None;
 

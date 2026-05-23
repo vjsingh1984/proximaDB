@@ -434,7 +434,7 @@ pub struct CompactionEngine {
     shutdown_sender: Arc<Mutex<Option<tokio::sync::broadcast::Sender<()>>>>,
 
     /// Compaction statistics
-    stats: Arc<RwLock<CompactionStats>>,
+    stats: Arc<RwLock<ViperPipelineCompactionStats>>,
 
     /// Filesystem interface
     filesystem: Arc<FilesystemFactory>,
@@ -575,9 +575,12 @@ pub struct CompactionOptimizationHints {
     pub estimated_improvement: f32,
 }
 
+/// Backwards-compat alias for [`ViperPipelineCompactionStats`].
+pub type CompactionStats = ViperPipelineCompactionStats;
+
 /// Compaction statistics
 #[derive(Debug, Default, Clone)]
-pub struct CompactionStats {
+pub struct ViperPipelineCompactionStats {
     pub total_operations: u64,
     pub successful_operations: u64,
     pub failed_operations: u64,
@@ -2406,7 +2409,7 @@ impl CompactionEngine {
             optimization_model: Arc::new(RwLock::new(None)),
             worker_handles: Arc::new(Mutex::new(Vec::new())),
             shutdown_sender: Arc::new(Mutex::new(None)),
-            stats: Arc::new(RwLock::new(CompactionStats::default())),
+            stats: Arc::new(RwLock::new(ViperPipelineCompactionStats::default())),
             filesystem,
         })
     }
@@ -2497,7 +2500,7 @@ impl CompactionEngine {
         task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
         task_notify: Arc<Notify>,
         active_compactions: Arc<RwLock<HashMap<String, CompactionOperation>>>,
-        stats: Arc<RwLock<CompactionStats>>,
+        stats: Arc<RwLock<ViperPipelineCompactionStats>>,
         _filesystem: Arc<FilesystemFactory>,
         shutdown_receiver: &mut broadcast::Receiver<()>,
     ) {
@@ -2530,7 +2533,7 @@ impl CompactionEngine {
     async fn execute_compaction_task(
         task: CompactionTask,
         active_compactions: Arc<RwLock<HashMap<String, CompactionOperation>>>,
-        stats: Arc<RwLock<CompactionStats>>,
+        stats: Arc<RwLock<ViperPipelineCompactionStats>>,
     ) {
         let operation = CompactionOperation {
             operation_id: task.task_id.clone(),

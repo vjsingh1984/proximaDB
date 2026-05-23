@@ -333,9 +333,12 @@ pub struct SectionCompressionInfo {
     pub compression_ratio: f32,
 }
 
+/// Backwards-compat alias for [`BlockFileMetadata`].
+pub type FileMetadata = BlockFileMetadata;
+
 /// File metadata (high-level file information)
 #[derive(Debug, Clone)]
-pub struct FileMetadata {
+pub struct BlockFileMetadata {
     /// Basic file information
     pub file_path: String,
     pub file_size: u64,

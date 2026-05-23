@@ -417,10 +417,13 @@ use std::sync::atomic::{AtomicU64, AtomicUsize};
 /// Engine statistics - using atomic counters for lock-free updates
 /// Integrated with unified metrics framework for consistent monitoring
 ///
+/// Backwards-compat alias for [`ViperEngineStats`].
+pub type EngineStats = ViperEngineStats;
+
 /// Provides real-time statistics about VIPER engine operations and state.
 /// Uses atomic types where possible for lock-free reads.
 #[derive(Debug)]
-pub struct EngineStats {
+pub struct ViperEngineStats {
     /// Total number of vectors stored
     pub total_vectors: AtomicU64,
     /// Total size of all data in bytes
@@ -443,7 +446,7 @@ pub struct EngineStats {
     avg_ml_prediction_accuracy: AtomicU32,
 }
 
-impl Default for EngineStats {
+impl Default for ViperEngineStats {
     fn default() -> Self {
         Self {
             total_vectors: AtomicU64::new(0),
@@ -460,7 +463,7 @@ impl Default for EngineStats {
     }
 }
 
-impl EngineStats {
+impl ViperEngineStats {
     pub fn get_compression_ratio(&self) -> f32 {
         f32::from_bits(self.avg_compression_ratio.load(Ordering::Relaxed))
     }

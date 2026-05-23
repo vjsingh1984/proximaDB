@@ -82,9 +82,12 @@ pub enum CompactionPriority {
     Critical = 3, // When storage is nearly full
 }
 
+/// Backwards-compat alias for [`SstCompactionStats`].
+pub type CompactionStats = SstCompactionStats;
+
 /// Statistics for compaction operations
 #[derive(Debug, Clone, Default)]
-pub struct CompactionStats {
+pub struct SstCompactionStats {
     pub total_compactions: u64,
     pub bytes_written: u64,
     pub bytes_read: u64,
@@ -97,9 +100,9 @@ pub struct CompactionStats {
 
 /// Enhanced compaction statistics with vector tracking for AXIS integration
 #[derive(Debug, Clone, Default)]
-pub struct EnhancedCompactionStats {
+pub struct EnhancedSstCompactionStats {
     /// Basic compaction statistics
-    pub base_stats: CompactionStats,
+    pub base_stats: SstCompactionStats,
 
     /// Vector IDs that were deleted (expired or tombstoned)
     pub deleted_vector_ids: Vec<String>,
@@ -118,7 +121,7 @@ pub struct Compaction {
     task_notify: Arc<Notify>,
     worker_handles: Vec<JoinHandle<()>>,
     shutdown_signal: Arc<AtomicBool>,
-    stats: Arc<RwLock<CompactionStats>>,
+    stats: Arc<RwLock<SstCompactionStats>>,
     active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
     #[allow(dead_code)]
     atomic_coordinator: Option<Arc<TransactionCoordinator>>,
@@ -253,7 +256,7 @@ impl Compaction {
             task_notify: Arc::new(Notify::new()),
             worker_handles: Vec::new(),
             shutdown_signal: Arc::new(AtomicBool::new(false)),
-            stats: Arc::new(RwLock::new(CompactionStats::default())),
+            stats: Arc::new(RwLock::new(SstCompactionStats::default())),
             active_compactions: Arc::new(RwLock::new(HashMap::new())),
             atomic_coordinator,
             unified_reader,
@@ -510,7 +513,7 @@ impl Compaction {
     }
 
     /// Get compaction statistics
-    pub async fn stats(&self) -> CompactionStats {
+    pub async fn stats(&self) -> SstCompactionStats {
         self.stats.read().await.clone()
     }
 
@@ -520,7 +523,7 @@ impl Compaction {
         task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
         task_notify: Arc<Notify>,
         shutdown_signal: Arc<AtomicBool>,
-        stats: Arc<RwLock<CompactionStats>>,
+        stats: Arc<RwLock<SstCompactionStats>>,
         active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
         config: SstConfig,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
@@ -633,7 +636,7 @@ impl Compaction {
         task: &CompactionTask,
         _config: &SstConfig,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
-    ) -> Result<CompactionStats> {
+    ) -> Result<SstCompactionStats> {
         let enhanced_stats = self
             .perform_compaction_enhanced(task, _config, atomic_coordinator, None)
             .await?;
@@ -648,7 +651,7 @@ impl Compaction {
         _config: &SstConfig,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
         compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
-    ) -> Result<EnhancedCompactionStats> {
+    ) -> Result<EnhancedSstCompactionStats> {
         debug!(
             "🚀 UNIFIED COMPACTION: Single optimized path for {} files at level {}",
             task.input_files.len(),
@@ -670,15 +673,15 @@ impl Compaction {
     fn convert_zero_copy_stats_to_enhanced(
         &self,
         stats: ZeroCopyCompactionStats,
-    ) -> EnhancedCompactionStats {
+    ) -> EnhancedSstCompactionStats {
         // For zero-copy compaction, we don't have VectorRecords but we DO have counts
         // Create placeholder VectorRecords just for counting purposes
         let merged_vectors = (0..stats.records_written)
             .map(|_| VectorRecord::default())
             .collect();
 
-        EnhancedCompactionStats {
-            base_stats: CompactionStats {
+        EnhancedSstCompactionStats {
+            base_stats: SstCompactionStats {
                 total_compactions: 1,
                 bytes_written: stats.bytes_written,
                 bytes_read: stats.bytes_read,
@@ -703,7 +706,7 @@ impl Compaction {
         _config: &SstConfig,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
         compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
-    ) -> Result<EnhancedCompactionStats> {
+    ) -> Result<EnhancedSstCompactionStats> {
         debug!(
             "🚀 UNIFIED COMPACTION: VectorRecord-only path with compression: {:?}",
             compression_config
@@ -954,8 +957,8 @@ impl Compaction {
             info!(
                 "📋 SST COMPACTION: No records to compact after merging. Returning without writing SSTable."
             );
-            return Ok(EnhancedCompactionStats {
-                base_stats: CompactionStats {
+            return Ok(EnhancedSstCompactionStats {
+                base_stats: SstCompactionStats {
                     total_compactions: 1,
                     bytes_written: 0,
                     bytes_read,
@@ -1333,8 +1336,8 @@ impl Compaction {
             tombstones_removed_count
         );
 
-        Ok(EnhancedCompactionStats {
-            base_stats: CompactionStats {
+        Ok(EnhancedSstCompactionStats {
+            base_stats: SstCompactionStats {
                 total_compactions: 1,
                 bytes_written,
                 bytes_read,

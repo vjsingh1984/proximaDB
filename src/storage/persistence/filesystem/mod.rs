@@ -246,9 +246,12 @@ pub enum FilesystemError {
     InvalidOperation(String),
 }
 
+/// Backwards-compat alias for [`FsFileMetadata`].
+pub type FileMetadata = FsFileMetadata;
+
 /// File metadata information
 #[derive(Debug, Clone, Default)]
-pub struct FileMetadata {
+pub struct FsFileMetadata {
     pub path: String,
     pub size: u64,
     pub created: Option<chrono::DateTime<chrono::Utc>>,
@@ -264,7 +267,7 @@ pub struct FileMetadata {
 pub struct DirEntry {
     pub name: String,
     pub url: String, // Full URL instead of relative path
-    pub metadata: FileMetadata,
+    pub metadata: FsFileMetadata,
 }
 
 /// Temporary directory strategy for atomic operations
@@ -605,7 +608,7 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     async fn exists(&self, path: &str) -> FsResult<bool>;
 
     /// Get file metadata
-    async fn metadata(&self, path: &str) -> FsResult<FileMetadata>;
+    async fn metadata(&self, path: &str) -> FsResult<FsFileMetadata>;
 
     /// List directory contents
     async fn list(&self, path: &str) -> FsResult<Vec<DirEntry>>;
@@ -1630,7 +1633,7 @@ impl FilesystemFactory {
         result
     }
 
-    pub async fn metadata(&self, url: &str) -> FsResult<FileMetadata> {
+    pub async fn metadata(&self, url: &str) -> FsResult<FsFileMetadata> {
         let fs = self.get_filesystem(url)?;
         let path = Self::resolve_path(url)?;
         fs.metadata(&path).await

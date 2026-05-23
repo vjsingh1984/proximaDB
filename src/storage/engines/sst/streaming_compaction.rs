@@ -124,7 +124,7 @@ impl StreamingCompactor {
         output_file: String,
         target_level: u8,
         compression_config: Option<CompressionConfig>,
-    ) -> Result<CompactionStats> {
+    ) -> Result<StreamingCompactionStats> {
         let start_time = std::time::Instant::now();
 
         info!(
@@ -294,7 +294,7 @@ impl StreamingCompactor {
             (total_input_size as f64 / (1024.0 * 1024.0)) / elapsed.as_secs_f64()
         );
 
-        Ok(CompactionStats {
+        Ok(StreamingCompactionStats {
             records_written,
             records_deduped,
             deleted_vector_ids,
@@ -350,9 +350,12 @@ impl StreamingCompactor {
     }
 }
 
+/// Backwards-compat alias for [`StreamingCompactionStats`].
+pub type CompactionStats = StreamingCompactionStats;
+
 /// Fast compaction statistics
 #[derive(Debug, Clone)]
-pub struct CompactionStats {
+pub struct StreamingCompactionStats {
     pub records_written: u64,
     pub records_deduped: u64,
     pub deleted_vector_ids: Vec<String>,

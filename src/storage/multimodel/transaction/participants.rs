@@ -671,7 +671,7 @@ impl TwoPhaseParticipant for VectorStoreParticipant {
 #[async_trait::async_trait]
 pub trait GraphWriteOperations: Send + Sync {
     /// Create a node in a graph.
-    async fn create_node(&self, graph_id: &str, node: GraphNode) -> Result<()>;
+    async fn create_node(&self, graph_id: &str, node: TxnLegacyGraphNode) -> Result<()>;
 
     /// Create an edge in a graph.
     async fn create_edge(&self, graph_id: &str, edge: TxnLegacyGraphEdge) -> Result<()>;
@@ -683,9 +683,12 @@ pub trait GraphWriteOperations: Send + Sync {
     async fn delete_edge(&self, graph_id: &str, edge_id: &str) -> Result<()>;
 }
 
+/// Backwards-compat alias for [`TxnLegacyGraphNode`].
+pub type GraphNode = TxnLegacyGraphNode;
+
 /// Lightweight node representation for staged graph transactions.
 #[derive(Debug, Clone)]
-pub struct GraphNode {
+pub struct TxnLegacyGraphNode {
     pub id: String,
     pub label: String,
     pub properties: HashMap<String, String>,
@@ -707,7 +710,7 @@ pub struct TxnLegacyGraphEdge {
 /// Staged graph operations buffered until commit.
 #[derive(Debug, Clone)]
 pub enum StagedGraphOperation {
-    CreateNode { graph_id: String, node: GraphNode },
+    CreateNode { graph_id: String, node: TxnLegacyGraphNode },
     CreateEdge { graph_id: String, edge: TxnLegacyGraphEdge },
     DeleteNode { graph_id: String, node_id: String },
     DeleteEdge { graph_id: String, edge_id: String },
@@ -731,7 +734,7 @@ impl GraphStoreParticipant {
         &self,
         transaction_id: &str,
         graph_id: &str,
-        node: GraphNode,
+        node: TxnLegacyGraphNode,
     ) -> Result<()> {
         self.stage_operation(
             transaction_id,

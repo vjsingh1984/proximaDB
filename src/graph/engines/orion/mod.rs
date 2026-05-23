@@ -149,15 +149,18 @@ pub struct OrionGraphEngine {
     pub index_to_node: Arc<RwLock<Vec<NodeId>>>,
 
     /// Engine statistics
-    stats: Arc<RwLock<EngineStats>>,
+    stats: Arc<RwLock<OrionEngineStats>>,
 
     /// Persistence manager (optional)
     persistence: Option<Arc<persistence::OrionPersistence>>,
 }
 
+/// Backwards-compat alias for [`OrionEngineStats`].
+pub type EngineStats = OrionEngineStats;
+
 /// Engine performance statistics tracking cumulative operation counts.
 #[derive(Debug, Default)]
-pub struct EngineStats {
+pub struct OrionEngineStats {
     /// Total number of nodes inserted since engine creation.
     pub nodes_created: u64,
     /// Total number of edges inserted since engine creation.
@@ -196,7 +199,7 @@ impl OrionGraphEngine {
             edge_metadata: Arc::new(DashMap::new()),
             node_to_index: Arc::new(DashMap::new()),
             index_to_node: Arc::new(RwLock::new(Vec::new())),
-            stats: Arc::new(RwLock::new(EngineStats::default())),
+            stats: Arc::new(RwLock::new(OrionEngineStats::default())),
             persistence: None,
         }
     }
@@ -210,7 +213,7 @@ impl OrionGraphEngine {
             edge_metadata: Arc::new(DashMap::new()),
             node_to_index: Arc::new(DashMap::new()),
             index_to_node: Arc::new(RwLock::new(Vec::new())),
-            stats: Arc::new(RwLock::new(EngineStats::default())),
+            stats: Arc::new(RwLock::new(OrionEngineStats::default())),
             persistence: None,
         }
     }
@@ -231,7 +234,7 @@ impl OrionGraphEngine {
             edge_metadata: Arc::new(DashMap::new()),
             node_to_index: Arc::new(DashMap::new()),
             index_to_node: Arc::new(RwLock::new(Vec::new())),
-            stats: Arc::new(RwLock::new(EngineStats::default())),
+            stats: Arc::new(RwLock::new(OrionEngineStats::default())),
             persistence: Some(persistence),
         })
     }
@@ -252,7 +255,7 @@ impl OrionGraphEngine {
             edge_metadata: Arc::new(DashMap::new()),
             node_to_index: Arc::new(DashMap::new()),
             index_to_node: Arc::new(RwLock::new(Vec::new())),
-            stats: Arc::new(RwLock::new(EngineStats::default())),
+            stats: Arc::new(RwLock::new(OrionEngineStats::default())),
             persistence: Some(persistence),
         })
     }
@@ -289,7 +292,7 @@ impl OrionGraphEngine {
     }
 
     /// Get engine statistics
-    pub async fn get_stats(&self) -> EngineStats {
+    pub async fn get_stats(&self) -> OrionEngineStats {
         let stats = match self.stats.read() {
             Ok(stats) => stats,
             Err(poisoned) => {
@@ -297,7 +300,7 @@ impl OrionGraphEngine {
                 poisoned.into_inner()
             }
         };
-        EngineStats {
+        OrionEngineStats {
             nodes_created: stats.nodes_created,
             edges_created: stats.edges_created,
             nodes_updated: stats.nodes_updated,

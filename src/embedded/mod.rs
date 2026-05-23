@@ -493,20 +493,22 @@ struct CacheStatsSnapshot {
 /// # Example
 /// ```rust,ignore
 /// // For a code symbol:
-/// let node = GraphNode::new("fn_main")
+/// let node = EmbeddedGraphNode::new("fn_main")
 ///     .with_label("function")
 ///     .with_property("name", "main")
 ///     .with_property("file", "main.py")
 ///     .with_property("line", "42");
 ///
 /// // For a social network:
-/// let node = GraphNode::new("user_123")
+/// let node = EmbeddedGraphNode::new("user_123")
 ///     .with_label("Person")
 ///     .with_property("name", "Alice")
 ///     .with_property("email", "alice@example.com");
 /// ```
+///
+/// Backwards-compat alias `GraphNode` is provided below.
 #[derive(Debug, Clone)]
-pub struct GraphNode {
+pub struct EmbeddedGraphNode {
     /// Unique node identifier
     pub id: String,
     /// Node labels/types (e.g., "Person", "function", "Document")
@@ -515,7 +517,7 @@ pub struct GraphNode {
     pub properties: std::collections::HashMap<String, String>,
 }
 
-impl GraphNode {
+impl EmbeddedGraphNode {
     /// Create a new node with the given ID
     pub fn new(id: impl Into<String>) -> Self {
         Self {
@@ -3177,7 +3179,7 @@ impl EmbeddedProximaDB {
     pub fn create_nodes(
         &self,
         graph_id: &str,
-        nodes: Vec<GraphNode>,
+        nodes: Vec<EmbeddedGraphNode>,
     ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         // Check write access before creating nodes
         self.check_write_access()?;
@@ -3229,8 +3231,8 @@ impl EmbeddedProximaDB {
         node_id: &str,
         labels: Vec<String>,
         properties: std::collections::HashMap<String, String>,
-    ) -> Result<GraphNode, Box<dyn std::error::Error + Send + Sync>> {
-        let node = GraphNode {
+    ) -> Result<EmbeddedGraphNode, Box<dyn std::error::Error + Send + Sync>> {
+        let node = EmbeddedGraphNode {
             id: node_id.to_string(),
             labels,
             properties,
@@ -3267,7 +3269,7 @@ impl EmbeddedProximaDB {
         &self,
         graph_id: &str,
         node_id: &str,
-    ) -> Result<Option<GraphNode>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Option<EmbeddedGraphNode>, Box<dyn std::error::Error + Send + Sync>> {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
             let node_id_string = node_id.to_string();
@@ -3279,7 +3281,7 @@ impl EmbeddedProximaDB {
                     Box::new(std::io::Error::other(e.to_string()))
                 })?;
 
-            Ok(proto_node.map(|n| GraphNode::from_proto(&n)))
+            Ok(proto_node.map(|n| EmbeddedGraphNode::from_proto(&n)))
         })
     }
 
@@ -3288,7 +3290,7 @@ impl EmbeddedProximaDB {
         &self,
         graph_id: &str,
         labels: Vec<String>,
-    ) -> Result<Vec<GraphNode>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<EmbeddedGraphNode>, Box<dyn std::error::Error + Send + Sync>> {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
@@ -3306,7 +3308,7 @@ impl EmbeddedProximaDB {
 
             Ok(proto_nodes
                 .into_iter()
-                .map(|n| GraphNode::from_proto(&n))
+                .map(|n| EmbeddedGraphNode::from_proto(&n))
                 .collect())
         })
     }
@@ -3319,7 +3321,7 @@ impl EmbeddedProximaDB {
         properties: Option<std::collections::HashMap<String, String>>,
         limit: Option<u32>,
         offset: Option<u32>,
-    ) -> Result<Vec<GraphNode>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<EmbeddedGraphNode>, Box<dyn std::error::Error + Send + Sync>> {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
@@ -3344,7 +3346,7 @@ impl EmbeddedProximaDB {
 
             Ok(proto_nodes
                 .into_iter()
-                .map(|n| GraphNode::from_proto(&n))
+                .map(|n| EmbeddedGraphNode::from_proto(&n))
                 .collect())
         })
     }
@@ -4601,7 +4603,7 @@ impl EmbeddedProximaDB {
         let nodes = response
             .nodes
             .into_iter()
-            .map(|node| GraphNode::from_proto(&node))
+            .map(|node| EmbeddedGraphNode::from_proto(&node))
             .collect();
         let edges = response
             .edges
@@ -5608,7 +5610,7 @@ pub struct EmbeddedTraversalStats {
 #[derive(Debug, Clone)]
 pub struct EmbeddedGraphTraversalResult {
     /// Nodes visited during traversal
-    pub nodes: Vec<GraphNode>,
+    pub nodes: Vec<EmbeddedGraphNode>,
     /// Edges traversed
     pub edges: Vec<EmbeddedGraphEdge>,
     /// Paths returned by the traversal engine

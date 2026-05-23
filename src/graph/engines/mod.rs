@@ -494,9 +494,12 @@ mod embedding_mode_tests {
     }
 }
 
+/// Backwards-compat alias for [`GraphEngineStats`].
+pub type EngineStats = GraphEngineStats;
+
 /// Engine performance statistics integrated with unified metrics framework
 #[derive(Debug, Clone, Default)]
-pub struct EngineStats {
+pub struct GraphEngineStats {
     /// Total number of nodes
     pub node_count: usize,
     /// Total number of edges
@@ -515,7 +518,7 @@ pub struct EngineStats {
     pub total_time_us: u64,
 }
 
-impl EngineStats {
+impl GraphEngineStats {
     /// Convert to unified metrics sample for integration with metrics framework
     pub fn to_metrics_sample(&self, engine_name: &str) -> MetricsSample {
         let mut values = HashMap::new();
@@ -637,9 +640,9 @@ pub trait GraphEngine: Send + Sync {
     // ===== Performance & Benchmarking Methods =====
 
     /// Get engine performance statistics
-    fn get_engine_stats(&self) -> Result<EngineStats> {
+    fn get_engine_stats(&self) -> Result<GraphEngineStats> {
         // Default implementation for backward compatibility
-        Ok(EngineStats::default())
+        Ok(GraphEngineStats::default())
     }
 
     /// Get memory usage metrics
@@ -1012,7 +1015,7 @@ impl GraphEngine for GraphEngineImpl {
     }
 
     // Delegate other methods with default implementations
-    fn get_engine_stats(&self) -> Result<EngineStats> {
+    fn get_engine_stats(&self) -> Result<GraphEngineStats> {
         match self {
             GraphEngineImpl::Orion(engine) => engine.get_engine_stats(),
             GraphEngineImpl::Pulsar(engine) => engine.get_engine_stats(),

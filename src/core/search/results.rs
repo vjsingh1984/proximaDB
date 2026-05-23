@@ -187,9 +187,12 @@ pub struct QuantizationInfo {
     pub compression_ratio: f32,
 }
 
+/// Backwards-compat alias for [`SearchEngineStats`].
+pub type EngineStats = SearchEngineStats;
+
 /// Per-engine performance statistics for a search result
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct EngineStats {
+pub struct SearchEngineStats {
     /// Number of vectors scanned
     pub vectors_scanned: usize,
     /// Number of cache hits during search
@@ -285,7 +288,7 @@ pub struct OptimizedSearchRecord {
     /// Debug information for result
     pub debug_info: Option<SearchDebugInfo>,
     /// Engine-specific optimization stats
-    pub engine_stats: Option<EngineStats>,
+    pub engine_stats: Option<SearchEngineStats>,
     /// Index path for result tracking
     pub index_path: Option<String>,
 }

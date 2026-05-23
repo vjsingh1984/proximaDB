@@ -50,7 +50,7 @@ pub struct CompactionCoordinator {
     active_compactions: Arc<Mutex<HashMap<String, CompactionTask>>>,
 
     /// Compaction statistics
-    stats: Arc<RwLock<CompactionStats>>,
+    stats: Arc<RwLock<WalCompactionStats>>,
 
     /// AXIS index updater
     axis_updater: CompactionAxisUpdater,
@@ -148,9 +148,12 @@ pub struct CompactionTask {
     pub estimated_completion: Option<DateTime<Utc>>,
 }
 
+/// Backwards-compat alias for [`WalCompactionStats`].
+pub type CompactionStats = WalCompactionStats;
+
 /// Compaction statistics
 #[derive(Debug, Clone, Default)]
-pub struct CompactionStats {
+pub struct WalCompactionStats {
     /// Total compactions completed
     pub total_compactions: u64,
 
@@ -222,7 +225,7 @@ impl CompactionCoordinator {
             sst_engine,
             config,
             active_compactions: Arc::new(Mutex::new(HashMap::new())),
-            stats: Arc::new(RwLock::new(CompactionStats::default())),
+            stats: Arc::new(RwLock::new(WalCompactionStats::default())),
             axis_updater: CompactionAxisUpdater::new(axis_manager),
         }
     }
@@ -776,7 +779,7 @@ impl CompactionCoordinator {
     }
 
     /// Get compaction statistics
-    pub async fn get_stats(&self) -> CompactionStats {
+    pub async fn get_stats(&self) -> WalCompactionStats {
         self.stats.read().await.clone()
     }
 

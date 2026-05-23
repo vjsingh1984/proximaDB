@@ -315,7 +315,7 @@ pub enum ResponseData {
     /// Graph traversal results
     GraphResults {
         /// Nodes returned by the graph query
-        nodes: Vec<GraphNode>,
+        nodes: Vec<NetworkGraphNode>,
         /// Edges returned by the graph query
         edges: Vec<NetworkGraphEdge>,
     },
@@ -358,9 +358,12 @@ pub struct NetworkCollectionInfo {
     pub created_at: i64,
 }
 
+/// Backwards-compat alias for [`NetworkGraphNode`].
+pub type GraphNode = NetworkGraphNode;
+
 /// Graph node (normalized)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphNode {
+pub struct NetworkGraphNode {
     /// Node identifier
     pub id: String,
     /// Node labels (categories)
