@@ -1,5 +1,6 @@
 //! Configuration types: embedding route, chunking strategy, BYO endpoint.
 
+use proximadb_records::EmbeddingScalarType;
 use serde::{Deserialize, Serialize};
 
 /// Embedding route. Stored on each cataloged collection (sticky across
@@ -28,6 +29,13 @@ pub enum EmbedRoute {
         url: String,
         auth: ByoAuth,
         declared_dim: usize,
+        /// Native scalar type the BYO endpoint emits at the wire. Operators
+        /// declare this when registering the route so the boundary
+        /// downconverter (PR 8) can project to canonical without a probe.
+        /// Defaults to `Fp32` for back-compat with pre-PR-9 configs that
+        /// omit the field — matches today's external API behavior.
+        #[serde(default)]
+        declared_precision: EmbeddingScalarType,
         batch_size: usize,
         timeout_ms: u64,
     },
@@ -45,6 +53,34 @@ impl EmbedRoute {
             Self::OpenAi { model } => model.dimension(),
             Self::Cohere { model } => model.dimension(),
             Self::Byo { declared_dim, .. } => *declared_dim,
+        }
+    }
+
+    /// Native scalar type the route's model emits at the wire (LLD §Q16).
+    ///
+    /// External-API routes (Azure / OpenAI / Cohere) return fp32 JSON
+    /// today, so they're hardcoded to `Fp32` until any provider ships a
+    /// precision-aware response format. In-process BGE routes report the
+    /// ONNX session's loaded precision when the BgeModel singleton is up;
+    /// before initialization the conservative default is `Fp32`. BYO
+    /// routes carry the operator-declared precision.
+    ///
+    /// Used by the policy resolver + the precision boundary downconverter
+    /// (PR 8) so the projection step can be skipped when the route's
+    /// native precision already matches the collection's canonical.
+    pub fn native_precision(&self) -> EmbeddingScalarType {
+        match self {
+            // In-process BGE: precision is decided by which ONNX is staged
+            // on disk. The BgeModel singleton caches the loaded precision
+            // after session-load; before that, default to fp32.
+            Self::BgeSmall | Self::BgeLarge | Self::BgeM3 => EmbeddingScalarType::Fp32,
+            // External APIs all return fp32 today.
+            Self::AzureOpenAi { .. } | Self::OpenAi { .. } | Self::Cohere { .. } => {
+                EmbeddingScalarType::Fp32
+            }
+            Self::Byo {
+                declared_precision, ..
+            } => *declared_precision,
         }
     }
 }
@@ -176,6 +212,11 @@ pub enum CollectionEmbeddingChoice {
         url: String,
         auth: ByoAuth,
         declared_dim: usize,
+        /// Native scalar type the endpoint emits. PR 9 of
+        /// EMBEDDING_PRECISION_LLD_2026_05_22. Defaults to `Fp32` for
+        /// back-compat with configs written before PR 9.
+        #[serde(default)]
+        declared_precision: EmbeddingScalarType,
         batch_size: usize,
         timeout_ms: u64,
     },
@@ -195,12 +236,14 @@ impl CollectionEmbeddingChoice {
                 url,
                 auth,
                 declared_dim,
+                declared_precision,
                 batch_size,
                 timeout_ms,
             } => EmbedRoute::Byo {
                 url: url.clone(),
                 auth: auth.clone(),
                 declared_dim: *declared_dim,
+                declared_precision: *declared_precision,
                 batch_size: *batch_size,
                 timeout_ms: *timeout_ms,
             },
@@ -475,6 +518,7 @@ mod collection_route_tests {
                     url: "https://example.com".into(),
                     auth: ByoAuth::None,
                     declared_dim: 768,
+                    declared_precision: EmbeddingScalarType::Fp32,
                     batch_size: 32,
                     timeout_ms: 5000,
                 }
@@ -505,6 +549,7 @@ mod collection_route_tests {
                 url: "https://example.com".into(),
                 auth: ByoAuth::None,
                 declared_dim: 768,
+                declared_precision: EmbeddingScalarType::Fp32,
                 batch_size: 32,
                 timeout_ms: 5000,
             }
@@ -537,6 +582,7 @@ mod collection_route_tests {
                 url: "https://example.com".into(),
                 auth: ByoAuth::None,
                 declared_dim: 1024,
+                declared_precision: EmbeddingScalarType::Fp32,
                 batch_size: 32,
                 timeout_ms: 5000,
             },
@@ -722,5 +768,115 @@ mod collection_route_tests {
         assert_eq!(post_downgrade_new.dimension(), 384);
         // Confirming the dimension delta the customer would see for new vs old.
         assert!(pre_downgrade.dimension() > post_downgrade_new.dimension());
+    }
+
+    // === PR 9: EmbedRoute::Byo declared_precision (Q16) ===
+
+    #[test]
+    fn native_precision_in_process_bge_is_fp32_until_session_loads() {
+        // In-process BGE routes default to fp32 before the ONNX session
+        // declares a different staged weight precision.
+        assert_eq!(EmbedRoute::BgeSmall.native_precision(), EmbeddingScalarType::Fp32);
+        assert_eq!(EmbedRoute::BgeLarge.native_precision(), EmbeddingScalarType::Fp32);
+        assert_eq!(EmbedRoute::BgeM3.native_precision(), EmbeddingScalarType::Fp32);
+    }
+
+    #[test]
+    fn native_precision_external_apis_are_fp32_today() {
+        // Azure / OpenAI / Cohere all return fp32 JSON at the wire today.
+        for route in [
+            EmbedRoute::AzureOpenAi {
+                model: AzureModel::TextEmbed3Large,
+            },
+            EmbedRoute::OpenAi {
+                model: OpenAiModel::TextEmbed3Large,
+            },
+            EmbedRoute::Cohere {
+                model: CohereModel::EmbedEnglishV3,
+            },
+        ] {
+            assert_eq!(
+                route.native_precision(),
+                EmbeddingScalarType::Fp32,
+                "external API route must default to fp32: {route:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn byo_native_precision_round_trips_every_scalar_type() {
+        for declared in [
+            EmbeddingScalarType::Fp32,
+            EmbeddingScalarType::Fp16,
+            EmbeddingScalarType::Bf16,
+            EmbeddingScalarType::Int8Scalar,
+            EmbeddingScalarType::UInt8Scalar,
+        ] {
+            let route = EmbedRoute::Byo {
+                url: "https://example.com".into(),
+                auth: ByoAuth::None,
+                declared_dim: 1024,
+                declared_precision: declared,
+                batch_size: 32,
+                timeout_ms: 5000,
+            };
+            assert_eq!(
+                route.native_precision(),
+                declared,
+                "BYO must echo declared precision {declared:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn byo_serde_round_trips_each_scalar_type() {
+        for declared in [
+            EmbeddingScalarType::Fp32,
+            EmbeddingScalarType::Fp16,
+            EmbeddingScalarType::Bf16,
+        ] {
+            let route = EmbedRoute::Byo {
+                url: "https://example.com".into(),
+                auth: ByoAuth::None,
+                declared_dim: 1024,
+                declared_precision: declared,
+                batch_size: 32,
+                timeout_ms: 5000,
+            };
+            let json = serde_json::to_string(&route).unwrap();
+            let back: EmbedRoute = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, route, "round-trip failed for {declared:?}");
+        }
+    }
+
+    #[test]
+    fn byo_json_without_declared_precision_defaults_to_fp32() {
+        // Legacy config files written before PR 9 don't carry the new
+        // field. The route must still deserialize cleanly and inherit
+        // fp32 (matches today's behavior).
+        let legacy_json = r#"{
+            "kind": "byo",
+            "url": "https://example.com",
+            "auth": {"kind": "none"},
+            "declared_dim": 768,
+            "batch_size": 32,
+            "timeout_ms": 5000
+        }"#;
+        let route: EmbedRoute = serde_json::from_str(legacy_json).unwrap();
+        assert_eq!(route.native_precision(), EmbeddingScalarType::Fp32);
+    }
+
+    #[test]
+    fn collection_choice_byo_propagates_declared_precision_into_route() {
+        let choice = CollectionEmbeddingChoice::Byo {
+            url: "https://example.com".into(),
+            auth: ByoAuth::None,
+            declared_dim: 1024,
+            declared_precision: EmbeddingScalarType::Fp16,
+            batch_size: 16,
+            timeout_ms: 5000,
+        };
+        let route = choice.route();
+        assert_eq!(route.native_precision(), EmbeddingScalarType::Fp16);
     }
 }

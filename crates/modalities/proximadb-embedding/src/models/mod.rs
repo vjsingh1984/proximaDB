@@ -95,6 +95,12 @@ impl ModelRegistry {
                 declared_dim,
                 batch_size,
                 timeout_ms,
+                // `declared_precision` consumed by the boundary
+                // downconverter (PR 8) once the BYO HTTP client is wired
+                // through `project_to_canonical`. Today the client always
+                // returns fp32; the precision tag is recorded on the
+                // EmbedRoute for catalog audit but doesn't change the call.
+                declared_precision: _,
             } => byo::ByoClient::new(url.clone(), auth.clone(), *batch_size, *timeout_ms)
                 .embed_batch(texts, *declared_dim),
         }
