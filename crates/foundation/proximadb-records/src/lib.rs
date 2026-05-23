@@ -120,7 +120,20 @@ pub struct EdgeShape {
 /// Scalar storage type for embedding values. See
 /// `docs/12-design/EMBEDDING_PRECISION_LLD_2026_05_22.adoc` for the canonical
 /// byte tags and serialization shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+///
+/// Wire encoding:
+/// * **Binary formats (bincode, etc.)** — emit the `#[repr(u8)]` value as a
+///   single byte. Saves 3 bytes per cell vs. serde's default u32 variant
+///   index. The LLD-locked tags (0x01..0x05) are the canonical wire IDs.
+/// * **Human-readable formats (JSON, YAML, etc.)** — emit the snake_case
+///   variant name. Same shape catalog rows + dashboards already consume.
+///
+/// The custom impls below replace the previous `derive(Serialize,
+/// Deserialize)` which emitted a u32 (4 bytes) on the wire regardless of
+/// `#[repr(u8)]`. INT-2.5b pre-step: lock the 1-byte tag before flipping
+/// `EmbeddingCell.values` to `EmbeddingValues` so the cell's bincode shape
+/// stays minimal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum EmbeddingScalarType {
     /// IEEE-754 f32, 4 bytes per element. Today's universal default.
@@ -133,6 +146,58 @@ pub enum EmbeddingScalarType {
     Int8Scalar = 0x04,
     /// Unsigned 8-bit scalar with per-cell scale + zero-point. Lossy.
     UInt8Scalar = 0x05,
+}
+
+impl Serialize for EmbeddingScalarType {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        if serializer.is_human_readable() {
+            serializer.serialize_str(match self {
+                Self::Fp32 => "fp32",
+                Self::Fp16 => "fp16",
+                Self::Bf16 => "bf16",
+                Self::Int8Scalar => "int8_scalar",
+                Self::UInt8Scalar => "uint8_scalar",
+            })
+        } else {
+            serializer.serialize_u8(*self as u8)
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for EmbeddingScalarType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        if deserializer.is_human_readable() {
+            let s = <&str>::deserialize(deserializer)?;
+            match s {
+                "fp32" => Ok(Self::Fp32),
+                "fp16" => Ok(Self::Fp16),
+                "bf16" => Ok(Self::Bf16),
+                "int8_scalar" => Ok(Self::Int8Scalar),
+                "uint8_scalar" => Ok(Self::UInt8Scalar),
+                other => Err(serde::de::Error::custom(format!(
+                    "unknown EmbeddingScalarType: {other:?}"
+                ))),
+            }
+        } else {
+            let b = u8::deserialize(deserializer)?;
+            match b {
+                0x01 => Ok(Self::Fp32),
+                0x02 => Ok(Self::Fp16),
+                0x03 => Ok(Self::Bf16),
+                0x04 => Ok(Self::Int8Scalar),
+                0x05 => Ok(Self::UInt8Scalar),
+                other => Err(serde::de::Error::custom(format!(
+                    "unknown EmbeddingScalarType tag: 0x{other:02x}"
+                ))),
+            }
+        }
+    }
 }
 
 impl EmbeddingScalarType {
@@ -1339,9 +1404,11 @@ text\\x04\\x00\\x00\\x00\\x00\\x00\\x00\\x00\
         }
         // dim: u32 LE
         b.extend_from_slice(&4u32.to_le_bytes());
-        // precision: serde variant index as u32 (NOT the repr value).
-        // Fp32 is variant 0 in declaration order.
-        b.extend_from_slice(&0u32.to_le_bytes());
+        // precision: single byte = #[repr(u8)] discriminant value
+        // (Fp32 = 0x01). Saves 3 bytes per cell vs the default u32
+        // variant index that serde-bincode would emit without the
+        // custom Serialize impl on EmbeddingScalarType.
+        b.push(EmbeddingScalarType::Fp32 as u8);
         // precision_epoch: None → 0 bytes (skip_serializing_if works)
         b
     }
