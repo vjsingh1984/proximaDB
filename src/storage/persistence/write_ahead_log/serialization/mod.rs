@@ -50,6 +50,86 @@ pub trait VectorBatchSerializer: Send + Sync {
         }
         Ok(records)
     }
+
+    /// INT-2a (mini-phase EMBEDDING_PRECISION_INTEGRATION_PLAN): prepend
+    /// the PR 4 v2 segment header to a serialized batch.
+    ///
+    /// Returns `header_bytes || serialize_batch(records)`. The caller
+    /// (a disk-manager write path gated on `schema_v2_enabled`) writes
+    /// the resulting blob to disk as one file. Readers use
+    /// [`Self::deserialize_batch_auto`] to magic-peek + dispatch.
+    ///
+    /// Default impl is generic across serializers — it doesn't depend on
+    /// the bincode shape. The header bytes only live in front of the
+    /// payload; no inline framing changes.
+    fn serialize_batch_with_v2_segment_header(
+        &self,
+        records: &[ProximaRecord],
+        header: &crate::storage::persistence::write_ahead_log::v2_segment_header::V2SegmentHeader,
+    ) -> Result<Vec<u8>> {
+        let mut out = header.encode();
+        out.extend(self.serialize_batch(records)?);
+        Ok(out)
+    }
+
+    /// INT-2a: deserialize a batch with automatic v1/v2 dispatch.
+    ///
+    /// * If the bytes start with the PR 4 `PWAL` magic and declare
+    ///   `version = 2`, the header is parsed, records are decoded from
+    ///   the bytes after the header, and every record is stamped
+    ///   `schema_version = V2`.
+    /// * Otherwise the bytes are treated as legacy v1 (no header, raw
+    ///   bincode batch) and records are stamped `schema_version = V1`.
+    ///
+    /// Returns `(records, parsed_header)` so the caller can use the
+    /// header's `canonical_default_precision`, `policy_id`, and
+    /// `precision_epoch` for downstream routing (INT-3+ PAX dispatch,
+    /// recall-report tagging, etc.).
+    fn deserialize_batch_auto(
+        &self,
+        data: &[u8],
+    ) -> Result<(
+        Vec<ProximaRecord>,
+        Option<crate::storage::persistence::write_ahead_log::v2_segment_header::V2SegmentHeader>,
+    )> {
+        use crate::storage::persistence::write_ahead_log::v2_segment_header::{
+            PWAL_MAGIC, PWAL_PEEK_LEN, PeekedSegmentVersion, V2SegmentHeader,
+            peek_segment_version,
+        };
+        // Magic check is bounded: any blob shorter than 4 bytes or that
+        // doesn't start with PWAL is treated as legacy v1 and handed to
+        // the existing path. This keeps the dispatch safe for all
+        // pre-INT-2a writers.
+        if data.len() < PWAL_PEEK_LEN || &data[..4] != PWAL_MAGIC {
+            let records = self.deserialize_batch_with_schema_version(
+                data,
+                proximadb_records::schema_version::V1,
+            )?;
+            return Ok((records, None));
+        }
+        match peek_segment_version(data)? {
+            PeekedSegmentVersion::V1 => {
+                // PWAL magic + version=1 is a future-reserved layout
+                // (today's v1 writer never prepends magic). Treat as
+                // legacy: pass the full blob through. Once that layout
+                // ships we'll either route it here or evolve the magic.
+                let records = self.deserialize_batch_with_schema_version(
+                    data,
+                    proximadb_records::schema_version::V1,
+                )?;
+                Ok((records, None))
+            }
+            PeekedSegmentVersion::V2 => {
+                let (header, consumed) = V2SegmentHeader::decode(data)?;
+                let payload = &data[consumed..];
+                let records = self.deserialize_batch_with_schema_version(
+                    payload,
+                    proximadb_records::schema_version::V2,
+                )?;
+                Ok((records, Some(header)))
+            }
+        }
+    }
 }
 
 /// Supported serialization formats

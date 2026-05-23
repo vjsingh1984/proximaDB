@@ -1248,7 +1248,9 @@ impl VectorOperationsService {
         // Write vectors via WAL for durability. A WAL-skipping engine path
         // remains deferred because it needs atomic segment+manifest commit,
         // replay or repair semantics, and idempotency.
-        let vectors_arc = Arc::new(vectors.clone());
+        // `vectors` is not used after this point — move it into the Arc rather
+        // than cloning. The non-bulk helper below already follows this pattern.
+        let vectors_arc = Arc::new(vectors);
 
         match self
             .wal_manager
