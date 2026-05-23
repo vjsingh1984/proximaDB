@@ -3,6 +3,8 @@
 use crate::compute::distance_computation::engine::SimilarityResult;
 use crate::proto::proximadb_v1::SourceContent;
 use proximadb_data_model::ProximaValue;
+// Canonical ranking score types — see roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md (R-0).
+pub use proximadb_kernel::{PhaseId, ScoreComponent, ScoreVector};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -222,10 +224,17 @@ pub struct OptimizedSearchRecord {
     pub record_type: RecordType,
 
     // --- Ranking ---
-    /// Similarity score (higher = more similar)
+    /// Similarity score (higher = more similar). When a rank profile is
+    /// attached this mirrors `score_vector.primary`; readers that only need
+    /// a scalar score keep working unchanged.
     pub score: f32,
     /// Distance value (lower = more similar, if different from score)
     pub similarity: Option<f32>,
+    /// Multi-component score from the multi-phase ranking pipeline. `None`
+    /// when no rank profile is attached — this keeps the no-profile path
+    /// zero-cost on the wire (NFR-9 in the ranking framework spec).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score_vector: Option<ScoreVector>,
 
     // --- Vector modality ---
     /// Original vector data (Arc avoids clone on fan-out)
@@ -403,6 +412,15 @@ impl OptimizedSearchRecord {
         self
     }
 
+    /// Builder method to attach a multi-component score from the ranking pipeline.
+    /// Also mirrors `score_vector.primary` into the scalar `score` field so
+    /// sort order is consistent regardless of which the reader inspects.
+    pub fn with_score_vector(mut self, sv: ScoreVector) -> Self {
+        self.score = sv.primary;
+        self.score_vector = Some(sv);
+        self
+    }
+
     // REMOVED: from_internal and to_internal methods - InternalSearchResult eliminated
 }
 
@@ -485,3 +503,76 @@ mod arc_slice_serde {
 }
 
 // Manual trait implementations for ordering (HashMap doesn't implement Ord)
+
+#[cfg(test)]
+mod score_vector_tests {
+    //! R-0 tests for the ScoreVector promotion into OptimizedSearchRecord.
+    //! See roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md §6.1.
+    use super::*;
+
+    #[test]
+    fn record_default_has_no_score_vector() {
+        let r = OptimizedSearchRecord::default();
+        assert!(r.score_vector.is_none());
+    }
+
+    #[test]
+    fn record_serde_omits_score_vector_when_none() {
+        // NFR-9: zero-cost when no profile attached — payload must not carry
+        // a `score_vector` key for records without one.
+        let r = OptimizedSearchRecord::new("doc1".to_string(), 0.5);
+        let j = serde_json::to_string(&r).unwrap();
+        assert!(
+            !j.contains("score_vector"),
+            "score_vector must be omitted when None: {j}"
+        );
+    }
+
+    #[test]
+    fn record_with_score_vector_round_trips() {
+        let sv = ScoreVector::new(
+            0.87,
+            PhaseId::GLOBAL,
+            vec![
+                ScoreComponent {
+                    name: "bm25(title)".into(),
+                    value: 12.4,
+                    weight: 0.4,
+                    contribution: 4.96,
+                },
+                ScoreComponent {
+                    name: "model(rerank-v3)".into(),
+                    value: 0.87,
+                    weight: 1.0,
+                    contribution: 0.87,
+                },
+            ],
+        );
+        let r = OptimizedSearchRecord::new("doc1".into(), 0.0).with_score_vector(sv.clone());
+        let j = serde_json::to_string(&r).unwrap();
+        let back: OptimizedSearchRecord = serde_json::from_str(&j).unwrap();
+        assert_eq!(back.score_vector.as_ref(), Some(&sv));
+    }
+
+    #[test]
+    fn with_score_vector_mirrors_primary_into_score() {
+        let sv = ScoreVector::from_primary(0.42, PhaseId::SECOND);
+        let r = OptimizedSearchRecord::new("doc1".into(), 0.0).with_score_vector(sv);
+        // Sort-order field must equal the score vector's primary.
+        assert_eq!(r.score, 0.42);
+        assert_eq!(r.score_vector.as_ref().unwrap().primary, 0.42);
+    }
+
+    #[test]
+    fn score_component_re_export_is_usable() {
+        // Confirms the re-export path src::core::search::results::ScoreComponent
+        // resolves to the same type as proximadb_kernel::ScoreComponent.
+        let c: ScoreComponent = proximadb_kernel::ScoreComponent {
+            name: "x".into(),
+            value: 1.0,
+            weight: 1.0,
+            contribution: 1.0,
+        };
+        assert_eq!(c.name, "x");
+    }
+}

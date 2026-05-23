@@ -10,6 +10,10 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use proximadb_data_model::DataModel;
+// ScoreComponent now lives in proximadb-kernel so that both the root crate
+// (src/core/search/results.rs) and this crate share the canonical definition.
+// See roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md (R-0).
+pub use proximadb_kernel::ScoreComponent;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, trace};
 
@@ -476,19 +480,6 @@ pub struct RerankExplanation {
     pub explanation_text: String,
     /// Confidence in the reranking.
     pub confidence: f64,
-}
-
-/// Component of a reranking score.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScoreComponent {
-    /// Component name.
-    pub name: String,
-    /// Component value.
-    pub value: f64,
-    /// Weight applied.
-    pub weight: f64,
-    /// Contribution to final score.
-    pub contribution: f64,
 }
 
 /// Reranked result with explanations.

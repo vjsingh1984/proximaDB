@@ -590,6 +590,10 @@ impl EmbeddedGraphNode {
     }
 }
 
+/// Backwards-compat alias for [`EmbeddedGraphNode`]. Matches the alias
+/// promise in the doc comment on `EmbeddedGraphNode` above.
+pub type GraphNode = EmbeddedGraphNode;
+
 /// Backwards-compat alias for [`EmbeddedGraphEdge`].
 pub type GraphEdge = EmbeddedGraphEdge;
 
