@@ -235,9 +235,12 @@ pub struct CompressionParameters {
     pub collection_config: Option<ProtoCompressionConfig>,
 }
 
+/// Backwards-compat alias for [`BlockCompressionStats`].
+pub type CompressionStats = BlockCompressionStats;
+
 /// Compression statistics and results
 #[derive(Debug, Clone)]
-pub struct CompressionStats {
+pub struct BlockCompressionStats {
     /// Size information
     pub original_size: usize,
     pub compressed_size: usize,

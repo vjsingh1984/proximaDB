@@ -309,7 +309,7 @@ pub struct SerializationMetadata {
     pub record_count: usize,
     pub dimension: usize,
     pub quantization_stats: QuantizationStats,
-    pub compression_stats: CompressionStats,
+    pub compression_stats: ColumnarCompressionStats,
     pub performance_stats: PerformanceStats,
 }
 
@@ -323,9 +323,12 @@ pub struct QuantizationStats {
     pub memory_reduction: f32,
 }
 
+/// Backwards-compat alias for [`ColumnarCompressionStats`].
+pub type CompressionStats = ColumnarCompressionStats;
+
 /// Statistics about compression
 #[derive(Debug, Clone)]
-pub struct CompressionStats {
+pub struct ColumnarCompressionStats {
     pub fp32_compressed_size: usize,
     pub binary_compressed_size: usize,
     pub int8_compressed_size: usize,
@@ -839,7 +842,7 @@ impl ColumnarSerializer {
         binary_array: &Option<ArrayRef>,
         int8_array: &Option<&ArrayRef>,
         pq_array: &Option<ArrayRef>,
-    ) -> Result<CompressionStats> {
+    ) -> Result<ColumnarCompressionStats> {
         let fp32_size = fp32_array.get_array_memory_size();
         let binary_size = binary_array.as_ref().map(|a| a.get_array_memory_size());
         let int8_size = int8_array.map(|a| a.get_array_memory_size());
@@ -855,7 +858,7 @@ impl ColumnarSerializer {
             1.0
         };
 
-        Ok(CompressionStats {
+        Ok(ColumnarCompressionStats {
             fp32_compressed_size: fp32_size,
             binary_compressed_size: binary_size.unwrap_or(0),
             int8_compressed_size: int8_size.unwrap_or(0),

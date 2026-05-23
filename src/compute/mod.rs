@@ -220,7 +220,7 @@ pub struct ComputeConfig {
     /// Memory optimization settings
     pub memory: MemoryConfig,
     /// Performance tuning parameters
-    pub performance: PerformanceConfig,
+    pub performance: ComputePerformanceConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -402,8 +402,11 @@ pub enum CachePolicy {
     TwoQ, // Two Queue
 }
 
+/// Backwards-compat alias for [`ComputePerformanceConfig`].
+pub type PerformanceConfig = ComputePerformanceConfig;
+
 #[derive(Debug, Clone)]
-pub struct PerformanceConfig {
+pub struct ComputePerformanceConfig {
     /// Enable SIMD optimizations
     pub simd_enabled: bool,
     /// Unroll loops for better performance
@@ -480,7 +483,7 @@ impl Default for ComputeConfig {
                     replacement_policy: CachePolicy::ARC,
                 },
             },
-            performance: PerformanceConfig {
+            performance: ComputePerformanceConfig {
                 simd_enabled: true,
                 loop_unrolling: true,
                 branch_prediction: true,

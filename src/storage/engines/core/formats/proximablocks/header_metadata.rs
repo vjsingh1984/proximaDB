@@ -92,13 +92,16 @@ pub struct CollectionMetadata {
     pub dimension: usize,
     pub distance_metric: DistanceMetric,
     pub schema_version: u32,
-    pub filterable_columns: Vec<FilterableColumn>,
+    pub filterable_columns: Vec<HeaderFilterableColumn>,
     pub collection_statistics: CollectionStatistics,
 }
 
+/// Backwards-compat alias for [`HeaderFilterableColumn`].
+pub type FilterableColumn = HeaderFilterableColumn;
+
 /// Filterable column definition
 #[derive(Debug, Clone)]
-pub struct FilterableColumn {
+pub struct HeaderFilterableColumn {
     pub name: String,
     pub indexed: bool,
     pub bloom_filter_enabled: bool,

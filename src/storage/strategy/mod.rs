@@ -30,7 +30,7 @@ pub struct CollectionStrategyConfig {
     pub search_config: SearchConfig,
 
     /// Performance tuning parameters
-    pub performance_config: PerformanceConfig,
+    pub performance_config: StrategyPerformanceConfig,
 }
 
 /// Indexing algorithm configuration
@@ -144,9 +144,12 @@ pub struct SearchConfig {
 /// Distance metrics - use proto enum directly for consistency
 pub type DistanceMetric = ProtoDistanceMetric;
 
+/// Backwards-compat alias for [`StrategyPerformanceConfig`].
+pub type PerformanceConfig = StrategyPerformanceConfig;
+
 /// Performance configuration
 #[derive(Debug, Clone)]
-pub struct PerformanceConfig {
+pub struct StrategyPerformanceConfig {
     /// Memory limit in MB
     pub memory_limit_mb: u32,
     /// Enable SIMD optimizations
@@ -186,7 +189,7 @@ impl Default for CollectionStrategyConfig {
                 parameters: HashMap::new(),
                 enable_optimization: true,
             },
-            performance_config: PerformanceConfig {
+            performance_config: StrategyPerformanceConfig {
                 memory_limit_mb: 1024,
                 enable_simd: true,
                 enable_gpu: false,

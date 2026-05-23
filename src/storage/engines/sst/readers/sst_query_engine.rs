@@ -181,12 +181,15 @@ pub struct IndexCache {
     bloom_filters: Arc<moka::future::Cache<String, Arc<SstableBloomFilter>>>,
     #[allow(dead_code)]
     max_memory_mb: usize,
-    metrics: Arc<tokio::sync::RwLock<CacheMetrics>>,
+    metrics: Arc<tokio::sync::RwLock<SstQueryCacheMetrics>>,
 }
+
+/// Backwards-compat alias for [`SstQueryCacheMetrics`].
+pub type CacheMetrics = SstQueryCacheMetrics;
 
 /// Cache metrics for monitoring and optimization
 #[derive(Debug, Default)]
-pub struct CacheMetrics {
+pub struct SstQueryCacheMetrics {
     pub memory_usage_bytes: usize,
     pub hit_count: u64,
     pub miss_count: u64,
@@ -5491,7 +5494,7 @@ impl IndexCache {
             indices: Arc::new(indices),
             bloom_filters: Arc::new(bloom_filters),
             max_memory_mb,
-            metrics: Arc::new(tokio::sync::RwLock::new(CacheMetrics::default())),
+            metrics: Arc::new(tokio::sync::RwLock::new(SstQueryCacheMetrics::default())),
         }
     }
 

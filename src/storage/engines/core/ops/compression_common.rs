@@ -1480,14 +1480,17 @@ pub struct QualityCharacteristics {
     pub lossless_capable: bool,
 }
 
+/// Backwards-compat alias for [`CommonCompressionStats`].
+pub type CompressionStats = CommonCompressionStats;
+
 /// Compression statistics
 #[derive(Debug, Clone)]
-pub struct CompressionStats {
+pub struct CommonCompressionStats {
     /// Overall statistics
-    pub overall: OverallCompressionStats,
+    pub overall: OverallCommonCompressionStats,
 
     /// Per-algorithm statistics
-    pub per_algorithm: HashMap<String, AlgorithmCompressionStats>,
+    pub per_algorithm: HashMap<String, AlgorithmCommonCompressionStats>,
 
     /// Hardware utilization
     pub hardware_utilization: HardwareUtilizationStats,
@@ -1501,7 +1504,7 @@ pub struct CompressionStats {
 
 /// Overall compression statistics
 #[derive(Debug, Clone)]
-pub struct OverallCompressionStats {
+pub struct OverallCommonCompressionStats {
     /// Total bytes compressed
     pub total_bytes_compressed: u64,
 
@@ -1523,7 +1526,7 @@ pub struct OverallCompressionStats {
 
 /// Algorithm compression statistics
 #[derive(Debug, Clone)]
-pub struct AlgorithmCompressionStats {
+pub struct AlgorithmCommonCompressionStats {
     /// Bytes processed
     pub bytes_processed: u64,
 

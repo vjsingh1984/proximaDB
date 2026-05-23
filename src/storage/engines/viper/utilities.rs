@@ -461,7 +461,7 @@ pub struct CompressionOptimizer {
 
     /// Compression statistics
     #[allow(dead_code)]
-    stats: Arc<RwLock<CompressionStats>>,
+    stats: Arc<RwLock<ViperUtilsCompressionStats>>,
 
     /// Algorithm performance cache
     #[allow(dead_code)]
@@ -523,9 +523,12 @@ pub struct AlgorithmPerformance {
     pub usage_count: u64,
 }
 
+/// Backwards-compat alias for [`ViperUtilsCompressionStats`].
+pub type CompressionStats = ViperUtilsCompressionStats;
+
 /// Compression statistics
 #[derive(Debug, Default)]
-pub struct CompressionStats {
+pub struct ViperUtilsCompressionStats {
     pub total_compressions: u64,
     pub total_bytes_input: u64,
     pub total_bytes_output: u64,
@@ -838,7 +841,7 @@ impl CompressionOptimizer {
         Ok(Self {
             config: _config,
             compression_models: Arc::new(RwLock::new(HashMap::new())),
-            stats: Arc::new(RwLock::new(CompressionStats::default())),
+            stats: Arc::new(RwLock::new(ViperUtilsCompressionStats::default())),
             algorithm_cache: Arc::new(RwLock::new(HashMap::new())),
         })
     }

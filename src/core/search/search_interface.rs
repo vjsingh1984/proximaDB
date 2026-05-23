@@ -36,7 +36,7 @@ pub struct SearchPlan {
     /// Collection configuration for optimization hints
     pub collection_config: Option<SearchCollectionConfig>,
     /// Filterable metadata columns from collection config
-    pub filterable_columns: Vec<FilterableColumn>,
+    pub filterable_columns: Vec<SearchFilterableColumn>,
     /// Available quantization methods for this collection
     pub available_quantization: Vec<UnifiedQuantizationLevel>,
     /// Storage characteristics
@@ -81,9 +81,12 @@ pub struct SearchCollectionConfig {
     pub estimated_document_count: usize,
 }
 
+/// Backwards-compat alias for [`SearchFilterableColumn`].
+pub type FilterableColumn = SearchFilterableColumn;
+
 /// Filterable metadata column configuration
 #[derive(Debug, Clone)]
-pub struct FilterableColumn {
+pub struct SearchFilterableColumn {
     /// Column name
     pub name: String,
     /// Column data type
@@ -279,12 +282,12 @@ impl IntegratedSearchOptimizer {
             .ok_or_else(|| anyhow::anyhow!("Collection not found: {}", collection_id))?;
 
         // Build filterable columns from collection config
-        let filterable_columns: Vec<FilterableColumn> =
+        let filterable_columns: Vec<SearchFilterableColumn> =
             collection.config.as_ref().map_or_else(Vec::new, |config| {
                 config
                     .filterable_columns
                     .iter()
-                    .map(|col| FilterableColumn {
+                    .map(|col| SearchFilterableColumn {
                         name: col.name.clone(),
                         data_type: match col.data_type {
                             1 => ColumnData::String,

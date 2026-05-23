@@ -111,7 +111,7 @@ pub struct GraphMetricsCollector {
     /// Business metrics
     business_metrics: Arc<RwLock<BusinessMetrics>>,
     /// Cache metrics
-    cache_metrics: Arc<RwLock<CacheMetrics>>,
+    cache_metrics: Arc<RwLock<GraphCacheMetrics>>,
 }
 
 /// Slow query logger
@@ -190,9 +190,12 @@ pub struct BusinessMetrics {
     pub hybrid_queries_per_minute: f64,
 }
 
+/// Backwards-compat alias for [`GraphCacheMetrics`].
+pub type CacheMetrics = GraphCacheMetrics;
+
 /// Cache performance metrics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CacheMetrics {
+pub struct GraphCacheMetrics {
     /// Query plan cache hits
     pub plan_cache_hits: u64,
     /// Query plan cache misses
@@ -862,7 +865,7 @@ pub struct GraphMetricsSnapshot {
     /// Business-level metrics (queries served, data volume, etc.).
     pub business_metrics: BusinessMetrics,
     /// Cache hit/miss statistics.
-    pub cache_metrics: CacheMetrics,
+    pub cache_metrics: GraphCacheMetrics,
 }
 
 impl GraphMetricsCollector {
@@ -874,7 +877,7 @@ impl GraphMetricsCollector {
             latency_histograms: Arc::new(RwLock::new(HashMap::new())),
             resource_metrics: Arc::new(RwLock::new(ResourceMetrics::default())),
             business_metrics: Arc::new(RwLock::new(BusinessMetrics::default())),
-            cache_metrics: Arc::new(RwLock::new(CacheMetrics::default())),
+            cache_metrics: Arc::new(RwLock::new(GraphCacheMetrics::default())),
         }
     }
 }

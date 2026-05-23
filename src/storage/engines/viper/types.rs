@@ -16,9 +16,12 @@ pub use crate::storage::engines::core::formats::columnar::{
     ColumnStatistics, ColumnarFileMetadata as CollectionMetadata, FilterCondition,
 };
 
+/// Backwards-compat alias for [`ViperFilterableColumn`].
+pub type FilterableColumn = ViperFilterableColumn;
+
 /// Filterable column configuration for server-side metadata filtering
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct FilterableColumn {
+pub struct ViperFilterableColumn {
     /// Column name in metadata
     pub name: String,
     /// Data type for Parquet schema
@@ -82,7 +85,7 @@ pub struct ParquetSchemaDesign {
     /// All fields defined in the schema
     pub fields: Vec<ParquetField>,
     /// Columns that can be filtered in queries
-    pub filterable_columns: Vec<FilterableColumn>,
+    pub filterable_columns: Vec<ViperFilterableColumn>,
     /// Columns used for partitioning the data
     pub partition_columns: Vec<String>,
     /// Compression algorithm to use
@@ -193,8 +196,11 @@ pub struct ViperEngineConfig {
 ///
 /// Tracks compression metrics for monitoring and optimization purposes.
 /// Used to evaluate compression effectiveness and performance.
+/// Backwards-compat alias for [`ViperCompressionStats`].
+pub type CompressionStats = ViperCompressionStats;
+
 #[derive(Debug, Clone, Default)]
-pub struct CompressionStats {
+pub struct ViperCompressionStats {
     /// Original data size before compression in bytes
     pub original_size: usize,
     /// Compressed data size in bytes

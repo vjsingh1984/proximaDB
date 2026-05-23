@@ -65,9 +65,12 @@ impl Default for CompressionConfig {
     }
 }
 
+/// Backwards-compat alias for [`WalPerformanceConfig`].
+pub type PerformanceConfig = WalPerformanceConfig;
+
 /// Performance configuration with smart defaults - size-based flush only
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PerformanceConfig {
+pub struct WalPerformanceConfig {
     /// Memory table flush threshold (bytes) - ONLY size-based trigger
     pub memory_flush_size_bytes: usize,
 
@@ -115,7 +118,7 @@ pub struct PerformanceConfig {
     pub write_buffer_batch_size: Option<usize>,
 }
 
-impl Default for PerformanceConfig {
+impl Default for WalPerformanceConfig {
     fn default() -> Self {
         Self {
             // Optimized for write-triggered size-based flush only
@@ -306,7 +309,7 @@ pub struct WALConfig {
     pub encryption: EncryptionConfig,
 
     /// Performance tuning
-    pub performance: PerformanceConfig,
+    pub performance: WalPerformanceConfig,
 
     /// Enable MVCC versioning
     pub enable_mvcc: bool,
@@ -344,7 +347,7 @@ impl Default for WALConfig {
             multi_disk: MultiDiskConfig::default(), // LoadBalanced for bulk insert optimization
             compression: CompressionConfig::default(), // Snappy for balanced performance
             encryption: EncryptionConfig::default(), // Encryption disabled by default (TD-016)
-            performance: PerformanceConfig::default(), // Optimized for large vectors and bulk processing
+            performance: WalPerformanceConfig::default(), // Optimized for large vectors and bulk processing
             enable_mvcc: true, // Enable for consistency and document versioning
             enable_ttl: true,  // Enable for data lifecycle management
             enable_background_compaction: true, // Enable for maintenance and space reclamation
@@ -395,7 +398,7 @@ impl From<&crate::core::config::WalStorageConfig> for WALConfig {
                 distribution_strategy,
                 collection_affinity: core_config.collection_affinity,
             },
-            performance: PerformanceConfig {
+            performance: WalPerformanceConfig {
                 memory_flush_size_bytes: core_config.memory_flush_size_bytes,
                 global_flush_threshold: core_config.global_flush_threshold,
                 ..Default::default()
@@ -743,7 +746,7 @@ mod tests {
 
     #[test]
     fn test_performance_config_limits() {
-        let mut perf_config = PerformanceConfig::default();
+        let mut perf_config = WalPerformanceConfig::default();
 
         // Test setting custom limits
         perf_config.memory_flush_size_bytes = 1000 * 1024 * 1024; // 1000MB
@@ -841,7 +844,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_performance_config_default() {
-        let config = PerformanceConfig::default();
+        let config = WalPerformanceConfig::default();
 
         assert_eq!(config.memory_flush_size_bytes, 2 * 1024 * 1024); // Updated to 2MB for faster recovery
         assert_eq!(config.disk_segment_size, 512 * 1024 * 1024);
@@ -894,7 +897,7 @@ mod tests {
                 min_compress_size: 2048,
             },
             encryption: EncryptionConfig::default(),
-            performance: PerformanceConfig {
+            performance: WalPerformanceConfig {
                 memory_flush_size_bytes: 128 * 1024 * 1024,
                 disk_segment_size: 512 * 1024 * 1024,
                 global_flush_threshold: 1024 * 1024 * 1024,
@@ -969,7 +972,7 @@ mod tests {
             },
             compression: CompressionConfig::default(),
             encryption: EncryptionConfig::default(),
-            performance: PerformanceConfig::default(),
+            performance: WalPerformanceConfig::default(),
             enable_mvcc: true,
             enable_ttl: true,
             enable_background_compaction: true,
@@ -992,7 +995,7 @@ mod tests {
     #[test]
     fn test_memory_flush_threshold_configuration() {
         // Test different memory flush threshold configurations
-        let mut config = PerformanceConfig::default();
+        let mut config = WalPerformanceConfig::default();
 
         // Default should be 2MB
         assert_eq!(config.memory_flush_size_bytes, 2 * 1024 * 1024);
@@ -1007,7 +1010,7 @@ mod tests {
 
     #[test]
     fn test_global_flush_threshold_configuration() {
-        let mut config = PerformanceConfig::default();
+        let mut config = WalPerformanceConfig::default();
 
         // Default should be 4GB
         assert_eq!(config.global_flush_threshold, 4 * 1024 * 1024 * 1024);
@@ -1019,7 +1022,7 @@ mod tests {
 
     #[test]
     fn test_compaction_threshold_configuration() {
-        // This tests SstConfig, not PerformanceConfig
+        // This tests SstConfig, not WalPerformanceConfig
         let mut config = crate::core::config::SstConfig::default();
 
         // Default should be 5 SSTables (as per SstConfig::default())
@@ -1032,7 +1035,7 @@ mod tests {
 
     #[test]
     fn test_memory_threshold_logic() {
-        let config = PerformanceConfig::default();
+        let config = WalPerformanceConfig::default();
         let threshold = config.memory_flush_size_bytes;
 
         // Test different memory usage scenarios
@@ -1122,7 +1125,7 @@ mod tests {
 
     #[test]
     fn test_global_flush_threshold_logic() {
-        let config = PerformanceConfig::default();
+        let config = WalPerformanceConfig::default();
         let threshold = config.global_flush_threshold;
 
         // Test scenarios that would trigger global flush
@@ -1169,7 +1172,7 @@ mod tests {
         use std::sync::Arc;
 
         let counter = Arc::new(TriggerCounter::new());
-        let config = PerformanceConfig::default();
+        let config = WalPerformanceConfig::default();
 
         // Simulate multiple memory threshold breaches
         let test_memory_usages = vec![
@@ -1368,13 +1371,13 @@ mod tests {
 
     #[test]
     fn test_performance_config_defaults() {
-        let config = PerformanceConfig::default();
+        let config = WalPerformanceConfig::default();
 
         // Verify size-based flush defaults
         assert_eq!(config.memory_flush_size_bytes, 2 * 1024 * 1024); // 2MB
         assert_eq!(config.disk_segment_size, 512 * 1024 * 1024); // 512MB
         assert_eq!(config.global_flush_threshold, 4 * 1024 * 1024 * 1024); // 4GB
-        // Note: write_ahead_log_size field doesn't exist in PerformanceConfig
+        // Note: write_ahead_log_size field doesn't exist in WalPerformanceConfig
         // TODO: Determine correct field to assert or remove this test
         assert_eq!(config.batch_threshold, 500);
         assert_eq!(config.mvcc_cleanup_interval_secs, 3600); // 1 hour
@@ -1390,7 +1393,7 @@ mod tests {
 
     #[test]
     fn test_performance_config_custom() {
-        let custom_config = PerformanceConfig {
+        let custom_config = WalPerformanceConfig {
             memory_flush_size_bytes: 1024 * 1024,       // 1MB
             disk_segment_size: 64 * 1024 * 1024,        // 64MB
             global_flush_threshold: 1024 * 1024 * 1024, // 1GB
@@ -1409,7 +1412,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&custom_config).unwrap();
-        let deserialized: PerformanceConfig = serde_json::from_str(&json).unwrap();
+        let deserialized: WalPerformanceConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(
             custom_config.memory_flush_size_bytes,
             deserialized.memory_flush_size_bytes

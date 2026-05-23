@@ -43,7 +43,7 @@ pub struct EngineMigrationConfig {
     pub validation: ValidationConfig,
 
     /// Performance settings
-    pub performance: PerformanceConfig,
+    pub performance: MigrationPerformanceConfig,
 
     /// Rollback settings
     pub rollback: RollbackConfig,
@@ -84,9 +84,12 @@ pub struct ValidationConfig {
     pub validation_timeout_seconds: u64,
 }
 
+/// Backwards-compat alias for [`MigrationPerformanceConfig`].
+pub type PerformanceConfig = MigrationPerformanceConfig;
+
 /// Performance configuration
 #[derive(Debug, Clone)]
-pub struct PerformanceConfig {
+pub struct MigrationPerformanceConfig {
     /// Batch size for data migration
     pub batch_size: usize,
 
@@ -183,7 +186,7 @@ impl Default for EngineMigrationConfig {
             collections: Vec::new(),
             strategy: MigrationStrategy::CopyThenSwitch,
             validation: ValidationConfig::default(),
-            performance: PerformanceConfig::default(),
+            performance: MigrationPerformanceConfig::default(),
             rollback: RollbackConfig::default(),
         }
     }
@@ -201,7 +204,7 @@ impl Default for ValidationConfig {
     }
 }
 
-impl Default for PerformanceConfig {
+impl Default for MigrationPerformanceConfig {
     fn default() -> Self {
         Self {
             batch_size: 1000,
@@ -295,7 +298,7 @@ pub mod utils {
         source: ProtoStorageEngine,
         target: ProtoStorageEngine,
         data_size_gb: f64,
-        config: &PerformanceConfig,
+        config: &MigrationPerformanceConfig,
     ) -> chrono::Duration {
         // Base throughput estimates (GB/hour)
         let throughput = match (source, target) {
@@ -448,7 +451,7 @@ mod tests {
 
     #[test]
     fn test_migration_time_estimation() {
-        let config = PerformanceConfig::default();
+        let config = MigrationPerformanceConfig::default();
 
         let duration = estimate_migration_time(
             ProtoStorageEngine::Viper,

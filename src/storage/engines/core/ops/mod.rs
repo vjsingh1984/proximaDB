@@ -15,7 +15,7 @@
 //!
 //! ## Data Types
 //!
-//! - **`FilterableColumn`**: Column configuration for metadata filtering
+//! - **`CoreOpsFilterableColumn`**: Column configuration for metadata filtering
 //! - **`ColumnData`**: Type-safe column data types
 //!
 //! ## Migration Notes
@@ -37,9 +37,12 @@ pub mod performance_optimization;
 // Import common types used across the module
 use crate::core::search::FilterExpression;
 
+/// Backwards-compat alias for [`CoreOpsFilterableColumn`].
+pub type FilterableColumn = CoreOpsFilterableColumn;
+
 /// Filterable metadata column configuration
 #[derive(Debug, Clone)]
-pub struct FilterableColumn {
+pub struct CoreOpsFilterableColumn {
     /// Column name
     pub name: String,
     /// Column data type
@@ -502,7 +505,7 @@ pub struct VectorValidationConfig {
 /// Metadata schema configuration
 #[derive(Debug, Clone)]
 pub struct MetadataSchemaConfig {
-    pub filterable_columns: Vec<FilterableColumn>,
+    pub filterable_columns: Vec<CoreOpsFilterableColumn>,
     pub searchable_columns: Vec<String>,
     pub required_columns: Vec<String>,
     pub schema_validation: bool,
