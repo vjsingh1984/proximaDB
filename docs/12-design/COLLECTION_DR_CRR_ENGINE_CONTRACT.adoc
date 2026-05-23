@@ -101,6 +101,16 @@ policy authority, and not a customer-mutable storage surface.
   marks any provider rule observed without an active billing binding as
   `BillingBlocked`. Concrete billing SKUs and approval UX are operator
   concerns.
+
+| D8
+| What about collections backed by external-authority tables (Iceberg /
+  Delta / Hudi)?
+| The engine refuses to create a `CollectionDrPolicy` for any collection
+  whose xCatalog authority mode is `ExternalAuthoritative`. Those
+  collections do not own their own commits; the external table owner must
+  arrange replication via their own catalog (Iceberg snapshot replication,
+  Delta clone, etc.). DR policy creation returns an explicit error citing
+  the authority mode. See `docs/12-design/OPEN_FORMAT_CATALOG_2026_05_17.adoc`.
 |===
 
 == HLD: Engine vs Operator
@@ -239,6 +249,21 @@ DR replication does not change:
 * billing ownership (held by the operator layer);
 * supported-surface maturity.
 
+=== External-Authority Collections
+
+ProximaDB xCatalog supports an `ExternalAuthoritative` mode for collections
+backed by externally-owned open-format tables (Iceberg / Delta / Hudi). The
+catalog tracks these as publications, imports, or federated reads, not as
+canonical-WAL-owned data
+(see `docs/12-design/OPEN_FORMAT_CATALOG_2026_05_17.adoc`).
+
+The engine refuses to create a `CollectionDrPolicy` when the owning
+collection's `CatalogAuthorityMode` is `ExternalAuthoritative`. The
+returned error names the authority mode and points the caller at the
+table owner's replication mechanism. The reconciler ignores
+`ExternalAuthoritative` collections entirely; it does not attempt to
+observe or repair provider state for them.
+
 === Storage Pool Classes
 
 The engine defines an abstract `StoragePoolClass` enum. The mapping from
@@ -259,11 +284,15 @@ Enum values (used by the path resolver and reconciler; not tier names):
 
 == LLD: xCatalog Schema
 
-=== `collection_dr_policies`
+=== `xcatalog_collection_dr_policies`
+
+Tables follow the existing xCatalog naming convention
+(`crates/control/proximadb-catalog/src/oltp.rs` already prefixes catalog
+tables with `xcatalog_`).
 
 [source,sql]
 ----
-CREATE TABLE collection_dr_policies (
+CREATE TABLE xcatalog_collection_dr_policies (
     policy_id              TEXT PRIMARY KEY,
     tenant_id              TEXT NOT NULL,
     namespace_id           TEXT NOT NULL,
@@ -326,11 +355,11 @@ Notes:
 * `region_pair_id` is an operator-curated identifier; the engine only checks
   that the value is non-null at provisioning time.
 
-=== `collection_dr_events`
+=== `xcatalog_collection_dr_events`
 
 [source,sql]
 ----
-CREATE TABLE collection_dr_events (
+CREATE TABLE xcatalog_collection_dr_events (
     event_id       TEXT PRIMARY KEY,
     policy_id      TEXT NOT NULL,
     tenant_id      TEXT NOT NULL,
@@ -369,7 +398,7 @@ pub struct CollectionDrPolicy {
     pub tenant_id: String,
     pub namespace_id: String,
     pub collection_id: String,
-    pub tier: TenantTier,
+    pub tier: Tier,
     pub state: DrState,
     pub provider: ObjectProvider,
     pub source_region: String,
@@ -403,6 +432,9 @@ pub enum ObjectProvider {
     AwsS3,
     AzureBlob,
     AzureAdlsHns,
+    // Reserved for a future GCS adapter. Not implemented at contract v1;
+    // creating a policy with this variant returns an
+    // `UnsupportedProvider` error from the engine API.
     GcsFuture,
 }
 
@@ -576,7 +608,7 @@ Loop:
   * provider rule status matches desired xCatalog state.
 . Repair safe drift automatically.
 . Mark unsafe drift as `DrHealthState::Drifted` or `ProviderBlocked`.
-. Emit `collection_dr_events`.
+. Emit `xcatalog_collection_dr_events`.
 . Update engine metrics with destination bytes, versions, requests, and lag.
 
 Unsafe drift examples:
@@ -603,31 +635,79 @@ failures, and provider-side retries:
   the policy `ProviderBlocked` and surfaces an alert.
 * Provider rule deletes only fire when both `state = Retired` and
   `policy_version` matches the rule's tagged version.
-* Reconciler emits `collection_dr_events` for every state-changing call,
+* Reconciler emits `xcatalog_collection_dr_events` for every state-changing call,
   including the lease holder and provider response IDs.
 
 == LLD: Provider Adapter Contract
 
 The engine does not embed provider-specific rule shapes. It calls a provider
-adapter via a small trait:
+adapter via a small async trait. All adapter methods are async because real
+provider SDKs (`aws-sdk-s3`, `azure_storage_blobs`) only expose async APIs;
+making the engine trait async avoids `block_on` smuggling inside the
+reconciler.
 
 [source,rust]
 ----
-pub trait DrProviderAdapter {
+#[async_trait::async_trait]
+pub trait DrProviderAdapter: Send + Sync {
     /// Create or update the provider rule to match the policy. Must be
     /// idempotent against (policy_id, policy_version).
-    fn ensure_rule(&self, policy: &CollectionDrPolicy)
+    async fn ensure_rule(&self, policy: &CollectionDrPolicy)
         -> Result<ProviderReplicationBinding, ProviderError>;
 
-    /// Fetch current provider state for drift detection.
-    fn fetch_state(&self, policy: &CollectionDrPolicy)
+    /// Fetch current provider state for drift detection. Read-only.
+    async fn fetch_state(&self, policy: &CollectionDrPolicy)
         -> Result<ProviderObservedState, ProviderError>;
 
     /// Disable and tombstone the provider rule. Must be idempotent.
-    fn retire_rule(&self, policy: &CollectionDrPolicy)
+    async fn retire_rule(&self, policy: &CollectionDrPolicy)
         -> Result<(), ProviderError>;
 }
 ----
+
+=== Error Taxonomy
+
+Adapter errors carry one of four canonical kinds so the reconciler can make
+a retry or escalate decision without parsing provider-specific strings:
+
+[source,rust]
+----
+#[derive(Debug, thiserror::Error)]
+pub enum ProviderError {
+    /// Transient provider failure — network blip, 5xx, throttling that the
+    /// SDK already retried past. Reconciler retries with exponential
+    /// backoff. Does not change `DrHealthState`.
+    #[error("transient provider error: {0}")]
+    Transient(String),
+
+    /// Provider rejected the call because preconditions are wrong (bucket
+    /// missing, versioning disabled, KMS key not usable, IAM policy
+    /// invalid). Reconciler marks `ProviderBlocked` and pages ops. No
+    /// further provider calls until human action.
+    #[error("provider misconfiguration: {0}")]
+    Misconfiguration(String),
+
+    /// Provider account hit a hard limit (S3 replication rule count, Azure
+    /// object replication policy count, request-rate ceiling). Reconciler
+    /// marks `ProviderBlocked` and alerts ops with the limit name.
+    #[error("provider quota exceeded: {0}")]
+    QuotaExceeded(String),
+
+    /// Provider returned 401/403 / role assumption failed. Reconciler
+    /// marks `ProviderBlocked` and pages ops immediately because this
+    /// usually means a credential rotation is mid-flight or an IAM policy
+    /// regressed.
+    #[error("provider auth denied: {0}")]
+    AuthDenied(String),
+}
+----
+
+Reconciler retry policy:
+
+* `Transient` → exponential backoff (default 30s → 30m, jittered), max 12
+  attempts before treating as `ProviderBlocked`.
+* `Misconfiguration` / `QuotaExceeded` / `AuthDenied` → no retry until a
+  human ack or a follow-up xCatalog event clears the block.
 
 Adapter implementations live outside this contract. Examples that the
 project expects to ship:
@@ -675,21 +755,65 @@ Delete replication:
 The engine exposes the primitives a restore workflow needs; the workflow
 itself (failover/failback runbook) lives in the operator layer.
 
+The contract anchors restore semantics on the existing
+`GlobalManifestService` (`src/storage/persistence/write_ahead_log/manifest/`).
+Each `GlobalManifestEntry` carries `global_lsn`, `collection_id`,
+`batch_id`, `file_path`, `storage_url`, `status` (`Active` / `Flushed` /
+`Archived` / `RolledBack`), `checkpoint_id`, and `timestamp_ms`. The
+restore-readiness checker treats those rows as the source of truth and
+asks whether their referenced objects are present at the destination.
+
 Restore readiness requires:
 
-* latest replicated manifest;
-* WAL checkpoint within RPO;
-* segment/snapshot objects for the manifest;
-* index rebuild metadata or replicated index objects;
+* every `GlobalManifestEntry` up to `target_lsn` has its referenced
+  object present at the destination;
+* `target_lsn` was committed at the source within `rpo_target_seconds`
+  of the observation time (RPO satisfied);
+* segment/snapshot objects referenced from the latest replicated
+  manifest entries are present;
+* index rebuild metadata or replicated index objects are present (rebuild
+  permitted — see open question on index replication);
 * tenant and collection metadata exported to the DR control plane;
-* KMS/decryption access in the DR region.
+* KMS/decryption access is available in the DR region.
 
-The engine provides a restore-readiness checker that returns:
+The engine exposes a restore-readiness checker:
 
-* whether each of the above is present;
-* the observed RPO at the destination;
-* the most recent replicated manifest ID;
-* a list of missing objects (if any).
+[source,rust]
+----
+pub struct RestoreReadiness {
+    pub policy_id: String,
+    pub target_lsn: u64,
+    pub observed_rpo_seconds: u32,
+    pub latest_replicated_manifest_entry: Option<GlobalManifestEntry>,
+    pub missing_objects: Vec<String>,
+    pub missing_metadata: Vec<String>,
+    pub kms_accessible: bool,
+}
+
+pub trait DrRestoreReadinessChecker {
+    fn check(&self, policy: &CollectionDrPolicy)
+        -> Result<RestoreReadiness, ProviderError>;
+}
+----
+
+The checker is read-only. It never mutates xCatalog state, never calls
+provider write APIs, and is safe to invoke from operator runbooks at any
+time.
+
+=== RPO Observation
+
+`proximadb_dr_provider_lag_seconds` and the checker's `observed_rpo_seconds`
+both use the manifest as the clock:
+
+* source-side commit time = `GlobalManifestEntry::timestamp_ms` at the
+  source for the latest committed batch;
+* destination-side commit time = `timestamp_ms` of the same entry as
+  observed at the destination after replication finishes;
+* lag = source commit time minus destination commit time, in seconds.
+
+Wall-clock skew between regions is irrelevant because both timestamps come
+from the manifest, which is written once at the source and replicated as
+bytes.
 
 == Observability
 
@@ -735,7 +859,7 @@ KMS:
 
 Audit:
 
-* Every policy state transition is recorded in `collection_dr_events`.
+* Every policy state transition is recorded in `xcatalog_collection_dr_events`.
 * Every provider adapter call (create/update/delete) is audit-logged with
   policy_id, policy_version, and the adapter response.
 * Every blocked delete/downgrade due to DR is audit-logged.
@@ -753,7 +877,7 @@ Audit:
 
 | P1
 | xCatalog metadata
-| Add `collection_dr_policies`, `collection_dr_events`, typed Rust policy
+| Add `xcatalog_collection_dr_policies`, `xcatalog_collection_dr_events`, typed Rust policy
   structs, and namespace/collection delete guards.
 | Not started
 
