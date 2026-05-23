@@ -170,8 +170,11 @@ mod tests {
     #[test]
     fn blueprint_factory_require_errors_on_unknown() {
         let f = BlueprintFactory::new();
-        let err = f.require("nope").unwrap_err();
-        assert!(matches!(err, RankError::UnknownFeature(_)));
+        match f.require("nope") {
+            Err(RankError::UnknownFeature(name)) => assert_eq!(name, "nope"),
+            Err(other) => panic!("expected UnknownFeature, got: {other:?}"),
+            Ok(_) => panic!("expected error"),
+        }
     }
 
     #[test]

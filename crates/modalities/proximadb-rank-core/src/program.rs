@@ -265,14 +265,14 @@ mod tests {
         let counter = Arc::new(AtomicUsize::new(0));
         let idx = b.add(Box::new(CountingExecutor {
             counter: counter.clone(),
-            value: 3.14,
+            value: 3.5,
         }));
         b.set_score(idx);
         let mut prog = b.build().unwrap();
 
         let (q, arena, a, c, m, met) = ctx_fixtures();
         let mut ctx = ScoreCtx::new(&q, &arena, &a, &c, &m, &met);
-        assert_eq!(prog.rank(DocHandle(0), &mut ctx), 3.14);
+        assert_eq!(prog.rank(DocHandle(0), &mut ctx), 3.5);
         assert_eq!(counter.load(Ordering::SeqCst), 1);
     }
 
@@ -306,6 +306,9 @@ mod tests {
 
     #[test]
     fn lazy_force_resets_per_doc() {
+        // Memoization is per-most-recent-doc only. Repeated calls for the
+        // same doc don't re-run; switching docs invalidates the cache.
+        // There's no across-all-docs cache.
         let mut b = RankProgram::builder();
         let counter = Arc::new(AtomicUsize::new(0));
         let leaf = b.add(Box::new(CountingExecutor {
@@ -324,16 +327,22 @@ mod tests {
 
         prog.rank(DocHandle(1), &mut ctx);
         assert_eq!(counter.load(Ordering::SeqCst), 1);
-        prog.rank(DocHandle(2), &mut ctx);
-        assert_eq!(counter.load(Ordering::SeqCst), 2);
-        prog.rank(DocHandle(1), &mut ctx); // same doc as last → counter doesn't bump
+        prog.rank(DocHandle(1), &mut ctx); // same doc as last → no rerun
         assert_eq!(
             counter.load(Ordering::SeqCst),
-            2,
-            "re-ranking same doc must not re-run leaf"
+            1,
+            "re-ranking the SAME most-recent doc must not re-run leaf"
         );
-        prog.rank(DocHandle(3), &mut ctx);
-        assert_eq!(counter.load(Ordering::SeqCst), 3);
+        prog.rank(DocHandle(2), &mut ctx);
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
+        prog.rank(DocHandle(2), &mut ctx); // still doc 2 → no rerun
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
+        prog.rank(DocHandle(1), &mut ctx); // doc changed back → rerun
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            3,
+            "switching doc, even to a previously-seen one, must re-run"
+        );
     }
 
     #[test]
@@ -384,7 +393,8 @@ mod tests {
         }));
         match b.build() {
             Err(RankError::InvalidProfile(_)) => {}
-            other => panic!("expected InvalidProfile, got {other:?}"),
+            Err(other) => panic!("expected InvalidProfile, got: {other:?}"),
+            Ok(_) => panic!("expected error, got Ok"),
         }
     }
 
@@ -394,7 +404,8 @@ mod tests {
         b.set_score(ExecutorIdx(99));
         match b.build() {
             Err(RankError::InvalidProfile(_)) => {}
-            other => panic!("expected InvalidProfile, got {other:?}"),
+            Err(other) => panic!("expected InvalidProfile, got: {other:?}"),
+            Ok(_) => panic!("expected error, got Ok"),
         }
     }
 }

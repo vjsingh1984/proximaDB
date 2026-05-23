@@ -8,7 +8,7 @@
 //! See `roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md` §4.1.7.
 
 use crate::context::ScoreCtx;
-use crate::error::{RankError, RankResult};
+use crate::error::RankResult;
 use crate::program::RankProgram;
 use crate::types::DocHandle;
 use proximadb_kernel::PhaseId;
@@ -93,10 +93,16 @@ impl GlobalScorer for IdentityGlobalScorer {
 /// In R-1, `second` is optional and `global` is optional. R-6 wires
 /// fusion → first → second → global. R-2 supplies the first-phase
 /// `RankProgram` from built-in features.
+///
+/// Each worker thread owns its own `RankPipeline` (RankProgram is `!Sync`
+/// because it carries `Box<dyn FeatureExecutor>` whose `Sync` bound varies
+/// per impl). Sharing across threads is via cloned templates, not shared
+/// state. `GlobalScorer` IS `Send + Sync` so the global stage's `Arc` is
+/// safe to fan out post-merge.
 pub struct RankPipeline {
     pub profile_id: String,
-    pub first: Arc<RankProgram>,
-    pub second: Option<Arc<RankProgram>>,
+    pub first: RankProgram,
+    pub second: Option<RankProgram>,
     pub global: Option<Arc<dyn GlobalScorer>>,
     pub budget: PhaseBudget,
     pub heap_size: usize,
@@ -107,7 +113,7 @@ impl RankPipeline {
     pub fn first_phase_only(profile_id: String, first: RankProgram, heap_size: usize) -> Self {
         Self {
             profile_id,
-            first: Arc::new(first),
+            first,
             second: None,
             global: None,
             budget: PhaseBudget::default(),
@@ -118,29 +124,20 @@ impl RankPipeline {
 
     /// Run first phase on a slice of candidate docs.
     ///
-    /// `RankProgram` is borrowed mutably so this method needs unique access
-    /// to the pipeline's first-phase program clone. Production callers run
-    /// a per-worker clone; tests typically have one worker.
+    /// Per-worker exclusive access via `&mut self` — see the struct doc
+    /// comment for the threading model.
     pub fn run_first_phase(
         &mut self,
         candidates: &[DocHandle],
         ctx: &mut ScoreCtx<'_>,
     ) -> RankResult<PhaseOutcome> {
-        let first =
-            Arc::get_mut(&mut self.first).ok_or_else(|| {
-                RankError::InvalidProfile(
-                    "first-phase RankProgram is shared — cannot mutate (clone the Arc per worker)"
-                        .into(),
-                )
-            })?;
-
         let t0 = Instant::now();
         let budget_us = self.budget.budget_for(PhaseId::FIRST);
         let mut hits = Vec::with_capacity(candidates.len().min(self.heap_size));
         let mut truncated = false;
 
         for &doc in candidates {
-            let score = first.rank(doc, ctx);
+            let score = self.first.rank(doc, ctx);
             hits.push(ScoredHit {
                 doc,
                 score,
@@ -167,7 +164,7 @@ impl RankPipeline {
         });
         hits.truncate(self.heap_size);
 
-        first.end_of_phase(ctx)?;
+        self.first.end_of_phase(ctx)?;
 
         let elapsed_us = t0.elapsed().as_micros() as u64;
         Ok(PhaseOutcome {

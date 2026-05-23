@@ -48,7 +48,7 @@ impl FeatureArena {
     }
 
     /// Allocate an uninitialised slice of `f32` of `len` elements.
-    pub fn alloc_floats_uninit<'a>(&'a self, len: usize) -> &'a mut [f32] {
+    pub fn alloc_floats_uninit(&self, len: usize) -> &mut [f32] {
         let slice = self.bump.alloc_slice_fill_default(len);
         self.bump_high_water();
         slice

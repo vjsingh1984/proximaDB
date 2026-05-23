@@ -220,11 +220,7 @@ mod tests {
     #[test]
     fn score_ctx_is_not_send() {
         // Compile-time guarantee — ScoreCtx must not cross threads.
-        fn assert_not_send<T: ?Sized>()
-        where
-            T: 'static,
-        {
-        }
+        fn assert_not_send<T: ?Sized + 'static>() {}
         assert_not_send::<ScoreCtx<'static>>();
         // The above doesn't actually fail at compile time for !Send types,
         // but the negative trait bound is hard to express. The PhantomData
