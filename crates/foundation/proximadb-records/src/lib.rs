@@ -302,7 +302,7 @@ impl EmbeddingValues {
 /// `Default` derive: enables existing struct literals to spread
 /// `..Default::default()` for the new precision fields without per-site code
 /// migration. Defaults are `Fp32` and `None` — back-compat with PR 0 records.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct EmbeddingCell {
     /// Identifier of the model that produced this embedding.
     pub model_id: String,
@@ -313,11 +313,77 @@ pub struct EmbeddingCell {
     /// Declared dimensionality (must equal `values.len()` for dense vectors).
     pub dim: u32,
     /// Declared scalar storage precision (PR 1 advisory; PR 3 authoritative).
-    #[serde(default)]
     pub precision: EmbeddingScalarType,
     /// Precision epoch this cell was written under, when known.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub precision_epoch: Option<u64>,
+}
+
+// INT-2.5b step 2: custom Serialize/Deserialize impls. Today's behavior
+// (values as raw Vec<f32>) is preserved byte-for-byte by the
+// `embedding_cell_bincode_fixture_locks_pre_2_5b_layout` test in this
+// crate's tests module. The custom impls replace the derived ones so
+// that step 3 (field type flip Vec<f32> → EmbeddingValues) can change
+// the in-memory shape without changing the on-disk shape.
+//
+// Field order locked by the fixture: model_id, modality, values, dim,
+// precision, precision_epoch. Skip-serializing-if-None on
+// precision_epoch is honored via the optional .skip_field branch.
+impl Serialize for EmbeddingCell {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        // Field count is 5 when precision_epoch is None (skipped), 6 otherwise.
+        // serialize_struct's count is advisory for some formats and required
+        // for others; 6 covers the maximum case and skip_field handles the
+        // optional case correctly for human-readable formats.
+        let field_count = if self.precision_epoch.is_some() { 6 } else { 5 };
+        let mut state = serializer.serialize_struct("EmbeddingCell", field_count)?;
+        state.serialize_field("model_id", &self.model_id)?;
+        state.serialize_field("modality", &self.modality)?;
+        state.serialize_field("values", &self.values)?;
+        state.serialize_field("dim", &self.dim)?;
+        state.serialize_field("precision", &self.precision)?;
+        match &self.precision_epoch {
+            Some(epoch) => state.serialize_field("precision_epoch", epoch)?,
+            None => state.skip_field("precision_epoch")?,
+        }
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for EmbeddingCell {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        // Use serde's derived-style visitor via #[derive(Deserialize)] on a
+        // shadow struct that mirrors EmbeddingCell's field shape exactly.
+        // This keeps the deserialization logic in sync with the derived
+        // back-compat behavior (#[serde(default)] on the new fields).
+        #[derive(Deserialize)]
+        #[serde(rename = "EmbeddingCell")]
+        struct Shadow {
+            model_id: String,
+            modality: String,
+            values: Vec<f32>,
+            dim: u32,
+            #[serde(default)]
+            precision: EmbeddingScalarType,
+            #[serde(default)]
+            precision_epoch: Option<u64>,
+        }
+        let s = Shadow::deserialize(deserializer)?;
+        Ok(EmbeddingCell {
+            model_id: s.model_id,
+            modality: s.modality,
+            values: s.values,
+            dim: s.dim,
+            precision: s.precision,
+            precision_epoch: s.precision_epoch,
+        })
+    }
 }
 
 impl EmbeddingCell {
