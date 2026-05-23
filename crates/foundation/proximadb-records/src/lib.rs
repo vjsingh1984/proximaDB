@@ -342,6 +342,26 @@ impl EmbeddingCell {
         &self.values
     }
 
+    /// INT-2.5a: borrowed-or-owned fp32 view of the cell's values.
+    ///
+    /// This is the migration target for the 145 read sites that currently
+    /// access `cell.values` directly. Today every cell stores `Vec<f32>`
+    /// internally so this returns `Cow::Borrowed(&self.values)` — zero
+    /// copy, same behavior as `&cell.values`.
+    ///
+    /// After INT-2.5b flips the storage to `EmbeddingValues`, the Fp32
+    /// variant continues to return `Cow::Borrowed`; non-fp32 variants
+    /// promote to fp32 once and return `Cow::Owned`. Callers that need
+    /// to read fp32 (distance compute, legacy proto bridges, capacity
+    /// dashboards) work unchanged through both shapes.
+    ///
+    /// Callers that need the typed payload (PAX writer in INT-3, future
+    /// fp16-native distance kernels) should call `as_embedding_values()`
+    /// instead so they get the variant without the lossy promote.
+    pub fn as_fp32_cow(&self) -> std::borrow::Cow<'_, [f32]> {
+        std::borrow::Cow::Borrowed(&self.values)
+    }
+
     pub fn values_byte_size(&self) -> usize {
         self.values.len() * self.precision.bytes_per_element()
     }
@@ -1128,6 +1148,28 @@ mod tests {
     fn embedding_cell_as_fp32_slice_borrows_values() {
         let cell = EmbeddingCell::new_fp32("m", "text", 3, vec![1.0, 2.0, 3.0]);
         assert_eq!(cell.as_fp32_slice(), &[1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn embedding_cell_as_fp32_cow_borrows_when_storage_is_fp32() {
+        // INT-2.5a: with today's Vec<f32> storage, the Cow must be
+        // Borrowed (zero-copy). After INT-2.5b's field flip, this
+        // invariant holds for the Fp32 variant; non-fp32 variants
+        // return Owned.
+        let cell = EmbeddingCell::new_fp32("m", "text", 3, vec![1.0, 2.0, 3.0]);
+        let cow = cell.as_fp32_cow();
+        assert!(matches!(cow, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(&*cow, &[1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn embedding_cell_as_fp32_cow_matches_as_fp32_slice() {
+        // The 145 read sites that currently do `&cell.values` or
+        // `cell.values.as_slice()` get equivalent bytes via as_fp32_cow.
+        // This lets us migrate sites incrementally without behavior
+        // change today.
+        let cell = EmbeddingCell::new_fp32("m", "text", 4, vec![0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(&*cell.as_fp32_cow(), cell.as_fp32_slice());
     }
 
     #[test]
