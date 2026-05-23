@@ -1041,7 +1041,91 @@ A precision change is shippable to a tenant tier when ALL of:
   binaries (one OFF flag, two ON flag), verify reads succeed across all
   nodes.
 
-== Open Items Deferred to Phase 3+
+== Phase 3 Plan: Int8 Canonical
+
+=== Why int8 deserves a phase of its own
+
+Int8 canonical is the next storage tier after fp16 — 4× compression vs fp32 (vs fp16's 2×) and ~2–3× QPS over fp16 on hardware with native int8 dot product (Intel VNNI / AVX-512 VPDPBUSD, ARM SDOT/UDOT, NVIDIA DP4A). On a 100M-row 1024-dim BGE-large collection, that's 800 GB → 200 GB raw storage and a roughly 4× total throughput improvement over the fp32 baseline.
+
+The cost is that int8 is fundamentally lossy in a way fp16 isn't. fp16 has 11-bit mantissa precision; int8 has 8 bits *total* and depends on a per-vector scale to reconstruct the original range. Calibration mistakes show up as recall regressions that the §Q13 gates would (correctly) refuse to ship. Phase 3 exists to make calibration disciplined and rerank-against-canonical non-negotiable so the lossy storage is invisible to the user-facing recall.
+
+=== Acceptance gates (stricter than Phase 2)
+
+A precision change to int8 canonical is shippable when ALL of:
+
+. **Recall@10 ≥ 0.95** on the candidate-only path (no rerank), measured by the PR 11 harness on three datasets: SIFT-1M, GloVe-100, AND a production-distribution sample.
+. **Recall@10 ≥ 0.99 with rerank-against-canonical** (the LLD's `rerank_with: Fp32Promoted` policy). Rerank cannot be disabled by the user for int8 canonical collections.
+. **Storage overhead ratio ≤ 1.25×** the int8 canonical size (vs Phase 2's 2× allowance) — int8's compression budget is too tight to spend on derived levels.
+. **CREATE TABLE refuses to set `canonical = Int8Scalar` without an explicit `ACKNOWLEDGE LOSSY` clause** (UX disclosure requirement called out in the deferred-items rationale).
+. **30-day production trial** on at least one Business or Enterprise tenant collection before the default-policy flip to int8-allowed.
+. **Calibration metadata is committed to the catalog**, not recomputed at write-time, so rolling a single bad calibration is a catalog operation rather than a re-quantization sweep.
+
+=== Phase 3 PR sequence (twelve PRs, same isolation discipline as Phase 2)
+
+==== Calibration infrastructure
+
+`crates/modalities/proximadb-embedding/src/precision/calibration/`:
+
+* **PR 3.1 — Calibrator trait + builtin strategies.** Plug-in `Calibrator` trait with `SymmetricMaxAbs` (today's naive default), `AsymmetricMinMax`, `PercentileClip { p99_5 }`, `KlDivergence`. Per-strategy unit tests on synthetic distributions. The PR 1 `EmbeddingValues::from_fp32_lossy` becomes a thin wrapper that delegates to the selected `Calibrator`.
+* **PR 3.2 — Offline collection-level calibration job.** Samples N vectors from a collection's current canonical store, fits per-strategy scales, picks the strategy that minimizes round-trip MSE under the recall harness's worst-case top-K shift metric. Result is `CollectionCalibrationProfile { strategy, per_subvector_scales, fit_at_epoch }` and lives on the catalog row.
+
+==== Distance kernels
+
+`src/compute/distance/`:
+
+* **PR 3.3 — int8×int8 dot product with int16 accumulators.** SIMD-vectorized: VPDPBUSD on x86 with VNNI (Cascade Lake+), SDOT on ARMv8.2+, scalar fallback elsewhere. Dequant once at the end using per-vector or per-collection scale. Per-platform throughput micro-bench feeds `HardwareCapabilities::probe()` (PR 7a extension).
+* **PR 3.4 — int8 L2 distance.** Decomposes to `||a||² + ||b||² - 2·a·b`; `||x||²` can be precomputed and stored alongside the vector. Cosine reduces to dot product when vectors are L2-normalized (the common case).
+
+==== Storage path
+
+* **PR 3.5 — PAX per-column quantizer metadata.** Extends the PR 5 PAX header so each int8 column carries `scale: f32` and `zero_point: i8` inline. Backward-compatible: fp32/fp16 columns have a zero-length metadata trailer.
+* **PR 3.6 — WAL writer emits int8 records.** Reuses the PR 3a `PROXIMADB_EMBED_PRECISION_SCHEMA_V2` feature flag + PR 8 boundary downconverter for the fp32→int8 conversion at the write boundary. WAL bytes per vector drop from 2N (fp16) to N+5 (int8 + scale + zero_point).
+
+==== Recall safety net
+
+* **PR 3.7 — Mandatory rerank-against-canonical for int8 collections.** Default search level becomes `int8_candidates + fp32_rerank`. The user can NOT set `rerank_with = None` on an int8 canonical collection; the catalog DDL validator refuses. Rerank pulls fp32 *shadow* vectors (PR 6a's `retain_fp32_shadow: true` for int8 collections is non-optional during Phase 3).
+* **PR 3.8 — Recall harness extension.** Adds production-distribution datasets to the PR 11 harness: BEIR (12 retrieval tasks), MIRACL (multilingual), and an anonymized customer sample loader. SIFT/GloVe alone don't stress int8 calibration because they're already well-conditioned.
+
+==== UX and disclosure
+
+* **PR 3.9 — `ACKNOWLEDGE LOSSY` DDL clause.** `CREATE TABLE ... WITH (canonical_embedding_precision = 'int8_scalar')` returns an error unless followed by `ACKNOWLEDGE LOSSY 'recall_floor=0.95'` or similar. The acknowledgement string is recorded in the catalog row for audit.
+* **PR 3.10 — Capability + dashboard.** `/version` advertises `int8_canonical_capable: true`. Grafana dashboard adds an "lossy collections" panel that surfaces `recall_at_10` prominently, with a default alert when it crosses the 0.95 floor.
+
+==== Tier policy and rollout
+
+* **PR 3.11 — Tier policy update.** Int8 canonical only available to Business and Enterprise tiers initially. Standard and Pro tiers can use int8-*derived* (PR 6a `QuantizationMaterialization::StorageAux`) but not int8-canonical. Free/Team blocked entirely.
+* **PR 3.12 — End-to-end int8 collection scaffold.** Same pattern as PR 12 for fp16: integration test that builds an int8 collection from a synthetic corpus, exercises rerank-against-canonical, verifies recall + storage gates. Lives in `proximadb-recall-bench/tests/int8_e2e.rs`.
+
+=== Risks and mitigations
+
+[cols="2,3"]
+|===
+| Risk | Mitigation
+
+| Calibration strategy that works on benchmark datasets fails on production distributions
+| PR 3.8 requires the production-distribution sample in the harness; the PR 3.2 offline calibrator picks strategy per-collection, not globally.
+
+| User disables rerank to chase QPS and ships recall < 0.95 to customers
+| PR 3.7 makes rerank-disable structurally impossible on int8 canonical collections via the catalog DDL validator, not a runtime check.
+
+| fp32 shadow doubles storage (defeating the int8 win)
+| PR 3.7 keeps shadow only for the rerank top-K candidate set, not every vector. The shadow is a per-segment side-file that compaction sparsifies as confidence in the calibration grows.
+
+| int8 calibration drifts as the collection's distribution evolves
+| PR 3.2's profile lives in the catalog with a `fit_at_epoch`; the migration job from PR 10 marks the collection's PQ codebooks AND the calibration profile stale together on epoch bump.
+
+| Hardware without int8 SIMD (older x86, Apple M1 pre-Neon-dot) takes a latency hit
+| PR 3.3 scalar fallback is correct but slow; `HardwareCapabilities::probe()` (PR 7a) gates int8 default via a `min_int8_speedup_ratio` threshold mirroring Phase 2's fp16 gate.
+
+| Different calibration on writer vs query side silently corrupts scores
+| Reuse the PR 8 `prepare_query_matches_writer_quantization_byte_for_byte` invariant test pattern — the int8 path needs its own version covering all four `Calibrator` strategies.
+|===
+
+=== When Phase 3 starts
+
+After Phase 2's deferred integrations land (WAL writer hookup, PAX writer hookup, BGE/HTTP client `project_to_canonical` wiring) AND at least one fp16 canonical collection is in production with 30 days of recall data showing the gates hold under real workload. The Phase 2 production data tells us where the int8 floor actually is, not where benchmark datasets suggest it might be.
+
+== Open Items Deferred to Phase 4+
 
 These were considered and deliberately deferred:
 
@@ -1051,12 +1135,13 @@ These were considered and deliberately deferred:
 . **bf16 canonical.** Reserved in the enum but not implemented; Apple
   Silicon's AMX favors fp16, x86_64 AVX-512 favors bf16. Cross-platform
   policy is non-trivial. Defer until customer demand.
-. **Int8 canonical (lossy collection mode).** Recall risk is real;
-  customer-facing UX needs careful disclosure. Defer until int8-derived
-  + rerank is proven on tier-business adaptive policies first.
 . **Adaptive policy auto-flip.** Phase 2 ships fixed-mode policies only.
   Adaptive (telemetry-driven default flips) lands in Phase 5 once we have
   enough production recall data.
+. **1-bit / binary canonical.** 32× compression but extreme recall floor;
+  only viable with mandatory rerank AND a binary-index-aware ANN engine
+  (e.g. IndexBinaryFlat). Defer until int8 canonical (Phase 3) ships and
+  customer demand justifies the index work.
 
 == References
 

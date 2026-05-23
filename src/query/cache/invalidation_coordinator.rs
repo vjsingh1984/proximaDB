@@ -273,6 +273,7 @@ mod tests {
         let s = InvalidationSummary {
             plan_cache_entries: 3,
             batch_groups_closed: 5,
+            corpus_version_after: None,
         };
         assert_eq!(s.total(), 8);
     }
