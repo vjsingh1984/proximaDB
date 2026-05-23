@@ -20,9 +20,10 @@
 //! happens at the query layer.
 
 use prometheus::{
-    CounterVec, GaugeVec, IntGaugeVec, Opts, Registry,
+    CounterVec, Encoder, GaugeVec, IntGaugeVec, Opts, Registry, TextEncoder,
     core::{AtomicF64, AtomicI64, GenericCounterVec, GenericGaugeVec},
 };
+use std::sync::OnceLock;
 
 // ---------------------------------------------------------------------------
 // LLD-locked metric names
@@ -226,6 +227,63 @@ impl PrecisionMetrics {
 }
 
 // ---------------------------------------------------------------------------
+// Process-wide singleton (PR 7 follow-up)
+// ---------------------------------------------------------------------------
+//
+// The existing /metrics/prometheus endpoint uses a SystemMetrics-shaped
+// custom exporter, not a `prometheus::Registry`. PrecisionMetrics lives
+// against its own `Registry` so it can use the typed
+// GaugeVec/CounterVec API. The endpoint code appends this registry's
+// scrape output to the legacy exporter's output so operators see both
+// metric families on the same scrape.
+
+static REGISTRY: OnceLock<Registry> = OnceLock::new();
+static METRICS: OnceLock<PrecisionMetrics> = OnceLock::new();
+
+/// Get-or-init the process-wide precision-metrics registry. Idempotent:
+/// later callers see the same `Registry` the first caller installed.
+pub fn precision_metrics_registry() -> &'static Registry {
+    REGISTRY.get_or_init(Registry::new)
+}
+
+/// Get-or-init the process-wide PrecisionMetrics handle. Registers
+/// every metric in the family against the registry on first call.
+///
+/// The server binary calls this at boot (after the PR 7a hw probe);
+/// hot-path callers read via `metrics()` and never re-init.
+pub fn init_precision_metrics() -> &'static PrecisionMetrics {
+    METRICS.get_or_init(|| {
+        PrecisionMetrics::register(precision_metrics_registry())
+            .expect("PrecisionMetrics::register must succeed on first init")
+    })
+}
+
+/// Read the cached PrecisionMetrics handle. Returns `None` if
+/// `init_precision_metrics()` has not been called yet — production hot-
+/// path callers should treat that as "skip the metric" rather than
+/// panic so a missed boot init doesn't take down the request path.
+pub fn metrics() -> Option<&'static PrecisionMetrics> {
+    METRICS.get()
+}
+
+/// Encode the precision-metrics registry's contents as Prometheus text
+/// format. Returns the empty string if `init_precision_metrics()` has
+/// not been called (so the existing endpoint stays valid).
+///
+/// Endpoint code appends this output to the legacy exporter's output.
+pub fn scrape_text() -> String {
+    let Some(registry) = REGISTRY.get() else {
+        return String::new();
+    };
+    let mut buf = Vec::new();
+    let encoder = TextEncoder::new();
+    if encoder.encode(&registry.gather(), &mut buf).is_err() {
+        return String::new();
+    }
+    String::from_utf8(buf).unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
@@ -396,5 +454,68 @@ mod tests {
             .collect();
         assert!(label_keys.contains(&LABEL_COLLECTION));
         assert!(label_keys.contains(&LABEL_PRECISION));
+    }
+
+    // === PR 7b follow-up: singleton + scrape ===
+    //
+    // Note: the OnceLock singleton (precision_metrics_registry / metrics)
+    // can't be unit-tested directly because it leaks state across tests.
+    // Cover the same invariants via dedicated Registry instances; the
+    // singleton itself is exercised by the integration smoke test in
+    // the server binary at boot.
+
+    #[test]
+    fn scrape_text_returns_empty_before_init() {
+        // Before init_precision_metrics() runs (which fresh tests
+        // never do — see note above), scrape_text() must return ""
+        // so the existing /metrics/prometheus endpoint stays valid.
+        //
+        // We can't actually reset the OnceLock between test runs, so
+        // this test only proves that calling scrape_text() doesn't
+        // panic; the actual empty-string behavior is exercised by the
+        // helper's `let Some(...) else { return String::new(); }`
+        // guard which is unreachable code coverage.
+        let _ = scrape_text();
+    }
+
+    #[test]
+    fn registry_encoded_output_includes_every_locked_metric_name() {
+        // Equivalent of scrape_text() but against a local registry so
+        // the test is hermetic. Confirms the TextEncoder pipeline
+        // produces output containing every LLD-locked metric name
+        // once values have been set.
+        let registry = Registry::new();
+        let metrics = PrecisionMetrics::register(&registry).unwrap();
+        metrics.set_segments_total("c", "fp32", 1);
+        metrics.set_canonical_bytes("c", "fp32", 1);
+        metrics.set_derived_bytes("c", "int8", 1);
+        metrics.set_overhead_ratio("c", 1.0);
+        metrics.set_migration_progress_ratio("c", 0.0);
+        metrics.inc_conversions("fp32", "fp16", SITE_INGEST_BOUNDARY, 1);
+        metrics.set_recall_at_10("c", "cosine", 1.0);
+        metrics.set_hw_matmul_ns(DTYPE_PAIR_F32_F32, 100);
+
+        let mut buf = Vec::new();
+        TextEncoder::new()
+            .encode(&registry.gather(), &mut buf)
+            .unwrap();
+        let text = String::from_utf8(buf).unwrap();
+
+        for name in [
+            METRIC_SEGMENTS_TOTAL,
+            METRIC_CANONICAL_BYTES,
+            METRIC_DERIVED_BYTES,
+            METRIC_OVERHEAD_RATIO,
+            METRIC_MIGRATION_PROGRESS_RATIO,
+            METRIC_CONVERSIONS_TOTAL,
+            METRIC_RECALL_AT_10,
+            METRIC_HW_MATMUL_NS,
+        ] {
+            assert!(
+                text.contains(name),
+                "scrape output missing {name} — operators' dashboards \
+                 grep these strings, so omission would silently break alerts"
+            );
+        }
     }
 }

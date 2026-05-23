@@ -165,9 +165,21 @@ async fn prometheus_metrics_endpoint(
 ) -> Result<String, StatusCode> {
     let metrics = metrics_collector.current_metrics().await;
     let exporter = PrometheusExporter::new();
-    exporter
+    let mut text = exporter
         .export_system_metrics(&metrics)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // PR 7b follow-up: append the precision-metrics family
+    // (proximadb_embedding_precision_*) if the singleton was
+    // initialized at boot. Empty when uninitialized so the response
+    // stays valid for binaries that don't run the precision rollout.
+    let precision_text = crate::observability::precision_metrics::scrape_text();
+    if !precision_text.is_empty() {
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&precision_text);
+    }
+    Ok(text)
 }
 
 /// Health check for metrics system

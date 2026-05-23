@@ -158,11 +158,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn empty_coordinator_returns_zero_summary() {
+    async fn empty_coordinator_returns_zero_caches_but_bumps_version() {
         let c = CacheInvalidationCoordinator::empty();
         let s = c.invalidate_collection("t", "kb", &[]).await;
-        assert_eq!(s, InvalidationSummary::default());
+        // No caches wired → both cache counters are zero…
+        assert_eq!(s.plan_cache_entries, 0);
+        assert_eq!(s.batch_groups_closed, 0);
         assert_eq!(s.total(), 0);
+        // …but the corpus_version bump always fires so future planner
+        // calls invalidate even if no cache was wired at flush time.
+        assert!(
+            s.corpus_version_after.is_some(),
+            "version bump must fire even when no caches are wired"
+        );
     }
 
     #[tokio::test]

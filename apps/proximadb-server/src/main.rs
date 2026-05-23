@@ -233,6 +233,22 @@ async fn main() -> anyhow::Result<()> {
         caps.best_canonical_for_inference(),
     );
 
+    // PR 7b follow-up: initialize the precision-metrics Prometheus
+    // family and populate `proximadb_embedding_precision_hw_matmul_ns`
+    // from the probe so the Grafana dashboard reflects the cached
+    // measurement immediately. Other metrics (segments, conversions,
+    // recall) populate from their respective hot-path callers as those
+    // call sites land. Init is idempotent (OnceLock-backed).
+    {
+        use proximadb::observability::precision_metrics::{
+            self, DTYPE_PAIR_F16_F16, DTYPE_PAIR_F16_F32, DTYPE_PAIR_F32_F32,
+        };
+        let pm = precision_metrics::init_precision_metrics();
+        pm.set_hw_matmul_ns(DTYPE_PAIR_F32_F32, caps.f32_f32_matmul_ns as i64);
+        pm.set_hw_matmul_ns(DTYPE_PAIR_F16_F32, caps.f16_f32_matmul_ns as i64);
+        pm.set_hw_matmul_ns(DTYPE_PAIR_F16_F16, caps.f16_f16_matmul_ns as i64);
+    }
+
     // Initialize the in-process embedding singleton. Loads BGE ONNX sessions
     // (or synthetic fallback when the `onnx` feature is off), spawns sync +
     // async tokio runtimes, and registers Prometheus instruments. Crashing
