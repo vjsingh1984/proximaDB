@@ -88,7 +88,7 @@ pub struct RaptorConfig {
     pub compaction_min_size_mb: usize,
     pub enable_clustering_aware_compaction: bool,
     pub compaction_config: Option<RaptorCompactionConfig>,
-    pub clustering_config: Option<ClusteringConfig>,
+    pub clustering_config: Option<RaptorClusteringConfig>,
 
     // Performance settings
     pub max_parallel_reads: usize,
@@ -148,8 +148,11 @@ pub struct RaptorCompactionConfig {
     pub target_file_size: usize,      // For RAPTOR: usize::MAX (single file)
 }
 
+/// Backwards-compat alias for [`RaptorClusteringConfig`].
+pub type ClusteringConfig = RaptorClusteringConfig;
+
 #[derive(Debug, Clone)]
-pub struct ClusteringConfig {
+pub struct RaptorClusteringConfig {
     pub num_clusters: usize,          // k value in p²+k×p
     pub rowgroup_size: usize,         // p value in p²+k×p
     pub boosting_alpha_own: f32,      // α₁ weight for own centroid
@@ -213,7 +216,7 @@ impl Default for RaptorConfig {
                 l0_trigger_file_count: constants::io::COMPACTION_THRESHOLD_FILES,
                 target_file_size: constants::io::TARGET_FILE_SIZE,
             }),
-            clustering_config: Some(ClusteringConfig {
+            clustering_config: Some(RaptorClusteringConfig {
                 num_clusters: constants::clustering::DEFAULT_CLUSTER_COUNT,
                 rowgroup_size: constants::clustering::DEFAULT_ROWGROUP_SIZE,
                 boosting_alpha_own: constants::boosting::ALPHA_OWN_DEFAULT,

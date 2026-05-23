@@ -107,8 +107,11 @@ pub struct AccessPrediction {
     pub prediction_rationale: String,
 }
 
+/// Backwards-compat alias for [`ZeroCopyAccessPatternTracker`].
+pub type AccessPatternTracker = ZeroCopyAccessPatternTracker;
+
 /// Access pattern tracker with learning capabilities
-pub struct AccessPatternTracker {
+pub struct ZeroCopyAccessPatternTracker {
     /// File-level access statistics
     file_stats: HashMap<String, AccessStats>,
     /// Collection-level patterns
@@ -153,7 +156,7 @@ impl Default for LearningParameters {
 }
 
 #[allow(dead_code)]
-impl AccessPatternTracker {
+impl ZeroCopyAccessPatternTracker {
     /// Create new access pattern tracker
     pub fn new(max_events: usize, analysis_window: Duration) -> Self {
         Self {
@@ -726,14 +729,14 @@ mod tests {
 
     #[test]
     fn test_access_tracker_creation() {
-        let tracker = AccessPatternTracker::new(1000, Duration::from_secs(3600));
+        let tracker = ZeroCopyAccessPatternTracker::new(1000, Duration::from_secs(3600));
         assert_eq!(tracker.max_events, 1000);
         assert_eq!(tracker.analysis_window, Duration::from_secs(3600));
     }
 
     #[test]
     fn test_file_key_creation() {
-        let tracker = AccessPatternTracker::new(100, Duration::from_secs(3600));
+        let tracker = ZeroCopyAccessPatternTracker::new(100, Duration::from_secs(3600));
         let key = tracker.create_file_key("/path/to/file.sst", "collection1");
         assert_eq!(key, "collection1:/path/to/file.sst");
 
@@ -744,7 +747,7 @@ mod tests {
 
     #[test]
     fn test_access_recording() {
-        let mut tracker = AccessPatternTracker::new(100, Duration::from_secs(3600));
+        let mut tracker = ZeroCopyAccessPatternTracker::new(100, Duration::from_secs(3600));
 
         let event = AccessEvent {
             file_path: "/test/file.sst".to_string(),
@@ -768,7 +771,7 @@ mod tests {
 
     #[test]
     fn test_prediction_with_no_data() {
-        let tracker = AccessPatternTracker::new(100, Duration::from_secs(3600));
+        let tracker = ZeroCopyAccessPatternTracker::new(100, Duration::from_secs(3600));
 
         let prediction = tracker.predict_access(
             "/unknown/file.sst",
@@ -783,7 +786,7 @@ mod tests {
 
     #[test]
     fn test_periodicity_detection() {
-        let tracker = AccessPatternTracker::new(100, Duration::from_secs(3600));
+        let tracker = ZeroCopyAccessPatternTracker::new(100, Duration::from_secs(3600));
 
         // Create intervals with similar duration (periodic pattern)
         let intervals = vec![
@@ -802,7 +805,7 @@ mod tests {
 
     #[test]
     fn test_burst_pattern_detection() {
-        let tracker = AccessPatternTracker::new(100, Duration::from_secs(3600));
+        let tracker = ZeroCopyAccessPatternTracker::new(100, Duration::from_secs(3600));
 
         // Create short intervals (burst pattern)
         let intervals = vec![

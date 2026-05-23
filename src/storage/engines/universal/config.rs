@@ -49,7 +49,7 @@ pub struct UniversalAdapterConfig {
     pub progressive_refinement: ProgressiveRefinementConfig,
 
     /// Cache configuration
-    pub cache_config: CacheConfig,
+    pub cache_config: UniversalCacheConfig,
 
     /// Storage engine configurations
     pub storage_engines: Vec<StorageEngineConfig>,
@@ -135,9 +135,12 @@ pub struct HardwareAccelerationConfig {
     pub enable_prefetching: bool,
 }
 
+/// Backwards-compat alias for [`UniversalCacheConfig`].
+pub type CacheConfig = UniversalCacheConfig;
+
 /// Cache configuration
 #[derive(Debug, Clone)]
-pub struct CacheConfig {
+pub struct UniversalCacheConfig {
     /// Maximum number of entries in cache
     pub max_entries: usize,
 
@@ -230,7 +233,7 @@ impl Default for HardwareAccelerationConfig {
     }
 }
 
-impl Default for CacheConfig {
+impl Default for UniversalCacheConfig {
     fn default() -> Self {
         Self {
             max_entries: 1000,

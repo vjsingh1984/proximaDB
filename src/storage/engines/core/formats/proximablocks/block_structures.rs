@@ -1006,7 +1006,7 @@ pub struct SuperBlock {
 
     /// Performance optimization
     pub layout: BlockLayout,
-    pub access_pattern: AccessPattern,
+    pub access_pattern: BlockStructuresAccessPattern,
 }
 
 /// Block layout configuration
@@ -1050,10 +1050,13 @@ pub enum PaddingStrategy {
     MemoryAlign,
 }
 
+/// Backwards-compat alias for [`BlockStructuresAccessPattern`].
+pub type AccessPattern = BlockStructuresAccessPattern;
+
 /// Access pattern tracking for optimization
 #[derive(Debug, Clone)]
-pub struct AccessPattern {
-    pub pattern_type: AccessPatternType,
+pub struct BlockStructuresAccessPattern {
+    pub pattern_type: BlockStructuresAccessPatternType,
     pub frequency: HashMap<String, u64>,
     pub temporal_locality: f64,
     pub spatial_locality: f64,
@@ -1061,7 +1064,7 @@ pub struct AccessPattern {
 }
 
 #[derive(Debug, Clone)]
-pub enum AccessPatternType {
+pub enum BlockStructuresAccessPatternType {
     Sequential,
     Random,
     Hotspot,
@@ -5574,7 +5577,7 @@ impl SuperBlock {
             quantized_signature: Vec::new(),
             bloom_filter: None,
             layout: BlockLayout::default(),
-            access_pattern: AccessPattern::default(),
+            access_pattern: BlockStructuresAccessPattern::default(),
         }
     }
 
@@ -5675,10 +5678,10 @@ impl Default for BlockStatistics {
     }
 }
 
-impl Default for AccessPattern {
+impl Default for BlockStructuresAccessPattern {
     fn default() -> Self {
         Self {
-            pattern_type: AccessPatternType::Mixed,
+            pattern_type: BlockStructuresAccessPatternType::Mixed,
             frequency: HashMap::new(),
             temporal_locality: 0.5,
             spatial_locality: 0.5,

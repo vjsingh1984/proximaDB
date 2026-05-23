@@ -26,7 +26,7 @@ pub struct SstCachedMetadata {
     /// Number of blocks in the file
     pub block_count: usize,
     /// Column metadata
-    pub column_info: HashMap<String, ColumnMetadata>,
+    pub column_info: HashMap<String, SstSerializerColumnMetadata>,
     /// Block index for efficient seeking
     pub block_index: Vec<BlockIndexEntry>,
     /// Bloom filter data for quick lookups
@@ -41,8 +41,11 @@ pub struct SstCachedMetadata {
     pub sequence_range: (u64, u64),
 }
 
+/// Backwards-compat alias for [`SstSerializerColumnMetadata`].
+pub type ColumnMetadata = SstSerializerColumnMetadata;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ColumnMetadata {
+pub struct SstSerializerColumnMetadata {
     pub name: String,
     pub data_type: String,
     pub null_count: usize,

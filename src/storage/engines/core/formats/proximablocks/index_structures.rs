@@ -272,11 +272,14 @@ pub struct MultiLevelIndex {
 
     /// Index selection statistics
     #[allow(dead_code)]
-    access_patterns: HashMap<String, AccessPattern>,
+    access_patterns: HashMap<String, IndexStructuresAccessPattern>,
 }
 
+/// Backwards-compat alias for [`IndexStructuresAccessPattern`].
+pub type AccessPattern = IndexStructuresAccessPattern;
+
 #[derive(Debug, Clone)]
-pub struct AccessPattern {
+pub struct IndexStructuresAccessPattern {
     pub pattern_type: AccessType,
     pub frequency: u64,
     pub last_access: i64,

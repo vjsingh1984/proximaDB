@@ -41,7 +41,7 @@ pub struct ColumnarSearchConfig {
     pub enable_quantized_search: bool,
     
     /// ML clustering configuration
-    pub clustering_config: Option<ClusteringConfig>,
+    pub clustering_config: Option<ColumnarSearchClusteringConfig>,
 }
 
 impl Default for ColumnarSearchConfig {
@@ -70,7 +70,7 @@ impl ColumnarSearchConfig {
             
             if let Some(enable_clustering) = params.get(key) {
                 if enable_clustering {
-                    config.clustering_config = Some(ClusteringConfig::default());
+                    config.clustering_config = Some(ColumnarSearchClusteringConfig::default());
                 }
             }
         }
@@ -79,9 +79,12 @@ impl ColumnarSearchConfig {
     }
 }
 
+/// Backwards-compat alias for [`ColumnarSearchClusteringConfig`].
+pub type ClusteringConfig = ColumnarSearchClusteringConfig;
+
 /// ML clustering configuration for optimized search
 #[derive(Debug, Clone)]
-pub struct ClusteringConfig {
+pub struct ColumnarSearchClusteringConfig {
     /// Number of clusters to search
     pub num_clusters: usize,
     
@@ -95,7 +98,7 @@ pub struct ClusteringConfig {
     pub refinement_factor: f32,
 }
 
-impl Default for ClusteringConfig {
+impl Default for ColumnarSearchClusteringConfig {
     fn default() -> Self {
         Self {
             num_clusters: 32,
@@ -415,7 +418,7 @@ impl ColumnarSearcher {
         &self,
         file: &ParquetFile,
         query_vector: &[f32],
-        config: &ClusteringConfig,
+        config: &ColumnarSearchClusteringConfig,
         top_k: usize,
         distance_metric: &DistanceMetric,
     ) -> Result<Vec<SearchResult>> {
@@ -453,7 +456,7 @@ impl ColumnarSearcher {
         &self,
         _file: &ParquetFile,
         _query_vector: &[f32],
-        config: &ClusteringConfig,
+        config: &ColumnarSearchClusteringConfig,
     ) -> Result<Vec<usize>> {
         // This would use cluster centroids to find nearest clusters
         // Simplified implementation
@@ -629,7 +632,7 @@ mod tests {
     
     #[test]
     fn test_clustering_config() {
-        let config = ClusteringConfig::default();
+        let config = ColumnarSearchClusteringConfig::default();
         assert_eq!(config.num_clusters, 32);
         assert_eq!(config.refinement_factor, 2.0);
     }

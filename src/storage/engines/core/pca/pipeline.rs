@@ -7,12 +7,12 @@
 //!
 //! ```rust,ignore
 //! use proximadb::storage::engines::core::pca::pipeline::{
-//!     SpatialClusteringPipeline, ClusteringConfig,
+//!     SpatialClusteringPipeline, PcaClusteringConfig,
 //! };
 //! use proximadb::storage::engines::core::formats::proximablocks::spatial_traits::CurveType;
 //!
 //! // Create pipeline for SST (Z-order)
-//! let config = ClusteringConfig::for_engine(CurveType::ZOrder);
+//! let config = PcaClusteringConfig::for_engine(CurveType::ZOrder);
 //! let pipeline = SpatialClusteringPipeline::new(config, filesystem, collection_dir).await?;
 //!
 //! // During flush, cluster blocks
@@ -36,9 +36,12 @@ use crate::storage::engines::core::formats::proximablocks::spatial_traits::{
 };
 use crate::storage::persistence::filesystem::FileSystem;
 
+/// Backwards-compat alias for [`PcaClusteringConfig`].
+pub type ClusteringConfig = PcaClusteringConfig;
+
 /// Configuration for spatial clustering pipeline
 #[derive(Debug, Clone)]
-pub struct ClusteringConfig {
+pub struct PcaClusteringConfig {
     /// Type of spatial curve to use
     pub curve_type: CurveType,
     /// Number of PCA dimensions (0 = auto-select)
@@ -53,7 +56,7 @@ pub struct ClusteringConfig {
     pub enabled: bool,
 }
 
-impl Default for ClusteringConfig {
+impl Default for PcaClusteringConfig {
     fn default() -> Self {
         Self {
             curve_type: CurveType::ZOrder,
@@ -66,7 +69,7 @@ impl Default for ClusteringConfig {
     }
 }
 
-impl ClusteringConfig {
+impl PcaClusteringConfig {
     /// Create configuration for a specific engine type
     pub fn for_engine(curve_type: CurveType) -> Self {
         match curve_type {
@@ -217,7 +220,7 @@ impl BlockInfo {
 /// blocks for improved locality during writes.
 pub struct SpatialClusteringPipeline {
     /// Configuration
-    config: ClusteringConfig,
+    config: PcaClusteringConfig,
     /// PCA model manager (per-collection)
     pca_manager: Option<PCAModelManager>,
     /// Spatial encoder
@@ -235,7 +238,7 @@ impl SpatialClusteringPipeline {
     /// * `collection_id` - Collection identifier
     /// * `collection_dir` - Base directory for collection data
     pub async fn new(
-        config: ClusteringConfig,
+        config: PcaClusteringConfig,
         filesystem: Arc<dyn FileSystem>,
         collection_id: String,
         collection_dir: PathBuf,
@@ -277,7 +280,7 @@ impl SpatialClusteringPipeline {
     }
 
     /// Create a lightweight pipeline without persistence (for testing)
-    pub fn new_in_memory(config: ClusteringConfig) -> Self {
+    pub fn new_in_memory(config: PcaClusteringConfig) -> Self {
         let encoder = SpatialEncoderFactory::create(
             config.curve_type,
             config.pca_dimensions,
@@ -768,14 +771,14 @@ mod tests {
 
     #[test]
     fn test_clustering_config() {
-        let config = ClusteringConfig::for_engine(CurveType::ZOrder);
+        let config = PcaClusteringConfig::for_engine(CurveType::ZOrder);
         assert_eq!(config.curve_type, CurveType::ZOrder);
         assert!(config.enabled);
 
-        let config = ClusteringConfig::for_engine(CurveType::Hilbert);
+        let config = PcaClusteringConfig::for_engine(CurveType::Hilbert);
         assert_eq!(config.curve_type, CurveType::Hilbert);
 
-        let disabled = ClusteringConfig::disabled();
+        let disabled = PcaClusteringConfig::disabled();
         assert!(!disabled.enabled);
     }
 
@@ -794,7 +797,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_in_memory_pipeline() {
-        let config = ClusteringConfig::for_engine(CurveType::ZOrder);
+        let config = PcaClusteringConfig::for_engine(CurveType::ZOrder);
         let pipeline = SpatialClusteringPipeline::new_in_memory(config);
 
         // Not ready without a trained model
@@ -818,7 +821,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cluster_vectors() {
-        let config = ClusteringConfig::for_engine(CurveType::Hilbert);
+        let config = PcaClusteringConfig::for_engine(CurveType::Hilbert);
         let pipeline = SpatialClusteringPipeline::new_in_memory(config);
 
         let records = create_test_records(100, 32);
@@ -833,7 +836,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_disabled_pipeline() {
-        let config = ClusteringConfig::disabled();
+        let config = PcaClusteringConfig::disabled();
         let pipeline = SpatialClusteringPipeline::new_in_memory(config);
 
         let mut blocks: Vec<BlockInfo> = (0..3)
@@ -849,7 +852,7 @@ mod tests {
 
     #[test]
     fn test_normalize_coordinates() {
-        let config = ClusteringConfig::default();
+        let config = PcaClusteringConfig::default();
         let pipeline = SpatialClusteringPipeline::new_in_memory(config);
 
         let coords = vec![vec![0.0, 10.0], vec![5.0, 20.0], vec![10.0, 30.0]];

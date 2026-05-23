@@ -56,7 +56,7 @@ pub struct DecompressionCache {
     /// File modification timestamps for invalidation
     file_timestamps: Arc<dashmap::DashMap<String, i64>>,
     /// Configuration from TOML
-    config: CacheConfig,
+    config: DecompressionCacheConfig,
     /// Invalidation task handle
     invalidation_task: Option<tokio::task::JoinHandle<()>>,
 }
@@ -90,7 +90,7 @@ impl std::fmt::Debug for DecompressionCache {
 
 impl DecompressionCache {
     /// Create a new decompression cache from configuration
-    pub fn from_config(config: CacheConfig) -> Self {
+    pub fn from_config(config: DecompressionCacheConfig) -> Self {
         // Apply configurable limits
         let max_size_mb = config
             .max_size_mb
@@ -126,7 +126,7 @@ impl DecompressionCache {
 
     /// Create with default configuration
     pub fn new(max_size_mb: usize) -> Self {
-        let config = CacheConfig {
+        let config = DecompressionCacheConfig {
             max_size_mb,
             ..Default::default()
         };
@@ -555,9 +555,12 @@ impl CacheStatsProvider for DecompressionCacheStatsProvider {
     }
 }
 
+/// Backwards-compat alias for [`DecompressionCacheConfig`].
+pub type CacheConfig = DecompressionCacheConfig;
+
 /// Cache configuration
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-pub struct CacheConfig {
+pub struct DecompressionCacheConfig {
     /// Maximum cache size in MB
     pub max_size_mb: usize,
     /// Minimum cache size in MB (0 = no minimum)
@@ -574,7 +577,7 @@ pub struct CacheConfig {
     pub invalidation_check_interval_seconds: u64,
 }
 
-impl Default for CacheConfig {
+impl Default for DecompressionCacheConfig {
     fn default() -> Self {
         Self {
             max_size_mb: 512, // 512MB default
@@ -588,7 +591,7 @@ impl Default for CacheConfig {
     }
 }
 
-impl CacheConfig {
+impl DecompressionCacheConfig {
     /// Default maximum cap value
     #[allow(dead_code)]
     fn default_max_cap() -> usize {
@@ -601,8 +604,8 @@ mod tests {
     use super::*;
 
     /// Create a test cache config with minimal values
-    fn test_cache_config(max_size_mb: usize) -> CacheConfig {
-        CacheConfig {
+    fn test_cache_config(max_size_mb: usize) -> DecompressionCacheConfig {
+        DecompressionCacheConfig {
             max_size_mb,
             min_size_mb: 0,   // No minimum for tests
             max_cap_mb: 8192, // Keep cap at 8GB

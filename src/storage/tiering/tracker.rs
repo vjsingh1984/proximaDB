@@ -50,9 +50,12 @@ pub enum AccessType {
     Scan,
 }
 
+/// Backwards-compat alias for [`TieringAccessPattern`].
+pub type AccessPattern = TieringAccessPattern;
+
 /// Tracked access pattern for an item
 #[derive(Debug, Clone)]
-pub struct AccessPattern {
+pub struct TieringAccessPattern {
     /// Total number of accesses
     pub access_count: u64,
     /// Read count
@@ -69,7 +72,7 @@ pub struct AccessPattern {
     pub avg_access_interval: Option<Duration>,
 }
 
-impl AccessPattern {
+impl TieringAccessPattern {
     /// Create new pattern with first access
     pub fn new(timestamp: Instant, access_type: AccessType, bytes: u64) -> Self {
         let (read_count, write_count) = match access_type {
@@ -130,7 +133,7 @@ impl AccessPattern {
 /// Tracks access patterns across collections
 pub struct AccessTracker {
     /// Access patterns by (collection, item_id)
-    patterns: Arc<RwLock<HashMap<(String, String), AccessPattern>>>,
+    patterns: Arc<RwLock<HashMap<(String, String), TieringAccessPattern>>>,
     /// Configuration
     config: AccessTrackerConfig,
     /// Stats
@@ -205,7 +208,7 @@ impl AccessTracker {
         } else {
             patterns.insert(
                 key,
-                AccessPattern::new(event.timestamp, event.access_type, event.bytes),
+                TieringAccessPattern::new(event.timestamp, event.access_type, event.bytes),
             );
         }
 
@@ -218,7 +221,7 @@ impl AccessTracker {
     }
 
     /// Get access pattern for an item
-    pub async fn get_pattern(&self, collection: &str, item_id: &str) -> Option<AccessPattern> {
+    pub async fn get_pattern(&self, collection: &str, item_id: &str) -> Option<TieringAccessPattern> {
         let patterns = self.patterns.read().await;
         patterns
             .get(&(collection.to_string(), item_id.to_string()))
@@ -226,7 +229,7 @@ impl AccessTracker {
     }
 
     /// Get all patterns for a collection
-    pub async fn get_collection_patterns(&self, collection: &str) -> Vec<(String, AccessPattern)> {
+    pub async fn get_collection_patterns(&self, collection: &str) -> Vec<(String, TieringAccessPattern)> {
         let patterns = self.patterns.read().await;
         patterns
             .iter()
@@ -236,7 +239,7 @@ impl AccessTracker {
     }
 
     /// Get hottest items across all collections
-    pub async fn get_hottest(&self, limit: usize) -> Vec<(String, String, AccessPattern)> {
+    pub async fn get_hottest(&self, limit: usize) -> Vec<(String, String, TieringAccessPattern)> {
         let patterns = self.patterns.read().await;
 
         let mut items: Vec<_> = patterns
@@ -254,7 +257,7 @@ impl AccessTracker {
     }
 
     /// Get coldest items across all collections
-    pub async fn get_coldest(&self, limit: usize) -> Vec<(String, String, AccessPattern)> {
+    pub async fn get_coldest(&self, limit: usize) -> Vec<(String, String, TieringAccessPattern)> {
         let patterns = self.patterns.read().await;
 
         let mut items: Vec<_> = patterns
@@ -314,7 +317,7 @@ mod tests {
 
     #[test]
     fn test_access_pattern_new() {
-        let pattern = AccessPattern::new(Instant::now(), AccessType::Read, 1024);
+        let pattern = TieringAccessPattern::new(Instant::now(), AccessType::Read, 1024);
         assert_eq!(pattern.access_count, 1);
         assert_eq!(pattern.read_count, 1);
         assert_eq!(pattern.write_count, 0);
@@ -323,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_access_pattern_record() {
-        let mut pattern = AccessPattern::new(Instant::now(), AccessType::Read, 1024);
+        let mut pattern = TieringAccessPattern::new(Instant::now(), AccessType::Read, 1024);
         std::thread::sleep(Duration::from_millis(10));
         pattern.record_access(Instant::now(), AccessType::Write, 2048);
 
@@ -336,7 +339,7 @@ mod tests {
 
     #[test]
     fn test_hotness_score() {
-        let pattern = AccessPattern::new(Instant::now(), AccessType::Read, 1024);
+        let pattern = TieringAccessPattern::new(Instant::now(), AccessType::Read, 1024);
         let score = pattern.hotness_score();
         assert!(score > 0.0);
     }

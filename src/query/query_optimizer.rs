@@ -34,7 +34,7 @@ pub struct UnifiedQueryOptimizer {
     #[allow(dead_code)]
     file_metadata_cache: Arc<dashmap::DashMap<String, OptimizerFileMetadata>>,
     #[allow(dead_code)]
-    column_metadata_cache: Arc<dashmap::DashMap<String, ColumnMetadata>>,
+    column_metadata_cache: Arc<dashmap::DashMap<String, OptimizerColumnMetadata>>,
 
     /// Unified performance tracking (merged from both)
     performance_history: Arc<parking_lot::RwLock<UnifiedPerformanceHistory>>,
@@ -67,7 +67,7 @@ pub struct UnifiedOptimizerConfig {
     pub cost_weights: UnifiedCostWeights,
 
     /// Cache configuration
-    pub cache_config: CacheConfig,
+    pub cache_config: QueryOptimizerCacheConfig,
 
     /// Filter optimization settings (from metadata filtering)
     pub filter_config: FilterOptimizerConfig,
@@ -1695,9 +1695,12 @@ pub struct OptimizerFileMetadata {
     pub last_accessed: i64,
 }
 
+/// Backwards-compat alias for [`OptimizerColumnMetadata`].
+pub type ColumnMetadata = OptimizerColumnMetadata;
+
 /// Column metadata
 #[derive(Debug, Clone)]
-pub struct ColumnMetadata {
+pub struct OptimizerColumnMetadata {
     /// Name of the metadata column
     pub column_name: String,
     /// Statistical summary of the column's values
@@ -1781,9 +1784,12 @@ struct StrategyPerformance {
     pub success_rate: f32,
 }
 
+/// Backwards-compat alias for [`QueryOptimizerCacheConfig`].
+pub type CacheConfig = QueryOptimizerCacheConfig;
+
 /// Cache configuration
 #[derive(Debug, Clone)]
-pub struct CacheConfig {
+pub struct QueryOptimizerCacheConfig {
     /// Maximum number of collections to cache metadata for
     pub max_collections: usize,
     /// Maximum number of files to cache per collection
@@ -2875,7 +2881,7 @@ impl Default for UnifiedOptimizerConfig {
                 index_efficiency_weight: 0.15,
                 filter_complexity_weight: 0.10,
             },
-            cache_config: CacheConfig {
+            cache_config: QueryOptimizerCacheConfig {
                 max_collections: 1000,
                 max_files_per_collection: 100,
                 ttl_seconds: 3600,

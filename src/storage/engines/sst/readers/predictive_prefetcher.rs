@@ -28,7 +28,7 @@ pub struct BlockCacheKey {
 /// Predictive prefetcher for SSTable blocks
 pub struct PredictivePrefetcher {
     /// Access pattern tracker
-    access_patterns: Arc<AccessPatternTracker>,
+    access_patterns: Arc<PrefetcherAccessPatternTracker>,
     /// Prefetch queue
     prefetch_queue: Arc<RwLock<PrefetchQueue>>,
     /// Prefetch cache (separate from main block cache)
@@ -56,8 +56,11 @@ pub struct PrefetchConfig {
     pub max_cache_size_bytes: usize,
 }
 
+/// Backwards-compat alias for [`PrefetcherAccessPatternTracker`].
+pub type AccessPatternTracker = PrefetcherAccessPatternTracker;
+
 /// Access pattern tracker
-pub struct AccessPatternTracker {
+pub struct PrefetcherAccessPatternTracker {
     /// Sequential access patterns per file
     sequential_patterns: DashMap<String, SequentialPattern>,
     /// Random access patterns
@@ -155,7 +158,7 @@ impl PredictivePrefetcher {
     /// Create new predictive prefetcher
     pub fn new(config: PrefetchConfig) -> Self {
         Self {
-            access_patterns: Arc::new(AccessPatternTracker::new()),
+            access_patterns: Arc::new(PrefetcherAccessPatternTracker::new()),
             prefetch_queue: Arc::new(RwLock::new(PrefetchQueue::new())),
             prefetch_cache: Arc::new(DashMap::new()),
             config,
@@ -446,7 +449,7 @@ impl Clone for PredictivePrefetcher {
     }
 }
 
-impl AccessPatternTracker {
+impl PrefetcherAccessPatternTracker {
     pub fn new() -> Self {
         Self {
             sequential_patterns: DashMap::new(),
@@ -549,7 +552,7 @@ impl AccessPatternTracker {
     }
 }
 
-impl Default for AccessPatternTracker {
+impl Default for PrefetcherAccessPatternTracker {
     fn default() -> Self {
         Self::new()
     }

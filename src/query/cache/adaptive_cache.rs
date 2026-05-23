@@ -19,9 +19,12 @@ pub struct CachedQueryResult {
     pub data: Vec<u8>,
 }
 
+/// Backwards-compat alias for [`AdaptiveCacheAccessPattern`].
+pub type AccessPattern = AdaptiveCacheAccessPattern;
+
 /// Access pattern tracking for adaptive TTL adjustment
 #[derive(Debug, Clone)]
-pub struct AccessPattern {
+pub struct AdaptiveCacheAccessPattern {
     /// Number of times this query has been accessed
     pub access_count: u64,
     /// Time since last access
@@ -34,7 +37,7 @@ pub struct AccessPattern {
     pub access_frequency: f64,
 }
 
-impl Default for AccessPattern {
+impl Default for AdaptiveCacheAccessPattern {
     fn default() -> Self {
         Self {
             access_count: 0,
@@ -94,7 +97,7 @@ pub struct AdaptiveCacheEntry {
     /// When this entry was last accessed
     pub last_accessed: Instant,
     /// Access pattern statistics
-    pub access_pattern: AccessPattern,
+    pub access_pattern: AdaptiveCacheAccessPattern,
     /// Predicted next access time
     pub predicted_next_access: Option<Instant>,
 }
@@ -108,7 +111,7 @@ impl AdaptiveCacheEntry {
             ttl,
             created_at: now,
             last_accessed: now,
-            access_pattern: AccessPattern::default(),
+            access_pattern: AdaptiveCacheAccessPattern::default(),
             predicted_next_access: None,
         }
     }

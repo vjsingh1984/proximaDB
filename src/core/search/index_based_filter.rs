@@ -99,7 +99,7 @@ pub trait MetadataSource: Send + Sync {
     fn get_row_count(&self) -> usize;
 
     /// Get column metadata for filtering optimization
-    fn get_column_metadata(&self, column_name: &str) -> Option<ColumnMetadata>;
+    fn get_column_metadata(&self, column_name: &str) -> Option<FilterColumnMetadata>;
 
     /// Extract metadata value for a specific row and column
     fn get_metadata_value(&self, row_idx: usize, column_name: &str) -> Option<serde_json::Value>;
@@ -111,9 +111,12 @@ pub trait MetadataSource: Send + Sync {
     fn supports_selective_reading(&self) -> bool;
 }
 
+/// Backwards-compat alias for [`FilterColumnMetadata`].
+pub type ColumnMetadata = FilterColumnMetadata;
+
 /// Statistical metadata about a column for filter optimization
 #[derive(Debug, Clone)]
-pub struct ColumnMetadata {
+pub struct FilterColumnMetadata {
     /// Whether an inverted index exists on this column
     pub has_index: bool,
     /// Approximate number of distinct values

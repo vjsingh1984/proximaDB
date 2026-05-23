@@ -6,7 +6,7 @@
 //!
 //! ## Key Components:
 //!
-//! - **AccessPatternTracker**: Learns access patterns for predictive prefetching
+//! - **OrchestratorAccessPatternTracker**: Learns access patterns for predictive prefetching
 //! - **CrossCacheOrchestrator**: Coordinates all cache types and memory allocation
 //! - **DynamicMemoryAllocator**: Adaptive memory distribution based on workload
 //! - **CacheAccessEvent**: Async event processing for minimal latency impact
@@ -170,8 +170,12 @@ pub struct CacheAccessEvent {
 /// - History limited to `max_history` entries (default: 10,000)
 /// - Correlation matrix pruned when > 100,000 entries
 /// - Background processing prevents memory bloat
+///
+/// Backwards-compat alias for [`OrchestratorAccessPatternTracker`].
+pub type AccessPatternTracker = OrchestratorAccessPatternTracker;
+
 #[derive(Debug)]
-pub struct AccessPatternTracker {
+pub struct OrchestratorAccessPatternTracker {
     /// Access history for pattern detection (processed async)
     /// VecDeque provides O(1) push/pop for sliding window
     access_history: Arc<Mutex<VecDeque<AccessRecord>>>,
@@ -269,7 +273,7 @@ impl CrossCacheOrchestrator {
     }
 }
 
-impl AccessPatternTracker {
+impl OrchestratorAccessPatternTracker {
     pub fn new(max_history: usize) -> Self {
         let (event_sender, mut event_receiver) = mpsc::channel::<CacheAccessEvent>(10000);
 
@@ -708,7 +712,7 @@ impl DynamicMemoryAllocator {
 /// Predictive prefetch engine for proactive data loading
 #[derive(Debug)]
 pub struct PredictivePrefetchEngine {
-    pattern_tracker: Arc<AccessPatternTracker>,
+    pattern_tracker: Arc<OrchestratorAccessPatternTracker>,
     prefetch_queue: Arc<Mutex<VecDeque<PrefetchRequest>>>,
     max_queue_size: usize,
 }
@@ -722,7 +726,7 @@ pub struct PrefetchRequest {
 }
 
 impl PredictivePrefetchEngine {
-    pub fn new(pattern_tracker: Arc<AccessPatternTracker>, max_queue_size: usize) -> Self {
+    pub fn new(pattern_tracker: Arc<OrchestratorAccessPatternTracker>, max_queue_size: usize) -> Self {
         Self {
             pattern_tracker,
             prefetch_queue: Arc::new(Mutex::new(VecDeque::with_capacity(max_queue_size))),
@@ -899,7 +903,7 @@ pub struct CrossCacheOrchestrator {
     string_interner: Arc<StringInterner>,
 
     /// Pattern analyzer for predictive operations
-    pattern_tracker: Arc<AccessPatternTracker>,
+    pattern_tracker: Arc<OrchestratorAccessPatternTracker>,
     /// Memory allocator for dynamic tier management
     memory_allocator: Arc<DynamicMemoryAllocator>,
     /// Prefetch engine for proactive loading
@@ -920,7 +924,7 @@ pub struct CrossCacheOrchestrator {
 
 impl CrossCacheOrchestrator {
     pub fn new(total_memory_budget: usize) -> Self {
-        let pattern_tracker = Arc::new(AccessPatternTracker::new(10000));
+        let pattern_tracker = Arc::new(OrchestratorAccessPatternTracker::new(10000));
         let memory_allocator = Arc::new(DynamicMemoryAllocator::new(total_memory_budget));
         let prefetch_engine =
             Arc::new(PredictivePrefetchEngine::new(pattern_tracker.clone(), 1000));
@@ -1169,7 +1173,7 @@ impl CrossCacheOrchestrator {
     }
 
     /// Get pattern tracker for external use
-    pub fn pattern_tracker(&self) -> Arc<AccessPatternTracker> {
+    pub fn pattern_tracker(&self) -> Arc<OrchestratorAccessPatternTracker> {
         self.pattern_tracker.clone()
     }
 

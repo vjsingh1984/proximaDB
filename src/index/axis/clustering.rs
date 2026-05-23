@@ -16,9 +16,12 @@ use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 // Export ClusterManager
 pub use super::cluster_manager::ClusterManager;
 
+/// Backwards-compat alias for [`AxisClusteringConfig`].
+pub type ClusteringConfig = AxisClusteringConfig;
+
 /// Clustering configuration
 #[derive(Debug, Clone)]
-pub struct ClusteringConfig {
+pub struct AxisClusteringConfig {
     /// Algorithm to use
     pub algorithm: ClusteringAlgorithm,
     /// Minimum vectors required before clustering
@@ -35,7 +38,7 @@ pub struct ClusteringConfig {
     pub enable_incremental: bool,
 }
 
-impl Default for ClusteringConfig {
+impl Default for AxisClusteringConfig {
     fn default() -> Self {
         Self {
             algorithm: ClusteringAlgorithm::KMeans(KMeansConfig::default()),
@@ -175,7 +178,7 @@ pub struct ClusteringMetrics {
 /// AXIS clustering engine
 pub struct AxisClusteringEngine {
     /// Configuration
-    config: ClusteringConfig,
+    config: AxisClusteringConfig,
     /// Current models per collection
     #[allow(dead_code)]
     models: Arc<RwLock<HashMap<String, ClusteringModel>>>,
@@ -238,7 +241,7 @@ pub struct ClusteringStats {
 
 impl AxisClusteringEngine {
     /// Create new clustering engine
-    pub fn new(config: ClusteringConfig) -> Self {
+    pub fn new(config: AxisClusteringConfig) -> Self {
         Self {
             config,
             models: Arc::new(RwLock::new(HashMap::new())),
@@ -1011,7 +1014,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_kmeans_clustering() {
-        let config = ClusteringConfig {
+        let config = AxisClusteringConfig {
             algorithm: ClusteringAlgorithm::KMeans(KMeansConfig {
                 k: 3,
                 ..Default::default()
@@ -1062,7 +1065,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cluster_manager_creation() -> Result<()> {
-        let config = ClusteringConfig {
+        let config = AxisClusteringConfig {
             algorithm: ClusteringAlgorithm::KMeans(KMeansConfig::default()),
             min_vectors_for_clustering: 100,
             max_clusters: 10,
@@ -1088,7 +1091,7 @@ mod tests {
             init_method: KMeansInit::KMeansPlusPlus,
         };
 
-        let config = ClusteringConfig {
+        let config = AxisClusteringConfig {
             algorithm: ClusteringAlgorithm::KMeans(kmeans_config),
             min_vectors_for_clustering: 10,
             max_clusters: 10,
@@ -1134,7 +1137,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adaptive_cluster_count() -> Result<()> {
-        let config = ClusteringConfig {
+        let config = AxisClusteringConfig {
             algorithm: ClusteringAlgorithm::KMeans(KMeansConfig::default()),
             min_vectors_for_clustering: 10,
             max_clusters: 20,
@@ -1170,7 +1173,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_vector_clustering() -> Result<()> {
-        let config = ClusteringConfig::default();
+        let config = AxisClusteringConfig::default();
         let mut manager = ClusterManager::new(config).await?;
 
         let empty_vectors: Vec<Vec<f32>> = Vec::new();
@@ -1186,7 +1189,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_single_vector_clustering() -> Result<()> {
-        let config = ClusteringConfig {
+        let config = AxisClusteringConfig {
             algorithm: ClusteringAlgorithm::KMeans(KMeansConfig {
                 k: 1,
                 ..Default::default()
@@ -1218,7 +1221,7 @@ mod tests {
             DistanceMetric::Cosine,
             DistanceMetric::Manhattan,
         ] {
-            let config = ClusteringConfig {
+            let config = AxisClusteringConfig {
                 algorithm: ClusteringAlgorithm::KMeans(KMeansConfig {
                     k: 3,
                     ..Default::default()

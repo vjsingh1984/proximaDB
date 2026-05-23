@@ -35,7 +35,7 @@ pub struct NovaCachedMetadata {
     /// Zone maps for efficient pruning
     pub zone_maps: Vec<ZoneMapEntry>,
     /// Column metadata for filterable columns
-    pub column_metadata: HashMap<String, ColumnMetadata>,
+    pub column_metadata: HashMap<String, ColumnarSerializerColumnMetadata>,
     /// Compression ratio achieved
     pub compression_ratio: f32,
     /// Quantization configuration
@@ -78,8 +78,11 @@ pub struct ZoneMapEntry {
     pub distinct_count: usize,
 }
 
+/// Backwards-compat alias for [`ColumnarSerializerColumnMetadata`].
+pub type ColumnMetadata = ColumnarSerializerColumnMetadata;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ColumnMetadata {
+pub struct ColumnarSerializerColumnMetadata {
     pub name: String,
     pub data_type: String,
     pub encoding: String,

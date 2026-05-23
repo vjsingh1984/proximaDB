@@ -348,7 +348,7 @@ pub struct MemoryConfig {
     /// Memory mapping configuration
     pub mmap_config: MmapConfig,
     /// Cache configuration
-    pub cache_config: CacheConfig,
+    pub cache_config: ComputeCacheConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -384,8 +384,11 @@ pub enum MadviseHint {
     DontNeed,
 }
 
+/// Backwards-compat alias for [`ComputeCacheConfig`].
+pub type CacheConfig = ComputeCacheConfig;
+
 #[derive(Debug, Clone)]
-pub struct CacheConfig {
+pub struct ComputeCacheConfig {
     /// L1 cache size (vectors in memory)
     pub l1_cache_size: usize,
     /// L2 cache size (compressed vectors)
@@ -477,7 +480,7 @@ impl Default for ComputeConfig {
                     huge_pages: true,
                     numa_node: None,
                 },
-                cache_config: CacheConfig {
+                cache_config: ComputeCacheConfig {
                     l1_cache_size: 100_000,   // 100K vectors
                     l2_cache_size: 1_000_000, // 1M vectors compressed
                     replacement_policy: CachePolicy::ARC,
