@@ -63,7 +63,7 @@ pub struct NovaSpecificConfig {
     pub caching_config: AdvancedCachingConfig,
 
     /// Progressive search optimization
-    pub progressive_search_config: ProgressiveSearchConfig,
+    pub progressive_search_config: NovaColumnarProgressiveSearchConfig,
 }
 
 /// Zone map configuration for NOVA
@@ -132,9 +132,12 @@ pub enum PrefetchStrategy {
     MachineLearning,
 }
 
+/// Backwards-compat alias for [`NovaColumnarProgressiveSearchConfig`].
+pub type ProgressiveSearchConfig = NovaColumnarProgressiveSearchConfig;
+
 /// Progressive search configuration for NOVA
 #[derive(Debug, Clone)]
-pub struct ProgressiveSearchConfig {
+pub struct NovaColumnarProgressiveSearchConfig {
     /// Enable progressive refinement
     pub enable_progressive: bool,
 
@@ -1214,7 +1217,7 @@ impl Default for NovaSpecificConfig {
             zone_map_config: ZoneMapConfig::default(),
             streaming_config: StreamingConfig::default(),
             caching_config: AdvancedCachingConfig::default(),
-            progressive_search_config: ProgressiveSearchConfig::default(),
+            progressive_search_config: NovaColumnarProgressiveSearchConfig::default(),
         }
     }
 }
@@ -1255,7 +1258,7 @@ impl Default for AdvancedCachingConfig {
     }
 }
 
-impl Default for ProgressiveSearchConfig {
+impl Default for NovaColumnarProgressiveSearchConfig {
     fn default() -> Self {
         Self {
             enable_progressive: true,

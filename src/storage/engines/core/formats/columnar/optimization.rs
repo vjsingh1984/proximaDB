@@ -74,9 +74,12 @@ pub struct StreamingRowGroupIterator {
     #[allow(dead_code)]
     batch_size: usize,
 }
+/// Backwards-compat alias for [`ColumnarOptProgressiveSearchConfig`].
+pub type ProgressiveSearchConfig = ColumnarOptProgressiveSearchConfig;
+
 /// Progressive search configuration
 #[derive(Debug, Clone)]
-pub struct ProgressiveSearchConfig {
+pub struct ColumnarOptProgressiveSearchConfig {
     /// Enable binary quantization filtering
     pub use_binary_filter: bool,
     /// Binary filter threshold (0.0-1.0)
@@ -93,7 +96,7 @@ pub struct ProgressiveSearchConfig {
     pub final_rerank: bool,
 }
 
-impl Default for ProgressiveSearchConfig {
+impl Default for ColumnarOptProgressiveSearchConfig {
     fn default() -> Self {
         Self {
             use_binary_filter: true,
@@ -341,7 +344,7 @@ impl ColumnarOptimizer {
         top_k: usize,
         distance_metric: &DistanceMetric,
         filter: Option<&MetadataFilter>,
-        config: &ProgressiveSearchConfig,
+        config: &ColumnarOptProgressiveSearchConfig,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         info!(
             "Progressive search across {} files, top_k={}",
@@ -414,7 +417,7 @@ impl ColumnarOptimizer {
         top_k: usize,
         distance_metric: &DistanceMetric,
         filter: Option<&MetadataFilter>,
-        config: &ProgressiveSearchConfig,
+        config: &ColumnarOptProgressiveSearchConfig,
         _stats: &mut OptimizationStats,
     ) -> Result<Vec<SearchCandidate>> {
         debug!("Progressive search in file: {}", file_path);
@@ -471,7 +474,7 @@ impl ColumnarOptimizer {
         &self,
         iterator: &mut StreamingRowGroupIterator,
         _query_vector: &[f32],
-        config: &ProgressiveSearchConfig,
+        config: &ColumnarOptProgressiveSearchConfig,
     ) -> Result<Vec<SearchCandidate>> {
         let mut candidates = Vec::new();
         while let Some(batch) = iterator.next().await? {
@@ -520,7 +523,7 @@ impl ColumnarOptimizer {
         _iterator: &mut StreamingRowGroupIterator,
         _query_vector: &[f32],
         candidates: &[SearchCandidate],
-        _config: &ProgressiveSearchConfig,
+        _config: &ColumnarOptProgressiveSearchConfig,
     ) -> Result<Vec<SearchCandidate>> {
         // Refine candidates using INT8 quantized vectors
         // For now, just return the input candidates
@@ -532,7 +535,7 @@ impl ColumnarOptimizer {
         _iterator: &mut StreamingRowGroupIterator,
         _query_vector: &[f32],
         candidates: &[SearchCandidate],
-        _config: &ProgressiveSearchConfig,
+        _config: &ColumnarOptProgressiveSearchConfig,
     ) -> Result<Vec<SearchCandidate>> {
         // Refine candidates using PQ vectors
         Ok(candidates.to_vec())
@@ -771,7 +774,7 @@ mod tests {
 
     #[test]
     fn test_progressive_search_config() {
-        let config = ProgressiveSearchConfig::default();
+        let config = ColumnarOptProgressiveSearchConfig::default();
         assert!(config.use_binary_filter);
         assert!(config.use_int8_search);
         assert!(config.use_pq_search);

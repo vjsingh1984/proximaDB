@@ -127,8 +127,11 @@ type DistanceTable = Vec<Vec<f32>>;
 ///
 /// Each level expands the candidate set and refines the ranking,
 /// progressively narrowing down to the top-k results.
+/// Backwards-compat alias for [`SwiftProgressiveSearchConfig`].
+pub type ProgressiveSearchConfig = SwiftProgressiveSearchConfig;
+
 #[derive(Debug, Clone)]
-pub struct ProgressiveSearchConfig {
+pub struct SwiftProgressiveSearchConfig {
     /// Number of candidates to retain after binary filtering (e.g., 10x top_k)
     /// Higher values improve recall but increase Phase 2 cost
     pub binary_expansion: usize,
@@ -158,7 +161,7 @@ pub struct ProgressiveSearchConfig {
     pub cache_distance_tables: bool,
 }
 
-impl Default for ProgressiveSearchConfig {
+impl Default for SwiftProgressiveSearchConfig {
     fn default() -> Self {
         Self {
             binary_expansion: 10,
@@ -283,7 +286,7 @@ pub async fn search_progressive(
     filter: Option<MetadataFilter>,
     prune: &crate::core::search::BlockPruneConfig,
 ) -> Result<Vec<ProximaRecord>> {
-    let config = ProgressiveSearchConfig::default();
+    let config = SwiftProgressiveSearchConfig::default();
 
     // Create quantization engine for binary operations
     let quantization_engine = StorageQuantizationEngine::new_default();
@@ -1537,12 +1540,12 @@ mod tests {
     }
 
     // ========================================================================
-    // ProgressiveSearchConfig tests
+    // SwiftProgressiveSearchConfig tests
     // ========================================================================
 
     #[test]
     fn test_progressive_search_config_default() {
-        let config = ProgressiveSearchConfig::default();
+        let config = SwiftProgressiveSearchConfig::default();
         assert_eq!(config.binary_expansion, 10);
         assert_eq!(config.int8_expansion, 5);
         assert_eq!(config.pq_expansion, 2);
@@ -1555,7 +1558,7 @@ mod tests {
 
     #[test]
     fn test_progressive_search_config_custom() {
-        let config = ProgressiveSearchConfig {
+        let config = SwiftProgressiveSearchConfig {
             binary_expansion: 20,
             int8_expansion: 10,
             pq_expansion: 5,

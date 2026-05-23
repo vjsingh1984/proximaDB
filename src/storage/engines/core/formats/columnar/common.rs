@@ -198,7 +198,7 @@ pub struct DistanceComputationConfig {
     pub default_distance_metric: crate::compute::distance_computation::DistanceMetric,
 
     /// Progressive search configuration
-    pub progressive_search: ProgressiveSearchConfig,
+    pub progressive_search: ColumnarCommonProgressiveSearchConfig,
 
     /// Distance caching settings
     pub distance_caching: DistanceCachingConfig,
@@ -207,9 +207,12 @@ pub struct DistanceComputationConfig {
     pub hardware_acceleration: HardwareAccelerationConfig,
 }
 
+/// Backwards-compat alias for [`ColumnarCommonProgressiveSearchConfig`].
+pub type ProgressiveSearchConfig = ColumnarCommonProgressiveSearchConfig;
+
 /// Progressive search configuration
 #[derive(Debug, Clone)]
-pub struct ProgressiveSearchConfig {
+pub struct ColumnarCommonProgressiveSearchConfig {
     /// Enable progressive search
     pub enable_progressive: bool,
 
@@ -1082,14 +1085,14 @@ impl Default for DistanceComputationConfig {
     fn default() -> Self {
         Self {
             default_distance_metric: crate::compute::distance_computation::DistanceMetric::Cosine,
-            progressive_search: ProgressiveSearchConfig::default(),
+            progressive_search: ColumnarCommonProgressiveSearchConfig::default(),
             distance_caching: DistanceCachingConfig::default(),
             hardware_acceleration: HardwareAccelerationConfig::default(),
         }
     }
 }
 
-impl Default for ProgressiveSearchConfig {
+impl Default for ColumnarCommonProgressiveSearchConfig {
     fn default() -> Self {
         Self {
             enable_progressive: true,

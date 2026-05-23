@@ -128,23 +128,69 @@ impl ProgressiveSearchStage for RaptorInt8Stage {
         mut candidates: Vec<ScoredCandidate>,
         distance_metric: DistanceMetric,
     ) -> Result<Vec<ScoredCandidate>> {
-        for candidate in &mut candidates {
-            if let Some(ref int8_data) = candidate.int8_data {
-                let int8_as_f32: Vec<f32> = int8_data
-                    .iter()
-                    .map(|&x| x as f32 / self.scale_factor)
-                    .collect();
+        // Partition into int8-backed and fp32-backed candidates. The int8 path
+        // dequantizes into a temporary Vec<f32> (so the slice we hand to the
+        // batch call must point at storage we keep alive across the call); the
+        // fp32 path borrows directly from the candidate.
+        let mut int8_indices: Vec<usize> = Vec::new();
+        let mut int8_temps: Vec<Vec<f32>> = Vec::new();
+        let mut fp32_indices: Vec<usize> = Vec::new();
 
-                let result =
-                    self.distance_compute
-                        .calculate_distance(query, &int8_as_f32, &distance_metric);
-                candidate.score = result.rank_value;
-            } else if let Some(ref vector) = candidate.vector {
-                let result =
-                    self.distance_compute
-                        .calculate_distance(query, vector, &distance_metric);
-                candidate.score = result.rank_value;
-            } else {
+        for (i, candidate) in candidates.iter().enumerate() {
+            if let Some(ref int8_data) = candidate.int8_data {
+                int8_indices.push(i);
+                int8_temps.push(
+                    int8_data
+                        .iter()
+                        .map(|&x| x as f32 / self.scale_factor)
+                        .collect(),
+                );
+            } else if candidate.vector.is_some() {
+                fp32_indices.push(i);
+            }
+        }
+
+        if !int8_temps.is_empty() {
+            let int8_slices: Vec<&[f32]> = int8_temps.iter().map(Vec::as_slice).collect();
+            let mut results = Vec::with_capacity(int8_indices.len());
+            self.distance_compute.batch_distance_into_buffer(
+                query,
+                &int8_slices,
+                &distance_metric,
+                &mut results,
+            );
+            drop(int8_slices);
+            for (idx, result) in int8_indices.iter().zip(results.iter()) {
+                candidates[*idx].score = result.rank_value;
+            }
+        }
+
+        if !fp32_indices.is_empty() {
+            let fp32_slices: Vec<&[f32]> = fp32_indices
+                .iter()
+                .map(|&i| {
+                    candidates[i]
+                        .vector
+                        .as_ref()
+                        .expect("fp32_indices entry must have a vector")
+                        .as_slice()
+                })
+                .collect();
+            let mut results = Vec::with_capacity(fp32_indices.len());
+            self.distance_compute.batch_distance_into_buffer(
+                query,
+                &fp32_slices,
+                &distance_metric,
+                &mut results,
+            );
+            drop(fp32_slices);
+            for (idx, result) in fp32_indices.iter().zip(results.iter()) {
+                candidates[*idx].score = result.rank_value;
+            }
+        }
+
+        for candidate in &mut candidates {
+            if candidate.int8_data.is_none() && candidate.vector.is_none() {
                 candidate.score = f32::MAX;
             }
         }
@@ -186,14 +232,37 @@ impl ProgressiveSearchStage for RaptorFp32Stage {
         mut candidates: Vec<ScoredCandidate>,
         distance_metric: DistanceMetric,
     ) -> Result<Vec<ScoredCandidate>> {
-        for candidate in &mut candidates {
+        // Partition: collect indices of candidates with vectors and gather their
+        // slices for a single batched SIMD distance call. Skipped candidates
+        // (no vector) get f32::MAX in a second pass.
+        let mut indices: Vec<usize> = Vec::with_capacity(candidates.len());
+        let mut vector_slices: Vec<&[f32]> = Vec::with_capacity(candidates.len());
+        for (i, candidate) in candidates.iter().enumerate() {
             if let Some(ref vector) = candidate.vector {
-                let result =
-                    self.distance_compute
-                        .calculate_distance(query, vector, &distance_metric);
-                candidate.score = result.rank_value;
+                indices.push(i);
+                vector_slices.push(vector.as_slice());
             } else {
                 tracing::warn!("RAPTOR-FP32Stage: No vector for candidate {}", candidate.id);
+            }
+        }
+
+        if !vector_slices.is_empty() {
+            let mut results = Vec::with_capacity(indices.len());
+            self.distance_compute.batch_distance_into_buffer(
+                query,
+                &vector_slices,
+                &distance_metric,
+                &mut results,
+            );
+            drop(vector_slices);
+
+            for (idx, result) in indices.iter().zip(results.iter()) {
+                candidates[*idx].score = result.rank_value;
+            }
+        }
+
+        for candidate in &mut candidates {
+            if candidate.vector.is_none() {
                 candidate.score = f32::MAX;
             }
         }

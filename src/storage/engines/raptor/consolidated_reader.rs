@@ -486,22 +486,33 @@ impl RaptorReader {
             candidates.push((id, vector));
         }
 
-        // Step 3: DIRECT distance computation - no wrapper, direct call to unified module
-        let mut results = Vec::new();
-        for (id, vector) in candidates {
-            // DIRECT call to unified distance compute
-            let similarity_result = self
-                .distance_compute
-                .calculate_distance(query, &vector, &_metric);
-
-            // Use normalized_score directly from UnifiedDistanceCompute - already calculated!
-            // No need to call standardized_distance_to_similarity - that would be redundant
-            results.push(
-                OptimizedSearchRecord::new(id, similarity_result.normalized_score)
-                    .with_similarity(similarity_result.normalized_score)
-                    .add_vector(vector)
-                    .with_metadata(std::collections::HashMap::new()),
+        // Step 3: Batch SIMD distance computation across all candidates.
+        // The per-record `calculate_distance` loop was dispatching SIMD once
+        // per vector; the batch entry point amortizes that and keeps
+        // candidates in cache-friendly chunks.
+        let mut results = Vec::with_capacity(candidates.len());
+        if !candidates.is_empty() {
+            let vector_slices: Vec<&[f32]> =
+                candidates.iter().map(|(_, v)| v.as_slice()).collect();
+            let mut sim_results: Vec<SimilarityResult> = Vec::with_capacity(candidates.len());
+            self.distance_compute.batch_distance_into_buffer(
+                query,
+                &vector_slices,
+                &_metric,
+                &mut sim_results,
             );
+            drop(vector_slices);
+
+            for ((id, vector), similarity_result) in
+                candidates.into_iter().zip(sim_results.into_iter())
+            {
+                results.push(
+                    OptimizedSearchRecord::new(id, similarity_result.normalized_score)
+                        .with_similarity(similarity_result.normalized_score)
+                        .add_vector(vector)
+                        .with_metadata(std::collections::HashMap::new()),
+                );
+            }
         }
 
         // Use bounded priority queue for efficient top-k selection

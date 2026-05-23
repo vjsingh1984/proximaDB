@@ -146,8 +146,11 @@ impl QuantizationAdapter {
 ///
 /// Configures the multi-stage progressive search pipeline with parameters
 /// for each quantization stage and overall search behavior.
+/// Backwards-compat alias for [`NovaProgressiveSearchConfig`].
+pub type ProgressiveSearchConfig = NovaProgressiveSearchConfig;
+
 #[derive(Debug, Clone)]
-pub struct ProgressiveSearchConfig {
+pub struct NovaProgressiveSearchConfig {
     /// Binary quantization stage configuration
     pub binary_config: StageConfig,
     /// INT8 quantization stage configuration
@@ -280,7 +283,7 @@ impl PartialOrd for ProgressiveCandidate {
 /// candidates through binary, INT8, PQ, and full precision stages.
 pub struct ProgressiveColumnarSearch {
     /// Search configuration
-    config: ProgressiveSearchConfig,
+    config: NovaProgressiveSearchConfig,
     /// Streaming row group processor
     streaming_processor: StreamingRowGroupProcessor,
     /// Distance metric for similarity computation
@@ -294,7 +297,7 @@ pub struct ProgressiveColumnarSearch {
 impl ProgressiveColumnarSearch {
     /// Create a new progressive search engine
     pub fn new(
-        config: ProgressiveSearchConfig,
+        config: NovaProgressiveSearchConfig,
         distance_metric: DistanceMetric,
         distance_compute: Arc<UnifiedDistanceCompute>,
         quantization_engine: Arc<UnifiedQuantizationEngine>,
@@ -918,7 +921,7 @@ impl ProgressiveColumnarSearch {
     }
 }
 
-impl Default for ProgressiveSearchConfig {
+impl Default for NovaProgressiveSearchConfig {
     fn default() -> Self {
         Self {
             binary_config: StageConfig {

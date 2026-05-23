@@ -371,7 +371,7 @@ mod tests {
             .find(|m| {
                 m.get_label().iter().any(|l| l.get_value() == "ingest_boundary")
             })
-            .map(|m| m.get_counter().get_value())
+            .map(|m| m.get_counter().value())
             .expect("matching label set present");
         assert!((value - 7.0).abs() < f64::EPSILON, "expected 7, got {value}");
     }

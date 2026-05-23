@@ -1346,37 +1346,48 @@ impl ProximaDataBlock {
         let record_count = records.len() as u32;
         let block_id = 0u32;
 
-        // Calculate ID range
-        let mut ids: Vec<String> = records.iter().map(|r| r.oid.clone()).collect();
-        ids.sort();
-        let id_range = if ids.is_empty() {
-            ("".to_string(), "".to_string())
+        // Single-pass scan for id range, timestamp range, and has_deletes
+        // (mirrors the optimization in `new()`). Avoids extracting two derived
+        // Vecs and sorting all OIDs just to read first/last.
+        let (id_range, timestamp_range, has_deletes) = if records.is_empty() {
+            (("".to_string(), "".to_string()), (0, 0), false)
         } else {
-            (ids[0].clone(), ids[ids.len() - 1].clone())
-        };
-
-        // Calculate timestamp range
-        let timestamps: Vec<i64> = records
-            .iter()
-            .map(|r| r.created_at_ns / 1_000_000)
-            .collect();
-        let timestamp_range = if timestamps.is_empty() {
-            (0, 0)
-        } else {
-            // Safe: we checked timestamps.is_empty() above
+            let first = &records[0];
+            let mut min_id: &str = first.oid.as_str();
+            let mut max_id: &str = first.oid.as_str();
+            let mut min_ts = first.created_at_ns / 1_000_000;
+            let mut max_ts = min_ts;
+            let mut deletes = false;
+            for r in records.iter() {
+                let oid = r.oid.as_str();
+                if oid < min_id {
+                    min_id = oid;
+                }
+                if oid > max_id {
+                    max_id = oid;
+                }
+                let ts = r.created_at_ns / 1_000_000;
+                if ts < min_ts {
+                    min_ts = ts;
+                }
+                if ts > max_ts {
+                    max_ts = ts;
+                }
+                if !deletes
+                    && matches!(
+                        r.props.get("_deleted"),
+                        Some(ProximaTreeNode::Value(ProximaValue::Boolean(true)))
+                    )
+                {
+                    deletes = true;
+                }
+            }
             (
-                timestamps.iter().min().copied().unwrap_or(0),
-                timestamps.iter().max().copied().unwrap_or(0),
+                (min_id.to_string(), max_id.to_string()),
+                (min_ts, max_ts),
+                deletes,
             )
         };
-
-        // Check for deletes
-        let has_deletes = records.iter().any(|r| {
-            r.props
-                .get("_deleted")
-                .map(|v| matches!(v, ProximaTreeNode::Value(ProximaValue::Boolean(true))))
-                .unwrap_or(false)
-        });
 
         // Analyze vectors to choose optimal encoding
         let encoding_marker = Self::choose_optimal_encoding_marker(&records);
@@ -1386,11 +1397,18 @@ impl ProximaDataBlock {
             None
         };
 
+        // Compute bloom filter and SIMD-layout decision before moving records
+        // into the block (so we can move instead of cloning at line below).
+        let bloom_filter = Self::generate_bloom_filter(&records);
+        let needs_simd_layout =
+            compression_config.vector_layout != VectorEncodingLayout::FullVector
+                && !records.is_empty();
+
         let mut block = Self {
             encoding_marker,
             encoding_metadata,
             block_id,
-            records: records.clone(),
+            records,
             quantized_vectors: None,
             quantization_level: None,
             encoded_vectors: None,
@@ -1413,7 +1431,7 @@ impl ProximaDataBlock {
             compression_config: compression_config.clone(),
             compression_algorithm: compression_config.algorithm,
             uncompressed_size: 0,
-            bloom_filter: Self::generate_bloom_filter(&records),
+            bloom_filter,
             block_bloom_filter: None,
             id_range,
             timestamp_range,
@@ -1422,12 +1440,9 @@ impl ProximaDataBlock {
             has_deletes,
         };
 
-        // Apply SIMD encoding with specific engine profile
-        // Note: Encoding now happens in serialize_with_config() using ProximaCodec
-        // Just store the layout preference from config
-        if compression_config.vector_layout != VectorEncodingLayout::FullVector
-            && !records.is_empty()
-        {
+        // Apply SIMD encoding with specific engine profile.
+        // (Actual encoding happens in serialize_with_config() via ProximaCodec.)
+        if needs_simd_layout {
             block.vector_layout = compression_config.vector_layout;
         }
 

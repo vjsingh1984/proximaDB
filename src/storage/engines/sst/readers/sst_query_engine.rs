@@ -476,25 +476,50 @@ impl ModularBlockReader {
         let mut priority_queue = BoundedPriorityQueue::new(k);
         let mut total_records_scanned = 0;
 
+        // Hoisted out of the per-record loop: instantiating UnifiedDistanceCompute
+        // and dispatching SIMD once per vector was per-record overhead. With the
+        // batch entry point we get one SIMD dispatch per block.
+        let distance_compute =
+            crate::compute::distance_computation::engine::UnifiedDistanceCompute::default();
+        let mut distance_results: Vec<
+            crate::compute::distance_computation::engine::SimilarityResult,
+        > = Vec::new();
+
         // Scan all blocks and compute distances
         for (block_idx, _index_entry) in index_entries.iter().enumerate() {
             let data_block = reader_clone
                 .read_data_block_async(block_idx as u64, ReadMode::Direct)
                 .await?;
 
-            for record in data_block.records.iter() {
-                total_records_scanned += 1;
-                let vector = record_vector(record);
-                if vector.is_empty() {
-                    continue;
+            // Preserve the original counter semantics: every record (including
+            // those with empty vectors) is counted as "scanned".
+            total_records_scanned += data_block.records.len();
+
+            // Collect non-empty vectors with their record indices in one pass.
+            let mut record_indices: Vec<usize> = Vec::with_capacity(data_block.records.len());
+            let mut vector_slices: Vec<&[f32]> = Vec::with_capacity(data_block.records.len());
+            for (i, record) in data_block.records.iter().enumerate() {
+                let v = record_vector(record);
+                if !v.is_empty() {
+                    record_indices.push(i);
+                    vector_slices.push(v);
                 }
+            }
 
-                let distance =
-                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::default()
-                        .calculate_distance(query_vector, vector, distance_metric);
+            if vector_slices.is_empty() {
+                continue;
+            }
 
-                // Use normalized_score for both fields - consistency across all engines
-                // Higher similarity = better match, VOS sorts descending
+            distance_compute.batch_distance_into_buffer(
+                query_vector,
+                &vector_slices,
+                distance_metric,
+                &mut distance_results,
+            );
+
+            for (idx, distance) in record_indices.iter().zip(distance_results.iter()) {
+                let record = &data_block.records[*idx];
+                let vector = record_vector(record);
                 let search_record =
                     OptimizedSearchRecord::new(record_id(record), distance.normalized_score)
                         .with_similarity(distance.normalized_score)
