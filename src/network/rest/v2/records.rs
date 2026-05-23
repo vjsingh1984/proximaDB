@@ -1540,6 +1540,33 @@ pub async fn search_with_typed_filters(
                 },
             );
 
+            // Emit the populated trace as a structured tracing span so
+            // existing log aggregators (Loki, etc.) ingest it without
+            // needing a dedicated billing sink yet. Tier-aware
+            // sampling + retention live downstream of this — every
+            // search emits one structured event; the gateway's log
+            // pipeline samples per its own policy.
+            //
+            // Fields land as labels on the log entry. trace_id keeps
+            // the entry correlatable with the response's
+            // search_plan_trace block when debug=true; tenant_id +
+            // collection are kept as bounded-cardinality labels.
+            // Enum fields use Debug formatting (they have stable
+            // snake_case Display via serde, but the tracing macro
+            // doesn't auto-convert; the Debug shape is good enough
+            // for log search).
+            tracing::info!(
+                trace_id = %trace.trace_id,
+                tenant_id = %trace.tenant_id,
+                collection = %trace.collection_name,
+                filter_strategy = ?trace.filter_strategy,
+                index_route = ?trace.index_route,
+                cache_result = ?trace.cache_result,
+                latency_ms = trace.latency_ms,
+                candidate_count = trace.candidate_count,
+                "search_plan_trace"
+            );
+
             // Gate the trace + explain emission on debug=true per LLD §1.
             // Non-debug responses keep the JSON payload tight; debug
             // responses surface the full trace + a human-readable route
