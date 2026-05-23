@@ -1,3 +1,17 @@
+// Disabled: this example was written against an older `UnifiedExecutionPlan`
+// shape (with an `operations` field) and an `ExecutionOperation::VectorSearch`
+// variant whose fields (collection_id, query_vector, filters, top_k,
+// distance_metric) no longer exist. The current execution-plan API uses
+// `execution_steps`, `resource_allocation`, etc. Needs full rewrite — not
+// in scope for the 2026-05-22 nomenclature refactor.
+
+fn main() {
+    eprintln!("low_latency_query_example is disabled — see header comment.");
+}
+
+#[cfg(any())]
+mod _disabled {
+
 //! Low-Latency Query Engine Example
 //!
 //! This example demonstrates the new low-latency query execution capabilities
@@ -213,3 +227,4 @@ async fn simulate_execution(plan: &ExecutionPlan) -> Result<Duration, Box<dyn st
         Ok(simulated_time)
     }
 }
+} // mod _disabled

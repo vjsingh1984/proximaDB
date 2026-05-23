@@ -2295,6 +2295,75 @@ impl UnifiedStorageEngine for RaptorEngine {
         })
     }
 
+    /// RAPTOR's LSM bulk-load override (Phase 2F-b).
+    ///
+    /// Delegates to `do_flush` with a synthetic FlushParameters.
+    /// RAPTOR's flush builds the hierarchical writer + summarization
+    /// layer; bulk-loaded segments inherit the same hierarchy. The
+    /// drainer sends a pre-sorted batch, the engine writes it once,
+    /// no WAL+memtable cost.
+    async fn ingest_sorted_segment(
+        &self,
+        collection_id: &str,
+        base_path: &str,
+        records: Vec<proximadb_records::ProximaRecord>,
+    ) -> Result<crate::storage::traits::SegmentIngestResult> {
+        use crate::proto::proximadb_v1::{Collection, StorageAssignment};
+
+        let count = records.len();
+        if count == 0 {
+            return Ok(crate::storage::traits::SegmentIngestResult {
+                collection_id: collection_id.to_string(),
+                record_count: 0,
+                synthetic_segment_id: "empty".to_string(),
+                used_engine_specific_path: true,
+            });
+        }
+
+        let collection_config = Some(Collection {
+            id: collection_id.to_string(),
+            config: None,
+            stats: None,
+            created_at: 0,
+            updated_at: 0,
+            storage_assignment: Some(StorageAssignment {
+                primary_path: base_path.to_string(),
+                backup_paths: vec![],
+                engine: 0,
+                engine_config: std::collections::HashMap::new(),
+                base_location: base_path.to_string(),
+                assigned_at: 0,
+            }),
+        });
+
+        let params = FlushParameters {
+            collection_id: Some(collection_id.to_string()),
+            force: true,
+            synchronous: true,
+            hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            vector_records: records,
+            trigger_compaction: false,
+            batch_ids: vec![],
+            collection_config,
+            estimated_size: 0,
+        };
+
+        let flush_result = self.do_flush(&params).await?;
+        let synthetic_segment_id = flush_result
+            .file_paths
+            .first()
+            .cloned()
+            .unwrap_or_else(|| format!("raptor-bulkload-{collection_id}-{count}"));
+
+        Ok(crate::storage::traits::SegmentIngestResult {
+            collection_id: collection_id.to_string(),
+            record_count: count,
+            synthetic_segment_id,
+            used_engine_specific_path: true,
+        })
+    }
+
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
         let _collection_id = self.get_collection_id_from_compaction_params(params)?;
         let start_time = std::time::Instant::now();

@@ -57,6 +57,87 @@ impl UnifiedStorageEngine for SstEngine {
         self.flush_implementation(params).await
     }
 
+    /// SST's LSM bulk-load override (Phase 2F-b).
+    ///
+    /// Same shape as NOVA's override — SST's `flush_implementation`
+    /// already takes `FlushParameters { vector_records, collection_config, .. }`
+    /// and writes a single SSTable file via the existing writer, so
+    /// the trait method just builds a synthetic params and delegates.
+    /// WAL + memtable are bypassed because we never call into the
+    /// per-record insert path.
+    ///
+    /// SST adds quantization on top of NOVA's path (Binary → INT8 →
+    /// FP32 progressive search), so bulk-loaded segments inherit the
+    /// same hierarchical bloom filters and progressive quantization
+    /// the normal flush produces.
+    async fn ingest_sorted_segment(
+        &self,
+        collection_id: &str,
+        base_path: &str,
+        records: Vec<proximadb_records::ProximaRecord>,
+    ) -> Result<crate::storage::traits::SegmentIngestResult> {
+        use crate::proto::proximadb_v1::{Collection, StorageAssignment};
+
+        let count = records.len();
+        if count == 0 {
+            return Ok(crate::storage::traits::SegmentIngestResult {
+                collection_id: collection_id.to_string(),
+                record_count: 0,
+                synthetic_segment_id: "empty".to_string(),
+                used_engine_specific_path: true,
+            });
+        }
+
+        // Minimal synthetic Collection so flush_implementation knows
+        // where to write. `config = None` lets dimension fall back to
+        // inspecting records[0].embeddings[0].dim inside the flush
+        // path (existing fallback chain). `base_location` is the only
+        // field flush_implementation actually reads from the
+        // assignment for storage URL resolution.
+        let collection_config = Some(Collection {
+            id: collection_id.to_string(),
+            config: None,
+            stats: None,
+            created_at: 0,
+            updated_at: 0,
+            storage_assignment: Some(StorageAssignment {
+                primary_path: base_path.to_string(),
+                backup_paths: vec![],
+                engine: 0,
+                engine_config: std::collections::HashMap::new(),
+                base_location: base_path.to_string(),
+                assigned_at: 0,
+            }),
+        });
+
+        let params = FlushParameters {
+            collection_id: Some(collection_id.to_string()),
+            force: true,
+            synchronous: true,
+            hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            vector_records: records,
+            trigger_compaction: false,
+            batch_ids: vec![],
+            collection_config,
+            estimated_size: 0,
+        };
+
+        let flush_result = self.flush_implementation(&params).await?;
+        let synthetic_segment_id = flush_result
+            .file_paths
+            .first()
+            .cloned()
+            .unwrap_or_else(|| format!("sst-bulkload-{collection_id}-{count}"));
+
+        Ok(crate::storage::traits::SegmentIngestResult {
+            collection_id: collection_id.to_string(),
+            record_count: count,
+            synthetic_segment_id,
+            used_engine_specific_path: true,
+        })
+    }
+
     /// Delegate compaction to the compaction module
     async fn do_compact(&self, params: &CompactionParameters) -> Result<CompactionResult> {
         info!("🔄 SST: Starting compaction operation");

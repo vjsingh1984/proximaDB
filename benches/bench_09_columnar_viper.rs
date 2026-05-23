@@ -182,7 +182,11 @@ fn bench_viper_flush(c: &mut Criterion) {
 
                         let params = FlushParameters {
                             collection_id: Some("bench-viper".to_string()),
-                            vector_records: vectors.clone(),
+                            vector_records: vectors
+                                .iter()
+                                .cloned()
+                                .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+                                .collect(),
                             force: true,
                             synchronous: true,
                             collection_config: Some(collection),

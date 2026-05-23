@@ -99,7 +99,12 @@ fn test_compression(
     let original_size = vectors.len() * dimension * 4; // 4 bytes per f32
 
     // Measure encoding time
-    let block = ProximaDataBlock::new(vectors.to_vec(), config.clone());
+    let proxima_records: Vec<_> = vectors
+        .iter()
+        .cloned()
+        .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+        .collect();
+    let block = ProximaDataBlock::new(proxima_records, config.clone());
     let encode_start = Instant::now();
     let encoded = block.serialize_with_config(&config)?;
     let encode_time_ms = encode_start.elapsed().as_secs_f64() * 1000.0;

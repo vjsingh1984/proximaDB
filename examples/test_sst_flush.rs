@@ -79,7 +79,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("💾 Flushing vectors...");
     let flush_params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
-        vector_records: vectors,
+        vector_records: vectors
+            .into_iter()
+            .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+            .collect(),
         force: true,
         synchronous: true,
         collection_config: Some(collection.clone()),

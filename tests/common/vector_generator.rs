@@ -29,6 +29,7 @@ fn make_record(id: &str, vector: Vec<f32>, props: ProximaTree) -> ProximaRecord 
     let ts = now_ns();
     let dim = vector.len() as u32;
     ProximaRecord {
+        schema_version: proximadb_records::schema_version::default_schema_version(),
         oid: id.to_string(),
         local_id: None,
         tid: None,

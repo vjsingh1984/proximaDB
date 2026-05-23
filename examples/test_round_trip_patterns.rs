@@ -165,8 +165,13 @@ fn test_round_trip(
         0
     };
 
-    // Create block and serialize
-    let block = ProximaDataBlock::new(records.clone(), config.clone());
+    // Create block and serialize — convert legacy VectorRecord to canonical ProximaRecord.
+    let proxima_records: Vec<_> = records
+        .iter()
+        .cloned()
+        .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+        .collect();
+    let block = ProximaDataBlock::new(proxima_records, config.clone());
     let serialized = block
         .serialize_with_config(&config)
         .map_err(|e| format!("Serialization failed: {}", e))?;
@@ -184,8 +189,9 @@ fn test_round_trip(
         return Ok((false, serialized_size, compression_ratio));
     }
 
-    // Check vectors
+    // Check vectors — convert decoded ProximaRecord back to legacy shape for comparison.
     for (original, decoded) in records.iter().zip(deserialized_block.records.iter()) {
+        let decoded = proximadb_records::conversions::proxima_record_to_vector(decoded);
         if original.id != decoded.id {
             return Ok((false, serialized_size, compression_ratio));
         }

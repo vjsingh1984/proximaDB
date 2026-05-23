@@ -403,7 +403,11 @@ fn bench_compression_with_search(c: &mut Criterion) {
 
                 let params = FlushParameters {
                     collection_id: Some(collection_id.clone()),
-                    vector_records: vectors.clone(),
+                    vector_records: vectors
+                        .iter()
+                        .cloned()
+                        .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+                        .collect(),
                     force: true,
                     synchronous: true,
                     collection_config: Some(collection),
@@ -1015,7 +1019,11 @@ fn bench_large_scale_search(c: &mut Criterion) {
 
                     let params = FlushParameters {
                         collection_id: Some(collection_id.clone()),
-                        vector_records: vectors.clone(),
+                        vector_records: vectors
+                            .iter()
+                            .cloned()
+                            .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+                            .collect(),
                         force: true,
                         synchronous: true,
                         collection_config: Some(collection),
@@ -1193,7 +1201,11 @@ fn bench_insertion_performance(c: &mut Criterion) {
 
                     let params = FlushParameters {
                         collection_id: Some(collection_id),
-                        vector_records: vectors.clone(),
+                        vector_records: vectors
+                            .iter()
+                            .cloned()
+                            .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+                            .collect(),
                         force: true,
                         synchronous: true,
                         collection_config: Some(collection),

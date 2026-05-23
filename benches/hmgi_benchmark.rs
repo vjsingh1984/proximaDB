@@ -72,6 +72,7 @@ fn modality_query(modality: &str) -> HybridQuery {
         id_filters: Vec::new(),
         top_k: TOP_K,
         include_expired: false,
+        ann_filtering_mode: Default::default(),
     }
 }
 

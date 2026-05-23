@@ -57,7 +57,12 @@ fn main() {
     println!("Testing with realistic random vectors (not pattern data)...\n");
 
     // Create block
-    let original_block = ProximaDataBlock::new(vectors.clone(), config_no_compression.clone());
+    let proxima_records: Vec<_> = vectors
+        .iter()
+        .cloned()
+        .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+        .collect();
+    let original_block = ProximaDataBlock::new(proxima_records, config_no_compression.clone());
 
     // Test WITHOUT compression
     match original_block.serialize_with_config(&config_no_compression) {
@@ -117,6 +122,9 @@ fn main() {
                         for (i, (original, decoded)) in
                             vectors.iter().zip(decoded_block.records.iter()).enumerate()
                         {
+                            // ProximaRecord stores id as `oid` and vector in props;
+                            // convert back to compare with the legacy VectorRecord shape.
+                            let decoded = proximadb_records::conversions::proxima_record_to_vector(decoded);
                             if original.id != decoded.id {
                                 println!(
                                     "   ❌ ID mismatch at {}: {} vs {}",

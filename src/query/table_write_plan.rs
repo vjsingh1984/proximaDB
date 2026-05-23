@@ -234,6 +234,9 @@ pub enum ExecutionGuard {
     PreservePreviousSnapshot,
 }
 
+/// Backwards-compat alias for [`TableWriteCostEstimate`].
+pub type CostEstimate = TableWriteCostEstimate;
+
 /// Lightweight cost estimate. The first router is rule-based, but it returns
 /// comparable cost fields so xCatalog statistics can drive CBO later.
 #[derive(Debug, Clone, PartialEq)]

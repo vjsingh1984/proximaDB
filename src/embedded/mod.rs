@@ -308,6 +308,9 @@ impl StorageLocationConfig {
     }
 }
 
+/// Backwards-compat alias for [`EmbeddedSearchResult`].
+pub type SearchResult = EmbeddedSearchResult;
+
 /// Search result from embedded database
 #[derive(Debug, Clone)]
 pub struct EmbeddedSearchResult {
@@ -318,6 +321,9 @@ pub struct EmbeddedSearchResult {
     /// Associated metadata
     pub metadata: std::collections::HashMap<String, String>,
 }
+
+/// Backwards-compat alias for [`EmbeddedCollectionInfo`].
+pub type CollectionInfo = EmbeddedCollectionInfo;
 
 /// Collection information
 #[derive(Debug, Clone)]

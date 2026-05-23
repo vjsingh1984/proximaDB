@@ -53,7 +53,7 @@ async fn upgrade_emits_event_and_invalidates_warm_cache() {
     // Stage 1: warm the planner cache for tenant-a on collection 'kb'
     // against the community tier.
     let cache = Arc::new(PlanCache::default());
-    let before = record(Tier::Community, None, None, None);
+    let before = record(Tier::Team, None, None, None);
     let stats = FieldStatistics::default();
     let policy = PredicateSelectivityPolicy::default();
     let preds = vec![predicate("tier", "community")];
@@ -195,8 +195,8 @@ async fn cross_tenant_transition_does_not_flush_other_tenants() {
     let stats = FieldStatistics::default();
     let policy = PredicateSelectivityPolicy::default();
     let preds = vec![predicate("plan", "community")];
-    let tier_a = record(Tier::Community, None, None, None);
-    let mut tier_b = record(Tier::Community, None, None, None);
+    let tier_a = record(Tier::Team, None, None, None);
+    let mut tier_b = record(Tier::Team, None, None, None);
     tier_b.tenant_id = "tenant-b".into();
 
     // Warm cache for both tenants.

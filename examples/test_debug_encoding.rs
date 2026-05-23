@@ -53,7 +53,12 @@ fn main() -> anyhow::Result<()> {
     };
 
     info!("Creating ProximaDataBlock");
-    let block = ProximaDataBlock::new(vectors.clone(), config.clone());
+    let proxima_records: Vec<_> = vectors
+        .iter()
+        .cloned()
+        .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+        .collect();
+    let block = ProximaDataBlock::new(proxima_records, config.clone());
 
     info!("Serializing block");
     let encoded = block.serialize_with_config(&config)?;
@@ -70,6 +75,8 @@ fn main() -> anyhow::Result<()> {
 
     info!("Comparing vectors");
     for (i, (orig, dec)) in vectors.iter().zip(decoded_block.records.iter()).enumerate() {
+        // Convert ProximaRecord back to VectorRecord shape for field-level comparison.
+        let dec = proximadb_records::conversions::proxima_record_to_vector(dec);
         debug!("Vector {} comparison:", i);
         debug!("  Original: {:?}", orig.vector);
         debug!("  Decoded:  {:?}", dec.vector);

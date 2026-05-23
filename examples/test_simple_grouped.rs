@@ -34,12 +34,17 @@ fn main() -> anyhow::Result<()> {
         metadata_algorithm: None,
     };
 
-    let block = ProximaDataBlock::new(vec![record], config.clone());
+    let block = ProximaDataBlock::new(
+        vec![proximadb::proto::defaults::vector_record_to_proxima_record(record)],
+        config.clone(),
+    );
     let encoded = block.serialize_with_config(&config)?;
     println!("Encoded size: {} bytes", encoded.len());
 
     let decoded_block = ProximaDataBlock::deserialize(&encoded, None)?;
-    let decoded = &decoded_block.records[0].vector;
+    let decoded_vec =
+        proximadb_records::conversions::proxima_record_to_vector(&decoded_block.records[0]);
+    let decoded = &decoded_vec.vector;
 
     // Check values
     for i in 0..20 {

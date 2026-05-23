@@ -71,6 +71,8 @@ pub use distributed_ops::{
     DistributedSearchResult, DistributedWriteRequest, DistributedWriteResult, QueryContext,
     RetryConfig, ShardSearchResult, WriteRecord,
 };
+/// Backwards-compat alias for the per-shard SearchResult re-exported from distributed_ops.
+pub use distributed_ops::ShardSearchResult as SearchResult;
 pub use metadata_service::{ClusterMetadata, MetadataService, MetadataServiceConfig};
 pub use node_registry::{
     NodeHealth, NodeInfo, NodeRegistry, NodeRegistryConfig, NodeRole, NodeStatus,

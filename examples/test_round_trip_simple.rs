@@ -69,7 +69,12 @@ fn test_round_trip(
         metadata_algorithm: None, // Use main algorithm for metadata
     };
 
-    let block = ProximaDataBlock::new(vectors.to_vec(), config.clone());
+    let proxima_records: Vec<_> = vectors
+        .iter()
+        .cloned()
+        .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+        .collect();
+    let block = ProximaDataBlock::new(proxima_records, config.clone());
 
     // Calculate original size
     let dimension = vectors[0].vector.len();
@@ -94,7 +99,9 @@ fn test_round_trip(
     }
 
     for (i, (original, decoded)) in vectors.iter().zip(decoded_block.records.iter()).enumerate() {
-        if original.vector.len() != decoded.vector.len() {
+        // ProximaRecord stores vectors in props; convert back to compare.
+        let decoded_vec = proximadb_records::conversions::proxima_record_to_vector(decoded);
+        if original.vector.len() != decoded_vec.vector.len() {
             println!("❌ FAIL (vec {} dim mismatch)", i);
             return Ok(false);
         }
@@ -102,7 +109,7 @@ fn test_round_trip(
         for (j, (orig_val, dec_val)) in original
             .vector
             .iter()
-            .zip(decoded.vector.iter())
+            .zip(decoded_vec.vector.iter())
             .enumerate()
         {
             let diff = (orig_val - dec_val).abs();

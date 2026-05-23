@@ -44,7 +44,11 @@ fn analyze_layout() -> anyhow::Result<()> {
         metadata_algorithm: None,
     };
 
-    let block = ProximaDataBlock::new(vectors, config.clone());
+    let proxima_records: Vec<_> = vectors
+        .into_iter()
+        .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+        .collect();
+    let block = ProximaDataBlock::new(proxima_records, config.clone());
     let encoded = block.serialize_with_config(&config)?;
 
     println!("\n📏 SERIALIZATION ANALYSIS:");
