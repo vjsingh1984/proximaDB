@@ -58,9 +58,12 @@ impl Default for TieringEngineConfig {
     }
 }
 
+/// Backwards-compat alias for [`StorageTieringStats`].
+pub type TieringStats = StorageTieringStats;
+
 /// Statistics for the tiering engine
 #[derive(Debug, Clone, Default)]
-pub struct TieringStats {
+pub struct StorageTieringStats {
     /// Total evaluations performed
     pub evaluations: u64,
     /// Items evaluated
@@ -99,7 +102,7 @@ pub struct TieringPolicyEngine {
     /// Item migration state (for cooldown)
     item_states: Arc<RwLock<HashMap<(String, String), ItemMigrationState>>>,
     /// Engine statistics
-    stats: Arc<RwLock<TieringStats>>,
+    stats: Arc<RwLock<StorageTieringStats>>,
     /// Running state
     running: Arc<AtomicBool>,
 }
@@ -115,7 +118,7 @@ impl TieringPolicyEngine {
                 config.max_concurrent_migrations,
             )),
             item_states: Arc::new(RwLock::new(HashMap::new())),
-            stats: Arc::new(RwLock::new(TieringStats::default())),
+            stats: Arc::new(RwLock::new(StorageTieringStats::default())),
             running: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -397,7 +400,7 @@ impl TieringPolicyEngine {
     }
 
     /// Get engine statistics
-    pub async fn get_stats(&self) -> TieringStats {
+    pub async fn get_stats(&self) -> StorageTieringStats {
         self.stats.read().await.clone()
     }
 

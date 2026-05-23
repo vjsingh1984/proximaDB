@@ -448,9 +448,12 @@ fn collection_engine_name(storage_engine: Option<i32>) -> String {
     .to_string()
 }
 
+/// Backwards-compat alias for [`EmbeddedStorageStats`].
+pub type StorageStats = EmbeddedStorageStats;
+
 /// Storage statistics
 #[derive(Debug, Clone)]
-pub struct StorageStats {
+pub struct EmbeddedStorageStats {
     /// Total number of vectors across all collections
     pub total_vectors: u64,
     /// Total number of collections
@@ -2535,7 +2538,7 @@ impl EmbeddedProximaDB {
     }
 
     /// Get storage statistics
-    pub fn stats(&self) -> Result<StorageStats, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn stats(&self) -> Result<EmbeddedStorageStats, Box<dyn std::error::Error + Send + Sync>> {
         self.runtime.block_on(async {
             let collections = self.collection_service.list_collections().await.ok();
             let total_collections = collections.as_ref().map_or(0, |c| c.len() as u64);
@@ -2546,7 +2549,7 @@ impl EmbeddedProximaDB {
                     .sum()
             });
 
-            Ok(StorageStats {
+            Ok(EmbeddedStorageStats {
                 total_vectors,
                 total_collections,
                 disk_usage_bytes: 0, // Deferred: Calculate actual disk usage

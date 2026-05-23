@@ -587,9 +587,12 @@ impl ColumnarMetadataFilter {
     }
 }
 
+/// Backwards-compat alias for [`ColumnarRowGroupStats`].
+pub type RowGroupStats = ColumnarRowGroupStats;
+
 /// Row group statistics for optimization
 #[derive(Debug, Clone)]
-pub struct RowGroupStats {
+pub struct ColumnarRowGroupStats {
     pub row_group_id: usize,
     pub num_rows: u64,
     pub compressed_size: u64,
@@ -599,9 +602,12 @@ pub struct RowGroupStats {
     pub bloom_filter_size: Option<usize>,
 }
 
+/// Backwards-compat alias for [`ColumnarSearchCandidate`].
+pub type SearchCandidate = ColumnarSearchCandidate;
+
 /// Search candidate for progressive refinement
 #[derive(Debug, Clone)]
-pub struct SearchCandidate {
+pub struct ColumnarSearchCandidate {
     pub row_group_id: usize,
     pub row_offset: u32,
     pub similarity: f32,
@@ -626,7 +632,7 @@ pub trait ColumnarOperations {
     ) -> Result<Vec<ProximaRecord>>;
 
     /// Get row group statistics
-    fn row_group_stats(&self) -> Vec<RowGroupStats>;
+    fn row_group_stats(&self) -> Vec<ColumnarRowGroupStats>;
 
     /// Optimize row group layout
     async fn optimize_layout(&self, collection_id: &str) -> Result<()>;

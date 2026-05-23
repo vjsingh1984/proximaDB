@@ -41,7 +41,7 @@ pub struct ColdStorageBackend {
     node_index: Arc<RwLock<HashMap<NodeId, StorageLocation>>>,
     edge_index: Arc<RwLock<HashMap<EdgeId, StorageLocation>>>,
     /// Storage statistics
-    stats: Arc<RwLock<StorageStats>>,
+    stats: Arc<RwLock<QuasarStorageStats>>,
 }
 
 /// Storage location information
@@ -57,9 +57,12 @@ pub struct StorageLocation {
     pub stored_at: std::time::SystemTime,
 }
 
+/// Backwards-compat alias for [`QuasarStorageStats`].
+pub type StorageStats = QuasarStorageStats;
+
 /// Storage statistics
 #[derive(Debug, Default, Clone)]
-pub struct StorageStats {
+pub struct QuasarStorageStats {
     pub nodes_stored: u64,
     pub edges_stored: u64,
     pub total_storage_bytes: u64,
@@ -118,7 +121,7 @@ impl ColdStorageBackend {
             storage_path: storage_path.to_path_buf(),
             node_index: Arc::new(RwLock::new(HashMap::new())),
             edge_index: Arc::new(RwLock::new(HashMap::new())),
-            stats: Arc::new(RwLock::new(StorageStats::default())),
+            stats: Arc::new(RwLock::new(QuasarStorageStats::default())),
         };
 
         // Load existing index if available
@@ -646,7 +649,7 @@ impl ColdStorageBackend {
     }
 
     /// Get storage statistics
-    pub async fn get_stats(&self) -> StorageStats {
+    pub async fn get_stats(&self) -> QuasarStorageStats {
         let stats = self.stats.read().await;
         (*stats).clone()
     }

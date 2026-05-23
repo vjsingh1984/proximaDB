@@ -46,9 +46,12 @@ pub struct ProgressiveSearchExecutor {
     distance_compute: Arc<UnifiedDistanceCompute>,
 }
 
+/// Backwards-compat alias for [`ProgressiveSearchCandidate`].
+pub type SearchCandidate = ProgressiveSearchCandidate;
+
 /// Candidate tracking during progressive search
 #[derive(Debug, Clone)]
-pub struct SearchCandidate {
+pub struct ProgressiveSearchCandidate {
     /// Vector ID
     pub id: String,
 
@@ -184,7 +187,7 @@ impl ProgressiveSearchExecutor {
         ctx: &StorageQueryContext,
         records: Vec<VectorRecord>,
         levels: &[QuantizationLevel],
-    ) -> Result<Vec<SearchCandidate>> {
+    ) -> Result<Vec<ProgressiveSearchCandidate>> {
         let mut candidates = Vec::with_capacity(records.len());
 
         for record in records {
@@ -322,7 +325,7 @@ impl ProgressiveSearchExecutor {
                 }
             };
 
-            candidates.push(SearchCandidate {
+            candidates.push(ProgressiveSearchCandidate {
                 id: record.id.clone(),
                 vector: Some(record.vector.clone()),
                 quantized_vectors,
@@ -339,11 +342,11 @@ impl ProgressiveSearchExecutor {
     async fn apply_progressive_stage(
         &self,
         ctx: &StorageQueryContext,
-        mut candidates: Vec<SearchCandidate>,
+        mut candidates: Vec<ProgressiveSearchCandidate>,
         query_vector: &[f32],
         level: &QuantizationLevel,
         stage: SearchStage,
-    ) -> Result<Vec<SearchCandidate>> {
+    ) -> Result<Vec<ProgressiveSearchCandidate>> {
         // Get selectivity for this stage
         let selectivity = match stage {
             SearchStage::BinaryFilter => ctx.binary_filter_selectivity(),
@@ -413,7 +416,7 @@ impl ProgressiveSearchExecutor {
     /// Score candidates using binary quantization (delegates to unified quantization)
     async fn score_binary(
         &self,
-        candidates: &mut [SearchCandidate],
+        candidates: &mut [ProgressiveSearchCandidate],
         query_vector: &[f32],
         level: &QuantizationLevel,
     ) -> Result<()> {
@@ -446,7 +449,7 @@ impl ProgressiveSearchExecutor {
     /// Score candidates using scalar quantization (INT8) - delegates to unified quantization
     async fn score_scalar(
         &self,
-        candidates: &mut [SearchCandidate],
+        candidates: &mut [ProgressiveSearchCandidate],
         query_vector: &[f32],
         level: &QuantizationLevel,
     ) -> Result<()> {
@@ -480,7 +483,7 @@ impl ProgressiveSearchExecutor {
     /// Score candidates using product quantization - delegates to unified quantization
     async fn score_product(
         &self,
-        candidates: &mut [SearchCandidate],
+        candidates: &mut [ProgressiveSearchCandidate],
         query_vector: &[f32],
         level: &QuantizationLevel,
     ) -> Result<()> {
@@ -524,7 +527,7 @@ impl ProgressiveSearchExecutor {
     /// Score candidates using full precision
     async fn score_full_precision(
         &self,
-        candidates: &mut [SearchCandidate],
+        candidates: &mut [ProgressiveSearchCandidate],
         query_vector: &[f32],
         distance_metric: DistanceMetric,
     ) -> Result<()> {
@@ -547,9 +550,9 @@ impl ProgressiveSearchExecutor {
     async fn final_rerank(
         &self,
         ctx: &StorageQueryContext,
-        mut candidates: Vec<SearchCandidate>,
+        mut candidates: Vec<ProgressiveSearchCandidate>,
         query_vector: &[f32],
-    ) -> Result<Vec<SearchCandidate>> {
+    ) -> Result<Vec<ProgressiveSearchCandidate>> {
         debug!(
             "Final reranking {} candidates with full precision",
             candidates.len()
@@ -681,7 +684,7 @@ impl ProgressiveSearchExecutor {
     /// Convert candidates to search results
     fn convert_to_results(
         &self,
-        candidates: Vec<SearchCandidate>,
+        candidates: Vec<ProgressiveSearchCandidate>,
         top_k: usize,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let mut results = Vec::with_capacity(top_k.min(candidates.len()));

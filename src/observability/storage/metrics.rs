@@ -745,9 +745,9 @@ impl MetricStorage {
     }
 
     /// Get tiering statistics for all series
-    pub async fn tiering_stats(&self) -> TieringStats {
+    pub async fn tiering_stats(&self) -> ObservabilityTieringStats {
         let series = self.series.read().await;
-        let mut stats = TieringStats::default();
+        let mut stats = ObservabilityTieringStats::default();
 
         for s in series.values() {
             let points = s.points.read().await;
@@ -1101,10 +1101,13 @@ impl TieringResult {
 
 /// Statistics about tiering storage
 ///
+/// Backwards-compat alias for [`ObservabilityTieringStats`].
+pub type TieringStats = ObservabilityTieringStats;
+
 /// Provides statistics about metric storage across all resolution tiers.
 /// Used to monitor storage usage and compression ratios.
 #[derive(Debug, Default)]
-pub struct TieringStats {
+pub struct ObservabilityTieringStats {
     /// Number of series
     pub series_count: usize,
     /// Total raw data points
@@ -1117,7 +1120,7 @@ pub struct TieringStats {
     pub hour_points: usize,
 }
 
-impl TieringStats {
+impl ObservabilityTieringStats {
     /// Total points across all tiers
     #[must_use]
     pub fn total_points(&self) -> usize {
@@ -1520,7 +1523,7 @@ mod tests {
 
     #[test]
     fn test_tiering_stats_compression_ratio() {
-        let stats = TieringStats {
+        let stats = ObservabilityTieringStats {
             series_count: 1,
             raw_points: 1000,
             minute_points: 100,

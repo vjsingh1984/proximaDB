@@ -76,7 +76,7 @@ impl ParallelWALSearch {
         let distance_metric_arc = Arc::new(*distance_metric);
 
         // Process batches in parallel using rayon
-        let candidates: Vec<SearchCandidate> = batches
+        let candidates: Vec<WalSearchCandidate> = batches
             .into_par_iter()
             .flat_map(|batch| {
                 self.process_batch_parallel(
@@ -123,7 +123,7 @@ impl ParallelWALSearch {
         distance_metric: Arc<DistanceMetric>,
         include_vectors: bool,
         include_metadata: bool,
-    ) -> Vec<SearchCandidate> {
+    ) -> Vec<WalSearchCandidate> {
         // Use SIMD-optimized distance computation when available
         let use_simd =
             self.hardware.cpu.features.avx2_support || self.hardware.cpu.features.sse42_support;
@@ -172,7 +172,7 @@ impl ParallelWALSearch {
                     self.compute_distance_scalar(&query_vector, vector, &distance_metric)
                 };
 
-                Some(SearchCandidate {
+                Some(WalSearchCandidate {
                     record: record.clone(),
                     score,
                     include_vectors,
@@ -383,9 +383,9 @@ impl ParallelWALSearch {
     /// Parallel top-k sorting for large result sets
     fn parallel_top_k_sort(
         &self,
-        mut candidates: Vec<SearchCandidate>,
+        mut candidates: Vec<WalSearchCandidate>,
         k: usize,
-    ) -> Vec<SearchCandidate> {
+    ) -> Vec<WalSearchCandidate> {
         // Use parallel partial sort for large datasets
         candidates.par_sort_unstable_by(|a, b| {
             b.score
@@ -399,9 +399,9 @@ impl ParallelWALSearch {
     /// Sequential top-k sorting for small result sets
     fn sequential_top_k_sort(
         &self,
-        mut candidates: Vec<SearchCandidate>,
+        mut candidates: Vec<WalSearchCandidate>,
         k: usize,
-    ) -> Vec<SearchCandidate> {
+    ) -> Vec<WalSearchCandidate> {
         candidates.sort_unstable_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
@@ -437,16 +437,19 @@ impl ParallelWALSearch {
     }
 }
 
+/// Backwards-compat alias for [`WalSearchCandidate`].
+pub type SearchCandidate = WalSearchCandidate;
+
 /// Intermediate search candidate
 #[derive(Clone)]
-pub struct SearchCandidate {
+pub struct WalSearchCandidate {
     record: ProximaRecord,
     score: f32,
     include_vectors: bool,
     include_metadata: bool,
 }
 
-impl SearchCandidate {
+impl WalSearchCandidate {
     /// Convert to OptimizedSearchRecord - preserves all source information
     fn into_search_result(self) -> OptimizedSearchRecord {
         let metadata = if self.include_metadata {
@@ -488,7 +491,7 @@ fn proxima_value_to_json(value: &ProximaValue) -> serde_json::Value {
 pub struct EarlyTerminationTracker {
     target_k: usize,
     multiplier: f32,
-    candidates: Arc<RwLock<Vec<SearchCandidate>>>,
+    candidates: Arc<RwLock<Vec<WalSearchCandidate>>>,
 }
 
 impl EarlyTerminationTracker {
@@ -507,13 +510,13 @@ impl EarlyTerminationTracker {
     }
 
     /// Add candidates
-    pub fn add_candidates(&self, mut new_candidates: Vec<SearchCandidate>) {
+    pub fn add_candidates(&self, mut new_candidates: Vec<WalSearchCandidate>) {
         let mut candidates = self.candidates.write();
         candidates.append(&mut new_candidates);
     }
 
     /// Get final results
-    pub fn get_top_k(self) -> Vec<SearchCandidate> {
+    pub fn get_top_k(self) -> Vec<WalSearchCandidate> {
         let mut candidates = Arc::try_unwrap(self.candidates)
             .map_or_else(|arc| arc.read().clone(), |rwlock| rwlock.into_inner());
 
@@ -550,7 +553,7 @@ mod tests {
 
         let mut candidates = vec![];
         for i in 0..1000 {
-            candidates.push(SearchCandidate {
+            candidates.push(WalSearchCandidate {
                 record: ProximaRecord::default(),
                 score: (i as f32) / 1000.0,
                 include_vectors: false,

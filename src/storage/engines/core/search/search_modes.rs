@@ -1097,9 +1097,12 @@ pub struct SearchStageContext {
     pub additional_context: HashMap<String, serde_json::Value>,
 }
 
+/// Backwards-compat alias for [`SearchModeSearchCandidate`].
+pub type SearchCandidate = SearchModeSearchCandidate;
+
 /// Search candidate for progressive refinement
 #[derive(Debug, Clone)]
-pub struct SearchCandidate {
+pub struct SearchModeSearchCandidate {
     /// Candidate record
     pub record: CandidateRecord,
 

@@ -64,9 +64,12 @@ pub struct NodejsCollectionInfo {
     pub engine: String,
 }
 
+/// Backwards-compat alias for [`NodejsStorageStats`].
+pub type StorageStats = NodejsStorageStats;
+
 /// Storage statistics
 #[napi(object)]
-pub struct StorageStats {
+pub struct NodejsStorageStats {
     /// Total vectors
     pub total_vectors: i64,
     /// Total collections
@@ -315,10 +318,10 @@ impl ProximaDB {
     ///
     /// @returns Storage statistics
     #[napi]
-    pub fn stats(&self) -> Result<StorageStats> {
+    pub fn stats(&self) -> Result<NodejsStorageStats> {
         self.inner
             .stats()
-            .map(|s| StorageStats {
+            .map(|s| NodejsStorageStats {
                 total_vectors: s.total_vectors as i64,
                 total_collections: s.total_collections as i64,
                 disk_usage_bytes: s.disk_usage_bytes as i64,

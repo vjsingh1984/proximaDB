@@ -188,7 +188,7 @@ pub struct HierarchicalStatistics {
     pub super_blocks: Vec<SuperBlockStats>,
 
     /// Row group statistics
-    pub row_group_stats: Vec<RowGroupStats>,
+    pub row_group_stats: Vec<NovaColumnarRowGroupStats>,
 
     /// Column statistics
     pub column_stats: HashMap<String, NovaColumnarColumnStats>,
@@ -209,9 +209,12 @@ pub struct SuperBlockStats {
     pub compression_ratio: f32,
 }
 
+/// Backwards-compat alias for [`NovaColumnarRowGroupStats`].
+pub type RowGroupStats = NovaColumnarRowGroupStats;
+
 /// Row group statistics
 #[derive(Debug, Clone)]
-pub struct RowGroupStats {
+pub struct NovaColumnarRowGroupStats {
     pub row_group_id: usize,
     pub super_block_id: usize,
     pub num_vectors: usize,

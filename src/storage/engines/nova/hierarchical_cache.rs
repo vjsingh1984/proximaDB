@@ -23,7 +23,7 @@ pub struct HierarchicalStats {
     pub block_stats: Vec<BlockStats>,
 
     /// RowGroup level statistics (lowest level)
-    pub rowgroup_stats: Vec<RowGroupStats>,
+    pub rowgroup_stats: Vec<NovaCacheRowGroupStats>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,8 +71,11 @@ pub struct BlockStats {
     pub bloom_filter: Option<Vec<u8>>,
 }
 
+/// Backwards-compat alias for [`NovaCacheRowGroupStats`].
+pub type RowGroupStats = NovaCacheRowGroupStats;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RowGroupStats {
+pub struct NovaCacheRowGroupStats {
     pub rowgroup_id: u64,
     pub block_id: u64,
     pub num_rows: u64,
@@ -135,7 +138,7 @@ pub struct NovaHierarchicalCache {
 
     /// RowGroup stats - on-demand loading with TTL
     rowgroup_cache:
-        Arc<RwLock<HashMap<String, (Arc<RowGroupStats>, chrono::DateTime<chrono::Utc>)>>>,
+        Arc<RwLock<HashMap<String, (Arc<NovaCacheRowGroupStats>, chrono::DateTime<chrono::Utc>)>>>,
     rowgroup_ttl_sec: u64,
 
     /// Zone maps - always cached for fast pruning
@@ -275,7 +278,7 @@ impl NovaHierarchicalCache {
     }
 
     /// Get RowGroup statistics with TTL
-    pub async fn get_rowgroup_stats(&self, rowgroup_id: &str) -> Result<Arc<RowGroupStats>> {
+    pub async fn get_rowgroup_stats(&self, rowgroup_id: &str) -> Result<Arc<NovaCacheRowGroupStats>> {
         // Check cache with TTL
         {
             let cache = self.rowgroup_cache.read().await;
@@ -427,7 +430,7 @@ impl NovaHierarchicalCache {
         Ok(bincode::deserialize(&data)?)
     }
 
-    async fn load_rowgroup_stats(&self, rowgroup_id: &str) -> Result<RowGroupStats> {
+    async fn load_rowgroup_stats(&self, rowgroup_id: &str) -> Result<NovaCacheRowGroupStats> {
         let path = format!("stats/rowgroup/{}.bin", rowgroup_id);
         let data = self.filesystem.read(&path).await?;
         Ok(bincode::deserialize(&data)?)

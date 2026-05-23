@@ -210,9 +210,12 @@ impl Default for AxisTieringConfig {
     }
 }
 
+/// Backwards-compat alias for [`AxisTieringStats`].
+pub type TieringStats = AxisTieringStats;
+
 /// Statistics for AXIS tiering operations
 #[derive(Debug, Clone, Default)]
-pub struct TieringStats {
+pub struct AxisTieringStats {
     /// Number of indexes promoted to a higher (faster) tier.
     pub promotions: u64,
     /// Number of indexes demoted to a lower (cheaper) tier.
@@ -261,7 +264,7 @@ pub struct AxisTieringManager {
     serializer: Arc<IndexSerializer>,
 
     /// Statistics
-    stats: Arc<RwLock<TieringStats>>,
+    stats: Arc<RwLock<AxisTieringStats>>,
 
     /// Active tier operations
     active_operations: Arc<DashMap<String, TierOperation>>,
@@ -317,7 +320,7 @@ impl AxisTieringManager {
             memory_tracker,
             format_strategy,
             serializer,
-            stats: Arc::new(RwLock::new(TieringStats::default())),
+            stats: Arc::new(RwLock::new(AxisTieringStats::default())),
             active_operations: Arc::new(DashMap::new()),
         }
     }
@@ -1195,7 +1198,7 @@ impl AxisTieringManager {
     }
 
     /// Get current statistics
-    pub async fn get_stats(&self) -> TieringStats {
+    pub async fn get_stats(&self) -> AxisTieringStats {
         self.stats.read().await.clone()
     }
 

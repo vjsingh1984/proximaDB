@@ -41,12 +41,15 @@ pub struct TieringManager {
     /// Configuration
     config: QuasarConfig,
     /// Tiering statistics
-    stats: Arc<RwLock<TieringStats>>,
+    stats: Arc<RwLock<QuasarTieringStats>>,
 }
+
+/// Backwards-compat alias for [`QuasarTieringStats`].
+pub type TieringStats = QuasarTieringStats;
 
 /// Statistics for tiering operations
 #[derive(Debug, Default)]
-pub struct TieringStats {
+pub struct QuasarTieringStats {
     /// Number of items migrated to cold storage
     pub cold_migrations: u64,
     /// Number of items promoted to hot storage
@@ -106,7 +109,7 @@ impl TieringManager {
             cold_tier,
             access_cache,
             config,
-            stats: Arc::new(RwLock::new(TieringStats::default())),
+            stats: Arc::new(RwLock::new(QuasarTieringStats::default())),
         }
     }
 
@@ -368,9 +371,9 @@ impl TieringManager {
     }
 
     /// Get tiering statistics
-    pub async fn get_stats(&self) -> TieringStats {
+    pub async fn get_stats(&self) -> QuasarTieringStats {
         let stats = self.stats.read().await;
-        TieringStats {
+        QuasarTieringStats {
             cold_migrations: stats.cold_migrations,
             hot_promotions: stats.hot_promotions,
             total_migration_time_ms: stats.total_migration_time_ms,

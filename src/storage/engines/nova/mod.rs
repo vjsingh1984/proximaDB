@@ -184,7 +184,7 @@ pub use columnar_integration::{
 pub use hierarchical_cache::{
     GlobalStatistics, HierarchicalStats, NovaHierarchicalCache, OptimizationHints,
 };
-pub use hierarchical_stats::{EnhancedRowGroupStats, SuperBlock};
+pub use hierarchical_stats::{EnhancedNovaRowGroupStats, SuperBlock};
 pub use progressive_search::{ProgressiveColumnarSearch, ProgressiveSearchConfig};
 pub use streaming_processor::{StreamingConfig, StreamingRowGroupProcessor};
 pub use streaming_search::{StreamingSearchConfig, StreamingSearchEngine};
@@ -217,7 +217,7 @@ pub struct NovaFile {
     pub row_groups: Vec<RowGroupMetaData>,
 
     /// Enhanced row group statistics for optimization
-    pub enhanced_stats: Vec<EnhancedRowGroupStats>,
+    pub enhanced_stats: Vec<EnhancedNovaRowGroupStats>,
 
     /// SuperBlock hierarchy for efficient pruning
     pub superblocks: Vec<SuperBlock>,
@@ -256,7 +256,7 @@ pub trait NovaOperations {
     async fn get_by_ids_columnar(&self, ids: &[String]) -> Result<Vec<VectorRecord>>;
 
     /// Get enhanced row group statistics
-    fn get_enhanced_stats(&self) -> &[EnhancedRowGroupStats];
+    fn get_enhanced_stats(&self) -> &[EnhancedNovaRowGroupStats];
 
     /// Get SuperBlock hierarchy
     fn get_superblocks(&self) -> &[SuperBlock];
@@ -266,9 +266,12 @@ pub trait NovaOperations {
     -> Result<()>;
 }
 
+/// Backwards-compat alias for [`NovaRowGroupStats`].
+pub type RowGroupStats = NovaRowGroupStats;
+
 /// Row group statistics for optimization
 #[derive(Debug, Clone)]
-pub struct RowGroupStats {
+pub struct NovaRowGroupStats {
     pub row_group_id: usize,
     pub num_rows: u64,
     pub compressed_size: u64,
@@ -534,14 +537,14 @@ mod tests {
             assert!(!superblock.can_contain_candidates(&far_query, "euclidean".to_string(), 1.0));
         }
 
-        fn create_test_enhanced_stats(id: u32) -> EnhancedRowGroupStats {
+        fn create_test_enhanced_stats(id: u32) -> EnhancedNovaRowGroupStats {
             let zone_map = hierarchical_stats::ZoneMap::from_vectors(&[
                 vec![1.0, 2.0, 3.0],
                 vec![4.0, 5.0, 6.0],
             ])
             .unwrap();
 
-            EnhancedRowGroupStats {
+            EnhancedNovaRowGroupStats {
                 row_group_id: id,
                 parquet_metadata: None,
                 vector_zone_map: zone_map,
@@ -930,7 +933,7 @@ mod tests {
                 .collect()
         }
 
-        fn create_test_enhanced_stats_vec(count: usize) -> Vec<EnhancedRowGroupStats> {
+        fn create_test_enhanced_stats_vec(count: usize) -> Vec<EnhancedNovaRowGroupStats> {
             (0..count)
                 .map(|i| {
                     let zone_map = hierarchical_stats::ZoneMap::from_vectors(&[
@@ -939,7 +942,7 @@ mod tests {
                     ])
                     .unwrap();
 
-                    EnhancedRowGroupStats {
+                    EnhancedNovaRowGroupStats {
                         row_group_id: i as u32,
                         parquet_metadata: None,
                         vector_zone_map: zone_map,

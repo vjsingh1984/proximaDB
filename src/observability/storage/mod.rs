@@ -416,7 +416,7 @@ impl ObservabilityStorage {
     }
 
     /// Get storage statistics for a namespace
-    pub async fn stats(&self, namespace: &str) -> Result<StorageStats> {
+    pub async fn stats(&self, namespace: &str) -> Result<ObservabilityStorageStats> {
         let namespaces = self.namespaces.read().await;
         let ns = namespaces
             .get(namespace)
@@ -427,7 +427,7 @@ impl ObservabilityStorage {
         let metric_bytes = ns.metrics.total_bytes().await;
         let trace_bytes = ns.traces.total_bytes().await;
 
-        Ok(StorageStats {
+        Ok(ObservabilityStorageStats {
             log_count: ns.logs.count().await,
             metric_series_count: ns.metrics.series_count().await,
             trace_count: ns.traces.count().await,
@@ -438,10 +438,13 @@ impl ObservabilityStorage {
 
 /// Storage statistics
 ///
+/// Backwards-compat alias for [`ObservabilityStorageStats`].
+pub type StorageStats = ObservabilityStorageStats;
+
 /// Provides statistics about a namespace's storage usage,
 /// including counts of logs, metric series, and traces.
 #[derive(Debug, Clone)]
-pub struct StorageStats {
+pub struct ObservabilityStorageStats {
     /// Number of log entries
     pub log_count: u64,
     /// Number of metric series
@@ -458,7 +461,7 @@ mod tests {
 
     #[test]
     fn test_storage_stats() {
-        let stats = StorageStats {
+        let stats = ObservabilityStorageStats {
             log_count: 1000,
             metric_series_count: 50,
             trace_count: 100,
