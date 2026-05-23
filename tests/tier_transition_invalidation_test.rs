@@ -78,9 +78,11 @@ async fn upgrade_emits_event_and_invalidates_warm_cache() {
     let after = record(Tier::Business, None, None, None);
     let event = detect_transition(&before, &after);
     assert_eq!(event.class, TransitionClass::Upgrade);
-    assert_eq!(event.tier_before, "community");
+    // 2026-Q2 tier rename: Community → Team. See memory note
+    // project_tier_rename_2026_05_22.
+    assert_eq!(event.tier_before, "team");
     assert_eq!(event.tier_after, "business");
-    // Scan budget axis moves up (community 2.0 → business 16.0).
+    // Scan budget axis moves up (team default < business default).
     assert_eq!(event.scan_budget_gb.direction, AxisDirection::Up);
 
     // Stage 3: flush the caches that held the old budget.
