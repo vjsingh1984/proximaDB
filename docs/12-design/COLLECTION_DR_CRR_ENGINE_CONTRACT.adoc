@@ -30,6 +30,15 @@ Two layers, two homes:
   ops, billing SKUs, failover runbook, private connectivity, support
   workflows.
 
+=== Mode Applicability
+
+The DR contract applies to ProximaDB in **server mode** only. Embedded
+ProximaDB (PyO3, JNI, NAPI-RS, C FFI bindings in `src/embedded/`) does not
+run a reconciler, does not expose the policy management API, and does not
+ship provider adapters. Embedded callers that need replication must lift to
+server mode or arrange their own storage-layer replication outside this
+contract.
+
 == Authoritative Context
 
 * `docs/12-design/README.adoc`
@@ -225,6 +234,10 @@ pub struct CatalogNamespace {
     /// Optional operator-curated default that new collections in this
     /// namespace inherit at DR enablement time.
     pub default_dr_region_pair_id: Option<String>,
+    /// Storage pool class. Set by the operator at namespace provisioning;
+    /// the path resolver refuses writes that target a bucket/container
+    /// outside the matching pool class. See "Storage Pool Classes".
+    pub storage_pool_class: StoragePoolClass,
 }
 ----
 
