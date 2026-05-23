@@ -36,6 +36,7 @@ members = [
     "crates/horizontal/proximadb-codec",
     "crates/horizontal/proximadb-compression",
     "crates/horizontal/proximadb-embedded-common",
+    "crates/horizontal/proximadb-recall-bench",
     "crates/horizontal/proximadb-runtime-common",
     "crates/horizontal/proximadb-security",
     "crates/horizontal/proximadb-telemetry",

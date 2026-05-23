@@ -13,7 +13,7 @@ use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 
 use crate::core::bloom::{
-    BloomFilter, BloomFilterBuilder as CoreBloomBuilder, ParquetBloomFilterConfig as CoreConfig,
+    BloomFilter, BloomFilterBuilder as CoreBloomBuilder, BloomFilterConfig as CoreConfig,
     BloomStrategy,
 };
 use proximadb_records::ProximaRecord;

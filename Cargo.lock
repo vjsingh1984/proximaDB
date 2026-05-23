@@ -6638,6 +6638,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-recall-bench"
+version = "0.2.0"
+dependencies = [
+ "proximadb-records",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "proximadb-records"
 version = "0.2.0"
 dependencies = [

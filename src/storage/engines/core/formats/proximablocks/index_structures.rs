@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::block_structures::BlockLocation;
 use crate::core::bloom::{
-    BloomFilterBuilder, BlockBloomFilterConfig as SstBloomConfig, SstableBloomFilter,
+    BloomFilterBuilder, BloomFilterConfig as SstBloomConfig, SstableBloomFilter,
 };
 
 /// Row-based ID indexing with multiple strategies
@@ -477,7 +477,7 @@ impl RowBasedIdIndex {
 
             let bloom_filter = if config.bloom_per_level {
                 Some(SstableBloomFilter::new(
-                    crate::core::config::BlockBloomFilterConfig::default(),
+                    crate::core::config::BloomFilterConfig::default(),
                     vec![],
                     vec![],
                     crate::core::bloom::BloomFilterStats::default(),
