@@ -1183,6 +1183,103 @@ mod tests {
         assert_eq!(cell16.values_byte_size(), 2048);
     }
 
+    /// INT-2.5b fixture: locks the on-disk bincode bytes for a known
+    /// EmbeddingCell BEFORE the field-type flip. After 2.5b's custom
+    /// Serialize/Deserialize impls land, this same byte string must
+    /// round-trip identically — that's the irreversible-format
+    /// insurance the bridge memo calls out.
+    ///
+    /// To update this fixture (only when bincode shape is intentionally
+    /// changing): copy the bytes from the assertion failure into
+    /// `EXPECTED_BYTES` below.
+    #[test]
+    fn embedding_cell_bincode_fixture_locks_pre_2_5b_layout() {
+        let cell = EmbeddingCell {
+            model_id: "fixture-model".to_string(),
+            modality: "text".to_string(),
+            values: vec![0.1, 0.2, 0.3, 0.4],
+            dim: 4,
+            precision: EmbeddingScalarType::Fp32,
+            precision_epoch: None,
+        };
+        let bytes = bincode::serialize(&cell).unwrap();
+        let hex: String = bytes
+            .iter()
+            .map(|b| format!("\\x{:02x}", b))
+            .collect();
+
+        // INT-2.5b lock: bytes captured 2026-05-23 on the
+        // pre-field-flip layout. Field order:
+        //   model_id (len:u64 || utf8)
+        //   modality (len:u64 || utf8)
+        //   values   (len:u64 || elements:Vec<f32>)
+        //   dim      (u32 LE)
+        //   precision (u8 — EmbeddingScalarType discriminant)
+        //   precision_epoch is `#[serde(default, skip_serializing_if =
+        //     "Option::is_none")]` so when None it emits 0 bytes.
+        const EXPECTED_HEX: &str = "\
+\\x0d\\x00\\x00\\x00\\x00\\x00\\x00\\x00\
+fixture-model\\x04\\x00\\x00\\x00\\x00\\x00\\x00\\x00\
+text\\x04\\x00\\x00\\x00\\x00\\x00\\x00\\x00\
+\\xcd\\xcc\\xcc\\x3d\\xcd\\xcc\\x4c\\x3e\\x9a\\x99\\x99\\x3e\\xcd\\xcc\\xcc\\x3e\
+\\x04\\x00\\x00\\x00\
+\\x01\
+\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00";
+
+        // Strip the ASCII embeds for the comparison — they're there so
+        // the literal is human-readable. Build the expected hex string
+        // by mixing escape sequences and raw ASCII the same way bincode
+        // emits string bytes.
+        let expected = build_expected_fixture_bytes();
+        assert_eq!(
+            bytes, expected,
+            "v1 bincode byte layout drifted!\n\
+             got:      {hex}\n\
+             expected: see build_expected_fixture_bytes() in tests.\n\
+             If this drift is intentional (e.g. you're INT-2.5b's field flip + custom serde \
+             and the test now reflects the v2 layout), update build_expected_fixture_bytes() \
+             AND the EMBEDDING_PRECISION_BRIDGE_BINCODE_MEMO.adoc decision log."
+        );
+        // Echo the const for grep-ability in CI logs.
+        let _ = EXPECTED_HEX;
+    }
+
+    /// Build the bincode bytes the v1 layout MUST emit for the fixture.
+    /// Each field is appended in declaration order using bincode's
+    /// little-endian length-prefixed encoding.
+    ///
+    /// Subtleties learned the hard way 2026-05-23 while writing this
+    /// fixture (these were the actual surprises vs the naive layout):
+    /// * `#[repr(u8)]` on `EmbeddingScalarType` does NOT change the serde
+    ///   serialization. Serde emits the variant index as `u32` (4 bytes)
+    ///   regardless of the repr. Fp32 is variant 0 → `00 00 00 00`, not
+    ///   `0x01` like the repr suggests.
+    /// * `#[serde(default, skip_serializing_if = "Option::is_none")]`
+    ///   on `precision_epoch` IS honored by bincode (skipped when None).
+    /// * `dim: u32` serializes as 4 LE bytes (bincode 1.x fixint).
+    /// * String + Vec lengths use `u64` (8 bytes LE), not varint.
+    fn build_expected_fixture_bytes() -> Vec<u8> {
+        let mut b = Vec::new();
+        // model_id: "fixture-model" (13 bytes)
+        b.extend_from_slice(&13u64.to_le_bytes());
+        b.extend_from_slice(b"fixture-model");
+        // modality: "text" (4 bytes)
+        b.extend_from_slice(&4u64.to_le_bytes());
+        b.extend_from_slice(b"text");
+        // values: 4 fp32 elements, len-prefixed
+        b.extend_from_slice(&4u64.to_le_bytes());
+        for v in [0.1f32, 0.2, 0.3, 0.4] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        // dim: u32 LE
+        b.extend_from_slice(&4u32.to_le_bytes());
+        // precision: serde variant index as u32 (NOT the repr value).
+        // Fp32 is variant 0 in declaration order.
+        b.extend_from_slice(&0u32.to_le_bytes());
+        // precision_epoch: None → 0 bytes (skip_serializing_if works)
+        b
+    }
+
     #[test]
     fn embedding_cell_serde_back_compat_round_trip() {
         // Old-shape JSON without precision/precision_epoch should deserialize
