@@ -365,9 +365,12 @@ pub enum GcsAuthMethod {
     Environment,
 }
 
+/// Backwards-compat alias for [`FsRetryConfig`].
+pub type RetryConfig = FsRetryConfig;
+
 /// Retry configuration for operations
 #[derive(Debug, Clone)]
-pub struct RetryConfig {
+pub struct FsRetryConfig {
     /// Maximum number of retries
     pub max_retries: u32,
     /// Initial delay between retries (ms)
@@ -484,7 +487,7 @@ pub struct FilesystemPerformanceConfig {
     pub compression: bool,
 
     /// Retry configuration
-    pub retry_config: RetryConfig,
+    pub retry_config: FsRetryConfig,
 
     /// Buffer size for operations (bytes)
     pub buffer_size: usize,
@@ -791,7 +794,7 @@ impl Default for FilesystemPerformanceConfig {
             enable_keep_alive: true,
             request_timeout_seconds: 30,
             compression: true,
-            retry_config: RetryConfig {
+            retry_config: FsRetryConfig {
                 max_retries: 3,
                 initial_delay_ms: 100,
                 max_delay_ms: 5000,

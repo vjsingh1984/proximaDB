@@ -13,7 +13,7 @@ use anyhow::{Result, anyhow};
 use std::collections::HashMap;
 
 use crate::core::bloom::{
-    BloomFilter, BloomFilterBuilder as CoreBloomBuilder, BloomFilterConfig as CoreConfig,
+    BloomFilter, BloomFilterBuilder as CoreBloomBuilder, ParquetBloomFilterConfig as CoreConfig,
     BloomStrategy,
 };
 use proximadb_records::ProximaRecord;
@@ -24,15 +24,18 @@ pub struct BloomFilterBuilder {
     bloom_filters: HashMap<usize, BloomFilter>,
 
     /// Configuration for bloom filters
-    config: BloomFilterConfig,
+    config: ParquetBloomFilterConfig,
 
     /// Current row group being processed
     current_row_group: usize,
 }
 
+/// Backwards-compat alias for [`ParquetBloomFilterConfig`].
+pub type BloomFilterConfig = ParquetBloomFilterConfig;
+
 /// Configuration for bloom filter creation (wraps core config)
 #[derive(Debug, Clone)]
-pub struct BloomFilterConfig {
+pub struct ParquetBloomFilterConfig {
     /// False positive probability
     pub fpp: f64,
 
@@ -49,7 +52,7 @@ pub struct BloomFilterConfig {
     pub bits_per_key: Option<f32>,
 }
 
-impl Default for BloomFilterConfig {
+impl Default for ParquetBloomFilterConfig {
     fn default() -> Self {
         Self {
             fpp: 0.01,   // 1% false positive rate (matching core default)
@@ -63,7 +66,7 @@ impl Default for BloomFilterConfig {
 
 impl BloomFilterBuilder {
     /// Create new bloom filter builder
-    pub fn new(config: BloomFilterConfig) -> Self {
+    pub fn new(config: ParquetBloomFilterConfig) -> Self {
         Self {
             bloom_filters: HashMap::new(),
             config,
@@ -201,7 +204,7 @@ impl BloomFilterBuilder {
 
         Ok(Self {
             bloom_filters,
-            config: BloomFilterConfig::default(),
+            config: ParquetBloomFilterConfig::default(),
             current_row_group: 0,
         })
     }
@@ -265,7 +268,7 @@ mod tests {
 
     #[test]
     fn test_bloom_filter_basic() {
-        let config = BloomFilterConfig::default();
+        let config = ParquetBloomFilterConfig::default();
         let mut builder = BloomFilterBuilder::new(config);
 
         // Add IDs to row group 0
@@ -287,7 +290,7 @@ mod tests {
 
     #[test]
     fn test_multiple_row_groups() {
-        let config = BloomFilterConfig {
+        let config = ParquetBloomFilterConfig {
             per_row_group: true,
             ..Default::default()
         };
@@ -315,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_batch_addition() {
-        let config = BloomFilterConfig::default();
+        let config = ParquetBloomFilterConfig::default();
         let mut builder = BloomFilterBuilder::new(config);
 
         builder
@@ -341,7 +344,7 @@ mod tests {
 
     #[test]
     fn test_stats() {
-        let config = BloomFilterConfig::default();
+        let config = ParquetBloomFilterConfig::default();
         let mut builder = BloomFilterBuilder::new(config);
 
         builder

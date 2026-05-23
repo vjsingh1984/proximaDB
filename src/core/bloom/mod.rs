@@ -160,9 +160,9 @@
 //!
 //! ### Basic Bloom Filter
 //! ```rust,ignore
-//! use proximadb::bloom::{BloomFilterBuilder, BloomFilterConfig};
+//! use proximadb::bloom::{BloomFilterBuilder, CoreBloomFilterConfig};
 //!
-//! let config = BloomFilterConfig::for_sstable(10000);
+//! let config = CoreBloomFilterConfig::for_sstable(10000);
 //! let mut builder = BloomFilterBuilder::new(config);
 //!
 //! // Add keys
@@ -337,9 +337,12 @@ pub enum HashAlgorithm {
     Fnv1a,
 }
 
+/// Backwards-compat alias for [`CoreBloomFilterConfig`].
+pub type BloomFilterConfig = CoreBloomFilterConfig;
+
 /// Enhanced bloom filter configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct BloomFilterConfig {
+pub struct CoreBloomFilterConfig {
     /// Strategy to use
     pub strategy: BloomStrategy,
 
@@ -359,7 +362,7 @@ pub struct BloomFilterConfig {
     pub hash_algorithm: HashAlgorithm,
 }
 
-impl Default for BloomFilterConfig {
+impl Default for CoreBloomFilterConfig {
     fn default() -> Self {
         Self {
             strategy: BloomStrategy::ByteAligned,
@@ -372,7 +375,7 @@ impl Default for BloomFilterConfig {
     }
 }
 
-impl BloomFilterConfig {
+impl CoreBloomFilterConfig {
     /// Create config for SSTable usage
     pub fn for_sstable(expected_items: usize) -> Self {
         Self {
@@ -411,7 +414,7 @@ pub struct SerializedBloomFilter {
     pub version: u32,
 
     /// Configuration used to create the filter
-    pub config: BloomFilterConfig,
+    pub config: CoreBloomFilterConfig,
 
     /// Serialized filter data
     pub data: Vec<u8>,
@@ -427,7 +430,7 @@ impl SerializedBloomFilter {
     /// Create from a bloom filter instance
     pub fn from_filter(
         filter: &dyn BloomFilterStrategy,
-        config: BloomFilterConfig,
+        config: CoreBloomFilterConfig,
     ) -> Result<Self> {
         let mut metadata = HashMap::new();
         metadata.insert(
@@ -600,9 +603,9 @@ mod tests {
     #[test]
     fn test_bits_from_fpr() {
         // Test conversion from false positive rate to bits per key
-        assert_eq!(BloomFilterConfig::bits_from_fpr(0.01), 9); // ~1% FPR needs ~9 bits
-        assert_eq!(BloomFilterConfig::bits_from_fpr(0.001), 14); // ~0.1% FPR needs ~14 bits
-        assert_eq!(BloomFilterConfig::bits_from_fpr(0.1), 4); // ~10% FPR needs ~4 bits
+        assert_eq!(CoreBloomFilterConfig::bits_from_fpr(0.01), 9); // ~1% FPR needs ~9 bits
+        assert_eq!(CoreBloomFilterConfig::bits_from_fpr(0.001), 14); // ~0.1% FPR needs ~14 bits
+        assert_eq!(CoreBloomFilterConfig::bits_from_fpr(0.1), 4); // ~10% FPR needs ~4 bits
     }
 
     #[test]
@@ -643,7 +646,7 @@ pub struct BloomFilterStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SstableBloomFilter {
     /// Key filter configuration
-    pub key_filter_config: BloomFilterConfig,
+    pub key_filter_config: CoreBloomFilterConfig,
     /// Key filter data
     pub key_filter_data: Vec<u8>,
     /// Metadata filter data  
@@ -657,7 +660,7 @@ pub struct SstableBloomFilter {
 impl SstableBloomFilter {
     /// Create a new SstableBloomFilter
     pub fn new(
-        key_filter_config: BloomFilterConfig,
+        key_filter_config: CoreBloomFilterConfig,
         key_filter_data: Vec<u8>,
         metadata_filter_data: Vec<u8>,
         stats: BloomFilterStats,
@@ -874,7 +877,7 @@ impl SstableBloomFilter {
             metadata_queries_saved,
         };
 
-        let key_filter_config = BloomFilterConfig {
+        let key_filter_config = CoreBloomFilterConfig {
             strategy,
             bits_per_key,
             false_positive_rate,
@@ -896,13 +899,13 @@ impl SstableBloomFilter {
 #[derive(Debug, Clone)]
 pub struct HierarchicalBloomConfig {
     /// Configuration for the global-level key bloom filter
-    pub global_key_filter: BloomFilterConfig,
+    pub global_key_filter: CoreBloomFilterConfig,
     /// Configuration for the global-level metadata bloom filter
-    pub global_metadata_filter: BloomFilterConfig,
+    pub global_metadata_filter: CoreBloomFilterConfig,
     /// Configuration for per-block key bloom filters
-    pub block_key_filter: BloomFilterConfig,
+    pub block_key_filter: CoreBloomFilterConfig,
     /// Configuration for per-block metadata bloom filters
-    pub block_metadata_filter: BloomFilterConfig,
+    pub block_metadata_filter: CoreBloomFilterConfig,
     /// Minimum number of blocks before enabling hierarchical filters
     pub block_count_threshold: usize,
     /// Minimum metadata columns before enabling metadata bloom filters
@@ -912,13 +915,13 @@ pub struct HierarchicalBloomConfig {
 /// Bloom filter builder for incremental construction
 pub struct BloomFilterBuilder {
     #[allow(dead_code)]
-    config: BloomFilterConfig,
+    config: CoreBloomFilterConfig,
     filter: Box<dyn BloomFilterStrategy>,
 }
 
 impl BloomFilterBuilder {
     /// Create a new bloom filter builder with the given configuration
-    pub fn new(config: BloomFilterConfig) -> Self {
+    pub fn new(config: CoreBloomFilterConfig) -> Self {
         let filter = factory::BloomFilterFactory::create(&config);
         Self { config, filter }
     }
@@ -937,7 +940,7 @@ impl BloomFilterBuilder {
 /// Serializable version of SstableBloomFilter to work around bincode limitations
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SerializedSstableBloomFilter {
-    // BloomFilterConfig fields flattened to avoid Option<f64> issues
+    // CoreBloomFilterConfig fields flattened to avoid Option<f64> issues
     strategy: u8,
     bits_per_key: u32,
     false_positive_rate: f64, // Use NaN for None
@@ -986,7 +989,7 @@ impl From<SerializedSstableBloomFilter> for SstableBloomFilter {
             + serialized.metadata_filter_data.len();
 
         Self {
-            key_filter_config: BloomFilterConfig {
+            key_filter_config: CoreBloomFilterConfig {
                 strategy,
                 bits_per_key: serialized.bits_per_key,
                 false_positive_rate,

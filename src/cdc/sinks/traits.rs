@@ -117,7 +117,7 @@ pub struct SinkConfig {
     pub buffer: BufferConfig,
     /// Retry configuration
     #[serde(default)]
-    pub retry: RetryConfig,
+    pub retry: CdcSinkRetryConfig,
 }
 
 /// Buffer configuration for sinks
@@ -152,9 +152,12 @@ impl Default for BufferConfig {
     }
 }
 
+/// Backwards-compat alias for [`CdcSinkRetryConfig`].
+pub type RetryConfig = CdcSinkRetryConfig;
+
 /// Retry configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RetryConfig {
+pub struct CdcSinkRetryConfig {
     /// Maximum retry attempts
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
@@ -192,7 +195,7 @@ fn default_jitter() -> f64 {
     0.1
 }
 
-impl Default for RetryConfig {
+impl Default for CdcSinkRetryConfig {
     fn default() -> Self {
         Self {
             max_retries: default_max_retries(),
@@ -204,7 +207,7 @@ impl Default for RetryConfig {
     }
 }
 
-impl RetryConfig {
+impl CdcSinkRetryConfig {
     /// Create a new retry config
     pub fn new() -> Self {
         Self::default()
@@ -379,7 +382,7 @@ mod tests {
 
     #[test]
     fn test_retry_config_default() {
-        let config = RetryConfig::default();
+        let config = CdcSinkRetryConfig::default();
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.initial_backoff_ms, 100);
         assert_eq!(config.max_backoff_ms, 10000);
@@ -387,7 +390,7 @@ mod tests {
 
     #[test]
     fn test_retry_backoff_calculation() {
-        let config = RetryConfig::new()
+        let config = CdcSinkRetryConfig::new()
             .with_initial_backoff(100)
             .with_max_retries(5);
 
@@ -402,7 +405,7 @@ mod tests {
 
     #[test]
     fn test_retry_max_backoff() {
-        let config = RetryConfig::new()
+        let config = CdcSinkRetryConfig::new()
             .with_initial_backoff(100)
             .with_max_backoff(500);
 

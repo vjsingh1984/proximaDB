@@ -12,9 +12,12 @@ use super::id_index::BlockLocation;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
+/// Backwards-compat alias for [`SwiftBatchConfig`].
+pub type BatchConfig = SwiftBatchConfig;
+
 /// Configuration for batch operations
 #[derive(Debug, Clone)]
-pub struct BatchConfig {
+pub struct SwiftBatchConfig {
     /// Maximum number of concurrent block loads
     pub max_concurrent_blocks: usize,
 
@@ -28,7 +31,7 @@ pub struct BatchConfig {
     pub prefetch_adjacent: bool,
 }
 
-impl Default for BatchConfig {
+impl Default for SwiftBatchConfig {
     fn default() -> Self {
         Self {
             max_concurrent_blocks: 10,
@@ -86,7 +89,7 @@ impl BlockCache {
 
 /// Main batch ID lookup function
 pub async fn get_records_by_ids(sst: &SwiftFile, ids: &[String]) -> Result<Vec<VectorRecord>> {
-    let config = BatchConfig::default();
+    let config = SwiftBatchConfig::default();
 
     info!("Starting batch ID lookup for {} IDs", ids.len());
 
@@ -455,12 +458,12 @@ mod tests {
     }
 
     // ========================================================================
-    // BatchConfig tests
+    // SwiftBatchConfig tests
     // ========================================================================
 
     #[test]
     fn test_batch_config_default() {
-        let config = BatchConfig::default();
+        let config = SwiftBatchConfig::default();
         assert_eq!(config.max_concurrent_blocks, 10);
         assert!(config.cache_blocks);
         assert_eq!(config.max_cache_bytes, 1024 * 1024 * 1024);
@@ -469,7 +472,7 @@ mod tests {
 
     #[test]
     fn test_batch_config_custom() {
-        let config = BatchConfig {
+        let config = SwiftBatchConfig {
             max_concurrent_blocks: 4,
             cache_blocks: false,
             max_cache_bytes: 512 * 1024,

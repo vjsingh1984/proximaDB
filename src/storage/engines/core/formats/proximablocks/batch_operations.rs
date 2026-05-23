@@ -18,7 +18,7 @@ pub struct RowBasedBatchOperations {
     memory_pool: Arc<VectorMemoryPool>,
 
     /// Configuration
-    config: BatchConfig,
+    config: BlockBatchConfig,
 
     /// Concurrency control
     semaphore: Arc<tokio::sync::Semaphore>,
@@ -31,9 +31,12 @@ pub struct RowBasedBatchOperations {
     _statistics: BatchOperationStats,
 }
 
+/// Backwards-compat alias for [`BlockBatchConfig`].
+pub type BatchConfig = BlockBatchConfig;
+
 /// Batch operation configuration
 #[derive(Debug, Clone)]
-pub struct BatchConfig {
+pub struct BlockBatchConfig {
     /// Batch sizes
     pub default_batch_size: usize,
     pub max_batch_size: usize,
@@ -150,7 +153,7 @@ impl RowBasedBatchOperations {
     pub fn new(
         _hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
         memory_pool: Arc<VectorMemoryPool>,
-        config: BatchConfig,
+        config: BlockBatchConfig,
     ) -> Self {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(config.max_concurrent_batches));
         let operation_cache = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
@@ -723,7 +726,7 @@ impl RowBasedBatchOperations {
     }
 }
 
-impl Default for BatchConfig {
+impl Default for BlockBatchConfig {
     fn default() -> Self {
         Self {
             default_batch_size: 1000,
@@ -771,7 +774,7 @@ mod tests {
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new());
 
-        let config = BatchConfig::default();
+        let config = BlockBatchConfig::default();
         let batch_ops = RowBasedBatchOperations::new(hardware, memory_pool, config);
 
         assert_eq!(batch_ops.config.default_batch_size, 1000);
@@ -783,7 +786,7 @@ mod tests {
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new());
 
-        let config = BatchConfig::default();
+        let config = BlockBatchConfig::default();
         let batch_ops = RowBasedBatchOperations::new(hardware, memory_pool, config);
 
         let batch_size = batch_ops.calculate_optimal_batch_size(10000);
@@ -812,7 +815,7 @@ mod tests {
     //     //     )
     //     // );
 
-    //     let config = BatchConfig {
+    //     let config = BlockBatchConfig {
     //         default_batch_size: 100,
     //         adaptive_batch_sizing: false,
     //         ..Default::default()

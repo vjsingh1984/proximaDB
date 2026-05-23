@@ -317,7 +317,7 @@ pub enum ResponseData {
         /// Nodes returned by the graph query
         nodes: Vec<GraphNode>,
         /// Edges returned by the graph query
-        edges: Vec<GraphEdge>,
+        edges: Vec<NetworkGraphEdge>,
     },
     /// Health check result
     HealthStatus {
@@ -369,9 +369,12 @@ pub struct GraphNode {
     pub properties: HashMap<String, serde_json::Value>,
 }
 
+/// Backwards-compat alias for [`NetworkGraphEdge`].
+pub type GraphEdge = NetworkGraphEdge;
+
 /// Graph edge (normalized)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphEdge {
+pub struct NetworkGraphEdge {
     /// Edge identifier
     pub id: String,
     /// Source node ID

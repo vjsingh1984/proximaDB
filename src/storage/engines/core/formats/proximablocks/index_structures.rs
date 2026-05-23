@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use super::block_structures::BlockLocation;
 use crate::core::bloom::{
-    BloomFilterBuilder, BloomFilterConfig as SstBloomConfig, SstableBloomFilter,
+    BloomFilterBuilder, BlockBloomFilterConfig as SstBloomConfig, SstableBloomFilter,
 };
 
 /// Row-based ID indexing with multiple strategies
@@ -175,7 +175,7 @@ pub struct IndexConfiguration {
     pub enable_caching: bool,
 
     /// Bloom filter settings
-    pub bloom_config: BloomFilterConfig,
+    pub bloom_config: BlockBloomFilterConfig,
 
     /// Performance settings
     pub max_memory_usage: usize,
@@ -188,9 +188,12 @@ pub struct IndexConfiguration {
     pub rebalancing_enabled: bool,
 }
 
+/// Backwards-compat alias for [`BlockBloomFilterConfig`].
+pub type BloomFilterConfig = BlockBloomFilterConfig;
+
 /// Bloom filter configuration for row-based engines
 #[derive(Debug, Clone)]
-pub struct BloomFilterConfig {
+pub struct BlockBloomFilterConfig {
     pub enabled: bool,
     pub false_positive_rate: f64,
     pub max_items_per_filter: u64,
@@ -474,7 +477,7 @@ impl RowBasedIdIndex {
 
             let bloom_filter = if config.bloom_per_level {
                 Some(SstableBloomFilter::new(
-                    crate::core::config::BloomFilterConfig::default(),
+                    crate::core::config::BlockBloomFilterConfig::default(),
                     vec![],
                     vec![],
                     crate::core::bloom::BloomFilterStats::default(),
@@ -653,7 +656,7 @@ impl Default for IndexConfiguration {
             index_type: Index::Hybrid,
             compression: true,
             enable_caching: true,
-            bloom_config: BloomFilterConfig::default(),
+            bloom_config: BlockBloomFilterConfig::default(),
             max_memory_usage: 256 * 1024 * 1024, // 256MB
             concurrent_access_limit: 16,
             maintenance_interval_ms: 60000, // 1 minute
@@ -664,7 +667,7 @@ impl Default for IndexConfiguration {
     }
 }
 
-impl Default for BloomFilterConfig {
+impl Default for BlockBloomFilterConfig {
     fn default() -> Self {
         Self {
             enabled: true,

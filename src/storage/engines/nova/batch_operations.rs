@@ -14,9 +14,12 @@ use tokio::sync::{RwLock, Semaphore};
 use tracing::{debug, info, warn};
 // ID index not available in NOVA yet
 // use super::id_index::BatchIdReader;
+/// Backwards-compat alias for [`NovaBatchConfig`].
+pub type BatchConfig = NovaBatchConfig;
+
 /// Configuration for batch operations
 #[derive(Debug, Clone)]
-pub struct BatchConfig {
+pub struct NovaBatchConfig {
     /// Maximum concurrent row group reads
     pub max_concurrent_row_groups: usize,
 
@@ -29,7 +32,7 @@ pub struct BatchConfig {
     /// Column projection
     pub projection: Vec<String>,
 }
-impl Default for BatchConfig {
+impl Default for NovaBatchConfig {
     fn default() -> Self {
         Self {
             max_concurrent_row_groups: 4,
@@ -90,7 +93,7 @@ impl RowGroupCache {
 
 /// Main batch ID lookup for NOVA
 pub async fn get_records_by_ids(nova_file: &NovaFile, ids: &[String]) -> Result<Vec<VectorRecord>> {
-    let config = BatchConfig::default();
+    let config = NovaBatchConfig::default();
     info!("Starting batch ID lookup for {} IDs", ids.len());
     // Step 1: Lookup locations using ID index
     // Deferred: Implement ID index for NOVA
@@ -302,7 +305,7 @@ pub async fn read_batch_optimized(
     ids: &[String],
     columns: Vec<String>,
 ) -> Result<HashMap<String, RecordBatch>> {
-    let config = BatchConfig {
+    let config = NovaBatchConfig {
         projection: columns,
         ..Default::default()
     };

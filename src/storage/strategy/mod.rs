@@ -157,12 +157,15 @@ pub struct StrategyPerformanceConfig {
     /// Enable GPU acceleration
     pub enable_gpu: bool,
     /// Batch configuration
-    pub batch_config: BatchConfig,
+    pub batch_config: StrategyBatchConfig,
 }
+
+/// Backwards-compat alias for [`StrategyBatchConfig`].
+pub type BatchConfig = StrategyBatchConfig;
 
 /// Batch processing configuration
 #[derive(Debug, Clone)]
-pub struct BatchConfig {
+pub struct StrategyBatchConfig {
     /// Batch size for operations
     pub batch_size: usize,
     /// Batch timeout in milliseconds
@@ -193,7 +196,7 @@ impl Default for CollectionStrategyConfig {
                 memory_limit_mb: 1024,
                 enable_simd: true,
                 enable_gpu: false,
-                batch_config: BatchConfig {
+                batch_config: StrategyBatchConfig {
                     batch_size: 1000,
                     batch_timeout_ms: 100,
                 },

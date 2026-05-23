@@ -375,7 +375,7 @@ pub struct UniversalIndexConfig {
     pub secondary_indexes: Vec<SecondaryIndexConfig>,
 
     /// Bloom filter configuration
-    pub bloom_filters: BloomFilterConfig,
+    pub bloom_filters: CoreOpsBloomFilterConfig,
 
     /// Index maintenance
     pub maintenance_config: IndexMaintenanceConfig,
@@ -427,9 +427,12 @@ pub struct SecondaryIndexConfig {
     pub configuration: HashMap<String, serde_json::Value>,
 }
 
+/// Backwards-compat alias for [`CoreOpsBloomFilterConfig`].
+pub type BloomFilterConfig = CoreOpsBloomFilterConfig;
+
 /// Bloom filter configuration
 #[derive(Debug, Clone)]
-pub struct BloomFilterConfig {
+pub struct CoreOpsBloomFilterConfig {
     pub enabled: bool,
     pub false_positive_rate: f64,
     pub per_block: bool,
@@ -751,7 +754,7 @@ impl Default for UniversalIndexConfig {
             index_types: vec![Index::PrimaryId, Index::Hash],
             id_index: IdIndexConfig::default(),
             secondary_indexes: Vec::new(),
-            bloom_filters: BloomFilterConfig::default(),
+            bloom_filters: CoreOpsBloomFilterConfig::default(),
             maintenance_config: IndexMaintenanceConfig::default(),
         }
     }
@@ -768,7 +771,7 @@ impl Default for IdIndexConfig {
     }
 }
 
-impl Default for BloomFilterConfig {
+impl Default for CoreOpsBloomFilterConfig {
     fn default() -> Self {
         Self {
             enabled: true,

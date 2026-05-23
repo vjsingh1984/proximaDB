@@ -20,16 +20,19 @@ use url::Url;
 
 use super::{FileSystem, FilesystemError, FsResult};
 
+/// Backwards-compat alias for [`FsManagerRetryConfig`].
+pub type RetryConfig = FsManagerRetryConfig;
+
 /// Retry configuration for filesystem operations
 #[derive(Debug, Clone)]
-pub struct RetryConfig {
+pub struct FsManagerRetryConfig {
     pub max_retries: usize,
     pub initial_delay_ms: u64,
     pub max_delay_ms: u64,
     pub backoff_multiplier: f64,
 }
 
-impl Default for RetryConfig {
+impl Default for FsManagerRetryConfig {
     fn default() -> Self {
         Self {
             max_retries: 3,
@@ -40,7 +43,7 @@ impl Default for RetryConfig {
     }
 }
 
-impl RetryConfig {
+impl FsManagerRetryConfig {
     pub fn new(
         max_retries: usize,
         initial_delay_ms: u64,
@@ -114,7 +117,7 @@ pub struct ManagedFilesystem {
     #[allow(dead_code)]
     base_path: String,
     #[allow(dead_code)]
-    retry_config: RetryConfig,
+    retry_config: FsManagerRetryConfig,
 }
 
 #[allow(dead_code)]
@@ -349,7 +352,7 @@ pub struct FilesystemManager {
     // auth_providers: HashMap<String, Arc<dyn AuthProvider>>,
 
     /// Default retry configuration
-    default_retry_config: RetryConfig,
+    default_retry_config: FsManagerRetryConfig,
 
     /// Configuration for creating new filesystems
     config: super::FilesystemConfig,
@@ -391,7 +394,7 @@ impl FilesystemManager {
         Ok(Self {
             filesystems: Arc::new(RwLock::new(HashMap::new())),
             // auth_providers,
-            default_retry_config: RetryConfig::default(),
+            default_retry_config: FsManagerRetryConfig::default(),
             config,
         })
     }

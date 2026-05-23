@@ -585,9 +585,12 @@ impl GraphNode {
     }
 }
 
+/// Backwards-compat alias for [`EmbeddedGraphEdge`].
+pub type GraphEdge = EmbeddedGraphEdge;
+
 /// Generic graph edge with flexible property storage
 #[derive(Debug, Clone)]
-pub struct GraphEdge {
+pub struct EmbeddedGraphEdge {
     /// Optional edge ID (auto-generated if not provided)
     pub id: Option<String>,
     /// Source node ID
@@ -602,7 +605,7 @@ pub struct GraphEdge {
     pub properties: std::collections::HashMap<String, String>,
 }
 
-impl GraphEdge {
+impl EmbeddedGraphEdge {
     /// Create a new edge
     pub fn new(
         from_node_id: impl Into<String>,
@@ -3195,7 +3198,7 @@ impl EmbeddedProximaDB {
     pub fn create_edges(
         &self,
         graph_id: &str,
-        edges: Vec<GraphEdge>,
+        edges: Vec<EmbeddedGraphEdge>,
     ) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         // Check write access before creating edges
         self.check_write_access()?;
@@ -3243,8 +3246,8 @@ impl EmbeddedProximaDB {
         edge_type: &str,
         weight: Option<f64>,
         properties: std::collections::HashMap<String, String>,
-    ) -> Result<GraphEdge, Box<dyn std::error::Error + Send + Sync>> {
-        let edge = GraphEdge {
+    ) -> Result<EmbeddedGraphEdge, Box<dyn std::error::Error + Send + Sync>> {
+        let edge = EmbeddedGraphEdge {
             id: edge_id.map(str::to_string),
             from_node_id: from_node_id.to_string(),
             to_node_id: to_node_id.to_string(),
@@ -3349,7 +3352,7 @@ impl EmbeddedProximaDB {
         graph_id: &str,
         node_id: &str,
         edge_types: Option<Vec<String>>,
-    ) -> Result<Vec<GraphEdge>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<EmbeddedGraphEdge>, Box<dyn std::error::Error + Send + Sync>> {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
@@ -3369,7 +3372,7 @@ impl EmbeddedProximaDB {
 
             Ok(proto_edges
                 .into_iter()
-                .map(|e| GraphEdge::from_proto(&e))
+                .map(|e| EmbeddedGraphEdge::from_proto(&e))
                 .collect())
         })
     }
@@ -3380,7 +3383,7 @@ impl EmbeddedProximaDB {
         graph_id: &str,
         node_id: &str,
         edge_types: Option<Vec<String>>,
-    ) -> Result<Vec<GraphEdge>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<EmbeddedGraphEdge>, Box<dyn std::error::Error + Send + Sync>> {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
@@ -3400,7 +3403,7 @@ impl EmbeddedProximaDB {
 
             Ok(proto_edges
                 .into_iter()
-                .map(|e| GraphEdge::from_proto(&e))
+                .map(|e| EmbeddedGraphEdge::from_proto(&e))
                 .collect())
         })
     }
@@ -4600,7 +4603,7 @@ impl EmbeddedProximaDB {
         let edges = response
             .edges
             .into_iter()
-            .map(|edge| GraphEdge::from_proto(&edge))
+            .map(|edge| EmbeddedGraphEdge::from_proto(&edge))
             .collect();
         let paths = response
             .paths
@@ -5604,7 +5607,7 @@ pub struct EmbeddedGraphTraversalResult {
     /// Nodes visited during traversal
     pub nodes: Vec<GraphNode>,
     /// Edges traversed
-    pub edges: Vec<GraphEdge>,
+    pub edges: Vec<EmbeddedGraphEdge>,
     /// Paths returned by the traversal engine
     pub paths: Vec<Vec<String>>,
     /// Optional traversal statistics

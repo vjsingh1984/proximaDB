@@ -135,9 +135,12 @@ pub enum RecordType {
     TimeSeries,
 }
 
+/// Backwards-compat alias for [`SearchGraphEdge`].
+pub type GraphEdge = SearchGraphEdge;
+
 /// Directed or undirected edge in a graph result.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct GraphEdge {
+pub struct SearchGraphEdge {
     /// Target (or other endpoint) node identifier.
     pub neighbor_id: String,
     /// Edge label / relation type.
@@ -232,7 +235,7 @@ pub struct OptimizedSearchRecord {
 
     // --- Graph modality ---
     /// Adjacent edges/neighbors for graph result records.
-    pub graph_edges: Option<Vec<GraphEdge>>,
+    pub graph_edges: Option<Vec<SearchGraphEdge>>,
     /// In-degree + out-degree of the matched node.
     pub graph_degree: Option<u32>,
 

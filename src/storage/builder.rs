@@ -200,7 +200,7 @@ pub struct StoragePerformanceConfig {
     pub memory_pool_mb: usize,
 
     /// Storage-specific batch configuration
-    pub batch_config: BatchConfig,
+    pub batch_config: StorageBuilderBatchConfig,
 
     /// Enable zero-copy optimizations for storage
     pub enable_zero_copy: bool,
@@ -221,8 +221,11 @@ pub struct StorageBufferConfig {
     pub compaction_buffer_size: usize,
 }
 
+/// Backwards-compat alias for [`StorageBuilderBatchConfig`].
+pub type BatchConfig = StorageBuilderBatchConfig;
+
 #[derive(Debug, Clone)]
-pub struct BatchConfig {
+pub struct StorageBuilderBatchConfig {
     /// Default batch size for operations
     pub default_batch_size: usize,
 
@@ -267,7 +270,7 @@ impl Default for StorageSystemConfig {
             storage_performance: StoragePerformanceConfig {
                 io_threads: num_cpus::get(),
                 memory_pool_mb: 2048,
-                batch_config: BatchConfig {
+                batch_config: StorageBuilderBatchConfig {
                     default_batch_size: 1000,
                     max_batch_size: 10000,
                     batch_timeout_ms: 100,
@@ -470,7 +473,7 @@ impl StorageSystemBuilder {
         self.config.storage_performance = StoragePerformanceConfig {
             io_threads: num_cpus::get() * 2,
             memory_pool_mb: 8192,
-            batch_config: BatchConfig {
+            batch_config: StorageBuilderBatchConfig {
                 default_batch_size: 5000,
                 max_batch_size: 50000,
                 batch_timeout_ms: 50,

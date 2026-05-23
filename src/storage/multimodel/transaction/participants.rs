@@ -674,7 +674,7 @@ pub trait GraphWriteOperations: Send + Sync {
     async fn create_node(&self, graph_id: &str, node: GraphNode) -> Result<()>;
 
     /// Create an edge in a graph.
-    async fn create_edge(&self, graph_id: &str, edge: GraphEdge) -> Result<()>;
+    async fn create_edge(&self, graph_id: &str, edge: TxnLegacyGraphEdge) -> Result<()>;
 
     /// Delete a node by ID.
     async fn delete_node(&self, graph_id: &str, node_id: &str) -> Result<()>;
@@ -691,9 +691,12 @@ pub struct GraphNode {
     pub properties: HashMap<String, String>,
 }
 
+/// Backwards-compat alias for [`TxnLegacyGraphEdge`].
+pub type GraphEdge = TxnLegacyGraphEdge;
+
 /// Lightweight edge representation for staged graph transactions.
 #[derive(Debug, Clone)]
-pub struct GraphEdge {
+pub struct TxnLegacyGraphEdge {
     pub id: String,
     pub source: String,
     pub target: String,
@@ -705,7 +708,7 @@ pub struct GraphEdge {
 #[derive(Debug, Clone)]
 pub enum StagedGraphOperation {
     CreateNode { graph_id: String, node: GraphNode },
-    CreateEdge { graph_id: String, edge: GraphEdge },
+    CreateEdge { graph_id: String, edge: TxnLegacyGraphEdge },
     DeleteNode { graph_id: String, node_id: String },
     DeleteEdge { graph_id: String, edge_id: String },
 }
@@ -744,7 +747,7 @@ impl GraphStoreParticipant {
         &self,
         transaction_id: &str,
         graph_id: &str,
-        edge: GraphEdge,
+        edge: TxnLegacyGraphEdge,
     ) -> Result<()> {
         self.stage_operation(
             transaction_id,

@@ -36,7 +36,7 @@ pub struct DistributedOpsConfig {
     /// Consistency level for reads
     pub read_consistency: ConsistencyLevel,
     /// Retry configuration
-    pub retry_config: RetryConfig,
+    pub retry_config: DistributedRetryConfig,
 }
 
 impl Default for DistributedOpsConfig {
@@ -47,14 +47,17 @@ impl Default for DistributedOpsConfig {
             parallel_queries: true,
             write_consistency: ConsistencyLevel::Quorum,
             read_consistency: ConsistencyLevel::One,
-            retry_config: RetryConfig::default(),
+            retry_config: DistributedRetryConfig::default(),
         }
     }
 }
 
+/// Backwards-compat alias for [`DistributedRetryConfig`].
+pub type RetryConfig = DistributedRetryConfig;
+
 /// Retry configuration for failed operations
 #[derive(Debug, Clone)]
-pub struct RetryConfig {
+pub struct DistributedRetryConfig {
     /// Maximum number of retries
     pub max_retries: u32,
     /// Initial backoff in milliseconds
@@ -65,7 +68,7 @@ pub struct RetryConfig {
     pub backoff_multiplier: f64,
 }
 
-impl Default for RetryConfig {
+impl Default for DistributedRetryConfig {
     fn default() -> Self {
         Self {
             max_retries: 3,

@@ -13,7 +13,7 @@ use tracing::{debug, info};
 pub struct SstScanFilter {
     pub collection_id: String,
     pub filter: UnifiedMetadataFilter,
-    pub bloom_filters: HashMap<String, BloomFilterConfig>,
+    pub bloom_filters: HashMap<String, SstBloomFilterConfig>,
     pub applied_at: std::time::SystemTime,
 }
 
@@ -26,9 +26,12 @@ pub struct SstIndexFilter {
     pub applied_at: std::time::SystemTime,
 }
 
+/// Backwards-compat alias for [`SstBloomFilterConfig`].
+pub type BloomFilterConfig = SstBloomFilterConfig;
+
 /// Bloom filter configuration for metadata fields
 #[derive(Debug, Clone, Default)]
-pub struct BloomFilterConfig {
+pub struct SstBloomFilterConfig {
     #[allow(missing_docs)]
     pub field_name: String,
     #[allow(missing_docs)]
@@ -77,7 +80,7 @@ impl crate::storage::engines::sst::SstEngine {
             // Configure bloom filter for this metadata field
             bloom_configs.insert(
                 field_name.clone(),
-                BloomFilterConfig {
+                SstBloomFilterConfig {
                     field_name,
                     bits_per_key: 10, // Standard bits per key for SST bloom filters
                     false_positive_rate: 0.01, // 1% false positive rate

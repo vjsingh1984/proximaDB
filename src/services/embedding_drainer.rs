@@ -430,6 +430,7 @@ mod tests {
                 url: start_byo_test_endpoint(),
                 auth: ByoAuth::None,
                 declared_dim: 3,
+                declared_precision: proximadb_records::EmbeddingScalarType::Fp32,
                 batch_size: 8,
                 timeout_ms: 1_000,
             },
