@@ -1,0 +1,20 @@
+[package]
+name = "proximadb-rank-features"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage = "https://github.com/vjsingh1984/proximadb"
+description = "Built-in ranking features for ProximaDB (attribute, closeness, bm25, freshness, decay). See roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md (R-2)."
+
+[lib]
+name = "proximadb_rank_features"
+path = "src/lib.rs"
+
+[dependencies]
+proximadb-rank-core = { workspace = true }
+proximadb-kernel = { workspace = true }
+serde.workspace = true
+thiserror.workspace = true

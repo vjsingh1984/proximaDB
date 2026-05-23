@@ -6097,6 +6097,7 @@ dependencies = [
  "proximadb-query-fusion",
  "proximadb-queue",
  "proximadb-rank-core",
+ "proximadb-rank-features",
  "proximadb-records",
  "proximadb-runtime",
  "proximadb-runtime-common",
@@ -6654,6 +6655,16 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-rank-features"
+version = "0.2.0"
+dependencies = [
+ "proximadb-kernel",
+ "proximadb-rank-core",
+ "serde",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

@@ -25,6 +25,25 @@ pub struct QueryContext {
     /// Free-form tag bag for v1; will be replaced with typed query params
     /// in R-2 when retrieval candidates wire in.
     pub tags: Vec<(String, String)>,
+    /// Logical "now" in milliseconds since the Unix epoch. Used by
+    /// `freshness(...)` / `decay(...)` features so tests can pin a
+    /// deterministic clock. Production callers set this from
+    /// `SystemTime::now()` at query-arrival; tests pin a fixed value.
+    /// `None` means features should fall back to `SystemTime::now()`.
+    pub now_ms_unix: Option<i64>,
+}
+
+impl QueryContext {
+    /// Resolved query time — either the pinned value or wall-clock now.
+    pub fn now_ms_or_wall(&self) -> i64 {
+        self.now_ms_unix.unwrap_or_else(|| {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0)
+        })
+    }
 }
 
 /// Per-thread mutable scoring context. Lives for the duration of one

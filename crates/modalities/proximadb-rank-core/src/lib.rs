@@ -22,7 +22,8 @@ pub mod types;
 pub use arena::FeatureArena;
 pub use blueprint::{Blueprint, BlueprintFactory, InputSpec, OutputSpec, PhaseConfig, ValueKind};
 pub use context::{
-    AttributeAccess, CandidateData, ModelCache, QueryContext, RankMetricsSink, ScoreCtx,
+    AttributeAccess, BatchSlot, CandidateData, ModelCache, NoopAttributeAccess, NoopCandidateData,
+    NoopMetricsSink, NoopModelCache, QueryContext, RankMetricsSink, ScoreCtx,
 };
 pub use error::{RankError, RankResult};
 pub use executor::{FeatureExecutor, FeatureLookup};
