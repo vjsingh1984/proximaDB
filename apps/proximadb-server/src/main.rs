@@ -216,6 +216,23 @@ async fn main() -> anyhow::Result<()> {
         info!("Continuing with CPU-only mode");
     }
 
+    // PR 7a follow-up: probe per-precision matmul latency so the policy
+    // resolver + embedding service can read the cached snapshot without
+    // re-running the micro-bench. Idempotent — OnceLock guards re-init.
+    // Runs BEFORE the embedding service so BgeModel can read the result
+    // when picking its default loaded precision.
+    let caps = proximadb_embedding::precision::hw_capability::init_capabilities();
+    info!(
+        "🎯 Precision hw probe (dim={}): f32_f32={}ns, f16_f32={}ns, f16_f16={}ns, \
+         bf16_supported={}, best_canonical={:?}",
+        caps.probe_dim,
+        caps.f32_f32_matmul_ns,
+        caps.f16_f32_matmul_ns,
+        caps.f16_f16_matmul_ns,
+        caps.bf16_supported,
+        caps.best_canonical_for_inference(),
+    );
+
     // Initialize the in-process embedding singleton. Loads BGE ONNX sessions
     // (or synthetic fallback when the `onnx` feature is off), spawns sync +
     // async tokio runtimes, and registers Prometheus instruments. Crashing
