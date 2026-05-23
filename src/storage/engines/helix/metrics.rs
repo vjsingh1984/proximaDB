@@ -396,14 +396,14 @@ impl PerformanceMonitor {
     }
 
     /// Generate optimization recommendations
-    pub async fn get_recommendations(&self) -> Vec<OptimizationRecommendation> {
+    pub async fn get_recommendations(&self) -> Vec<HelixOptimizationRecommendation> {
         let mut recommendations = Vec::new();
 
         // Analyze metrics and generate recommendations
         let query_throughput = self.metrics.query_throughput().await;
 
         if query_throughput > 1000.0 {
-            recommendations.push(OptimizationRecommendation {
+            recommendations.push(HelixOptimizationRecommendation {
                 category: "Caching".to_string(),
                 suggestion: "Consider increasing block cache size".to_string(),
                 expected_improvement: "20-30% latency reduction".to_string(),
@@ -428,8 +428,11 @@ pub enum AlertSeverity {
     Critical,
 }
 
+/// Backwards-compat alias for [`HelixOptimizationRecommendation`].
+pub type OptimizationRecommendation = HelixOptimizationRecommendation;
+
 #[derive(Debug)]
-pub struct OptimizationRecommendation {
+pub struct HelixOptimizationRecommendation {
     pub category: String,
     pub suggestion: String,
     pub expected_improvement: String,

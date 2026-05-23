@@ -312,14 +312,14 @@ impl RowBasedUtilities {
     fn recommend_access_optimizations(
         temporal_gaps: &[i64],
         spatial_distances: &[u64],
-    ) -> Vec<OptimizationRecommendation> {
+    ) -> Vec<BlockUtilsOptimizationRecommendation> {
         let mut recommendations = Vec::new();
 
         let temporal_locality = Self::calculate_temporal_locality(temporal_gaps);
         let spatial_locality = Self::calculate_spatial_locality(spatial_distances);
 
         if temporal_locality > 0.7 {
-            recommendations.push(OptimizationRecommendation {
+            recommendations.push(BlockUtilsOptimizationRecommendation {
                 optimization_type: "enable_prefetching".to_string(),
                 description: "High temporal locality detected - enable prefetching".to_string(),
                 expected_improvement: 15.0,
@@ -328,7 +328,7 @@ impl RowBasedUtilities {
         }
 
         if spatial_locality > 0.8 {
-            recommendations.push(OptimizationRecommendation {
+            recommendations.push(BlockUtilsOptimizationRecommendation {
                 optimization_type: "sequential_layout".to_string(),
                 description: "High spatial locality - optimize for sequential access".to_string(),
                 expected_improvement: 25.0,
@@ -337,7 +337,7 @@ impl RowBasedUtilities {
         }
 
         if temporal_locality < 0.3 && spatial_locality < 0.3 {
-            recommendations.push(OptimizationRecommendation {
+            recommendations.push(BlockUtilsOptimizationRecommendation {
                 optimization_type: "random_access_optimization".to_string(),
                 description: "Random access pattern - optimize index structures".to_string(),
                 expected_improvement: 20.0,
@@ -562,11 +562,14 @@ pub struct AccessPatternAnalysis {
     pub temporal_locality: f64,
     pub spatial_locality: f64,
     pub operation_distribution: HashMap<String, u64>,
-    pub recommended_optimizations: Vec<OptimizationRecommendation>,
+    pub recommended_optimizations: Vec<BlockUtilsOptimizationRecommendation>,
 }
 
+/// Backwards-compat alias for [`BlockUtilsOptimizationRecommendation`].
+pub type OptimizationRecommendation = BlockUtilsOptimizationRecommendation;
+
 #[derive(Debug, Clone)]
-pub struct OptimizationRecommendation {
+pub struct BlockUtilsOptimizationRecommendation {
     pub optimization_type: String,
     pub description: String,
     pub expected_improvement: f64, // Percentage

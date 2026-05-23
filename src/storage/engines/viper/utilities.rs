@@ -83,7 +83,7 @@ pub struct ViperUtilitiesConfig {
 pub struct PerformanceStatsCollector {
     /// Operation metrics
     #[allow(dead_code)]
-    operation_metrics: Arc<RwLock<HashMap<String, OperationMetrics>>>,
+    operation_metrics: Arc<RwLock<HashMap<String, ViperUtilsOperationMetrics>>>,
 
     /// Collection-level statistics
     #[allow(dead_code)]
@@ -117,9 +117,12 @@ pub struct StatsConfig {
     pub enable_profiling: bool,
 }
 
+/// Backwards-compat alias for [`ViperUtilsOperationMetrics`].
+pub type OperationMetrics = ViperUtilsOperationMetrics;
+
 /// Metrics for individual operations
 #[derive(Debug, Clone)]
-pub struct OperationMetrics {
+pub struct ViperUtilsOperationMetrics {
     pub operation_type: String,
     pub collection_id: String,
     pub records_processed: u64,
@@ -170,7 +173,7 @@ pub struct GlobalViperStats {
 pub struct OperationStatsCollector {
     operation_start: Option<Instant>,
     phase_timers: HashMap<String, Instant>,
-    metrics: OperationMetrics,
+    metrics: ViperUtilsOperationMetrics,
 }
 
 // TTL Management
@@ -615,7 +618,7 @@ impl ViperUtilities {
     }
 
     /// Record operation metrics
-    pub async fn record_operation(&self, metrics: OperationMetrics) -> Result<()> {
+    pub async fn record_operation(&self, metrics: ViperUtilsOperationMetrics) -> Result<()> {
         self.stats_collector.record_operation(metrics).await
     }
 
@@ -673,7 +676,7 @@ impl ViperUtilities {
 pub struct PerformanceReport {
     pub global_stats: GlobalViperStats,
     pub collection_stats: Option<ViperCollectionStats>,
-    pub recent_operations: Vec<OperationMetrics>,
+    pub recent_operations: Vec<ViperUtilsOperationMetrics>,
     pub recommendations: Vec<PerformanceRecommendation>,
 }
 
@@ -728,7 +731,7 @@ impl PerformanceStatsCollector {
         Ok(())
     }
 
-    async fn record_operation(&self, _metrics: OperationMetrics) -> Result<()> {
+    async fn record_operation(&self, _metrics: ViperUtilsOperationMetrics) -> Result<()> {
         Ok(())
     }
 
@@ -868,7 +871,7 @@ impl OperationStatsCollector {
         Self {
             operation_start: None,
             phase_timers: HashMap::new(),
-            metrics: OperationMetrics {
+            metrics: ViperUtilsOperationMetrics {
                 operation_type,
                 collection_id,
                 records_processed: 0,
@@ -906,7 +909,7 @@ impl OperationStatsCollector {
         }
     }
 
-    pub fn finalize(&mut self) -> OperationMetrics {
+    pub fn finalize(&mut self) -> ViperUtilsOperationMetrics {
         if let Some(start_time) = self.operation_start {
             self.metrics.total_time_ms = start_time.elapsed().as_millis() as u64;
 

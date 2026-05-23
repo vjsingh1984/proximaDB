@@ -26,7 +26,7 @@ pub struct StorageConfig {
     pub monitoring: ColumnarTomlMonitoringConfig,
     
     /// Migration settings
-    pub migration: MigrationConfig,
+    pub migration: ColumnarTomlMigrationConfig,
     
     /// Advanced settings
     pub advanced: AdvancedConfig,
@@ -236,15 +236,18 @@ impl Default for MonitoringSettings {
     }
 }
 
+/// Backwards-compat alias for [`ColumnarTomlMigrationConfig`].
+pub type MigrationConfig = ColumnarTomlMigrationConfig;
+
 /// Migration configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct MigrationConfig {
+pub struct ColumnarTomlMigrationConfig {
     pub auto_migrate: bool,
     
     pub apply_optimizations_to_existing: bool,
 }
 
-impl Default for MigrationConfig {
+impl Default for ColumnarTomlMigrationConfig {
     fn default() -> Self {
         Self {
             auto_migrate: true,
@@ -622,7 +625,7 @@ impl Default for StorageConfig {
         Self {
             storage: GlobalStorageConfig::default(),
             monitoring: ColumnarTomlMonitoringConfig::default(),
-            migration: MigrationConfig::default(),
+            migration: ColumnarTomlMigrationConfig::default(),
             advanced: AdvancedConfig::default(),
         }
     }

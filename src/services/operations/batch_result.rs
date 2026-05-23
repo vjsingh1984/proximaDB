@@ -15,9 +15,12 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Backwards-compat alias for [`BatchOperationMetrics`].
+pub type OperationMetrics = BatchOperationMetrics;
+
 /// Metrics for a batch operation
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct OperationMetrics {
+pub struct BatchOperationMetrics {
     /// Total number of vectors processed
     pub total_processed: i64,
 
@@ -50,7 +53,7 @@ pub struct BatchOperationResult {
     pub vector_ids: Vec<String>,
 
     /// Operation metrics
-    pub metrics: OperationMetrics,
+    pub metrics: BatchOperationMetrics,
 
     /// Error messages for failed vectors
     pub errors: Vec<String>,
@@ -61,7 +64,7 @@ pub struct BatchOperationResult {
 
 impl BatchOperationResult {
     /// Create a successful batch result
-    pub fn success(vector_ids: Vec<String>, metrics: OperationMetrics) -> Self {
+    pub fn success(vector_ids: Vec<String>, metrics: BatchOperationMetrics) -> Self {
         Self {
             success: true,
             vector_ids,
@@ -76,7 +79,7 @@ impl BatchOperationResult {
         Self {
             success: false,
             vector_ids: vec![],
-            metrics: OperationMetrics::default(),
+            metrics: BatchOperationMetrics::default(),
             errors: vec![error_message],
             error_code: Some(error_code),
         }
@@ -85,7 +88,7 @@ impl BatchOperationResult {
     /// Create a partial success result
     pub fn partial(
         vector_ids: Vec<String>,
-        metrics: OperationMetrics,
+        metrics: BatchOperationMetrics,
         errors: Vec<String>,
     ) -> Self {
         Self {
@@ -104,7 +107,7 @@ mod tests {
 
     #[test]
     fn test_batch_result_success() {
-        let metrics = OperationMetrics {
+        let metrics = BatchOperationMetrics {
             total_processed: 10,
             successful_count: 10,
             failed_count: 0,

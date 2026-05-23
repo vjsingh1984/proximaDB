@@ -96,7 +96,7 @@ impl ColumnarUtilities {
         // Check for undersized row groups
         for stats in &file_stats {
             if stats.avg_row_group_size < optimal_row_group_size / 2 {
-                recommendations.push(OptimizationRecommendation {
+                recommendations.push(ColumnarUtilsOptimizationRecommendation {
                     file_path: stats.file_path.clone(),
                     issue: "Undersized row groups".to_string(),
                     action: format!(
@@ -112,7 +112,7 @@ impl ColumnarUtilities {
         // Check for oversized files
         for stats in &file_stats {
             if stats.total_vectors > optimal_row_group_size * 20 {
-                recommendations.push(OptimizationRecommendation {
+                recommendations.push(ColumnarUtilsOptimizationRecommendation {
                     file_path: stats.file_path.clone(),
                     issue: "Oversized file".to_string(),
                     action: format!(
@@ -404,7 +404,7 @@ impl ColumnarUtilities {
     pub async fn record_operation_metrics(
         &self,
         operation: &str,
-        metrics: OperationMetrics,
+        metrics: ColumnarUtilsOperationMetrics,
     ) -> Result<()> {
         debug!("Recording metrics for operation: {}", operation);
 
@@ -467,7 +467,7 @@ pub struct FileLayoutOptimization {
     pub current_total_size_bytes: usize,
     pub optimal_row_group_size: usize,
     pub current_avg_row_group_size: usize,
-    pub recommendations: Vec<OptimizationRecommendation>,
+    pub recommendations: Vec<ColumnarUtilsOptimizationRecommendation>,
     pub file_statistics: Vec<FileStatistics>,
 }
 
@@ -483,9 +483,12 @@ pub struct FileStatistics {
     pub has_quantization: bool,
 }
 
+/// Backwards-compat alias for [`ColumnarUtilsOptimizationRecommendation`].
+pub type OptimizationRecommendation = ColumnarUtilsOptimizationRecommendation;
+
 /// Optimization recommendation
 #[derive(Debug)]
-pub struct OptimizationRecommendation {
+pub struct ColumnarUtilsOptimizationRecommendation {
     pub file_path: String,
     pub issue: String,
     pub action: String,
@@ -561,9 +564,12 @@ pub struct FileCorruption {
     pub error: String,
 }
 
+/// Backwards-compat alias for [`ColumnarUtilsOperationMetrics`].
+pub type OperationMetrics = ColumnarUtilsOperationMetrics;
+
 /// Operation metrics for recording
 #[derive(Debug)]
-pub struct OperationMetrics {
+pub struct ColumnarUtilsOperationMetrics {
     pub duration_ms: f64,
     pub bytes_processed: u64,
     pub vectors_processed: usize,
@@ -606,7 +612,7 @@ mod tests {
         let utilities = ColumnarUtilities::new(filesystem, hardware, config);
 
         // Test metrics recording
-        let metrics = OperationMetrics {
+        let metrics = ColumnarUtilsOperationMetrics {
             duration_ms: 100.0,
             bytes_processed: 1024,
             vectors_processed: 10,

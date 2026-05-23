@@ -19,9 +19,12 @@ use std::collections::HashMap;
 
 use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
 
+/// Backwards-compat alias for [`EngineMigrationConfig`].
+pub type MigrationConfig = EngineMigrationConfig;
+
 /// Migration configuration
 #[derive(Debug, Clone)]
-pub struct MigrationConfig {
+pub struct EngineMigrationConfig {
     /// Source engine type
     #[allow(dead_code)]
     pub source_engine: ProtoStorageEngine,
@@ -172,7 +175,7 @@ pub enum MigrationEventType {
     RollbackCompleted,
 }
 
-impl Default for MigrationConfig {
+impl Default for EngineMigrationConfig {
     fn default() -> Self {
         Self {
             source_engine: ProtoStorageEngine::Viper,
@@ -340,7 +343,7 @@ pub mod utils {
     }
 
     /// Validate migration configuration
-    pub fn validate_migration_config(config: &MigrationConfig) -> Result<()> {
+    pub fn validate_migration_config(config: &EngineMigrationConfig) -> Result<()> {
         // Check engine support
         if !is_migration_supported(config.source_engine, config.target_engine) {
             return Err(anyhow::anyhow!(
@@ -461,7 +464,7 @@ mod tests {
 
     #[test]
     fn test_migration_config_validation() {
-        let mut config = MigrationConfig::default();
+        let mut config = EngineMigrationConfig::default();
 
         // Valid config should pass
         assert!(validate_migration_config(&config).is_ok());
@@ -471,7 +474,7 @@ mod tests {
         assert!(validate_migration_config(&config).is_err());
 
         // Reset and test invalid sample percentage
-        config = MigrationConfig::default();
+        config = EngineMigrationConfig::default();
         config.validation.sample_percentage = 1.5;
         assert!(validate_migration_config(&config).is_err());
     }

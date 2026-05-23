@@ -58,12 +58,15 @@ pub struct HmgiMigrationEngine {
     paused_writes: Arc<RwLock<HashMap<String, WritePauseToken>>>,
 
     /// Migration configuration
-    config: MigrationConfig,
+    config: HmgiMigrationConfig,
 }
+
+/// Backwards-compat alias for [`HmgiMigrationConfig`].
+pub type MigrationConfig = HmgiMigrationConfig;
 
 /// Migration configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MigrationConfig {
+pub struct HmgiMigrationConfig {
     /// Timeout for migration steps (seconds)
     pub step_timeout_secs: u64,
 
@@ -77,7 +80,7 @@ pub struct MigrationConfig {
     pub cleanup_delay_secs: u64,
 }
 
-impl Default for MigrationConfig {
+impl Default for HmgiMigrationConfig {
     fn default() -> Self {
         Self {
             step_timeout_secs: 300, // 5 minutes per step
@@ -183,7 +186,7 @@ impl HmgiMigrationEngine {
             tier_policy,
             active_migrations: Arc::new(RwLock::new(HashMap::new())),
             paused_writes: Arc::new(RwLock::new(HashMap::new())),
-            config: MigrationConfig::default(),
+            config: HmgiMigrationConfig::default(),
         }
     }
 
@@ -191,7 +194,7 @@ impl HmgiMigrationEngine {
     pub fn with_config(
         registry: Arc<HmgiRegistry>,
         tier_policy: Arc<super::tiering::HmgiTierPolicy>,
-        config: MigrationConfig,
+        config: HmgiMigrationConfig,
     ) -> Self {
         Self {
             registry,

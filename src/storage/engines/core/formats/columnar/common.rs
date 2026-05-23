@@ -455,7 +455,7 @@ struct CachedFileMetadata {
 #[derive(Debug)]
 pub struct PerformanceMonitor {
     /// Operation metrics
-    operation_metrics: Arc<RwLock<OperationMetrics>>,
+    operation_metrics: Arc<RwLock<ColumnarCommonOperationMetrics>>,
 
     /// Resource usage metrics
     resource_metrics: Arc<RwLock<ResourceMetrics>>,
@@ -464,10 +464,14 @@ pub struct PerformanceMonitor {
     config: ColumnarMonitoringConfig,
 }
 
+/// Backwards-compat alias for [`ColumnarCommonOperationMetrics`].
+#[allow(dead_code)]
+pub type OperationMetrics = ColumnarCommonOperationMetrics;
+
 /// Operation performance metrics
 #[derive(Debug, Default, Clone)]
 #[allow(dead_code)]
-pub struct OperationMetrics {
+pub struct ColumnarCommonOperationMetrics {
     /// Serialization metrics
     serialization_ops: usize,
     serialization_total_time_ms: f64,
@@ -765,7 +769,7 @@ impl CommonColumnarOperations {
     }
 
     /// Get performance metrics
-    pub async fn get_performance_metrics(&self) -> Result<(OperationMetrics, ResourceMetrics)> {
+    pub async fn get_performance_metrics(&self) -> Result<(ColumnarCommonOperationMetrics, ResourceMetrics)> {
         let operation_metrics = {
             let guard = self.performance_monitor.operation_metrics.read().await;
             (*guard).clone()
@@ -874,7 +878,7 @@ impl CommonColumnarOperations {
 impl PerformanceMonitor {
     fn new(config: ColumnarMonitoringConfig) -> Self {
         Self {
-            operation_metrics: Arc::new(RwLock::new(OperationMetrics::default())),
+            operation_metrics: Arc::new(RwLock::new(ColumnarCommonOperationMetrics::default())),
             resource_metrics: Arc::new(RwLock::new(ResourceMetrics::default())),
             config,
         }
@@ -913,7 +917,7 @@ impl PerformanceMonitor {
 
     async fn reset_metrics(&self) {
         let mut op_metrics = self.operation_metrics.write().await;
-        *op_metrics = OperationMetrics::default();
+        *op_metrics = ColumnarCommonOperationMetrics::default();
 
         let mut res_metrics = self.resource_metrics.write().await;
         *res_metrics = ResourceMetrics::default();

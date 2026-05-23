@@ -365,7 +365,7 @@ impl PulsarQueryOptimizer {
     }
 
     /// Get optimization recommendations
-    pub async fn get_recommendations(&self) -> Vec<OptimizationRecommendation> {
+    pub async fn get_recommendations(&self) -> Vec<PulsarOptimizationRecommendation> {
         let stats = self.stats_cache.read().await;
         let mut recommendations = Vec::new();
 
@@ -375,7 +375,7 @@ impl PulsarQueryOptimizer {
                 let avg_time = times.iter().sum::<u64>() as f64 / times.len() as f64;
                 if avg_time > 10_000.0 {
                     // > 10ms average
-                    recommendations.push(OptimizationRecommendation {
+                    recommendations.push(PulsarOptimizationRecommendation {
                         recommendation_type: RecommendationType::SlowQuery,
                         description: format!(
                             "Strategy '{}' has high average execution time: {:.2}ms",
@@ -390,7 +390,7 @@ impl PulsarQueryOptimizer {
 
         // Check for hot data patterns
         if stats.hot_nodes.len() > 1000 {
-            recommendations.push(OptimizationRecommendation {
+            recommendations.push(PulsarOptimizationRecommendation {
                 recommendation_type: RecommendationType::CacheOptimization,
                 description: "Consider implementing more aggressive caching for hot nodes"
                     .to_string(),
@@ -415,9 +415,12 @@ pub struct QueryExecutionResult {
     pub shards_accessed: u32,
 }
 
+/// Backwards-compat alias for [`PulsarOptimizationRecommendation`].
+pub type OptimizationRecommendation = PulsarOptimizationRecommendation;
+
 /// Optimization recommendation
 #[derive(Debug, Clone)]
-pub struct OptimizationRecommendation {
+pub struct PulsarOptimizationRecommendation {
     pub recommendation_type: RecommendationType,
     pub description: String,
     pub impact: RecommendationImpact,

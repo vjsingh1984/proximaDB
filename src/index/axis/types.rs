@@ -347,7 +347,7 @@ pub struct AxisConfig {
     pub strategy_config: StrategyConfig,
 
     /// Migration configuration
-    pub migration_config: MigrationConfig,
+    pub migration_config: AxisMigrationConfig,
 
     /// Monitoring configuration
     pub monitoring_config: AxisMonitoringConfig,
@@ -382,16 +382,19 @@ impl Default for StrategyConfig {
     }
 }
 
+/// Backwards-compat alias for [`AxisMigrationConfig`].
+pub type MigrationConfig = AxisMigrationConfig;
+
 /// Migration configuration
 #[derive(Debug, Clone)]
-pub struct MigrationConfig {
+pub struct AxisMigrationConfig {
     /// Minimum performance improvement ratio to trigger a migration.
     pub improvement_threshold: f32,
     /// Maximum number of index migrations running simultaneously.
     pub max_concurrent_migrations: usize,
 }
 
-impl Default for MigrationConfig {
+impl Default for AxisMigrationConfig {
     fn default() -> Self {
         Self {
             improvement_threshold: 0.1,
@@ -418,7 +421,7 @@ impl Default for AxisConfig {
                 max_memory_usage: 0.8,
             },
             strategy_config: StrategyConfig::default(),
-            migration_config: MigrationConfig::default(),
+            migration_config: AxisMigrationConfig::default(),
             monitoring_config: AxisMonitoringConfig::default(),
         }
     }
