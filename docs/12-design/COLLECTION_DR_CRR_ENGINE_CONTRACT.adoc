@@ -37,8 +37,11 @@ Two layers, two homes:
 * `docs/12-design/RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc`
 * `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`
 * `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`
+* `crates/control/proximadb-catalog/src/lib.rs` (extended `CatalogNamespace`)
 * `crates/control/proximadb-catalog/src/oltp.rs`
 * `src/catalog/tenant_tier.rs`
+* `src/storage/persistence/write_ahead_log/manifest/` (anchors for restore)
+* `src/storage/trait_components/path_resolver.rs` (consolidation target)
 * `src/storage/persistence/filesystem/s3.rs`
 * `src/storage/persistence/filesystem/azure.rs`
 * `src/storage/tiering/**`
@@ -63,10 +66,17 @@ policy authority, and not a customer-mutable storage surface.
   collection.
 
 | D2
-| Is namespace tied to tenant ID?
-| Yes. Physical storage paths include stable `tenant_id`, stable
-  `namespace_id`, and stable `collection_id`. Human namespace names are labels
-  and must not drive object movement on rename.
+| Is namespace tied to tenant ID? How does that relate to the existing
+  Iceberg-REST `CatalogNamespace`?
+| Yes, and we reuse the existing `CatalogNamespace`
+  (`crates/control/proximadb-catalog/src/lib.rs:23-79`) rather than
+  introducing a parallel concept. The Iceberg-REST `levels` field stays for
+  federation. We add four new fields — `namespace_id` (server-issued ULID,
+  stable, drives physical paths and IAM scoping), `tenant_id` (mandatory
+  owning tenant), `region_home` (where authoritative writes land), and
+  `default_dr_region_pair_id` (optional inheritance default). Human
+  namespace names (`levels`, `name`) are labels and must not drive object
+  movement on rename. See "Namespace As The DR Authority Boundary" below.
 
 | D3
 | Can customers turn DR off?
@@ -186,26 +196,72 @@ flowchart TB
 
 === Namespace As The DR Authority Boundary
 
-A namespace is a stable, tenant-owned container of collections that the
-engine uses to:
+The engine extends the existing `CatalogNamespace`
+(`crates/control/proximadb-catalog/src/lib.rs:23-79`) rather than
+introducing a parallel multi-tenant container. `CatalogNamespace` already
+serves Iceberg-REST federation via hierarchical `levels: Vec<String>`,
+plus `properties`, `owner`, `location`, and `created_at_ms` /
+`updated_at_ms`. DR adds four engine-authoritative fields on top:
 
-* anchor the physical object prefix used for replication;
-* group collections that share a replication context;
-* draw the only safe authority boundary for provider rule filters.
+[source,rust]
+----
+pub struct CatalogNamespace {
+    // --- Existing Iceberg-REST federation fields (unchanged) ---
+    pub levels: Vec<String>,                   // hierarchy, mutable
+    pub properties: HashMap<String, String>,
+    pub owner: Option<String>,
+    pub location: Option<String>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
 
-A namespace has:
+    // --- New fields added by this contract ---
+    /// Opaque, stable, server-issued ULID. Never reused, never changes on
+    /// rename. Drives physical paths and provider rule filters.
+    pub namespace_id: String,
+    /// Owning tenant. Mandatory. A namespace cannot be re-parented.
+    pub tenant_id: String,
+    /// Region where authoritative writes land for this namespace.
+    pub region_home: Option<String>,
+    /// Optional operator-curated default that new collections in this
+    /// namespace inherit at DR enablement time.
+    pub default_dr_region_pair_id: Option<String>,
+}
+----
 
-* `namespace_id`: opaque, stable, server-issued ULID. Never reused. Never
-  changes on rename. Drives physical paths and provider rule filters.
-* `name`: human label, mutable, never used for object paths or IAM scoping.
-* `tenant_id`: owning tenant. A namespace cannot be re-parented.
-* `region_home`: where authoritative writes land.
-* `default_dr_region_pair_id`: optional default that new collections inherit
-  on DR enablement (operator-defined region pairs).
+How the two roles coexist:
+
+* `levels` and `name` are human-readable labels used by Iceberg-REST clients
+  and the SQL surface. They are mutable, do not drive object paths, and do
+  not appear in provider rule filters.
+* `namespace_id` is the engine's authoritative identifier. It drives the
+  physical path layout `data/{tenant_id}/{namespace_id}/{collection_id}/`
+  and the prefix filter passed to provider replication rules. Rename of
+  `levels` does not move objects or invalidate provider rules.
+* `tenant_id` is the multi-tenant authority root. The engine refuses to
+  load any `CatalogNamespace` row without a non-null `tenant_id` once the
+  contract's P1 migration completes.
 
 Per-collection DR policy is created underneath this boundary, never across
 it. The provider replication filter is therefore always a subtree of
 `data/{tenant_id}/{namespace_id}/`.
+
+=== Backwards Compatibility For Existing Namespaces
+
+The xCatalog schema migration that adds `namespace_id`, `tenant_id`,
+`region_home`, and `default_dr_region_pair_id` follows these rules:
+
+. Existing `CatalogNamespace` rows are backfilled with new ULIDs
+  (`namespace_id`).
+. Existing rows are assigned a default tenant id
+  (`tenant_id = "tnt_legacy_system"`) so the NOT NULL constraint can be
+  added safely. Operator policy is responsible for re-parenting legacy
+  namespaces to real tenants before exposing them to DR.
+. `region_home` and `default_dr_region_pair_id` stay nullable; only
+  namespaces participating in DR need them set.
+. `CatalogNamespace::new()` and other constructors are extended to take
+  `tenant_id` (mandatory) and to generate `namespace_id` automatically.
+. The Iceberg-REST handler returns only the federation fields to keep wire
+  compatibility with external Iceberg clients.
 
 === Tenant, Namespace, Collection
 
@@ -875,17 +931,31 @@ Audit:
 | Add this engine contract, link from the architecture index.
 | Completed
 
+| P0.5
+| Namespace extension
+| Extend `CatalogNamespace` with `namespace_id` (ULID), `tenant_id`,
+  `region_home`, `default_dr_region_pair_id`. Add migration that backfills
+  ULIDs and assigns legacy rows to `tnt_legacy_system`. Update Iceberg-REST
+  handler to project only federation fields. Prerequisite for every other
+  phase.
+| Not started
+
 | P1
 | xCatalog metadata
-| Add `xcatalog_collection_dr_policies`, `xcatalog_collection_dr_events`, typed Rust policy
-  structs, and namespace/collection delete guards.
+| Add `xcatalog_collection_dr_policies`, `xcatalog_collection_dr_events`,
+  typed Rust policy structs, and namespace/collection delete guards.
+  Depends on P0.5.
 | Not started
 
 | P2
 | Storage path contract
-| Make object path resolver emit
-  `data/{tenant_id}/{namespace_id}/{collection_id}/...` and reject DR for
-  legacy paths that cannot be prefix-scoped. Wire `StoragePoolClass` guard.
+| Consolidate the ad-hoc path builders in
+  `src/storage/persistence/filesystem/`,
+  `src/storage/persistence/write_ahead_log/`, and `src/storage/engines/` into
+  the single `CollectionPathResolver`. Make it emit
+  `data/{tenant_id}/{namespace_id}/{collection_id}/...` from the extended
+  `CatalogNamespace` and reject DR for legacy collections that cannot be
+  prefix-scoped. Wire `StoragePoolClass` guard. Depends on P0.5.
 | Not started
 
 | P3
