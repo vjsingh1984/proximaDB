@@ -482,6 +482,35 @@ pub struct CatalogTableSchema {
     /// and open-format planners.
     #[serde(default)]
     pub compression_stats_profiles: Vec<CatalogCompressionStatsProfile>,
+
+    // === Embedding-precision rollout (PR 6 of EMBEDDING_PRECISION_LLD_2026_05_22) ===
+    /// Reference to the precision policy row in `embedding_precision_policy`.
+    /// `None` = inherit the cluster's `GLOBAL_DEFAULT_POLICY_ID` seed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding_precision_policy_id: Option<String>,
+    /// Locked policy version this collection's writes resolve against. Bumps
+    /// when an operator promotes the collection to a new policy revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding_precision_policy_version: Option<u64>,
+    /// Monotonically-increasing epoch tagged onto every WAL record + segment
+    /// header. Starts at 0; bumped each time the canonical precision changes.
+    #[serde(default)]
+    pub current_precision_epoch: u64,
+    /// Canonical (default) precision for new writes. Legacy schemas
+    /// deserialize as `Fp32` via `Default`.
+    #[serde(default)]
+    pub canonical_embedding_precision: proximadb_records::EmbeddingScalarType,
+    /// Precisions ingest will accept (subject to `ingest_mismatch` policy).
+    /// Empty = inherit from policy.
+    #[serde(default)]
+    pub allowed_embedding_precisions: Vec<proximadb_records::EmbeddingScalarType>,
+    /// Per-metric recall@10/@100 SLO; LLD §Q13 defaults seeded automatically.
+    #[serde(default)]
+    pub embedding_recall_slo: embedding_precision_policy::RecallSlo,
+    /// Migration lifecycle state for in-flight precision changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub precision_migration_state: Option<embedding_precision_policy::PrecisionMigrationState>,
+
     /// Schema version
     pub schema_version: i32,
     /// Table properties
@@ -515,6 +544,14 @@ impl Default for CatalogTableSchema {
             props_auto_promotion: PropsAutoPromotionPolicy::default(),
             observability_compression: None,
             compression_stats_profiles: Vec::new(),
+            // PR 6: inherit cluster default policy; fp32-only baseline.
+            embedding_precision_policy_id: None,
+            embedding_precision_policy_version: None,
+            current_precision_epoch: 0,
+            canonical_embedding_precision: proximadb_records::EmbeddingScalarType::Fp32,
+            allowed_embedding_precisions: Vec::new(),
+            embedding_recall_slo: embedding_precision_policy::RecallSlo::lld_defaults(),
+            precision_migration_state: None,
             schema_version: 1,
             properties: HashMap::new(),
             location: None,
@@ -2987,6 +3024,90 @@ mod tests {
         assert!(
             stats.is_stale(1_000_000, 60_000),
             "stats older than TTL must be stale"
+        );
+    }
+
+    // === PR 6b: CatalogTableSchema precision fields ===
+
+    #[test]
+    fn catalog_table_schema_default_inherits_global_precision_policy() {
+        let schema = CatalogTableSchema::default();
+        assert!(schema.embedding_precision_policy_id.is_none());
+        assert!(schema.embedding_precision_policy_version.is_none());
+        assert_eq!(schema.current_precision_epoch, 0);
+        assert_eq!(
+            schema.canonical_embedding_precision,
+            proximadb_records::EmbeddingScalarType::Fp32
+        );
+        assert!(schema.allowed_embedding_precisions.is_empty());
+        let slo = schema.embedding_recall_slo;
+        assert_eq!(slo.cosine.at_10, 0.99);
+        assert_eq!(slo.dot.at_10, 0.995);
+        assert!(schema.precision_migration_state.is_none());
+    }
+
+    #[test]
+    fn catalog_table_schema_serde_back_compat_with_pre_pr6_json() {
+        let pre_pr6_json = serde_json::json!({
+            "name": "legacy_collection",
+            "columns": [],
+            "primary_key": [],
+            "indexes": [],
+            "schema_version": 1,
+            "properties": {},
+            "location": null,
+            "created_at_ms": 1700000000000_i64,
+            "updated_at_ms": 1700000000000_i64,
+        });
+        let schema: CatalogTableSchema = serde_json::from_value(pre_pr6_json).unwrap();
+        assert_eq!(schema.name, "legacy_collection");
+        assert!(schema.embedding_precision_policy_id.is_none());
+        assert_eq!(schema.current_precision_epoch, 0);
+        assert_eq!(
+            schema.canonical_embedding_precision,
+            proximadb_records::EmbeddingScalarType::Fp32
+        );
+    }
+
+    #[test]
+    fn catalog_table_schema_serde_omits_none_policy_fields() {
+        let schema = CatalogTableSchema::new("test");
+        let json = serde_json::to_value(&schema).unwrap();
+        assert!(json.get("embedding_precision_policy_id").is_none());
+        assert!(json.get("embedding_precision_policy_version").is_none());
+        assert!(json.get("precision_migration_state").is_none());
+    }
+
+    #[test]
+    fn catalog_table_schema_round_trips_explicit_policy_reference() {
+        let mut schema = CatalogTableSchema::new("fp16_collection");
+        schema.embedding_precision_policy_id = Some("tenant_business_fp16".to_string());
+        schema.embedding_precision_policy_version = Some(7);
+        schema.current_precision_epoch = 3;
+        schema.canonical_embedding_precision = proximadb_records::EmbeddingScalarType::Fp16;
+        schema.allowed_embedding_precisions = vec![
+            proximadb_records::EmbeddingScalarType::Fp16,
+            proximadb_records::EmbeddingScalarType::Fp32,
+        ];
+        schema.precision_migration_state =
+            Some(embedding_precision_policy::PrecisionMigrationState::ShadowingTarget);
+
+        let json = serde_json::to_string(&schema).unwrap();
+        let back: CatalogTableSchema = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.embedding_precision_policy_id.as_deref(),
+            Some("tenant_business_fp16")
+        );
+        assert_eq!(back.embedding_precision_policy_version, Some(7));
+        assert_eq!(back.current_precision_epoch, 3);
+        assert_eq!(
+            back.canonical_embedding_precision,
+            proximadb_records::EmbeddingScalarType::Fp16
+        );
+        assert_eq!(back.allowed_embedding_precisions.len(), 2);
+        assert_eq!(
+            back.precision_migration_state,
+            Some(embedding_precision_policy::PrecisionMigrationState::ShadowingTarget)
         );
     }
 }
