@@ -103,6 +103,9 @@ pub mod workload_mix;
 /// Tenant Prometheus label resolver — bundles tenant_id → bounded
 /// label resolution with the LLD's cardinality-safety guardrail.
 pub mod tenant_label;
+/// Embedding-precision metrics — Prometheus gauges/counters per
+/// EMBEDDING_PRECISION_LLD_2026_05_22 §"Observability (Q11)" (PR 7b).
+pub mod precision_metrics;
 
 use std::collections::HashMap;
 use std::sync::Arc;

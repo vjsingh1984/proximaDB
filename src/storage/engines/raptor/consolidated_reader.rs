@@ -1111,12 +1111,12 @@ impl RaptorReader {
     // Reason: Redundant - logic inlined directly where needed
     // Benefit: Reduced stack depth, less function call overhead
 
-    /// Read file metadata - leverages zero-copy filesystem's integrated caching
+    /// Read file metadata. Caches the deserialized `RaptorFileMetadata` per
+    /// file path and validates the cache against the current (size, modified)
+    /// stat — so the footer is only re-read when the file actually changes.
     async fn read_metadata(&self, file_path: &str) -> Result<RaptorFileMetadata> {
         tracing::debug!("RAPTOR read_metadata: Starting for file: {}", file_path);
 
-        // The zero-copy filesystem automatically handles caching through CrossCacheOrchestrator
-        // using the metadata serializer/deserializer we provided
         let cache_key = format!("{}:{}:raptor", file_path, self.collection_id);
 
         // Track access pattern for predictive prefetching
@@ -1124,13 +1124,25 @@ impl RaptorReader {
             .pattern_tracker()
             .track_access_async(cache_key.clone(), CacheType::Metadata);
 
-        // The zero-copy system handles metadata caching internally
-        // For now, we'll always read from disk and let the filesystem layer cache it
-
-        // Fallback: DIRECT file read with proper footer size detection
-        // Get file size using filesystem API
+        // Stat the file first so we can validate the cache.
         let file_metadata = self.filesystem.metadata(file_path).await?;
-        let file_size = file_metadata.size as usize;
+        let file_size_u64 = file_metadata.size;
+        let modified = file_metadata.modified;
+        let file_size = file_size_u64 as usize;
+
+        // Cache hit: same path, same size, same modified timestamp.
+        if let Some(entry) = self.metadata_cache.get(file_path) {
+            if entry.size == file_size_u64 && entry.modified == modified {
+                tracing::debug!(
+                    "RAPTOR read_metadata: cache hit for {} (size={}, modified={:?})",
+                    file_path,
+                    file_size_u64,
+                    modified
+                );
+                return Ok((*entry.metadata).clone());
+            }
+        }
+
         tracing::debug!("RAPTOR read_metadata: File size: {} bytes", file_size);
 
         // Check if file is too small to have a footer
@@ -1202,14 +1214,24 @@ impl RaptorReader {
         let footer: RaptorFooter = bincode::deserialize(&footer_data)?;
         let metadata = footer.file_metadata;
 
-        tracing::info!(
-            "RAPTOR read_metadata: Successfully loaded metadata with {} row groups, {} total vectors",
+        // Demoted from info! to debug!: this fires on every cache miss and is
+        // not actionable in steady state.
+        tracing::debug!(
+            "RAPTOR read_metadata: loaded metadata with {} row groups, {} total vectors",
             metadata.row_groups.len(),
             metadata.total_vectors
         );
 
-        // Metadata caching is handled by the zero-copy filesystem infrastructure
-        // No need to manually cache here
+        // Populate cache: any subsequent read with the same (size, modified)
+        // stat returns the cached metadata without re-reading the footer.
+        self.metadata_cache.insert(
+            file_path.to_string(),
+            CachedFileMetadata {
+                metadata: Arc::new(metadata.clone()),
+                size: file_size_u64,
+                modified,
+            },
+        );
 
         Ok(metadata)
     }
