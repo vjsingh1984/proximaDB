@@ -826,6 +826,63 @@ failures, and provider-side retries:
 * Reconciler emits `xcatalog_collection_dr_events` for every state-changing call,
   including the lease holder and provider response IDs.
 
+== LLD: Engine API Surface
+
+Operators interact with the engine via an internal Rust crate API, not via
+the customer-facing REST/gRPC surface. The engine exposes the DR control
+operations as a single trait:
+
+[source,rust]
+----
+#[async_trait::async_trait]
+pub trait CollectionDrPolicyStore: Send + Sync {
+    /// Create a new policy in `PendingBillingApproval`. Refuses
+    /// ExternalAuthoritative collections; refuses if any IDs are unknown
+    /// or if the namespace has no `region_home`.
+    async fn create(&self, req: CreatePolicyRequest)
+        -> Result<CollectionDrPolicy, DrApiError>;
+
+    /// Move from PendingBillingApproval -> PendingProviderProvisioning.
+    /// Requires `billing_approval_id` and `cost_owner_tenant_id` to be set.
+    async fn approve_billing(&self, policy_id: &str, approval: BillingApproval)
+        -> Result<CollectionDrPolicy, DrApiError>;
+
+    /// Begin retirement. Customer-initiated.
+    async fn request_retire(&self, policy_id: &str, ack: RetirementAck)
+        -> Result<CollectionDrPolicy, DrApiError>;
+
+    /// Ops-only emergency suspend.
+    async fn suspend(&self, policy_id: &str, reason: &str)
+        -> Result<CollectionDrPolicy, DrApiError>;
+
+    /// Ops-only resume from suspension.
+    async fn resume(&self, policy_id: &str)
+        -> Result<CollectionDrPolicy, DrApiError>;
+
+    /// Read-only fetches.
+    async fn get(&self, policy_id: &str)
+        -> Result<Option<CollectionDrPolicy>, DrApiError>;
+    async fn list_by_tenant(&self, tenant_id: &str)
+        -> Result<Vec<CollectionDrPolicy>, DrApiError>;
+    async fn list_by_collection(&self, tenant_id: &str, collection_id: &str)
+        -> Result<Option<CollectionDrPolicy>, DrApiError>;
+}
+----
+
+`DrApiError` distinguishes:
+
+* `ValidationFailed` (caller error — wrong IDs, missing fields);
+* `Unauthorized` (caller lacks the operator service-account capability);
+* `InvalidStateTransition` (state machine refused);
+* `ExternalAuthoritativeRefused` (per D8);
+* `UnsupportedProvider` (per S13);
+* `StoreUnavailable` (xCatalog transient error — retryable).
+
+The operator's customer-facing HTTP/gRPC layer is a thin facade over this
+trait. The trait is the only sanctioned way to mutate DR state; any code
+path that touches `xcatalog_collection_dr_policies` directly is treated as
+a bug.
+
 == LLD: Provider Adapter Contract
 
 The engine does not embed provider-specific rule shapes. It calls a provider
@@ -1172,6 +1229,25 @@ Operational tests (outside engine repo; tracked by operator):
 * billing reconciliation against provider usage;
 * KMS permission revocation alert;
 * destination write rejection.
+
+== Out Of Scope
+
+The following concerns are real but explicitly outside this contract; they
+are tracked in separate docs or operator runbooks:
+
+* **xCatalog multi-region availability.** If xCatalog itself lives in one
+  region and that region fails, the reconciler stops driving. Data-plane
+  bytes continue to replicate at the provider, but no state transitions
+  happen until xCatalog comes back. Cross-region xCatalog is a separate
+  control-plane story.
+* **Cross-region failover of customer-facing endpoints.** Routing customer
+  traffic to the DR region is an operator/DNS concern, not engine state.
+* **Index byte-equivalence at the destination.** Today the contract treats
+  indexes as rebuildable from segments. A future addition may replicate
+  index objects for lower RTO; see open questions.
+* **Backup/restore for the engine's own metadata stores** (xCatalog
+  database, manifest store). Handled by the operator's general
+  backup/restore policy, not this contract.
 
 == Operator Coordination
 
