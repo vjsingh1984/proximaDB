@@ -451,9 +451,13 @@ pub fn group_by_row_group(vectors: &[Vec<f32>], row_group_size: usize) -> Vec<Ve
 
 /// Performance metrics for tracking execution
 /// Source: optimized_operations.rs
+/// Backwards-compat alias for [`NovaTestPerformanceMetrics`].
+#[allow(dead_code)]
+pub type PerformanceMetrics = NovaTestPerformanceMetrics;
+
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
-pub struct PerformanceMetrics {
+pub struct NovaTestPerformanceMetrics {
     pub io_operations: u64,
     pub bytes_read: u64,
     pub cache_hits: u64,
@@ -462,7 +466,7 @@ pub struct PerformanceMetrics {
     pub cpu_time_ms: f64,
 }
 
-impl PerformanceMetrics {
+impl NovaTestPerformanceMetrics {
     /// Create new performance metrics
     #[allow(dead_code)]
     pub fn new() -> Self {
@@ -507,7 +511,7 @@ impl PerformanceMetrics {
     }
 }
 
-impl Default for PerformanceMetrics {
+impl Default for NovaTestPerformanceMetrics {
     fn default() -> Self {
         Self::new()
     }
@@ -676,7 +680,7 @@ mod tests {
 
     #[test]
     fn test_performance_metrics() {
-        let mut metrics = PerformanceMetrics::new();
+        let mut metrics = NovaTestPerformanceMetrics::new();
         metrics.record_io(1024);
         metrics.record_cache_hit();
         metrics.record_cache_miss();

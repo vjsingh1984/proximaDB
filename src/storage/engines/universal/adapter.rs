@@ -155,7 +155,7 @@ pub struct DistanceComputationResult {
     pub quality_metrics: QualityMetrics,
 
     /// Performance metrics
-    pub performance_metrics: PerformanceMetrics,
+    pub performance_metrics: UniversalAdapterPerformanceMetrics,
 
     /// Stages used in progressive refinement
     pub refinement_stages: Vec<RefinementStage>,
@@ -170,9 +170,12 @@ pub struct DistanceComputationResult {
     pub computation_time_us: u64,
 }
 
+/// Backwards-compat alias for [`UniversalAdapterPerformanceMetrics`].
+pub type PerformanceMetrics = UniversalAdapterPerformanceMetrics;
+
 /// Performance metrics for distance computation
 #[derive(Debug, Clone)]
-pub struct PerformanceMetrics {
+pub struct UniversalAdapterPerformanceMetrics {
     /// Total computation time in microseconds
     pub total_time_us: u64,
 
@@ -381,7 +384,7 @@ impl UniversalDistanceAdapter {
             results: refinement_result.similarity_results,
             vector_ids: refinement_result.vector_ids,
             quality_metrics: refinement_result.quality_metrics,
-            performance_metrics: PerformanceMetrics {
+            performance_metrics: UniversalAdapterPerformanceMetrics {
                 total_time_us: computation_time_us,
                 stage_times_us: refinement_result.stage_times,
                 distance_calculations: refinement_result.total_distance_calculations,

@@ -89,7 +89,7 @@ pub struct BusinessMetrics {
     /// Operational efficiency metrics
     pub operational_metrics: OperationalMetrics,
     /// Performance and throughput metrics
-    pub performance_metrics: PerformanceMetrics,
+    pub performance_metrics: BiEnginePerformanceMetrics,
 }
 
 /// Revenue-related metrics
@@ -131,9 +131,12 @@ pub struct OperationalMetrics {
     pub resource_utilization_percent: Option<f64>,
 }
 
+/// Backwards-compat alias for [`BiEnginePerformanceMetrics`].
+pub type PerformanceMetrics = BiEnginePerformanceMetrics;
+
 /// Performance metrics
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct PerformanceMetrics {
+pub struct BiEnginePerformanceMetrics {
     /// Queries processed per second
     pub queries_per_second: Option<f64>,
     /// Cache hit rate percentage
@@ -383,7 +386,7 @@ impl BusinessIntelligenceEngine {
             resource_utilization_percent: None,
         };
 
-        let mut performance_metrics = PerformanceMetrics {
+        let mut performance_metrics = BiEnginePerformanceMetrics {
             queries_per_second: None,
             cache_hit_rate_percent: None,
             storage_efficiency_percent: None,
@@ -445,7 +448,7 @@ impl BusinessIntelligenceEngine {
         revenue_metrics: &mut RevenueMetrics,
         customer_metrics: &mut CustomerMetrics,
         operational_metrics: &mut OperationalMetrics,
-        performance_metrics: &mut PerformanceMetrics,
+        performance_metrics: &mut BiEnginePerformanceMetrics,
     ) {
         // Simple pattern matching to categorize and process results
         let query_lower = query.to_lowercase();

@@ -20,7 +20,7 @@ pub struct ColumnarUtilities {
     config: ColumnarConfig,
 
     /// Performance metrics cache
-    metrics_cache: Arc<RwLock<HashMap<String, PerformanceMetrics>>>,
+    metrics_cache: Arc<RwLock<HashMap<String, ColumnarUtilsPerformanceMetrics>>>,
 }
 
 /// Recommend a Parquet page size given row group sizing and vector characteristics.
@@ -408,7 +408,7 @@ impl ColumnarUtilities {
     ) -> Result<()> {
         debug!("Recording metrics for operation: {}", operation);
 
-        let perf_metrics = PerformanceMetrics {
+        let perf_metrics = ColumnarUtilsPerformanceMetrics {
             operation: operation.to_string(),
             duration_ms: metrics.duration_ms,
             bytes_processed: metrics.bytes_processed,
@@ -436,7 +436,7 @@ impl ColumnarUtilities {
     pub async fn get_performance_stats(
         &self,
         operation: Option<&str>,
-    ) -> Result<Vec<PerformanceMetrics>> {
+    ) -> Result<Vec<ColumnarUtilsPerformanceMetrics>> {
         let cache = self.metrics_cache.read().await;
 
         if let Some(op) = operation {
@@ -571,9 +571,12 @@ pub struct OperationMetrics {
     pub memory_usage_bytes: u64,
 }
 
+/// Backwards-compat alias for [`ColumnarUtilsPerformanceMetrics`].
+pub type PerformanceMetrics = ColumnarUtilsPerformanceMetrics;
+
 /// Performance metrics
 #[derive(Debug, Clone)]
-pub struct PerformanceMetrics {
+pub struct ColumnarUtilsPerformanceMetrics {
     pub operation: String,
     pub duration_ms: f64,
     pub bytes_processed: u64,

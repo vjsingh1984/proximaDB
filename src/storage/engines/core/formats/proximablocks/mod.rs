@@ -240,6 +240,8 @@ pub mod index_structures;
 pub mod batch_operations;
 pub mod constants;
 pub mod header_metadata;
+// Embedding-precision rollout (PR 5 of EMBEDDING_PRECISION_LLD_2026_05_22).
+pub mod per_column_alignment;
 pub mod spatial_clustering; // PCA-based clustering and Z-Order spatial indexing
 pub mod spatial_encoding; // 512-bit spatial codes for high-dimensional embeddings
 pub mod spatial_pruning; // SpatialPruner for unified block selection
