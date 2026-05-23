@@ -1045,7 +1045,7 @@ impl SwiftFile {
         &self,
         query: &[f32],
         top_k: usize,
-        filter: Option<MetadataFilter>,
+        filter: Option<SwiftMetadataFilter>,
         prune: &crate::core::search::BlockPruneConfig,
     ) -> Result<Vec<ProximaRecord>> {
         progressive_search::search_progressive(self, query, top_k, filter, prune).await
@@ -1611,9 +1611,12 @@ impl SwiftFile {
     }
 }
 
+/// Backwards-compat alias for [`SwiftMetadataFilter`].
+pub type MetadataFilter = SwiftMetadataFilter;
+
 /// Metadata filter for queries
 #[derive(Debug, Clone)]
-pub struct MetadataFilter {
+pub struct SwiftMetadataFilter {
     pub conditions: Vec<FilterCondition>,
 }
 

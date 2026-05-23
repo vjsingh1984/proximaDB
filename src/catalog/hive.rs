@@ -282,6 +282,11 @@ impl Catalog for HiveCatalog {
             location: Some(format!("/warehouse/{}", db_name)),
             created_at_ms: now,
             updated_at_ms: now,
+            namespace_id: None,
+            tenant_id: None,
+            region_home: None,
+            default_dr_region_pair_id: None,
+            storage_pool_class: Default::default(),
         })
     }
 
@@ -328,6 +333,11 @@ impl Catalog for HiveCatalog {
                 location: Some(db.location.clone()),
                 created_at_ms: db.created_at,
                 updated_at_ms: db.created_at,
+                namespace_id: None,
+                tenant_id: None,
+                region_home: None,
+                default_dr_region_pair_id: None,
+                storage_pool_class: Default::default(),
             })
             .collect();
 
@@ -354,6 +364,11 @@ impl Catalog for HiveCatalog {
             location: Some(db.location.clone()),
             created_at_ms: db.created_at,
             updated_at_ms: db.created_at,
+            namespace_id: None,
+            tenant_id: None,
+            region_home: None,
+            default_dr_region_pair_id: None,
+            storage_pool_class: Default::default(),
         })
     }
 

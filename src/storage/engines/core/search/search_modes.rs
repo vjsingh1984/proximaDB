@@ -5,7 +5,10 @@ use std::collections::HashMap;
 
 use crate::compute::distance_computation::DistanceMetric;
 
-/// Placeholder for metadata filtering - use crate::query::query_optimizer::UnifiedSearchModeMetadataFilter instead
+/// Backwards-compat alias for [`SearchModeMetadataFilter`].
+pub type MetadataFilter = SearchModeMetadataFilter;
+
+/// Placeholder for metadata filtering - use crate::query::query_optimizer::UnifiedMetadataFilter instead
 #[derive(Debug, Clone)]
 pub struct SearchModeMetadataFilter {
     pub placeholder: bool,

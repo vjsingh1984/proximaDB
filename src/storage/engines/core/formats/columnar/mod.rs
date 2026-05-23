@@ -185,7 +185,7 @@ pub use parquet_write_engine::{
 };
 // Quantization now handled by unified compute module
 pub use self::metadata_filter_strategy::{
-    FilterPerformanceMetrics, ColumnarMetadataFilterAnalyzer, ColumnarMetadataFilterStrategy,
+    FilterPerformanceMetrics, MetadataFilterAnalyzer, MetadataFilterStrategy,
 };
 pub use batch_operations::ColumnarBatchOperations;
 pub use columnar_schema::ColumnarSchema;

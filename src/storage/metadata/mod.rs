@@ -122,9 +122,12 @@ pub enum MetadataOperation {
     UpdateSystemMetadata(SystemMetadata),
 }
 
+/// Backwards-compat alias for [`StorageMetadataFilter`].
+pub type MetadataFilter = StorageMetadataFilter;
+
 /// Metadata query filters
 #[derive(Default)]
-pub struct MetadataFilter {
+pub struct StorageMetadataFilter {
     /// Filter by access pattern
     pub access_pattern: Option<String>,
 
@@ -145,9 +148,9 @@ pub struct MetadataFilter {
         Option<Box<dyn Fn(&crate::proto::proximadb_v1::Collection) -> bool + Send + Sync>>,
 }
 
-impl std::fmt::Debug for MetadataFilter {
+impl std::fmt::Debug for StorageMetadataFilter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MetadataFilter")
+        f.debug_struct("StorageMetadataFilter")
             .field("access_pattern", &self.access_pattern)
             .field("tags", &self.tags)
             .field("owner", &self.owner)
@@ -158,7 +161,7 @@ impl std::fmt::Debug for MetadataFilter {
     }
 }
 
-impl Clone for MetadataFilter {
+impl Clone for StorageMetadataFilter {
     fn clone(&self) -> Self {
         Self {
             access_pattern: self.access_pattern.clone(),
@@ -199,7 +202,7 @@ pub trait MetadataStoreInterface: Send + Sync {
     /// List collections with filtering
     async fn list_collections(
         &self,
-        filter: Option<MetadataFilter>,
+        filter: Option<StorageMetadataFilter>,
     ) -> Result<Vec<crate::proto::proximadb_v1::Collection>>;
 
     /// Update collection statistics atomically

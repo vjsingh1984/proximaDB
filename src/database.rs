@@ -870,10 +870,25 @@ async fn open_queue_client_from_resolved(
         topics,
     };
 
-    let queue = proximadb_queue::QueueClient::open(queue_cfg)
+    // Build a FilesystemFactory-backed QueueFs adapter so the queue's
+    // `root` URL can be `file://`, `adls://`, `s3://`, etc. (any
+    // scheme the factory knows). For pure-local file:// roots the
+    // adapter behaves identically to the queue's built-in LocalFs;
+    // for cloud schemes it routes through the factory's per-scheme
+    // backend. This is the unblock for the "object_archive on
+    // adls://" use case the AnvaiOps deployment needs.
+    let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
+    let factory = std::sync::Arc::new(
+        crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)
+            .await
+            .map_err(|e| anyhow::anyhow!("FilesystemFactory init: {}", e))?,
+    );
+    let fs_adapter = crate::services::queue_fs_adapter::FactoryQueueFs::new(factory, &rq.root);
+
+    let queue = proximadb_queue::QueueClient::open_with_fs(queue_cfg, Some(fs_adapter))
         .await
         .map_err(|e| anyhow::anyhow!("queue open: {}", e))?;
-    tracing::info!("✅ Queue subsystem opened");
+    tracing::info!("✅ Queue subsystem opened (via FilesystemFactory adapter)");
     Ok(queue)
 }
 

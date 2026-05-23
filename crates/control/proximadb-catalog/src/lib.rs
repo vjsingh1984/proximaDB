@@ -21,9 +21,52 @@ pub mod relational;
 pub mod schema;
 pub mod system_columns;
 
-/// Namespace metadata
+/// Storage pool class for a namespace's bytes. The path resolver routes
+/// writes to the matching bucket/container and refuses cross-class writes.
+/// Tier-to-pool mapping is operator policy and lives in the operator layer;
+/// the engine only knows the enum.
+///
+/// See `docs/12-design/COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc` "Storage Pool
+/// Classes".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum StoragePoolClass {
+    /// Shared pool — lowest operational overhead, no per-collection CRR.
+    /// Default for legacy rows backfilled by the P0.5 migration.
+    #[default]
+    Pooled,
+    /// Shared Business pool — prefix-scoped CRR allowed.
+    Business,
+    /// Shared Enterprise pool — stricter KMS, monitoring, and rule budgeting.
+    Enterprise,
+    /// Dedicated bucket/storage-account pair per tenant per region pair.
+    EnterpriseDedicated,
+}
+
+/// Namespace metadata.
+///
+/// Serves two roles:
+///
+/// 1. **Iceberg-REST federation identifier** — `levels`, `properties`,
+///    `owner`, `location`, timestamps. Compatible with the Iceberg REST
+///    catalog wire format.
+/// 2. **Engine multi-tenant authority** — `namespace_id`, `tenant_id`,
+///    `region_home`, `default_dr_region_pair_id`, `storage_pool_class`.
+///    Drives the physical path layout
+///    `data/{tenant_id}/{namespace_id}/{collection_id}/` and the DR
+///    policy authority boundary.
+///
+/// New engine-authoritative fields are `Option<>` for backwards
+/// compatibility with the P0.5 migration. The DR-strict path
+/// (reconciler, path resolver guard) refuses null `namespace_id` /
+/// `tenant_id`. The Iceberg-REST handler projects only the federation
+/// fields so external Iceberg clients see the wire format they expect.
+///
+/// See `docs/12-design/COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc` "Namespace
+/// As The DR Authority Boundary".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogNamespace {
+    // --- Iceberg-REST federation fields (mutable labels) ---
     /// Namespace hierarchy (e.g., ["database", "schema"])
     pub levels: Vec<String>,
     /// Namespace properties
@@ -36,10 +79,40 @@ pub struct CatalogNamespace {
     pub created_at_ms: i64,
     /// Last update timestamp (millis since epoch)
     pub updated_at_ms: i64,
+
+    // --- Engine multi-tenant authority fields (stable identifiers) ---
+    /// Opaque, stable, server-issued ULID. Never reused, never changes on
+    /// rename. Drives physical paths and provider rule filters. `None`
+    /// for legacy rows pending P0.5 migration backfill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace_id: Option<String>,
+    /// Owning tenant. A namespace cannot be re-parented. `None` for
+    /// legacy rows pending migration backfill (target value:
+    /// `"tnt_legacy_system"` until operator re-parents).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant_id: Option<String>,
+    /// Region where authoritative writes land. `None` is allowed only
+    /// for namespaces with no DR policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region_home: Option<String>,
+    /// Operator-curated default that new collections inherit at DR
+    /// enablement time. Recommended canonical form
+    /// `{provider}:{source_region}:{destination_region}`; engine treats
+    /// it as opaque.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_dr_region_pair_id: Option<String>,
+    /// Storage pool class. Path resolver refuses writes that target a
+    /// bucket/container outside the matching class. Defaults to `Pooled`
+    /// for backwards compatibility with legacy rows.
+    #[serde(default)]
+    pub storage_pool_class: StoragePoolClass,
 }
 
 impl CatalogNamespace {
-    /// Create a new namespace
+    /// Create a new namespace with only the Iceberg-REST federation
+    /// fields populated. Engine multi-tenant fields are `None` /
+    /// defaults; use `with_tenant`, `with_namespace_id`, etc. to set
+    /// them when constructing an engine-authoritative namespace.
     pub fn new(levels: Vec<String>) -> Self {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -53,6 +126,11 @@ impl CatalogNamespace {
             location: None,
             created_at_ms: now,
             updated_at_ms: now,
+            namespace_id: None,
+            tenant_id: None,
+            region_home: None,
+            default_dr_region_pair_id: None,
+            storage_pool_class: StoragePoolClass::default(),
         }
     }
 
@@ -77,6 +155,43 @@ impl CatalogNamespace {
     pub fn with_location(mut self, location: impl Into<String>) -> Self {
         self.location = Some(location.into());
         self
+    }
+
+    /// Set the engine-authoritative namespace ID (server-issued ULID).
+    pub fn with_namespace_id(mut self, namespace_id: impl Into<String>) -> Self {
+        self.namespace_id = Some(namespace_id.into());
+        self
+    }
+
+    /// Set the owning tenant.
+    pub fn with_tenant(mut self, tenant_id: impl Into<String>) -> Self {
+        self.tenant_id = Some(tenant_id.into());
+        self
+    }
+
+    /// Set the home region for authoritative writes.
+    pub fn with_region_home(mut self, region: impl Into<String>) -> Self {
+        self.region_home = Some(region.into());
+        self
+    }
+
+    /// Set the default region-pair ID for DR enablement.
+    pub fn with_default_dr_region_pair(mut self, pair_id: impl Into<String>) -> Self {
+        self.default_dr_region_pair_id = Some(pair_id.into());
+        self
+    }
+
+    /// Set the storage pool class.
+    pub fn with_storage_pool_class(mut self, class: StoragePoolClass) -> Self {
+        self.storage_pool_class = class;
+        self
+    }
+
+    /// True when both `namespace_id` and `tenant_id` are populated. The
+    /// DR path resolver and reconciler require this; legacy namespaces
+    /// pending migration backfill return false.
+    pub fn is_dr_addressable(&self) -> bool {
+        self.namespace_id.is_some() && self.tenant_id.is_some()
     }
 }
 
@@ -2089,6 +2204,95 @@ mod tests {
     fn test_namespace_fqn() {
         let ns = CatalogNamespace::new(vec!["catalog".into(), "database".into()]);
         assert_eq!(ns.fqn(), "catalog.database");
+    }
+
+    #[test]
+    fn namespace_defaults_are_legacy_compatible() {
+        // Legacy callers that build a namespace without DR fields get
+        // backwards-compatible defaults: no tenant/namespace ID, no
+        // region home, Pooled pool class. The migration backfills these.
+        let ns = CatalogNamespace::new(vec!["legacy".into()]);
+        assert!(ns.namespace_id.is_none());
+        assert!(ns.tenant_id.is_none());
+        assert!(ns.region_home.is_none());
+        assert!(ns.default_dr_region_pair_id.is_none());
+        assert_eq!(ns.storage_pool_class, StoragePoolClass::Pooled);
+        assert!(!ns.is_dr_addressable());
+    }
+
+    #[test]
+    fn namespace_dr_builders_compose() {
+        let ns = CatalogNamespace::new(vec!["catalog".into(), "db".into()])
+            .with_tenant("tnt_acme")
+            .with_namespace_id("ns_01HX7Q8K2N5R9P3M1B2C3D4E5F")
+            .with_region_home("us-east-1")
+            .with_default_dr_region_pair("aws:us-east-1:us-west-2")
+            .with_storage_pool_class(StoragePoolClass::Business);
+
+        assert_eq!(ns.tenant_id.as_deref(), Some("tnt_acme"));
+        assert_eq!(
+            ns.namespace_id.as_deref(),
+            Some("ns_01HX7Q8K2N5R9P3M1B2C3D4E5F"),
+        );
+        assert_eq!(ns.region_home.as_deref(), Some("us-east-1"));
+        assert_eq!(
+            ns.default_dr_region_pair_id.as_deref(),
+            Some("aws:us-east-1:us-west-2"),
+        );
+        assert_eq!(ns.storage_pool_class, StoragePoolClass::Business);
+        assert!(ns.is_dr_addressable());
+    }
+
+    #[test]
+    fn namespace_serde_round_trips_legacy_rows() {
+        // A namespace serialized before this migration has none of the
+        // new fields. Deserializing must succeed and leave them at
+        // their defaults.
+        let legacy_json = r#"{
+            "levels": ["db", "schema"],
+            "properties": {},
+            "owner": null,
+            "location": null,
+            "created_at_ms": 1000,
+            "updated_at_ms": 2000
+        }"#;
+        let ns: CatalogNamespace = serde_json::from_str(legacy_json)
+            .expect("legacy namespace JSON must deserialize");
+        assert!(ns.namespace_id.is_none());
+        assert!(ns.tenant_id.is_none());
+        assert_eq!(ns.storage_pool_class, StoragePoolClass::Pooled);
+
+        // Re-serializing must skip the None fields so legacy consumers
+        // still see only the federation fields.
+        let reserialized = serde_json::to_string(&ns).expect("serialize");
+        assert!(!reserialized.contains("namespace_id"));
+        assert!(!reserialized.contains("tenant_id"));
+        assert!(!reserialized.contains("region_home"));
+        assert!(!reserialized.contains("default_dr_region_pair_id"));
+        // `storage_pool_class` is non-Option so it does show up; that's
+        // expected because legacy rows backfill to "pooled".
+        assert!(reserialized.contains("\"storage_pool_class\":\"pooled\""));
+    }
+
+    #[test]
+    fn storage_pool_class_serde_uses_snake_case() {
+        let classes = [
+            (StoragePoolClass::Pooled, "\"pooled\""),
+            (StoragePoolClass::Business, "\"business\""),
+            (StoragePoolClass::Enterprise, "\"enterprise\""),
+            (StoragePoolClass::EnterpriseDedicated, "\"enterprise_dedicated\""),
+        ];
+        for (variant, expected_json) in classes {
+            let s = serde_json::to_string(&variant).unwrap();
+            assert_eq!(s, expected_json, "variant {variant:?}");
+            let back: StoragePoolClass = serde_json::from_str(expected_json).unwrap();
+            assert_eq!(back, variant);
+        }
+    }
+
+    #[test]
+    fn storage_pool_class_default_is_pooled() {
+        assert_eq!(StoragePoolClass::default(), StoragePoolClass::Pooled);
     }
 
     #[test]

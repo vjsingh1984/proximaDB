@@ -639,7 +639,7 @@ impl AxisManager {
             self.search_hmgi(collection_id, &query, query.top_k).await?
         } else if has_filters && query.ann_filtering_mode == AnnFilteringMode::Inline {
             // ADR-011 Inline: thread predicate into HNSW walk (ACORN semantics).
-            // build_id_predicate_from_filters converts MetadataFilter list to a Fn(&str)->bool.
+            // build_id_predicate_from_filters converts AxisMetadataFilter list to a Fn(&str)->bool.
             // Non-ID fields pass through (ACORN skip semantics); post-filter handles the rest.
             self.query_hnsw_with_predicate(collection_id, &query)
                 .await?
@@ -862,7 +862,7 @@ impl AxisManager {
             return Ok(Vec::new());
         };
 
-        // Convert MetadataFilter list → FilterExpression for make_id_predicate
+        // Convert AxisMetadataFilter list → FilterExpression for make_id_predicate
         let filter_expr = if query.metadata_filters.is_empty() && query.id_filters.len() == 1 {
             FilterExpression::Comparison {
                 field: "id".to_string(),
@@ -2058,7 +2058,7 @@ pub struct HybridQuery {
     /// Optional vector similarity query component.
     pub vector_query: Option<VectorQuery>,
     /// Metadata field filter predicates.
-    pub metadata_filters: Vec<MetadataFilter>,
+    pub metadata_filters: Vec<AxisMetadataFilter>,
     /// Exact vector ID filters for point lookups.
     pub id_filters: Vec<VectorId>,
     /// Maximum number of results to return.
@@ -2088,9 +2088,12 @@ pub enum VectorQuery {
     },
 }
 
+/// Backwards-compat alias for [`AxisMetadataFilter`].
+pub type MetadataFilter = AxisMetadataFilter;
+
 /// Metadata filter
 #[derive(Debug, Clone)]
-pub struct MetadataFilter {
+pub struct AxisMetadataFilter {
     /// Name of the metadata field to filter on.
     pub field: String,
     /// Comparison operator for the filter.
@@ -2253,7 +2256,7 @@ impl AxisManager {
 
     fn metadata_filters_to_expression(
         &self,
-        filters: &[MetadataFilter],
+        filters: &[AxisMetadataFilter],
     ) -> crate::core::search::FilterExpression {
         crate::core::search::FilterExpression::And(
             filters
