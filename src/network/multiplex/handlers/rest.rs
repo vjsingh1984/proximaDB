@@ -81,7 +81,30 @@ impl RestHandler {
         let body = serde_json::json!({
             "status": "healthy",
             "version": env!("CARGO_PKG_VERSION"),
-            "mode": "unified"
+            "mode": "unified",
+            // PR 3 of EMBEDDING_PRECISION_LLD_2026_05_22.adoc §"Feature Flag":
+            // operators check this before flipping
+            // `PROXIMADB_EMBED_PRECISION_SCHEMA_V2=true` so they can confirm
+            // every node in the cluster knows how to read v2 records.
+            "precision_schema_v2_capable": true,
+        });
+
+        Response::builder()
+            .status(StatusCode::OK)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap_or_else(response_builder_fallback)
+    }
+
+    /// Handle `/version` — minimal payload for rolling-deploy capability
+    /// checks. Per EMBEDDING_PRECISION_LLD_2026_05_22.adoc §"Feature Flag and
+    /// Rolling Deploy" PR 3, operators poll this endpoint across the cluster
+    /// to confirm every node is V2-capable before flipping the env flag on.
+    fn handle_version(&self) -> Response<Body> {
+        let body = serde_json::json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "name": env!("CARGO_PKG_NAME"),
+            "precision_schema_v2_capable": true,
         });
 
         Response::builder()
@@ -737,6 +760,9 @@ impl ProtocolHandler for RestHandler {
                 "/health" | "/health/live" | "/health/ready" => {
                     return handler.handle_health();
                 }
+                "/version" => {
+                    return handler.handle_version();
+                }
                 "/metrics" => {
                     if let Some(ref cfg) = config {
                         return RestHandler::handle_metrics_async(cfg).await;
@@ -910,5 +936,36 @@ mod tests {
     fn test_rest_handler_builder() {
         let handler = RestHandlerBuilder::new().ready().build();
         assert!(handler.is_ready());
+    }
+
+    // === PR 3c: /version + /health precision_schema_v2_capable ===
+
+    async fn body_json(resp: Response<Body>) -> serde_json::Value {
+        let bytes = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+
+    #[tokio::test]
+    async fn health_response_reports_precision_schema_v2_capable() {
+        let handler = RestHandler::ready();
+        let resp = handler.handle_health();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(
+            json["precision_schema_v2_capable"], true,
+            "operators grep this field before flipping the env flag"
+        );
+        assert_eq!(json["status"], "healthy");
+    }
+
+    #[tokio::test]
+    async fn version_endpoint_returns_capability_and_version() {
+        let handler = RestHandler::ready();
+        let resp = handler.handle_version();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["precision_schema_v2_capable"], true);
+        assert_eq!(json["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(json["name"], env!("CARGO_PKG_NAME"));
     }
 }

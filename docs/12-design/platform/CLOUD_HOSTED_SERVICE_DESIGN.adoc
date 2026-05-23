@@ -393,6 +393,222 @@ sequenceDiagram
 - Point-in-time recovery (PITR)
 - Cross-region replication (optional)
 
+=== Collection-Level DR / Cloud Object Replication
+
+Collection DR is a control-plane feature, not an ad hoc storage toggle. The
+customer-facing unit is a collection DR policy in xCatalog; the provider-facing
+unit is an S3 bucket replication rule or Azure Blob object replication rule.
+Detailed HLD/LLD and implementation tracker:
+`docs/12-design/COLLECTION_DR_CRR_HLD_LLD_2026_05_23.adoc`.
+
+Design goals:
+
+* DR must be explicit, billable, auditable, and attached to a tenant/namespace
+  boundary before provider replication is provisioned.
+* Control-plane automation is the only writer allowed to create, modify, or
+  remove provider replication rules.
+* Physical object paths must make tenant and collection scope enforceable by
+  prefix.
+* Enabling DR must be gated by tier, region-pair eligibility, KMS/key policy,
+  object-versioning requirements, and billing readiness.
+* Disabling DR is not a casual self-service toggle because replicated versions,
+  destination storage, egress, and retention can continue to incur cost.
+
+==== Policy Model
+
+[source,rust]
+----
+pub struct CollectionDrPolicy {
+    pub tenant_id: String,
+    pub namespace_id: String,
+    pub collection_id: String,
+    pub tier: TenantTier,
+
+    pub state: DrState,
+    pub source_region: String,
+    pub destination_region: String,
+    pub provider: ObjectProvider,
+
+    /// Physical prefix owned by this collection. Human-readable namespace names
+    /// are labels only; namespace_id and collection_id are stable.
+    pub source_prefix: String,
+    pub destination_prefix: String,
+
+    pub rpo_target_seconds: u32,
+    pub retain_delete_markers: bool,
+    pub replicate_existing_objects: bool,
+    pub destination_retention_days: u32,
+
+    pub billing_sku: String,
+    pub cost_owner_tenant_id: String,
+    pub provider_rule_id: Option<String>,
+    pub policy_version: u64,
+}
+
+pub enum DrState {
+    Disabled,
+    PendingBillingApproval,
+    PendingProviderProvisioning,
+    Active,
+    SuspendedByOps,
+    PendingRetirement,
+    Retired,
+}
+----
+
+State transitions are monotonic for normal customer APIs:
+
+* `Disabled -> PendingBillingApproval -> PendingProviderProvisioning -> Active`
+  is the enable path.
+* `Active -> PendingRetirement -> Retired` requires explicit cost/retention
+  acknowledgement and may be ops-approved for Business/Enterprise contracts.
+* Downgrades do not silently disable provider replication. The tenant either
+  keeps paying for DR through the retirement window or the account is blocked
+  from completing the downgrade until DR retirement is scheduled.
+* `SuspendedByOps` is reserved for emergency containment, provider incidents,
+  legal holds, or unpaid invoices. It is not used for ordinary customer
+  toggling.
+
+==== Physical Path Contract
+
+Every object written for a collection must live under a stable DR prefix:
+
+[source]
+----
+s3://proximadb-prod-{region}-{tier-class}-data/
+  data/{tenant_id}/{namespace_id}/{collection_id}/...
+
+https://{account}.blob.core.windows.net/{container}/
+  data/{tenant_id}/{namespace_id}/{collection_id}/...
+----
+
+Rules:
+
+* Use `tenant_id`, stable `namespace_id`, and stable `collection_id` in the
+  physical path. Human namespace names can be renamed; physical paths must not
+  move on rename.
+* Do not put multiple tenants under a replicated collection prefix.
+* Do not write logs, temporary compaction files, or billing-irrelevant scratch
+  data under the collection DR prefix unless those bytes are intentionally part
+  of DR.
+* WAL/archive, snapshots, manifests, and segment files need separate subprefixes
+  below the same collection root so restore can prove completeness:
++
+[source]
+----
+data/{tenant_id}/{namespace_id}/{collection_id}/wal/
+data/{tenant_id}/{namespace_id}/{collection_id}/snapshots/
+data/{tenant_id}/{namespace_id}/{collection_id}/segments/
+data/{tenant_id}/{namespace_id}/{collection_id}/manifests/
+----
+
+==== Provider Automation
+
+AWS S3:
+
+* Create source and destination buckets with versioning enabled.
+* Add an S3 replication rule filtered by the collection prefix:
+  `data/{tenant_id}/{namespace_id}/{collection_id}/`.
+* Use an IAM role owned by the control plane, scoped to that source prefix and
+  destination bucket/prefix.
+* Decide per policy whether delete marker replication is enabled. For DR, keep
+  delete marker replication enabled only when destination version retention is
+  configured and tested; otherwise deletes can hide the latest object in the DR
+  region unexpectedly.
+* Watch provider rule limits. S3 replication supports prefix/tag filters but has
+  a finite per-bucket rule limit, so high-cardinality per-collection DR requires
+  sharding tenants across tier buckets or promoting a tenant to a dedicated
+  bucket.
+
+Azure Blob Storage:
+
+* Use Blob Storage object replication for managed CRR. It requires blob
+  versioning on source and destination accounts and change feed on the source
+  account.
+* Create source and destination containers before creating object replication
+  rules.
+* Use prefix matches for
+  `data/{tenant_id}/{namespace_id}/{collection_id}/`.
+* Do not assume Azure Data Lake Storage Gen2 hierarchical namespace accounts can
+  use object replication. If hierarchical namespace is required, route DR
+  through a ProximaDB-controlled replication worker or a separate non-HNS Blob
+  account used for DR objects.
+* Destination containers under an active object replication policy are
+  read/delete-only from the application point of view; application writes to DR
+  destinations must be blocked.
+
+==== Tier And Product Rules
+
+Recommended launch posture:
+
+[cols="2,3,3"]
+|===
+| Tier | DR availability | Placement
+
+| FreeTrial / Team
+| Not available
+| Shared pooled data bucket/container, no CRR rules.
+
+| Pro
+| Optional later as a paid add-on if pricing requires it; otherwise defer.
+| Shared pooled bucket/container unless DR add-on is enabled.
+
+| Business
+| Available as paid add-on or bundled feature.
+| Dedicated Business source/destination buckets or Azure storage accounts per
+  region pair.
+
+| Enterprise
+| Available and usually bundled/customized.
+| Dedicated tenant bucket/storage account by default for large tenants, regulated
+  workloads, custom KMS, custom region pairs, or high collection count.
+|===
+
+For simplicity, use separate provider storage pools by tier class:
+
+* `pooled`: FreeTrial, Team, and non-DR Pro collections.
+* `business`: Business and DR-enabled Pro/Business collections.
+* `enterprise`: Enterprise shared pool only for small enterprise tenants.
+* `enterprise-dedicated`: one bucket/storage account pair per tenant when
+  isolation, rule count, KMS, residency, or contract terms require it.
+
+This keeps the initial system manageable while preserving isolation where it
+matters:
+
+* pooled buckets avoid sprawl for low-cost tenants;
+* Business buckets make DR billing and replication limits easier to manage;
+* Enterprise dedicated buckets avoid noisy-neighbor rule limits and simplify
+  customer-specific KMS, retention, and audit evidence;
+* Azure should mirror the same class boundaries with storage accounts and
+  containers, not reuse one global account for every tier.
+
+==== Billing And Guardrails
+
+Before provisioning provider replication:
+
+. Estimate destination storage, version growth, replication writes, change-feed
+  reads, and cross-region egress.
+. Persist the billable DR SKU and cost owner on the tenant and collection.
+. Require explicit customer or contract approval.
+. Enable provider rules only after billing state is active.
+. Emit audit events for policy creation, provider rule creation, rule drift,
+  and retirement.
+
+Runtime guardrails:
+
+* A provider-rule reconciler continuously compares xCatalog DR policy with S3
+  or Azure replication state.
+* If provider replication is removed or disabled out-of-band, mark the
+  collection `dr_unhealthy`, alert ops, and expose the state through the
+  control-plane API.
+* Collection delete must not delete replicated destination versions immediately.
+  It schedules DR retirement and retention cleanup.
+* Namespace delete with DR-enabled collections is rejected unless each
+  collection has completed DR retirement.
+* EXPLAIN / collection introspection should show DR state, source/destination
+  region, replication health, last provider checkpoint, and whether deletes are
+  replicated.
+
 **Compliance**:
 - SOC 2 Type II certified
 - GDPR compliant (data residency)
@@ -747,8 +963,6 @@ graph LR
 - https://www.terraform.io/docs/[Terraform Documentation]
 - https://aws.amazon.com/documentation/[AWS Documentation]
 - https://www.soc2.org/[SOC 2 Compliance Guide]
-
-----
 
 *Document Owner*: Infrastructure Team
 *Review Cycle*: Monthly

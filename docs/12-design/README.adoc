@@ -29,7 +29,10 @@ Read these in order for future-shaping architecture work:
 7. `OPEN_FORMAT_CATALOG_2026_05_17.adoc` +
    Iceberg REST catalog, OLTP catalog backends, open-format compatibility, and xCatalog ownership
    for external engines.
-8. `MULTIMODEL_TRAJECTORY_ALIGNMENT_2026_05_18.adoc` +
+8. `COLLECTION_DR_CRR_HLD_LLD_2026_05_23.adoc` +
+   Active HLD/LLD tracker for collection-level disaster recovery, S3/Azure cross-region object
+   replication, storage-pool placement, billing gates, restore readiness, and provider automation.
+9. `MULTIMODEL_TRAJECTORY_ALIGNMENT_2026_05_18.adoc` +
    Execution guide for keeping new multimodel code aligned with `ProximaRecord` and
    `ProximaValue`.
 

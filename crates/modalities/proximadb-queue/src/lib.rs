@@ -112,8 +112,25 @@ impl QueueClient {
     /// on disk from a previous run. Topics not declared in config get
     /// auto-created lazily on first send/subscribe.
     pub async fn open(config: QueueConfig) -> Result<Arc<Self>> {
+        Self::open_with_fs(config, None).await
+    }
+
+    /// Variant of `open` that accepts an explicit `QueueFs` override.
+    /// The main `proximadb` crate uses this to inject a
+    /// `FilesystemFactory`-backed adapter so the queue's `root` and
+    /// `object_archive` URLs can be `adls://...`, `s3://...`, etc.
+    /// — schemes the queue can't resolve on its own without a
+    /// circular dep on the main crate.
+    ///
+    /// When `fs_override` is `None`, falls back to the in-crate
+    /// `LocalFs` (file:// only). Tests and embedded Python builds
+    /// use the `None` path.
+    pub async fn open_with_fs(
+        config: QueueConfig,
+        fs_override: Option<Arc<dyn QueueFs>>,
+    ) -> Result<Arc<Self>> {
         let root_path = resolve_local_root(&config.root)?;
-        let fs: Arc<dyn QueueFs> = LocalFs::new_arc();
+        let fs: Arc<dyn QueueFs> = fs_override.unwrap_or_else(LocalFs::new_arc);
         fs.create_dir_all(&root_path).await?;
 
         let instance_id = format!(
