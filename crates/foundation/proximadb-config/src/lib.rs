@@ -1017,6 +1017,36 @@ impl EmbeddingPrecisionConfig {
         }
         Ok(self)
     }
+
+    /// Process-wide cached config: env var is read at first call and the
+    /// resolved value is memoized via `OnceLock`. Every subsequent caller
+    /// gets the same `&'static` reference without re-parsing.
+    ///
+    /// Multiple call sites (the PR 3b ingest validator, the INT-2b WAL
+    /// writer, future PAX writers in INT-3) need to consult this flag on
+    /// the hot path. Centralizing the cache here means every caller sees
+    /// the SAME value — operators can't end up with one subsystem on v2
+    /// and another on v1 due to a race on env-var read.
+    ///
+    /// Parse failures (malformed env var) degrade to the safe default
+    /// (`schema_v2_enabled = false`) + a `warn!` log so a typo doesn't
+    /// take down the ingest path. The warning fires exactly once per
+    /// process even if there are millions of calls.
+    pub fn cached() -> &'static Self {
+        static CACHED: std::sync::OnceLock<EmbeddingPrecisionConfig> = std::sync::OnceLock::new();
+        CACHED.get_or_init(|| {
+            EmbeddingPrecisionConfig::default()
+                .with_env_override()
+                .unwrap_or_else(|e| {
+                    tracing::warn!(
+                        env = EmbeddingPrecisionConfig::ENV_VAR,
+                        error = %e,
+                        "failed to parse precision env var; defaulting to schema_v2_enabled=false"
+                    );
+                    EmbeddingPrecisionConfig::default()
+                })
+        })
+    }
 }
 
 /// Parse a boolean feature-flag value from an env-var-style string.

@@ -237,27 +237,14 @@ fn rich_filters_to_v1_clauses(
     clauses
 }
 
-/// Cached precision-rollout config, read once from env per process.
-///
-/// PR 3b follow-up. The config is read at first-call (which happens on
-/// the first insert after server boot) and cached for every subsequent
-/// insert — the env var doesn't change at runtime. A parse error on the
-/// env var degrades to the safe default (`schema_v2_enabled = false`)
-/// + a warn-level log so a typo doesn't take down the ingest path.
+/// Thin alias to the centralized
+/// [`EmbeddingPrecisionConfig::cached`] singleton so the existing
+/// call sites in this module read like before. The shared singleton
+/// (PR 3b follow-up → INT-2b refactor) means every subsystem — ingest
+/// validator, WAL writer (INT-2b), future PAX writer (INT-3) — sees
+/// the same flag value.
 fn cached_precision_config() -> &'static EmbeddingPrecisionConfig {
-    static CACHED: std::sync::OnceLock<EmbeddingPrecisionConfig> = std::sync::OnceLock::new();
-    CACHED.get_or_init(|| {
-        EmbeddingPrecisionConfig::default()
-            .with_env_override()
-            .unwrap_or_else(|e| {
-                tracing::warn!(
-                    "PR 3b: failed to parse {} env var ({}); defaulting to schema_v2_enabled=false",
-                    EmbeddingPrecisionConfig::ENV_VAR,
-                    e
-                );
-                EmbeddingPrecisionConfig::default()
-            })
-    })
+    EmbeddingPrecisionConfig::cached()
 }
 
 fn proxima_value_to_filter_clause_value(

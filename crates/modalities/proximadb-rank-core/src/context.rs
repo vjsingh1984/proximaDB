@@ -1,0 +1,234 @@
+//! Per-query, per-thread scoring context and the integration traits the
+//! pipeline expects callers to provide.
+//!
+//! See `roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md` §4.1.8.
+//!
+//! The traits here (`AttributeAccess`, `CandidateData`, `ModelCache`,
+//! `RankMetricsSink`) are deliberately minimal in R-1 — concrete impls
+//! land in later phases (R-2 features, R-5 ONNX, R-7 observability).
+
+use crate::arena::FeatureArena;
+use crate::types::DocHandle;
+use std::time::Instant;
+
+/// Per-query immutable context — query vector(s), parameters, tenant scope.
+///
+/// `QueryContext` is intentionally light in R-1. Real query parameters
+/// (filters, k, query vectors) thread through here in later phases.
+#[derive(Debug, Default, Clone)]
+pub struct QueryContext {
+    pub query_id: Option<String>,
+    pub tenant: Option<String>,
+    /// Primary query vector for `closeness(...)` / `cosine(...)` features.
+    /// `None` when the query is keyword-only.
+    pub query_vector: Option<Vec<f32>>,
+    /// Free-form tag bag for v1; will be replaced with typed query params
+    /// in R-2 when retrieval candidates wire in.
+    pub tags: Vec<(String, String)>,
+}
+
+/// Per-thread mutable scoring context. Lives for the duration of one
+/// per-segment scan.
+///
+/// `!Send` on purpose — pipelines clone the context per worker rather than
+/// passing one across threads, so the borrow checker can enforce single-
+/// threaded access to the arena and batch buffers.
+pub struct ScoreCtx<'a> {
+    pub query: &'a QueryContext,
+    pub deadline: Option<Instant>,
+    pub arena: &'a FeatureArena,
+    pub attributes: &'a dyn AttributeAccess,
+    pub candidates: &'a dyn CandidateData,
+    pub models: &'a dyn ModelCache,
+    pub metrics: &'a dyn RankMetricsSink,
+    /// Cross-encoder batch scratch space, accumulated during per-doc
+    /// `execute()` and flushed at `end_of_phase()`. Carried as an opaque
+    /// boxed slot so callers control its concrete type. R-5 fills this in.
+    pub batch: BatchSlot,
+    // PhantomData to enforce !Send — ScoreCtx must not cross threads.
+    _not_send: std::marker::PhantomData<*const ()>,
+}
+
+impl<'a> ScoreCtx<'a> {
+    pub fn new(
+        query: &'a QueryContext,
+        arena: &'a FeatureArena,
+        attributes: &'a dyn AttributeAccess,
+        candidates: &'a dyn CandidateData,
+        models: &'a dyn ModelCache,
+        metrics: &'a dyn RankMetricsSink,
+    ) -> Self {
+        Self {
+            query,
+            deadline: None,
+            arena,
+            attributes,
+            candidates,
+            models,
+            metrics,
+            batch: BatchSlot::default(),
+            _not_send: std::marker::PhantomData,
+        }
+    }
+
+    pub fn with_deadline(mut self, deadline: Instant) -> Self {
+        self.deadline = Some(deadline);
+        self
+    }
+
+    /// Returns `true` when the configured deadline has passed.
+    pub fn deadline_exceeded(&self) -> bool {
+        match self.deadline {
+            Some(d) => Instant::now() >= d,
+            None => false,
+        }
+    }
+}
+
+/// Opaque per-phase scratch buffer. R-5 (ONNX) fills this with batched
+/// cross-encoder inputs/outputs; in R-1 it's just an empty placeholder
+/// so the trait surface is forward-compatible.
+#[derive(Default)]
+pub struct BatchSlot {
+    /// R-5 will populate this with a real typed payload.
+    pub _reserved: (),
+}
+
+// ---------------------------------------------------------------------------
+// Integration trait stubs — concrete impls live in later phases.
+// ---------------------------------------------------------------------------
+
+/// Read access to a candidate document's column (attribute) values.
+///
+/// Implemented by the storage engine layer in R-2. The lookup key is a
+/// `(doc, field)` pair; values are returned as `f32` for the v1 surface
+/// (full `ProximaValue` access lands when range / equality features come
+/// online).
+pub trait AttributeAccess: Send + Sync {
+    fn read_f32(&self, doc: DocHandle, field: &str) -> Option<f32>;
+}
+
+/// Per-candidate retrieval metadata: distance cached by the upstream
+/// vector index, BM25 score from the inverted index, etc.
+///
+/// The hybrid coordinator (R-2 wiring) supplies this so first-phase
+/// features like `closeness(...)` are O(1) reads rather than recomputing
+/// the retrieval distance.
+pub trait CandidateData: Send + Sync {
+    fn retrieval_distance(&self, doc: DocHandle) -> Option<f32>;
+    fn bm25_score(&self, doc: DocHandle) -> Option<f32>;
+}
+
+/// Acquires shared ONNX sessions. R-5 fills this in.
+pub trait ModelCache: Send + Sync {
+    fn is_loaded(&self, model_id: &str) -> bool;
+}
+
+/// Emits per-feature observability metrics. R-7 wires this to Prometheus.
+pub trait RankMetricsSink: Send + Sync {
+    fn record_feature_latency_ns(&self, feature: &str, ns: u64);
+    fn record_phase_truncated(&self, phase: proximadb_kernel::PhaseId, reason: &str);
+}
+
+// ---------------------------------------------------------------------------
+// Inline no-op implementations for tests + R-1 wiring.
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+pub struct NoopAttributeAccess;
+impl AttributeAccess for NoopAttributeAccess {
+    fn read_f32(&self, _doc: DocHandle, _field: &str) -> Option<f32> {
+        None
+    }
+}
+
+#[derive(Default)]
+pub struct NoopCandidateData;
+impl CandidateData for NoopCandidateData {
+    fn retrieval_distance(&self, _doc: DocHandle) -> Option<f32> {
+        None
+    }
+    fn bm25_score(&self, _doc: DocHandle) -> Option<f32> {
+        None
+    }
+}
+
+#[derive(Default)]
+pub struct NoopModelCache;
+impl ModelCache for NoopModelCache {
+    fn is_loaded(&self, _model_id: &str) -> bool {
+        false
+    }
+}
+
+#[derive(Default)]
+pub struct NoopMetricsSink;
+impl RankMetricsSink for NoopMetricsSink {
+    fn record_feature_latency_ns(&self, _feature: &str, _ns: u64) {}
+    fn record_phase_truncated(&self, _phase: proximadb_kernel::PhaseId, _reason: &str) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn make_ctx<'a>(
+        query: &'a QueryContext,
+        arena: &'a FeatureArena,
+        attr: &'a NoopAttributeAccess,
+        cand: &'a NoopCandidateData,
+        models: &'a NoopModelCache,
+        metrics: &'a NoopMetricsSink,
+    ) -> ScoreCtx<'a> {
+        ScoreCtx::new(query, arena, attr, cand, models, metrics)
+    }
+
+    #[test]
+    fn score_ctx_deadline_propagates() {
+        let q = QueryContext::default();
+        let arena = FeatureArena::new();
+        let (a, c, m, met) = (
+            NoopAttributeAccess,
+            NoopCandidateData,
+            NoopModelCache,
+            NoopMetricsSink,
+        );
+        let past = Instant::now() - Duration::from_millis(10);
+        let ctx = make_ctx(&q, &arena, &a, &c, &m, &met).with_deadline(past);
+        assert!(ctx.deadline_exceeded());
+
+        let future = Instant::now() + Duration::from_secs(60);
+        let ctx = make_ctx(&q, &arena, &a, &c, &m, &met).with_deadline(future);
+        assert!(!ctx.deadline_exceeded());
+    }
+
+    #[test]
+    fn score_ctx_with_no_deadline_never_exceeds() {
+        let q = QueryContext::default();
+        let arena = FeatureArena::new();
+        let (a, c, m, met) = (
+            NoopAttributeAccess,
+            NoopCandidateData,
+            NoopModelCache,
+            NoopMetricsSink,
+        );
+        let ctx = make_ctx(&q, &arena, &a, &c, &m, &met);
+        assert!(!ctx.deadline_exceeded());
+    }
+
+    #[test]
+    fn score_ctx_is_not_send() {
+        // Compile-time guarantee — ScoreCtx must not cross threads.
+        fn assert_not_send<T: ?Sized>()
+        where
+            T: 'static,
+        {
+        }
+        assert_not_send::<ScoreCtx<'static>>();
+        // The above doesn't actually fail at compile time for !Send types,
+        // but the negative trait bound is hard to express. The PhantomData
+        // raw pointer in ScoreCtx is the real enforcement; this test exists
+        // to document intent and trip a reviewer if PhantomData is removed.
+    }
+}

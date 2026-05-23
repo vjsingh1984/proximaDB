@@ -190,9 +190,32 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
 
         // Persist to disk if configured
         if self.should_persist_to_disk() {
-            let serialized = self
-                .serializer
-                .serialize_batch(batch.vector_records.as_ref())?;
+            // INT-2b (mini-phase EMBEDDING_PRECISION_INTEGRATION_PLAN):
+            // when the precision-schema-v2 feature flag is on, prepend
+            // the PR 4 v2 segment header to the bincode payload. When
+            // it's off (the default), the byte layout is identical to
+            // pre-INT-2b WAL files — operators can flip the flag back
+            // off and roll back without on-disk damage.
+            //
+            // Header metadata: today this uses the global-default
+            // policy because per-collection precision policy lookup
+            // isn't plumbed through to this strategy layer yet. INT-3
+            // adds the per-collection lookup; until then, a v2-enabled
+            // cluster writes "default canonical fp32, default policy"
+            // headers and the actual fp16 storage win lands in INT-3
+            // when the PAX writer keys on the header.
+            let serialized = if proximadb_config::EmbeddingPrecisionConfig::cached()
+                .schema_v2_enabled
+            {
+                let header = build_default_v2_segment_header(&batch.batch_id);
+                self.serializer.serialize_batch_with_v2_segment_header(
+                    batch.vector_records.as_ref(),
+                    &header,
+                )?
+            } else {
+                self.serializer
+                    .serialize_batch(batch.vector_records.as_ref())?
+            };
 
             // Determine if we should sync based on sync mode
             let should_sync = matches!(
@@ -851,10 +874,15 @@ impl BincodeSerializationStrategy {
             return Ok(Vec::new());
         }
 
-        // Deserialize using Bincode
-        let vector_records = self
+        // INT-2b: magic-peek dispatch. Legacy v1 files (no PWAL prefix)
+        // route to the existing decode path; v2 files (PWAL-prefixed)
+        // get their header stripped and records stamped V2 by
+        // `deserialize_batch_auto`. We ignore the parsed header at this
+        // layer — INT-3's PAX writer is the one that keys on
+        // `canonical_default_precision` / `precision_epoch`.
+        let (vector_records, _v2_header) = self
             .serializer
-            .deserialize_batch(&data)
+            .deserialize_batch_auto(&data)
             .with_context(|| format!("Failed to deserialize Bincode WAL file: {}", file_path))?;
 
         if vector_records.is_empty() {
@@ -881,5 +909,52 @@ impl BincodeSerializationStrategy {
         };
 
         Ok(vec![batch])
+    }
+}
+
+/// INT-2b: build a minimal valid v2 segment header for the WAL writer
+/// when the precision-schema-v2 feature flag is on.
+///
+/// Per-collection precision policy lookup is NOT plumbed through to
+/// this strategy layer yet — that's INT-3's job. Until then, every
+/// v2-enabled WAL file carries a "default canonical fp32, global
+/// default policy" header. The header is still useful because:
+///
+/// * The PWAL magic + version byte enables the reader's auto-dispatch
+///   (so INT-3's PAX writer can key on the parsed header).
+/// * The `precision_epoch = 0` matches what fresh collections carry
+///   per LLD §"Collection-level precision attributes" (PR 6b).
+/// * The `policy_id = GLOBAL_DEFAULT_POLICY_ID` (PR 6a) is the seeded
+///   row every cluster starts with.
+///
+/// Once INT-3 plumbs per-collection precision metadata through to
+/// this layer, the constants below become lookups against the
+/// collection's catalog row.
+fn build_default_v2_segment_header(
+    batch_id: &BatchId,
+) -> crate::storage::persistence::write_ahead_log::v2_segment_header::V2SegmentHeader {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let created_at_ns = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as i64)
+        .unwrap_or(0);
+
+    // Each bincode WAL file is one batch (one file per batch_id), so
+    // the batch_id is a natural unique key for the segment. Pack the
+    // 10-byte CompactBatchId (timestamp_ms u64 + counter u16) into the
+    // header's u128 segment_id with timestamp in the high 64 bits.
+    let segment_id =
+        ((batch_id.timestamp_ms() as u128) << 64) | (batch_id.counter() as u128);
+
+    crate::storage::persistence::write_ahead_log::v2_segment_header::V2SegmentHeader {
+        flags: 0,
+        segment_id,
+        created_at_ns,
+        canonical_default_precision: proximadb_records::EmbeddingScalarType::Fp32,
+        precision_epoch: 0,
+        policy_id: proximadb_catalog::embedding_precision_policy::GLOBAL_DEFAULT_POLICY_ID
+            .to_string(),
+        policy_version: 1,
     }
 }

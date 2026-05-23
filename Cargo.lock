@@ -6096,6 +6096,7 @@ dependencies = [
  "proximadb-query-filter",
  "proximadb-query-fusion",
  "proximadb-queue",
+ "proximadb-rank-core",
  "proximadb-records",
  "proximadb-runtime",
  "proximadb-runtime-common",
@@ -6635,6 +6636,24 @@ dependencies = [
  "tokio",
  "tracing",
  "twox-hash 1.6.3",
+]
+
+[[package]]
+name = "proximadb-rank-core"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bumpalo",
+ "dashmap",
+ "futures",
+ "proximadb-kernel",
+ "serde",
+ "serde_json",
+ "smallvec",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
