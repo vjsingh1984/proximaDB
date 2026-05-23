@@ -1210,6 +1210,11 @@ pub struct TypedSearchRequest {
     ///
     /// Vector data can be large, so it is excluded by default.
     pub include_vector: Option<bool>,
+    /// Return the SearchPlanTrace + a human-readable route explain
+    /// in the response (LLD §1 contract). Defaults to `false` so
+    /// non-debug requests don't pay the JSON serialization cost of
+    /// the ~30-field trace envelope.
+    pub debug: Option<bool>,
 }
 
 /// A typed filter for search operations
@@ -1282,9 +1287,16 @@ pub struct TypedSearchResponse {
     /// SearchPlanTrace (LLD §10) — the per-query telemetry envelope that the
     /// AnvaiOps gateway consumes for KRU billing and planner-v2 training.
     /// Phase 0 emits a stub trace populated from request_id + latency; later
-    /// phases fill in the per-stage counters.
+    /// phases fill in the per-stage counters. Only emitted when the request
+    /// sets `debug=true` (LLD §1 contract).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub search_plan_trace: Option<crate::observability::search_plan_trace::SearchPlanTrace>,
+    /// Human-readable explain summary derived from the SearchPlanTrace.
+    /// Only emitted when the request sets `debug=true` — gives an on-call
+    /// operator a one-glance view of the plan, cache result, and any
+    /// actionable hints (high scan fraction, repair triggered, ...).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub explain: Option<crate::observability::route_explain::RouteExplain>,
 }
 
 /// POST /api/v2/collections/{collection}/search
@@ -1517,12 +1529,35 @@ pub async fn search_with_typed_filters(
                     crate::observability::search_plan_trace::CacheResult::Hit;
             }
 
+            // Gate the trace + explain emission on debug=true per LLD §1.
+            // Non-debug responses keep the JSON payload tight; debug
+            // responses surface the full trace + a human-readable route
+            // explain (route_explain::build over the populated trace).
+            let debug_requested = request.debug.unwrap_or(false);
+            let (trace_field, explain_field) = if debug_requested {
+                let explain =
+                    crate::observability::route_explain::build(
+                        &crate::observability::route_explain::ExplainInputs {
+                            trace: &trace,
+                            // collection_gb not yet plumbed from the
+                            // catalog; pass 0.0 and accept the
+                            // scan-fraction-zero fallback until
+                            // collection-size hydration lands.
+                            corpus_gb: 0.0,
+                            recall_probe_open: None,
+                        },
+                    );
+                (Some(trace.clone()), Some(explain))
+            } else {
+                (None, None)
+            };
             let response = TypedSearchResponse {
                 results: results.clone(),
                 total_matches: Some(total_matches),
                 latency_ms,
                 request_id: request_id.clone(),
-                search_plan_trace: Some(trace),
+                search_plan_trace: trace_field,
+                explain: explain_field,
             };
 
             info!(
@@ -3011,6 +3046,7 @@ mod tests {
             latency_ms: 5,
             request_id: "req-123".to_string(),
             search_plan_trace: None,
+            explain: None,
         };
 
         let search_json =

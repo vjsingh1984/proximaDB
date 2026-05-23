@@ -432,6 +432,60 @@ pub mod schema_version {
     }
 }
 
+/// PR 3 §"Feature Flag and Rolling Deploy" — reject records that cannot be
+/// represented in the schema-v1 wire shape.
+///
+/// Callers (WAL writer, API ingress handler) invoke this before serializing a
+/// batch when the cluster is still on V1 (the default, see
+/// `EmbeddingPrecisionConfig.schema_v2_enabled`). Any embedding cell whose
+/// `precision` is not `Fp32` would silently lose data through the legacy fp32
+/// path, so the check fails fast with the LLD-locked error tag.
+///
+/// Returns `Ok(())` if every embedding in every record is fp32-shaped (matches
+/// what schema-v1 can durably represent without loss).
+pub fn validate_records_for_schema_v1<'a, I>(records: I) -> Result<(), SchemaV1ValidationError>
+where
+    I: IntoIterator<Item = &'a ProximaRecord>,
+{
+    for record in records {
+        for cell in &record.embeddings {
+            if cell.precision != EmbeddingScalarType::Fp32 {
+                return Err(SchemaV1ValidationError {
+                    record_oid: record.oid.clone(),
+                    model_id: cell.model_id.clone(),
+                    found_precision: cell.precision,
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Failure variant for [`validate_records_for_schema_v1`].
+///
+/// The `Display` text starts with the LLD-locked tag
+/// `unsupported_precision_schema_v1_only` so operators and CI can grep for it
+/// across logs and SDK error responses.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SchemaV1ValidationError {
+    pub record_oid: String,
+    pub model_id: String,
+    pub found_precision: EmbeddingScalarType,
+}
+
+impl std::fmt::Display for SchemaV1ValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "unsupported_precision_schema_v1_only: record {} embedding (model={}) \
+             declared precision {:?}, but PROXIMADB_EMBED_PRECISION_SCHEMA_V2 is off",
+            self.record_oid, self.model_id, self.found_precision,
+        )
+    }
+}
+
+impl std::error::Error for SchemaV1ValidationError {}
+
 /// The unified record envelope for all ProximaDB modalities.
 ///
 /// Implements spec §3 of MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc. Every stored
@@ -1166,6 +1220,91 @@ mod tests {
         let parsed: ProximaRecord = bincode::deserialize(&bytes).unwrap();
         assert_eq!(parsed.schema_version, schema_version::V1);
         assert_eq!(parsed.oid, "oid-bincode");
+    }
+
+    // === PR 3: validate_records_for_schema_v1 ===
+
+    #[test]
+    fn validate_records_for_schema_v1_accepts_all_fp32() {
+        let r = ProximaRecord {
+            embeddings: vec![EmbeddingCell::new_fp32("m", "text", 3, vec![0.1, 0.2, 0.3])],
+            ..ProximaRecord::default()
+        };
+        assert!(validate_records_for_schema_v1(std::iter::once(&r)).is_ok());
+    }
+
+    #[test]
+    fn validate_records_for_schema_v1_accepts_empty_embeddings() {
+        // Non-embedding modalities (graph nodes, log lines, relational rows)
+        // must pass the schema-v1 gate unchanged.
+        let r = ProximaRecord {
+            oid: "graph-node-1".into(),
+            ..ProximaRecord::default()
+        };
+        assert!(validate_records_for_schema_v1(std::iter::once(&r)).is_ok());
+    }
+
+    #[test]
+    fn validate_records_for_schema_v1_rejects_fp16_with_locked_error_tag() {
+        let mut r = ProximaRecord {
+            oid: "fp16-rec".into(),
+            embeddings: vec![EmbeddingCell::new_fp32(
+                "bge-large",
+                "text",
+                3,
+                vec![0.1, 0.2, 0.3],
+            )],
+            ..ProximaRecord::default()
+        };
+        r.embeddings[0].precision = EmbeddingScalarType::Fp16;
+
+        let err = validate_records_for_schema_v1(std::iter::once(&r)).unwrap_err();
+        assert_eq!(err.record_oid, "fp16-rec");
+        assert_eq!(err.model_id, "bge-large");
+        assert_eq!(err.found_precision, EmbeddingScalarType::Fp16);
+        let msg = err.to_string();
+        assert!(
+            msg.starts_with("unsupported_precision_schema_v1_only:"),
+            "error tag must match LLD: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_records_for_schema_v1_stops_at_first_offender() {
+        // Two records, second one bad — error must reference the second.
+        let good = ProximaRecord {
+            oid: "good".into(),
+            embeddings: vec![EmbeddingCell::new_fp32("m", "text", 1, vec![1.0])],
+            ..ProximaRecord::default()
+        };
+        let mut bad = ProximaRecord {
+            oid: "bad".into(),
+            embeddings: vec![EmbeddingCell::new_fp32("m", "text", 1, vec![1.0])],
+            ..ProximaRecord::default()
+        };
+        bad.embeddings[0].precision = EmbeddingScalarType::Int8Scalar;
+
+        let err = validate_records_for_schema_v1([&good, &bad]).unwrap_err();
+        assert_eq!(err.record_oid, "bad");
+        assert_eq!(err.found_precision, EmbeddingScalarType::Int8Scalar);
+    }
+
+    #[test]
+    fn validate_records_for_schema_v1_inspects_all_cells_per_record() {
+        // One record with two embeddings — second cell is non-fp32.
+        let mut r = ProximaRecord {
+            oid: "multi-cell".into(),
+            embeddings: vec![
+                EmbeddingCell::new_fp32("text-model", "text", 1, vec![1.0]),
+                EmbeddingCell::new_fp32("image-model", "image", 1, vec![1.0]),
+            ],
+            ..ProximaRecord::default()
+        };
+        r.embeddings[1].precision = EmbeddingScalarType::Bf16;
+
+        let err = validate_records_for_schema_v1(std::iter::once(&r)).unwrap_err();
+        assert_eq!(err.model_id, "image-model");
+        assert_eq!(err.found_precision, EmbeddingScalarType::Bf16);
     }
 
     #[test]
