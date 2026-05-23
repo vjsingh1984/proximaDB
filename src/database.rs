@@ -275,7 +275,32 @@ impl ProximaDB {
             // (they're built from the same condition), so unwrapping
             // here is safe.
             let rq = resolved_queue.as_ref().expect("queue_client → resolved_queue");
-            Some(spawn_embedding_drainer_from_resolved(qc.clone(), handlers_for_drainer, rq).await?)
+            // BulkLoader's per-engine bulk-load fallback uses this
+            // as the storage root when an override needs a base_path.
+            // The canonical source is `config.storage.storage_locations[0].url`
+            // — typically `adls://...`, `s3://...`, or `file:///tmp/proximadb`
+            // depending on deployment; reads from the TOML loaded at startup.
+            let default_storage_root = config
+                .storage
+                .storage_urls()
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| {
+                    tracing::warn!(
+                        "config.storage.storage_locations is empty; \
+                         BulkLoader falling back to data_dir for engine overrides"
+                    );
+                    format!("file://{}", config.server.data_dir.display())
+                });
+            Some(
+                spawn_embedding_drainer_from_resolved(
+                    qc.clone(),
+                    handlers_for_drainer,
+                    rq,
+                    default_storage_root,
+                )
+                .await?,
+            )
         } else {
             None
         };
@@ -860,11 +885,15 @@ async fn spawn_embedding_drainer_from_resolved(
     queue: Arc<proximadb_queue::QueueClient>,
     handlers: Arc<crate::api_handlers::request_handlers::UnifiedHandlers>,
     rq: &core::config::ResolvedQueueConfig,
+    default_storage_root: String,
 ) -> anyhow::Result<(
     tokio::task::JoinHandle<()>,
     tokio::sync::oneshot::Sender<()>,
 )> {
-    let bulk_loader = Arc::new(crate::services::bulk_load::BulkLoader::new(handlers));
+    let bulk_loader = Arc::new(crate::services::bulk_load::BulkLoader::new(
+        handlers,
+        default_storage_root,
+    ));
     let sink: Arc<dyn crate::services::DrainerInsertSink> = Arc::new(
         crate::services::bulk_load::BulkLoadDrainerSink::new(bulk_loader),
     );
@@ -921,6 +950,11 @@ async fn open_queue_client_if_configured()
 /// `BulkLoadDrainerSink`. The drainer subscribes to
 /// `0..partition_count` by default. For multi-replica deployments,
 /// `PROXIMADB_EMBED_DRAINER_PARTITIONS` carves out a per-pod range.
+///
+/// **DEPRECATED**: prefer `spawn_embedding_drainer_from_resolved`
+/// which reads `default_storage_root` from the TOML config rather
+/// than hard-defaulting.
+#[allow(dead_code)]
 async fn spawn_embedding_drainer(
     queue: Arc<proximadb_queue::QueueClient>,
     handlers: Arc<crate::api_handlers::request_handlers::UnifiedHandlers>,
@@ -928,7 +962,13 @@ async fn spawn_embedding_drainer(
     tokio::task::JoinHandle<()>,
     tokio::sync::oneshot::Sender<()>,
 )> {
-    let bulk_loader = Arc::new(crate::services::bulk_load::BulkLoader::new(handlers));
+    // Legacy fallback path; the resolved-from-config helper supplies
+    // the canonical storage_locations URL instead of this hard default.
+    let default_storage_root = "file:///tmp/proximadb".to_string();
+    let bulk_loader = Arc::new(crate::services::bulk_load::BulkLoader::new(
+        handlers,
+        default_storage_root,
+    ));
     let sink: Arc<dyn crate::services::DrainerInsertSink> = Arc::new(
         crate::services::bulk_load::BulkLoadDrainerSink::new(bulk_loader),
     );

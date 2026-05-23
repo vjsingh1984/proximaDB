@@ -82,11 +82,28 @@ pub struct BulkLoadOptions {
 
 pub struct BulkLoader {
     handlers: Arc<UnifiedHandlers>,
+    /// Default storage root URL passed to the engine's
+    /// `ingest_sorted_segment` override when the per-collection
+    /// `storage_assignment.base_location` isn't yet threaded.
+    ///
+    /// Comes from the canonical TOML at startup —
+    /// `config.storage.storage_locations[0].url` (typically
+    /// `file:///var/lib/proximadb/collections` on PVC-backed AKS,
+    /// `adls://account.dfs.core.windows.net/container/data` on
+    /// Azure-direct, `s3://bucket/data` on AWS-direct, or
+    /// `file:///tmp/proximadb/collections` on dev rigs). When the
+    /// drainer eventually threads the catalog handle, this becomes
+    /// the fallback for engines whose override doesn't bother
+    /// reading the per-collection assignment.
+    default_storage_root: String,
 }
 
 impl BulkLoader {
-    pub fn new(handlers: Arc<UnifiedHandlers>) -> Self {
-        Self { handlers }
+    pub fn new(handlers: Arc<UnifiedHandlers>, default_storage_root: String) -> Self {
+        Self {
+            handlers,
+            default_storage_root,
+        }
     }
 
     /// Bulk-load a batch of records into `collection_id` for the given
@@ -141,7 +158,7 @@ impl BulkLoader {
             .get_engine_for_collection(&collection_id)
             .await
         {
-            let base_path = base_path_for_engine(&engine);
+            let base_path = self.default_storage_root.clone();
             // Cloning records here so we still have them for the
             // fallback. Engines that DO override this method will
             // consume the clone and we never use the original — but
@@ -232,22 +249,6 @@ impl BulkLoader {
     }
 }
 
-/// Resolve a base path for the engine's `ingest_sorted_segment`. The
-/// catalog's storage_assignment is the authoritative source; until
-/// BulkLoader has a direct handle to the catalog we use a conventional
-/// fallback that lines up with the engines' default placement.
-///
-/// This is good enough for NOVA (which derives its own placement from
-/// `collection_config.storage_assignment.base_location` inside the
-/// override) — and the override will rebuild a synthetic assignment
-/// from this string. Other engines' overrides may need the
-/// per-collection real path; that wiring lands when they migrate.
-fn base_path_for_engine(_engine: &Arc<dyn crate::storage::traits::UnifiedStorageEngine>) -> String {
-    // TODO: thread the collection_service so this returns the
-    // collection's real storage_assignment.base_location. NOVA's
-    // override is tolerant of this default; other engines may not be.
-    "/var/lib/proximadb/collections".to_string()
-}
 
 // ── Production DrainerInsertSink wired to BulkLoader ─────────────
 
