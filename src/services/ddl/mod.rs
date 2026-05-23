@@ -608,6 +608,25 @@ impl DdlService {
         // Create the index
         catalog.create_index(&table_id, index).await?;
 
+        // Bump corpus_version: a new index changes which routes the
+        // planner can pick (e.g. an HNSW index unlocks a different
+        // route choice than the lexical-only path). Extract tenant
+        // from namespace[0] per the catalog convention (tenant_id is
+        // the first namespace segment in multi-tenant tables); skip
+        // when the table isn't tenant-scoped.
+        if let Some(tenant_id) = table_id.namespace.first() {
+            let version = crate::catalog::CorpusVersionRegistry::global()
+                .bump(tenant_id, &table_id.name)
+                .await;
+            tracing::debug!(
+                index = %index_name,
+                table = %table_name,
+                tenant = %tenant_id,
+                version,
+                "🔄 corpus_version bumped after create_index"
+            );
+        }
+
         info!(index = %index_name, table = %table_name, "Created index");
         Ok(DdlResult::success(format!(
             "Created index '{}' on table '{}'",
@@ -645,6 +664,23 @@ impl DdlService {
 
         // Drop the index
         catalog.drop_index(&table_id, index_name).await?;
+
+        // Bump corpus_version — dropping an index changes the
+        // available routes (FullPrecisionGraph → forced when the
+        // quantized index is gone, etc.). Same tenant-extraction
+        // convention as create_index.
+        if let Some(tenant_id) = table_id.namespace.first() {
+            let version = crate::catalog::CorpusVersionRegistry::global()
+                .bump(tenant_id, &table_id.name)
+                .await;
+            tracing::debug!(
+                index = %index_name,
+                table = %table_name,
+                tenant = %tenant_id,
+                version,
+                "🔄 corpus_version bumped after drop_index"
+            );
+        }
 
         info!(index = %index_name, table = %table_name, "Dropped index");
         Ok(DdlResult::success(format!(

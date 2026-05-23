@@ -105,4 +105,79 @@ impl ModelRegistry {
                 .embed_batch(texts, *declared_dim),
         }
     }
+
+    /// INT-1 (mini-phase EMBEDDING_PRECISION_INTEGRATION_PLAN_2026_05_23):
+    /// embed at a caller-declared canonical precision.
+    ///
+    /// Returns each batch element as a typed `EmbeddingValues` so callers
+    /// (WAL writer in INT-2, search planner in PR 8) can persist or
+    /// compare at native precision without a fp32 round-trip.
+    ///
+    /// The conversion site is the BGE / external-API response handler:
+    /// each model returns its native dtype (fp32 today for every
+    /// implemented route) and `project_to_canonical` narrows or widens
+    /// to `canonical`. A `BatchConversionSummary` is returned alongside
+    /// the values so the caller can populate the PR 7b
+    /// `proximadb_embedding_precision_conversions_total{from,to,site}`
+    /// counter without dragging the metric handle into the modality
+    /// crate (proximadb-embedding can't dep on the root crate where
+    /// `precision_metrics` lives per workspace layering rules).
+    pub fn embed_batch_at_precision(
+        &self,
+        route: &EmbedRoute,
+        texts: &[String],
+        canonical: EmbeddingScalarType,
+    ) -> Result<(Vec<crate::EmbeddingValues>, BatchConversionSummary)> {
+        // Delegate to the legacy embed_batch (every implemented route
+        // returns fp32 today; this is the LLD's `native_precision` for
+        // the BGE/Azure/OpenAI/Cohere routes — see EmbedRoute::native_precision).
+        let raw = self.embed_batch(route, texts)?;
+        let from = route.native_precision();
+        let mut total_elements: u64 = 0;
+        let projected: Vec<crate::EmbeddingValues> = raw
+            .into_iter()
+            .map(|v| {
+                total_elements = total_elements.saturating_add(v.len() as u64);
+                crate::precision::boundary::project_to_canonical(
+                    crate::precision::boundary::EmbeddingOutput::Fp32(v),
+                    canonical,
+                )
+            })
+            .collect();
+        let summary = BatchConversionSummary {
+            from,
+            to: canonical,
+            element_count: total_elements,
+            batch_count: projected.len() as u64,
+        };
+        Ok((projected, summary))
+    }
+}
+
+/// Per-batch conversion accounting returned from
+/// [`Models::embed_batch_at_precision`]. The caller bumps the
+/// `proximadb_embedding_precision_conversions_total{from,to,site}`
+/// counter exactly when `from != to`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BatchConversionSummary {
+    /// Native precision the route's model emitted.
+    pub from: EmbeddingScalarType,
+    /// Canonical precision the caller asked for.
+    pub to: EmbeddingScalarType,
+    /// Total elements (sum of `Vec<f32>::len()` across the batch).
+    /// Used as the counter increment so dashboards see "vectors
+    /// converted" not "batches converted".
+    pub element_count: u64,
+    /// Number of vectors in the batch (one per input text).
+    pub batch_count: u64,
+}
+
+impl BatchConversionSummary {
+    /// True when the conversion actually narrowed or widened precision
+    /// (i.e. `from != to`). Callers that emit the conversions counter
+    /// should guard their increment on this so a fp32→fp32 round-trip
+    /// doesn't inflate the metric.
+    pub fn was_converted(&self) -> bool {
+        self.from != self.to
+    }
 }
