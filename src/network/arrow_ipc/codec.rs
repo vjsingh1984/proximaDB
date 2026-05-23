@@ -222,7 +222,7 @@ impl ArrowProtoCodec {
             batch.num_rows(),
         )?;
 
-        let vectors = if let Some(vector_array) = batch.column_by_name("vector") {
+        let mut vectors = if let Some(vector_array) = batch.column_by_name("vector") {
             Some(Self::extract_vectors(vector_array, batch.num_rows())?)
         } else {
             None
@@ -264,12 +264,14 @@ impl ArrowProtoCodec {
                 record.updated_at_ns = record.created_at_ns;
             }
 
-            if let Some(values) = vectors.as_ref() {
+            if let Some(values) = vectors.as_mut() {
+                let row_values = std::mem::take(&mut values[row]);
+                let dim = row_values.len() as u32;
                 record.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "dense_vector".to_string(),
-                    dim: values[row].len() as u32,
-                    values: values[row].clone(),
+                    dim,
+                    values: row_values,
                     ..Default::default()
                 });
             }

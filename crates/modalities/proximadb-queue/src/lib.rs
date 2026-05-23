@@ -129,6 +129,20 @@ impl QueueClient {
         config: QueueConfig,
         fs_override: Option<Arc<dyn QueueFs>>,
     ) -> Result<Arc<Self>> {
+        Self::open_with_fs_split(config, fs_override, None).await
+    }
+
+    /// Two-filesystem variant. Production cross-scheme deployments
+    /// use this: the queue `root` lives on a PVC/EFS local mount
+    /// (`fs_override` → file-backed adapter), and the `object_archive`
+    /// lives in an object store (`archive_fs_override` → cloud-scheme
+    /// adapter). When the archive is on the same filesystem as the
+    /// root, pass `None` and the root adapter handles both.
+    pub async fn open_with_fs_split(
+        config: QueueConfig,
+        fs_override: Option<Arc<dyn QueueFs>>,
+        archive_fs_override: Option<Arc<dyn QueueFs>>,
+    ) -> Result<Arc<Self>> {
         let root_path = resolve_local_root(&config.root)?;
         let fs: Arc<dyn QueueFs> = fs_override.unwrap_or_else(LocalFs::new_arc);
         fs.create_dir_all(&root_path).await?;
@@ -170,10 +184,19 @@ impl QueueClient {
         // eviction onto fresh local disk, etc.).
         let archive_configured = client.config.object_archive.is_some();
         if let Some(archive_url) = client.config.object_archive.clone() {
+            // Pick the filesystem the uploader will use: caller-
+            // supplied archive adapter (for cross-scheme deployments
+            // like PVC queue + ADLS archive) or fall back to the
+            // queue root's fs (same-scheme deployments).
+            let archive_fs = archive_fs_override.clone().unwrap_or_else(|| client.fs.clone());
             let archive_root = crate::object_tier::resolve_archive_root(&archive_url)?;
-            client.fs.create_dir_all(&archive_root).await?;
-            let uploader =
-                ObjectTierUploader::new(client.fs.clone(), client.root_path.clone(), archive_root);
+            archive_fs.create_dir_all(&archive_root).await?;
+            let uploader = ObjectTierUploader::new(
+                client.fs.clone(),
+                archive_fs,
+                client.root_path.clone(),
+                archive_root,
+            );
             let pair = uploader.start(client.clone());
             client.background_tasks.lock().await.push(pair);
         }

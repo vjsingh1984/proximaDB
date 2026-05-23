@@ -47,16 +47,29 @@ const UPLOADED_MARKER_EXT: &str = "uploaded";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
 pub struct ObjectTierUploader {
-    fs: Arc<dyn QueueFs>,
+    /// Filesystem the queue's disk tier writes to. Used by the
+    /// uploader to READ sealed segments before mirroring them.
+    disk_fs: Arc<dyn QueueFs>,
+    /// Filesystem the archive lives on. In same-scheme deployments
+    /// (queue PVC + archive on same PVC) this equals `disk_fs`. In
+    /// cross-scheme deployments (queue PVC + archive on ADLS/S3) this
+    /// is a separate adapter anchored at the archive's root URL.
+    archive_fs: Arc<dyn QueueFs>,
     disk_root: PathBuf,
     archive_root: PathBuf,
     poll_interval: Duration,
 }
 
 impl ObjectTierUploader {
-    pub fn new(fs: Arc<dyn QueueFs>, disk_root: PathBuf, archive_root: PathBuf) -> Self {
+    pub fn new(
+        disk_fs: Arc<dyn QueueFs>,
+        archive_fs: Arc<dyn QueueFs>,
+        disk_root: PathBuf,
+        archive_root: PathBuf,
+    ) -> Self {
         Self {
-            fs,
+            disk_fs,
+            archive_fs,
             disk_root,
             archive_root,
             poll_interval: DEFAULT_POLL_INTERVAL,
@@ -146,32 +159,35 @@ impl ObjectTierUploader {
         let dst = self.archive_segment_path(topic, partition, segment_id);
         let marker = marker_path(disk_path);
 
-        // Already uploaded? Bail.
-        if self.fs.metadata(&marker).await.is_ok() {
+        // Already uploaded? Bail. Marker lives next to the source
+        // disk file, so check on disk_fs.
+        if self.disk_fs.metadata(&marker).await.is_ok() {
             return Ok(());
         }
 
         // Ensure archive partition dir exists.
         if let Some(parent) = dst.parent() {
-            self.fs.create_dir_all(parent).await?;
+            self.archive_fs.create_dir_all(parent).await?;
         }
 
-        // Copy bytes disk → archive. For LocalFs this is two syscalls;
-        // for object stores it's a PUT. Both are atomic at the file
-        // level — partial writes are detectable via the marker absence.
-        let bytes = self.fs.read(disk_path).await?;
+        // Copy bytes disk → archive. Read from disk_fs, write to
+        // archive_fs — supports cross-scheme deployments (queue on
+        // local PVC, archive on ADLS/S3).
+        let bytes = self.disk_fs.read(disk_path).await?;
         // Use a per-call temp path then rename so a concurrent
         // re-upload (shouldn't happen, but defensive) doesn't expose
-        // a torn write.
+        // a torn write. On object stores the rename is a copy+delete
+        // sequence the FilesystemFactory adapter handles.
         let tmp = dst.with_extension(format!("{SEGMENT_EXT}.uploading"));
-        let _ = self.fs.delete(&tmp).await;
-        self.fs.append(&tmp, &bytes).await?;
-        self.fs.fsync(&tmp).await?;
-        self.fs.rename(&tmp, &dst).await?;
+        let _ = self.archive_fs.delete(&tmp).await;
+        self.archive_fs.append(&tmp, &bytes).await?;
+        self.archive_fs.fsync(&tmp).await?;
+        self.archive_fs.rename(&tmp, &dst).await?;
 
-        // Sidecar marker — only written after the rename above commits.
-        self.fs.append(&marker, &[]).await?;
-        self.fs.fsync(&marker).await?;
+        // Sidecar marker lives next to the disk file (proves "this
+        // sealed segment has been mirrored"), so write to disk_fs.
+        self.disk_fs.append(&marker, &[]).await?;
+        self.disk_fs.fsync(&marker).await?;
         debug!(
             topic = %topic,
             partition = partition,
@@ -196,17 +212,24 @@ fn marker_path(disk_segment: &Path) -> PathBuf {
     PathBuf::from(p)
 }
 
-/// Parse an `object_archive` URL into a local PathBuf. Same shape as
-/// `lib::resolve_local_root` — object-store URLs are rejected until the
-/// `proximadb-filesystem` extraction lands.
+/// Parse an `object_archive` URL into the root the uploader uses.
+///
+/// * `file://` URLs become a local `PathBuf` (the absolute mount path).
+/// * Bare paths (`/var/lib/...`) become a local `PathBuf` directly.
+/// * `adls://`, `s3://`, `gcs://`, `hdfs://` URLs return `PathBuf::new()`
+///   (the empty path). The caller supplies an `archive_fs` adapter
+///   anchored at the archive URL, so the uploader's relative paths
+///   (`{topic}/{partition}/{segment}.qseg`) join with the adapter's
+///   own root_url to form the full URL — the empty PathBuf prefix
+///   contributes nothing, which is exactly what we want.
 pub(crate) fn resolve_archive_root(archive: &str) -> crate::Result<PathBuf> {
     if let Some(stripped) = archive.strip_prefix("file://") {
         Ok(PathBuf::from(stripped))
     } else if archive.contains("://") {
-        Err(QueueError::Persistence(format!(
-            "object_archive scheme not supported by LocalFs: {archive}; \
-             wait for proximadb-filesystem extraction",
-        )))
+        // Cloud scheme: the archive_fs adapter knows the URL anchor.
+        // Return an empty PathBuf so subsequent .join() calls produce
+        // relative paths the adapter resolves.
+        Ok(PathBuf::new())
     } else {
         Ok(PathBuf::from(archive))
     }

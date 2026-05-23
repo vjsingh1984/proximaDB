@@ -48,6 +48,8 @@ pub mod chunker;
 pub mod config;
 pub mod metrics;
 pub mod models;
+// Embedding-precision rollout (PR 7 of EMBEDDING_PRECISION_LLD_2026_05_22).
+pub mod precision;
 pub mod scheduler;
 pub mod service;
 pub mod tokenizer;

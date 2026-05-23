@@ -1033,23 +1033,24 @@ pub async fn insert_records(
         }
     );
 
-    let mut inserted_ids = Vec::new();
+    let total_records = request.records.len();
+    let mut inserted_ids = Vec::with_capacity(total_records);
     let mut errors = Vec::new();
-    let mut rich_records = Vec::new();
+    let mut rich_records = Vec::with_capacity(total_records);
 
-    for (index, record) in request.records.iter().enumerate() {
+    for (index, record) in request.records.into_iter().enumerate() {
         // Validate vector is not empty
         if record.vector.is_empty() {
             errors.push(InsertError {
                 index,
-                id: record.id.clone(),
+                id: record.id,
                 error: "Vector cannot be empty".to_string(),
             });
             continue;
         }
 
         // Generate ID if not provided
-        let record_id = record.id.clone().unwrap_or_else(|| {
+        let record_id = record.id.unwrap_or_else(|| {
             let new_id = uuid::Uuid::new_v4().to_string();
             debug!("Generated new UUID for record: {}", new_id);
             new_id
@@ -1057,18 +1058,18 @@ pub async fn insert_records(
 
         let mut props = HashMap::new();
 
-        if let Some(ref input_props) = record.props {
+        if let Some(input_props) = record.props {
             for (key, value) in input_props {
-                let proxima_value = rest_value_to_proxima(value)?;
-                props.insert(key.clone(), ProximaTreeNode::Value(proxima_value));
+                let proxima_value = rest_value_to_proxima(&value)?;
+                props.insert(key, ProximaTreeNode::Value(proxima_value));
             }
         }
 
-        if let Some(ref text_fields) = record.text_fields {
+        if let Some(text_fields) = record.text_fields {
             for text_field in text_fields {
                 props.insert(
-                    text_field.name.clone(),
-                    ProximaTreeNode::Value(ProximaValue::String(text_field.content.clone())),
+                    text_field.name,
+                    ProximaTreeNode::Value(ProximaValue::String(text_field.content)),
                 );
             }
         }
@@ -1076,6 +1077,8 @@ pub async fn insert_records(
         let now_ns = chrono::Utc::now()
             .timestamp_millis()
             .saturating_mul(1_000_000);
+        let vector = record.vector;
+        let dim = vector.len() as u32;
         let rich_record = ProximaRecord {
             oid: record_id.clone(),
             created_at_ns: now_ns,
@@ -1085,8 +1088,8 @@ pub async fn insert_records(
             embeddings: vec![EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "dense_vector".to_string(),
-                dim: record.vector.len() as u32,
-                values: record.vector.clone(),
+                dim,
+                values: vector,
                 ..Default::default()
             }],
             ..ProximaRecord::default()

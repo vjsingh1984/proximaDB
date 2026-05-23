@@ -1201,15 +1201,11 @@ impl DmlService {
         if primary_key.is_some_and(|primary_key| column.name.eq_ignore_ascii_case(primary_key)) {
             return record.oid.clone();
         }
-        if matches!(
-            column.data_type,
-            CatalogDataType::Vector | CatalogDataType::SparseVector | CatalogDataType::BinaryVector
-        ) && let Some(embedding) = record.embeddings.first()
-        {
-            return Self::proxima_value_to_predicate_text(&ProximaValue::DenseVector(
-                embedding.values.clone(),
-            ));
-        }
+        // Vector-typed columns are not meaningfully comparable via SQL scalar
+        // predicates; emitting a CSV stringification per row (potentially KB-sized)
+        // is wasted work and the comparison can never succeed semantically. Return
+        // empty so IsNull behaves correctly and all ordered/equality predicates
+        // evaluate to false.
         String::new()
     }
 
@@ -1309,37 +1305,64 @@ impl DmlService {
     }
 
     fn sql_like_matches(value: &str, pattern: &str) -> bool {
-        let value = value.chars().collect::<Vec<_>>();
-        let pattern = pattern.chars().collect::<Vec<_>>();
-        let mut table = vec![vec![false; pattern.len() + 1]; value.len() + 1];
-        table[0][0] = true;
-
-        for pattern_index in 1..=pattern.len() {
-            if pattern[pattern_index - 1] == '%' {
-                table[0][pattern_index] = table[0][pattern_index - 1];
-            }
-        }
-
-        for value_index in 1..=value.len() {
-            for pattern_index in 1..=pattern.len() {
-                match pattern[pattern_index - 1] {
-                    '%' => {
-                        table[value_index][pattern_index] = table[value_index][pattern_index - 1]
-                            || table[value_index - 1][pattern_index];
+        // Fast paths for common patterns. Only applied for pure-ASCII patterns
+        // where byte-indexed slicing is equivalent to char-indexed slicing; this
+        // preserves the char-based semantics of the DP path below for multi-byte
+        // patterns. `_` is not handled here because it requires per-position
+        // wildcard checking.
+        if pattern.is_ascii() && !pattern.contains('_') {
+            let bytes = pattern.as_bytes();
+            let pct_count = bytes.iter().filter(|&&b| b == b'%').count();
+            match pct_count {
+                0 => return value == pattern,
+                1 => {
+                    if bytes.first() == Some(&b'%') {
+                        return value.ends_with(&pattern[1..]);
                     }
-                    '_' => {
-                        table[value_index][pattern_index] =
-                            table[value_index - 1][pattern_index - 1];
+                    if bytes.last() == Some(&b'%') {
+                        return value.starts_with(&pattern[..pattern.len() - 1]);
                     }
-                    ch => {
-                        table[value_index][pattern_index] = ch == value[value_index - 1]
-                            && table[value_index - 1][pattern_index - 1];
-                    }
+                    // Single `%` in the middle: fall through to DP.
                 }
+                2 if bytes.first() == Some(&b'%') && bytes.last() == Some(&b'%') => {
+                    return value.contains(&pattern[1..pattern.len() - 1]);
+                }
+                _ => {}
             }
         }
 
-        table[value.len()][pattern.len()]
+        Self::sql_like_matches_dp(value, pattern)
+    }
+
+    fn sql_like_matches_dp(value: &str, pattern: &str) -> bool {
+        let value: Vec<char> = value.chars().collect();
+        let pattern: Vec<char> = pattern.chars().collect();
+        let plen = pattern.len();
+        let vlen = value.len();
+
+        // Rolling-row DP: O(plen) extra memory instead of O(vlen * plen).
+        let mut prev = vec![false; plen + 1];
+        let mut cur = vec![false; plen + 1];
+        prev[0] = true;
+        for p in 1..=plen {
+            if pattern[p - 1] == '%' {
+                prev[p] = prev[p - 1];
+            }
+        }
+
+        for v in 1..=vlen {
+            cur[0] = false;
+            for p in 1..=plen {
+                cur[p] = match pattern[p - 1] {
+                    '%' => cur[p - 1] || prev[p],
+                    '_' => prev[p - 1],
+                    ch => ch == value[v - 1] && prev[p - 1],
+                };
+            }
+            std::mem::swap(&mut prev, &mut cur);
+        }
+
+        prev[plen]
     }
 
     async fn resolve_table_write_source_metadata(
@@ -5213,5 +5236,53 @@ mod tests {
             stats.is_stale(last_ms + 120_000, 60_000),
             "stats 120s old must be stale under a 60s TTL"
         );
+    }
+
+    #[test]
+    fn sql_like_fast_paths_match_dp() {
+        // Each case is (value, pattern). The fast path and DP must agree.
+        let cases: &[(&str, &str)] = &[
+            // exact-match fast path
+            ("hello", "hello"),
+            ("hello", "world"),
+            ("", ""),
+            // suffix fast path: leading %
+            ("hello world", "%world"),
+            ("hello world", "%earth"),
+            ("", "%"),
+            // prefix fast path: trailing %
+            ("hello world", "hello%"),
+            ("hello world", "world%"),
+            // contains fast path: %x%
+            ("hello world", "%lo wo%"),
+            ("hello world", "%missing%"),
+            // single % in middle: DP path
+            ("hello world", "he%ld"),
+            ("hello world", "ab%cd"),
+            // underscore: DP path
+            ("abc", "a_c"),
+            ("abc", "a_d"),
+            ("abc", "a__"),
+            // mixed wildcards: DP path
+            ("hello world", "h_llo%world"),
+            // empty pattern, non-empty value
+            ("abc", ""),
+            // pattern with multiple percents only (matches everything)
+            ("abc", "%%"),
+            ("", "%%"),
+            // multi-byte (non-ASCII) — must take DP path
+            ("héllo", "héllo"),
+            ("héllo", "h%o"),
+            ("héllo", "h_llo"),
+        ];
+
+        for (value, pattern) in cases {
+            let fast = DmlService::sql_like_matches(value, pattern);
+            let dp = DmlService::sql_like_matches_dp(value, pattern);
+            assert_eq!(
+                fast, dp,
+                "LIKE mismatch for value={value:?} pattern={pattern:?}: fast={fast} dp={dp}"
+            );
+        }
     }
 }

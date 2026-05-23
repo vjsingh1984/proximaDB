@@ -1,5 +1,7 @@
 use anyhow::{Context, Result};
 use arrow_array::{Array, RecordBatch};
+use chrono::{DateTime, Utc};
+use dashmap::DashMap;
 use std::collections::HashMap;
 /// Consolidated RAPTOR reader that eliminates duplication by using unified components
 /// Replaces: reader.rs (1,243 lines) + unified_reader.rs (951 lines) + rowgroup_cache.rs (771 lines)
@@ -250,6 +252,16 @@ impl Default for BoostConfig {
     }
 }
 
+/// Cached RAPTOR file metadata entry, keyed by file path. The (size, modified)
+/// pair forms the invalidation token: any change to the underlying file is
+/// detected on the next `filesystem.metadata()` stat call.
+#[derive(Clone)]
+struct CachedFileMetadata {
+    metadata: Arc<RaptorFileMetadata>,
+    size: u64,
+    modified: Option<DateTime<Utc>>,
+}
+
 /// Consolidated RAPTOR reader using unified infrastructure
 pub struct RaptorReader {
     /// Base storage path
@@ -270,14 +282,20 @@ pub struct RaptorReader {
     /// Collection ID for cache keys
     collection_id: String,
 
+    /// Per-reader RAPTOR file metadata cache. Lookup is keyed by file path; the
+    /// cached entry is validated against the current filesystem (size, modified)
+    /// stat before reuse so footer reads only happen when the file actually
+    /// changes. The (footer read + bincode::deserialize) round-trip otherwise
+    /// occurs on every `read_metadata()` call.
+    metadata_cache: Arc<DashMap<String, CachedFileMetadata>>,
+
     /// Transaction coordinator
     _transaction_coordinator: Arc<TransactionCoordinator>,
     // Note: Caching strategy:
-    // - File-level metadata (footer, K centroids, K×K matrix) is cached by the
-    //   shared CrossCacheOrchestrator through the zero-copy filesystem
+    // - File-level metadata (footer, K centroids, K×K matrix) is cached via
+    //   `metadata_cache` above (per-reader, mtime-validated).
     // - Rowgroup-level data (P×K and P² matrices) is NOT cached - read from
-    //   disk/cloud on demand to avoid memory bloat (~1.5MB per rowgroup)
-    // - If caching is needed later, we can add a local DashMap with memory budget
+    //   disk/cloud on demand to avoid memory bloat (~1.5MB per rowgroup).
 }
 
 #[allow(dead_code)]
@@ -335,6 +353,7 @@ impl RaptorReader {
             cache,
             distance_compute: Arc::new(UnifiedDistanceCompute::default()),
             filesystem,
+            metadata_cache: Arc::new(DashMap::new()),
             _transaction_coordinator: transaction_coordinator,
         }
     }
