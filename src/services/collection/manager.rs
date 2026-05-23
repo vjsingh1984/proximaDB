@@ -395,7 +395,26 @@ impl CollectionService {
             );
         }
 
-        self.delete_collection(collection_name).await
+        let response = self.delete_collection(collection_name).await?;
+
+        // Bump the corpus_version for (tenant, collection) so the
+        // process-wide PlanCache invalidates on the next planner
+        // lookup. Deleting a collection definitionally invalidates
+        // any cached plans for it. Only fires when we have a tenant
+        // context — anonymous deletions can't be keyed.
+        if let Some(tenant_ctx) = tenant_context {
+            if response.success {
+                let version = crate::catalog::CorpusVersionRegistry::global()
+                    .bump(&tenant_ctx.tenant_id, collection_name)
+                    .await;
+                debug!(
+                    "🔄 corpus_version bumped after delete: tenant={} collection={} version={}",
+                    tenant_ctx.tenant_id, collection_name, version
+                );
+            }
+        }
+
+        Ok(response)
     }
 
     /// Create collection with tenant context validation
@@ -760,6 +779,23 @@ impl CollectionService {
 
         // Generate storage path template
         let storage_path = format!("${{base_path}}/collections/{}", uuid);
+
+        // Bump the corpus_version for (tenant, collection) so the
+        // process-wide PlanCache invalidates on the first planner
+        // lookup against the freshly-created collection. New
+        // collections start at version 2 (default was 1), so any
+        // entry that ended up in the cache during a race condition
+        // — e.g. a search that arrived between catalog upsert and
+        // this bump — gets superseded immediately.
+        if let Some(tenant_ctx) = tenant_context {
+            let version = crate::catalog::CorpusVersionRegistry::global()
+                .bump(&tenant_ctx.tenant_id, &config.name)
+                .await;
+            debug!(
+                "🔄 corpus_version bumped after create: tenant={} collection={} version={}",
+                tenant_ctx.tenant_id, config.name, version
+            );
+        }
 
         Ok(CollectionServiceResponse {
             success: true,

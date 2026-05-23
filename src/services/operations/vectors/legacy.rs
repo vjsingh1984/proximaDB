@@ -44,6 +44,10 @@
 use anyhow::Result;
 use proximadb_records::ProximaRecord;
 use proximadb_records::conversions::{proxima_to_sql_value, sql_value_to_proxima};
+// PR 3b follow-up: ingest-edge guard so non-Fp32 records can't sneak
+// into a collection while the schema-v2 feature flag is off.
+use proximadb_config::EmbeddingPrecisionConfig;
+use proximadb_records::validate_records_for_schema_v1;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -231,6 +235,29 @@ fn rich_filters_to_v1_clauses(
     }
 
     clauses
+}
+
+/// Cached precision-rollout config, read once from env per process.
+///
+/// PR 3b follow-up. The config is read at first-call (which happens on
+/// the first insert after server boot) and cached for every subsequent
+/// insert — the env var doesn't change at runtime. A parse error on the
+/// env var degrades to the safe default (`schema_v2_enabled = false`)
+/// + a warn-level log so a typo doesn't take down the ingest path.
+fn cached_precision_config() -> &'static EmbeddingPrecisionConfig {
+    static CACHED: std::sync::OnceLock<EmbeddingPrecisionConfig> = std::sync::OnceLock::new();
+    CACHED.get_or_init(|| {
+        EmbeddingPrecisionConfig::default()
+            .with_env_override()
+            .unwrap_or_else(|e| {
+                tracing::warn!(
+                    "PR 3b: failed to parse {} env var ({}); defaulting to schema_v2_enabled=false",
+                    EmbeddingPrecisionConfig::ENV_VAR,
+                    e
+                );
+                EmbeddingPrecisionConfig::default()
+            })
+    })
 }
 
 fn proxima_value_to_filter_clause_value(
@@ -1371,6 +1398,18 @@ impl VectorOperationsService {
 
         if let Some(tenant_ctx) = tenant_context {
             Self::ensure_tenant_on_records(&mut records, &tenant_ctx.tenant_id)?;
+        }
+
+        // PR 3b follow-up: while the precision-schema-v2 feature flag is
+        // off, reject any record carrying a non-Fp32 embedding cell. The
+        // validator's error tag (`unsupported_precision_schema_v1_only:`)
+        // is grep-able in logs + SDK responses per LLD §"Feature Flag
+        // and Rolling Deploy". When the flag is on, the catalog policy
+        // (PR 6a IngestMismatchPolicy) governs ingest behavior instead.
+        if !cached_precision_config().schema_v2_enabled {
+            if let Err(e) = validate_records_for_schema_v1(records.iter()) {
+                return Err(anyhow::anyhow!(e));
+            }
         }
 
         self.insert_batch_internal(collection_id, records).await
