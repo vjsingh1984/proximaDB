@@ -78,6 +78,13 @@ pub use tier_recommendation::{
     recommend as recommend_tier,
 };
 
+/// Corpus version registry — process-wide monotonic counter per
+/// (tenant, collection) for plan-cache invalidation. Catalog write
+/// paths call into this when they make a schema/segment/stats
+/// change visible to the planner.
+pub mod corpus_version;
+pub use corpus_version::CorpusVersionRegistry;
+
 // Feature-gated implementations
 #[cfg(feature = "delta-lake")]
 pub mod delta;

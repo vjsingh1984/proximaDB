@@ -30,7 +30,7 @@ use crate::services::operations::vectors::VectorOperationsService;
 // Type aliases for compatibility
 pub type VectorSearchQuery = SearchQuery;
 pub type VectorSearchResult = crate::core::service_types::VectorSearchResult;
-pub type SearchParameters = SearchConfig;
+pub type SearchParameters = VectorSearchConfig;
 
 // Search query structure
 #[derive(Debug, Clone)]
@@ -40,9 +40,12 @@ pub struct SearchQuery {
     pub distance_metric: DistanceMetric,
 }
 
+/// Backwards-compat alias for [`VectorSearchConfig`].
+pub type SearchConfig = VectorSearchConfig;
+
 // Search configuration
 #[derive(Debug, Clone)]
-pub struct SearchConfig {
+pub struct VectorSearchConfig {
     pub algorithm: SearchAlgorithm,
     pub timeout_ms: Option<u64>,
 }
@@ -322,7 +325,7 @@ impl SearchAlgorithmFactory {
 /// Execute vector search with given parameters
 pub async fn execute_search(
     _vector_service: &VectorOperationsService,
-    _params: &SearchConfig,
+    _params: &VectorSearchConfig,
 ) -> Result<VectorSearchResult> {
     // Placeholder implementation - delegates to vector service
     Err(anyhow!("Vector search not yet implemented"))

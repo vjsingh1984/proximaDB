@@ -55,7 +55,7 @@ pub struct TableInfo {
     pub properties: HashMap<String, String>,
 
     /// Statistics for query planning (if available)
-    pub statistics: Option<TableStatistics>,
+    pub statistics: Option<ConnectorTableStatistics>,
 }
 
 impl TableInfo {
@@ -83,7 +83,7 @@ impl TableInfo {
     }
 
     /// Set statistics.
-    pub fn with_statistics(mut self, stats: TableStatistics) -> Self {
+    pub fn with_statistics(mut self, stats: ConnectorTableStatistics) -> Self {
         self.statistics = Some(stats);
         self
     }
@@ -130,10 +130,13 @@ impl TableInfo {
 
 /// Table-level statistics for query planning.
 ///
+/// Backwards-compat alias for [`ConnectorTableStatistics`].
+pub type TableStatistics = ConnectorTableStatistics;
+
 /// Provides aggregate statistics about the entire table including
 /// row count, size, and per-column statistics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TableStatistics {
+pub struct ConnectorTableStatistics {
     /// Total number of rows in the table
     pub row_count: u64,
 
@@ -160,7 +163,7 @@ pub struct TableStatistics {
     pub is_exact: bool,
 }
 
-impl TableStatistics {
+impl ConnectorTableStatistics {
     /// Create new statistics with row count and size.
     pub fn new(row_count: u64, size_bytes: u64) -> Self {
         Self {
@@ -216,7 +219,7 @@ impl TableStatistics {
     }
 
     /// Merge with another statistics object.
-    pub fn merge(&mut self, other: &TableStatistics) {
+    pub fn merge(&mut self, other: &ConnectorTableStatistics) {
         self.row_count += other.row_count;
         self.size_bytes += other.size_bytes;
 
@@ -681,7 +684,7 @@ mod tests {
 
     #[test]
     fn test_table_statistics() {
-        let stats = TableStatistics::new(10000, 1_048_576)
+        let stats = ConnectorTableStatistics::new(10000, 1_048_576)
             .with_file_count(10)
             .with_column_stats(
                 "id",
@@ -739,14 +742,14 @@ mod tests {
 
     #[test]
     fn test_statistics_merge() {
-        let mut stats1 = TableStatistics::new(1000, 10000).with_column_stats(
+        let mut stats1 = ConnectorTableStatistics::new(1000, 10000).with_column_stats(
             "id",
             ConnectorColumnStatistics::new()
                 .with_distinct_count(1000)
                 .with_min_max("0001", "5000"),
         );
 
-        let stats2 = TableStatistics::new(1000, 10000)
+        let stats2 = ConnectorTableStatistics::new(1000, 10000)
             .with_column_stats(
                 "id",
                 ConnectorColumnStatistics::new()

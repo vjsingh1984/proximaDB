@@ -97,9 +97,12 @@ impl Ord for DiskAnnSearchResult {
     }
 }
 
+/// Backwards-compat alias for [`DiskAnnSearchConfig`].
+pub type SearchConfig = DiskAnnSearchConfig;
+
 /// Configuration for DiskANN search
 #[derive(Debug, Clone)]
-pub struct SearchConfig {
+pub struct DiskAnnSearchConfig {
     /// Beam width (L) - number of candidates to maintain
     pub beam_width: usize,
 
@@ -113,7 +116,7 @@ pub struct SearchConfig {
     pub use_node_ordering: bool,
 }
 
-impl Default for SearchConfig {
+impl Default for DiskAnnSearchConfig {
     fn default() -> Self {
         Self {
             beam_width: 50,        // Standard DiskANN parameter
@@ -190,7 +193,7 @@ impl DiskANNSearch {
         &self,
         query: &[f32],
         vectors: &[Vec<f32>],
-        config: &SearchConfig,
+        config: &DiskAnnSearchConfig,
     ) -> Result<(Vec<DiskAnnSearchResult>, SearchStats)> {
         let start_time = std::time::Instant::now();
 
@@ -386,7 +389,7 @@ impl DiskANNSearch {
         &self,
         queries: &[Vec<f32>],
         vectors: &[Vec<f32>],
-        config: &SearchConfig,
+        config: &DiskAnnSearchConfig,
     ) -> Result<Vec<(Vec<DiskAnnSearchResult>, SearchStats)>> {
         queries
             .iter()
@@ -472,7 +475,7 @@ mod tests {
 
     #[test]
     fn test_search_config_default() {
-        let config = SearchConfig::default();
+        let config = DiskAnnSearchConfig::default();
         assert_eq!(config.beam_width, 50);
         assert_eq!(config.top_k, 10);
         assert_eq!(config.search_list_size, 100);
@@ -494,7 +497,7 @@ mod tests {
 
         let vectors: Vec<Vec<f32>> = vec![];
         let query = vec![0.0; 128];
-        let config = SearchConfig::default();
+        let config = DiskAnnSearchConfig::default();
 
         let (results, stats) = search.search(&query, &vectors, &config).unwrap();
         assert_eq!(results.len(), 0);
@@ -521,7 +524,7 @@ mod tests {
 
         // Search for first vector
         let query = vectors[0].clone();
-        let search_config = SearchConfig {
+        let search_config = DiskAnnSearchConfig {
             beam_width: 10,
             top_k: 5,
             search_list_size: 20,
@@ -557,7 +560,7 @@ mod tests {
         let search = DiskANNSearch::new(graph, None);
 
         let queries = vec![vectors[0].clone(), vectors[5].clone()];
-        let search_config = SearchConfig::default();
+        let search_config = DiskAnnSearchConfig::default();
 
         let search_results = search
             .batch_search(&queries, &vectors, &search_config)
@@ -617,7 +620,7 @@ mod tests {
 
         let vectors = vec![vec![0.0; 128]; 10];
         let query = vec![0.0; 64]; // Wrong dimension
-        let config = SearchConfig::default();
+        let config = DiskAnnSearchConfig::default();
 
         let result = search.search(&query, &vectors, &config);
         assert!(result.is_err());

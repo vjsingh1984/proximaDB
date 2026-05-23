@@ -33,9 +33,12 @@ use proximadb_kernel::error::ProximaDBError;
 /// Result type for transaction operations
 pub type Result<T> = std::result::Result<T, ProximaDBError>;
 
+/// Backwards-compat alias for [`ManagerTransactionConfig`].
+pub type TransactionConfig = ManagerTransactionConfig;
+
 /// Configuration for the transaction manager
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionConfig {
+pub struct ManagerTransactionConfig {
     /// Default transaction timeout
     pub default_timeout: Duration,
     /// Maximum concurrent transactions
@@ -56,7 +59,7 @@ pub struct TransactionConfig {
     pub max_conflict_retries: u32,
 }
 
-impl Default for TransactionConfig {
+impl Default for ManagerTransactionConfig {
     fn default() -> Self {
         Self {
             default_timeout: Duration::from_secs(30),
@@ -119,7 +122,7 @@ struct LockEntry {
 /// using Two-Phase Commit (2PC) protocol.
 pub struct MultiModelTransactionManager {
     /// Configuration
-    config: TransactionConfig,
+    config: ManagerTransactionConfig,
     /// Active transactions
     active_transactions: Arc<RwLock<HashMap<TransactionId, Arc<TransactionContext>>>>,
     /// Transaction participants
@@ -184,7 +187,7 @@ impl ManagerStatsCounters {
 
 impl MultiModelTransactionManager {
     /// Create a new transaction manager
-    pub fn new(config: TransactionConfig) -> Self {
+    pub fn new(config: ManagerTransactionConfig) -> Self {
         Self {
             config,
             active_transactions: Arc::new(RwLock::new(HashMap::new())),
@@ -860,7 +863,7 @@ mod tests {
     use crate::storage::transaction::operations::VectorOperation;
 
     fn create_manager() -> MultiModelTransactionManager {
-        MultiModelTransactionManager::new(TransactionConfig::default())
+        MultiModelTransactionManager::new(ManagerTransactionConfig::default())
     }
 
     #[test]
@@ -988,7 +991,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_transaction_timeout() {
-        let config = TransactionConfig {
+        let config = ManagerTransactionConfig {
             default_timeout: Duration::from_millis(10),
             ..Default::default()
         };
@@ -1012,7 +1015,7 @@ mod tests {
 
     #[test]
     fn test_max_concurrent_transactions() {
-        let config = TransactionConfig {
+        let config = ManagerTransactionConfig {
             max_concurrent_transactions: 2,
             ..Default::default()
         };
@@ -1041,7 +1044,7 @@ mod tests {
     #[tokio::test]
     async fn test_conflict_detection() {
         // Use RepeatableRead (no locking) to test conflict detection at commit time
-        let config = TransactionConfig {
+        let config = ManagerTransactionConfig {
             default_isolation_level: IsolationLevel::RepeatableRead,
             conflict_resolution: ConflictResolution::FirstWriterWins,
             ..Default::default()
@@ -1081,7 +1084,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_timeout_check() {
-        let config = TransactionConfig {
+        let config = ManagerTransactionConfig {
             default_timeout: Duration::from_millis(10),
             ..Default::default()
         };

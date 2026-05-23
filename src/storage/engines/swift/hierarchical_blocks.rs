@@ -17,7 +17,7 @@ pub struct MetadataIndex {
     composite_indexes: Vec<CompositeIndex>,
 
     /// Table-level statistics
-    table_stats: TableStatistics,
+    table_stats: SwiftHierarchicalTableStatistics,
 
     /// Filterable columns configuration
     filterable_columns: HashSet<String>,
@@ -220,9 +220,12 @@ pub struct HistogramBucket {
     pub count: u64,
 }
 
+/// Backwards-compat alias for [`SwiftHierarchicalTableStatistics`].
+pub type TableStatistics = SwiftHierarchicalTableStatistics;
+
 /// Table-level statistics
 #[derive(Debug, Clone)]
-pub struct TableStatistics {
+pub struct SwiftHierarchicalTableStatistics {
     pub total_records: u64,
     pub total_blocks: u64,
     pub total_superblocks: u64,
@@ -251,7 +254,7 @@ impl MetadataIndex {
         Self {
             column_indexes: HashMap::new(),
             composite_indexes: Vec::new(),
-            table_stats: TableStatistics {
+            table_stats: SwiftHierarchicalTableStatistics {
                 total_records: 0,
                 total_blocks: 0,
                 total_superblocks: 0,

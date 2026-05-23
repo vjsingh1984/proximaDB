@@ -30,6 +30,11 @@ use crate::query::cache::plan_cache::PlanCache;
 pub struct InvalidationSummary {
     pub plan_cache_entries: u64,
     pub batch_groups_closed: u64,
+    /// Corpus version after the bump that fired during this call —
+    /// `None` only if the registry wasn't reachable. The observability
+    /// dashboard reports this so an SRE can correlate "the version
+    /// became N at time T" with downstream cache misses.
+    pub corpus_version_after: Option<u64>,
 }
 
 impl InvalidationSummary {
@@ -99,6 +104,18 @@ impl CacheInvalidationCoordinator {
                 summary.batch_groups_closed += after.saturating_sub(before);
             }
         }
+
+        // Bump the process-wide corpus_version so future plan-cache
+        // lookups against this (tenant, collection) miss even if the
+        // PlanCache wasn't wired into this coordinator instance. This
+        // closes the race where a new request arrives between the
+        // PlanCache drop above and the next cache fill — the
+        // post-bump version doesn't match any pre-existing entries.
+        summary.corpus_version_after = Some(
+            crate::catalog::CorpusVersionRegistry::global()
+                .bump(tenant_id, collection)
+                .await,
+        );
 
         summary
     }

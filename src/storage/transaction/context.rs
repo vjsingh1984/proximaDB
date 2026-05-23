@@ -469,9 +469,9 @@ impl TransactionContext {
     }
 
     /// Get transaction statistics
-    pub fn stats(&self) -> TransactionStats {
+    pub fn stats(&self) -> ContextTransactionStats {
         let inner = self.inner.read();
-        TransactionStats {
+        ContextTransactionStats {
             id: self.id.clone(),
             state: inner.state,
             isolation_level: self.isolation_level,
@@ -484,9 +484,12 @@ impl TransactionContext {
     }
 }
 
+/// Backwards-compat alias for [`ContextTransactionStats`].
+pub type TransactionStats = ContextTransactionStats;
+
 /// Transaction statistics
 #[derive(Debug, Clone)]
-pub struct TransactionStats {
+pub struct ContextTransactionStats {
     /// Transaction ID
     pub id: TransactionId,
     /// Current state

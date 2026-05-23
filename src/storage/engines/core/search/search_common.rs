@@ -14,9 +14,12 @@ use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine
 use crate::core::search::{FilterExpression, OptimizedSearchRecord};
 use crate::proto::proximadb_v1::VectorRecord;
 
+/// Backwards-compat alias for [`UniversalSearchConfig`].
+pub type SearchConfig = UniversalSearchConfig;
+
 /// Configuration for the universal search pipeline
 #[derive(Debug, Clone)]
-pub struct SearchConfig {
+pub struct UniversalSearchConfig {
     /// Number of results to return
     pub top_k: usize,
 
@@ -39,7 +42,7 @@ pub struct SearchConfig {
     pub distance_metric: crate::compute::distance_computation::DistanceMetric,
 }
 
-impl Default for SearchConfig {
+impl Default for UniversalSearchConfig {
     fn default() -> Self {
         Self {
             top_k: 10,
@@ -124,7 +127,7 @@ pub trait FileSearcher<F: SearchableFile, B: SearchableBlock>: Send + Sync {
         &self,
         file: &F,
         query_vector: &[f32],
-        config: &SearchConfig,
+        config: &UniversalSearchConfig,
     ) -> Result<Vec<OptimizedSearchRecord>>;
 
     /// Get searchable blocks from a file
@@ -135,7 +138,7 @@ pub trait FileSearcher<F: SearchableFile, B: SearchableBlock>: Send + Sync {
         &self,
         block: &B,
         query_vector: &[f32],
-        config: &SearchConfig,
+        config: &UniversalSearchConfig,
     ) -> Result<Vec<OptimizedSearchRecord>>;
 }
 
@@ -167,7 +170,7 @@ impl UniversalSearchPipeline {
         &self,
         files: Vec<F>,
         query_vector: &[f32],
-        config: SearchConfig,
+        config: UniversalSearchConfig,
         file_searcher: Arc<S>,
     ) -> Result<Vec<OptimizedSearchRecord>>
     where
@@ -226,7 +229,7 @@ impl UniversalSearchPipeline {
         &self,
         files: Vec<F>,
         query_vector: &[f32],
-        config: &SearchConfig,
+        config: &UniversalSearchConfig,
         file_searcher: Arc<S>,
     ) -> Result<Vec<Vec<OptimizedSearchRecord>>>
     where
@@ -262,7 +265,7 @@ impl UniversalSearchPipeline {
         &self,
         candidates: Vec<OptimizedSearchRecord>,
         query_vector: &[f32],
-        config: &SearchConfig,
+        config: &UniversalSearchConfig,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         if !config.include_vectors {
             // Can't rerank without vectors
@@ -615,7 +618,7 @@ impl ResultManager {
     pub fn apply_field_config(
         &self,
         mut results: Vec<OptimizedSearchRecord>,
-        config: &SearchConfig,
+        config: &UniversalSearchConfig,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         for result in &mut results {
             if !config.include_vectors {
@@ -635,7 +638,7 @@ mod tests {
 
     #[test]
     fn test_search_config_default() {
-        let config = SearchConfig::default();
+        let config = UniversalSearchConfig::default();
         assert_eq!(config.top_k, 10);
         assert_eq!(config.max_parallel_files, 4);
         assert!(config.enable_progressive_search);

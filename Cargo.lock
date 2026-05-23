@@ -6641,6 +6641,8 @@ dependencies = [
 name = "proximadb-recall-bench"
 version = "0.2.0"
 dependencies = [
+ "half",
+ "proximadb-catalog",
  "proximadb-records",
  "serde",
  "serde_json",

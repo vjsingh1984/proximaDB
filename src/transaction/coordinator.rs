@@ -61,9 +61,13 @@ use super::wal_coordinator::WALCoordinator;
 
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
+/// Backwards-compat aliases.
+pub type TransactionConfig = CoordinatorTransactionConfig;
+pub type TransactionStats = CoordinatorTransactionStats;
+
 /// Configuration for cross-model transaction coordinator
 #[derive(Debug, Clone)]
-pub struct TransactionConfig {
+pub struct CoordinatorTransactionConfig {
     /// WAL directory for transaction logs
     pub wal_dir: PathBuf,
 
@@ -77,7 +81,7 @@ pub struct TransactionConfig {
     pub cleanup_interval_secs: u64,
 }
 
-impl Default for TransactionConfig {
+impl Default for CoordinatorTransactionConfig {
     fn default() -> Self {
         Self {
             wal_dir: PathBuf::from("/tmp/proximadb/transactions"),
@@ -90,7 +94,7 @@ impl Default for TransactionConfig {
 
 /// Transaction statistics
 #[derive(Debug, Clone, Default)]
-pub struct TransactionStats {
+pub struct CoordinatorTransactionStats {
     /// Total transactions started
     pub total_transactions: u64,
     /// Committed transactions
@@ -106,7 +110,7 @@ pub struct TransactionStats {
 /// Cross-model transaction coordinator
 pub struct CrossModelTransactionCoordinator {
     /// Configuration
-    config: TransactionConfig,
+    config: CoordinatorTransactionConfig,
 
     /// Two-phase commit coordinator
     two_phase_commit: TwoPhaseCommit,
@@ -118,12 +122,12 @@ pub struct CrossModelTransactionCoordinator {
     participants: Arc<RwLock<HashMap<String, Arc<dyn TransactionParticipant>>>>,
 
     /// Transaction statistics
-    stats: Arc<RwLock<TransactionStats>>,
+    stats: Arc<RwLock<CoordinatorTransactionStats>>,
 }
 
 impl CrossModelTransactionCoordinator {
     /// Create a new cross-model transaction coordinator
-    pub fn new(config: TransactionConfig) -> Self {
+    pub fn new(config: CoordinatorTransactionConfig) -> Self {
         let two_phase_commit = TwoPhaseCommit::new(config.timeout_secs);
         let wal_coordinator = WALCoordinator::new(config.wal_dir.clone());
 
@@ -132,7 +136,7 @@ impl CrossModelTransactionCoordinator {
             two_phase_commit,
             wal_coordinator,
             participants: Arc::new(RwLock::new(HashMap::new())),
-            stats: Arc::new(RwLock::new(TransactionStats::default())),
+            stats: Arc::new(RwLock::new(CoordinatorTransactionStats::default())),
         }
     }
 
@@ -325,7 +329,7 @@ impl CrossModelTransactionCoordinator {
     }
 
     /// Get transaction statistics
-    pub async fn get_stats(&self) -> TransactionStats {
+    pub async fn get_stats(&self) -> CoordinatorTransactionStats {
         self.stats.read().await.clone()
     }
 
@@ -530,7 +534,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_creation() {
-        let config = TransactionConfig::default();
+        let config = CoordinatorTransactionConfig::default();
         let coordinator = CrossModelTransactionCoordinator::new(config);
 
         assert_eq!(coordinator.config.timeout_secs, 30);
@@ -538,7 +542,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_initialize() {
-        let config = TransactionConfig {
+        let config = CoordinatorTransactionConfig {
             wal_dir: PathBuf::from("/tmp/test_tx_coordinator"),
             ..Default::default()
         };
@@ -553,7 +557,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_begin_transaction() {
-        let config = TransactionConfig {
+        let config = CoordinatorTransactionConfig {
             wal_dir: PathBuf::from("/tmp/test_tx_begin"),
             ..Default::default()
         };
@@ -577,7 +581,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_rejects_buffer_only_participants() {
-        let config = TransactionConfig {
+        let config = CoordinatorTransactionConfig {
             wal_dir: PathBuf::from("/tmp/test_tx_buffer_only"),
             ..Default::default()
         };
@@ -603,7 +607,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_commit_writes_prepare_and_commit_wal_for_durable_participant() {
-        let config = TransactionConfig {
+        let config = CoordinatorTransactionConfig {
             wal_dir: PathBuf::from("/tmp/test_tx_durable_commit"),
             ..Default::default()
         };
@@ -635,7 +639,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_recovery_aborts_prepared_tx_for_buffer_only_participants() {
-        let config = TransactionConfig {
+        let config = CoordinatorTransactionConfig {
             wal_dir: PathBuf::from("/tmp/test_tx_recovery_abort"),
             enable_recovery: false,
             ..Default::default()

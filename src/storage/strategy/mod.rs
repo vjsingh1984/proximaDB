@@ -27,7 +27,7 @@ pub struct CollectionStrategyConfig {
     pub storage_config: StorageConfig,
 
     /// Search engine configuration
-    pub search_config: SearchConfig,
+    pub search_config: StrategySearchConfig,
 
     /// Performance tuning parameters
     pub performance_config: StrategyPerformanceConfig,
@@ -130,9 +130,12 @@ pub struct StorageConfig {
 /// Storage engine types - use proto enum directly for consistency
 pub type StorageEngineType = ProtoStorageEngine;
 
+/// Backwards-compat alias for [`StrategySearchConfig`].
+pub type SearchConfig = StrategySearchConfig;
+
 /// Search engine configuration
 #[derive(Debug, Clone)]
-pub struct SearchConfig {
+pub struct StrategySearchConfig {
     /// Distance metric for similarity
     pub distance_metric: DistanceMetric,
     /// Search-specific parameters
@@ -187,7 +190,7 @@ impl Default for CollectionStrategyConfig {
                 engine_type: ProtoStorageEngine::Sst,
                 parameters: HashMap::new(),
             },
-            search_config: SearchConfig {
+            search_config: StrategySearchConfig {
                 distance_metric: ProtoDistanceMetric::Cosine,
                 parameters: HashMap::new(),
                 enable_optimization: true,

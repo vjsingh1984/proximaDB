@@ -1495,10 +1495,16 @@ pub async fn search_with_typed_filters(
                             collection_gb: 0.0,
                             tier: &tier_record,
                         },
-                    // corpus_version=1 until the catalog manifest
-                    // exposes a real version. Bumping the manifest
-                    // version invalidates the cache transparently.
-                    corpus_version: 1,
+                    // Pull the current corpus_version from the
+                    // process-wide registry. Catalog write paths
+                    // bump this on schema/segment/stats changes;
+                    // the cache invalidates on the next lookup
+                    // when the stamped version no longer matches.
+                    // Defaults to 1 for any (tenant, collection)
+                    // the registry has never seen.
+                    corpus_version: crate::catalog::CorpusVersionRegistry::global()
+                        .current(&tenant.tenant_id, &collection)
+                        .await,
                 };
             let cached_plan =
                 crate::query::federated::optimizer::cached_plan_builder::build_for_search_cached_with_collection(

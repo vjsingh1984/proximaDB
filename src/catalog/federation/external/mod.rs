@@ -210,7 +210,7 @@ pub trait ExternalCatalog: Send + Sync {
         &self,
         _namespace: &str,
         _table: &str,
-    ) -> Result<Option<TableStatistics>> {
+    ) -> Result<Option<FederationTableStatistics>> {
         Ok(None)
     }
 
@@ -227,9 +227,12 @@ pub trait ExternalCatalog: Send + Sync {
     async fn refresh_table(&self, namespace: &str, table: &str) -> Result<()>;
 }
 
+/// Backwards-compat alias for [`FederationTableStatistics`].
+pub type TableStatistics = FederationTableStatistics;
+
 /// Table statistics from external catalog
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TableStatistics {
+pub struct FederationTableStatistics {
     /// Row count
     pub row_count: Option<u64>,
     /// Total size in bytes
