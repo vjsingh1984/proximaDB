@@ -1458,20 +1458,6 @@ pub async fn search_with_typed_filters(
 
             let total_matches = resp.total_found as u64;
 
-            // Build the Phase-1 SearchPlanTrace. The planner consults the
-            // selectivity estimator (with Phase-5 stats stubbed empty for now,
-            // so estimates fall through to the policy defaults) and the
-            // filter-strategy router. AXIS-level counters (block_fill_pct,
-            // tunneled_nodes, ...) remain zero until Phase 3.
-            let mut trace = crate::observability::search_plan_trace::SearchPlanTrace::new(
-                request_id.clone(),
-                tenant.tenant_id.clone(),
-                collection.clone(),
-            );
-            trace.latency_ms = latency_ms as f64;
-            trace.candidate_count = results.len() as u32;
-            trace.rerank_count = results.len() as u32;
-
             // ── Phase 1: run the deterministic planner via the
             // process-wide PlanCache ─────────────────────────────
             // Bundles selectivity + GLS + filter-strategy + route
@@ -1518,16 +1504,41 @@ pub async fn search_with_typed_filters(
                     &collection,
                 )
                 .await;
-            trace.filter_strategy = cached_plan.plan.filter_strategy;
-            trace.index_route = cached_plan.plan.index_route;
-            trace.estimated_selectivity = cached_plan.plan.estimated_selectivity;
-            trace.gls_score = cached_plan.plan.gls_score;
-            // Surface cache hit/miss on the trace so observability
-            // can track plan-cache hit rate per tenant.
-            if cached_plan.cache_hit {
-                trace.cache_result =
-                    crate::observability::search_plan_trace::CacheResult::Hit;
-            }
+
+            // Build the Phase-1 SearchPlanTrace via the centralized
+            // TraceBuilder helper. AXIS-level counters
+            // (block_fill_pct, tunneled_nodes, ...) stay zero until
+            // Phase 3's engine wiring fills them in; the builder
+            // accepts the default IndexStats today and emits a
+            // valid trace.
+            let cache_result = if cached_plan.cache_hit {
+                crate::observability::search_plan_trace::CacheResult::Hit
+            } else {
+                crate::observability::search_plan_trace::CacheResult::Miss
+            };
+            let trace = crate::observability::search_plan_trace_builder::build(
+                crate::observability::search_plan_trace_builder::TraceBuilderInputs {
+                    trace_id: request_id.clone(),
+                    tenant_id: tenant.tenant_id.clone(),
+                    collection_name: collection.clone(),
+                    plan: &cached_plan.plan,
+                    latency_ms: latency_ms as f64,
+                    index_stats: crate::core::service_types::IndexStats::default(),
+                    candidate_count: results.len() as u32,
+                    rerank_count: results.len() as u32,
+                    repair_count: 0,
+                    sure_signals:
+                        crate::observability::search_plan_trace::SureSignals::default(),
+                    cache_result,
+                    failure_class: None,
+                    // bytes_per_vector: the trace builder needs this
+                    // for actual_scan_gb derivation. Pass 0.0 until
+                    // engine instrumentation lands (Phase 3); the
+                    // builder skips the derivation and leaves
+                    // actual_scan_gb at 0.0.
+                    bytes_per_vector: 0.0,
+                },
+            );
 
             // Gate the trace + explain emission on debug=true per LLD §1.
             // Non-debug responses keep the JSON payload tight; debug

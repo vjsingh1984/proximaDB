@@ -169,6 +169,7 @@
 
 pub mod bulk_load;
 pub mod canonical_wal;
+pub mod queue_fs_adapter;
 pub mod catalog_introspection;
 pub mod collection;
 pub mod ddl;
