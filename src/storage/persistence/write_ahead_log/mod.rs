@@ -121,6 +121,9 @@ pub mod serialization; // New pure serialization layer // Slug codec for collect
 // Optimized WAL components (Phase 1 implementation) - now consolidated into WriteAheadLogManager
 pub mod simple_atomic_sync;
 pub mod wal_operations; // WAL operations for vector and graph
+
+// Embedding-precision rollout (PR 4 of EMBEDDING_PRECISION_LLD_2026_05_22).
+pub mod v2_segment_header;
 // MARKED FOR REMOVAL: optimized_path_resolver uses assignment_service
 // pub mod optimized_path_resolver;
 // MARKED FOR REMOVAL: atomic_write_buffer_sync uses optimized_path_resolver
