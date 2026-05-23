@@ -266,9 +266,12 @@ pub struct TrafficDistribution {
     pub write_distribution: Vec<(Data, f32)>,
 }
 
+/// Backwards-compat alias for [`AxisMigrationResult`].
+pub type MigrationResult = AxisMigrationResult;
+
 /// Migration result
 #[derive(Debug, Clone)]
-pub struct MigrationResult {
+pub struct AxisMigrationResult {
     /// Unique identifier of the completed migration.
     pub migration_id: proximadb_kernel::uuid::Uuid,
     /// Whether the migration completed successfully.
@@ -451,7 +454,7 @@ pub struct MigrationHistory {
     /// When the migration ended.
     pub end_time: DateTime<Utc>,
     /// Outcome of the migration.
-    pub result: MigrationResult,
+    pub result: AxisMigrationResult,
 }
 
 impl IndexMigrationEngine {
@@ -474,7 +477,7 @@ impl IndexMigrationEngine {
         collection_id: &str,
         from: IndexSelectionStrategy,
         to: IndexSelectionStrategy,
-    ) -> Result<MigrationResult> {
+    ) -> Result<AxisMigrationResult> {
         // Acquire resource permit
         let _permit = self.resource_limiter.acquire().await?;
 
@@ -541,7 +544,7 @@ impl IndexMigrationEngine {
         }
 
         // Create result
-        let result = MigrationResult {
+        let result = AxisMigrationResult {
             migration_id: plan.migration_id,
             success: errors.is_empty(),
             new_strategy: to.clone(),

@@ -557,6 +557,23 @@ impl DdlService {
         // Apply evolution
         catalog.evolve_schema(&table_id, evolution).await?;
 
+        // Bump corpus_version: a schema change definitionally
+        // invalidates cached plans — predicate types may shift,
+        // new columns add predicate surface, dropped columns
+        // invalidate predicates against them. Same tenant-extraction
+        // convention as create_index/drop_index (namespace[0]).
+        if let Some(tenant_id) = table_id.namespace.first() {
+            let version = crate::catalog::CorpusVersionRegistry::global()
+                .bump(tenant_id, &table_id.name)
+                .await;
+            tracing::debug!(
+                table = %table_name,
+                tenant = %tenant_id,
+                version,
+                "🔄 corpus_version bumped after evolve_schema"
+            );
+        }
+
         info!(table = %table_name, "Altered table");
         Ok(DdlResult::success(format!(
             "Altered table '{}'",

@@ -150,9 +150,12 @@ pub enum HmgiMigrationPhase {
     Failed,
 }
 
+/// Backwards-compat alias for [`HmgiMigrationResult`].
+pub type MigrationResult = HmgiMigrationResult;
+
 /// Result of a migration operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MigrationResult {
+pub struct HmgiMigrationResult {
     /// Migration ID
     pub migration_id: String,
 
@@ -221,7 +224,7 @@ impl HmgiMigrationEngine {
         &self,
         partition_key: HmgiPartitionKey,
         target_tier: InfrastructureTier,
-    ) -> Result<MigrationResult> {
+    ) -> Result<HmgiMigrationResult> {
         let migration_id = format!(
             "{}_{}",
             partition_key,
@@ -308,7 +311,7 @@ impl HmgiMigrationEngine {
                     }
                 }
 
-                Ok(MigrationResult {
+                Ok(HmgiMigrationResult {
                     migration_id,
                     partition_key,
                     from_tier: source_tier,

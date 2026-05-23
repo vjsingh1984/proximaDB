@@ -49,9 +49,12 @@ pub struct MigrationProgress {
     pub throughput_records_per_second: f64,
 }
 
+/// Backwards-compat alias for [`MigratorMigrationResult`].
+pub type MigrationResult = MigratorMigrationResult;
+
 /// Migration result
 #[derive(Debug, Clone)]
-pub struct MigrationResult {
+pub struct MigratorMigrationResult {
     pub success: bool,
     pub migrated_collections: Vec<String>,
     pub total_records_migrated: u64,
@@ -184,7 +187,7 @@ impl EngineMigrator {
     }
 
     /// Execute migration
-    pub async fn execute(&self, plan: &MigrationPlan) -> Result<MigrationResult> {
+    pub async fn execute(&self, plan: &MigrationPlan) -> Result<MigratorMigrationResult> {
         info!("Starting migration execution: {}", plan.migration_id);
 
         // Update status
@@ -259,7 +262,7 @@ impl EngineMigrator {
             };
         }
 
-        Ok(MigrationResult {
+        Ok(MigratorMigrationResult {
             success: errors.is_empty(),
             migrated_collections,
             total_records_migrated,
