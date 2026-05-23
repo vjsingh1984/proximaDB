@@ -92,6 +92,22 @@ pub const DTYPE_PAIR_F32_F32: &str = "f32_f32";
 pub const DTYPE_PAIR_F16_F32: &str = "f16_f32";
 pub const DTYPE_PAIR_F16_F16: &str = "f16_f16";
 
+/// Map an [`EmbeddingScalarType`] to the LLD-locked `precision` label
+/// value used by `segments_total{collection,precision}` +
+/// `canonical_bytes{collection,precision}` +
+/// `conversions_total{from,to,site}`. The strings match the snake_case
+/// serde tags so Prometheus dashboards stay aligned with catalog rows.
+pub fn precision_label(p: proximadb_records::EmbeddingScalarType) -> &'static str {
+    use proximadb_records::EmbeddingScalarType as P;
+    match p {
+        P::Fp32 => "fp32",
+        P::Fp16 => "fp16",
+        P::Bf16 => "bf16",
+        P::Int8Scalar => "int8_scalar",
+        P::UInt8Scalar => "uint8_scalar",
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Handle bundle
 // ---------------------------------------------------------------------------
@@ -187,6 +203,17 @@ impl PrecisionMetrics {
         self.canonical_bytes
             .with_label_values(&[collection, precision])
             .set(value);
+    }
+
+    /// INT-4-partial: per-batch increment for callers in the WAL flush
+    /// hot path. Atomically adds `delta` to the per-(collection, precision)
+    /// gauge so repeated calls accumulate to the collection's total
+    /// canonical embedding bytes without the caller having to track the
+    /// running total externally.
+    pub fn add_canonical_bytes(&self, collection: &str, precision: &str, delta: i64) {
+        self.canonical_bytes
+            .with_label_values(&[collection, precision])
+            .add(delta);
     }
 
     pub fn set_derived_bytes(&self, collection: &str, level: &str, value: i64) {
@@ -517,5 +544,81 @@ mod tests {
                  grep these strings, so omission would silently break alerts"
             );
         }
+    }
+
+    // === INT-4-partial: storage gauge wire-up helpers ===
+
+    #[test]
+    fn precision_label_locks_lld_q11_strings() {
+        use proximadb_records::EmbeddingScalarType as P;
+        // Locked by LLD §Q11 — operator dashboards filter on these
+        // exact strings. Renaming requires the LLD doc update + a
+        // dashboards migration.
+        assert_eq!(precision_label(P::Fp32), "fp32");
+        assert_eq!(precision_label(P::Fp16), "fp16");
+        assert_eq!(precision_label(P::Bf16), "bf16");
+        assert_eq!(precision_label(P::Int8Scalar), "int8_scalar");
+        assert_eq!(precision_label(P::UInt8Scalar), "uint8_scalar");
+    }
+
+    #[test]
+    fn add_canonical_bytes_accumulates_per_label_set() {
+        // INT-4-partial relies on per-batch deltas summing to the
+        // collection's running total. If add_canonical_bytes ever
+        // regressed to a set, capacity dashboards would silently
+        // under-report by orders of magnitude.
+        let registry = Registry::new();
+        let metrics = PrecisionMetrics::register(&registry).unwrap();
+        metrics.add_canonical_bytes("col_a", "fp32", 4096);
+        metrics.add_canonical_bytes("col_a", "fp32", 2048);
+        metrics.add_canonical_bytes("col_a", "fp16", 1024);
+        metrics.add_canonical_bytes("col_b", "fp32", 512);
+
+        let families = registry.gather();
+        let cb = families
+            .iter()
+            .find(|mf| mf.get_name() == METRIC_CANONICAL_BYTES)
+            .expect("canonical_bytes metric registered");
+
+        let value = |collection: &str, precision: &str| -> i64 {
+            cb.get_metric()
+                .iter()
+                .find(|m| {
+                    let labels = m.get_label();
+                    labels.iter().any(|l| l.get_value() == collection)
+                        && labels.iter().any(|l| l.get_value() == precision)
+                })
+                .map(|m| m.get_gauge().value() as i64)
+                .unwrap_or(0)
+        };
+
+        assert_eq!(value("col_a", "fp32"), 6144, "two deltas must sum");
+        assert_eq!(value("col_a", "fp16"), 1024, "different precision label tracks separately");
+        assert_eq!(value("col_b", "fp32"), 512, "different collection label tracks separately");
+    }
+
+    #[test]
+    fn add_and_set_canonical_bytes_can_coexist() {
+        // Some callers know the running total (compaction sweep) and
+        // some know the delta (WAL flush). Both must work against the
+        // same label set without one stomping the other.
+        let registry = Registry::new();
+        let metrics = PrecisionMetrics::register(&registry).unwrap();
+        metrics.add_canonical_bytes("col", "fp32", 100);
+        metrics.add_canonical_bytes("col", "fp32", 200); // total = 300
+        metrics.set_canonical_bytes("col", "fp32", 999); // reset
+        metrics.add_canonical_bytes("col", "fp32", 1); // total = 1000
+
+        let families = registry.gather();
+        let cb = families
+            .iter()
+            .find(|mf| mf.get_name() == METRIC_CANONICAL_BYTES)
+            .unwrap();
+        let m = cb
+            .get_metric()
+            .iter()
+            .find(|m| m.get_label().iter().any(|l| l.get_value() == "col"))
+            .unwrap();
+        assert_eq!(m.get_gauge().value() as i64, 1000);
     }
 }

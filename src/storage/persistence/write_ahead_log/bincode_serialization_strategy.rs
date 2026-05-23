@@ -217,6 +217,42 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
                     .serialize_batch(batch.vector_records.as_ref())?
             };
 
+            // INT-4-partial (mini-phase EMBEDDING_PRECISION_INTEGRATION_PLAN):
+            // populate `proximadb_embedding_precision_canonical_bytes`
+            // from this batch's records. Per-precision accumulation
+            // means a future fp16-mixed collection will see both
+            // {precision="fp32"} and {precision="fp16"} totals at the
+            // same {collection} label. Today every record's
+            // `EmbeddingCell.precision` is Fp32 (the bridge that
+            // produces non-fp32 records is INT-2.5, still pending),
+            // so this currently always increments the fp32 gauge.
+            // That's still useful: per-collection canonical-bytes
+            // accounting unblocks capacity dashboards immediately.
+            //
+            // Safe to call before init_precision_metrics(): the
+            // singleton accessor returns None and the increment is a
+            // no-op. Hot-path overhead is one HashMap lookup +
+            // one atomic add per (collection, precision) seen.
+            if let Some(pm) = crate::observability::precision_metrics::metrics() {
+                let mut per_precision: std::collections::HashMap<
+                    proximadb_records::EmbeddingScalarType,
+                    i64,
+                > = std::collections::HashMap::new();
+                for record in batch.vector_records.iter() {
+                    for cell in &record.embeddings {
+                        *per_precision.entry(cell.precision).or_insert(0) +=
+                            cell.values_byte_size() as i64;
+                    }
+                }
+                for (precision, delta) in per_precision {
+                    pm.add_canonical_bytes(
+                        collection_id,
+                        crate::observability::precision_metrics::precision_label(precision),
+                        delta,
+                    );
+                }
+            }
+
             // Determine if we should sync based on sync mode
             let should_sync = matches!(
                 self.config.performance.sync_mode,
