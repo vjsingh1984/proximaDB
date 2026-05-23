@@ -237,14 +237,14 @@ pub enum ExecutionGuard {
 /// Lightweight cost estimate. The first router is rule-based, but it returns
 /// comparable cost fields so xCatalog statistics can drive CBO later.
 #[derive(Debug, Clone, PartialEq)]
-pub struct CostEstimate {
+pub struct TableWriteCostEstimate {
     pub rows: Option<u64>,
     pub bytes: Option<u64>,
     pub relative_cost: f64,
     pub reason: String,
 }
 
-impl CostEstimate {
+impl TableWriteCostEstimate {
     fn new(relative_cost: f64, reason: impl Into<String>) -> Self {
         Self {
             rows: None,
@@ -262,7 +262,7 @@ pub struct CandidateWritePath {
     pub access_method: AccessMethodFamily,
     pub pushdown: PushdownCapabilities,
     pub cost_hints: AccessMethodCostHints,
-    pub estimated_cost: CostEstimate,
+    pub estimated_cost: TableWriteCostEstimate,
     pub guards: Vec<ExecutionGuard>,
 }
 
@@ -412,7 +412,7 @@ pub struct RoutedExecutionPlan {
     pub plan: CopyIntoPlan,
     pub write_intent: WriteIntent,
     pub write_lane_decision: WriteLaneDecision,
-    pub estimated_cost: CostEstimate,
+    pub estimated_cost: TableWriteCostEstimate,
     pub required_guards: Vec<ExecutionGuard>,
     pub selected_path: CandidateWritePath,
     pub candidate_paths: Vec<CandidateWritePath>,
@@ -733,7 +733,7 @@ impl TableWriteRouter {
         &self,
         context: &RoutingContext<'_>,
         backend: &ComputeBackend,
-    ) -> CostEstimate {
+    ) -> TableWriteCostEstimate {
         let write_mode_penalty = match context.plan.write_mode {
             WriteMode::Append | WriteMode::InsertOnly | WriteMode::Upsert => 1.0,
             WriteMode::OverwriteTable | WriteMode::ReplacePartitions(_) => 3.0,
@@ -780,7 +780,7 @@ impl TableWriteRouter {
                 }
             }
         };
-        let mut estimate = CostEstimate::new(
+        let mut estimate = TableWriteCostEstimate::new(
             write_mode_penalty * backend_cost,
             format!(
                 "rule-based route for {:?} {:?}",
@@ -892,7 +892,7 @@ fn write_intent_explanation(intent: &WriteIntent) -> TableWriteIntentExplanation
     }
 }
 
-fn cost_explanation(cost: &CostEstimate) -> TableWriteCostExplanation {
+fn cost_explanation(cost: &TableWriteCostEstimate) -> TableWriteCostExplanation {
     TableWriteCostExplanation {
         rows: cost.rows,
         bytes: cost.bytes,

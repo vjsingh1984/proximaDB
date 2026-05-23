@@ -41,7 +41,7 @@ pub struct CommonColumnarConfig {
     pub engine_optimizations: EngineOptimizations,
 
     /// Performance monitoring settings
-    pub monitoring_config: MonitoringConfig,
+    pub monitoring_config: ColumnarMonitoringConfig,
 }
 
 /// Schema generation configuration
@@ -370,7 +370,7 @@ pub struct AdvancedCachingConfig {
 
 /// Monitoring configuration
 #[derive(Debug, Clone)]
-pub struct MonitoringConfig {
+pub struct ColumnarMonitoringConfig {
     /// Enable performance metrics collection
     pub enable_metrics: bool,
 
@@ -381,12 +381,12 @@ pub struct MonitoringConfig {
     pub enable_detailed_tracing: bool,
 
     /// Resource usage monitoring
-    pub resource_monitoring: ResourceMonitoringConfig,
+    pub resource_monitoring: ResourceColumnarMonitoringConfig,
 }
 
 /// Resource monitoring configuration
 #[derive(Debug, Clone)]
-pub struct ResourceMonitoringConfig {
+pub struct ResourceColumnarMonitoringConfig {
     /// Monitor memory usage
     pub monitor_memory: bool,
 
@@ -458,7 +458,7 @@ pub struct PerformanceMonitor {
     resource_metrics: Arc<RwLock<ResourceMetrics>>,
 
     /// Configuration
-    config: MonitoringConfig,
+    config: ColumnarMonitoringConfig,
 }
 
 /// Operation performance metrics
@@ -869,7 +869,7 @@ impl CommonColumnarOperations {
 }
 
 impl PerformanceMonitor {
-    fn new(config: MonitoringConfig) -> Self {
+    fn new(config: ColumnarMonitoringConfig) -> Self {
         Self {
             operation_metrics: Arc::new(RwLock::new(OperationMetrics::default())),
             resource_metrics: Arc::new(RwLock::new(ResourceMetrics::default())),
@@ -1219,18 +1219,18 @@ impl Default for AdvancedCachingConfig {
     }
 }
 
-impl Default for MonitoringConfig {
+impl Default for ColumnarMonitoringConfig {
     fn default() -> Self {
         Self {
             enable_metrics: true,
             metrics_interval_seconds: 60,
             enable_detailed_tracing: false,
-            resource_monitoring: ResourceMonitoringConfig::default(),
+            resource_monitoring: ResourceColumnarMonitoringConfig::default(),
         }
     }
 }
 
-impl Default for ResourceMonitoringConfig {
+impl Default for ResourceColumnarMonitoringConfig {
     fn default() -> Self {
         Self {
             monitor_memory: true,

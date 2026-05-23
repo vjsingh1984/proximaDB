@@ -351,7 +351,7 @@ pub struct ShardSearchRequest {
     pub filter: Option<String>,
 
     /// Search parameters
-    pub params: SearchParams,
+    pub params: RpcSearchParams,
 
     /// Request timeout
     pub timeout: Duration,
@@ -366,9 +366,12 @@ pub struct ShardSearchRequest {
     pub domain_id: Option<String>,
 }
 
+/// Backwards-compat alias for [`RpcSearchParams`].
+pub type SearchParams = RpcSearchParams;
+
 /// Search parameters
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SearchParams {
+pub struct RpcSearchParams {
     /// Distance metric to use
     pub metric: DistanceMetric,
 
@@ -647,7 +650,7 @@ mod tests {
 
     #[test]
     fn test_search_params_default() {
-        let params: SearchParams = Default::default();
+        let params: RpcSearchParams = Default::default();
         assert_eq!(params.metric, DistanceMetric::L2);
         assert!(params.min_score.is_none());
     }

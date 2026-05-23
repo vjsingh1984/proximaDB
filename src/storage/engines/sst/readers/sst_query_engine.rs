@@ -171,7 +171,7 @@ pub struct BlockCache {
     #[allow(dead_code)]
     max_size: usize,
     #[allow(dead_code)]
-    hit_rate: Arc<tokio::sync::RwLock<CacheStats>>,
+    hit_rate: Arc<tokio::sync::RwLock<SstQueryCacheStats>>,
 }
 
 /// Optimized Index cache with memory bounds and LRU eviction
@@ -274,7 +274,7 @@ pub struct BlockCacheKey {
 
 /// Cache statistics
 #[derive(Debug, Default)]
-pub struct CacheStats {
+pub struct SstQueryCacheStats {
     pub hits: u64,
     pub misses: u64,
     pub evictions: u64,
@@ -5429,7 +5429,7 @@ impl BlockCache {
                 proximadb_runtime_common::cache::LruCache::new(max_size),
             )),
             max_size,
-            hit_rate: Arc::new(tokio::sync::RwLock::new(CacheStats::default())),
+            hit_rate: Arc::new(tokio::sync::RwLock::new(SstQueryCacheStats::default())),
         }
     }
 }

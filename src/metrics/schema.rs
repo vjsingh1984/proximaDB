@@ -9,9 +9,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::SystemTime;
 
-/// Alert for threshold violations
+/// Backwards-compat alias for [`MetricsAlert`].
+pub type Alert = MetricsAlert;
+
+/// MetricsAlert for threshold violations
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Alert {
+pub struct MetricsAlert {
     pub id: String,
     pub level: AlertLevel,
     pub message: String,
@@ -22,7 +25,7 @@ pub struct Alert {
     pub acknowledged: bool,
 }
 
-/// Alert severity level
+/// MetricsAlert severity level
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AlertLevel {
     Info,

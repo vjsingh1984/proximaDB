@@ -210,10 +210,13 @@ impl ComputeCapabilities {
 
 /// Cost estimate for executing a compute plan
 ///
+/// Backwards-compat alias for [`ComputeProviderCostEstimate`].
+pub type CostEstimate = ComputeProviderCostEstimate;
+
 /// Used by the scheduler to select the most efficient provider
 /// for a given query.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CostEstimate {
+pub struct ComputeProviderCostEstimate {
     /// Estimated CPU cost (relative units)
     pub cpu_cost: f64,
 
@@ -230,7 +233,7 @@ pub struct CostEstimate {
     pub estimated_rows: u64,
 }
 
-impl CostEstimate {
+impl ComputeProviderCostEstimate {
     /// Create a new cost estimate
     pub fn new(cpu: f64, io: f64, network: f64, memory: u64, rows: u64) -> Self {
         Self {
@@ -272,8 +275,8 @@ impl CostEstimate {
     }
 
     /// Combine two cost estimates (for composed operations)
-    pub fn combine(&self, other: &CostEstimate) -> CostEstimate {
-        CostEstimate {
+    pub fn combine(&self, other: &ComputeProviderCostEstimate) -> ComputeProviderCostEstimate {
+        ComputeProviderCostEstimate {
             cpu_cost: self.cpu_cost + other.cpu_cost,
             io_cost: self.io_cost + other.io_cost,
             network_cost: self.network_cost + other.network_cost,
@@ -283,7 +286,7 @@ impl CostEstimate {
     }
 }
 
-impl Default for CostEstimate {
+impl Default for ComputeProviderCostEstimate {
     fn default() -> Self {
         Self {
             cpu_cost: 0.0,
@@ -573,9 +576,9 @@ impl std::fmt::Debug for ExecutionResult {
 ///         true
 ///     }
 ///
-///     fn estimate_cost(&self, plan: &ComputePlan) -> Result<CostEstimate> {
+///     fn estimate_cost(&self, plan: &ComputePlan) -> Result<ComputeProviderCostEstimate> {
 ///         // Estimate execution cost...
-///         Ok(CostEstimate::default())
+///         Ok(ComputeProviderCostEstimate::default())
 ///     }
 ///
 ///     fn capabilities(&self) -> ComputeCapabilities {
@@ -616,7 +619,7 @@ pub trait ComputeProvider: Send + Sync + Debug {
     ///
     /// # Returns
     /// Cost estimate used by the scheduler for provider selection
-    fn estimate_cost(&self, plan: &ComputePlan) -> Result<CostEstimate>;
+    fn estimate_cost(&self, plan: &ComputePlan) -> Result<ComputeProviderCostEstimate>;
 
     /// Get the capabilities of this provider
     fn capabilities(&self) -> ComputeCapabilities;
@@ -651,8 +654,8 @@ pub trait ComputeProvider: Send + Sync + Debug {
     }
 
     /// Get current resource usage
-    fn resource_usage(&self) -> Result<ResourceUsage> {
-        Ok(ResourceUsage::default())
+    fn resource_usage(&self) -> Result<ComputeProviderResourceUsage> {
+        Ok(ComputeProviderResourceUsage::default())
     }
 
     /// Shutdown the provider and release resources
@@ -661,9 +664,12 @@ pub trait ComputeProvider: Send + Sync + Debug {
     }
 }
 
+/// Backwards-compat alias for [`ComputeProviderResourceUsage`].
+pub type ResourceUsage = ComputeProviderResourceUsage;
+
 /// Resource usage information
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ResourceUsage {
+pub struct ComputeProviderResourceUsage {
     /// Currently used memory in bytes
     pub memory_used_bytes: u64,
 
@@ -707,15 +713,15 @@ mod tests {
 
     #[test]
     fn test_cost_estimate_total() {
-        let cost = CostEstimate::new(100.0, 50.0, 10.0, 1024, 1000);
+        let cost = ComputeProviderCostEstimate::new(100.0, 50.0, 10.0, 1024, 1000);
         // Total = 100 + (2*50) + (5*10) = 100 + 100 + 50 = 250
         assert_eq!(cost.total_cost(), 250.0);
     }
 
     #[test]
     fn test_cost_estimate_combine() {
-        let cost1 = CostEstimate::new(100.0, 50.0, 0.0, 1024, 1000);
-        let cost2 = CostEstimate::new(50.0, 25.0, 10.0, 512, 500);
+        let cost1 = ComputeProviderCostEstimate::new(100.0, 50.0, 0.0, 1024, 1000);
+        let cost2 = ComputeProviderCostEstimate::new(50.0, 25.0, 10.0, 512, 500);
 
         let combined = cost1.combine(&cost2);
         assert_eq!(combined.cpu_cost, 150.0);

@@ -1698,7 +1698,7 @@ pub struct ColumnMetadata {
     /// Name of the metadata column
     pub column_name: String,
     /// Statistical summary of the column's values
-    pub statistics: ColumnStatistics,
+    pub statistics: OptimizerColumnStatistics,
     /// Indexes available on this column
     pub indexes: Vec<IndexInfo>,
 }
@@ -1722,7 +1722,7 @@ pub enum ColumnData {
 
 /// Column statistics
 #[derive(Debug, Clone)]
-pub struct ColumnStatistics {
+pub struct OptimizerColumnStatistics {
     /// Number of distinct values in the column
     pub distinct_count: usize,
     /// Number of null values in the column

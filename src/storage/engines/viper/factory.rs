@@ -412,7 +412,7 @@ impl ViperFactory {
     pub fn create_for_collection(
         &self,
         collection_id: &str,
-        collection_config: Option<&CollectionConfig>,
+        collection_config: Option<&ViperCollectionConfig>,
     ) -> Result<ViperComponents> {
         info!(
             "🏭 VIPER Factory: Creating components for collection {}",
@@ -489,7 +489,7 @@ impl ViperFactory {
 
     fn build_adaptive_configuration(
         &self,
-        collection_config: &CollectionConfig,
+        collection_config: &ViperCollectionConfig,
     ) -> Result<ViperConfiguration> {
         let builder = ViperConfigurationBuilder::new()
             .with_clustering_enabled(!collection_config.filterable_metadata_fields.is_empty())
@@ -503,7 +503,7 @@ impl ViperFactory {
     fn select_schema_strategy(
         &self,
         _config: &ViperConfiguration,
-        _collection_config: Option<&CollectionConfig>,
+        _collection_config: Option<&ViperCollectionConfig>,
     ) -> String {
         // All VIPER engines use the same recommendation
         "viper".to_string()
@@ -512,7 +512,7 @@ impl ViperFactory {
     fn select_processor_strategy(
         &self,
         config: &ViperConfiguration,
-        _collection_config: Option<&CollectionConfig>,
+        _collection_config: Option<&ViperCollectionConfig>,
     ) -> String {
         match &config.processing_config.strategy_selection {
             StrategySelectionMode::Adaptive => "standard".to_string(),
@@ -565,7 +565,7 @@ pub struct ViperComponents {
 
 /// Collection configuration (simplified)
 #[derive(Debug, Clone)]
-pub struct CollectionConfig {
+pub struct ViperCollectionConfig {
     pub name: String,
     pub filterable_metadata_fields: Vec<String>,
     pub vector_dimension: Option<usize>,

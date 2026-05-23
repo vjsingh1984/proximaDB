@@ -419,8 +419,8 @@ pub use schema::{
     AvroStyleType,
     // Bloom filter consolidation (WS1)
     BloomConsolidator,
-    CacheStats,
     CachedHeader,
+    HeaderCacheStats,
     CachingHeaderLoader,
     CentroidNode,
     // CentroidTree for O(log n) vector pruning (WS1)

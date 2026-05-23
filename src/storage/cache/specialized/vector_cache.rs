@@ -123,8 +123,8 @@ impl VectorCache {
     pub async fn clear(&self) {}
 
     /// Get cache statistics
-    pub async fn statistics(&self) -> CacheStatistics {
-        CacheStatistics {
+    pub async fn statistics(&self) -> VectorCacheStatistics {
+        VectorCacheStatistics {
             total_items: 0,
             memory_usage_bytes: 0,
             hit_count: 0,
@@ -145,14 +145,14 @@ impl VectorCache {
 
 /// Cache statistics
 #[derive(Debug, Clone)]
-pub struct CacheStatistics {
+pub struct VectorCacheStatistics {
     pub total_items: usize,
     pub memory_usage_bytes: usize,
     pub hit_count: u64,
     pub miss_count: u64,
 }
 
-impl CacheStatistics {
+impl VectorCacheStatistics {
     pub fn hit_rate(&self) -> f64 {
         let total = self.hit_count + self.miss_count;
         if total > 0 {

@@ -12,7 +12,7 @@ use anyhow::Result;
 use tokio::sync::RwLock;
 use tracing::info;
 
-use super::Alert;
+use super::ObservabilityAlert as Alert;
 use super::rules::{AlertRule, AlertRuleId, RuleCondition};
 
 /// Alert evaluation engine

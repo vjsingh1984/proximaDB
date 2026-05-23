@@ -136,7 +136,7 @@ impl Default for FooterCacheConfig {
 
 /// Cache statistics for monitoring
 #[derive(Debug, Clone, Serialize)]
-pub struct CacheStats {
+pub struct FooterCacheStats {
     pub hit_count: u64,
     pub miss_count: u64,
     pub total_requests: u64,
@@ -158,7 +158,7 @@ pub struct ParquetFooterCache {
     config: FooterCacheConfig,
 
     /// Cache statistics
-    stats: Arc<RwLock<CacheStats>>,
+    stats: Arc<RwLock<FooterCacheStats>>,
 
     /// Prefetch candidates (files that should be pre-cached)
     prefetch_queue: Arc<RwLock<Vec<String>>>,
@@ -191,7 +191,7 @@ impl ParquetFooterCache {
             .time_to_idle(config.time_to_idle)
             .build();
 
-        let stats = Arc::new(RwLock::new(CacheStats {
+        let stats = Arc::new(RwLock::new(FooterCacheStats {
             hit_count: 0,
             miss_count: 0,
             total_requests: 0,
@@ -335,7 +335,7 @@ impl ParquetFooterCache {
     }
 
     /// Get cache statistics
-    pub async fn get_stats(&self) -> CacheStats {
+    pub async fn get_stats(&self) -> FooterCacheStats {
         let stats = self.stats.read().await;
         let mut result = stats.clone();
 
@@ -463,7 +463,7 @@ impl ParquetFooterCache {
     /// Update statistics
     async fn update_stats<F>(&self, update_fn: F)
     where
-        F: FnOnce(&mut CacheStats),
+        F: FnOnce(&mut FooterCacheStats),
     {
         let mut stats = self.stats.write().await;
         update_fn(&mut stats);

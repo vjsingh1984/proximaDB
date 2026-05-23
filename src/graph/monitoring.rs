@@ -72,14 +72,14 @@ pub struct GraphMonitor {
     /// Performance profiler
     profiler: Arc<GraphProfiler>,
     /// Configuration
-    config: MonitoringConfig,
+    config: GraphMonitoringConfig,
     /// Metrics export channel
     metrics_sender: Option<mpsc::Sender<MetricEvent>>,
 }
 
 /// Configuration for monitoring system
 #[derive(Debug, Clone)]
-pub struct MonitoringConfig {
+pub struct GraphMonitoringConfig {
     /// Enable/disable monitoring
     pub enabled: bool,
     /// Slow query threshold in milliseconds
@@ -119,7 +119,7 @@ pub struct SlowQueryLogger {
     /// Recent slow queries (circular buffer)
     slow_queries: Arc<Mutex<VecDeque<SlowQueryRecord>>>,
     /// Configuration
-    config: Arc<MonitoringConfig>,
+    config: Arc<GraphMonitoringConfig>,
 }
 
 /// Performance profiler for detailed analysis
@@ -130,7 +130,7 @@ pub struct GraphProfiler {
     completed_profiles: Arc<RwLock<VecDeque<ProfileSummary>>>,
     /// Configuration
     #[allow(dead_code)]
-    config: Arc<MonitoringConfig>,
+    config: Arc<GraphMonitoringConfig>,
 }
 
 /// Latency histogram for tracking response times
@@ -353,7 +353,7 @@ pub struct ComponentHealth {
     pub response_time_ms: u64,
 }
 
-impl Default for MonitoringConfig {
+impl Default for GraphMonitoringConfig {
     fn default() -> Self {
         Self {
             enabled: true,
@@ -370,7 +370,7 @@ impl Default for MonitoringConfig {
 
 impl GraphMonitor {
     /// Create a new graph monitor
-    pub fn new(config: MonitoringConfig) -> Self {
+    pub fn new(config: GraphMonitoringConfig) -> Self {
         let metrics_collector = Arc::new(GraphMetricsCollector::new());
         let slow_query_logger = Arc::new(SlowQueryLogger::new(Arc::new(config.clone())));
         let profiler = Arc::new(GraphProfiler::new(Arc::new(config.clone())));
@@ -943,7 +943,7 @@ impl LatencyHistogram {
 
 impl SlowQueryLogger {
     /// Create a new slow query logger with the given monitoring configuration.
-    pub fn new(config: Arc<MonitoringConfig>) -> Self {
+    pub fn new(config: Arc<GraphMonitoringConfig>) -> Self {
         Self {
             slow_queries: Arc::new(Mutex::new(VecDeque::new())),
             config,
@@ -976,7 +976,7 @@ impl SlowQueryLogger {
 
 impl GraphProfiler {
     /// Create a new graph profiler with the given monitoring configuration.
-    pub fn new(config: Arc<MonitoringConfig>) -> Self {
+    pub fn new(config: Arc<GraphMonitoringConfig>) -> Self {
         Self {
             active_profiles: Arc::new(RwLock::new(HashMap::new())),
             completed_profiles: Arc::new(RwLock::new(VecDeque::new())),
@@ -1098,7 +1098,7 @@ mod tests {
 
     #[test]
     fn test_monitoring_config_default() {
-        let config = MonitoringConfig::default();
+        let config = GraphMonitoringConfig::default();
         assert!(config.enabled);
         assert_eq!(config.slow_query_threshold_ms, 1000);
         assert_eq!(config.max_slow_queries, 1000);
@@ -1123,7 +1123,7 @@ mod tests {
 
     #[test]
     fn test_graph_monitor_creation() {
-        let config = MonitoringConfig::default();
+        let config = GraphMonitoringConfig::default();
         let monitor = GraphMonitor::new(config);
 
         assert!(monitor.config.enabled);
@@ -1131,7 +1131,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_check() {
-        let config = MonitoringConfig::default();
+        let config = GraphMonitoringConfig::default();
         let monitor = GraphMonitor::new(config);
         let memory_pool = Arc::new(GraphMemoryPool::new());
 

@@ -10,9 +10,12 @@ use std::sync::Arc;
 // TODO: Move implementation to proximadb-graph crate
 // For now, provide stub implementations
 
+/// Backwards-compat alias for [`GraphPlannerCostEstimate`].
+pub type CostEstimate = GraphPlannerCostEstimate;
+
 /// Cost estimate for a query plan step
 #[derive(Debug, Clone, Default)]
-pub struct CostEstimate {
+pub struct GraphPlannerCostEstimate {
     pub cost: f64,
     pub rows: usize,
     pub total_cost: f64,
@@ -24,7 +27,7 @@ pub struct CostEstimate {
 #[derive(Debug, Clone)]
 pub struct PlanStep {
     pub step_type: PlanStepType,
-    pub cost: CostEstimate,
+    pub cost: GraphPlannerCostEstimate,
     pub children: Vec<PlanStep>,
 }
 
@@ -67,7 +70,7 @@ pub enum JoinType {
 #[derive(Debug, Clone)]
 pub struct QueryPlan {
     pub steps: Vec<PlanStep>,
-    pub estimated_cost: CostEstimate,
+    pub estimated_cost: GraphPlannerCostEstimate,
     pub estimated_result_size: usize,
 }
 
@@ -77,13 +80,13 @@ pub struct GraphStatistics {
     pub node_count: u64,
     pub edge_count: u64,
     pub avg_node_degree: f64,
-    pub index_stats: Vec<IndexStats>,
+    pub index_stats: Vec<PlannerIndexStats>,
     pub label_selectivity: std::collections::HashMap<String, f64>,
 }
 
 /// Index statistics
 #[derive(Debug, Clone)]
-pub struct IndexStats {
+pub struct PlannerIndexStats {
     pub index_type: String,
     pub cardinality: usize,
 }
@@ -192,7 +195,7 @@ impl QueryPlanner {
     pub fn plan(&self, _query: &str) -> QueryResult<QueryPlan> {
         Ok(QueryPlan {
             steps: vec![],
-            estimated_cost: CostEstimate::default(),
+            estimated_cost: GraphPlannerCostEstimate::default(),
             estimated_result_size: 0,
         })
     }
@@ -201,7 +204,7 @@ impl QueryPlanner {
     pub fn plan_pattern(&self, _pattern: &CompiledPattern) -> QueryResult<QueryPlan> {
         Ok(QueryPlan {
             steps: vec![],
-            estimated_cost: CostEstimate::default(),
+            estimated_cost: GraphPlannerCostEstimate::default(),
             estimated_result_size: 0,
         })
     }

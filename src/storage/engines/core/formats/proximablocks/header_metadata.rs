@@ -102,7 +102,7 @@ pub struct FilterableColumn {
     pub name: String,
     pub indexed: bool,
     pub bloom_filter_enabled: bool,
-    pub statistics: ColumnStatistics,
+    pub statistics: HeaderColumnStatistics,
 }
 
 #[derive(Debug, Clone)]
@@ -117,7 +117,7 @@ pub enum ColumnData {
 
 /// Column statistics
 #[derive(Debug, Clone)]
-pub struct ColumnStatistics {
+pub struct HeaderColumnStatistics {
     pub null_count: u64,
     pub distinct_count: u64,
     pub min_value: Option<serde_json::Value>,

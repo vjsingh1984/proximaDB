@@ -237,9 +237,12 @@ impl QueryRequest {
 // QUERY RESULT - Unified Output Type
 // ================================================================================
 
+/// Backwards-compat alias for [`FacadeQueryResult`].
+pub type QueryResult = FacadeQueryResult;
+
 /// Unified query result
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueryResult {
+pub struct FacadeQueryResult {
     /// Result data (type depends on query)
     pub data: QueryResultData,
     /// Execution metrics (if requested)
@@ -306,7 +309,7 @@ pub trait QueryStrategy: Send + Sync {
     fn can_handle(&self, request: &QueryRequest) -> bool;
 
     /// Execute the query and return results
-    async fn execute(&self, request: QueryRequest, ctx: &QueryContext) -> Result<QueryResult>;
+    async fn execute(&self, request: QueryRequest, ctx: &FacadeQueryContext) -> Result<FacadeQueryResult>;
 
     /// Priority when multiple strategies can handle a query (higher = preferred)
     fn priority(&self) -> i32 {
@@ -314,8 +317,11 @@ pub trait QueryStrategy: Send + Sync {
     }
 }
 
+/// Backwards-compat alias for [`FacadeQueryContext`].
+pub type QueryContext = FacadeQueryContext;
+
 /// Query execution context passed to strategies
-pub struct QueryContext {
+pub struct FacadeQueryContext {
     /// Request ID for tracing
     pub request_id: String,
     /// Start time for timeout tracking
@@ -324,7 +330,7 @@ pub struct QueryContext {
     pub timeout: Duration,
 }
 
-impl QueryContext {
+impl FacadeQueryContext {
     pub fn new(timeout_ms: u64) -> Self {
         Self {
             request_id: uuid::Uuid::new_v4().to_string(),
@@ -373,7 +379,7 @@ impl Default for FacadeConfig {
 ///
 /// This facade consolidates the 5 parallel query paths:
 /// 1. UnifiedQueryOptimizer (vector search optimization)
-/// 2. FederatedQueryContext (SQL with extensions)
+/// 2. FederatedFacadeQueryContext (SQL with extensions)
 /// 3. UnifiedQueryEngine (multi-model decomposition)
 /// 4. Distributed query coordination
 /// 5. AST-based query engine
@@ -404,12 +410,12 @@ impl UnifiedQueryFacade {
 
     /// Execute a query through the appropriate strategy
     #[instrument(skip(self, request), fields(query_type = ?request.query_type))]
-    pub async fn execute(&self, request: QueryRequest) -> Result<QueryResult> {
+    pub async fn execute(&self, request: QueryRequest) -> Result<FacadeQueryResult> {
         let timeout_ms = request
             .params
             .timeout_ms
             .unwrap_or(self.config.default_timeout_ms);
-        let ctx = QueryContext::new(timeout_ms);
+        let ctx = FacadeQueryContext::new(timeout_ms);
         let include_metrics = request.params.include_metrics;
         let start = Instant::now();
         let telemetry_kind = match request.query_type {
@@ -527,9 +533,9 @@ mod tests {
         async fn execute(
             &self,
             _request: QueryRequest,
-            _ctx: &QueryContext,
-        ) -> Result<QueryResult> {
-            Ok(QueryResult {
+            _ctx: &FacadeQueryContext,
+        ) -> Result<FacadeQueryResult> {
+            Ok(FacadeQueryResult {
                 data: QueryResultData::VectorResults(vec![ScoredRecord {
                     record: proximadb_records::ProximaRecord {
                         oid: "test_1".to_string(),
@@ -566,9 +572,9 @@ mod tests {
         async fn execute(
             &self,
             _request: QueryRequest,
-            _ctx: &QueryContext,
-        ) -> Result<QueryResult> {
-            Ok(QueryResult {
+            _ctx: &FacadeQueryContext,
+        ) -> Result<FacadeQueryResult> {
+            Ok(FacadeQueryResult {
                 data: QueryResultData::Rows(vec![]),
                 metrics: Some(ExecutionMetrics {
                     execution_path: "unified".to_string(),
@@ -594,9 +600,9 @@ mod tests {
         async fn execute(
             &self,
             _request: QueryRequest,
-            _ctx: &QueryContext,
-        ) -> Result<QueryResult> {
-            Ok(QueryResult {
+            _ctx: &FacadeQueryContext,
+        ) -> Result<FacadeQueryResult> {
+            Ok(FacadeQueryResult {
                 data: QueryResultData::Graph(GraphQueryResult {
                     nodes: vec![],
                     edges: vec![],
@@ -724,8 +730,8 @@ mod tests {
             fn can_handle(&self, r: &QueryRequest) -> bool {
                 r.query_type == QueryType::VectorSearch
             }
-            async fn execute(&self, _r: QueryRequest, _ctx: &QueryContext) -> Result<QueryResult> {
-                Ok(QueryResult {
+            async fn execute(&self, _r: QueryRequest, _ctx: &FacadeQueryContext) -> Result<FacadeQueryResult> {
+                Ok(FacadeQueryResult {
                     data: QueryResultData::Empty,
                     metrics: Some(ExecutionMetrics {
                         strategy_name: "low-priority".to_string(),
@@ -746,8 +752,8 @@ mod tests {
             fn can_handle(&self, r: &QueryRequest) -> bool {
                 r.query_type == QueryType::VectorSearch
             }
-            async fn execute(&self, _r: QueryRequest, _ctx: &QueryContext) -> Result<QueryResult> {
-                Ok(QueryResult {
+            async fn execute(&self, _r: QueryRequest, _ctx: &FacadeQueryContext) -> Result<FacadeQueryResult> {
+                Ok(FacadeQueryResult {
                     data: QueryResultData::Empty,
                     metrics: Some(ExecutionMetrics {
                         strategy_name: "high-priority".to_string(),

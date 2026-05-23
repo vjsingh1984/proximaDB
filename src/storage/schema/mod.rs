@@ -68,8 +68,8 @@ pub use proxima_record_bridge::{
 
 // Header cache exports
 pub use header_cache::{
-    CacheStats,
     CachedHeader,
+    HeaderCacheStats,
     CachingHeaderLoader,
     ColumnBounds,
     ColumnValue,

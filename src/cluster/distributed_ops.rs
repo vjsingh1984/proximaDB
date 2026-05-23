@@ -130,9 +130,12 @@ pub struct DistributedWriteResult {
     pub total_time_ms: u64,
 }
 
+/// Backwards-compat alias for [`DistributedQueryContext`].
+pub type QueryContext = DistributedQueryContext;
+
 /// Query context for metadata-aware shard pruning
 #[derive(Debug, Clone, Default)]
-pub struct QueryContext {
+pub struct DistributedQueryContext {
     /// Tenant ID for tenant-based filtering/pruning
     pub tenant_id: Option<String>,
     /// Domain ID for domain-based filtering/pruning
@@ -143,7 +146,7 @@ pub struct QueryContext {
     pub field_filters: HashMap<String, serde_json::Value>,
 }
 
-impl QueryContext {
+impl DistributedQueryContext {
     /// Create a new empty query context
     pub fn new() -> Self {
         Self::default()
@@ -216,7 +219,7 @@ pub struct DistributedSearchRequest {
     /// Exclude specific shards
     pub exclude_shards: Option<Vec<String>>,
     /// Query context for metadata-aware shard pruning
-    pub query_context: Option<QueryContext>,
+    pub query_context: Option<DistributedQueryContext>,
 }
 
 /// Distributed write request
@@ -680,7 +683,7 @@ impl DistributedCollectionOps {
     fn prune_shards_by_metadata(
         &self,
         shards: &[Shard],
-        query_context: &Option<QueryContext>,
+        query_context: &Option<DistributedQueryContext>,
     ) -> Vec<Shard> {
         let context = match query_context {
             Some(ctx) if ctx.has_filters() => ctx,
@@ -719,7 +722,7 @@ impl DistributedCollectionOps {
     }
 
     /// Check if a shard might contain data matching the query context
-    fn shard_matches_context(&self, shard: &Shard, context: &QueryContext) -> bool {
+    fn shard_matches_context(&self, shard: &Shard, context: &DistributedQueryContext) -> bool {
         // Use the Shard's may_contain_data method for tenant/domain checks
         if !shard.may_contain_data(context.tenant_id.as_deref(), context.domain_id.as_deref()) {
             return false;
@@ -1423,23 +1426,23 @@ mod tests {
     #[test]
     fn test_query_context_builder() {
         // Test empty context
-        let ctx = QueryContext::new();
+        let ctx = DistributedQueryContext::new();
         assert!(!ctx.has_filters());
         assert!(ctx.tenant_id.is_none());
         assert!(ctx.domain_id.is_none());
 
         // Test with tenant
-        let ctx = QueryContext::with_tenant("tenant-1");
+        let ctx = DistributedQueryContext::with_tenant("tenant-1");
         assert!(ctx.has_filters());
         assert_eq!(ctx.tenant_id, Some("tenant-1".to_string()));
 
         // Test with domain
-        let ctx = QueryContext::with_domain("domain-1");
+        let ctx = DistributedQueryContext::with_domain("domain-1");
         assert!(ctx.has_filters());
         assert_eq!(ctx.domain_id, Some("domain-1".to_string()));
 
         // Test builder pattern
-        let ctx = QueryContext::new()
+        let ctx = DistributedQueryContext::new()
             .tenant("tenant-2")
             .domain("domain-2")
             .partition("partition-1")
@@ -1478,13 +1481,13 @@ mod tests {
         let shards = vec![shard1, shard2];
 
         // Test: Query for tenant-1 should only include shard1
-        let ctx = QueryContext::with_tenant("tenant-1");
+        let ctx = DistributedQueryContext::with_tenant("tenant-1");
         let pruned = coordinator.prune_shards_by_metadata(&shards, &Some(ctx));
         assert_eq!(pruned.len(), 1);
         assert_eq!(pruned[0].id.id(), "test-collection_0000");
 
         // Test: Query for tenant-3 should only include shard2
-        let ctx = QueryContext::with_tenant("tenant-3");
+        let ctx = DistributedQueryContext::with_tenant("tenant-3");
         let pruned = coordinator.prune_shards_by_metadata(&shards, &Some(ctx));
         assert_eq!(pruned.len(), 1);
         assert_eq!(pruned[0].id.id(), "test-collection_0001");
@@ -1573,7 +1576,7 @@ mod tests {
             routing_key: None,
             include_shards: None,
             exclude_shards: None,
-            query_context: Some(QueryContext::with_tenant("tenant-1").domain("domain-1")),
+            query_context: Some(DistributedQueryContext::with_tenant("tenant-1").domain("domain-1")),
         };
 
         let ctx = request

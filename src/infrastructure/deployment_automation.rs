@@ -86,7 +86,7 @@ pub struct InfrastructureConfig {
     /// Container configuration
     pub container: ContainerConfig,
     /// Network configuration
-    pub network: NetworkConfig,
+    pub network: DeploymentNetworkConfig,
     /// Storage configuration
     pub storage: StorageDeploymentConfig,
 }
@@ -117,7 +117,7 @@ pub enum PullPolicy {
 
 /// Network configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkConfig {
+pub struct DeploymentNetworkConfig {
     /// Network mode
     pub mode: NetworkMode,
     /// Load balancer configuration
@@ -656,7 +656,7 @@ pub mod utils {
                     registry: None,
                     pull_policy: PullPolicy::IfNotPresent,
                 },
-                network: NetworkConfig {
+                network: DeploymentNetworkConfig {
                     mode: NetworkMode::Bridge,
                     load_balancer: None,
                     tls_enabled: false,

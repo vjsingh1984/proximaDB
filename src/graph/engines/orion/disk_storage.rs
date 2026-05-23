@@ -152,14 +152,14 @@ impl Page {
 
 /// Cache statistics for the disk-based CSR page cache.
 #[derive(Debug, Clone)]
-pub struct CacheStats {
+pub struct OrionDiskCacheStats {
     /// Current number of cached pages.
     pub cache_size: usize,
     /// Maximum number of pages the cache can hold.
     pub cache_capacity: usize,
 }
 
-impl CacheStats {
+impl OrionDiskCacheStats {
     /// Compute the cache utilization ratio (0.0 to 1.0).
     pub fn hit_rate(&self) -> f64 {
         if self.cache_capacity == 0 {
@@ -485,16 +485,16 @@ impl DiskCsrStorage {
     }
 
     /// Get cache statistics
-    pub fn cache_stats(&self) -> CacheStats {
+    pub fn cache_stats(&self) -> OrionDiskCacheStats {
         // Use try_read to avoid blocking in async context
         if let Ok(cache) = self.page_cache.try_read() {
-            CacheStats {
+            OrionDiskCacheStats {
                 cache_size: cache.len(),
                 cache_capacity: cache.cap().get(),
             }
         } else {
             // Return default stats if lock is contended
-            CacheStats {
+            OrionDiskCacheStats {
                 cache_size: 0,
                 cache_capacity: self.config.cache_size_bytes / 4096,
             }

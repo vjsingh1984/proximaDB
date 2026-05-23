@@ -238,12 +238,12 @@ impl EventIndex {
     }
 
     /// Get index statistics
-    pub async fn get_stats(&self) -> IndexStats {
+    pub async fn get_stats(&self) -> EventLogIndexStats {
         let entity_index = self.entity_index.read().await;
         let type_index = self.type_index.read().await;
         let reverse_index = self.reverse_index.read().await;
 
-        IndexStats {
+        EventLogIndexStats {
             total_entities: entity_index.len(),
             total_event_types: type_index.len(),
             total_indexed_events: reverse_index.len(),
@@ -253,7 +253,7 @@ impl EventIndex {
 
 /// Index statistics
 #[derive(Debug, Clone, Default)]
-pub struct IndexStats {
+pub struct EventLogIndexStats {
     pub total_entities: usize,
     pub total_event_types: usize,
     pub total_indexed_events: usize,

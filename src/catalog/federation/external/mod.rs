@@ -237,12 +237,12 @@ pub struct TableStatistics {
     /// File count
     pub file_count: Option<u64>,
     /// Column statistics
-    pub column_stats: HashMap<String, ColumnStatistics>,
+    pub column_stats: HashMap<String, FederationColumnStatistics>,
 }
 
 /// Column statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ColumnStatistics {
+pub struct FederationColumnStatistics {
     /// Null count
     pub null_count: Option<u64>,
     /// Distinct count

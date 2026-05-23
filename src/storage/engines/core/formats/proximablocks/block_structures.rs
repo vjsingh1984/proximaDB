@@ -329,7 +329,7 @@ pub struct ProximaBlockMetadata {
     pub version_range: (i64, i64),
 
     /// Column statistics for metadata filtering
-    pub column_stats: HashMap<String, ColumnStatistics>,
+    pub column_stats: HashMap<String, BlockColumnStatistics>,
 
     /// Quantization information
     pub quantization_stats: QuantizationStatistics,
@@ -493,7 +493,7 @@ impl ProximaBlockMetadata {
 
             column_stats.insert(
                 key_name,
-                ColumnStatistics {
+                BlockColumnStatistics {
                     name: stat_name,
                     null_count,
                     distinct_count,
@@ -535,9 +535,12 @@ impl ProximaBlockMetadata {
     }
 }
 
+/// Backwards-compat alias for [`BlockColumnStatistics`].
+pub type ColumnStatistics = BlockColumnStatistics;
+
 /// Column statistics for optimization
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ColumnStatistics {
+pub struct BlockColumnStatistics {
     pub name: String,
     pub null_count: u32,
     pub distinct_count: u32,
@@ -549,7 +552,7 @@ pub struct ColumnStatistics {
 
 /// Typed column statistics for efficient predicate pushdown
 ///
-/// Unlike ColumnStatistics which uses serde_json::Value, TypedColumnStatistics
+/// Unlike BlockColumnStatistics which uses serde_json::Value, TypedBlockColumnStatistics
 /// provides native typed statistics for each column type, enabling:
 /// - Zero-overhead predicate evaluation (no JSON parsing)
 /// - Type-specific statistics (e.g., ngram bloom for TEXT)
@@ -557,7 +560,7 @@ pub struct ColumnStatistics {
 ///
 /// This is part of the ProximaRecord type system upgrade.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TypedColumnStatistics {
+pub enum TypedBlockColumnStatistics {
     /// String column statistics
     String(StringStats),
     /// Integer column statistics (i64)
@@ -739,51 +742,51 @@ pub struct ArrayStats {
     pub element_type: String, // Type name of array elements
 }
 
-impl TypedColumnStatistics {
+impl TypedBlockColumnStatistics {
     /// Check if column has null values
     pub fn has_nulls(&self) -> bool {
         match self {
-            TypedColumnStatistics::String(s) => s.null_count > 0,
-            TypedColumnStatistics::Integer(s) => s.null_count > 0,
-            TypedColumnStatistics::Float(s) => s.null_count > 0,
-            TypedColumnStatistics::Decimal(s) => s.null_count > 0,
-            TypedColumnStatistics::Boolean(s) => s.null_count > 0,
-            TypedColumnStatistics::Timestamp(s) => s.null_count > 0,
-            TypedColumnStatistics::Text(s) => s.null_count > 0,
-            TypedColumnStatistics::Uuid(s) => s.null_count > 0,
-            TypedColumnStatistics::Binary(s) => s.null_count > 0,
-            TypedColumnStatistics::Date(s) => s.null_count > 0,
-            TypedColumnStatistics::Time(s) => s.null_count > 0,
-            TypedColumnStatistics::GeoPoint(s) => s.null_count > 0,
-            TypedColumnStatistics::Json(s) => s.null_count > 0,
-            TypedColumnStatistics::Array(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::String(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Integer(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Float(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Decimal(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Boolean(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Timestamp(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Text(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Uuid(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Binary(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Date(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Time(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::GeoPoint(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Json(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Array(s) => s.null_count > 0,
         }
     }
 
     /// Get null count
     pub fn null_count(&self) -> u32 {
         match self {
-            TypedColumnStatistics::String(s) => s.null_count,
-            TypedColumnStatistics::Integer(s) => s.null_count,
-            TypedColumnStatistics::Float(s) => s.null_count,
-            TypedColumnStatistics::Decimal(s) => s.null_count,
-            TypedColumnStatistics::Boolean(s) => s.null_count,
-            TypedColumnStatistics::Timestamp(s) => s.null_count,
-            TypedColumnStatistics::Text(s) => s.null_count,
-            TypedColumnStatistics::Uuid(s) => s.null_count,
-            TypedColumnStatistics::Binary(s) => s.null_count,
-            TypedColumnStatistics::Date(s) => s.null_count,
-            TypedColumnStatistics::Time(s) => s.null_count,
-            TypedColumnStatistics::GeoPoint(s) => s.null_count,
-            TypedColumnStatistics::Json(s) => s.null_count,
-            TypedColumnStatistics::Array(s) => s.null_count,
+            TypedBlockColumnStatistics::String(s) => s.null_count,
+            TypedBlockColumnStatistics::Integer(s) => s.null_count,
+            TypedBlockColumnStatistics::Float(s) => s.null_count,
+            TypedBlockColumnStatistics::Decimal(s) => s.null_count,
+            TypedBlockColumnStatistics::Boolean(s) => s.null_count,
+            TypedBlockColumnStatistics::Timestamp(s) => s.null_count,
+            TypedBlockColumnStatistics::Text(s) => s.null_count,
+            TypedBlockColumnStatistics::Uuid(s) => s.null_count,
+            TypedBlockColumnStatistics::Binary(s) => s.null_count,
+            TypedBlockColumnStatistics::Date(s) => s.null_count,
+            TypedBlockColumnStatistics::Time(s) => s.null_count,
+            TypedBlockColumnStatistics::GeoPoint(s) => s.null_count,
+            TypedBlockColumnStatistics::Json(s) => s.null_count,
+            TypedBlockColumnStatistics::Array(s) => s.null_count,
         }
     }
 
-    /// Convert to legacy ColumnStatistics for backward compatibility
-    pub fn to_legacy(&self, name: &str) -> ColumnStatistics {
+    /// Convert to legacy BlockColumnStatistics for backward compatibility
+    pub fn to_legacy(&self, name: &str) -> BlockColumnStatistics {
         let (min_value, max_value) = match self {
-            TypedColumnStatistics::String(s) => (
+            TypedBlockColumnStatistics::String(s) => (
                 s.min_value
                     .as_ref()
                     .map(|v| serde_json::Value::String(v.clone())),
@@ -791,34 +794,34 @@ impl TypedColumnStatistics {
                     .as_ref()
                     .map(|v| serde_json::Value::String(v.clone())),
             ),
-            TypedColumnStatistics::Integer(s) => (
+            TypedBlockColumnStatistics::Integer(s) => (
                 s.min_value.map(|v| serde_json::json!(v)),
                 s.max_value.map(|v| serde_json::json!(v)),
             ),
-            TypedColumnStatistics::Float(s) => (
+            TypedBlockColumnStatistics::Float(s) => (
                 s.min_value.map(|v| serde_json::json!(v)),
                 s.max_value.map(|v| serde_json::json!(v)),
             ),
-            TypedColumnStatistics::Decimal(s) => (
+            TypedBlockColumnStatistics::Decimal(s) => (
                 s.min_value.map(|v| serde_json::json!(v.to_string())),
                 s.max_value.map(|v| serde_json::json!(v.to_string())),
             ),
-            TypedColumnStatistics::Timestamp(s) => (
+            TypedBlockColumnStatistics::Timestamp(s) => (
                 s.min_value.map(|v| serde_json::json!(v)),
                 s.max_value.map(|v| serde_json::json!(v)),
             ),
-            TypedColumnStatistics::Date(s) => (
+            TypedBlockColumnStatistics::Date(s) => (
                 s.min_value.map(|v| serde_json::json!(v)),
                 s.max_value.map(|v| serde_json::json!(v)),
             ),
-            TypedColumnStatistics::Time(s) => (
+            TypedBlockColumnStatistics::Time(s) => (
                 s.min_value.map(|v| serde_json::json!(v)),
                 s.max_value.map(|v| serde_json::json!(v)),
             ),
             _ => (None, None),
         };
 
-        ColumnStatistics {
+        BlockColumnStatistics {
             name: name.to_string(),
             null_count: self.null_count(),
             distinct_count: self.get_distinct_count(),
@@ -831,42 +834,42 @@ impl TypedColumnStatistics {
 
     fn get_distinct_count(&self) -> u32 {
         match self {
-            TypedColumnStatistics::String(s) => s.distinct_count,
-            TypedColumnStatistics::Integer(s) => s.distinct_count,
-            TypedColumnStatistics::Float(s) => s.distinct_count,
-            TypedColumnStatistics::Decimal(s) => s.distinct_count,
-            TypedColumnStatistics::Timestamp(s) => s.distinct_count,
-            TypedColumnStatistics::Date(s) => s.distinct_count,
-            TypedColumnStatistics::Time(s) => s.distinct_count,
-            TypedColumnStatistics::Uuid(s) => s.distinct_count,
+            TypedBlockColumnStatistics::String(s) => s.distinct_count,
+            TypedBlockColumnStatistics::Integer(s) => s.distinct_count,
+            TypedBlockColumnStatistics::Float(s) => s.distinct_count,
+            TypedBlockColumnStatistics::Decimal(s) => s.distinct_count,
+            TypedBlockColumnStatistics::Timestamp(s) => s.distinct_count,
+            TypedBlockColumnStatistics::Date(s) => s.distinct_count,
+            TypedBlockColumnStatistics::Time(s) => s.distinct_count,
+            TypedBlockColumnStatistics::Uuid(s) => s.distinct_count,
             _ => 0,
         }
     }
 
     fn get_avg_size_bytes(&self) -> u64 {
         match self {
-            TypedColumnStatistics::String(s) => s.avg_length as u64,
-            TypedColumnStatistics::Text(s) => s.avg_length as u64,
-            TypedColumnStatistics::Binary(s) => s.avg_size as u64,
-            TypedColumnStatistics::Json(s) => s.avg_size as u64,
-            TypedColumnStatistics::Integer(_) => 8,
-            TypedColumnStatistics::Float(_) => 8,
-            TypedColumnStatistics::Decimal(_) => 16,
-            TypedColumnStatistics::Boolean(_) => 1,
-            TypedColumnStatistics::Timestamp(_) => 8,
-            TypedColumnStatistics::Date(_) => 4,
-            TypedColumnStatistics::Time(_) => 8,
-            TypedColumnStatistics::Uuid(_) => 16,
-            TypedColumnStatistics::GeoPoint(_) => 24,
-            TypedColumnStatistics::Array(s) => s.avg_length as u64,
+            TypedBlockColumnStatistics::String(s) => s.avg_length as u64,
+            TypedBlockColumnStatistics::Text(s) => s.avg_length as u64,
+            TypedBlockColumnStatistics::Binary(s) => s.avg_size as u64,
+            TypedBlockColumnStatistics::Json(s) => s.avg_size as u64,
+            TypedBlockColumnStatistics::Integer(_) => 8,
+            TypedBlockColumnStatistics::Float(_) => 8,
+            TypedBlockColumnStatistics::Decimal(_) => 16,
+            TypedBlockColumnStatistics::Boolean(_) => 1,
+            TypedBlockColumnStatistics::Timestamp(_) => 8,
+            TypedBlockColumnStatistics::Date(_) => 4,
+            TypedBlockColumnStatistics::Time(_) => 8,
+            TypedBlockColumnStatistics::Uuid(_) => 16,
+            TypedBlockColumnStatistics::GeoPoint(_) => 24,
+            TypedBlockColumnStatistics::Array(s) => s.avg_length as u64,
         }
     }
 
     fn has_bloom_filter(&self) -> bool {
         match self {
-            TypedColumnStatistics::String(s) => s.bloom_filter_offset.is_some(),
-            TypedColumnStatistics::Uuid(s) => s.bloom_filter_offset.is_some(),
-            TypedColumnStatistics::Text(s) => s.ngram_bloom_offset.is_some(),
+            TypedBlockColumnStatistics::String(s) => s.bloom_filter_offset.is_some(),
+            TypedBlockColumnStatistics::Uuid(s) => s.bloom_filter_offset.is_some(),
+            TypedBlockColumnStatistics::Text(s) => s.ngram_bloom_offset.is_some(),
             _ => false,
         }
     }

@@ -250,11 +250,11 @@ impl SmartResultCache {
     }
 
     /// Get cache statistics
-    pub async fn get_stats(&self) -> CacheStats {
+    pub async fn get_stats(&self) -> HelixQueryCacheStats {
         let cache = self.cache.read().await;
         let tracker = self.invalidation_tracker.read().await;
 
-        CacheStats {
+        HelixQueryCacheStats {
             entries: cache.len(),
             tracked_files: tracker.len(),
             total_dependencies: tracker.values().map(|v| v.len()).sum(),
@@ -273,7 +273,7 @@ impl SmartResultCache {
 
 /// Cache statistics
 #[derive(Debug)]
-pub struct CacheStats {
+pub struct HelixQueryCacheStats {
     pub entries: usize,
     pub tracked_files: usize,
     pub total_dependencies: usize,
@@ -393,7 +393,7 @@ impl QueryOptimizer {
     }
 
     /// Get optimization statistics
-    pub async fn get_stats(&self) -> (QueryStats, CacheStats) {
+    pub async fn get_stats(&self) -> (QueryStats, HelixQueryCacheStats) {
         let query_stats = self.query_stats.read().await.clone();
         let cache_stats = self.cache.get_stats().await;
         (query_stats, cache_stats)

@@ -427,10 +427,10 @@ impl BusinessIntelligenceEngine {
     }
 
     /// Execute business query (placeholder for actual database execution)
-    async fn execute_business_query(&self, _sql: &str) -> Result<QueryResult, BIError> {
+    async fn execute_business_query(&self, _sql: &str) -> Result<BiEngineQueryResult, BIError> {
         // Placeholder implementation
         // In real implementation, would execute SQL against ProximaDB
-        Ok(QueryResult {
+        Ok(BiEngineQueryResult {
             rows: vec![],
             columns: vec![],
             execution_time_ms: 100,
@@ -441,7 +441,7 @@ impl BusinessIntelligenceEngine {
     fn process_business_query_result(
         &self,
         query: &str,
-        result: &QueryResult,
+        result: &BiEngineQueryResult,
         revenue_metrics: &mut RevenueMetrics,
         customer_metrics: &mut CustomerMetrics,
         operational_metrics: &mut OperationalMetrics,
@@ -760,7 +760,7 @@ Recommendation:",
 
 /// Query result structure (placeholder)
 #[derive(Debug, Clone)]
-pub struct QueryResult {
+pub struct BiEngineQueryResult {
     /// Result rows as key-value maps
     pub rows: Vec<HashMap<String, String>>,
     /// Column names in the result
@@ -769,7 +769,7 @@ pub struct QueryResult {
     pub execution_time_ms: u64,
 }
 
-impl QueryResult {
+impl BiEngineQueryResult {
     /// Extract the first numeric value from the first row.
     pub fn extract_numeric_value(&self) -> Option<f64> {
         // Extract first numeric value from first row

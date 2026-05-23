@@ -133,7 +133,7 @@ pub struct VectorSearchQuery {
     /// Distance metric override
     pub distance_metric: Option<DistanceMetric>,
     /// Search parameters
-    pub search_params: Option<SearchParams>,
+    pub search_params: Option<NetworkSearchParams>,
     /// Source protocol
     pub source: RequestProtocol,
     /// Request ID for tracing
@@ -144,7 +144,7 @@ pub use proximadb_distance_types::DistanceMetric;
 
 /// Search parameters
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct SearchParams {
+pub struct NetworkSearchParams {
     /// Maximum number of results to return
     pub top_k: Option<u32>,
     /// Minimum accuracy threshold for approximate search
@@ -206,7 +206,7 @@ pub struct CollectionOperation {
     /// Target collection identifier (required for get/delete/update)
     pub collection_id: Option<String>,
     /// Collection configuration (required for create/update)
-    pub config: Option<CollectionConfig>,
+    pub config: Option<NetworkCollectionConfig>,
     /// Source protocol that originated this request
     pub source: RequestProtocol,
 }
@@ -228,7 +228,7 @@ pub enum CollectionOperationType {
 
 /// Collection configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CollectionConfig {
+pub struct NetworkCollectionConfig {
     /// Collection name
     pub name: String,
     /// Vector dimensionality
@@ -309,9 +309,9 @@ pub enum ResponseData {
         rows: Vec<Vec<serde_json::Value>>,
     },
     /// Collection info
-    CollectionInfo(CollectionInfo),
+    NetworkCollectionInfo(NetworkCollectionInfo),
     /// Collection list
-    CollectionList(Vec<CollectionInfo>),
+    CollectionList(Vec<NetworkCollectionInfo>),
     /// Graph traversal results
     GraphResults {
         /// Nodes returned by the graph query
@@ -345,7 +345,7 @@ pub struct NetworkSearchResult {
 
 /// Collection info (normalized)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CollectionInfo {
+pub struct NetworkCollectionInfo {
     /// Collection identifier
     pub id: String,
     /// Vector dimensionality
@@ -416,7 +416,7 @@ impl UnifiedQueryRequest {
             top_k: request.top_k,
             filters,
             distance_metric: None,
-            search_params: request.search_params.as_ref().map(|p| SearchParams {
+            search_params: request.search_params.as_ref().map(|p| NetworkSearchParams {
                 top_k: p.top_k,
                 accuracy_threshold: p.accuracy_threshold,
                 timeout_ms: p.timeout_ms,
@@ -1412,7 +1412,7 @@ impl UnifiedQueryHandler {
                     .await
                     .map_err(|e| anyhow!("Failed to list collections: {}", e))?;
 
-                let collection_info: Vec<CollectionInfo> = collections
+                let collection_info: Vec<NetworkCollectionInfo> = collections
                     .into_iter()
                     .map(|c| {
                         let dimension = c.config.as_ref().map_or(0, |cfg| cfg.dimension);
@@ -1427,7 +1427,7 @@ impl UnifiedQueryHandler {
                             },
                         );
 
-                        CollectionInfo {
+                        NetworkCollectionInfo {
                             id: c.id,
                             dimension,
                             vector_count,
@@ -1475,7 +1475,7 @@ impl UnifiedQueryHandler {
                 Ok(UnifiedQueryResponse {
                     success: true,
                     error: None,
-                    data: ResponseData::CollectionInfo(CollectionInfo {
+                    data: ResponseData::NetworkCollectionInfo(NetworkCollectionInfo {
                         id: collection.id,
                         dimension,
                         vector_count,

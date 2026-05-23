@@ -453,7 +453,7 @@ pub struct StorageTraitMetricsSnapshot {
 
 /// Cache statistics
 #[derive(Debug, Clone, Default)]
-pub struct CacheStats {
+pub struct StorageTraitCacheStats {
     pub hits: u64,
     pub misses: u64,
     pub evictions: u64,

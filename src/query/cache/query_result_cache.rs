@@ -185,12 +185,12 @@ pub struct QueryResultCache {
     /// Configuration
     config: QueryResultCacheConfig,
     /// Cache statistics
-    stats: CacheStatistics,
+    stats: QueryResultCacheStatistics,
 }
 
 /// Statistics for cache monitoring
 #[derive(Debug, Default)]
-pub struct CacheStatistics {
+pub struct QueryResultCacheStatistics {
     /// Total cache hits
     pub hits: AtomicU64,
     /// Total cache misses
@@ -205,7 +205,7 @@ pub struct CacheStatistics {
     pub expirations: AtomicU64,
 }
 
-impl CacheStatistics {
+impl QueryResultCacheStatistics {
     /// Get the cache hit rate (0.0 to 1.0)
     pub fn hit_rate(&self) -> f64 {
         let hits = self.hits.load(Ordering::Relaxed);
@@ -226,7 +226,7 @@ impl QueryResultCache {
             cache: DashMap::new(),
             invalidation_registry: DashMap::new(),
             config,
-            stats: CacheStatistics::default(),
+            stats: QueryResultCacheStatistics::default(),
         }
     }
 

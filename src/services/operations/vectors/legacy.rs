@@ -2925,7 +2925,7 @@ impl VectorOperationsService {
     /// - Returns the cached engine for subsequent calls
     ///
     /// Without this, all searches would use SST regardless of collection configuration.
-    async fn get_engine_for_collection(
+    pub async fn get_engine_for_collection(
         &self,
         collection_id: &str,
     ) -> Result<Arc<dyn UnifiedStorageEngine>> {

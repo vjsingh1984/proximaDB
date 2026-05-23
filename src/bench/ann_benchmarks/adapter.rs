@@ -27,7 +27,7 @@ pub struct ANNBenchmarkConfig {
     /// Build parameters
     pub build_params: BuildParams,
     /// Search parameters
-    pub search_params: SearchParams,
+    pub search_params: AnnBenchSearchParams,
 }
 
 /// Build parameters for index construction
@@ -66,9 +66,12 @@ impl Default for BuildParams {
     }
 }
 
+/// Backwards-compat alias for [`AnnBenchSearchParams`].
+pub type SearchParams = AnnBenchSearchParams;
+
 /// Search parameters for queries
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchParams {
+pub struct AnnBenchSearchParams {
     /// Ef search parameter for HNSW
     pub ef_search: Option<usize>,
     /// Nprobe for IVF (number of centroids to probe)
@@ -81,7 +84,7 @@ pub struct SearchParams {
     pub search_l: Option<usize>,
 }
 
-impl Default for SearchParams {
+impl Default for AnnBenchSearchParams {
     fn default() -> Self {
         Self {
             ef_search: Some(100),
@@ -103,7 +106,7 @@ pub struct BenchmarkResults {
     /// Build parameters
     pub build_params: BuildParams,
     /// Search parameters
-    pub search_params: SearchParams,
+    pub search_params: AnnBenchSearchParams,
     /// Index build time in seconds
     pub build_time_secs: f64,
     /// Index size in bytes
@@ -271,7 +274,7 @@ impl ANNBenchmarksRunner {
     fn run_queries(
         &self,
         _metadata: &DatasetMetadata,
-        _search_params: &SearchParams,
+        _search_params: &AnnBenchSearchParams,
     ) -> Result<QueryStats, String> {
         // In production, this would:
         // 1. Load test queries from the dataset
@@ -373,7 +376,7 @@ mod tests {
             k: 10,
             runs: 100,
             build_params: BuildParams::default(),
-            search_params: SearchParams::default(),
+            search_params: AnnBenchSearchParams::default(),
         });
 
         let metadata = runner.load_dataset_metadata().unwrap();
@@ -399,7 +402,7 @@ mod tests {
             k: 10,
             runs: 100,
             build_params: BuildParams::default(),
-            search_params: SearchParams::default(),
+            search_params: AnnBenchSearchParams::default(),
         });
 
         let results = runner.run().unwrap();
@@ -427,7 +430,7 @@ mod tests {
             k: 10,
             runs: 100,
             build_params: BuildParams::default(),
-            search_params: SearchParams::default(),
+            search_params: AnnBenchSearchParams::default(),
         });
 
         let results = runner.run().unwrap();

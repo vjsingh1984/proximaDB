@@ -128,9 +128,12 @@ pub enum AuditLevel {
     All,
 }
 
+/// Backwards-compat alias for [`ServiceCollectionConfig`] used by pre-disambiguation imports.
+pub type CollectionConfig = ServiceCollectionConfig;
+
 /// Collection configuration for CREATE and UPDATE operations
 #[derive(Debug, Clone)]
-pub struct CollectionConfig {
+pub struct ServiceCollectionConfig {
     /// Collection name
     pub name: String,
     /// Vector dimension (required)
@@ -329,7 +332,7 @@ pub struct SearchMetadata {
     /// Suggested optimization hint for the caller
     pub performance_hint: Option<String>,
     /// Index-level performance statistics
-    pub index_stats: Option<IndexStats>,
+    pub index_stats: Option<ServiceIndexStats>,
 }
 
 /// Index performance statistics
@@ -340,8 +343,11 @@ pub struct SearchMetadata {
 ///
 /// All new fields default to zero so unimplemented features can stub-emit
 /// without changing the JSON shape consumed by AnvaiOps's `ScanStats`.
+/// Backwards-compat alias for [`ServiceIndexStats`].
+pub type IndexStats = ServiceIndexStats;
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct IndexStats {
+pub struct ServiceIndexStats {
     /// Total vectors in the index
     pub total_vectors: i64,
     /// Vectors compared during distance calculation
@@ -455,7 +461,7 @@ pub struct CollectionRequest {
     /// Collection identifier (required for all ops except CREATE and LIST)
     pub collection_id: Option<String>,
     /// Collection configuration (for CREATE and UPDATE operations)
-    pub collection_config: Option<CollectionConfig>,
+    pub collection_config: Option<ServiceCollectionConfig>,
     /// Query parameters (limit, offset, filters, etc.)
     pub query_params: Option<HashMap<String, String>>,
     /// Operation options (force, include_stats, etc.)
@@ -491,7 +497,7 @@ pub struct CollectionResponse {
 // Implementation blocks for new types
 impl CollectionRequest {
     /// Create a new collection creation request
-    pub fn create_collection(config: CollectionConfig) -> Self {
+    pub fn create_collection(config: ServiceCollectionConfig) -> Self {
         Self {
             operation: CollectionOperation::Create,
             collection_id: None,

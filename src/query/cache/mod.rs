@@ -130,7 +130,7 @@ pub mod result_cache_gate;
 
 // Re-export main types
 pub use adaptive_cache::{
-    AccessPattern, AdaptiveCacheConfig, AdaptiveCacheEntry, AdaptiveQueryCache, CacheStats,
+    AccessPattern, AdaptiveCacheConfig, AdaptiveCacheEntry, AdaptiveCacheStats, AdaptiveQueryCache,
 };
 pub use query_result_cache::{
     CachedResult, QueryCacheError, QueryCacheKey, QueryCacheResult, QueryCacheStats, QueryKey,

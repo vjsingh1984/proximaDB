@@ -350,7 +350,7 @@ pub struct AxisConfig {
     pub migration_config: MigrationConfig,
 
     /// Monitoring configuration
-    pub monitoring_config: MonitoringConfig,
+    pub monitoring_config: AxisMonitoringConfig,
 }
 
 /// Performance thresholds for monitoring
@@ -419,7 +419,7 @@ impl Default for AxisConfig {
             },
             strategy_config: StrategyConfig::default(),
             migration_config: MigrationConfig::default(),
-            monitoring_config: MonitoringConfig::default(),
+            monitoring_config: AxisMonitoringConfig::default(),
         }
     }
 }
@@ -482,9 +482,12 @@ pub struct AlertThresholds {
     pub max_error_rate: f64,
 }
 
+/// Backwards-compat alias for [`AxisMonitoringConfig`].
+pub type MonitoringConfig = AxisMonitoringConfig;
+
 /// Monitoring configuration
 #[derive(Debug, Clone)]
-pub struct MonitoringConfig {
+pub struct AxisMonitoringConfig {
     /// Whether monitoring is active.
     pub enabled: bool,
     /// Interval in seconds between health checks.
@@ -497,7 +500,7 @@ pub struct MonitoringConfig {
     pub alert_thresholds: AlertThresholds,
 }
 
-impl Default for MonitoringConfig {
+impl Default for AxisMonitoringConfig {
     fn default() -> Self {
         Self {
             enabled: true,

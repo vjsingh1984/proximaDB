@@ -77,6 +77,6 @@ pub mod statement;
 
 // Re-export main types
 pub use statement::{
-    CacheStats, CachedStatement, ParameterBinding, ParameterValue, PreparedStatement,
+    CachedStatement, ParameterBinding, ParameterValue, PreparedStatement, PreparedStatementCacheStats,
     PreparedStatementCache, PreparedStatementConfig, PreparedStatementError, PreparedStatementId,
 };

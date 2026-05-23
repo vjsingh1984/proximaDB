@@ -132,9 +132,19 @@ impl SearchMode {
     }
 }
 
+/// Backward-compatibility alias for [`UnifiedSearchParams`].
+///
+/// Use [`UnifiedSearchParams`] in new code — this alias exists to keep
+/// pre-disambiguation imports (`use crate::core::search::SearchParams`)
+/// working during the migration window. Other SearchParams structs in
+/// this codebase (`RpcSearchParams`, `NetworkSearchParams`,
+/// `ComputeSearchParams`, `AnnBenchSearchParams`) are independent types
+/// with different fields and are not aliased.
+pub type SearchParams = UnifiedSearchParams;
+
 /// Unified search parameters for all storage engines
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SearchParams {
+pub struct UnifiedSearchParams {
     // Core search parameters
     /// Query vectors for similarity search (supports single or batch search)
     pub query_vectors: Option<Vec<Vec<f32>>>,
@@ -289,7 +299,7 @@ pub enum BlockPruneMode {
     Fixed(usize),
 }
 
-impl Default for SearchParams {
+impl Default for UnifiedSearchParams {
     fn default() -> Self {
         Self {
             query_vectors: None,
@@ -324,7 +334,7 @@ impl Default for SearchParams {
     }
 }
 
-impl SearchParams {
+impl UnifiedSearchParams {
     /// Create search params for a single vector query
     pub fn single_vector(query_vector: Vec<f32>) -> Self {
         Self {
@@ -1190,7 +1200,7 @@ mod tests {
 
     #[test]
     fn test_search_params_default() {
-        let params = SearchParams::default();
+        let params = UnifiedSearchParams::default();
 
         // Core defaults
         assert!(params.query_vectors.is_none());
@@ -1228,7 +1238,7 @@ mod tests {
         filters.insert("category".to_string(), serde_json::json!("electronics"));
         filters.insert("price".to_string(), serde_json::json!(99.99));
 
-        let params = SearchParams::default().with_simple_filters(filters);
+        let params = UnifiedSearchParams::default().with_simple_filters(filters);
 
         // Filter expression should be set
         assert!(params.filter_expression.is_some());
@@ -1251,7 +1261,7 @@ mod tests {
         }
 
         // Empty filters should not set filter_expression
-        let params_empty = SearchParams::default().with_simple_filters(HashMap::new());
+        let params_empty = UnifiedSearchParams::default().with_simple_filters(HashMap::new());
         assert!(params_empty.filter_expression.is_none());
     }
 

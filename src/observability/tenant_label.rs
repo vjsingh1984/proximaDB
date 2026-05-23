@@ -16,8 +16,11 @@
 // returns the raw `tenant_id` and is intentionally not `&'static`,
 // signaling that it must only land on metrics scraped at >=1m.
 //
-// Bounded set: free, team, pro, business, enterprise — same set
-// the audit + billing surfaces use.
+// Bounded set: free, team, pro, business, enterprise — derived at startup
+// from `config/pricing.json` via `Tier::prometheus_label()` so adding a tier
+// in the AnvaiOps canonical config automatically widens the bounded set here.
+
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
@@ -53,21 +56,23 @@ impl TenantLabel {
     }
 
     /// Safe label for high-cardinality counters (per-second scrape).
-    /// Returns the bounded `&'static str` from the static set of five.
-    ///
-    /// Legacy pre-2026-Q2 tier labels (`"community"`, `"starter"`,
-    /// `"standard"`, `"enterprise_pooled"`, `"enterprise_dedicated"`)
-    /// map to their canonical replacements so historical TenantLabel
-    /// JSON keeps producing bounded metrics after deserialization.
+    /// Returns a bounded `&'static str` sourced from the loaded pricing
+    /// config. The legacy-alias rewrite (community/starter/standard → team,
+    /// enterprise_pooled → business, enterprise_dedicated → enterprise) keeps
+    /// historical TenantLabel JSON producing bounded metrics after
+    /// deserialization.
     pub fn high_cardinality_label(&self) -> &'static str {
-        match self.tier_label.as_str() {
-            "free" => "free",
-            "team" | "community" | "starter" | "standard" => "team",
-            "pro" => "pro",
-            "business" | "enterprise_pooled" => "business",
-            "enterprise" | "enterprise_dedicated" => "enterprise",
-            _ => "unknown",
-        }
+        let normalized = match self.tier_label.as_str() {
+            "community" | "starter" | "standard" => "team",
+            "enterprise_pooled" => "business",
+            "enterprise_dedicated" => "enterprise",
+            other => other,
+        };
+        bounded_tier_labels()
+            .iter()
+            .copied()
+            .find(|&label| label == normalized)
+            .unwrap_or("unknown")
     }
 
     /// Label for rollup metrics scraped at >=1m. Returns the raw
@@ -88,15 +93,22 @@ impl TenantLabel {
     }
 }
 
-/// Bounded label set — listed here as a single source of truth so
-/// callers can register Prometheus metric families with the static set.
-pub const BOUNDED_TIER_LABELS: &[&str] = &["free", "team", "pro", "business", "enterprise"];
+static BOUNDED_LABELS_CACHE: OnceLock<Vec<&'static str>> = OnceLock::new();
 
-/// `true` when `s` is one of the five bounded tier labels. Used by
-/// metric registration code that wants to assert label safety at
-/// startup.
+/// Bounded tier-label set, derived at startup from `Tier::prometheus_label()`
+/// (which itself loads from `config/pricing.json`). This is the single source
+/// of truth callers should hit when registering Prometheus metric families
+/// or asserting cardinality safety.
+pub fn bounded_tier_labels() -> &'static [&'static str] {
+    BOUNDED_LABELS_CACHE
+        .get_or_init(|| Tier::all().iter().map(|t| t.prometheus_label()).collect())
+        .as_slice()
+}
+
+/// `true` when `s` is one of the bounded tier labels. Used by metric
+/// registration code that wants to assert label safety at startup.
 pub fn is_bounded_label(s: &str) -> bool {
-    BOUNDED_TIER_LABELS.contains(&s)
+    bounded_tier_labels().contains(&s)
 }
 
 #[cfg(test)]
@@ -187,12 +199,22 @@ mod tests {
 
     #[test]
     fn bounded_tier_labels_contains_exactly_five() {
-        assert_eq!(BOUNDED_TIER_LABELS.len(), 5);
-        assert!(BOUNDED_TIER_LABELS.contains(&"free"));
-        assert!(BOUNDED_TIER_LABELS.contains(&"team"));
-        assert!(BOUNDED_TIER_LABELS.contains(&"pro"));
-        assert!(BOUNDED_TIER_LABELS.contains(&"business"));
-        assert!(BOUNDED_TIER_LABELS.contains(&"enterprise"));
+        let labels = bounded_tier_labels();
+        assert_eq!(labels.len(), 5);
+        assert!(labels.contains(&"free"));
+        assert!(labels.contains(&"team"));
+        assert!(labels.contains(&"pro"));
+        assert!(labels.contains(&"business"));
+        assert!(labels.contains(&"enterprise"));
+    }
+
+    #[test]
+    fn bounded_tier_labels_derived_from_pricing_config() {
+        // The label set must match what Tier::prometheus_label() returns
+        // for each declared variant — proving the JSON-driven derivation
+        // didn't drift from the enum-driven side.
+        let derived: Vec<&str> = Tier::all().iter().map(|t| t.prometheus_label()).collect();
+        assert_eq!(bounded_tier_labels(), derived.as_slice());
     }
 
     #[test]

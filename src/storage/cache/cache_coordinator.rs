@@ -113,7 +113,7 @@ impl CacheId {
 
 /// Cache statistics snapshot
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CacheStats {
+pub struct CacheCoordinatorStats {
     /// Cache identifier
     pub cache_id: CacheId,
     /// Total number of entries
@@ -242,7 +242,7 @@ pub trait UnifiedCache: Send + Sync {
     /// let stats = cache.stats().await?;
     /// println!("Hit rate: {:.2}%", stats.hit_rate * 100.0);
     /// ```
-    async fn stats(&self) -> Result<CacheStats, VectorDBError>;
+    async fn stats(&self) -> Result<CacheCoordinatorStats, VectorDBError>;
 
     /// Get cache identifier
     ///
@@ -463,7 +463,7 @@ impl UnifiedCacheCoordinator {
     /// # Returns
     ///
     /// Statistics for all registered caches
-    pub async fn get_all_stats(&self) -> HashMap<CacheId, CacheStats> {
+    pub async fn get_all_stats(&self) -> HashMap<CacheId, CacheCoordinatorStats> {
         let mut stats = HashMap::new();
 
         for (cache_id, _cache) in self.caches.iter() {
@@ -471,7 +471,7 @@ impl UnifiedCacheCoordinator {
             // For now, add placeholder
             stats.insert(
                 *cache_id,
-                CacheStats {
+                CacheCoordinatorStats {
                     cache_id: *cache_id,
                     entry_count: 0,
                     memory_usage_bytes: 0,

@@ -14,7 +14,7 @@
 // concrete backing, so the swap is transparent.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -22,6 +22,82 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
+
+// ── Pricing config (vendored copy of anvaiops/pricing/tiers.json) ───────────
+//
+// Embedded at compile time via include_str! so the server binary stays
+// self-contained. The file is kept byte-identical with
+// anvaiops/pricing/tiers.json via `scripts/sync_pricing_to_proximadb.sh`;
+// drift is caught by the `config/pricing.json.sha256` fingerprint check
+// in CI (`scripts/check_pricing_fingerprint.sh`).
+//
+// The numeric defaults (scan_budget_gb, ef_search_cap, freshness_sla_seconds,
+// prom_label) load from this JSON at first access. The `Tier` enum variants
+// themselves stay compile-time exhaustive — Rust enums cannot be built from
+// runtime data. The startup assertion `pricing_matches_enum()` panics if the
+// JSON tier set diverges from the enum variants, surfacing the drift at
+// process start rather than at the first soft-cap rejection.
+
+const PRICING_JSON_BYTES: &str = include_str!("../../config/pricing.json");
+
+static PRICING: OnceLock<PricingConfig> = OnceLock::new();
+
+#[derive(Debug, Deserialize)]
+struct PricingConfig {
+    schema_version: u32,
+    #[allow(dead_code)]
+    default_tier: String,
+    tiers: Vec<PricingTier>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PricingTier {
+    id: String,
+    prom_label: String,
+    soft_caps: PricingSoftCaps,
+}
+
+#[derive(Debug, Deserialize)]
+struct PricingSoftCaps {
+    scan_budget_gb: f64,
+    ef_search_cap: u32,
+    freshness_sla_seconds: u32,
+}
+
+fn pricing() -> &'static PricingConfig {
+    PRICING.get_or_init(|| {
+        let parsed: PricingConfig = serde_json::from_str(PRICING_JSON_BYTES)
+            .expect("config/pricing.json is malformed — proximaDB cannot start");
+        assert_eq!(
+            parsed.schema_version, 1,
+            "config/pricing.json has unsupported schema_version {}",
+            parsed.schema_version
+        );
+        validate_pricing_matches_enum(&parsed);
+        parsed
+    })
+}
+
+fn validate_pricing_matches_enum(p: &PricingConfig) {
+    use std::collections::HashSet;
+    let json_ids: HashSet<&str> = p.tiers.iter().map(|t| t.id.as_str()).collect();
+    let enum_ids: HashSet<&str> = Tier::all().iter().map(|t| t.id()).collect();
+    assert_eq!(
+        json_ids, enum_ids,
+        "config/pricing.json tier ids must match Tier enum variants exactly; \
+         add/remove a Tier variant or update pricing/tiers.json. \
+         json={json_ids:?} enum={enum_ids:?}"
+    );
+}
+
+fn pricing_row(tier: Tier) -> &'static PricingTier {
+    let id = tier.id();
+    pricing()
+        .tiers
+        .iter()
+        .find(|t| t.id == id)
+        .unwrap_or_else(|| panic!("tier {id} missing from config/pricing.json"))
+}
 
 /// Tier identifier. Names match `docs/PRICING_INTERNAL.md` in the AnvaiOps repo.
 ///
@@ -51,53 +127,53 @@ pub enum Tier {
 }
 
 impl Tier {
-    /// Default scan budget (GB) for the tier — the soft cap the gateway uses
-    /// when the request omits `scan_budget_gb` and the per-tenant override is
-    /// absent. Values mirror the Python `tier_cache._TIER_DEFAULTS` in the
-    /// AnvaiOps repo and must move in lockstep with it.
-    pub const fn default_scan_budget_gb(self) -> f64 {
+    /// Stable enum-id used as the JSON key in `config/pricing.json`. Matches
+    /// the canonical tier ids in `anvaiops/pricing/tiers.json`.
+    pub const fn id(self) -> &'static str {
         match self {
-            Tier::FreeTrial => 1.0,
-            Tier::Team => 4.0,
-            Tier::Pro => 15.0,
-            Tier::Business => 50.0,
-            Tier::Enterprise => 256.0,
-        }
-    }
-
-    /// Default beam-width / ef_search ceiling — hard ceiling at the router.
-    pub const fn default_ef_search_cap(self) -> u32 {
-        match self {
-            Tier::FreeTrial => 64,
-            Tier::Team => 160,
-            Tier::Pro => 256,
-            Tier::Business => 384,
-            Tier::Enterprise => 1024,
-        }
-    }
-
-    /// Default freshness SLA for async ingest, in seconds.
-    pub const fn default_freshness_sla_seconds(self) -> u32 {
-        match self {
-            Tier::FreeTrial => 900,
-            Tier::Team => 300,
-            Tier::Pro => 120,
-            Tier::Business => 60,
-            Tier::Enterprise => 15,
-        }
-    }
-
-    /// Label used on bounded-cardinality Prometheus counters. Must stay in the
-    /// fixed set {free, team, pro, business, enterprise} to keep cardinality
-    /// safe (see LLD `Multi-Tenant + SaaS Posture`).
-    pub const fn prometheus_label(self) -> &'static str {
-        match self {
-            Tier::FreeTrial => "free",
+            Tier::FreeTrial => "free_trial",
             Tier::Team => "team",
             Tier::Pro => "pro",
             Tier::Business => "business",
             Tier::Enterprise => "enterprise",
         }
+    }
+
+    /// All declared tier variants in display order. Kept in sync with the
+    /// canonical JSON via `validate_pricing_matches_enum()` at startup.
+    pub const fn all() -> &'static [Tier] {
+        &[
+            Tier::FreeTrial,
+            Tier::Team,
+            Tier::Pro,
+            Tier::Business,
+            Tier::Enterprise,
+        ]
+    }
+
+    /// Default scan budget (GB). Loaded from `config/pricing.json` at first
+    /// access; identical values live in `apps/api/src/services/pricing_config.py`
+    /// on the AnvaiOps side. Drift is impossible — both sides parse the same
+    /// vendored copy of `pricing/tiers.json`.
+    pub fn default_scan_budget_gb(self) -> f64 {
+        pricing_row(self).soft_caps.scan_budget_gb
+    }
+
+    /// Default beam-width / ef_search ceiling — hard ceiling at the router.
+    pub fn default_ef_search_cap(self) -> u32 {
+        pricing_row(self).soft_caps.ef_search_cap
+    }
+
+    /// Default freshness SLA for async ingest, in seconds.
+    pub fn default_freshness_sla_seconds(self) -> u32 {
+        pricing_row(self).soft_caps.freshness_sla_seconds
+    }
+
+    /// Bounded Prometheus label — cardinality-safe. The label set is loaded
+    /// from `pricing/tiers.json` so adding a tier on the AnvaiOps side and
+    /// re-vendoring the JSON automatically widens the metric label set here.
+    pub fn prometheus_label(self) -> &'static str {
+        pricing_row(self).prom_label.as_str()
     }
 }
 
@@ -430,6 +506,35 @@ mod tests {
         match cache.check_ef_search(&record, 256) {
             BudgetDecision::Exceeded { which, .. } => assert_eq!(which, "ef_search_cap"),
             other => panic!("expected Exceeded for ef_search, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn pricing_config_loads_without_panic_and_matches_enum() {
+        // First access of `pricing()` deserializes the embedded JSON, asserts
+        // schema_version == 1, and runs `validate_pricing_matches_enum`. If
+        // any of those checks fail we panic here — surfaces a malformed or
+        // drifted `config/pricing.json` at test time rather than first
+        // production request.
+        let cfg = pricing();
+        assert_eq!(cfg.schema_version, 1);
+        let json_ids: std::collections::HashSet<&str> =
+            cfg.tiers.iter().map(|t| t.id.as_str()).collect();
+        let enum_ids: std::collections::HashSet<&str> =
+            Tier::all().iter().map(|t| t.id()).collect();
+        assert_eq!(json_ids, enum_ids);
+    }
+
+    #[test]
+    fn every_tier_id_round_trips_through_pricing_lookup() {
+        for tier in Tier::all() {
+            // Every variant must find a matching row, and the loaded numbers
+            // must be positive / non-zero — guards against an incomplete
+            // pricing.json that compiles but stalls the router with NaN.
+            assert!(tier.default_scan_budget_gb() > 0.0, "{:?}", tier);
+            assert!(tier.default_ef_search_cap() > 0, "{:?}", tier);
+            assert!(tier.default_freshness_sla_seconds() > 0, "{:?}", tier);
+            assert!(!tier.prometheus_label().is_empty(), "{:?}", tier);
         }
     }
 

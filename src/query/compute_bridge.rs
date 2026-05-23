@@ -197,7 +197,7 @@ impl ComputeBridge {
     pub async fn execute(
         &self,
         plan: &UnifiedExecutionPlan,
-        context: &QueryContext,
+        context: &ComputeBridgeQueryContext,
     ) -> Result<ExecutionResult> {
         let start = std::time::Instant::now();
 
@@ -236,7 +236,7 @@ impl ComputeBridge {
     }
 
     /// Check if the plan should be routed through compute layer
-    fn should_use_compute(&self, plan: &UnifiedExecutionPlan, context: &QueryContext) -> bool {
+    fn should_use_compute(&self, plan: &UnifiedExecutionPlan, context: &ComputeBridgeQueryContext) -> bool {
         // Check if routing is enabled
         if !self.config.enable_compute_routing {
             return false;
@@ -308,7 +308,7 @@ impl ComputeBridge {
     async fn execute_via_compute(
         &self,
         plan: &UnifiedExecutionPlan,
-        context: &QueryContext,
+        context: &ComputeBridgeQueryContext,
     ) -> Result<ExecutionResult> {
         debug!("Executing via compute scheduler");
 
@@ -351,7 +351,7 @@ impl ComputeBridge {
     async fn execute_fallback(
         &self,
         _plan: &UnifiedExecutionPlan,
-        _context: &QueryContext,
+        _context: &ComputeBridgeQueryContext,
     ) -> Result<ExecutionResult> {
         debug!("Executing via fallback path");
 
@@ -365,7 +365,7 @@ impl ComputeBridge {
     pub fn convert_to_compute_plan(
         &self,
         plan: &UnifiedExecutionPlan,
-        context: &QueryContext,
+        context: &ComputeBridgeQueryContext,
     ) -> Result<ComputePlan> {
         if plan.execution_steps.is_empty() {
             bail!("Cannot convert empty execution plan");
@@ -390,7 +390,7 @@ impl ComputeBridge {
     }
 
     /// Build a plan tree from execution steps
-    fn build_plan_tree(&self, steps: &[ExecutionStep], context: &QueryContext) -> Result<PlanNode> {
+    fn build_plan_tree(&self, steps: &[ExecutionStep], context: &ComputeBridgeQueryContext) -> Result<PlanNode> {
         if steps.is_empty() {
             bail!("No execution steps to convert");
         }
@@ -410,7 +410,7 @@ impl ComputeBridge {
     fn convert_step_to_node(
         &self,
         step: &ExecutionStep,
-        context: &QueryContext,
+        context: &ComputeBridgeQueryContext,
         input: Option<PlanNode>,
     ) -> Result<PlanNode> {
         match step {
@@ -772,9 +772,12 @@ impl ComputeBridge {
 // Supporting Types
 // ============================================================================
 
+/// Backwards-compat alias for [`ComputeBridgeQueryContext`].
+pub type QueryContext = ComputeBridgeQueryContext;
+
 /// Context for query execution through the bridge
 #[derive(Debug, Clone)]
-pub struct QueryContext {
+pub struct ComputeBridgeQueryContext {
     /// Collection/table being queried
     pub collection_name: String,
 
@@ -791,7 +794,7 @@ pub struct QueryContext {
     pub parameters: HashMap<String, serde_json::Value>,
 }
 
-impl Default for QueryContext {
+impl Default for ComputeBridgeQueryContext {
     fn default() -> Self {
         Self {
             collection_name: String::new(),
@@ -803,7 +806,7 @@ impl Default for QueryContext {
     }
 }
 
-impl QueryContext {
+impl ComputeBridgeQueryContext {
     /// Create a new query context
     pub fn new(collection_name: impl Into<String>, dataset_size: usize) -> Self {
         Self {
@@ -972,7 +975,7 @@ mod tests {
         let bridge = create_test_bridge();
         let plan = create_test_plan();
 
-        let context = QueryContext::new("test_collection", 100); // Small dataset
+        let context = ComputeBridgeQueryContext::new("test_collection", 100); // Small dataset
         let should_compute = bridge.should_use_compute(&plan, &context);
 
         assert!(!should_compute, "Small datasets should use fallback");
@@ -983,7 +986,7 @@ mod tests {
         let bridge = create_test_bridge();
         let plan = create_test_plan();
 
-        let context = QueryContext::new("test_collection", 10000); // Large dataset
+        let context = ComputeBridgeQueryContext::new("test_collection", 10000); // Large dataset
         let should_compute = bridge.should_use_compute(&plan, &context);
 
         assert!(should_compute, "Large datasets should use compute");
@@ -1068,7 +1071,7 @@ mod tests {
         let bridge = create_test_bridge();
         let plan = create_test_plan();
 
-        let context = QueryContext::new("test_collection", 10000)
+        let context = ComputeBridgeQueryContext::new("test_collection", 10000)
             .with_query_vector(vec![0.1, 0.2, 0.3])
             .with_top_k(10);
 
@@ -1103,7 +1106,7 @@ mod tests {
         let bridge = create_test_bridge();
         let plan = create_test_plan();
 
-        let context = QueryContext::new("test_collection", 10000)
+        let context = ComputeBridgeQueryContext::new("test_collection", 10000)
             .with_query_vector(vec![0.1, 0.2, 0.3])
             .with_top_k(10);
 

@@ -56,12 +56,15 @@ pub trait AxisVectorIndex: Send + Sync {
     fn algorithm(&self) -> &IndexAlgorithm;
 
     /// Get index statistics
-    fn stats(&self) -> IndexStats;
+    fn stats(&self) -> AxisIndexStats;
 }
+
+/// Backwards-compat alias for [`AxisIndexStats`].
+pub type IndexStats = AxisIndexStats;
 
 /// Index statistics
 #[derive(Debug, Clone)]
-pub struct IndexStats {
+pub struct AxisIndexStats {
     /// Number of vectors currently stored in the index.
     pub vector_count: usize,
     /// Approximate memory consumption of the index in bytes.

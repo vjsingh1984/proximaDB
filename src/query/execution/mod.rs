@@ -115,7 +115,7 @@ impl QueryEngine {
     /// Execute query from internal AST (post-lowering from sql_frontend)
     ///
     /// This is the main entry point, providing superior performance through HashMap metadata filtering.
-    pub async fn execute_frontend(&self, query: Query) -> Result<QueryResult> {
+    pub async fn execute_frontend(&self, query: Query) -> Result<ExecutionQueryResult> {
         // 1. Generate optimized execution plan from AST
         let plan = self.planner.create_plan(&query)?;
 
@@ -185,9 +185,12 @@ pub use crate::query::query_optimizer::{
     UnifiedExecutionPlan as ExecutionPlan,
 };
 
+/// Backwards-compat alias for [`ExecutionQueryResult`].
+pub type QueryResult = ExecutionQueryResult;
+
 /// Query execution result
 #[derive(Debug, Clone, Default)]
-pub struct QueryResult {
+pub struct ExecutionQueryResult {
     /// Result rows
     pub rows: Vec<QueryRow>,
     /// Total number of matching results

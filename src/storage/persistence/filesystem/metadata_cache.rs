@@ -24,7 +24,7 @@ pub struct UnifiedMetadataCache {
     default_ttl: Duration,
 
     /// Statistics
-    stats: Arc<CacheStatistics>,
+    stats: Arc<FsMetadataCacheStatistics>,
 
     /// Memory tracker
     memory_usage: Arc<RwLock<usize>>,
@@ -57,7 +57,7 @@ pub struct CachedMetadata {
 
 /// Cache statistics
 #[derive(Debug, Default)]
-pub struct CacheStatistics {
+pub struct FsMetadataCacheStatistics {
     hits: std::sync::atomic::AtomicU64,
     misses: std::sync::atomic::AtomicU64,
     evictions: std::sync::atomic::AtomicU64,
@@ -73,7 +73,7 @@ impl UnifiedMetadataCache {
             max_entries: 100_000, // Default max entries
             max_memory_mb,
             default_ttl: Duration::from_secs(default_ttl_secs),
-            stats: Arc::new(CacheStatistics::default()),
+            stats: Arc::new(FsMetadataCacheStatistics::default()),
             memory_usage: Arc::new(RwLock::new(0)),
         }
     }
@@ -176,8 +176,8 @@ impl UnifiedMetadataCache {
     }
 
     /// Get cache statistics
-    pub fn stats(&self) -> CacheStats {
-        CacheStats {
+    pub fn stats(&self) -> FsMetadataCacheStats {
+        FsMetadataCacheStats {
             hits: self.stats.hits.load(std::sync::atomic::Ordering::Relaxed),
             misses: self.stats.misses.load(std::sync::atomic::Ordering::Relaxed),
             evictions: self
@@ -304,7 +304,7 @@ impl UnifiedMetadataCache {
     }
 }
 
-impl CacheStatistics {
+impl FsMetadataCacheStatistics {
     fn record_hit(&self) {
         self.hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
@@ -336,7 +336,7 @@ impl CacheStatistics {
 
 /// Public cache statistics
 #[derive(Debug, Clone)]
-pub struct CacheStats {
+pub struct FsMetadataCacheStats {
     pub hits: u64,
     pub misses: u64,
     pub evictions: u64,
@@ -345,7 +345,7 @@ pub struct CacheStats {
     pub memory_usage_bytes: usize,
 }
 
-impl CacheStats {
+impl FsMetadataCacheStats {
     /// Calculate hit rate
     pub fn hit_rate(&self) -> f64 {
         let total = self.hits + self.misses;

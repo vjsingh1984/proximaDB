@@ -213,9 +213,12 @@ pub use server_builder::{
     ArrowIpcServerBuilder, GrpcHttpServerBuilder, MultiServerBuilder, RestHttpServerBuilder,
 };
 
+/// Backwards-compat alias for [`NetworkServerConfig`].
+pub type NetworkConfig = NetworkServerConfig;
+
 /// Network server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkConfig {
+pub struct NetworkServerConfig {
     /// Server bind address
     pub bind_address: String,
 

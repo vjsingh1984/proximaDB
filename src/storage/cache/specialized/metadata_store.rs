@@ -154,12 +154,12 @@ pub struct ParquetFileMetadata {
     pub file_size: usize,
     pub is_cloud_storage: bool,
     pub supports_range_requests: bool,
-    pub column_stats: HashMap<String, ColumnStatistics>,
+    pub column_stats: HashMap<String, PushdownColumnStatistics>,
 }
 
 /// Column statistics for predicate pushdown
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ColumnStatistics {
+pub struct PushdownColumnStatistics {
     pub min_value: Value,
     pub max_value: Value,
     pub null_count: usize,

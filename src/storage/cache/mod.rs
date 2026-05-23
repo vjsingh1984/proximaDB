@@ -204,9 +204,9 @@ pub use backend::{CacheTier, StorageBackend};
 pub use base::BaseCacheImpl;
 pub use cache_coordinator::{
     // TD-042: Unified cache interface
+    CacheCoordinatorStats,
     CacheDependency,
     CacheId,
-    CacheStats,
     UnifiedCache,
     UnifiedCacheCoordinator,
 };

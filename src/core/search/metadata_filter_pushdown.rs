@@ -20,7 +20,7 @@ pub struct MetadataFilterPushdown {
     bloom_filters: HashMap<String, Arc<BloomFilter>>,
 
     /// Column statistics for selective filtering
-    column_stats: HashMap<String, ColumnStatistics>,
+    column_stats: HashMap<String, MetadataColumnStatistics>,
 
     /// Index on frequently filtered columns
     column_indexes: HashMap<String, ColumnIndex>,
@@ -116,7 +116,7 @@ impl MetadataFilterPushdownConfig {
 
 /// Statistics for a metadata column
 #[derive(Debug, Clone)]
-pub struct ColumnStatistics {
+pub struct MetadataColumnStatistics {
     /// Name of the metadata column
     pub column_name: String,
     /// Number of distinct values
@@ -417,7 +417,7 @@ impl MetadataFilterPushdown {
     /// Estimate selectivity for a comparison
     fn estimate_comparison_selectivity(
         &self,
-        stats: &ColumnStatistics,
+        stats: &MetadataColumnStatistics,
         operator: &ComparisonOperator,
         value: &Value,
     ) -> f64 {
@@ -476,7 +476,7 @@ impl MetadataFilterPushdown {
         &self,
         column_name: &str,
         values: &[Option<Value>],
-    ) -> ColumnStatistics {
+    ) -> MetadataColumnStatistics {
         let mut distinct_values = HashSet::new();
         let mut null_count = 0;
         let mut value_histogram = HashMap::new();
@@ -509,7 +509,7 @@ impl MetadataFilterPushdown {
             }
         }
 
-        ColumnStatistics {
+        MetadataColumnStatistics {
             column_name: column_name.to_string(),
             distinct_values: distinct_values.len(),
             null_count,
@@ -534,7 +534,7 @@ impl MetadataFilterPushdown {
     }
 
     /// Check if we should build an index for a column
-    fn should_build_index(&self, stats: &ColumnStatistics) -> bool {
+    fn should_build_index(&self, stats: &MetadataColumnStatistics) -> bool {
         // Build index if column is selective and frequently used
         let selectivity = stats.distinct_values as f64 / stats.total_count as f64;
         selectivity > self.config.min_index_selectivity
@@ -755,8 +755,8 @@ impl MetadataBloomBuilder {
 mod tests {
     use super::*;
 
-    fn column_stats(distinct_values: usize, total_count: usize) -> ColumnStatistics {
-        ColumnStatistics {
+    fn column_stats(distinct_values: usize, total_count: usize) -> MetadataColumnStatistics {
+        MetadataColumnStatistics {
             column_name: "category".to_string(),
             distinct_values,
             null_count: 0,

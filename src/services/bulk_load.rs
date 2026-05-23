@@ -126,13 +126,68 @@ impl BulkLoader {
             });
         }
 
-        // Delegate to the per-record insert path. When 2F-b lands the
-        // storage-engine refactor, this whole block becomes:
-        //
-        //     engine.ingest_sorted_segment(collection_id, base_path, records).await
-        //
-        // ...where `engine` is the trait object resolved by the
-        // catalog. The drainer doesn't need to change.
+        // Phase 2F-b activation: try the engine-specific LSM-bypass
+        // path first. Engines that ship `ingest_sorted_segment`
+        // overrides (NOVA so far; SST/VIPER/RAPTOR/CHRONO/SEQUOIA as
+        // they migrate) write a single SST/Parquet file directly,
+        // skipping WAL+memtable for ~30% storage-layer savings on top
+        // of the inference-layer batching. Engines without an override
+        // return `used_engine_specific_path: false` and we fall back
+        // to the per-record WAL+memtable path via UnifiedHandlers —
+        // correctness-equivalent, just slower.
+        if let Ok(engine) = self
+            .handlers
+            .vector_operations_service
+            .get_engine_for_collection(&collection_id)
+            .await
+        {
+            let base_path = base_path_for_engine(&engine);
+            // Cloning records here so we still have them for the
+            // fallback. Engines that DO override this method will
+            // consume the clone and we never use the original — but
+            // until every engine migrates we can't risk a no-op
+            // override losing the records.
+            let engine_records = records.clone();
+            match engine
+                .ingest_sorted_segment(&collection_id, &base_path, engine_records)
+                .await
+            {
+                Ok(seg) if seg.used_engine_specific_path => {
+                    debug!(
+                        collection_id = %collection_id,
+                        engine = engine.engine_name(),
+                        record_count,
+                        synthetic_segment_id = %seg.synthetic_segment_id,
+                        "bulk_load: engine-specific LSM bypass committed segment",
+                    );
+                    return Ok(BulkLoadedSegment {
+                        collection_id,
+                        record_count: seg.record_count,
+                        synthetic_segment_id: seg.synthetic_segment_id,
+                    });
+                }
+                Ok(_) => {
+                    debug!(
+                        collection_id = %collection_id,
+                        engine = engine.engine_name(),
+                        "bulk_load: engine has no LSM bypass override; falling back to per-record path",
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        collection_id = %collection_id,
+                        engine = engine.engine_name(),
+                        error = %e,
+                        "bulk_load: engine override errored; falling back to per-record path",
+                    );
+                }
+            }
+        }
+
+        // Fallback: per-record insert via WAL+memtable. Used when no
+        // engine override exists OR when the override returned an
+        // error. Customer-visible correctness is identical to the
+        // pre-2F-b behavior.
         let request = RichRecordBatchRequest {
             collection_id: collection_id.clone(),
             records,
@@ -167,7 +222,7 @@ impl BulkLoader {
             collection_id = %collection_id,
             record_count,
             synthetic_segment_id = %synthetic_segment_id,
-            "bulk_load: segment committed (via per-record path; LSM bypass deferred to 2F-b)",
+            "bulk_load: segment committed via per-record fallback path",
         );
         Ok(BulkLoadedSegment {
             collection_id,
@@ -175,6 +230,23 @@ impl BulkLoader {
             synthetic_segment_id,
         })
     }
+}
+
+/// Resolve a base path for the engine's `ingest_sorted_segment`. The
+/// catalog's storage_assignment is the authoritative source; until
+/// BulkLoader has a direct handle to the catalog we use a conventional
+/// fallback that lines up with the engines' default placement.
+///
+/// This is good enough for NOVA (which derives its own placement from
+/// `collection_config.storage_assignment.base_location` inside the
+/// override) — and the override will rebuild a synthetic assignment
+/// from this string. Other engines' overrides may need the
+/// per-collection real path; that wiring lands when they migrate.
+fn base_path_for_engine(_engine: &Arc<dyn crate::storage::traits::UnifiedStorageEngine>) -> String {
+    // TODO: thread the collection_service so this returns the
+    // collection's real storage_assignment.base_location. NOVA's
+    // override is tolerant of this default; other engines may not be.
+    "/var/lib/proximadb/collections".to_string()
 }
 
 // ── Production DrainerInsertSink wired to BulkLoader ─────────────

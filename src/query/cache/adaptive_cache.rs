@@ -220,7 +220,7 @@ impl AdaptiveQueryCache {
     }
 
     /// Get cache statistics
-    pub fn stats(&self) -> CacheStats {
+    pub fn stats(&self) -> AdaptiveCacheStats {
         let hits = self.hits.load(Ordering::Relaxed);
         let misses = self.misses.load(Ordering::Relaxed);
         let total = hits + misses;
@@ -230,7 +230,7 @@ impl AdaptiveQueryCache {
             0.0
         };
 
-        CacheStats {
+        AdaptiveCacheStats {
             total_entries: self.cache.len(),
             hits,
             misses,
@@ -288,7 +288,7 @@ impl AdaptiveQueryCache {
 
 /// Cache statistics
 #[derive(Debug, Clone)]
-pub struct CacheStats {
+pub struct AdaptiveCacheStats {
     /// Total number of entries in cache
     pub total_entries: usize,
     /// Total cache hits
@@ -301,7 +301,7 @@ pub struct CacheStats {
     pub prefetches: u64,
 }
 
-impl CacheStats {
+impl AdaptiveCacheStats {
     /// Print human-readable cache statistics
     pub fn print_summary(&self) {
         info!("📊 Adaptive Cache Statistics:");

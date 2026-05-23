@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::history::{AlertHistoryEntry, HistoryFilter};
 use super::rules::AlertRule;
 use super::rules::RuleCondition;
-use super::{ActiveAlert, Alert, AlertSeverity};
+use super::{ActiveAlert, AlertSeverity, ObservabilityAlert as Alert};
 
 /// Trait for durable alert state persistence.
 #[async_trait]

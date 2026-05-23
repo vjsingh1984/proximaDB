@@ -321,7 +321,7 @@ pub struct EmbeddedSearchResult {
 
 /// Collection information
 #[derive(Debug, Clone)]
-pub struct CollectionInfo {
+pub struct EmbeddedCollectionInfo {
     /// Collection name
     pub name: String,
     /// Vector dimension
@@ -1893,7 +1893,7 @@ impl EmbeddedProximaDB {
     pub fn get_collection(
         &self,
         name: &str,
-    ) -> Result<Option<CollectionInfo>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Option<EmbeddedCollectionInfo>, Box<dyn std::error::Error + Send + Sync>> {
         self.runtime.block_on(async {
             let collection = self
                 .collection_service
@@ -1905,7 +1905,7 @@ impl EmbeddedProximaDB {
 
             Ok(collection.map(|c| {
                 let config = c.config.unwrap_or_default();
-                CollectionInfo {
+                EmbeddedCollectionInfo {
                     name: config.name,
                     dimension: config.dimension,
                     vector_count: c.stats.map_or(0, |s| s.vector_count as u64),
@@ -1919,7 +1919,7 @@ impl EmbeddedProximaDB {
     /// List all collections
     pub fn list_collections(
         &self,
-    ) -> Result<Vec<CollectionInfo>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Vec<EmbeddedCollectionInfo>, Box<dyn std::error::Error + Send + Sync>> {
         self.runtime.block_on(async {
             let collections = self.collection_service.list_collections().await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
@@ -1931,7 +1931,7 @@ impl EmbeddedProximaDB {
                 .into_iter()
                 .map(|c| {
                     let config = c.config.unwrap_or_default();
-                    CollectionInfo {
+                    EmbeddedCollectionInfo {
                         name: config.name,
                         dimension: config.dimension,
                         vector_count: c.stats.map_or(0, |s| s.vector_count as u64),

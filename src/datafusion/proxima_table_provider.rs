@@ -12,7 +12,7 @@
 //! │  ┌───────────────────────────────────────────────────────────────────────┐  │
 //! │  │  ProximaTableProvider (extends DataFusion TableProvider)              │  │
 //! │  │  - engine_type(): EngineType                                          │  │
-//! │  │  - collection_info(): CollectionInfo                                  │  │
+//! │  │  - collection_info(): DataFusionCollectionInfo                                  │  │
 //! │  │  - get_splits(): Vec<FileSplit>                                       │  │
 //! │  │  - pruning_stats(): PruningStatistics                                 │  │
 //! │  └───────────────────────────────────────────────────────────────────────┘  │
@@ -122,7 +122,7 @@ impl std::fmt::Display for EngineType {
 /// Contains essential information about a ProximaDB collection
 /// needed for query planning and execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CollectionInfo {
+pub struct DataFusionCollectionInfo {
     /// Collection name/identifier
     pub name: String,
     /// Vector dimension
@@ -145,8 +145,8 @@ pub struct CollectionInfo {
     pub updated_at_ms: i64,
 }
 
-impl CollectionInfo {
-    /// Create a new CollectionInfo with required fields.
+impl DataFusionCollectionInfo {
+    /// Create a new DataFusionCollectionInfo with required fields.
     pub fn new(name: String, dimension: usize, engine_type: EngineType) -> Self {
         let now = chrono::Utc::now().timestamp_millis();
         Self {
@@ -313,7 +313,7 @@ impl PruningStatistics {
 /// ```rust,ignore
 /// impl ProximaTableProvider for SstTableProvider {
 ///     fn engine_type(&self) -> EngineType { EngineType::Sst }
-///     fn collection_info(&self) -> &CollectionInfo { &self.info }
+///     fn collection_info(&self) -> &DataFusionCollectionInfo { &self.info }
 ///     async fn get_splits(&self, filters: &[Expr]) -> Result<Vec<FileSplit>> {
 ///         // Engine-specific split generation with filter pushdown
 ///     }
@@ -329,7 +329,7 @@ pub trait ProximaTableProvider: TableProvider + Send + Sync + Debug {
     /// Get collection metadata.
     ///
     /// Returns essential information about the collection for query planning.
-    fn collection_info(&self) -> &CollectionInfo;
+    fn collection_info(&self) -> &DataFusionCollectionInfo;
 
     /// Get file splits for distributed execution.
     ///
@@ -397,12 +397,12 @@ pub trait ProximaTableProvider: TableProvider + Send + Sync + Debug {
 #[derive(Debug)]
 pub struct NullProximaTableProvider {
     schema: SchemaRef,
-    info: CollectionInfo,
+    info: DataFusionCollectionInfo,
 }
 
 impl NullProximaTableProvider {
     /// Create a new null provider for testing.
-    pub fn new(schema: SchemaRef, info: CollectionInfo) -> Self {
+    pub fn new(schema: SchemaRef, info: DataFusionCollectionInfo) -> Self {
         Self { schema, info }
     }
 }
@@ -451,7 +451,7 @@ impl ProximaTableProvider for NullProximaTableProvider {
         self.info.engine_type
     }
 
-    fn collection_info(&self) -> &CollectionInfo {
+    fn collection_info(&self) -> &DataFusionCollectionInfo {
         &self.info
     }
 
@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn test_collection_info_creation() {
-        let info = CollectionInfo::new("test_collection".to_string(), 128, EngineType::Sst)
+        let info = DataFusionCollectionInfo::new("test_collection".to_string(), 128, EngineType::Sst)
             .with_vector_count(1000)
             .with_storage_size(1024 * 1024)
             .with_file_count(5)
@@ -523,14 +523,14 @@ mod tests {
 
     #[test]
     fn test_collection_info_vector_size() {
-        let info = CollectionInfo::new("test".to_string(), 768, EngineType::Viper);
+        let info = DataFusionCollectionInfo::new("test".to_string(), 768, EngineType::Viper);
         assert_eq!(info.avg_vector_size_bytes(), 768 * 4);
     }
 
     #[test]
     fn test_collection_info_estimated_size() {
         let info =
-            CollectionInfo::new("test".to_string(), 128, EngineType::Nova).with_vector_count(1000);
+            DataFusionCollectionInfo::new("test".to_string(), 128, EngineType::Nova).with_vector_count(1000);
         assert_eq!(info.estimated_vector_data_size(), 1000 * 128 * 4);
     }
 
@@ -562,7 +562,7 @@ mod tests {
     #[tokio::test]
     async fn test_null_provider() {
         let schema = test_schema();
-        let info = CollectionInfo::new("test".to_string(), 128, EngineType::Sst);
+        let info = DataFusionCollectionInfo::new("test".to_string(), 128, EngineType::Sst);
         let provider = NullProximaTableProvider::new(schema.clone(), info);
 
         assert_eq!(provider.engine_type(), EngineType::Sst);
@@ -579,7 +579,7 @@ mod tests {
     #[test]
     fn test_provider_capabilities() {
         let schema = test_schema();
-        let info = CollectionInfo::new("test".to_string(), 128, EngineType::Sst);
+        let info = DataFusionCollectionInfo::new("test".to_string(), 128, EngineType::Sst);
         let provider = NullProximaTableProvider::new(schema, info);
 
         let caps = provider.capabilities();
@@ -593,12 +593,12 @@ mod tests {
         let schema = test_schema();
 
         // Provider with dimension > 0 should support vector search
-        let info = CollectionInfo::new("test".to_string(), 128, EngineType::Sst);
+        let info = DataFusionCollectionInfo::new("test".to_string(), 128, EngineType::Sst);
         let provider = NullProximaTableProvider::new(schema.clone(), info);
         assert!(provider.supports_vector_search());
 
         // Provider with dimension = 0 should not support vector search
-        let info_no_vector = CollectionInfo::new("test".to_string(), 0, EngineType::Sst);
+        let info_no_vector = DataFusionCollectionInfo::new("test".to_string(), 0, EngineType::Sst);
         let provider_no_vector = NullProximaTableProvider::new(schema, info_no_vector);
         assert!(!provider_no_vector.supports_vector_search());
     }
@@ -606,7 +606,7 @@ mod tests {
     #[test]
     fn test_vector_column_name() {
         let schema = test_schema();
-        let info = CollectionInfo::new("test".to_string(), 128, EngineType::Sst);
+        let info = DataFusionCollectionInfo::new("test".to_string(), 128, EngineType::Sst);
         let provider = NullProximaTableProvider::new(schema, info);
 
         assert_eq!(provider.vector_column_name(), Some("vector"));

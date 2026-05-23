@@ -41,7 +41,7 @@ pub struct PropertyIndex {
     pub btree_index: BTreeMap<String, HashSet<String>>,
 
     /// Statistics about this index
-    pub stats: IndexStats,
+    pub stats: OrionIndexStats,
 }
 
 /// Label index for efficient label-based queries
@@ -54,7 +54,7 @@ pub struct LabelIndex {
     pub node_to_labels: HashMap<NodeId, HashSet<String>>,
 
     /// Statistics
-    pub stats: IndexStats,
+    pub stats: OrionIndexStats,
 }
 
 /// Edge type index for efficient edge type queries
@@ -64,12 +64,12 @@ pub struct EdgeTypeIndex {
     pub type_to_edges: HashMap<String, HashSet<EdgeId>>,
 
     /// Statistics
-    pub stats: IndexStats,
+    pub stats: OrionIndexStats,
 }
 
 /// Index statistics tracking size, cardinality, and memory consumption.
 #[derive(Debug, Default)]
-pub struct IndexStats {
+pub struct OrionIndexStats {
     /// Total number of entries in the index.
     pub total_entries: usize,
     /// Number of distinct key values in the index.
@@ -90,7 +90,7 @@ pub struct CompositeIndex {
     pub composite_index: BTreeMap<Vec<String>, HashSet<String>>,
 
     /// Statistics
-    pub stats: IndexStats,
+    pub stats: OrionIndexStats,
 }
 
 /// Index manager for ORION engine
@@ -118,7 +118,7 @@ impl PropertyIndex {
         Self {
             property_key,
             btree_index: BTreeMap::new(),
-            stats: IndexStats::default(),
+            stats: OrionIndexStats::default(),
         }
     }
 
@@ -220,7 +220,7 @@ impl LabelIndex {
         Self {
             label_to_nodes: HashMap::new(),
             node_to_labels: HashMap::new(),
-            stats: IndexStats::default(),
+            stats: OrionIndexStats::default(),
         }
     }
 
@@ -341,7 +341,7 @@ impl EdgeTypeIndex {
     pub fn new() -> Self {
         Self {
             type_to_edges: HashMap::new(),
-            stats: IndexStats::default(),
+            stats: OrionIndexStats::default(),
         }
     }
 

@@ -19,9 +19,12 @@ use std::sync::Arc;
 
 use crate::storage::builder::{StorageSystem, StorageSystemBuilder};
 
+/// Backwards-compat alias for [`ServerNetworkConfig`].
+pub type NetworkConfig = ServerNetworkConfig;
+
 /// Server network configuration
 #[derive(Debug, Clone)]
-pub struct NetworkConfig {
+pub struct ServerNetworkConfig {
     /// Server host/interface (e.g., "0.0.0.0", "127.0.0.1", "localhost")
     pub host: String,
 
@@ -56,7 +59,7 @@ pub struct NetworkConfig {
     pub grpc_port: Option<u16>,
 }
 
-impl Default for NetworkConfig {
+impl Default for ServerNetworkConfig {
     fn default() -> Self {
         Self {
             host: "0.0.0.0".to_string(),
@@ -207,9 +210,12 @@ impl Default for IndexingConfig {
     }
 }
 
+/// Backwards-compat alias for [`ServerMonitoringConfig`].
+pub type MonitoringConfig = ServerMonitoringConfig;
+
 /// Monitoring and observability configuration
 #[derive(Debug, Clone)]
-pub struct MonitoringConfig {
+pub struct ServerMonitoringConfig {
     /// Enable detailed metrics collection
     pub enable_metrics: bool,
 
@@ -235,7 +241,7 @@ pub struct MonitoringConfig {
     pub log_level: String,
 }
 
-impl Default for MonitoringConfig {
+impl Default for ServerMonitoringConfig {
     fn default() -> Self {
         Self {
             enable_metrics: true,
@@ -254,7 +260,7 @@ impl Default for MonitoringConfig {
 #[derive(Debug, Clone, Default)]
 pub struct ServerConfig {
     /// Network configuration
-    pub network: NetworkConfig,
+    pub network: ServerNetworkConfig,
 
     /// Compute system configuration
     pub compute: ComputeConfig,
@@ -263,7 +269,7 @@ pub struct ServerConfig {
     pub indexing: IndexingConfig,
 
     /// Monitoring configuration
-    pub monitoring: MonitoringConfig,
+    pub monitoring: ServerMonitoringConfig,
 }
 
 /// Unified server builder that coordinates all subsystems
@@ -299,7 +305,7 @@ impl ServerBuilder {
     }
 
     /// Configure network settings
-    pub fn with_network_config(mut self, config: NetworkConfig) -> Self {
+    pub fn with_network_config(mut self, config: ServerNetworkConfig) -> Self {
         self.server_config.network = config;
         self
     }
@@ -392,7 +398,7 @@ impl ServerBuilder {
 
     /// Enable detailed monitoring
     pub fn with_detailed_monitoring(mut self) -> Self {
-        self.server_config.monitoring = MonitoringConfig {
+        self.server_config.monitoring = ServerMonitoringConfig {
             enable_metrics: true,
             metrics_interval_seconds: 10,
             enable_profiling: true,
@@ -406,7 +412,7 @@ impl ServerBuilder {
     }
 
     /// Configure monitoring
-    pub fn with_monitoring_config(mut self, config: MonitoringConfig) -> Self {
+    pub fn with_monitoring_config(mut self, config: ServerMonitoringConfig) -> Self {
         self.server_config.monitoring = config;
         self
     }

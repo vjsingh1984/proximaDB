@@ -49,7 +49,7 @@ pub struct DecompressionCache {
     /// Current cache size in bytes
     current_size_bytes: Arc<RwLock<usize>>,
     /// Cache statistics
-    stats: Arc<RwLock<CacheStats>>,
+    stats: Arc<RwLock<DecompressionCacheStats>>,
     /// Compression-specific sub-caches for better locality
     compression_caches:
         Arc<RwLock<HashMap<proximadb_compression::CompressionAlgorithm, Vec<BlockCacheKey>>>>,
@@ -63,7 +63,7 @@ pub struct DecompressionCache {
 
 /// Cache statistics
 #[derive(Debug, Default, Clone)]
-pub struct CacheStats {
+pub struct DecompressionCacheStats {
     /// Total cache hits
     pub hits: u64,
     /// Total cache misses
@@ -109,7 +109,7 @@ impl DecompressionCache {
             block_cache: Arc::new(RwLock::new(LruCache::new(capacity))),
             max_size_bytes,
             current_size_bytes: Arc::new(RwLock::new(0)),
-            stats: Arc::new(RwLock::new(CacheStats::default())),
+            stats: Arc::new(RwLock::new(DecompressionCacheStats::default())),
             compression_caches: Arc::new(RwLock::new(HashMap::new())),
             file_timestamps: Arc::new(dashmap::DashMap::new()),
             config,
@@ -452,7 +452,7 @@ impl DecompressionCache {
     }
 
     /// Get cache statistics
-    pub async fn get_stats(&self) -> CacheStats {
+    pub async fn get_stats(&self) -> DecompressionCacheStats {
         self.stats.read().await.clone()
     }
 

@@ -32,7 +32,7 @@ pub struct SIMDConfiguration {
     pub encoding_preferences: EncodingPreferences,
 
     /// Performance monitoring
-    pub monitoring: MonitoringConfig,
+    pub monitoring: SimdMonitoringConfig,
 }
 
 /// Memory pool configuration for SIMD operations
@@ -145,7 +145,7 @@ pub struct EncodingPreferences {
 
 /// Performance monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MonitoringConfig {
+pub struct SimdMonitoringConfig {
     /// Enable performance tracking
     pub enabled: bool,
 
@@ -173,7 +173,7 @@ impl Default for SIMDConfiguration {
             memory_pool: MemoryPoolConfig::default(),
             engine_settings: EngineSettings::default(),
             encoding_preferences: EncodingPreferences::default(),
-            monitoring: MonitoringConfig::default(),
+            monitoring: SimdMonitoringConfig::default(),
         }
     }
 }
@@ -238,7 +238,7 @@ impl Default for EncodingPreferences {
     }
 }
 
-impl Default for MonitoringConfig {
+impl Default for SimdMonitoringConfig {
     fn default() -> Self {
         Self {
             enabled: cfg!(debug_assertions), // Enable in debug builds

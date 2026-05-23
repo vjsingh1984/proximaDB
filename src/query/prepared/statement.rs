@@ -580,7 +580,7 @@ impl PreparedStatementCache {
     }
 
     /// Get cache statistics
-    pub fn stats(&self) -> CacheStats {
+    pub fn stats(&self) -> PreparedStatementCacheStats {
         let mut total_executions = 0u64;
         let mut oldest_access = Instant::now();
         let mut total_access_count = 0u64;
@@ -593,7 +593,7 @@ impl PreparedStatementCache {
             }
         }
 
-        CacheStats {
+        PreparedStatementCacheStats {
             cached_statements: self.cache.len(),
             max_statements: self.config.max_statements,
             total_executions,
@@ -647,7 +647,7 @@ impl Default for PreparedStatementCache {
 
 /// Cache statistics
 #[derive(Debug, Clone)]
-pub struct CacheStats {
+pub struct PreparedStatementCacheStats {
     /// Number of currently cached statements
     pub cached_statements: usize,
     /// Maximum allowed statements

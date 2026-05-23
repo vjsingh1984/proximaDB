@@ -53,7 +53,7 @@ pub struct NodejsSearchResult {
 
 /// Collection information
 #[napi(object)]
-pub struct CollectionInfo {
+pub struct NodejsCollectionInfo {
     /// Collection name
     pub name: String,
     /// Vector dimension
@@ -179,11 +179,11 @@ impl ProximaDB {
     /// @param name - Collection name
     /// @returns Collection info or null if not found
     #[napi]
-    pub fn get_collection(&self, name: String) -> Result<Option<CollectionInfo>> {
+    pub fn get_collection(&self, name: String) -> Result<Option<NodejsCollectionInfo>> {
         self.inner
             .get_collection(&name)
             .map(|opt| {
-                opt.map(|info| CollectionInfo {
+                opt.map(|info| NodejsCollectionInfo {
                     name: info.name,
                     dimension: info.dimension as i32,
                     vector_count: info.vector_count as i64,
@@ -197,13 +197,13 @@ impl ProximaDB {
     ///
     /// @returns Array of collection info
     #[napi]
-    pub fn list_collections(&self) -> Result<Vec<CollectionInfo>> {
+    pub fn list_collections(&self) -> Result<Vec<NodejsCollectionInfo>> {
         self.inner
             .list_collections()
             .map(|collections| {
                 collections
                     .into_iter()
-                    .map(|info| CollectionInfo {
+                    .map(|info| NodejsCollectionInfo {
                         name: info.name,
                         dimension: info.dimension as i32,
                         vector_count: info.vector_count as i64,

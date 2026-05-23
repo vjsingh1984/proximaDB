@@ -608,9 +608,9 @@ impl QueryPreprocessor {
     }
 
     /// Get cache statistics
-    pub fn stats(&self) -> CacheStatistics {
+    pub fn stats(&self) -> QueryPreprocessingCacheStatistics {
         let stats = self.stats.read();
-        CacheStatistics {
+        QueryPreprocessingCacheStatistics {
             hits: stats.hits,
             misses: stats.misses,
             hit_rate: if stats.hits + stats.misses > 0 {
@@ -636,7 +636,7 @@ impl QueryPreprocessor {
 
 /// Cache statistics for monitoring
 #[derive(Debug, Clone)]
-pub struct CacheStatistics {
+pub struct QueryPreprocessingCacheStatistics {
     /// Number of preprocessing cache hits
     pub hits: u64,
     /// Number of preprocessing cache misses

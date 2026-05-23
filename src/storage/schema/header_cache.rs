@@ -757,9 +757,9 @@ impl ProximaHeaderCache {
     }
 
     /// Get cache statistics.
-    pub fn stats(&self) -> CacheStats {
+    pub fn stats(&self) -> HeaderCacheStats {
         let cache = self.cache.read();
-        CacheStats {
+        HeaderCacheStats {
             entries: cache.len(),
             size_bytes: *self.current_size_bytes.read(),
             max_size_bytes: self.max_size_bytes,
@@ -794,7 +794,7 @@ impl Default for ProximaHeaderCache {
 
 /// Cache statistics.
 #[derive(Debug, Clone)]
-pub struct CacheStats {
+pub struct HeaderCacheStats {
     /// Number of cached entries
     pub entries: usize,
     /// Current cache size in bytes
@@ -809,7 +809,7 @@ pub struct CacheStats {
     pub hit_ratio: f64,
 }
 
-impl std::fmt::Display for CacheStats {
+impl std::fmt::Display for HeaderCacheStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,

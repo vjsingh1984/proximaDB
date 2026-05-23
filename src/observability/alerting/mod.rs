@@ -4,19 +4,19 @@
 // - Rule-based alerting
 // - Threshold and anomaly detection
 // - Notification channels (webhook, Slack, PagerDuty)
-// - Alert aggregation and deduplication
+// - ObservabilityAlert aggregation and deduplication
 
 /// Core alert evaluation engine with threshold and anomaly detection.
 pub mod engine;
 /// Staged escalation policies for unacknowledged alerts.
 pub mod escalation;
-/// Alert history tracking for audit trail.
+/// ObservabilityAlert history tracking for audit trail.
 pub mod history;
 /// Notification channels (webhook, Slack, PagerDuty, email).
 pub mod notifications;
 /// Durable persistence for rules, state, and history.
 pub mod persistence;
-/// Alert rule definitions and rule management.
+/// ObservabilityAlert rule definitions and rule management.
 pub mod rules;
 
 use std::collections::HashMap;
@@ -32,7 +32,7 @@ use self::rules::{AlertRule, AlertRuleId};
 
 /// Alerting service
 pub struct AlertingService {
-    /// Alert engine
+    /// ObservabilityAlert engine
     engine: Arc<AlertEngine>,
     /// Notification manager
     notifications: Arc<NotificationManager>,
@@ -61,7 +61,7 @@ impl AlertingService {
     }
 
     /// Fire an alert
-    pub async fn fire_alert(&self, alert: Alert) -> Result<()> {
+    pub async fn fire_alert(&self, alert: ObservabilityAlert) -> Result<()> {
         let alert_key = alert.key();
 
         // Check for duplicate/aggregation
@@ -69,7 +69,7 @@ impl AlertingService {
             let alerts = self.active_alerts.read().await;
             if let Some(_existing) = alerts.get(&alert_key) {
                 // Update existing alert
-                debug!("Alert already active: {}", alert_key);
+                debug!("ObservabilityAlert already active: {}", alert_key);
                 return Ok(());
             }
         }
@@ -91,7 +91,7 @@ impl AlertingService {
         // Send notifications
         self.notifications.send(&alert).await?;
 
-        info!("Alert fired: {} - {}", alert.name, alert.message);
+        info!("ObservabilityAlert fired: {} - {}", alert.name, alert.message);
 
         Ok(())
     }
@@ -100,7 +100,7 @@ impl AlertingService {
     pub async fn resolve_alert(&self, alert_key: &str) -> Result<()> {
         let mut alerts = self.active_alerts.write().await;
         if let Some(active) = alerts.remove(alert_key) {
-            info!("Alert resolved: {}", active.alert.name);
+            info!("ObservabilityAlert resolved: {}", active.alert.name);
         }
         Ok(())
     }
@@ -112,7 +112,7 @@ impl AlertingService {
             active.acknowledged = true;
             active.acknowledged_by = Some(user.to_string());
             active.acknowledged_at = Some(chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
-            info!("Alert acknowledged by {}: {}", user, active.alert.name);
+            info!("ObservabilityAlert acknowledged by {}: {}", user, active.alert.name);
         }
         Ok(())
     }
@@ -135,16 +135,16 @@ impl Default for AlertingService {
     }
 }
 
-/// Alert definition
+/// ObservabilityAlert definition
 ///
 /// Represents an alert event that can be fired by the alerting system.
 /// Contains information about what triggered the alert, its severity,
 /// and associated metadata.
 #[derive(Debug, Clone)]
-pub struct Alert {
-    /// Alert name
+pub struct ObservabilityAlert {
+    /// ObservabilityAlert name
     pub name: String,
-    /// Alert message
+    /// ObservabilityAlert message
     pub message: String,
     /// Severity level
     pub severity: AlertSeverity,
@@ -162,7 +162,7 @@ pub struct Alert {
     pub threshold: Option<f64>,
 }
 
-impl Alert {
+impl ObservabilityAlert {
     /// Generate alert key for deduplication
     ///
     /// Creates a unique key for this alert based on its name and source.
@@ -173,7 +173,7 @@ impl Alert {
     }
 }
 
-/// Alert severity levels
+/// ObservabilityAlert severity levels
 ///
 /// Defines the severity levels for alerts, from informational to critical.
 /// Each level indicates the urgency of attention required.
@@ -206,8 +206,8 @@ impl std::fmt::Display for AlertSeverity {
 /// Tracks the alert details along with acknowledgment state.
 #[derive(Debug, Clone)]
 pub struct ActiveAlert {
-    /// Alert details
-    pub alert: Alert,
+    /// ObservabilityAlert details
+    pub alert: ObservabilityAlert,
     /// When the alert was fired
     pub fired_at: i64,
     /// Whether the alert has been acknowledged
@@ -226,7 +226,7 @@ mod tests {
     async fn test_fire_alert() {
         let service = AlertingService::new();
 
-        let alert = Alert {
+        let alert = ObservabilityAlert {
             name: "HighCPU".to_string(),
             message: "CPU usage exceeded 90%".to_string(),
             severity: AlertSeverity::High,
@@ -249,7 +249,7 @@ mod tests {
     async fn test_acknowledge_alert() {
         let service = AlertingService::new();
 
-        let alert = Alert {
+        let alert = ObservabilityAlert {
             name: "HighCPU".to_string(),
             message: "CPU usage exceeded 90%".to_string(),
             severity: AlertSeverity::High,

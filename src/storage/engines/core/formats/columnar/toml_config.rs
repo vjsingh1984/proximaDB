@@ -23,7 +23,7 @@ pub struct StorageConfig {
     pub storage: GlobalStorageConfig,
     
     /// Monitoring settings
-    pub monitoring: MonitoringConfig,
+    pub monitoring: ColumnarTomlMonitoringConfig,
     
     /// Migration settings
     pub migration: MigrationConfig,
@@ -206,7 +206,7 @@ pub struct SstEngineConfig {
 
 /// Monitoring configuration
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct MonitoringConfig {
+pub struct ColumnarTomlMonitoringConfig {
     pub parquet_optimizations: MonitoringSettings,
 }
 
@@ -621,7 +621,7 @@ impl Default for StorageConfig {
     fn default() -> Self {
         Self {
             storage: GlobalStorageConfig::default(),
-            monitoring: MonitoringConfig::default(),
+            monitoring: ColumnarTomlMonitoringConfig::default(),
             migration: MigrationConfig::default(),
             advanced: AdvancedConfig::default(),
         }

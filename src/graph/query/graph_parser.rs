@@ -18,13 +18,16 @@ pub fn parse_cypher(query: &str) -> QueryResult<CypherStatement> {
 /// Parse a Cypher query string with context
 pub fn parse_cypher_with_context(
     query: &str,
-    _context: &QueryContext,
+    _context: &GraphParserQueryContext,
 ) -> QueryResult<CypherStatement> {
     parse_cypher(query)
 }
 
+/// Backwards-compat alias for [`GraphParserQueryContext`].
+pub type QueryContext = GraphParserQueryContext;
+
 /// Query context for parsing
 #[derive(Debug, Clone, Default)]
-pub struct QueryContext {
+pub struct GraphParserQueryContext {
     // TODO: Add context fields
 }

@@ -618,7 +618,7 @@ impl AxisManager {
     }
 
     /// Query vectors using adaptive indexes
-    pub async fn query(&self, query: HybridQuery) -> Result<QueryResult> {
+    pub async fn query(&self, query: HybridQuery) -> Result<AxisManagerQueryResult> {
         let start = std::time::Instant::now();
 
         // Execute query using current search_strategy
@@ -679,7 +679,7 @@ impl AxisManager {
             })
             .collect();
 
-        Ok(QueryResult {
+        Ok(AxisManagerQueryResult {
             results: active_results,
             strategy_used: search_strategy,
             execution_time_ms: start.elapsed().as_millis() as u64,
@@ -2134,9 +2134,12 @@ pub enum FilterOperator {
     IsNotNull,
 }
 
+/// Backwards-compat alias for [`AxisManagerQueryResult`].
+pub type QueryResult = AxisManagerQueryResult;
+
 /// Query result
 #[derive(Debug, Clone)]
-pub struct QueryResult {
+pub struct AxisManagerQueryResult {
     /// Scored results ordered by relevance.
     pub results: Vec<ScoredResult>,
     /// Index selection strategy that was used to execute the query.

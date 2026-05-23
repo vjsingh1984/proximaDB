@@ -189,7 +189,7 @@ pub use self::metadata_filter_strategy::{
 };
 pub use batch_operations::ColumnarBatchOperations;
 pub use columnar_schema::ColumnarSchema;
-pub use footer_cache::{CacheStats, FooterCacheConfig, ParquetFooterCache, WarmingStrategy};
+pub use footer_cache::{FooterCacheConfig, FooterCacheStats, ParquetFooterCache, WarmingStrategy};
 pub use utilities::ColumnarUtilities;
 
 pub use config_builder::{
@@ -380,7 +380,7 @@ pub struct ColumnarFileMetadata {
     pub quantization: QuantizationConfig,
 
     /// Column statistics
-    pub column_stats: HashMap<String, ColumnStatistics>,
+    pub column_stats: HashMap<String, ColumnarColumnStatistics>,
 
     /// File version
     pub version: u32,
@@ -392,9 +392,12 @@ pub struct ColumnarFileMetadata {
     pub modified_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// Backwards-compat alias for [`ColumnarColumnStatistics`].
+pub type ColumnStatistics = ColumnarColumnStatistics;
+
 /// Column statistics for query optimization
 #[derive(Debug, Clone)]
-pub struct ColumnStatistics {
+pub struct ColumnarColumnStatistics {
     pub null_count: u64,
     pub distinct_count: u64,
     pub min_value: Option<serde_json::Value>,

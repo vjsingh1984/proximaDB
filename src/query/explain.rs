@@ -46,12 +46,12 @@ pub struct ExplainPlan {
     pub orchestration_steps: Vec<String>,
     pub vector_hints: Option<VectorHints>,
     pub graph_hints: Option<GraphHints>,
-    pub join_costs: Option<JoinCostEstimate>,
+    pub join_costs: Option<JoinExplainCostEstimate>,
     pub query_stats: Option<AnalyzeMetrics>,
     pub execution_strategy: Option<String>,
     pub estimated_total_cost: Option<f64>,
     /// Per-operation cost breakdown from the cost-based optimizer
-    pub cost_breakdown: Option<Vec<CostEstimate>>,
+    pub cost_breakdown: Option<Vec<ExplainCostEstimate>>,
     /// Join strategy chosen by the optimizer and the reasoning behind it
     pub join_strategy: Option<JoinStrategyExplanation>,
     /// Fusion strategy chosen by the optimizer and the reasoning behind it
@@ -63,7 +63,7 @@ pub struct ExplainPlan {
 
 /// Cost estimate for a single operation in the query plan
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CostEstimate {
+pub struct ExplainCostEstimate {
     /// Human-readable operation name (e.g. "VectorSearch(products)")
     pub operation: String,
     /// Estimated cost units for this operation
@@ -122,7 +122,7 @@ impl ExplainPlan {
     }
 
     /// Add join cost estimates
-    pub fn with_join_costs(mut self, costs: JoinCostEstimate) -> Self {
+    pub fn with_join_costs(mut self, costs: JoinExplainCostEstimate) -> Self {
         self.join_costs = Some(costs);
         self
     }
@@ -146,7 +146,7 @@ impl ExplainPlan {
     }
 
     /// Set per-operation cost breakdown
-    pub fn with_cost_breakdown(mut self, breakdown: Vec<CostEstimate>) -> Self {
+    pub fn with_cost_breakdown(mut self, breakdown: Vec<ExplainCostEstimate>) -> Self {
         self.cost_breakdown = Some(breakdown);
         self
     }
@@ -673,7 +673,7 @@ pub struct GraphPlannerStats {
 
 /// Join cost estimation for hybrid queries
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct JoinCostEstimate {
+pub struct JoinExplainCostEstimate {
     /// Join algorithm used
     pub join_algorithm: String,
     /// Estimated cost of the join
@@ -702,18 +702,18 @@ pub struct AnalyzeMetrics {
     /// Actual memory usage in MB
     pub actual_memory_mb: f64,
     /// Cache hit rates
-    pub cache_statistics: CacheStatistics,
+    pub cache_statistics: ExplainCacheStatistics,
     /// I/O statistics
     pub io_statistics: IOStatistics,
     /// Operator timing breakdown
     pub operator_timings: Vec<OperatorTiming>,
     /// Resource utilization
-    pub resource_usage: ResourceUsage,
+    pub resource_usage: ExplainResourceUsage,
 }
 
 /// Cache statistics for ANALYZE
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CacheStatistics {
+pub struct ExplainCacheStatistics {
     /// Vector cache hit rate
     pub vector_cache_hit_rate: f64,
     /// Graph cache hit rate  
@@ -756,7 +756,7 @@ pub struct OperatorTiming {
 
 /// Resource utilization metrics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ResourceUsage {
+pub struct ExplainResourceUsage {
     /// Peak memory usage in MB
     pub peak_memory_mb: f64,
     /// CPU time in milliseconds
@@ -820,7 +820,7 @@ impl GraphHints {
     }
 }
 
-impl JoinCostEstimate {
+impl JoinExplainCostEstimate {
     /// Create a join cost estimate for vector-graph hybrid queries
     pub fn for_hybrid_join(
         vector_cardinality: usize,
@@ -832,7 +832,7 @@ impl JoinCostEstimate {
             ((vector_cardinality as f64) * (graph_cardinality as f64) * join_selectivity) as usize;
         let memory_mb = ((vector_cardinality + graph_cardinality) as f64 * 0.001).max(1.0); // Rough estimate
 
-        JoinCostEstimate {
+        JoinExplainCostEstimate {
             join_algorithm: "hybrid_hash_join".to_string(),
             estimated_cost,
             left_cardinality: vector_cardinality,
@@ -852,10 +852,10 @@ impl AnalyzeMetrics {
             actual_execution_time_ms: execution_time_ms,
             actual_rows: rows,
             actual_memory_mb: 1.0,
-            cache_statistics: CacheStatistics::default(),
+            cache_statistics: ExplainCacheStatistics::default(),
             io_statistics: IOStatistics::default(),
             operator_timings: vec![],
-            resource_usage: ResourceUsage::default(),
+            resource_usage: ExplainResourceUsage::default(),
         }
     }
 }
@@ -2056,7 +2056,7 @@ mod tests {
 
     #[test]
     fn test_cost_estimate_struct() {
-        let estimate = CostEstimate {
+        let estimate = ExplainCostEstimate {
             operation: "VectorSearch(products)".to_string(),
             estimated_cost: 3.5,
             estimated_rows: 100,
@@ -2093,13 +2093,13 @@ mod tests {
     fn test_explain_plan_with_cost_breakdown() {
         let plan = ExplainPlan::new()
             .with_cost_breakdown(vec![
-                CostEstimate {
+                ExplainCostEstimate {
                     operation: "VectorSearch(products)".to_string(),
                     estimated_cost: 3.5,
                     estimated_rows: 100,
                     notes: None,
                 },
-                CostEstimate {
+                ExplainCostEstimate {
                     operation: "GraphTraversal(knowledge)".to_string(),
                     estimated_cost: 6.0,
                     estimated_rows: 500,

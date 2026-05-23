@@ -210,11 +210,11 @@ impl QueryCache {
     }
 
     /// Get cache statistics
-    pub async fn statistics(&self) -> CacheStatistics {
+    pub async fn statistics(&self) -> SpecializedQueryCacheStatistics {
         // Get snapshot from unified metrics
         let snapshot = self.base.metrics().get_snapshot().await;
 
-        CacheStatistics {
+        SpecializedQueryCacheStatistics {
             total_entries: self.size().await,
             hit_count: snapshot.cache_hits,
             miss_count: snapshot.cache_misses,
@@ -231,7 +231,7 @@ impl QueryCache {
 
 /// Cache statistics structure
 #[derive(Debug, Clone, Default)]
-pub struct CacheStatistics {
+pub struct SpecializedQueryCacheStatistics {
     pub total_entries: usize,
     pub hit_count: u64,
     pub miss_count: u64,

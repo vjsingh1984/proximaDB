@@ -295,7 +295,7 @@ pub struct AlgorithmConfig {
     /// Index algorithm preferences
     pub index_algorithm: IndexAlgorithm,
     /// Search algorithm tuning
-    pub search_params: SearchParams,
+    pub search_params: ComputeSearchParams,
     /// Quantization settings
     pub quantization: UnifiedQuantizationLevel,
 }
@@ -330,7 +330,7 @@ pub enum IndexAlgorithm {
 }
 
 #[derive(Debug, Clone)]
-pub struct SearchParams {
+pub struct ComputeSearchParams {
     /// Search accuracy vs speed trade-off
     pub accuracy_target: f32, // 0.0 = fastest, 1.0 = most accurate
     /// Maximum search time (milliseconds)
@@ -456,7 +456,7 @@ impl Default for ComputeConfig {
             algorithms: AlgorithmConfig {
                 default_metric: DistanceMetric::Cosine,
                 index_algorithm: IndexAlgorithm::Auto,
-                search_params: SearchParams {
+                search_params: ComputeSearchParams {
                     accuracy_target: 0.95,
                     max_search_time_ms: 100,
                     early_termination_threshold: None,

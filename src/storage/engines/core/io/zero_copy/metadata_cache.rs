@@ -208,7 +208,7 @@ impl MmappedMetadata {
 
 /// Cache statistics for monitoring
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CacheStatistics {
+pub struct ZeroCopyMetadataCacheStatistics {
     pub hits: u64,
     pub misses: u64,
     pub files_skipped: u64,
@@ -221,7 +221,7 @@ pub struct CacheStatistics {
     pub invalidations: u64,
 }
 
-impl CacheStatistics {
+impl ZeroCopyMetadataCacheStatistics {
     #[allow(dead_code)]
     pub fn hit_rate(&self) -> f64 {
         let total = self.hits + self.misses;
@@ -252,7 +252,7 @@ pub struct ZeroCopyMetadataCache {
     /// Memory-mapped metadata cache
     mmap_cache: DashMap<String, Arc<MmappedMetadata>>,
     /// Cache statistics
-    stats: RwLock<CacheStatistics>,
+    stats: RwLock<ZeroCopyMetadataCacheStatistics>,
     /// Cache configuration
     max_memory_bytes: usize,
     max_entries: usize,
@@ -277,7 +277,7 @@ impl ZeroCopyMetadataCache {
             cache_dir,
             serializers: DashMap::new(),
             mmap_cache: DashMap::new(),
-            stats: RwLock::new(CacheStatistics::default()),
+            stats: RwLock::new(ZeroCopyMetadataCacheStatistics::default()),
             max_memory_bytes,
             max_entries,
             enable_compression,
@@ -446,7 +446,7 @@ impl ZeroCopyMetadataCache {
     }
 
     /// Get cache statistics
-    pub fn get_statistics(&self) -> CacheStatistics {
+    pub fn get_statistics(&self) -> ZeroCopyMetadataCacheStatistics {
         let mut stats = self.stats.read().clone();
         stats.total_entries = self.mmap_cache.len();
         stats.memory_usage_bytes = self.calculate_memory_usage();
@@ -719,7 +719,7 @@ mod tests {
             cache_dir: temp_dir.path().to_path_buf(),
             serializers: DashMap::new(),
             mmap_cache: DashMap::new(),
-            stats: RwLock::new(CacheStatistics::default()),
+            stats: RwLock::new(ZeroCopyMetadataCacheStatistics::default()),
             max_memory_bytes: 1024,
             max_entries: 100,
             enable_compression: false,

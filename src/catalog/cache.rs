@@ -60,12 +60,12 @@ pub struct CatalogCache {
     /// Statistics cache: catalog.namespace.table -> CatalogTableStatistics
     statistics: RwLock<HashMap<String, CacheEntry<CatalogTableStatistics>>>,
     /// Cache statistics
-    stats: RwLock<CacheStats>,
+    stats: RwLock<CatalogCacheStats>,
 }
 
 /// Cache performance statistics
 #[derive(Debug, Clone, Default)]
-pub struct CacheStats {
+pub struct CatalogCacheStats {
     /// Number of namespace cache hits
     pub namespace_hits: u64,
     /// Number of namespace cache misses
@@ -88,7 +88,7 @@ pub struct CacheStats {
     pub invalidations: u64,
 }
 
-impl CacheStats {
+impl CatalogCacheStats {
     /// Compute the overall cache hit rate as a value in [0.0, 1.0]
     pub fn hit_rate(&self) -> f64 {
         let total_hits = self.namespace_hits + self.table_hits + self.index_hits + self.stats_hits;
@@ -113,7 +113,7 @@ impl CatalogCache {
             tables: RwLock::new(HashMap::new()),
             indexes: RwLock::new(HashMap::new()),
             statistics: RwLock::new(HashMap::new()),
-            stats: RwLock::new(CacheStats::default()),
+            stats: RwLock::new(CatalogCacheStats::default()),
         }
     }
 
@@ -344,7 +344,7 @@ impl CatalogCache {
     }
 
     /// Get cache statistics
-    pub fn get_stats(&self) -> CacheStats {
+    pub fn get_stats(&self) -> CatalogCacheStats {
         self.stats.read().clone()
     }
 
@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn test_cache_hit_rate() {
-        let mut stats = CacheStats::default();
+        let mut stats = CatalogCacheStats::default();
         assert_eq!(stats.hit_rate(), 0.0);
 
         stats.table_hits = 3;

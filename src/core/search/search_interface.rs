@@ -34,7 +34,7 @@ pub struct SearchPlan {
     /// Collection metadata for optimization
     pub collection_id: String,
     /// Collection configuration for optimization hints
-    pub collection_config: Option<CollectionConfig>,
+    pub collection_config: Option<SearchCollectionConfig>,
     /// Filterable metadata columns from collection config
     pub filterable_columns: Vec<FilterableColumn>,
     /// Available quantization methods for this collection
@@ -63,9 +63,12 @@ pub struct SearchPlan {
     pub enable_early_termination: bool,
 }
 
+/// Backwards-compat alias for [`SearchCollectionConfig`].
+pub type CollectionConfig = SearchCollectionConfig;
+
 /// Collection configuration for search optimization
 #[derive(Debug, Clone)]
-pub struct CollectionConfig {
+pub struct SearchCollectionConfig {
     /// Default distance metric
     pub default_distance_metric: DistanceMetric,
     /// Vector dimension
@@ -301,7 +304,7 @@ impl IntegratedSearchOptimizer {
         let storage_info = self.analyze_storage_info(collection_id).await?;
 
         // Build collection config
-        let collection_config = collection.config.as_ref().map(|config| CollectionConfig {
+        let collection_config = collection.config.as_ref().map(|config| SearchCollectionConfig {
             default_distance_metric: config
                 .distance_metric
                 .and_then(|m| DistanceMetric::try_from(m).ok())

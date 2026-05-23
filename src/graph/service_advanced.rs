@@ -139,7 +139,7 @@ pub struct QuasarGraphStats {
     /// Statistics about node migration between tiers.
     pub tiering_stats: Option<QuasarTieringStats>,
     /// Cache hit/miss statistics.
-    pub cache_stats: Option<CacheStats>,
+    pub cache_stats: Option<GraphServiceCacheStats>,
 }
 
 /// Tier statistics (stub)
@@ -170,7 +170,7 @@ pub struct QuasarTieringStats {
 
 /// Cache statistics (stub)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CacheStats {
+pub struct GraphServiceCacheStats {
     /// Cache hit rate for the hot tier (0.0 to 1.0).
     pub hot_tier_hit_rate: f64,
     /// Cache hit rate for the cold tier (0.0 to 1.0).
