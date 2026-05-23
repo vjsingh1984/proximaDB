@@ -6147,6 +6147,7 @@ dependencies = [
  "url",
  "urlencoding",
  "uuid",
+ "walkdir",
  "webpki-roots 0.25.4",
  "x509-parser",
  "xz2",
