@@ -29,9 +29,12 @@ Read these in order for future-shaping architecture work:
 7. `OPEN_FORMAT_CATALOG_2026_05_17.adoc` +
    Iceberg REST catalog, OLTP catalog backends, open-format compatibility, and xCatalog ownership
    for external engines.
-8. `COLLECTION_DR_CRR_HLD_LLD_2026_05_23.adoc` +
-   Active HLD/LLD tracker for collection-level disaster recovery, S3/Azure cross-region object
-   replication, storage-pool placement, billing gates, restore readiness, and provider automation.
+8. `COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc` +
+   Engine contract for collection-level disaster recovery and cross-region object replication.
+   Defines catalog metadata, physical path layout, path-resolver invariants, state machine,
+   reconciler interface, and provider adapter contract. SaaS operationalization (tier-to-pool
+   mapping, bucket naming, provider rule JSON, billing SKUs, failover runbook) lives in the
+   AnvaiOps repo, not here.
 9. `MULTIMODEL_TRAJECTORY_ALIGNMENT_2026_05_18.adoc` +
    Execution guide for keeping new multimodel code aligned with `ProximaRecord` and
    `ProximaValue`.
@@ -45,7 +48,6 @@ Read these in order for future-shaping architecture work:
   duplicate-doc findings, and archive batch plan.
 * `DESIGN_PATTERNS.adoc` - general design patterns and implementation references.
 * `SUPPORTED_SURFACES.adoc` - supported API/projection status and retirement candidates.
-* `platform/CLOUD_HOSTED_SERVICE_DESIGN.adoc` - cloud service deployment/control-plane design.
 
 == ADRs
 
