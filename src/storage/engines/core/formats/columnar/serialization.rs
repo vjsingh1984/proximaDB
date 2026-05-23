@@ -310,7 +310,7 @@ pub struct SerializationMetadata {
     pub dimension: usize,
     pub quantization_stats: QuantizationStats,
     pub compression_stats: ColumnarCompressionStats,
-    pub performance_stats: PerformanceStats,
+    pub performance_stats: ColumnarSerPerformanceStats,
 }
 
 /// Statistics about quantization quality
@@ -338,9 +338,12 @@ pub struct ColumnarCompressionStats {
     pub compression_ratio: f32,
 }
 
+/// Backwards-compat alias for [`ColumnarSerPerformanceStats`].
+pub type PerformanceStats = ColumnarSerPerformanceStats;
+
 /// Performance statistics
 #[derive(Debug, Clone)]
-pub struct PerformanceStats {
+pub struct ColumnarSerPerformanceStats {
     pub serialization_time_ms: f64,
     pub quantization_time_ms: f64,
     pub compression_time_ms: f64,
@@ -472,7 +475,7 @@ impl ColumnarSerializer {
             dimension: self.config.dimension,
             quantization_stats: quant_stats,
             compression_stats,
-            performance_stats: PerformanceStats {
+            performance_stats: ColumnarSerPerformanceStats {
                 serialization_time_ms: total_time,
                 quantization_time_ms: quantization_time,
                 compression_time_ms: _compression_time,

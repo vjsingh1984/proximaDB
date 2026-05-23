@@ -39,7 +39,7 @@ pub struct NovaCachedMetadata {
     /// Compression ratio achieved
     pub compression_ratio: f32,
     /// Quantization configuration
-    pub quantization_config: Option<QuantizationMetadata>,
+    pub quantization_config: Option<ColumnarSerializerQuantizationMetadata>,
     /// Creation timestamp
     pub creation_timestamp: i64,
     /// Parquet schema hash for validation
@@ -88,8 +88,11 @@ pub struct ColumnMetadata {
     pub total_uncompressed_size: u64,
 }
 
+/// Backwards-compat alias for [`ColumnarSerializerQuantizationMetadata`].
+pub type QuantizationMetadata = ColumnarSerializerQuantizationMetadata;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuantizationMetadata {
+pub struct ColumnarSerializerQuantizationMetadata {
     pub algorithm: String, // "binary", "int8", "pq4", "pq8", etc.
     pub codebook_size: usize,
     pub subvector_count: Option<usize>,
@@ -217,7 +220,7 @@ mod tests {
             }],
             column_metadata: HashMap::new(),
             compression_ratio: 0.25,
-            quantization_config: Some(QuantizationMetadata {
+            quantization_config: Some(ColumnarSerializerQuantizationMetadata {
                 algorithm: "pq8".to_string(),
                 codebook_size: 256,
                 subvector_count: Some(192),

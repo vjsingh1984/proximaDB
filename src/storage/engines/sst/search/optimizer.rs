@@ -49,7 +49,7 @@ pub struct SearchOptimizer {
     /// Query pattern statistics
     query_stats: HashMap<String, QueryStatistics>,
     /// Current optimization configuration
-    config: OptimizationConfig,
+    config: SstSearchOptimizationConfig,
 }
 
 impl SearchOptimizer {
@@ -57,12 +57,12 @@ impl SearchOptimizer {
     pub fn new() -> Self {
         Self {
             query_stats: HashMap::new(),
-            config: OptimizationConfig::default(),
+            config: SstSearchOptimizationConfig::default(),
         }
     }
 
     /// Create optimizer with custom configuration
-    pub fn with_config(config: OptimizationConfig) -> Self {
+    pub fn with_config(config: SstSearchOptimizationConfig) -> Self {
         Self {
             query_stats: HashMap::new(),
             config,
@@ -265,7 +265,7 @@ impl SearchOptimizer {
     }
 
     /// Update optimizer configuration
-    pub fn update_config(&mut self, config: OptimizationConfig) {
+    pub fn update_config(&mut self, config: SstSearchOptimizationConfig) {
         self.config = config;
         info!("🔧 SearchOptimizer: Configuration updated");
     }
@@ -277,9 +277,12 @@ impl Default for SearchOptimizer {
     }
 }
 
+/// Backwards-compat alias for [`SstSearchOptimizationConfig`].
+pub type OptimizationConfig = SstSearchOptimizationConfig;
+
 /// Configuration for search optimization
 #[derive(Debug, Clone)]
-pub struct OptimizationConfig {
+pub struct SstSearchOptimizationConfig {
     /// File count threshold for using direct search
     pub direct_search_file_threshold: usize,
     /// Latency threshold for considering a query high-latency
@@ -292,7 +295,7 @@ pub struct OptimizationConfig {
     pub enable_pattern_learning: bool,
 }
 
-impl Default for OptimizationConfig {
+impl Default for SstSearchOptimizationConfig {
     fn default() -> Self {
         Self {
             direct_search_file_threshold: 5,

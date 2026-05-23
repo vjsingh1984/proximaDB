@@ -90,7 +90,7 @@ pub struct ExecutionPlan {
     /// Estimated total execution time
     pub estimated_duration: Duration,
     /// Resource requirements
-    pub resource_requirements: ResourceRequirements,
+    pub resource_requirements: ZeroCopyResourceRequirements,
     /// Fallback plans in case of failure
     pub fallback_plans: Vec<ExecutionPlan>,
 }
@@ -129,9 +129,12 @@ pub enum OperationType {
     ValidateDownload,
 }
 
+/// Backwards-compat alias for [`ZeroCopyResourceRequirements`].
+pub type ResourceRequirements = ZeroCopyResourceRequirements;
+
 /// Resource requirements for execution
 #[derive(Debug, Clone, Default)]
-pub struct ResourceRequirements {
+pub struct ZeroCopyResourceRequirements {
     /// Memory required in bytes
     pub memory_bytes: u64,
     /// Disk space required in bytes
@@ -325,7 +328,7 @@ impl ZeroCopyIOSystem {
                 execution_plan: ExecutionPlan {
                     operations: vec![],
                     estimated_duration: Duration::from_millis(1),
-                    resource_requirements: ResourceRequirements::default(),
+                    resource_requirements: ZeroCopyResourceRequirements::default(),
                     fallback_plans: vec![],
                 },
                 rationale: "Metadata analysis determined no relevant data in file".to_string(),
@@ -629,7 +632,7 @@ impl ZeroCopyIOSystem {
                     let plan = ExecutionPlan {
                         operations: vec![],
                         estimated_duration: Duration::from_millis(1),
-                        resource_requirements: ResourceRequirements::default(),
+                        resource_requirements: ZeroCopyResourceRequirements::default(),
                         fallback_plans: vec![],
                     };
                     let savings = IOSavings {
@@ -673,7 +676,7 @@ impl ZeroCopyIOSystem {
                     let plan = ExecutionPlan {
                         operations,
                         estimated_duration: Duration::from_millis(150),
-                        resource_requirements: ResourceRequirements {
+                        resource_requirements: ZeroCopyResourceRequirements {
                             memory_bytes: file_size,
                             disk_bytes: if cache_locally { file_size } else { 0 },
                             bandwidth_bps: file_size,
@@ -723,7 +726,7 @@ impl ZeroCopyIOSystem {
                     let plan = ExecutionPlan {
                         operations,
                         estimated_duration: Duration::from_millis(ranges.len() as u64 * 25),
-                        resource_requirements: ResourceRequirements {
+                        resource_requirements: ZeroCopyResourceRequirements {
                             memory_bytes: total_bytes,
                             disk_bytes: 0,
                             bandwidth_bps: total_bytes,
@@ -828,7 +831,7 @@ impl ZeroCopyIOSystem {
         Ok(ExecutionPlan {
             operations: vec![],
             estimated_duration: Duration::from_millis(100),
-            resource_requirements: ResourceRequirements::default(),
+            resource_requirements: ZeroCopyResourceRequirements::default(),
             fallback_plans: vec![],
         })
     }

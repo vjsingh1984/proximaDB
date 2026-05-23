@@ -414,7 +414,7 @@ impl UnifiedQuantizationEngine {
                 Ok(QuantizedVector {
                     data: bytes,
                     quantization_level: level.clone(),
-                    metadata: QuantizationMetadata::default(),
+                    metadata: QuantEngineQuantizationMetadata::default(),
                 })
             }
 
@@ -964,7 +964,7 @@ impl UnifiedQuantizationEngine {
         Ok(QuantizedVector {
             data: codes,
             quantization_level: codebook.quantization_level.clone(),
-            metadata: QuantizationMetadata {
+            metadata: QuantEngineQuantizationMetadata {
                 codebook_id: Some(codebook.id.clone()),
                 ..Default::default()
             },
@@ -1001,7 +1001,7 @@ impl UnifiedQuantizationEngine {
                     clamp_values: true,
                 })),
             },
-            metadata: QuantizationMetadata::default(),
+            metadata: QuantEngineQuantizationMetadata::default(),
         })
     }
 
@@ -1051,7 +1051,7 @@ impl UnifiedQuantizationEngine {
                     offset: Some(offset),
                 })),
             },
-            metadata: QuantizationMetadata {
+            metadata: QuantEngineQuantizationMetadata {
                 scale: Some(scale),
                 offset: Some(offset),
                 ..Default::default()
@@ -1078,7 +1078,7 @@ impl UnifiedQuantizationEngine {
                     sign_based: false,
                 })),
             },
-            metadata: QuantizationMetadata::default(),
+            metadata: QuantEngineQuantizationMetadata::default(),
         })
     }
 
@@ -1123,7 +1123,7 @@ impl UnifiedQuantizationEngine {
             quantization_level: UnifiedQuantizationLevel {
                 level_type: Some(QuantizationLevel::Custom(custom.clone())),
             },
-            metadata: QuantizationMetadata {
+            metadata: QuantEngineQuantizationMetadata {
                 codebook_id: None,
                 scale: None,
                 offset: None,
@@ -1855,12 +1855,15 @@ pub struct QuantizedVector {
     pub quantization_level: UnifiedQuantizationLevel,
 
     /// Additional metadata (scale, offset, codebook reference)
-    pub metadata: QuantizationMetadata,
+    pub metadata: QuantEngineQuantizationMetadata,
 }
+
+/// Backwards-compat alias for [`QuantEngineQuantizationMetadata`].
+pub type QuantizationMetadata = QuantEngineQuantizationMetadata;
 
 /// Metadata for quantized vectors
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct QuantizationMetadata {
+pub struct QuantEngineQuantizationMetadata {
     /// Reference to codebook (for PQ)
     pub codebook_id: Option<String>,
 

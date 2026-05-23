@@ -347,9 +347,12 @@ impl OptimizedSwiftOperations {
 
 // Removed wrapper - use ProximaDataBlock::deserialize() directly
 
+/// Backwards-compat alias for [`SwiftOpsPerformanceStats`].
+pub type PerformanceStats = SwiftOpsPerformanceStats;
+
 /// Performance statistics for monitoring
 #[derive(Debug, Clone)]
-pub struct PerformanceStats {
+pub struct SwiftOpsPerformanceStats {
     pub hardware_backend: HardwareBackend,
     pub simd_operations: u64,
     pub gpu_operations: u64,
@@ -359,7 +362,7 @@ pub struct PerformanceStats {
     pub average_latency_ms: f64,
 }
 
-impl PerformanceStats {
+impl SwiftOpsPerformanceStats {
     pub fn print_summary(&self) {
         info!("🚀 Performance Statistics:");
         info!("   Hardware: {:?}", self.hardware_backend);

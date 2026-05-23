@@ -18,8 +18,8 @@ use crate::index::axis::types::{
 pub type IndexStrategy = IndexSelectionStrategy;
 /// Type alias for `IndexStrategyBuilder` for compatibility
 pub type StrategySelector = IndexStrategyBuilder;
-/// Type alias for `OptimizationConfig` for compatibility
-pub type StrategyRecommendation = OptimizationConfig;
+/// Type alias for `AxisStrategyOptimizationConfig` for compatibility
+pub type StrategyRecommendation = AxisStrategyOptimizationConfig;
 
 /// Optimization goals for index selection
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -34,9 +34,12 @@ pub enum OptimizationGoal {
     Balanced,
 }
 
+/// Backwards-compat alias for [`AxisStrategyOptimizationConfig`].
+pub type OptimizationConfig = AxisStrategyOptimizationConfig;
+
 /// Configuration for index optimization
 #[derive(Debug, Clone)]
-pub struct OptimizationConfig {
+pub struct AxisStrategyOptimizationConfig {
     /// Primary optimization goal
     pub goal: OptimizationGoal,
     /// Maximum memory budget in gigabytes
@@ -47,7 +50,7 @@ pub struct OptimizationConfig {
     pub min_accuracy: Option<f32>,
 }
 
-impl Default for OptimizationConfig {
+impl Default for AxisStrategyOptimizationConfig {
     fn default() -> Self {
         Self {
             goal: OptimizationGoal::Balanced,
@@ -103,7 +106,7 @@ pub struct IndexStrategyBuilder {
     pub query_patterns: QueryPatterns,
     #[cfg(not(test))]
     query_patterns: QueryPatterns,
-    optimization_config: OptimizationConfig,
+    optimization_config: AxisStrategyOptimizationConfig,
 }
 
 impl IndexStrategyBuilder {
@@ -112,12 +115,12 @@ impl IndexStrategyBuilder {
         Self {
             collection_stats,
             query_patterns,
-            optimization_config: OptimizationConfig::default(),
+            optimization_config: AxisStrategyOptimizationConfig::default(),
         }
     }
 
     /// Override the optimization configuration
-    pub fn with_optimization(mut self, config: OptimizationConfig) -> Self {
+    pub fn with_optimization(mut self, config: AxisStrategyOptimizationConfig) -> Self {
         self.optimization_config = config;
         self
     }

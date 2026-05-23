@@ -68,7 +68,7 @@ pub struct ViperConfiguration {
     pub compaction_config: ViperFactoryCompactionConfig,
 
     /// Performance optimization settings
-    pub optimization_config: OptimizationConfig,
+    pub optimization_config: ViperOptimizationConfig,
 }
 
 /// VIPER storage configuration
@@ -208,11 +208,14 @@ pub struct ViperFactoryCompactionConfig {
     pub priority_scheduling: bool,
 }
 
+/// Backwards-compat alias for [`ViperOptimizationConfig`].
+pub type OptimizationConfig = ViperOptimizationConfig;
+
 /// Performance optimization configuration
 ///
 /// Controls adaptive optimization features including ML-guided improvements.
 #[derive(Debug, Clone)]
-pub struct OptimizationConfig {
+pub struct ViperOptimizationConfig {
     /// Enable adaptive clustering
     pub enable_adaptive_clustering: bool,
 
@@ -960,7 +963,7 @@ impl Default for ViperFactoryCompactionConfig {
     }
 }
 
-impl Default for OptimizationConfig {
+impl Default for ViperOptimizationConfig {
     fn default() -> Self {
         Self {
             enable_adaptive_clustering: true,

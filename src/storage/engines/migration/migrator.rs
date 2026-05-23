@@ -72,7 +72,7 @@ pub struct MigrationPlan {
     pub target_engine: ProtoStorageEngine,
     pub collections: Vec<CollectionMigrationPlan>,
     pub estimated_duration: chrono::Duration,
-    pub resource_requirements: ResourceRequirements,
+    pub resource_requirements: MigratorResourceRequirements,
     pub risk_assessment: RiskAssessment,
 }
 
@@ -88,9 +88,12 @@ pub struct CollectionMigrationPlan {
     pub special_requirements: Vec<String>,
 }
 
+/// Backwards-compat alias for [`MigratorResourceRequirements`].
+pub type ResourceRequirements = MigratorResourceRequirements;
+
 /// Resource requirements for migration
 #[derive(Debug, Clone)]
-pub struct ResourceRequirements {
+pub struct MigratorResourceRequirements {
     pub min_memory_gb: f64,
     pub recommended_memory_gb: f64,
     pub min_storage_gb: f64,
@@ -419,10 +422,10 @@ impl EngineMigrator {
         Ok(plan.record_count)
     }
 
-    fn calculate_resource_requirements(&self, total_data_size: u64) -> ResourceRequirements {
+    fn calculate_resource_requirements(&self, total_data_size: u64) -> MigratorResourceRequirements {
         let data_size_gb = total_data_size as f64 / (1024.0 * 1024.0 * 1024.0);
 
-        ResourceRequirements {
+        MigratorResourceRequirements {
             min_memory_gb: (data_size_gb * 0.1).max(2.0), // At least 10% of data size, min 2GB
             recommended_memory_gb: (data_size_gb * 0.5).max(8.0), // 50% of data size, min 8GB
             min_storage_gb: data_size_gb * 1.2,           // 20% overhead

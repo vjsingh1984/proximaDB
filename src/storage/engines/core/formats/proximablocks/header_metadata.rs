@@ -230,7 +230,7 @@ pub struct IndexMetadata {
     /// Quantization index information
     pub quantization_index_offset: u64,
     pub quantization_index_size: u64,
-    pub quantization_metadata: QuantizationMetadata,
+    pub quantization_metadata: BlockQuantizationMetadata,
 
     /// Hierarchical index information
     pub hierarchical_levels: u8,
@@ -267,9 +267,12 @@ pub enum BloomFilter {
     XorFilter,
 }
 
+/// Backwards-compat alias for [`BlockQuantizationMetadata`].
+pub type QuantizationMetadata = BlockQuantizationMetadata;
+
 /// Quantization metadata
 #[derive(Debug, Clone)]
-pub struct QuantizationMetadata {
+pub struct BlockQuantizationMetadata {
     pub quantization_enabled: bool,
     pub binary_quantization: Option<BinaryQuantizationMeta>,
     pub int8_quantization: Option<Int8QuantizationMeta>,
@@ -647,7 +650,7 @@ impl Default for IndexMetadata {
             bloom_filter_config: BloomFilterMetadata::default(),
             quantization_index_offset: 0,
             quantization_index_size: 0,
-            quantization_metadata: QuantizationMetadata::default(),
+            quantization_metadata: BlockQuantizationMetadata::default(),
             hierarchical_levels: 0,
             level_offsets: Vec::new(),
             level_sizes: Vec::new(),
@@ -668,7 +671,7 @@ impl Default for BloomFilterMetadata {
     }
 }
 
-impl Default for QuantizationMetadata {
+impl Default for BlockQuantizationMetadata {
     fn default() -> Self {
         Self {
             quantization_enabled: true,

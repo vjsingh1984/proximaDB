@@ -33,7 +33,7 @@ pub struct QuantizedVector {
     pub pq8: Option<Vec<u8>>,
     pub pq16: Option<Vec<u8>>,
     pub codebooks: Option<QuantizationCodebooks>,
-    pub metadata: QuantizationMetadata,
+    pub metadata: PrecomputeQuantizationMetadata,
 }
 
 #[derive(Debug, Clone)]
@@ -43,8 +43,11 @@ pub struct QuantizationCodebooks {
     pub pq_codebooks: Option<Vec<Vec<f32>>>,
 }
 
+/// Backwards-compat alias for [`PrecomputeQuantizationMetadata`].
+pub type QuantizationMetadata = PrecomputeQuantizationMetadata;
+
 #[derive(Debug, Clone)]
-pub struct QuantizationMetadata {
+pub struct PrecomputeQuantizationMetadata {
     pub dimension: usize,
     pub levels_computed: Vec<UnifiedQuantizationLevel>,
     pub compression_ratio: f32,
@@ -240,7 +243,7 @@ impl QuantizationPrecomputeService {
                 pq8: None,
                 pq16: None,
                 codebooks: None,
-                metadata: QuantizationMetadata {
+                metadata: PrecomputeQuantizationMetadata {
                     dimension,
                     levels_computed: levels.to_vec(),
                     compression_ratio: 0.0,
@@ -398,7 +401,7 @@ impl QuantizationPrecomputeService {
             pq8: None,
             pq16: None,
             codebooks: None,
-            metadata: QuantizationMetadata {
+            metadata: PrecomputeQuantizationMetadata {
                 dimension: query.len(),
                 levels_computed: levels.clone(),
                 compression_ratio: 0.0,

@@ -1474,7 +1474,7 @@ pub struct ParallelStage {
     /// Data dependencies that limit parallelism
     pub dependencies: Vec<String>,
     /// Resource requirements per unit
-    pub resource_per_unit: Option<ResourceRequirements>,
+    pub resource_per_unit: Option<ExplainResourceRequirements>,
 }
 
 impl ParallelStage {
@@ -1510,7 +1510,7 @@ impl ParallelStage {
     }
 
     /// Builder-style method to add resource requirements
-    pub fn with_resources(mut self, resources: ResourceRequirements) -> Self {
+    pub fn with_resources(mut self, resources: ExplainResourceRequirements) -> Self {
         self.resource_per_unit = Some(resources);
         self
     }
@@ -1531,9 +1531,12 @@ pub enum ParallelismType {
     Simd,
 }
 
+/// Backwards-compat alias for [`ExplainResourceRequirements`].
+pub type ResourceRequirements = ExplainResourceRequirements;
+
 /// Resource requirements for parallel execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceRequirements {
+pub struct ExplainResourceRequirements {
     /// Memory requirement in MB
     pub memory_mb: f64,
     /// CPU cores needed
@@ -1544,7 +1547,7 @@ pub struct ResourceRequirements {
     pub gpu_memory_mb: Option<f64>,
 }
 
-impl Default for ResourceRequirements {
+impl Default for ExplainResourceRequirements {
     fn default() -> Self {
         Self {
             memory_mb: 16.0,

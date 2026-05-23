@@ -96,12 +96,15 @@ pub struct AdvancedSearchOptimizer {
     hardware_profile: HardwareProfile,
 
     /// Configuration
-    config: OptimizationConfig,
+    config: IntegratedOptimizationConfig,
 }
+
+/// Backwards-compat alias for [`IntegratedOptimizationConfig`].
+pub type OptimizationConfig = IntegratedOptimizationConfig;
 
 /// Configuration for integrated optimizations
 #[derive(Debug, Clone)]
-pub struct OptimizationConfig {
+pub struct IntegratedOptimizationConfig {
     /// Enable result caching
     pub enable_result_cache: bool,
 
@@ -193,18 +196,21 @@ pub struct PerformanceTracker {
 /// Search cost estimator (from IntegratedSearchOptimizer)
 pub struct SearchCostEstimator {
     /// Average search times per index type
-    pub index_search_times: HashMap<Index, PerformanceStats>,
+    pub index_search_times: HashMap<Index, IntegratedSearchPerformanceStats>,
     /// Average search times per quantization level
-    pub progressive_search_times: HashMap<UnifiedQuantizationLevel, PerformanceStats>,
+    pub progressive_search_times: HashMap<UnifiedQuantizationLevel, IntegratedSearchPerformanceStats>,
     /// Average search times by dataset size
-    pub direct_search_times: HashMap<usize, PerformanceStats>,
+    pub direct_search_times: HashMap<usize, IntegratedSearchPerformanceStats>,
     /// Detected hardware profile for SIMD/memory optimization
     pub hardware_profile: HardwareProfile,
 }
 
+/// Backwards-compat alias for [`IntegratedSearchPerformanceStats`].
+pub type PerformanceStats = IntegratedSearchPerformanceStats;
+
 /// Performance statistics for cost estimation
 #[derive(Debug, Clone)]
-pub struct PerformanceStats {
+pub struct IntegratedSearchPerformanceStats {
     /// Average execution time in milliseconds
     pub avg_time_ms: f32,
     /// Standard deviation of execution times
@@ -242,7 +248,7 @@ impl AdvancedSearchOptimizer {
         query_cache: Arc<QueryCache>,
         metadata_store: Arc<MetadataStore>,
         cache_orchestrator: Arc<CrossCacheOrchestrator>,
-        config: OptimizationConfig,
+        config: IntegratedOptimizationConfig,
     ) -> Self {
         // Detect available memory using platform-specific methods
         let available_memory_gb = Self::detect_available_memory();
@@ -1191,7 +1197,7 @@ impl BufferPool {
     }
 }
 
-impl Default for OptimizationConfig {
+impl Default for IntegratedOptimizationConfig {
     fn default() -> Self {
         Self {
             enable_result_cache: true,

@@ -1499,7 +1499,7 @@ pub struct CommonCompressionStats {
     pub quality_metrics: QualityStats,
 
     /// Performance metrics
-    pub performance_metrics: PerformanceStats,
+    pub performance_metrics: CompressionPerformanceStats,
 }
 
 /// Overall compression statistics
@@ -1578,9 +1578,12 @@ pub struct QualityStats {
     pub quality_test_pass_rate: f32,
 }
 
+/// Backwards-compat alias for [`CompressionPerformanceStats`].
+pub type PerformanceStats = CompressionPerformanceStats;
+
 /// Performance statistics
 #[derive(Debug, Clone)]
-pub struct PerformanceStats {
+pub struct CompressionPerformanceStats {
     /// Average compression speed (MB/s)
     pub avg_compression_speed: f64,
 
