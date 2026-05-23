@@ -185,7 +185,7 @@ pub use parquet_write_engine::{
 };
 // Quantization now handled by unified compute module
 pub use self::metadata_filter_strategy::{
-    FilterPerformanceMetrics, MetadataFilterAnalyzer, MetadataFilterStrategy,
+    FilterPerformanceMetrics, ColumnarMetadataFilterAnalyzer, ColumnarMetadataFilterStrategy,
 };
 pub use batch_operations::ColumnarBatchOperations;
 pub use columnar_schema::ColumnarSchema;
@@ -416,7 +416,7 @@ pub enum ColumnarSearchMode {
     IndexFree {
         query: Vec<f32>,
         top_k: usize,
-        filter: Option<MetadataFilter>,
+        filter: Option<ColumnarMetadataFilter>,
     },
 
     /// Hybrid mode - use AXIS for initial candidates, refine with local search
@@ -427,9 +427,12 @@ pub enum ColumnarSearchMode {
     },
 }
 
+/// Backwards-compat alias for [`ColumnarMetadataFilter`].
+pub type MetadataFilter = ColumnarMetadataFilter;
+
 /// Metadata filter for queries
 #[derive(Debug, Clone)]
-pub struct MetadataFilter {
+pub struct ColumnarMetadataFilter {
     pub conditions: Vec<FilterCondition>,
     pub logic: FilterLogic,
 }
@@ -462,8 +465,8 @@ impl FilterCondition {
     }
 }
 
-impl MetadataFilter {
-    /// Convert from core::search::FilterExpression to columnar::MetadataFilter
+impl ColumnarMetadataFilter {
+    /// Convert from core::search::FilterExpression to columnar::ColumnarMetadataFilter
     /// This enables row group pruning using FilterExpression
     pub fn from_filter_expression(expr: &crate::core::search::FilterExpression) -> Option<Self> {
         use crate::core::search::{ComparisonOperator, FilterExpression};
@@ -565,7 +568,7 @@ impl MetadataFilter {
                     }
                 }
                 FilterExpression::Not(_) => {
-                    // NOT expressions can't be easily converted to MetadataFilter
+                    // NOT expressions can't be easily converted to ColumnarMetadataFilter
                     // Skip them for now
                 }
             }
@@ -579,7 +582,7 @@ impl MetadataFilter {
         if conditions.is_empty() {
             None
         } else {
-            Some(MetadataFilter { conditions, logic })
+            Some(ColumnarMetadataFilter { conditions, logic })
         }
     }
 }
@@ -619,7 +622,7 @@ pub trait ColumnarOperations {
         &self,
         query: &[f32],
         top_k: usize,
-        filter: Option<MetadataFilter>,
+        filter: Option<ColumnarMetadataFilter>,
     ) -> Result<Vec<ProximaRecord>>;
 
     /// Get row group statistics

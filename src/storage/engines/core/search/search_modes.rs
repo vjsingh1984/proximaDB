@@ -5,9 +5,9 @@ use std::collections::HashMap;
 
 use crate::compute::distance_computation::DistanceMetric;
 
-/// Placeholder for metadata filtering - use crate::query::query_optimizer::UnifiedMetadataFilter instead
+/// Placeholder for metadata filtering - use crate::query::query_optimizer::UnifiedSearchModeMetadataFilter instead
 #[derive(Debug, Clone)]
-pub struct MetadataFilter {
+pub struct SearchModeMetadataFilter {
     pub placeholder: bool,
 }
 
@@ -42,7 +42,7 @@ pub enum UniversalSearchMode {
         query_vector: Vec<f32>,
         top_k: usize,
         distance_metric: DistanceMetric,
-        metadata_filter: MetadataFilter,
+        metadata_filter: SearchModeMetadataFilter,
         search_params: SimilaritySearchParams,
     },
 
@@ -50,7 +50,7 @@ pub enum UniversalSearchMode {
     HybridSearch {
         vector_query: Option<Vec<f32>>,
         text_query: Option<String>,
-        metadata_filter: Option<MetadataFilter>,
+        metadata_filter: Option<SearchModeMetadataFilter>,
         fusion_params: HybridFusionParams,
         top_k: usize,
     },

@@ -389,7 +389,7 @@ pub enum RowBasedSearchMode {
     IndexFree {
         query: Vec<f32>,
         top_k: usize,
-        filter: Option<MetadataFilter>,
+        filter: Option<BlockMetadataFilter>,
     },
 
     /// Hybrid mode - combine AXIS with local refinement
@@ -401,9 +401,12 @@ pub enum RowBasedSearchMode {
     },
 }
 
+/// Backwards-compat alias for [`BlockMetadataFilter`].
+pub type MetadataFilter = BlockMetadataFilter;
+
 /// Metadata filter for queries
 #[derive(Debug, Clone)]
-pub struct MetadataFilter {
+pub struct BlockMetadataFilter {
     pub conditions: Vec<FilterCondition>,
     pub logic: FilterLogic,
 }
@@ -715,7 +718,7 @@ mod tests {
 
     #[test]
     fn test_metadata_filter_creation() {
-        let filter = MetadataFilter {
+        let filter = BlockMetadataFilter {
             conditions: vec![
                 FilterCondition::Equals("category".to_string(), "electronics".into()),
                 FilterCondition::Range("price".to_string(), 100.0.into(), 1000.0.into()),

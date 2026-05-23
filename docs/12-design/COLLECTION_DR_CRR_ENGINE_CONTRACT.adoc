@@ -258,6 +258,28 @@ Per-collection DR policy is created underneath this boundary, never across
 it. The provider replication filter is therefore always a subtree of
 `data/{tenant_id}/{namespace_id}/`.
 
+=== Region Home Routing
+
+A namespace's `region_home` is the only region authorized to accept
+writes for any collection in that namespace. The engine enforces this:
+
+* the path resolver refuses to construct a write path for a collection
+  whose owning namespace `region_home` differs from the current process's
+  configured region;
+* router/multiplexer write routes (`docs/12-design/COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc`)
+  emit a `RoutedExecutionPlan` rejection with reason `region_home_mismatch`
+  when a write hits the wrong region's data plane;
+* reads MAY be served from the destination region while DR is active and
+  healthy, subject to the freshness policy on the collection;
+* a namespace `region_home` change is not supported while any child
+  collection has an active DR policy. The operator must retire DR, change
+  `region_home`, and re-enable DR with a new region pair.
+
+`region_home` is nullable to keep migration safe for legacy namespaces
+that were created before this contract. The path resolver allows writes
+under a null `region_home` only for collections whose DR policy state is
+`Disabled`.
+
 === Backwards Compatibility For Existing Namespaces
 
 The xCatalog schema migration that adds `namespace_id`, `tenant_id`,
@@ -271,6 +293,9 @@ The xCatalog schema migration that adds `namespace_id`, `tenant_id`,
   namespaces to real tenants before exposing them to DR.
 . `region_home` and `default_dr_region_pair_id` stay nullable; only
   namespaces participating in DR need them set.
+. `storage_pool_class` is backfilled to `Pooled` for legacy rows so the
+  NOT NULL constraint is safe. Operator policy upgrades a namespace to a
+  higher class before exposing it to DR.
 . `CatalogNamespace::new()` and other constructors are extended to take
   `tenant_id` (mandatory) and to generate `namespace_id` automatically.
 . The Iceberg-REST handler returns only the federation fields to keep wire
@@ -339,10 +364,12 @@ The engine defines an abstract `StoragePoolClass` enum. The mapping from
 tenant tier to pool class is operator policy and lives in the operator
 layer. The engine only knows that:
 
-* a tenant has a `StoragePoolClass` assigned at provisioning;
-* a collection inherits the class from its owning namespace;
-* the path resolver refuses to write a collection's bytes outside the bucket/
-  container that matches its pool class.
+* every namespace carries a `storage_pool_class` field (set by the operator
+  at namespace provisioning) on the extended `CatalogNamespace`;
+* a collection inherits the class from its owning namespace; the engine
+  does not store a separate per-collection pool class;
+* the path resolver refuses to write a collection's bytes outside the
+  bucket/container that matches its namespace's pool class.
 
 Enum values (used by the path resolver and reconciler; not tier names):
 
@@ -421,8 +448,13 @@ Notes:
   operator layer; the engine treats them as opaque strings and enforces the
   presence rules in the state machine.
 * `provider_*` columns are populated by the provider adapter implementation.
-* `region_pair_id` is an operator-curated identifier; the engine only checks
-  that the value is non-null at provisioning time.
+* `region_pair_id` is an operator-curated identifier the engine treats as
+  opaque. Recommended canonical form is
+  `{provider}:{source_region}:{destination_region}` (for example
+  `aws:us-east-1:us-west-2`, `azure:eastus:westus`), but the engine does
+  not parse it — operator policy decides the namespace. The engine only
+  checks that the value is non-null at provisioning time and uses it as a
+  metric label.
 
 === `xcatalog_collection_dr_events`
 
@@ -602,6 +634,11 @@ Rules:
   cold-tier lifecycle automation.
 * A collection cannot be moved to a new physical prefix without a cataloged
   relocation workflow.
+* All PAX blocks (`docs/12-design/PAX_CODEC_LAYOUT_COMPRESSION_LLD_2026_05_20.adoc`)
+  replicate as byte-identical objects. The provider adapter never re-
+  encodes block contents; if a provider supports server-side compression
+  for replicated objects, it must be disabled for DR destinations so the
+  destination bytes match the source manifest checksums.
 
 === Path Resolver Guard
 
@@ -633,6 +670,20 @@ buckets.
 
 == LLD: State Machine
 
+`DrState` and `DrHealthState` are intentionally orthogonal:
+
+* `DrState` is *intent* — what the policy says should be true. Customer
+  and operator actions move it.
+* `DrHealthState` is *observation* — what the reconciler last saw at the
+  provider. Reconciler movement only.
+
+An `Active` policy can be `Healthy` (normal), `Degraded` (lag rising but
+still inside RPO), `Drifted` (provider state diverged but reconciler
+can repair), `BillingBlocked`, or `ProviderBlocked`. The reverse is also
+true: a `PendingRetirement` policy can still be `Healthy` until the
+provider rule is disabled. Never collapse the two into one enum; the
+reconciler needs both axes to decide whether to repair, alert, or wait.
+
 [source,mermaid]
 ----
 stateDiagram-v2
@@ -655,9 +706,53 @@ Invalid transitions (engine rejects):
 * `PendingProviderProvisioning -> Disabled` after a provider rule exists
   without an explicit cleanup event;
 * `Retired -> Active` with the same provider rule ID;
+* `SuspendedByOps -> Disabled` (must go through retirement);
+* `SuspendedByOps -> Retired` directly without first resuming and then
+  requesting retirement, so the reconciler observes a clean handover;
+* any state -> `SuspendedByOps` from a non-`Active` source;
 * tenant downgrade while any policy is `Active`, `SuspendedByOps`, or
   `PendingRetirement` unless the operator has marked billing active for the
   retirement window.
+
+=== Policy Version Bump Rules
+
+`policy_version: u64` is the optimistic-concurrency counter the reconciler
+keys against. The engine increments it on every change that requires a
+provider adapter call, and only those changes:
+
+[cols="2,1"]
+|===
+| Change | Bump?
+
+| RPO target (`rpo_target_seconds`)
+| No (observed-only — drives alerts, not provider rules)
+
+| Destination retention days
+| No (lifecycle is reconciler-driven without provider mutation)
+
+| `replicate_existing_objects` flag flipped
+| Yes (triggers a new provider job)
+
+| `replicate_deletes` flag flipped
+| Yes (changes provider rule shape)
+
+| `destination_region` or `region_pair_id`
+| Yes (new provider rule, old one tombstoned)
+
+| Source/destination bucket or prefix
+| Yes
+
+| `kms_key_id`
+| Yes (KMS binding revalidates)
+
+| State transition
+| Yes (durable transitions always bump)
+|===
+
+When `policy_version` increments, the reconciler treats the in-flight
+provider rule as stale: it issues a new `ensure_rule` call with the new
+content-addressed ID, then retires the previous binding after the new one
+is confirmed `Active`.
 
 == LLD: Reconciler Interface
 
@@ -688,6 +783,30 @@ Unsafe drift examples:
 * versioning disabled/suspended;
 * KMS key policy revoked;
 * destination accepts application writes.
+
+=== Scheduling And Backpressure
+
+The reconciler runs as a single async task per shard, where a shard is a
+contiguous range of `policy_id` ULIDs. Default deployment is one shard;
+operators scale out by sharding when policy count justifies it.
+
+Per-shard behavior:
+
+* poll interval default: 60 seconds (configurable via
+  `[dr.reconciler] poll_interval_seconds`);
+* per-policy reconcile is rate-limited to one provider call per 5 seconds
+  unless the provider returns success faster;
+* on `ProviderError::Transient`, exponential backoff 30s → 30m with
+  jitter, max 12 attempts before escalating to `ProviderBlocked`;
+* on `ProviderError::QuotaExceeded`, the shard pauses provider mutations
+  for at least 60 seconds and emits
+  `proximadb_dr_reconciler_paused_total{reason="quota"}`;
+* read-only `fetch_state` calls are not rate-limited the same way and run
+  on every poll to keep drift detection responsive.
+
+The reconciler is **not** wall-clock-driven for correctness — it is
+state-driven. Skipped polls (process restart, leader change) are safe
+because every operation is idempotent against `(policy_id, policy_version)`.
 
 === Concurrency And Provider Rule Locking
 
@@ -791,6 +910,31 @@ project expects to ship:
 
 Concrete provider-side artifacts (replication rule JSON, IAM role
 ARNs, bucket naming) belong in the operator's documentation, not here.
+
+== LLD: Schema Evolution Under DR
+
+A collection's schema can evolve while DR is active. Schema evolution
+modes are governed by
+`roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` (Migration / AppendMode /
+SafeShape). The DR contract guarantees:
+
+* the destination is byte-identical to the source. Schema metadata is
+  carried in manifest objects, which replicate via the same provider rule
+  as segment objects.
+* the engine does not "translate" schemas at the destination. A restore
+  reconstructs the schema from replicated manifests, not from a separately
+  exported schema descriptor.
+* a schema change that requires a new collection format (e.g.,
+  `Tier::Migration` re-shape) does not bump `policy_version` by itself.
+  Provider rule shape is unchanged; only collection bytes change, and
+  those flow through the existing replication path.
+* the reconciler does not inspect collection schema. It is schema-blind.
+
+The one exception: a schema migration that renames the collection's
+physical prefix (rare, requires a cataloged relocation workflow) creates a
+new policy at the new prefix and retires the old policy through the normal
+`PendingRetirement` flow. The migration is not atomic across regions — the
+operator must coordinate cutover.
 
 == LLD: Delete, Retention, And Legal Holds
 
