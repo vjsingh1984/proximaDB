@@ -92,7 +92,7 @@ pub async fn viper_optimization_example() -> Result<()> {
                     model_id: "example-model".to_string(),
                     modality: "text".to_string(),
                     dim: vector.len() as u32,
-                    values: vector,
+                    values: proximadb_records::EmbeddingValues::Fp32(vector),
                     ..Default::default()
                 }],
                 created_at_ns: i as i64,
@@ -354,7 +354,7 @@ pub async fn nova_optimization_example() -> Result<()> {
                     model_id: "text-embedding-ada-002".to_string(),
                     modality: "text".to_string(),
                     dim: vector.len() as u32,
-                    values: vector,
+                    values: proximadb_records::EmbeddingValues::Fp32(vector),
                     ..Default::default()
                 }],
                 created_at_ns: (1_700_000_000 + i) as i64,

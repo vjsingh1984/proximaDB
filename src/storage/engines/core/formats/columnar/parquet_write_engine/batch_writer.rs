@@ -210,7 +210,7 @@ mod tests {
                 r.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values: vec![1.0; 128],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![1.0; 128]),
                     dim: 128,
                     ..Default::default()
                 });
@@ -224,7 +224,7 @@ mod tests {
                 r.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values: vec![2.0; 128],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![2.0; 128]),
                     dim: 128,
                     ..Default::default()
                 });
@@ -261,7 +261,7 @@ mod tests {
         r.embeddings.push(EmbeddingCell {
             model_id: "default".to_string(),
             modality: "vector".to_string(),
-            values: vec![1.0; 64],
+            values: proximadb_records::EmbeddingValues::Fp32(vec![1.0; 64]),
             dim: 64,
             ..Default::default()
         });

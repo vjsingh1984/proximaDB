@@ -174,7 +174,7 @@ async fn test_parquet_flush_and_read_pattern() {
             r.embeddings.push(EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
                 dim,
                 ..Default::default()
             });
@@ -303,7 +303,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
         r.embeddings.push(EmbeddingCell {
             model_id: "default".to_string(),
             modality: "vector".to_string(),
-            values,
+            values: proximadb_records::EmbeddingValues::Fp32(values),
             dim,
             ..Default::default()
         });
@@ -564,7 +564,7 @@ async fn test_multi_file_directory_scan() {
                 r.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     dim,
                     ..Default::default()
                 });
@@ -704,7 +704,7 @@ async fn test_dictionary_encoding_optimization() {
                 r.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     dim,
                     ..Default::default()
                 });
@@ -763,7 +763,7 @@ async fn test_dictionary_encoding_optimization() {
             r.embeddings.push(EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
                 dim,
                 ..Default::default()
             });
@@ -780,7 +780,7 @@ async fn test_dictionary_encoding_optimization() {
             r.embeddings.push(EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
                 dim,
                 ..Default::default()
             });
@@ -824,7 +824,7 @@ async fn test_customer_api_compatibility() {
             r.embeddings.push(EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
                 dim,
                 ..Default::default()
             });
@@ -842,7 +842,7 @@ async fn test_customer_api_compatibility() {
             r.embeddings.push(EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
                 dim,
                 ..Default::default()
             });
@@ -860,7 +860,7 @@ async fn test_customer_api_compatibility() {
             r.embeddings.push(EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
                 dim,
                 ..Default::default()
             });
@@ -907,7 +907,7 @@ async fn test_customer_api_compatibility() {
         r.embeddings.push(EmbeddingCell {
             model_id: "default".to_string(),
             modality: "vector".to_string(),
-            values,
+            values: proximadb_records::EmbeddingValues::Fp32(values),
             dim,
             ..Default::default()
         });
@@ -934,7 +934,7 @@ async fn test_customer_api_compatibility() {
             r.embeddings.push(EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
                 dim,
                 ..Default::default()
             });
@@ -952,7 +952,7 @@ async fn test_customer_api_compatibility() {
             r.embeddings.push(EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
                 dim,
                 ..Default::default()
             });
@@ -1046,7 +1046,7 @@ async fn test_row_group_offset_optimization() {
         r.embeddings.push(EmbeddingCell {
             model_id: "default".to_string(),
             modality: "vector".to_string(),
-            values,
+            values: proximadb_records::EmbeddingValues::Fp32(values),
             dim,
             ..Default::default()
         });
@@ -1085,7 +1085,7 @@ fn create_test_records(count: usize) -> Vec<ProximaRecord> {
             r.embeddings.push(EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
                 dim,
                 ..Default::default()
             });
@@ -1300,7 +1300,7 @@ fn convert_batches_to_records(batches: Vec<arrow_array::RecordBatch>) -> Vec<Pro
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
                 dim: vector.len() as u32,
-                values: vector,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
                 ..Default::default()
             });
             records.push(record);

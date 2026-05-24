@@ -2312,7 +2312,7 @@ mod compression_tests_unified {
         // Create highly compressible data
         let mut record = create_test_record("compress_test", 1000);
         if let Some(embedding) = record.embeddings.first_mut() {
-            embedding.values = vec![42.0; 1000];
+            embedding.values = proximadb_records::EmbeddingValues::Fp32(vec![42.0; 1000]);
             embedding.dim = 1000;
         }
 
@@ -3449,7 +3449,7 @@ mod compression_tests {
         // Create highly compressible data (repeated values)
         let mut record = create_test_record("compress_test", 1000);
         if let Some(embedding) = record.embeddings.first_mut() {
-            embedding.values = vec![1.0; 1000]; // Highly compressible
+            embedding.values = proximadb_records::EmbeddingValues::Fp32(vec![1.0; 1000]); // Highly compressible
             embedding.dim = 1000;
         }
 

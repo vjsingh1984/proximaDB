@@ -471,7 +471,7 @@ mod tests {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim: 64,
-                    values: vec![0.1; 64],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![0.1; 64]),
                     ..Default::default()
                 }],
                 record_version: 1,
@@ -526,7 +526,7 @@ mod tests {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim: 64,
-                    values: vec![0.1 * (i as f32); 64],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![0.1 * (i as f32); 64]),
                     ..Default::default()
                 }],
                 record_version: 1,
@@ -567,7 +567,7 @@ mod tests {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
                 dim: 64,
-                values: vec![0.1; 64],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1; 64]),
                 ..Default::default()
             }],
             record_version: 1,

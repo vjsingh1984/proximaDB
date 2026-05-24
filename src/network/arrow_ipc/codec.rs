@@ -1325,7 +1325,7 @@ mod tests {
         assert_eq!(records.len(), 1);
         let record = &records[0];
         assert_eq!(record.oid, "doc_1");
-        assert_eq!(record.embeddings[0].values, vec![0.1, 0.2, 0.3]);
+        assert_eq!(record.embeddings[0].values, proximadb_records::EmbeddingValues::Fp32(vec![0.1, 0.2, 0.3]));
         assert_eq!(
             record.props.get("title"),
             Some(&ProximaTreeNode::Value(ProximaValue::String(
@@ -1415,7 +1415,7 @@ mod tests {
 
         let records = ArrowProtoCodec::batches_to_proxima_records(vec![batch]).unwrap();
         let record = &records[0];
-        assert_eq!(record.embeddings[0].values, vec![1.0, 2.0, 3.5]);
+        assert_eq!(record.embeddings[0].values, proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0, 3.5]));
         assert_eq!(
             record.props.get("small_int"),
             Some(&ProximaTreeNode::Value(ProximaValue::Int8(-8)))
@@ -1669,7 +1669,7 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].oid, "vec_large_1");
         assert_eq!(records[1].oid, "vec_large_2");
-        assert_eq!(records[1].embeddings[0].values, vec![0.3, 0.4]);
+        assert_eq!(records[1].embeddings[0].values, proximadb_records::EmbeddingValues::Fp32(vec![0.3, 0.4]));
     }
 
     #[test]
@@ -1754,8 +1754,8 @@ mod tests {
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded[0].oid, "rt_1");
         assert_eq!(decoded[1].oid, "rt_2");
-        assert_eq!(decoded[0].embeddings[0].values, vec![0.5, 1.5, 2.5, 3.5]);
-        assert_eq!(decoded[1].embeddings[0].values, vec![4.5, 5.5, 6.5, 7.5]);
+        assert_eq!(decoded[0].embeddings[0].values, proximadb_records::EmbeddingValues::Fp32(vec![0.5, 1.5, 2.5, 3.5]));
+        assert_eq!(decoded[1].embeddings[0].values, proximadb_records::EmbeddingValues::Fp32(vec![4.5, 5.5, 6.5, 7.5]));
     }
 
     #[test]

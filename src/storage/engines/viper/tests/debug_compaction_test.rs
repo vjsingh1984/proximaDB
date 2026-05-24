@@ -158,7 +158,7 @@ fn create_test_vector(id: &str, dimension: usize) -> ProximaRecord {
             model_id: "default".to_string(),
             modality: "vector".to_string(),
             dim: dimension as u32,
-            values,
+            values: proximadb_records::EmbeddingValues::Fp32(values),
             ..Default::default()
         }],
         props,

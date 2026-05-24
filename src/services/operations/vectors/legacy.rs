@@ -4103,7 +4103,7 @@ mod tenant_tests {
             embeddings: vec![proximadb_records::EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values: vec![0.3, 0.4],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.3, 0.4]),
                 dim: 2,
                 ..Default::default()
             }],
@@ -4164,7 +4164,7 @@ mod pseudo_query_tests {
             embeddings: vec![EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values: vec![1.0, 2.0, 3.0],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0]),
                 dim: 3,
                 ..Default::default()
             }],
@@ -4686,7 +4686,7 @@ mod index_first_search_tests {
             embeddings: vec![proximadb_records::EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values: vec![1.0, 2.0, 3.0],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0]),
                 dim: 3,
                 ..Default::default()
             }],
@@ -4815,7 +4815,7 @@ mod index_first_search_tests {
                 embeddings: vec![proximadb_records::EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values: vec![i as f32, (i * 2) as f32, (i * 3) as f32],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![i as f32, (i * 2) as f32, (i * 3) as f32]),
                     dim: 3,
                     ..Default::default()
                 }],

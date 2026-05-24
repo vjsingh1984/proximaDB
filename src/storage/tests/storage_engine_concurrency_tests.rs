@@ -93,7 +93,7 @@ mod tests {
             embeddings: vec![EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values: vec![0.1_f32; 128],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1_f32; 128]),
                 dim: 128,
                 ..Default::default()
             }],

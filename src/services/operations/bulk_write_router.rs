@@ -276,7 +276,7 @@ mod tests {
                 model_id: "default".to_string(),
                 modality: "dense_vector".to_string(),
                 dim: dimension as u32,
-                values: vec![0.0; dimension],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.0; dimension]),
                 ..Default::default()
             }],
             ..ProximaRecord::default()

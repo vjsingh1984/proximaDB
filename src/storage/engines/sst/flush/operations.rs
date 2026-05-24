@@ -300,7 +300,7 @@ mod tests {
                 model_id: "test".to_string(),
                 modality: "vector".to_string(),
                 dim: vector.len() as u32,
-                values: vector,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
                 ..Default::default()
             }],
             ..Default::default()

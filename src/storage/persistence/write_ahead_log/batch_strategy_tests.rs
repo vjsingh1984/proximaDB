@@ -306,7 +306,7 @@ mod write_ahead_log_batch_strategy_tests {
             embeddings: vec![EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values: vector,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
                 dim,
                 ..Default::default()
             }],

@@ -371,7 +371,7 @@ mod tests {
                 model_id: "test".to_string(),
                 modality: "dense_vector".to_string(),
                 dim: dim as u32,
-                values: (0..dim).map(|i| i as f32 * 0.1).collect(),
+                values: proximadb_records::EmbeddingValues::Fp32((0..dim).map(|i| i as f32 * 0.1).collect()),
                 ..Default::default()
             }],
             ..ProximaRecord::default()

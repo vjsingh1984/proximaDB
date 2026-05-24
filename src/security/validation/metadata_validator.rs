@@ -542,7 +542,7 @@ mod tests {
                 model_id: "test".to_string(),
                 modality: "dense_vector".to_string(),
                 dim: 3,
-                values: vec![1.0, 2.0, 3.0],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0]),
                 ..Default::default()
             }],
             props: metadata

@@ -232,7 +232,7 @@ mod tests {
                 model_id: "test".to_string(),
                 modality: "dense_vector".to_string(),
                 dim: 4,
-                values: vec![0.1, 0.2, 0.3, 0.4],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1, 0.2, 0.3, 0.4]),
                 ..Default::default()
             }],
             created_at_ns: 1_234_567_890_000_000_000,

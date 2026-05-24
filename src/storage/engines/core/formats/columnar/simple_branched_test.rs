@@ -26,7 +26,7 @@ mod tests {
                 record.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values: vec![i as f32; 128],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![i as f32; 128]),
                     dim: 128,
                     ..Default::default()
                 });

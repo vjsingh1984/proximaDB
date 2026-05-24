@@ -199,7 +199,7 @@ async fn test_atomic_wal_to_storage_flow() {
             embeddings: vec![EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values: vec![1.0, 2.0, 3.0],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0]),
                 dim: 3,
                 ..Default::default()
             }],
@@ -210,7 +210,7 @@ async fn test_atomic_wal_to_storage_flow() {
             embeddings: vec![EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values: vec![4.0, 5.0, 6.0],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![4.0, 5.0, 6.0]),
                 dim: 3,
                 ..Default::default()
             }],

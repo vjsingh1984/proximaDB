@@ -1017,7 +1017,7 @@ mod tests {
             rec.embeddings.push(EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
                 dim,
                 ..Default::default()
             });
@@ -1065,7 +1065,7 @@ mod tests {
                 rec.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     dim,
                     ..Default::default()
                 });

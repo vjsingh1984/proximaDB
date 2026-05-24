@@ -804,9 +804,11 @@ mod tests {
             embeddings: vec![EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values: (0..dimension)
-                    .map(|i| (i as f32) / (dimension as f32))
-                    .collect(),
+                values: proximadb_records::EmbeddingValues::Fp32(
+                    (0..dimension)
+                        .map(|i| (i as f32) / (dimension as f32))
+                        .collect(),
+                ),
                 dim: dimension as u32,
                 ..Default::default()
             }],

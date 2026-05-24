@@ -44,7 +44,7 @@ mod tests {
                 model_id: "test".to_string(),
                 modality: "vector".to_string(),
                 dim: vector.len() as u32,
-                values: vector,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
                 ..Default::default()
             }],
             ..Default::default()
@@ -61,7 +61,7 @@ mod tests {
                 model_id: "test".to_string(),
                 modality: "vector".to_string(),
                 dim: vector.len() as u32,
-                values: vector,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
                 ..Default::default()
             }],
             ..Default::default()
@@ -157,12 +157,12 @@ mod tests {
 
         let canonical_record = create_test_vector_record("test_id", vector.clone(), metadata);
         assert_eq!(canonical_record.oid, "test_id".to_string());
-        assert_eq!(canonical_record.embeddings[0].values, vector);
+        assert_eq!(canonical_record.embeddings[0].values, proximadb_records::EmbeddingValues::Fp32(vector.clone()));
         assert_eq!(canonical_record.props.len(), 2);
 
         let core_record = create_core_test_vector("test_id", vector.clone());
         assert_eq!(core_record.oid, "test_id");
-        assert_eq!(core_record.embeddings[0].values, vector);
+        assert_eq!(core_record.embeddings[0].values, proximadb_records::EmbeddingValues::Fp32(vector.clone()));
     }
 
     #[tokio::test]
@@ -249,10 +249,10 @@ mod tests {
         // Test single element vector
         let single_elem = create_core_test_vector("single", vec![42.0]);
         assert_eq!(single_elem.embeddings[0].values.len(), 1);
-        assert_eq!(single_elem.embeddings[0].values[0], 42.0);
+        assert_eq!(single_elem.embeddings[0].as_fp32_slice()[0], 42.0);
 
         // Test vector with negative values
         let negative_vec = create_core_test_vector("negative", vec![-1.0, -2.0, -3.0]);
-        assert!(negative_vec.embeddings[0].values.iter().all(|&x| x < 0.0));
+        assert!(negative_vec.embeddings[0].as_fp32_slice().iter().all(|&x| x < 0.0));
     }
 }

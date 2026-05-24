@@ -37,7 +37,7 @@ async fn test_end_to_end_streaming() {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim: 128,
-                    values: vec![0.1 * (i as f32); 128],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![0.1 * (i as f32); 128]),
                     ..Default::default()
                 }],
                 record_version: 1,
@@ -93,7 +93,7 @@ async fn test_backpressure_signaling() {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
                 dim: 128,
-                values: vec![0.1; 128],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1; 128]),
                 ..Default::default()
             }],
             record_version: 1,
@@ -134,7 +134,7 @@ async fn test_concurrent_sessions() {
                             model_id: "default".to_string(),
                             modality: "vector".to_string(),
                             dim: 64,
-                            values: vec![0.1; 64],
+                            values: proximadb_records::EmbeddingValues::Fp32(vec![0.1; 64]),
                             ..Default::default()
                         }],
                         record_version: 1,
@@ -182,7 +182,7 @@ async fn test_session_stats() {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
                 dim: 64,
-                values: vec![0.1; 64],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1; 64]),
                 ..Default::default()
             }],
             record_version: 1,
@@ -290,7 +290,7 @@ async fn test_rate_limiter_integration() {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
                 dim: 64,
-                values: vec![0.1; 64],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1; 64]),
                 ..Default::default()
             }],
             record_version: 1,
@@ -309,7 +309,7 @@ async fn test_rate_limiter_integration() {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
                 dim: 64,
-                values: vec![0.1; 64],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1; 64]),
                 ..Default::default()
             }],
             record_version: 1,

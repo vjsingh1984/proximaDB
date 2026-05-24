@@ -1376,7 +1376,7 @@ mod tests {
                 model_id: "default".to_string(),
                 modality: "dense_vector".to_string(),
                 dim: 4,
-                values: vec![0.1, 0.2, 0.3, 0.4],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1, 0.2, 0.3, 0.4]),
                 ..Default::default()
             }],
             ..Default::default()
@@ -1400,7 +1400,7 @@ mod tests {
         match &entries[0].operation {
             CanonicalOperation::RecordUpsert { record, .. } => {
                 assert_eq!(record.embeddings.len(), 1);
-                assert_eq!(record.embeddings[0].values, vec![0.1_f32, 0.2, 0.3, 0.4]);
+                assert_eq!(record.embeddings[0].values, proximadb_records::EmbeddingValues::Fp32(vec![0.1_f32, 0.2, 0.3, 0.4]));
             }
             other => panic!("expected RecordUpsert WAL entry, got {other:?}"),
         }

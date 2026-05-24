@@ -170,7 +170,7 @@ mod tests {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
                 dim: dimension as u32,
-                values: vec![value; dimension],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![value; dimension]),
                 ..Default::default()
             }],
             props,
@@ -881,7 +881,7 @@ mod tests {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim,
-                    values: vector_data,
+                    values: proximadb_records::EmbeddingValues::Fp32(vector_data),
                     ..Default::default()
                 }],
                 props,
