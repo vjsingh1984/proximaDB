@@ -141,6 +141,45 @@ impl ProximaDB {
             .set_metadata_provider(collection_service.metadata_backend().clone())
             .await;
 
+        // Wire CanonicalPrecisionResolver into Compaction. The catalog
+        // already exists (constructed inside SharedServices::new above)
+        // but the storage engine was built without knowing about it;
+        // `Compaction::set_precision_resolver` is the post-construction
+        // hook that closes the gap. When no default catalog is
+        // registered (degraded boot), the resolver isn't wired and
+        // compaction keeps producing fp32 records.
+        match shared_services.catalog_manager.default_catalog().await {
+            Ok(catalog) => {
+                let resolver_cache = Arc::new(
+                    proximadb_catalog::cache::CatalogCache::new(10_000, 60),
+                );
+                let resolver = Arc::new(
+                    proximadb_catalog::canonical_precision::CanonicalPrecisionResolver::new(
+                        catalog,
+                        resolver_cache,
+                    ),
+                );
+                if storage_engine
+                    .compaction_manager()
+                    .set_precision_resolver(resolver)
+                    .is_ok()
+                {
+                    tracing::info!(
+                        "✅ Compaction wired with CanonicalPrecisionResolver — \
+                         fp16 collections will preserve precision through compaction"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "compaction bootstrap: no default catalog; precision lookup \
+                     disabled, compaction rewrites will produce fp32 records \
+                     regardless of collection canonical precision"
+                );
+            }
+        }
+
         let storage = Arc::new(RwLock::new(storage_engine));
         tracing::info!("✅ ProximaDB::new - StorageEngine initialized successfully");
 
@@ -233,6 +272,11 @@ impl ProximaDB {
         // needs it as the production DrainerInsertSink target via the
         // BulkLoadDrainerSink wrapper.
         let handlers_for_drainer = shared_services.request_handlers.clone();
+        // Capture the catalog_manager Arc the same way — the drainer
+        // needs it to construct CanonicalPrecisionResolver so per-payload
+        // canonical_embedding_precision lookup populates
+        // EmbeddedRecord.target_precision (fp16 ingest end-to-end).
+        let catalog_manager_for_drainer = shared_services.catalog_manager.clone();
 
         // Open the queue subsystem BEFORE MultiServer so its Arc can
         // thread into AppState (so the v3 `/documents?mode=async` REST
@@ -296,6 +340,7 @@ impl ProximaDB {
                 spawn_embedding_drainer_from_resolved(
                     qc.clone(),
                     handlers_for_drainer,
+                    catalog_manager_for_drainer,
                     rq,
                     default_storage_root,
                 )
@@ -899,6 +944,7 @@ async fn open_queue_client_from_resolved(
 async fn spawn_embedding_drainer_from_resolved(
     queue: Arc<proximadb_queue::QueueClient>,
     handlers: Arc<crate::api_handlers::request_handlers::UnifiedHandlers>,
+    catalog_manager: Arc<crate::catalog::CatalogManager>,
     rq: &core::config::ResolvedQueueConfig,
     default_storage_root: String,
 ) -> anyhow::Result<(
@@ -914,8 +960,45 @@ async fn spawn_embedding_drainer_from_resolved(
     );
     let embed_service = proximadb_embedding::EmbeddingService::global();
     let drainer_cfg = crate::services::EmbeddingDrainerConfig::default();
-    let drainer =
+
+    // Build the canonical-precision resolver from the same catalog +
+    // cache the rest of the server uses. When no default catalog is
+    // registered (degraded boot), the drainer falls back to None and
+    // ships every record at fp32 — same behavior as before.
+    let mut drainer =
         crate::services::EmbeddingDrainer::new(queue, embed_service, sink, drainer_cfg);
+    match catalog_manager.default_catalog().await {
+        Ok(catalog) => {
+            // Separate CatalogCache instance for the resolver — same type as
+            // the runtime catalog's cache, but its own Arc so TTL/capacity
+            // and hit-rate signal stay independent. A
+            // canonical_embedding_precision change can lag by up to the TTL
+            // (60s) before the drainer picks it up; acceptable because
+            // precision changes are rare and the mismatched-batch path
+            // errors safely.
+            let resolver_cache = Arc::new(
+                proximadb_catalog::cache::CatalogCache::new(10_000, 60),
+            );
+            let resolver = Arc::new(
+                proximadb_catalog::canonical_precision::CanonicalPrecisionResolver::new(
+                    catalog,
+                    resolver_cache,
+                ),
+            );
+            drainer = drainer.with_precision_resolver(resolver);
+            tracing::info!(
+                "✅ Embedding drainer wired with CanonicalPrecisionResolver — \
+                 fp16 collections will produce fp16 records at ingest"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "drainer bootstrap: no default catalog; precision lookup disabled, \
+                 records will ship as fp32 regardless of collection canonical precision"
+            );
+        }
+    }
 
     let partitions: Vec<u32> = parse_partition_list(&rq.drainer_partitions).unwrap_or_else(|| {
         tracing::warn!(

@@ -56,7 +56,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::sync::{Mutex, Notify, RwLock};
+use tokio::sync::{Mutex, Notify, OnceCell, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
@@ -144,14 +144,19 @@ pub struct Compaction {
     /// New compaction orchestrator
     #[allow(dead_code)]
     compaction_orchestrator: Option<Arc<CompactionOrchestrator>>,
-    /// When set, `check_compaction_needed` populates the produced
-    /// `CompactionTask.precision_hint` from `resolver.resolve(table_id)`
-    /// so the writer reconstitution sites coerce records to the
-    /// collection's canonical precision before flushing. When `None`,
-    /// `precision_hint` stays `None` (records keep whatever precision
-    /// the VectorRecord intermediate hands them — always fp32 today).
-    precision_resolver:
-        Option<Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>>,
+    /// Set-once resolver — initialized after bootstrap once the catalog
+    /// handle becomes available (the storage engine constructs Compaction
+    /// before SharedServices does, so the resolver can't be injected at
+    /// construction time). When initialized, `check_compaction_needed`
+    /// populates the produced `CompactionTask.precision_hint` from
+    /// `resolver.resolve(table_id)` so the writer reconstitution sites
+    /// coerce records to the collection's canonical precision before
+    /// flushing. When unset, `precision_hint` stays `None` (records keep
+    /// whatever precision the VectorRecord intermediate hands them —
+    /// always fp32 today).
+    precision_resolver: Arc<
+        OnceCell<Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>>,
+    >,
     // manifest: Option<Arc<super::SstManifest>>, // Removed - using directory discovery
 }
 
@@ -284,7 +289,7 @@ impl Compaction {
             sst_compactor,
             filesystem_factory,
             compaction_orchestrator: orchestrator,
-            precision_resolver: None,
+            precision_resolver: Arc::new(OnceCell::new()),
         })
     }
 
@@ -298,12 +303,40 @@ impl Compaction {
     /// convention as `CollectionManager::collection_table_identifier`:
     /// `TableIdentifier::parse(id)`, with unqualified names defaulting
     /// to the `"default"` namespace.
+    ///
+    /// Builder form — consumes self. For post-construction injection
+    /// (the bootstrap path, where Compaction is wrapped in `Arc` before
+    /// the catalog handle becomes available), use
+    /// [`Self::set_precision_resolver`].
     pub fn with_precision_resolver(
-        mut self,
+        self,
         resolver: Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>,
     ) -> Self {
-        self.precision_resolver = Some(resolver);
+        // Best-effort init; the resolver is the first one set in this
+        // construction path so a duplicate-set is a programming error.
+        let _ = self.precision_resolver.set(resolver);
         self
+    }
+
+    /// Post-construction setter for the canonical-precision resolver.
+    /// Works through `Arc<Compaction>`, so bootstrap code that builds
+    /// the catalog handle after the storage engine has already wrapped
+    /// Compaction in `Arc` can still wire the resolver.
+    ///
+    /// Returns `Err` if the resolver was already set (typically: a
+    /// bootstrap-ordering bug — there should only be one
+    /// `with_precision_resolver` or `set_precision_resolver` call per
+    /// Compaction instance).
+    pub fn set_precision_resolver(
+        &self,
+        resolver: Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>,
+    ) -> std::result::Result<
+        (),
+        tokio::sync::SetError<
+            Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>,
+        >,
+    > {
+        self.precision_resolver.set(resolver)
     }
 
     /// Mirror of `CollectionManager::collection_table_identifier` for
@@ -548,7 +581,7 @@ impl Compaction {
                 CompactionPriority::Medium
             };
 
-            let precision_hint = match &self.precision_resolver {
+            let precision_hint = match self.precision_resolver.get() {
                 None => None,
                 Some(resolver) => {
                     let table_id = Self::collection_to_table_identifier(collection_id);

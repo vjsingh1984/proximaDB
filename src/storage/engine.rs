@@ -49,6 +49,15 @@ impl StorageEngine {
         &self.config
     }
 
+    /// Get a handle to the compaction manager so the bootstrap path
+    /// can attach a `CanonicalPrecisionResolver` after `SharedServices`
+    /// becomes available (the storage engine is constructed before the
+    /// catalog handle exists, so the resolver is injected via
+    /// `Compaction::set_precision_resolver` post-construction).
+    pub fn compaction_manager(&self) -> Arc<Compaction> {
+        self.compaction_manager.clone()
+    }
+
     /// Create new storage engine without collection service dependency
     /// The metadata provider will be injected later via set_metadata_provider
     pub async fn new_without_collection_service(
