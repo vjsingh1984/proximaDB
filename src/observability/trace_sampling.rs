@@ -2,8 +2,8 @@
 //
 // The risk row pins this requirement:
 //
-//   "Trace cardinality. `anvaiops_search_plan_traces` will be hot.
-//    Mitigation: down-sample at the gateway by tier (free tier 10%,
+//   "Trace cardinality. The trace-archive collection will be hot.
+//    Mitigation: down-sample at the gateway by tier (lowest tier 10%,
 //    pooled 50%, dedicated 100%) and keep a 30-day retention policy."
 //
 // Every search emits a SearchPlanTrace today; persisting all of them

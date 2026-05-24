@@ -12,12 +12,13 @@
 //!
 //! ## Replaces the obsolete pending-collection design
 //!
-//! An earlier scaffold of this module used `anvaiops_pending_embed` as
-//! a pseudo-queue collection. That design was abandoned in favor of
-//! the dedicated `proximadb-queue` subsystem (per README locked
-//! decision: write-many-read-once messaging belongs in a real queue,
-//! not in a ProximaDB collection). This module is now the consumer
-//! side of that queue.
+//! An earlier scaffold of this module used a pseudo-queue collection
+//! (`pending_embed`) as the staging surface for async embedding work.
+//! That design was abandoned in favor of the dedicated
+//! `proximadb-queue` subsystem (per README locked decision:
+//! write-many-read-once messaging belongs in a real queue, not in a
+//! ProximaDB collection). This module is now the consumer side of
+//! that queue.
 //!
 //! ## Message contract
 //!

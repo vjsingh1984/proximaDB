@@ -17,8 +17,9 @@
 // signaling that it must only land on metrics scraped at >=1m.
 //
 // Bounded set: free, team, pro, business, enterprise — derived at startup
-// from `config/pricing.json` via `Tier::prometheus_label()` so adding a tier
-// in the AnvaiOps canonical config automatically widens the bounded set here.
+// from `config/pricing.json` via `Tier::prometheus_label()`. Operators
+// adding tiers via the runtime overlay (see `config/TIER_CONFIG.md`)
+// automatically widen this bounded set on the next process restart.
 
 use std::sync::OnceLock;
 

@@ -1,12 +1,13 @@
 // Metering event builder.
 //
-// Converts a populated `SearchPlanTrace` + tier label into the exact JSON
-// shape the AnvaiOps `anvaiops_billing_events` collection consumes. The
-// gateway currently re-derives this in Python; this builder makes the
-// derivation a single Rust function tested against the LLD §10 contract,
-// so the data plane and the control plane can't drift.
+// Converts a populated `SearchPlanTrace` + tier label into a stable JSON
+// shape suitable for an operator-side metering-events collection (default
+// name `proximadb_metering_events`; operator-configurable). This builder
+// makes the derivation a single Rust function tested against the LLD §10
+// contract so the data plane and any upstream metering pipeline don't drift.
 //
-// The shape matches `apps/api/src/services/billing.py::BillingEventWriter`:
+// The shape matches the operator's metering-event writer contract; the
+// canonical reference field set:
 //
 //   {
 //     "tenant_id":    "...",
@@ -37,9 +38,9 @@ use serde_json::{Map, Value, json};
 
 use crate::observability::search_plan_trace::SearchPlanTrace;
 
-/// One KRU billing event ready to POST to `anvaiops_billing_events`.
-/// Wraps a `serde_json::Value` so the call site can serialize directly
-/// without re-pasting fields.
+/// One metering event ready to POST to the operator-configured
+/// metering-events collection. Wraps a `serde_json::Value` so the call
+/// site can serialize directly without re-pasting fields.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MeteringEvent {
     pub event_type: &'static str,

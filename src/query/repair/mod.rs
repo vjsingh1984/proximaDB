@@ -9,10 +9,10 @@
 //!     Doctor-RAG arXiv 2604.00865 (prefix reuse) and Skill-RAG arXiv
 //!     2604.15771 (bounded skill set: query-rewrite, decompose, focus, exit).
 //!
-//! The pair-level verifier itself runs outside ProximaDB (AnvaiOps calls
-//! whatever model the tenant configured). The data-plane only ever sees
-//! the aggregated signals — keeping this primitive testable without an
-//! LLM in the loop.
+//! The pair-level verifier itself runs outside ProximaDB (an operator-
+//! configured external service invokes whatever model the tenant has
+//! registered). The data plane only ever sees the aggregated signals —
+//! keeping this primitive testable without an LLM in the loop.
 
 pub mod decision;
 pub mod sure_aggregator;

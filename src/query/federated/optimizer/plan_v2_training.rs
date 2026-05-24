@@ -3,14 +3,14 @@
 // Phase 7 of the LLD calls for a learned planner v2 trained on historical
 // SearchPlanTrace records:
 //
-//   "Lightweight model trained on `anvaiops_search_plan_traces` (now
-//    populated since Phase 0). Optionally BoomHQ-style autoencoder for
-//    multi-vector (2604.24552)."
+//   "Lightweight model trained on the archived SearchPlanTrace rows
+//    (now populated since Phase 0). Optionally BoomHQ-style autoencoder
+//    for multi-vector (2604.24552)."
 //
 // The actual model training and inference live outside ProximaDB
-// (AnvaiOps or an offline pipeline), but the wire shape of the training
-// record needs a stable contract — otherwise the trace fields the gateway
-// fills today won't line up with the model's expected feature vector
+// (an operator-side pipeline), but the wire shape of the training record
+// needs a stable contract — otherwise the trace fields the data plane
+// emits today won't line up with the model's expected feature vector
 // tomorrow. This module pins that contract.
 //
 // The extractor is a pure function: trace in, training record out. Real

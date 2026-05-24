@@ -69,8 +69,8 @@ pub mod alerting;
 pub mod audit;
 /// High-throughput ingestion pipeline with multi-format parsing.
 pub mod ingestion;
-/// KRU metering event builder — converts SearchPlanTrace → AnvaiOps
-/// billing_events JSON shape so the data and control planes can't drift.
+/// Metering event builder — converts SearchPlanTrace → operator metering
+/// event JSON shape so the data plane and operator pipelines can't drift.
 pub mod metering_event;
 /// Query engine for logs, metrics, and traces with PromQL support.
 pub mod query;

@@ -219,8 +219,9 @@ pub struct FeatureFlags {
     pub repair_controller: bool,
 }
 
-/// Policy record for a single tenant. Stored as a row in
-/// `anvaiops_tenant_tier` and surfaced via `TenantTierStore`.
+/// Policy record for a single tenant. Stored as a row in the
+/// operator-configured tenant-tier collection and surfaced via
+/// `TenantTierStore`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TenantTierRecord {
     /// Tenant identifier (matches `X-Tenant-ID`).
@@ -577,9 +578,10 @@ mod tests {
 
     #[test]
     fn legacy_tier_aliases_deserialize_to_team() {
-        // 2026 Q2 consolidation: stored tier values from the old AnvaiOps
-        // ladder (Starter/Standard/Community) must continue to load as Team
-        // so we don't need a one-shot migration over the tenant registry.
+        // Tier consolidation: stored tier values from the older ladder
+        // (Starter / Standard / Community) must continue to load as Team
+        // so deployments don't need a one-shot migration over the tenant
+        // registry.
         for raw in ["\"community\"", "\"starter\"", "\"standard\""] {
             let parsed: Tier = serde_json::from_str(raw).expect("deserialize legacy tier");
             assert_eq!(parsed, Tier::Team, "expected {raw} → Team");

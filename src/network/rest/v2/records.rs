@@ -819,7 +819,7 @@ fn bytes_from_json_array(value: &serde_json::Value) -> Result<Vec<u8>, ApiError>
 fn typed_filters_to_predicates(
     filters: &[TypedFilter],
 ) -> Vec<crate::query::federated::optimizer::Predicate> {
-    use crate::query::federated::optimizer::{Predicate, PredicateOp, PredicateValue};
+    use crate::query::federated::optimizer::{Predicate, PredicateOp};
     filters
         .iter()
         .filter_map(|f| {

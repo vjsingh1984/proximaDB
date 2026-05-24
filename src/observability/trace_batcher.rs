@@ -26,7 +26,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::observability::metering_event::{MeteringEvent, MeteringInputs, build_kru};
+use crate::observability::metering_event::{MeteringInputs, build_kru};
 use crate::observability::search_plan_trace::SearchPlanTrace;
 use crate::observability::trace_digest::{DigestInputs, digest_hex};
 use crate::observability::trace_fingerprint::{TraceShape, fingerprint_hex};
@@ -37,8 +37,8 @@ use crate::observability::trace_fingerprint::{TraceShape, fingerprint_hex};
 pub struct TraceBatchRecord {
     pub idempotency_key: String,
     pub fingerprint: String,
-    /// The KRU metering event metadata (matches the
-    /// `anvaiops_billing_events` schema's `metadata` field shape).
+    /// The metering event metadata (matches the operator metering-events
+    /// collection schema's `metadata` field shape).
     pub metering: Value,
 }
 

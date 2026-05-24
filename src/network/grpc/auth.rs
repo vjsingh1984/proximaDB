@@ -1,7 +1,7 @@
 //! Shared gRPC authentication and data-plane capability enforcement.
 //!
 //! The transport layer authenticates every generic gRPC request when enterprise
-//! security is enabled. Narrow AnvaiOps-style capability tokens are then
+//! security is enabled. Narrow operator-issued capability tokens are then
 //! constrained to the V2 record data-plane RPCs; body-aware checks for
 //! collection, record, and byte limits are applied inside `ProximaRecordService`
 //! after protobuf decoding.
@@ -368,7 +368,7 @@ mod tests {
                     secret: "dev-jwt-secret".to_string(),
                     access_token_expiration_minutes: 15,
                     refresh_token_expiration_days: 7,
-                    issuer: "anvaiops-control-plane".to_string(),
+                    issuer: "operator-control-plane".to_string(),
                     audience: "proximadb-data-plane".to_string(),
                     algorithm: "HS256".to_string(),
                 },
@@ -408,13 +408,13 @@ mod tests {
             iat: now - 10,
             exp: now + 300,
             nbf: now - 10,
-            iss: "anvaiops-control-plane".to_string(),
+            iss: "operator-control-plane".to_string(),
             aud: "proximadb-data-plane".to_string(),
             jti: "capability-token".to_string(),
             tenant_id: Some("tenant-a".to_string()),
-            roles: vec!["anvaiops_data_plane".to_string()],
+            roles: vec!["data_plane".to_string()],
             typ: TokenType::Access,
-            capability_type: Some("anvaiops.data-plane.capability.v1".to_string()),
+            capability_type: Some("operator.data-plane.capability.v1".to_string()),
             collection: Some(collection.to_string()),
             operation: Some(operation.to_string()),
             protocol: Some(protocol.to_string()),
@@ -445,7 +445,7 @@ mod tests {
 
     #[tokio::test]
     async fn grpc_auth_accepts_capability_for_v2_search() {
-        let token = capability_token("grpc", "search", "anvaiops_knowledge");
+        let token = capability_token("grpc", "search", "example_knowledge");
         let mut request = HttpRequest::builder()
             .uri("/proximadb.v2.ProximaRecordService/Search")
             .header("authorization", format!("Bearer {token}"))
@@ -473,7 +473,7 @@ mod tests {
 
     #[tokio::test]
     async fn grpc_auth_rejects_capability_for_wrong_protocol() {
-        let token = capability_token("rest", "search", "anvaiops_knowledge");
+        let token = capability_token("rest", "search", "example_knowledge");
         let mut request = HttpRequest::builder()
             .uri("/proximadb.v2.ProximaRecordService/Search")
             .header("authorization", format!("Bearer {token}"))
@@ -489,7 +489,7 @@ mod tests {
 
     #[tokio::test]
     async fn grpc_auth_rejects_capability_for_non_data_plane_method() {
-        let token = capability_token("grpc", "search", "anvaiops_knowledge");
+        let token = capability_token("grpc", "search", "example_knowledge");
         let mut request = HttpRequest::builder()
             .uri("/proximadb.v1.CollectionService/ListCollections")
             .header("authorization", format!("Bearer {token}"))
@@ -508,7 +508,7 @@ mod tests {
         let user_context = UnifiedUserContext {
             user_id: "key-a".to_string(),
             tenant_id: Some("tenant-a".to_string()),
-            roles: vec!["anvaiops_data_plane".to_string()],
+            roles: vec!["data_plane".to_string()],
             effective_permissions: Default::default(),
             auth_method: crate::security::UnifiedAuthMethod::JWT,
             session_id: "session-a".to_string(),
@@ -517,9 +517,9 @@ mod tests {
             metadata: HashMap::from([
                 (
                     "capability_type".to_string(),
-                    "anvaiops.data-plane.capability.v1".to_string(),
+                    "operator.data-plane.capability.v1".to_string(),
                 ),
-                ("collection".to_string(), "anvaiops_knowledge".to_string()),
+                ("collection".to_string(), "example_knowledge".to_string()),
                 ("operation".to_string(), "ingest".to_string()),
                 ("protocol".to_string(), "grpc".to_string()),
                 ("scopes".to_string(), "records:write".to_string()),
@@ -530,7 +530,7 @@ mod tests {
         let capability =
             DataPlaneCapability::from_user_context(&user_context).expect("capability should parse");
 
-        validate_data_plane_capability(&capability, "ingest", "anvaiops_knowledge", 2, Some(100))
+        validate_data_plane_capability(&capability, "ingest", "example_knowledge", 2, Some(100))
             .expect("matching request should pass");
         assert_eq!(
             validate_data_plane_capability(&capability, "ingest", "other", 1, Some(1))
@@ -539,7 +539,7 @@ mod tests {
             Code::PermissionDenied
         );
         assert_eq!(
-            validate_data_plane_capability(&capability, "ingest", "anvaiops_knowledge", 3, Some(1))
+            validate_data_plane_capability(&capability, "ingest", "example_knowledge", 3, Some(1))
                 .expect_err("record limit should fail")
                 .code(),
             Code::ResourceExhausted
@@ -548,7 +548,7 @@ mod tests {
             validate_data_plane_capability(
                 &capability,
                 "ingest",
-                "anvaiops_knowledge",
+                "example_knowledge",
                 1,
                 Some(101)
             )
@@ -573,7 +573,7 @@ mod tests {
 
     #[tokio::test]
     async fn grpc_auth_rejects_tenant_header_mismatch() {
-        let token = capability_token("grpc", "search", "anvaiops_knowledge");
+        let token = capability_token("grpc", "search", "example_knowledge");
         let mut request = HttpRequest::builder()
             .uri("/proximadb.v2.ProximaRecordService/Search")
             .header("authorization", format!("Bearer {token}"))
@@ -593,7 +593,7 @@ mod tests {
             secret: Some("dev-jwt-secret".to_string()),
             expiration_secs: 900,
             refresh_expiration_secs: 86400,
-            issuer: "anvaiops-control-plane".to_string(),
+            issuer: "operator-control-plane".to_string(),
             audience: "proximadb-data-plane".to_string(),
             algorithm: JwtAlgorithm::HS256,
         })

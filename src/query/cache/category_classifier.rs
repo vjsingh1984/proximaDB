@@ -26,7 +26,8 @@
 // Heuristics are intentionally simple — the goal is a default that
 // outperforms "unknown" without needing per-tenant configuration. The
 // LLD's planner v2 (Phase 7) will replace this with a learned head
-// trained on `anvaiops_search_plan_traces` rows.
+// trained on archived SearchPlanTrace rows (from the operator-configured
+// trace-archive collection).
 
 /// Bounded category set the classifier emits. Matches the PerCategoryPolicy
 /// default table.
