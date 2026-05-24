@@ -46,10 +46,10 @@ pub struct BudgetRejection {
 }
 
 impl BudgetRejection {
-    /// Serialize to the JSON shape the AnvaiOps gateway emits. Matches
-    /// `services::tier_cache::BudgetExceeded.explain()` so customer-facing
-    /// payloads are identical whether the gateway or the data-plane
-    /// rejected.
+    /// Serialize to a structured JSON shape suitable as a 429 response body.
+    /// Matches `services::tier_cache::BudgetExceeded.explain()` so the
+    /// customer-facing payload is identical whether an upstream gateway or
+    /// the data plane rejected the request.
     pub fn to_explain_json(&self) -> serde_json::Value {
         serde_json::json!({
             "error":     "budget_exceeded",

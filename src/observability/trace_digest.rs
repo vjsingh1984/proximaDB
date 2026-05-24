@@ -1,10 +1,11 @@
-// Trace digest — stable hash for dedup on the async billing sink.
+// Trace digest — stable hash for dedup on the async metering sink.
 //
-// `metering_event::build_kru` produces one billing record per search.
-// The gateway POSTs the record to the `anvaiops_billing_events`
-// collection asynchronously (fire-and-forget) and the CDC fan-out
-// downstream can replay on consumer restart. Without an idempotency
-// key the sink ends up double-billing on replay.
+// `metering_event::build_kru` produces one metering record per search.
+// An upstream gateway POSTs the record to a metering-events collection
+// (operator-configured; default name `proximadb_metering_events`)
+// asynchronously (fire-and-forget) and the CDC fan-out downstream can
+// replay on consumer restart. Without an idempotency key the sink ends
+// up double-counting on replay.
 //
 // This module produces a stable 64-bit digest of the trace identity:
 //

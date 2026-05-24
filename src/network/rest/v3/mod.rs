@@ -7,10 +7,11 @@
 
 //! REST API v3 — native server-side embedding surface.
 //!
-//! Adds the document-ingest endpoint that the AnvaiOps `/v1/ingest` proxy
-//! targets. Unlike v1/v2 which require a `vector` field, v3 accepts text-only
-//! records and dispatches them through the in-process EmbeddingService
-//! singleton (proximadb-embedding crate) before they reach WAL + index.
+//! Adds the document-ingest endpoint for text-only records. Unlike v1/v2
+//! which require a `vector` field, v3 accepts text-only records and
+//! dispatches them through the in-process EmbeddingService singleton
+//! (proximadb-embedding crate) before they reach WAL + index. Suitable as
+//! a target for upstream gateways that proxy a `/v1/ingest`-style API.
 //!
 //! ## Endpoints
 //!
@@ -26,8 +27,8 @@
 //! - `X-Embed-Source` — `native` (default; server embeds) or `sdk-vector`
 //!   (client provided the vector; server skips embedding).
 //!
-//! See `docs/architecture/EMBEDDING.md` in the AnvaiOps repo for the
-//! finalized API contract.
+//! See the operator-side architecture docs for the finalized API contract
+//! consumed by upstream gateways.
 
 pub mod documents;
 

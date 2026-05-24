@@ -98,7 +98,7 @@ impl Default for Config {
 /// ```toml
 /// [queue]
 /// root = "file:///var/lib/proximadb/queue"
-/// object_archive = "adls://anvaiops/queue-cold"   # optional
+/// object_archive = "adls://example-operator/queue-cold"   # optional
 /// sync_mode = "strict"                             # "strict" or "lazy"
 /// drainer_partitions = "0..16"                    # this replica's range
 /// ```
@@ -236,13 +236,13 @@ mod queue_config_tests {
         let _g_part = EnvGuard::set("PROXIMADB_EMBED_DRAINER_PARTITIONS", None);
         let toml = QueueRuntimeConfig {
             root: Some("file:///srv/queue".to_string()),
-            object_archive: Some("adls://anvaiops/archive".to_string()),
+            object_archive: Some("adls://example-operator/archive".to_string()),
             sync_mode: Some("lazy".to_string()),
             drainer_partitions: Some("0..4".to_string()),
         };
         let resolved = QueueRuntimeConfig::resolve(Some(&toml)).expect("resolved");
         assert_eq!(resolved.root, "file:///srv/queue");
-        assert_eq!(resolved.object_archive.as_deref(), Some("adls://anvaiops/archive"));
+        assert_eq!(resolved.object_archive.as_deref(), Some("adls://example-operator/archive"));
         assert_eq!(resolved.sync_mode, "lazy");
         assert_eq!(resolved.drainer_partitions, "0..4");
     }
@@ -316,7 +316,7 @@ mod queue_config_tests {
     fn queue_section_round_trips_through_toml() {
         let original = QueueRuntimeConfig {
             root: Some("file:///canonical".to_string()),
-            object_archive: Some("adls://anvaiops/archive".to_string()),
+            object_archive: Some("adls://example-operator/archive".to_string()),
             sync_mode: Some("strict".to_string()),
             drainer_partitions: Some("0..16".to_string()),
         };

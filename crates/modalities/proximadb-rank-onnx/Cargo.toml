@@ -1,0 +1,35 @@
+[package]
+name = "proximadb-rank-onnx"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage = "https://github.com/vjsingh1984/proximadb"
+description = "Shared ONNX scorer primitives for ProximaDB ranking: ScorerSession, OnnxModelCache (LRU+refcount), BatchedScorer, ModelRegistry. See roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md (R-5)."
+
+[lib]
+name = "proximadb_rank_onnx"
+path = "src/lib.rs"
+
+[features]
+default = []
+# R-5b will gate the real ort-based ScorerSession here. R-5 itself
+# ships only the mock-driven primitives so the cache / batch / LRU
+# semantics can land without pulling in the ort dep.
+real-onnx = []
+
+[dependencies]
+proximadb-rank-core = { workspace = true }
+proximadb-kernel = { workspace = true }
+async-trait.workspace = true
+dashmap.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }

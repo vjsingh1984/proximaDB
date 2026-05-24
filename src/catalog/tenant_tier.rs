@@ -9,9 +9,10 @@
 //   - feature_flags             — per-tenant + per-collection rollout switches
 //
 // Phase 0 backs the store with an in-process TTL cache populated from config;
-// later phases hydrate it from the `anvaiops_tenant_tier` ProximaDB collection
-// via the regular SDK read path. Callers depend on `TenantTierStore`, not the
-// concrete backing, so the swap is transparent.
+// later phases hydrate it from a system-internal tenant-tier collection via
+// the regular SDK read path. The collection name is operator-configurable
+// (defaults to `proximadb_tenant_tier`). Callers depend on `TenantTierStore`,
+// not the concrete backing, so the swap is transparent.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -23,13 +24,17 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
-// ── Pricing config (vendored copy of anvaiops/pricing/tiers.json) ───────────
+// ── Tier config (embedded baseline; runtime overlay loaded by entrypoint) ───
 //
-// Embedded at compile time via include_str! so the server binary stays
-// self-contained. The file is kept byte-identical with
-// anvaiops/pricing/tiers.json via `scripts/sync_pricing_to_proximadb.sh`;
-// drift is caught by the `config/pricing.json.sha256` fingerprint check
-// in CI (`scripts/check_pricing_fingerprint.sh`).
+// The compile-time-embedded `config/pricing.json` provides the baseline
+// numeric defaults so the server binary stays self-contained for offline /
+// air-gapped deployments. Runtime deployments overlay this via the entrypoint
+// script (`deploy/docker/entrypoint.sh`) which fetches from
+// `PROXIMADB_TIER_CONFIG_URL` and atomic-replaces the on-disk config before
+// the server starts. See `config/TIER_CONFIG.md` for the operator-neutral
+// schema; the embedded baseline currently uses the richer legacy schema
+// during the migration window (Phase B-4 will flip the embedded file to
+// the stripped tier-config.json shape).
 //
 // The numeric defaults (scan_budget_gb, ef_search_cap, freshness_sla_seconds,
 // prom_label) load from this JSON at first access. The `Tier` enum variants
@@ -99,36 +104,44 @@ fn pricing_row(tier: Tier) -> &'static PricingTier {
         .unwrap_or_else(|| panic!("tier {id} missing from config/pricing.json"))
 }
 
-/// Tier identifier. Names match `docs/PRICING_INTERNAL.md` in the AnvaiOps repo.
+/// Tier identifier — the baseline tier set shipped with ProximaDB. Operator
+/// deployments can override the numeric caps per tier via the runtime
+/// tier-config overlay (see `config/TIER_CONFIG.md`), but the variant set
+/// itself is compile-time exhaustive because Rust enums can't be built from
+/// runtime data.
 ///
-/// **2026 Q2 consolidation** — the prior `Community` variant maps to `Team`.
 /// Legacy stored values (`"community"`, `"starter"`, `"standard"`,
 /// `"enterprise_pooled"`, `"enterprise_dedicated"`) deserialize transparently
-/// via the serde aliases below so existing `anvaiops_tenant_tier` rows stay
-/// readable without a data migration.
+/// via the serde aliases below so existing tenant-tier rows stay readable
+/// across a tier-naming consolidation without a data migration.
+///
+/// A future major version (Phase B-4) may rename these variants to fully
+/// operator-neutral names (e.g., `Tier1` / `Tier2` / `Tier3`); the current
+/// names are kept stable to avoid breaking external callers in this
+/// release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Tier {
     /// Shared pool, capped resources, evaluation usage.
     #[default]
     FreeTrial,
-    /// Team — $19/mo pooled entry tier. Replaces the legacy `community`
-    /// (and the prior `starter`/`standard` SKUs on the AnvaiOps side).
+    /// Entry pooled tier — replaces the legacy `community` / `starter` /
+    /// `standard` SKUs from earlier naming conventions.
     #[serde(alias = "community", alias = "starter", alias = "standard")]
     Team,
-    /// Pro — $199/mo pooled production tier with sync ingest + DR add-on.
+    /// Production pooled tier with sync ingest support.
     Pro,
-    /// Business — $599/mo pooled tier with all 21 connectors + webhook bots.
+    /// Pooled tier with full connector set + webhook integration support.
     #[serde(alias = "enterprise_pooled")]
     Business,
-    /// Enterprise — $1,500+/mo dedicated infrastructure, custom commits.
+    /// Dedicated single-tenant infrastructure tier.
     #[serde(alias = "enterprise_dedicated")]
     Enterprise,
 }
 
 impl Tier {
-    /// Stable enum-id used as the JSON key in `config/pricing.json`. Matches
-    /// the canonical tier ids in `anvaiops/pricing/tiers.json`.
+    /// Stable enum-id used as the JSON key in the embedded
+    /// `config/pricing.json` baseline (and any runtime tier-config overlay).
     pub const fn id(self) -> &'static str {
         match self {
             Tier::FreeTrial => "free_trial",
@@ -151,10 +164,12 @@ impl Tier {
         ]
     }
 
-    /// Default scan budget (GB). Loaded from `config/pricing.json` at first
-    /// access; identical values live in `apps/api/src/services/pricing_config.py`
-    /// on the AnvaiOps side. Drift is impossible — both sides parse the same
-    /// vendored copy of `pricing/tiers.json`.
+    /// Default scan budget (GB). Loaded from the embedded baseline
+    /// `config/pricing.json` at first access. Operators who overlay a runtime
+    /// tier-config replace these defaults at process start (see
+    /// `config/TIER_CONFIG.md`); drift between operator gateway + engine is
+    /// avoided because the engine sources its values from the same overlay
+    /// the operator publishes.
     pub fn default_scan_budget_gb(self) -> f64 {
         pricing_row(self).soft_caps.scan_budget_gb
     }
@@ -170,8 +185,9 @@ impl Tier {
     }
 
     /// Bounded Prometheus label — cardinality-safe. The label set is loaded
-    /// from `pricing/tiers.json` so adding a tier on the AnvaiOps side and
-    /// re-vendoring the JSON automatically widens the metric label set here.
+    /// from the embedded baseline `config/pricing.json`; operators who add a
+    /// tier via the runtime overlay (see `config/TIER_CONFIG.md`) widen the
+    /// metric label set automatically without a recompile.
     pub fn prometheus_label(self) -> &'static str {
         pricing_row(self).prom_label.as_str()
     }

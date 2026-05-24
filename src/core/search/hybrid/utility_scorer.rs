@@ -16,8 +16,8 @@
 // `UtilityScorer` trait lets a tenant attach an externally-trained UAE
 // artifact (Utility-Aligned Embeddings, arXiv 2604.22722) that distills
 // generative utility into a bi-encoder, replacing the linear blend with a
-// learned ranker. The artifact path is provided by AnvaiOps; the data plane
-// only consumes a scoring function.
+// learned ranker. The artifact path is provided by the operator via tenant
+// configuration; the data plane only consumes a scoring function.
 //
 // This module ships the linear-blend default (`LinearUtilityScorer`) and
 // the trait + path-based artifact wrapper (`ArtifactUtilityScorer`) the
@@ -163,10 +163,10 @@ impl UtilityScorer for LinearUtilityScorer {
 }
 
 /// Wrapper that records a model artifact path so the runtime can load the
-/// UAE-distilled bi-encoder produced by AnvaiOps. Phase 6 ships only the
-/// path-recording shell; the actual scoring delegates to a fallback (the
-/// linear blend) until the runtime loads the artifact. This keeps the
-/// gateway flow workable even before the model artifact ships.
+/// UAE-distilled bi-encoder when one is provided by the operator. Phase 6
+/// ships only the path-recording shell; the actual scoring delegates to a
+/// fallback (the linear blend) until the runtime loads the artifact. This
+/// keeps the gateway flow workable even before the model artifact ships.
 pub struct ArtifactUtilityScorer {
     /// Filesystem / object-store path to the artifact.
     pub artifact_path: PathBuf,
@@ -188,7 +188,7 @@ impl ArtifactUtilityScorer {
     }
 
     /// Whether the artifact has been loaded. Phase 6 ships only the path;
-    /// loading lives in the runtime / AnvaiOps integration.
+    /// loading lives in the operator-side runtime integration.
     pub fn is_loaded(&self) -> bool {
         false
     }

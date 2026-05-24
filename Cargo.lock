@@ -6099,6 +6099,7 @@ dependencies = [
  "proximadb-rank-core",
  "proximadb-rank-expr",
  "proximadb-rank-features",
+ "proximadb-rank-onnx",
  "proximadb-rank-profile",
  "proximadb-records",
  "proximadb-runtime",
@@ -6680,6 +6681,21 @@ dependencies = [
  "proximadb-rank-core",
  "serde",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "proximadb-rank-onnx"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "dashmap",
+ "proximadb-kernel",
+ "proximadb-rank-core",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

@@ -875,8 +875,8 @@ async fn open_queue_client_from_resolved(
     // scheme the factory knows). For pure-local file:// roots the
     // adapter behaves identically to the queue's built-in LocalFs;
     // for cloud schemes it routes through the factory's per-scheme
-    // backend. This is the unblock for the "object_archive on
-    // adls://" use case the AnvaiOps deployment needs.
+    // backend. This unblocks the "object_archive on adls:// / s3:// /
+    // gcs://" use case for operators deploying with cross-scheme storage.
     let fs_config = crate::storage::persistence::filesystem::FilesystemConfig::default();
     let factory = std::sync::Arc::new(
         crate::storage::persistence::filesystem::FilesystemFactory::create(fs_config)

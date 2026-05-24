@@ -39,8 +39,10 @@ use crate::catalog::tenant_tier::Tier;
 /// Hard-cap violation emitted by `RouteContext::check_tenant_caps`.
 ///
 /// Carries the structured fields the gateway needs to render an explainable
-/// 429 (matches the AnvaiOps `BudgetExceeded.explain()` shape so the
-/// customer-facing payload is identical regardless of which side rejected).
+/// 429. The fields are operator-neutral; an operator-side gateway can
+/// re-render them into whatever customer-facing payload shape it emits so
+/// the user sees a consistent rejection regardless of which side (router
+/// or gateway) detected the breach.
 #[derive(Debug, Clone)]
 pub struct TenantBudgetExceeded {
     /// Which ceiling tripped (e.g. "scan_budget_gb_hard", "ef_search_cap").
@@ -68,9 +70,9 @@ impl std::fmt::Display for TenantBudgetExceeded {
 impl std::error::Error for TenantBudgetExceeded {}
 
 impl TenantBudgetExceeded {
-    /// Serialise to the same JSON shape the AnvaiOps gateway emits — keeps
-    /// the customer-facing 429 payload identical whether the soft or hard
-    /// cap tripped.
+    /// Serialise to a structured JSON shape suitable as the body of a 429
+    /// response. Keeps the customer-facing payload identical whether the
+    /// soft or hard cap tripped; operators wrap or rename fields as needed.
     pub fn to_explain_json(&self) -> serde_json::Value {
         serde_json::json!({
             "error":     "budget_exceeded",
@@ -202,8 +204,9 @@ pub struct RouteContext {
     pub trace_id: Option<String>,
 
     /// Caller-requested scan budget in GB (LLD §1 request contract).
-    /// The router enforces the **hard** cap from `anvaiops_tenant_tier` and
-    /// rejects with `RouteError::BudgetExceeded` if this exceeds the cap.
+    /// The router enforces the **hard** cap from the resolved tenant tier
+    /// (loaded from `config/tier-config.json`) and rejects with
+    /// `RouteError::BudgetExceeded` if this exceeds the cap.
     /// `None` means "no soft cap from the gateway" — the tier default applies.
     #[serde(default)]
     pub requested_scan_gb: Option<f64>,

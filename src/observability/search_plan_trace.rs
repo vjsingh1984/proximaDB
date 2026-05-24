@@ -1,13 +1,14 @@
 // SearchPlanTrace — per-query telemetry envelope for the retrieval cost LLD.
 //
 // One trace per search, emitted to:
-//   1. the response body (so the AnvaiOps gateway can read it for KRU billing
-//      via `apps/api/src/services/billing.py::ScanStats.from_response`), and
-//   2. the `anvaiops_search_plan_traces` ProximaDB collection via the CDC sink,
-//      so the learned planner v2 can train against historical traces.
+//   1. the response body (so an upstream gateway can read it for metering
+//      or downstream pipeline use), and
+//   2. an operator-configured trace-archive collection (default name
+//      `proximadb_search_plan_traces`) via the CDC sink, so a learned
+//      planner v2 can train against historical traces.
 //
-// Schema is the source of truth for the LLD §10 trace contract.
-// See: docs/architecture/RETRIEVAL_COST_OPTIMIZATION_LLD.md (AnvaiOps repo).
+// Schema is the source of truth for the LLD §10 trace contract; see the
+// operator-side architecture docs for the consumer-side trace usage.
 //
 // Phase 0 emits zero-valued stubs for fields whose underlying feature is not
 // yet implemented (graph tunneling, quantized hops, catapult shortcuts, SURE
@@ -110,7 +111,8 @@ pub struct SureSignals {
 }
 
 /// Per-query telemetry envelope. One emitted per search, written to the
-/// response and to `anvaiops_search_plan_traces` for offline training.
+/// response and to the operator-configured trace-archive collection for
+/// offline training.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchPlanTrace {
     // ── Identity ───────────────────────────────────────────────────────────

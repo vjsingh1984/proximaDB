@@ -1287,8 +1287,8 @@ pub struct TypedSearchResponse {
     pub latency_ms: u64,
     /// Request ID for tracing
     pub request_id: String,
-    /// SearchPlanTrace (LLD §10) — the per-query telemetry envelope that the
-    /// AnvaiOps gateway consumes for KRU billing and planner-v2 training.
+    /// SearchPlanTrace (LLD §10) — the per-query telemetry envelope that
+    /// upstream gateways consume for metering and planner-v2 training.
     /// Phase 0 emits a stub trace populated from request_id + latency; later
     /// phases fill in the per-stage counters. Only emitted when the request
     /// sets `debug=true` (LLD §1 contract).

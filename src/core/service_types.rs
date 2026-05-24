@@ -340,12 +340,14 @@ pub struct SearchMetadata {
 
 /// Index performance statistics
 ///
-/// Per-query counters emitted by the search runtime. Anchors the KRU billing
-/// signal and the planner v2 training inputs (see `SearchPlanTrace` for the
-/// per-query envelope that wraps this).
+/// Per-query counters emitted by the search runtime. Anchors the planner v2
+/// training inputs (see `SearchPlanTrace` for the per-query envelope that
+/// wraps this) and any operator-side metering wrapper that consumes scan
+/// statistics.
 ///
 /// All new fields default to zero so unimplemented features can stub-emit
-/// without changing the JSON shape consumed by AnvaiOps's `ScanStats`.
+/// without changing the JSON shape consumed by downstream telemetry
+/// (planner trainers, gateway scan-stats wrappers, etc.).
 /// Backwards-compat alias for [`ServiceIndexStats`].
 pub type IndexStats = ServiceIndexStats;
 
