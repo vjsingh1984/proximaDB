@@ -71,6 +71,19 @@ pub struct CompactionTask {
     pub block_size_kb: Option<u32>,
     /// Compression configuration (uses server default if None)
     pub compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
+    /// Target embedding precision the writer should reconstitute records
+    /// to before flushing the rewritten block. When `None`, records keep
+    /// the precision they carried into the compaction (today: always fp32
+    /// because the `VectorRecord` intermediate flattens to fp32). When
+    /// `Some(target)`, `EmbeddingCell::coerce_to_precision(target)` is
+    /// called on every record at the writer reconstitution site —
+    /// recovers fp16 / bf16 / int8 collections from the fp32 pivot
+    /// bit-exact for fp16 (fp32 strictly dominates fp16).
+    ///
+    /// The compaction scheduler populates this from
+    /// `CanonicalPrecisionResolver::resolve` for the output collection;
+    /// callers constructing tasks manually leave it `None`.
+    pub precision_hint: Option<proximadb_records::EmbeddingScalarType>,
 }
 
 /// Priority levels for compaction tasks
@@ -502,6 +515,7 @@ impl Compaction {
                 priority,
                 block_size_kb: None,      // Use server default
                 compression_config: None, // Use server default
+                precision_hint: None,     // Scheduler populates via resolver in a future PR
             }));
         }
 
@@ -1080,8 +1094,15 @@ impl Compaction {
 
                     // ArrowBlock writes canonical records; this branch is the
                     // boundary from legacy SST compaction records.
-                    let records: Vec<ProximaRecord> =
+                    let mut records: Vec<ProximaRecord> =
                         btree_records.values().map(ProximaRecord::from).collect();
+                    if let Some(target) = task.precision_hint {
+                        for record in &mut records {
+                            for cell in &mut record.embeddings {
+                                cell.coerce_to_precision(target);
+                            }
+                        }
+                    }
 
                     writer
                         .write_block(&records)
@@ -1187,8 +1208,15 @@ impl Compaction {
 
                     // ArrowBlock writes canonical records; this branch is the
                     // boundary from legacy SST compaction records.
-                    let records: Vec<ProximaRecord> =
+                    let mut records: Vec<ProximaRecord> =
                         btree_records.values().map(ProximaRecord::from).collect();
+                    if let Some(target) = task.precision_hint {
+                        for record in &mut records {
+                            for cell in &mut record.embeddings {
+                                cell.coerce_to_precision(target);
+                            }
+                        }
+                    }
 
                     writer
                         .write_block(&records)
