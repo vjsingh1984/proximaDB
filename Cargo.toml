@@ -51,6 +51,7 @@ members = [
     "crates/modalities/proximadb-rank-core",
     "crates/modalities/proximadb-rank-features",
     "crates/modalities/proximadb-rank-expr",
+    "crates/modalities/proximadb-rank-profile",
     "crates/storage/proximadb-storage-common",
     "crates/storage/proximadb-block-format",
     "crates/query/proximadb-document-query",
@@ -129,6 +130,7 @@ proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
 proximadb-rank-core = { path = "crates/modalities/proximadb-rank-core" }
 proximadb-rank-features = { path = "crates/modalities/proximadb-rank-features" }
 proximadb-rank-expr = { path = "crates/modalities/proximadb-rank-expr" }
+proximadb-rank-profile = { path = "crates/modalities/proximadb-rank-profile" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
 proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
@@ -209,6 +211,7 @@ proximadb-queue = { path = "crates/modalities/proximadb-queue" }
 proximadb-rank-core = { path = "crates/modalities/proximadb-rank-core" }
 proximadb-rank-features = { path = "crates/modalities/proximadb-rank-features" }
 proximadb-rank-expr = { path = "crates/modalities/proximadb-rank-expr" }
+proximadb-rank-profile = { path = "crates/modalities/proximadb-rank-profile" }
 proximadb-vector = { path = "crates/modalities/proximadb-vector" }
 proximadb-graph-arrow = { path = "crates/query/proximadb-graph-arrow" }
 proximadb-graph-query = { path = "crates/query/proximadb-graph-query" }
