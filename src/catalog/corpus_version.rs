@@ -93,6 +93,30 @@ impl CorpusVersionRegistry {
     pub async fn tracked_pairs(&self) -> usize {
         self.inner.read().await.len()
     }
+
+    /// Bump the version for every `(tenant, collection)` pair the
+    /// registry has seen for this collection, regardless of tenant.
+    /// Returns the number of pairs bumped. Use this from code paths
+    /// that don't know the tenant (e.g. storage-engine compaction
+    /// operates on a `collection_id` only) but still need to
+    /// invalidate every tenant's cached plans for the collection.
+    ///
+    /// Note: This only bumps tenants the registry has already
+    /// tracked. A tenant whose first request arrives after the
+    /// compaction completes will start at version 1 (the default)
+    /// and observe no invalidation — which is correct, because
+    /// their cache was empty.
+    pub async fn bump_collection_all_tenants(&self, collection: &str) -> usize {
+        let mut map = self.inner.write().await;
+        let mut bumped = 0;
+        for (key, version) in map.iter_mut() {
+            if key.collection == collection {
+                *version = version.saturating_add(1);
+                bumped += 1;
+            }
+        }
+        bumped
+    }
 }
 
 #[cfg(test)]
@@ -212,6 +236,54 @@ mod tests {
         }
         // 100 bumps from default of 1 → ending value is 101.
         assert_eq!(r.current("tenant-a", "kb").await, 101);
+    }
+
+    #[tokio::test]
+    async fn bump_collection_all_tenants_bumps_every_matching_tenant() {
+        let r = CorpusVersionRegistry::default();
+        // Three tenants with the same collection name.
+        r.bump("tenant-a", "kb").await; // → 2
+        r.bump("tenant-b", "kb").await; // → 2
+        r.bump("tenant-c", "kb").await; // → 2
+        // A different collection that should NOT be touched.
+        r.bump("tenant-a", "other-coll").await; // → 2
+
+        let bumped = r.bump_collection_all_tenants("kb").await;
+        assert_eq!(bumped, 3, "three tenants matched on 'kb'");
+        // Each of the three matched tenants is now at 3.
+        assert_eq!(r.current("tenant-a", "kb").await, 3);
+        assert_eq!(r.current("tenant-b", "kb").await, 3);
+        assert_eq!(r.current("tenant-c", "kb").await, 3);
+        // The non-matching collection stayed at 2.
+        assert_eq!(r.current("tenant-a", "other-coll").await, 2);
+    }
+
+    #[tokio::test]
+    async fn bump_collection_all_tenants_returns_zero_when_no_match() {
+        let r = CorpusVersionRegistry::default();
+        r.bump("tenant-a", "kb").await;
+        let bumped = r.bump_collection_all_tenants("never-tracked").await;
+        assert_eq!(bumped, 0);
+        // The unrelated kb entry is unchanged.
+        assert_eq!(r.current("tenant-a", "kb").await, 2);
+    }
+
+    #[tokio::test]
+    async fn bump_collection_all_tenants_does_not_track_new_pairs() {
+        // The collection-wide bump must NOT create entries for tenants
+        // the registry hasn't seen. A tenant whose first read happens
+        // after the compaction completes correctly starts at version 1.
+        let r = CorpusVersionRegistry::default();
+        // tenant-a only.
+        r.bump("tenant-a", "kb").await;
+        // Compaction-style bump on kb.
+        r.bump_collection_all_tenants("kb").await;
+        // tenant-z has never been tracked; reading them returns the
+        // default 1, not a back-filled value.
+        assert_eq!(r.current("tenant-z", "kb").await, 1);
+        // tracked_pairs only counts the entries that existed before
+        // the all-tenants bump.
+        assert_eq!(r.tracked_pairs().await, 1);
     }
 
     #[tokio::test]
