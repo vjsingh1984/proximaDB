@@ -43,6 +43,23 @@ pub struct EmbedResult {
     pub route: EmbedRoute,
 }
 
+/// INT-2.5c result for the precision-aware embed path
+/// ([`EmbeddingService::embed_sync_at_precision`]).
+///
+/// Returns typed [`crate::EmbeddingValues`] so the caller can hand them
+/// directly to [`proximadb_records::EmbeddingCell::new_typed`] without a
+/// fp32 round-trip. Also returns the [`crate::BatchConversionSummary`]
+/// so the caller can populate the PR 7b
+/// `proximadb_embedding_precision_conversions_total{from,to,site}`
+/// counter — same accounting hand-off as INT-1's
+/// `Models::embed_batch_at_precision`.
+#[derive(Debug, Clone)]
+pub struct EmbedResultTyped {
+    pub values: Vec<crate::EmbeddingValues>,
+    pub route: EmbedRoute,
+    pub summary: crate::BatchConversionSummary,
+}
+
 /// Cached tenant route. The DashMap entry expires after `ttl_secs` since
 /// the tenant registry can change (tier upgrade, BYO endpoint change).
 #[derive(Debug, Clone)]
@@ -148,6 +165,48 @@ impl EmbeddingService {
         rx.await
             .map_err(|_| EmbeddingError::Other(anyhow::anyhow!("scheduler dropped")))?
             .map(|vectors| EmbedResult { vectors, route })
+    }
+
+    /// INT-2.5c: synchronous embed at a caller-declared canonical
+    /// precision. Returns typed [`crate::EmbeddingValues`] so callers
+    /// can build [`proximadb_records::EmbeddingCell`]s via `new_typed`
+    /// without a fp32 round-trip + downconvert.
+    ///
+    /// The `canonical` parameter should come from the target collection's
+    /// `canonical_embedding_precision` field (PR 6b CatalogTableSchema).
+    /// The drainer's current shape batches across collections so per-
+    /// collection lookup + grouping is a follow-up; this method is the
+    /// contract new callers (e.g. precision-aware REST handlers) use
+    /// once they know the canonical precision for their request.
+    ///
+    /// Legacy `embed_sync` stays unchanged for callers that don't (yet)
+    /// know the canonical precision — they get fp32 records like today.
+    pub async fn embed_sync_at_precision(
+        self: &Arc<Self>,
+        batch: EmbedBatch,
+        canonical: proximadb_records::EmbeddingScalarType,
+    ) -> Result<EmbedResultTyped> {
+        let route = if batch.records.is_empty() {
+            self.default_config.route.clone()
+        } else {
+            self.resolve_route(&batch.records[0].tenant_id)
+        };
+
+        let service = self.clone();
+        let texts: Vec<String> = batch.records.iter().map(|r| r.text.clone()).collect();
+        let route_inner = route.clone();
+        let rx = self.scheduler.submit_sync(move || {
+            service
+                .models
+                .embed_batch_at_precision(&route_inner, &texts, canonical)
+        })?;
+        rx.await
+            .map_err(|_| EmbeddingError::Other(anyhow::anyhow!("scheduler dropped")))?
+            .map(|(values, summary)| EmbedResultTyped {
+                values,
+                route,
+                summary,
+            })
     }
 
     /// Asynchronous embed — Approach B post-WAL drainer dispatches a batch.

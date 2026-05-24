@@ -62,7 +62,7 @@ pub use models::{BatchConversionSummary, ModelRegistry};
 // embed_batch_at_precision.
 pub use proximadb_records::{EmbeddingScalarType, EmbeddingValues};
 pub use scheduler::{EmbedScheduler, IngestMode, Priority};
-pub use service::{EmbedBatch, EmbedRecord, EmbedResult, EmbeddingService};
+pub use service::{EmbedBatch, EmbedRecord, EmbedResult, EmbedResultTyped, EmbeddingService};
 
 /// Stable label used by embedding records in WAL + telemetry.
 pub const EMBEDDING_LABEL: &str = "embedding";

@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use proximadb_embedding::{
-    EmbeddingError,
+    EmbeddingError, EmbeddingScalarType, EmbeddingValues,
     config::{ChunkConfig, EmbedRoute, EmbeddingConfig},
     scheduler::EmbedSchedulerConfig,
     scheduler::IngestMode,
@@ -118,6 +118,41 @@ async fn route_cache_returns_default_then_explicit() {
     svc.update_tenant_route("premium-tenant", EmbedRoute::BgeLarge);
     let route = svc.resolve_route("premium-tenant");
     assert_eq!(route, EmbedRoute::BgeLarge);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_embed_at_precision_returns_typed_fp16() {
+    let svc = initialize();
+    let batch = make_batch("tenant-fp16", 3, IngestMode::Sync);
+    let result = match svc
+        .embed_sync_at_precision(batch, EmbeddingScalarType::Fp16)
+        .await
+    {
+        Ok(result) => result,
+        Err(EmbeddingError::ModelUnavailable(message)) => {
+            assert!(
+                message.contains("onnx") || message.contains("model"),
+                "unexpected model-unavailable message: {message}"
+            );
+            return;
+        }
+        Err(error) => panic!("unexpected sync embed error: {error}"),
+    };
+    assert_eq!(result.values.len(), 3);
+    for v in &result.values {
+        match v {
+            EmbeddingValues::Fp16(elts) => assert_eq!(elts.len(), 384, "bge-small dim, fp16"),
+            other => panic!("expected Fp16 variant, got {:?}", other.scalar_type()),
+        }
+    }
+    assert_eq!(result.summary.from, EmbeddingScalarType::Fp32);
+    assert_eq!(result.summary.to, EmbeddingScalarType::Fp16);
+    assert_eq!(result.summary.batch_count, 3);
+    assert_eq!(result.summary.element_count, 3 * 384);
+    assert!(
+        result.summary.was_converted(),
+        "fp32 native → fp16 canonical must be flagged as a conversion"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
