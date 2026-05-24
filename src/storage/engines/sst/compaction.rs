@@ -144,6 +144,14 @@ pub struct Compaction {
     /// New compaction orchestrator
     #[allow(dead_code)]
     compaction_orchestrator: Option<Arc<CompactionOrchestrator>>,
+    /// When set, `check_compaction_needed` populates the produced
+    /// `CompactionTask.precision_hint` from `resolver.resolve(table_id)`
+    /// so the writer reconstitution sites coerce records to the
+    /// collection's canonical precision before flushing. When `None`,
+    /// `precision_hint` stays `None` (records keep whatever precision
+    /// the VectorRecord intermediate hands them — always fp32 today).
+    precision_resolver:
+        Option<Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>>,
     // manifest: Option<Arc<super::SstManifest>>, // Removed - using directory discovery
 }
 
@@ -276,7 +284,39 @@ impl Compaction {
             sst_compactor,
             filesystem_factory,
             compaction_orchestrator: orchestrator,
+            precision_resolver: None,
         })
+    }
+
+    /// Attach a `CanonicalPrecisionResolver` so produced `CompactionTask`s
+    /// carry `precision_hint = Some(target)` for fp16 / non-fp32 collections.
+    /// Without this, all tasks ship with `precision_hint: None` and
+    /// compaction writes records at whatever precision the VectorRecord
+    /// intermediate produced (today: always fp32).
+    ///
+    /// Maps `collection_id` strings to `TableIdentifier` using the same
+    /// convention as `CollectionManager::collection_table_identifier`:
+    /// `TableIdentifier::parse(id)`, with unqualified names defaulting
+    /// to the `"default"` namespace.
+    pub fn with_precision_resolver(
+        mut self,
+        resolver: Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>,
+    ) -> Self {
+        self.precision_resolver = Some(resolver);
+        self
+    }
+
+    /// Mirror of `CollectionManager::collection_table_identifier` for
+    /// the compaction-scheduler side of the precision lookup.
+    fn collection_to_table_identifier(
+        collection_id: &str,
+    ) -> proximadb_catalog::TableIdentifier {
+        let parsed = proximadb_catalog::TableIdentifier::parse(collection_id);
+        if parsed.namespace.is_empty() {
+            proximadb_catalog::TableIdentifier::new(vec!["default".to_string()], parsed.name)
+        } else {
+            parsed
+        }
     }
 
     // Quantization sorting now handled by unified compute module
@@ -508,6 +548,24 @@ impl Compaction {
                 CompactionPriority::Medium
             };
 
+            let precision_hint = match &self.precision_resolver {
+                None => None,
+                Some(resolver) => {
+                    let table_id = Self::collection_to_table_identifier(collection_id);
+                    match resolver.resolve(&table_id).await {
+                        Ok(precision) => Some(precision),
+                        Err(e) => {
+                            warn!(
+                                collection = %collection_id,
+                                error = %e,
+                                "compaction: precision resolver failed; falling back to fp32"
+                            );
+                            None
+                        }
+                    }
+                }
+            };
+
             return Ok(Some(CompactionTask {
                 level: task.level as u8,
                 input_files,
@@ -515,7 +573,7 @@ impl Compaction {
                 priority,
                 block_size_kb: None,      // Use server default
                 compression_config: None, // Use server default
-                precision_hint: None,     // Scheduler populates via resolver in a future PR
+                precision_hint,
             }));
         }
 

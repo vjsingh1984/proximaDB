@@ -153,6 +153,14 @@ pub struct EmbeddingDrainer {
     embed_service: Arc<EmbeddingService>,
     sink: Arc<dyn DrainerInsertSink>,
     config: EmbeddingDrainerConfig,
+    /// When set, the drainer calls `resolver.resolve(table_id)` per payload
+    /// to populate each `EmbeddedRecord.target_precision` with the
+    /// collection's `canonical_embedding_precision`. When `None`, all
+    /// records ship with `target_precision: None` and the sink stays on
+    /// the legacy fp32 path. Set via `with_precision_resolver` after
+    /// construction.
+    precision_resolver:
+        Option<Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>>,
 }
 
 impl EmbeddingDrainer {
@@ -167,6 +175,41 @@ impl EmbeddingDrainer {
             embed_service,
             sink,
             config,
+            precision_resolver: None,
+        }
+    }
+
+    /// Attach a `CanonicalPrecisionResolver` so the drainer can stamp
+    /// `EmbeddedRecord.target_precision` from each collection's
+    /// `canonical_embedding_precision`. Without this, records flow
+    /// through as fp32 regardless of the collection's setting.
+    ///
+    /// The drainer maps a `target_collection: String` to a
+    /// `TableIdentifier` using the same convention as
+    /// `CollectionManager::collection_table_identifier`:
+    /// `TableIdentifier::parse(name)`, with unqualified names defaulting
+    /// to the `"default"` namespace.
+    pub fn with_precision_resolver(
+        mut self,
+        resolver: Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>,
+    ) -> Self {
+        self.precision_resolver = Some(resolver);
+        self
+    }
+
+    /// Map a drainer-side `target_collection` string to the catalog
+    /// `TableIdentifier`. Mirrors
+    /// `src/services/collection/manager.rs:collection_table_identifier`
+    /// so the resolver hits the same key the manager wrote on
+    /// collection creation.
+    fn collection_to_table_identifier(
+        target_collection: &str,
+    ) -> proximadb_catalog::TableIdentifier {
+        let parsed = proximadb_catalog::TableIdentifier::parse(target_collection);
+        if parsed.namespace.is_empty() {
+            proximadb_catalog::TableIdentifier::new(vec!["default".to_string()], parsed.name)
+        } else {
+            parsed
         }
     }
 
@@ -278,6 +321,31 @@ impl EmbeddingDrainer {
         // Re-split the result back to per-payload + insert.
         let dim = result.route.dimension() as u32;
         for ((payload, range), msg) in payload_indices.iter().zip(messages.iter()) {
+            // Resolve per-payload canonical precision once (so all records
+            // in this payload — which belong to the same collection —
+            // share the same target). When no resolver is wired or the
+            // lookup fails, the records ship with `target_precision: None`
+            // and the sink keeps the legacy fp32 path.
+            let target_precision = match &self.precision_resolver {
+                None => None,
+                Some(resolver) => {
+                    let table_id =
+                        Self::collection_to_table_identifier(&payload.target_collection);
+                    match resolver.resolve(&table_id).await {
+                        Ok(precision) => Some(precision),
+                        Err(e) => {
+                            warn!(
+                                collection = %payload.target_collection,
+                                tenant = %payload.tenant_id,
+                                error = %e,
+                                "drainer: precision resolver failed; falling back to fp32"
+                            );
+                            None
+                        }
+                    }
+                }
+            };
+
             let mut embedded: Vec<EmbeddedRecord> = Vec::with_capacity(range.end - range.start);
             for (i, rec) in payload.records.iter().enumerate() {
                 let vector = result
@@ -291,7 +359,7 @@ impl EmbeddingDrainer {
                     vector,
                     vector_dim: dim,
                     metadata: rec.metadata.clone(),
-                    target_precision: None,
+                    target_precision,
                 });
             }
             self.sink
@@ -562,5 +630,126 @@ mod tests {
             "malformed payload must NOT invoke sink",
         );
         queue.shutdown().await.expect("shutdown");
+    }
+
+    /// With a resolver attached and a fp16 collection in the catalog,
+    /// the drainer must stamp `EmbeddedRecord.target_precision = Some(Fp16)`
+    /// on every record routed to that collection. The sink (in
+    /// production: BulkLoadDrainerSink) then coerces the fp32 vector
+    /// to fp16 before constructing the ProximaRecord. End-to-end ingest
+    /// for an fp16 collection now produces fp16 records.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn drainer_stamps_target_precision_from_resolver() {
+        use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
+        use proximadb_catalog::cache::CatalogCache;
+        use proximadb_catalog::oltp::{OltpCatalog, OltpCatalogConfig};
+        use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier};
+
+        ensure_embedding_singleton();
+        let tmp = TempDir::new().expect("tempdir");
+        let queue = QueueClient::open(queue_cfg(tmp.path()))
+            .await
+            .expect("queue open");
+        let embed_service = proximadb_embedding::EmbeddingService::global();
+        embed_service.update_tenant_route(
+            "tenant-fp16",
+            EmbedRoute::Byo {
+                url: start_byo_test_endpoint(),
+                auth: ByoAuth::None,
+                declared_dim: 3,
+                declared_precision: proximadb_records::EmbeddingScalarType::Fp32,
+                batch_size: 8,
+                timeout_ms: 1_000,
+            },
+        );
+
+        // Stand up an in-memory catalog with one fp16 collection.
+        let cache = Arc::new(CatalogCache::new(1000, 60));
+        let cat: Arc<OltpCatalog> = Arc::new(
+            OltpCatalog::new(
+                "drainer-test",
+                OltpCatalogConfig::sqlite("sqlite::memory:"),
+                cache.clone(),
+            )
+            .await
+            .unwrap(),
+        );
+        cat.create_namespace(&["default".to_string()], HashMap::new())
+            .await
+            .unwrap();
+        let table_id = TableIdentifier::new(vec!["default".to_string()], "fp16_docs");
+        let mut schema = CatalogTableSchema {
+            name: "fp16_docs".to_string(),
+            ..Default::default()
+        };
+        schema.canonical_embedding_precision =
+            proximadb_records::EmbeddingScalarType::Fp16;
+        cat.create_table(&table_id, schema).await.unwrap();
+
+        let resolver = Arc::new(CanonicalPrecisionResolver::new(
+            cat.clone() as Arc<dyn Catalog>,
+            cache,
+        ));
+
+        let sink = Arc::new(RecordingSink::default());
+        let producer = queue.producer();
+        let payload = EmbedIngestPayload {
+            target_collection: "fp16_docs".to_string(), // unqualified → default namespace
+            tenant_id: "tenant-fp16".to_string(),
+            records: vec![EmbedIngestRecord {
+                oid: "doc-1".to_string(),
+                text: "fp16 collection ingest".to_string(),
+                metadata: HashMap::new(),
+            }],
+        };
+        producer
+            .send(Message::new(
+                EMBED_INGEST_TOPIC,
+                "tenant-fp16",
+                serde_json::to_vec(&payload).unwrap(),
+            ))
+            .await
+            .expect("send");
+
+        let sink_for_drainer: Arc<dyn DrainerInsertSink> = sink.clone();
+        let drainer = EmbeddingDrainer::new(
+            queue.clone(),
+            embed_service,
+            sink_for_drainer,
+            EmbeddingDrainerConfig {
+                batch_size: 8,
+                poll_wait: Duration::from_millis(50),
+                ..Default::default()
+            },
+        )
+        .with_precision_resolver(resolver);
+        let (handle, shutdown) = drainer.start(vec![0, 1]);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            if !sink.calls.lock().await.is_empty() {
+                break;
+            }
+            if std::time::Instant::now() > deadline {
+                panic!("drainer never invoked sink");
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        let calls = sink.calls.lock().await;
+        assert_eq!(calls.len(), 1);
+        let (_target, _tenant, recs) = &calls[0];
+        assert_eq!(recs.len(), 1);
+        assert_eq!(
+            recs[0].target_precision,
+            Some(proximadb_records::EmbeddingScalarType::Fp16),
+            "resolver must stamp target_precision=Fp16 from the catalog's \
+             canonical_embedding_precision for this collection"
+        );
+        drop(calls);
+
+        let _ = shutdown.send(());
+        let _ = handle.await;
+        queue.shutdown().await.expect("queue shutdown");
     }
 }
