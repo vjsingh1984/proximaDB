@@ -271,6 +271,58 @@ impl BulkLoadDrainerSink {
     }
 }
 
+/// Project an [`EmbeddedRecord`] into a [`ProximaRecord`] honoring the
+/// record's `target_precision` hint. When `target_precision` is `None`
+/// or `Some(Fp32)`, the resulting `EmbeddingCell` carries
+/// `EmbeddingValues::Fp32` (legacy behavior). Otherwise the fp32 vector
+/// is coerced via `EmbeddingValues::from_fp32_lossy(_, target)` and the
+/// cell's `precision` field is stamped to match.
+///
+/// Extracted from the [`DrainerInsertSink`] impl so the precision-routing
+/// is exercised by unit tests without booting the full bulk loader.
+fn project_embedded_record(
+    r: EmbeddedRecord,
+    tenant_id: &str,
+    now_ns: i64,
+) -> ProximaRecord {
+    let mut props = std::collections::HashMap::new();
+    props.insert(
+        "text".to_string(),
+        ProximaTreeNode::Value(ProximaValue::String(r.text)),
+    );
+    for (k, v) in r.metadata {
+        props.insert(k, ProximaTreeNode::Value(ProximaValue::String(v)));
+    }
+    let (values, precision) = match r.target_precision {
+        None | Some(proximadb_records::EmbeddingScalarType::Fp32) => (
+            proximadb_records::EmbeddingValues::Fp32(r.vector),
+            proximadb_records::EmbeddingScalarType::Fp32,
+        ),
+        Some(target) => (
+            proximadb_records::EmbeddingValues::from_fp32_lossy(&r.vector, target),
+            target,
+        ),
+    };
+    ProximaRecord {
+        oid: r.oid.clone(),
+        local_id: Some(r.oid),
+        tenant_id: tenant_id.to_string(),
+        created_at_ns: now_ns,
+        updated_at_ns: now_ns,
+        origin: Some("v3_async_drainer".to_string()),
+        props,
+        embeddings: vec![EmbeddingCell {
+            model_id: "native".to_string(),
+            modality: "dense_vector".to_string(),
+            dim: r.vector_dim,
+            values,
+            precision,
+            ..Default::default()
+        }],
+        ..ProximaRecord::default()
+    }
+}
+
 #[async_trait]
 impl DrainerInsertSink for BulkLoadDrainerSink {
     async fn insert(
@@ -284,33 +336,7 @@ impl DrainerInsertSink for BulkLoadDrainerSink {
             .saturating_mul(1_000_000);
         let proxima_records: Vec<ProximaRecord> = records
             .into_iter()
-            .map(|r| {
-                let mut props = std::collections::HashMap::new();
-                props.insert(
-                    "text".to_string(),
-                    ProximaTreeNode::Value(ProximaValue::String(r.text)),
-                );
-                for (k, v) in r.metadata {
-                    props.insert(k, ProximaTreeNode::Value(ProximaValue::String(v)));
-                }
-                ProximaRecord {
-                    oid: r.oid.clone(),
-                    local_id: Some(r.oid),
-                    tenant_id: tenant_id.to_string(),
-                    created_at_ns: now_ns,
-                    updated_at_ns: now_ns,
-                    origin: Some("v3_async_drainer".to_string()),
-                    props,
-                    embeddings: vec![EmbeddingCell {
-                        model_id: "native".to_string(),
-                        modality: "dense_vector".to_string(),
-                        dim: r.vector_dim,
-                        values: proximadb_records::EmbeddingValues::Fp32(r.vector),
-                        ..Default::default()
-                    }],
-                    ..ProximaRecord::default()
-                }
-            })
+            .map(|r| project_embedded_record(r, tenant_id, now_ns))
             .collect();
         let _segment = self
             .bulk_loader
@@ -370,5 +396,87 @@ mod tests {
         // The actual skip happens inside ingest_sorted_segment; this
         // test exists to lock the API shape so reorderings of the
         // SortHint enum don't silently break callers.
+    }
+
+    fn make_embedded(target_precision: Option<proximadb_records::EmbeddingScalarType>) -> EmbeddedRecord {
+        EmbeddedRecord {
+            oid: "rec-1".to_string(),
+            text: "hello world".to_string(),
+            vector: vec![1.0, 2.0, 3.0, 4.0],
+            vector_dim: 4,
+            metadata: std::collections::HashMap::new(),
+            target_precision,
+        }
+    }
+
+    #[test]
+    fn project_embedded_record_defaults_to_fp32_when_target_is_none() {
+        let r = project_embedded_record(make_embedded(None), "tenant-a", 1_000);
+        assert_eq!(r.embeddings.len(), 1);
+        assert_eq!(
+            r.embeddings[0].values,
+            proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0, 4.0])
+        );
+        assert_eq!(
+            r.embeddings[0].precision,
+            proximadb_records::EmbeddingScalarType::Fp32
+        );
+    }
+
+    #[test]
+    fn project_embedded_record_stays_fp32_when_target_is_explicit_fp32() {
+        let r = project_embedded_record(
+            make_embedded(Some(proximadb_records::EmbeddingScalarType::Fp32)),
+            "tenant-a",
+            1_000,
+        );
+        assert_eq!(
+            r.embeddings[0].values,
+            proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0, 4.0])
+        );
+        assert_eq!(
+            r.embeddings[0].precision,
+            proximadb_records::EmbeddingScalarType::Fp32
+        );
+    }
+
+    #[test]
+    fn project_embedded_record_coerces_to_fp16_when_target_is_fp16() {
+        let r = project_embedded_record(
+            make_embedded(Some(proximadb_records::EmbeddingScalarType::Fp16)),
+            "tenant-a",
+            1_000,
+        );
+        assert_eq!(
+            r.embeddings[0].precision,
+            proximadb_records::EmbeddingScalarType::Fp16
+        );
+        match &r.embeddings[0].values {
+            proximadb_records::EmbeddingValues::Fp16(vs) => {
+                let expected: Vec<half::f16> = [1.0_f32, 2.0, 3.0, 4.0]
+                    .iter()
+                    .map(|&x| half::f16::from_f32(x))
+                    .collect();
+                assert_eq!(vs, &expected);
+            }
+            other => panic!("expected Fp16, got {:?}", other.scalar_type()),
+        }
+    }
+
+    #[test]
+    fn project_embedded_record_coerces_to_bf16_when_target_is_bf16() {
+        let r = project_embedded_record(
+            make_embedded(Some(proximadb_records::EmbeddingScalarType::Bf16)),
+            "tenant-a",
+            1_000,
+        );
+        assert_eq!(
+            r.embeddings[0].precision,
+            proximadb_records::EmbeddingScalarType::Bf16
+        );
+        assert!(matches!(
+            r.embeddings[0].values,
+            proximadb_records::EmbeddingValues::Bf16(_)
+        ));
     }
 }

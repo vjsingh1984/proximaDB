@@ -109,6 +109,17 @@ pub struct EmbeddedRecord {
     pub vector: Vec<f32>,
     pub vector_dim: u32,
     pub metadata: std::collections::HashMap<String, String>,
+    /// Collection's canonical embedding precision. `None` defaults to
+    /// `Fp32` (legacy behavior — sink builds an `EmbeddingValues::Fp32`
+    /// cell). `Some(target)` instructs the sink to coerce the fp32
+    /// vector to `target` via `EmbeddingValues::from_fp32_lossy` before
+    /// constructing the `EmbeddingCell`.
+    ///
+    /// The drainer populates this from a per-collection lookup
+    /// (`CanonicalPrecisionResolver::resolve`) once the resolver is
+    /// plumbed into the drainer's construction site. Until then, all
+    /// records carry `None` and the sink stays on the fp32 path.
+    pub target_precision: Option<proximadb_records::EmbeddingScalarType>,
 }
 
 #[derive(Debug, Clone)]
@@ -280,6 +291,7 @@ impl EmbeddingDrainer {
                     vector,
                     vector_dim: dim,
                     metadata: rec.metadata.clone(),
+                    target_precision: None,
                 });
             }
             self.sink
