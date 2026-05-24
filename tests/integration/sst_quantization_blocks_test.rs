@@ -311,7 +311,7 @@ fn generate_clustered_vectors(count: usize, dim: usize) -> Vec<ProximaRecord> {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim: dim as u32,
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     ..Default::default()
                 }],
                 record_version: 1,
@@ -341,7 +341,7 @@ fn generate_clustered_vectors(count: usize, dim: usize) -> Vec<ProximaRecord> {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
                 dim: dim as u32,
-                values,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
                 ..Default::default()
             }],
             record_version: 1,

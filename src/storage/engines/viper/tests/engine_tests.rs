@@ -25,7 +25,6 @@ mod tests {
     use proximadb_data_model::ProximaValue;
     use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
     use proximadb_storage_common::storage_path::StoragePath;
-    use std::collections::HashMap;
     use std::fs::File;
     // TODO: Refactor test code to use columnar module's exports
     // Currently using direct parquet imports for test compatibility

@@ -586,7 +586,7 @@ mod tests {
             .unwrap();
 
         // Note: Actual migration would fail without a real index, but we can test state tracking
-        let result = engine
+        let _ = engine
             .migrate_partition(partition_key.clone(), InfrastructureTier::Memory)
             .await;
 

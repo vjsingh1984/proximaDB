@@ -221,7 +221,7 @@ async fn test_memtable_semantic_search() {
             model_id: "default".to_string(),
             modality: "vector".to_string(),
             dim: values.len() as u32,
-            values,
+            values: proximadb_records::EmbeddingValues::Fp32(values),
             ..Default::default()
         }],
         record_version: 1,

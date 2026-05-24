@@ -2237,9 +2237,8 @@ fn create_field_eq_filter(
 mod tests {
     use super::*;
     use crate::proto::proximadb_v1::{
-        DocFilterCondition, DocFilterOperator, DocIndexType, DocumentCollectionConfig,
-        DocumentFilter, DocumentUpdate, IndexDefinition, SqlObject, SqlValue, UpdateOperation,
-        sql_value,
+        DocFilterCondition, DocFilterOperator, DocumentCollectionConfig, DocumentFilter,
+        DocumentUpdate, SqlObject, SqlValue, UpdateOperation, sql_value,
     };
     use crate::storage::traits::{
         CompactionParameters, CompactionResult, FlushParameters, FlushResult,
@@ -2417,6 +2416,7 @@ mod tests {
         svc
     }
 
+    #[allow(dead_code)]
     fn assert_same_document_shape(left: &DocumentRecord, right: &DocumentRecord) {
         assert_eq!(left.id, right.id);
         assert_eq!(left.collection_id, right.collection_id);

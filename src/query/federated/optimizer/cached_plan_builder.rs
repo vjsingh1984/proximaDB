@@ -12,9 +12,7 @@
 // plan and then serving it to a query with different neighborhood
 // samples would silently degrade routing.
 
-use crate::catalog::tenant_tier::TenantTierRecord;
 use crate::query::cache::plan_cache::{PlanCache, PlanCacheKey, digest_predicates};
-use crate::query::federated::optimizer::Predicate;
 use crate::query::federated::optimizer::plan_builder::{
     PlanBuilderInputs, PlanOutput, build_for_search,
 };
@@ -139,6 +137,7 @@ pub async fn build_for_search_cached_with_collection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::tenant_tier::TenantTierRecord;
     use crate::query::federated::optimizer::gls::GlsSample;
     use crate::query::federated::optimizer::selectivity::FieldStatistics;
     use crate::query::federated::optimizer::{

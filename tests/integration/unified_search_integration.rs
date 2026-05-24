@@ -10,7 +10,7 @@ use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::search::SearchParams;
 use proximadb_data_model::ProximaValue;
-use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
+use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord, ProximaTree, ProximaTreeNode};
 
 /// Generate test vectors with basic metadata
 fn generate_test_vectors(count: usize, dimension: usize) -> Vec<ProximaRecord> {
@@ -46,7 +46,7 @@ fn generate_test_vectors(count: usize, dimension: usize) -> Vec<ProximaRecord> {
                 embeddings: vec![EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values,
+                    values: EmbeddingValues::Fp32(values),
                     dim,
                     ..Default::default()
                 }],

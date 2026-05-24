@@ -14,7 +14,9 @@ use rand_chacha::ChaCha8Rng;
 use std::collections::HashMap;
 
 use proximadb_data_model::ProximaValue;
-use proximadb_records::{EmbeddingCell, LabelSet, ProximaRecord, ProximaTree, ProximaTreeNode};
+use proximadb_records::{
+    EmbeddingCell, EmbeddingValues, LabelSet, ProximaRecord, ProximaTree, ProximaTreeNode,
+};
 
 /// Helper to get the current time in nanoseconds since Unix epoch.
 fn now_ns() -> i64 {
@@ -55,7 +57,7 @@ fn make_record(id: &str, vector: Vec<f32>, props: ProximaTree) -> ProximaRecord 
                 model_id: "default".to_string(),
                 modality: "dense_vector".to_string(),
                 dim,
-                values: vector,
+                values: EmbeddingValues::Fp32(vector),
                 ..Default::default()
             }]
         } else {

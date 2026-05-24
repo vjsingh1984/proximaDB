@@ -1,10 +1,8 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
     use crate::storage::engines::sst::{SstConfig, SstEngine};
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use crate::storage::traits::UnifiedStorageEngine;
     use std::sync::Arc;
 
     #[tokio::test]

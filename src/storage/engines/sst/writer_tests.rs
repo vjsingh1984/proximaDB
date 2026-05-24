@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::storage::engines::sst::SstableWriter;
     use proximadb_data_model::ProximaValue;
     use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
@@ -89,7 +88,6 @@ mod tests {
         use crate::storage::persistence::filesystem::FilesystemConfig;
         use crate::storage::persistence::filesystem::FilesystemFactory;
         use tempfile::TempDir;
-        use tracing::debug;
 
         // Initialize hardware capabilities
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init

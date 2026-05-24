@@ -234,9 +234,6 @@ pub enum CollectionIsolation {
     Shared,
 }
 
-/// Backwards-compat alias for [`ZeroCopyPerformanceConfig`].
-pub type PerformanceConfig = ZeroCopyPerformanceConfig;
-
 /// Performance tuning configuration
 #[derive(Debug, Clone)]
 pub struct ZeroCopyPerformanceConfig {

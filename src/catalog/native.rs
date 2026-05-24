@@ -279,6 +279,13 @@ impl NativeCatalog {
             .unwrap_or_default()
             .as_millis() as i64
     }
+
+    /// Inherent accessor for the catalog metadata cache.
+    /// Was a trait method before Option B consolidation; moved to inherent
+    /// since the canonical `proximadb_catalog::Catalog` trait omits it.
+    pub fn cache(&self) -> Option<Arc<CatalogCache>> {
+        Some(self.cache.clone())
+    }
 }
 
 #[async_trait]
@@ -815,14 +822,6 @@ impl Catalog for NativeCatalog {
             .await;
 
         Ok(())
-    }
-
-    // ========================
-    // Cache Integration
-    // ========================
-
-    fn cache(&self) -> Option<Arc<CatalogCache>> {
-        Some(self.cache.clone())
     }
 
     // ========================

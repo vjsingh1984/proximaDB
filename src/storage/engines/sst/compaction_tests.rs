@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::storage::engines::sst::blocks::SstRecord;
     use crate::storage::engines::sst::{
         Compaction, CompactionPriority, CompactionStats, CompactionTask, SstConfig,

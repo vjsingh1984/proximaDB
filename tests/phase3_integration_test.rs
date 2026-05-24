@@ -45,7 +45,7 @@ mod streaming_flush_tests {
     use proximadb::streaming::{
         BackpressureLevel, FlushRetryConfig, SessionConfig, StreamConfig, StreamCoordinator,
     };
-    use proximadb_records::{EmbeddingCell, ProximaRecord};
+    use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
 
     /// Helper to create test vectors
     fn create_test_vectors(count: usize, start_id: usize, dimension: usize) -> Vec<ProximaRecord> {
@@ -55,7 +55,7 @@ mod streaming_flush_tests {
                 embeddings: vec![EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: String::new(),
-                    values: vec![0.1 * (i as f32); dimension],
+                    values: EmbeddingValues::Fp32(vec![0.1 * (i as f32); dimension]),
                     dim: dimension as u32,
                     ..Default::default()
                 }],
@@ -1724,7 +1724,7 @@ mod cross_workstream_tests {
         CompressionAlgorithm, CreateGraphRequest, GraphStorageConfig,
     };
     use proximadb::streaming::{SessionConfig, StreamConfig, StreamCoordinator};
-    use proximadb_records::{EmbeddingCell, ProximaRecord};
+    use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
 
     fn create_test_vectors(count: usize, dimension: usize) -> Vec<ProximaRecord> {
         (0..count)
@@ -1733,7 +1733,7 @@ mod cross_workstream_tests {
                 embeddings: vec![EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: String::new(),
-                    values: vec![0.1 * (i as f32); dimension],
+                    values: EmbeddingValues::Fp32(vec![0.1 * (i as f32); dimension]),
                     dim: dimension as u32,
                     ..Default::default()
                 }],
@@ -1893,7 +1893,7 @@ mod stress_tests {
         CompressionAlgorithm, CreateGraphRequest, GraphStorageConfig,
     };
     use proximadb::streaming::{SessionConfig, StreamConfig, StreamCoordinator};
-    use proximadb_records::{EmbeddingCell, ProximaRecord};
+    use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
 
     fn create_test_vectors(count: usize, dimension: usize) -> Vec<ProximaRecord> {
         (0..count)
@@ -1901,7 +1901,7 @@ mod stress_tests {
                 oid: format!("stress_vec_{}", i),
                 embeddings: vec![EmbeddingCell {
                     model_id: "default".to_string(),
-                    values: vec![0.1; dimension],
+                    values: EmbeddingValues::Fp32(vec![0.1; dimension]),
                     dim: dimension as u32,
                     ..Default::default()
                 }],

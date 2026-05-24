@@ -78,7 +78,7 @@ fn create_compressible_test_vectors(
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim: dimension as u32,
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     ..Default::default()
                 }],
                 props,
@@ -362,7 +362,7 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
                 dim: 512,
-                values,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
                 ..Default::default()
             }],
             props,
@@ -389,7 +389,7 @@ async fn test_sst_search_compressed_blocks() -> anyhow::Result<()> {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
                 dim: 512,
-                values,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
                 ..Default::default()
             }],
             props,

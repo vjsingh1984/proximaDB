@@ -1,11 +1,9 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::query::capability::{Capability, CapabilitySet};
     use crate::query::federated::optimizer::*;
     use crate::query::federated::parser::{
-        self, FederatedParser, FederatedQuery, QueryType, SqlExtension, TargetModelType,
-        VectorQuery,
+        self, FederatedQuery, QueryType, SqlExtension, TargetModelType, VectorQuery,
     };
     use crate::storage::multimodal::ModelType;
     use std::collections::HashMap;

@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::embedded::*;
     use std::collections::HashMap;
 

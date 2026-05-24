@@ -46,7 +46,7 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
                 dim: values.len() as u32,
-                values,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
                 ..Default::default()
             }],
             props,

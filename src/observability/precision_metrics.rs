@@ -405,7 +405,7 @@ mod tests {
 
         // Scrape and verify each LLD-locked metric name is present.
         let metric_families = registry.gather();
-        let names: Vec<&str> = metric_families.iter().map(|mf| mf.get_name()).collect();
+        let names: Vec<&str> = metric_families.iter().map(|mf| mf.name()).collect();
         for expected in [
             METRIC_SEGMENTS_TOTAL,
             METRIC_CANONICAL_BYTES,
@@ -448,13 +448,13 @@ mod tests {
         let families = registry.gather();
         let conv = families
             .iter()
-            .find(|mf| mf.get_name() == METRIC_CONVERSIONS_TOTAL)
+            .find(|mf| mf.name() == METRIC_CONVERSIONS_TOTAL)
             .expect("conversions metric registered");
         let value = conv
             .get_metric()
             .iter()
             .find(|m| {
-                m.get_label().iter().any(|l| l.get_value() == "ingest_boundary")
+                m.get_label().iter().any(|l| l.value() == "ingest_boundary")
             })
             .map(|m| m.get_counter().value())
             .expect("matching label set present");
@@ -469,7 +469,7 @@ mod tests {
         let families = registry.gather();
         let seg = families
             .iter()
-            .find(|mf| mf.get_name() == METRIC_SEGMENTS_TOTAL)
+            .find(|mf| mf.name() == METRIC_SEGMENTS_TOTAL)
             .unwrap();
         let label_keys: Vec<&str> = seg
             .get_metric()
@@ -477,7 +477,7 @@ mod tests {
             .unwrap()
             .get_label()
             .iter()
-            .map(|l| l.get_name())
+            .map(|l| l.name())
             .collect();
         assert!(label_keys.contains(&LABEL_COLLECTION));
         assert!(label_keys.contains(&LABEL_PRECISION));
@@ -577,7 +577,7 @@ mod tests {
         let families = registry.gather();
         let cb = families
             .iter()
-            .find(|mf| mf.get_name() == METRIC_CANONICAL_BYTES)
+            .find(|mf| mf.name() == METRIC_CANONICAL_BYTES)
             .expect("canonical_bytes metric registered");
 
         let value = |collection: &str, precision: &str| -> i64 {
@@ -585,8 +585,8 @@ mod tests {
                 .iter()
                 .find(|m| {
                     let labels = m.get_label();
-                    labels.iter().any(|l| l.get_value() == collection)
-                        && labels.iter().any(|l| l.get_value() == precision)
+                    labels.iter().any(|l| l.value() == collection)
+                        && labels.iter().any(|l| l.value() == precision)
                 })
                 .map(|m| m.get_gauge().value() as i64)
                 .unwrap_or(0)
@@ -612,12 +612,12 @@ mod tests {
         let families = registry.gather();
         let cb = families
             .iter()
-            .find(|mf| mf.get_name() == METRIC_CANONICAL_BYTES)
+            .find(|mf| mf.name() == METRIC_CANONICAL_BYTES)
             .unwrap();
         let m = cb
             .get_metric()
             .iter()
-            .find(|m| m.get_label().iter().any(|l| l.get_value() == "col"))
+            .find(|m| m.get_label().iter().any(|l| l.value() == "col"))
             .unwrap();
         assert_eq!(m.get_gauge().value() as i64, 1000);
     }

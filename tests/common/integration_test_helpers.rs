@@ -430,7 +430,9 @@ impl UnifiedTestEnvironment {
                         model_id: "default".to_string(),
                         modality: "vector".to_string(),
                         dim: dimension as u32,
-                        values: (0..dimension).map(|j| (i + j) as f32).collect(),
+                        values: proximadb_records::EmbeddingValues::Fp32(
+                            (0..dimension).map(|j| (i + j) as f32).collect(),
+                        ),
                         ..Default::default()
                     }],
                     props,

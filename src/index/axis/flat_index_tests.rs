@@ -14,6 +14,7 @@ mod tests {
     use std::time::Instant;
     use tracing::debug;
 
+    #[allow(dead_code)]
     struct TestVector {
         id: String,
         vector: Vec<f32>,

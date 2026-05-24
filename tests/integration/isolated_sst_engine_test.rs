@@ -323,11 +323,11 @@ async fn test_isolated_sst_multi_batch_flush_compaction() -> Result<()> {
                         model_id: "default".to_string(),
                         modality: "vector".to_string(),
                         dim: 3,
-                        values: vec![
+                        values: proximadb_records::EmbeddingValues::Fp32(vec![
                             global_id as f32,
                             (global_id + 1) as f32,
                             (global_id + 2) as f32,
-                        ],
+                        ]),
                         ..Default::default()
                     }],
                     record_version: 1,
@@ -542,7 +542,7 @@ async fn test_isolated_sst_concurrent_read_operations() -> Result<()> {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim: 3,
-                    values: vec![(i * 2) as f32, (i * 2 + 1) as f32, (i * 2 + 2) as f32],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![(i * 2) as f32, (i * 2 + 1) as f32, (i * 2 + 2) as f32]),
                     ..Default::default()
                 }],
                 props,
@@ -868,7 +868,7 @@ async fn test_isolated_sst_multiple_distance_metrics() -> Result<()> {
             model_id: "default".to_string(),
             modality: "vector".to_string(),
             dim: values.len() as u32,
-            values,
+            values: proximadb_records::EmbeddingValues::Fp32(values),
             ..Default::default()
         }],
         record_version: 1,
@@ -1009,11 +1009,11 @@ async fn test_isolated_sst_large_dataset_performance() -> Result<()> {
                         model_id: "default".to_string(),
                         modality: "vector".to_string(),
                         dim: 3,
-                        values: vec![
+                        values: proximadb_records::EmbeddingValues::Fp32(vec![
                             (global_id as f32) / 100.0,
                             ((global_id + 1) as f32) / 100.0,
                             ((global_id + 2) as f32) / 100.0,
-                        ],
+                        ]),
                         ..Default::default()
                     }],
                     props,

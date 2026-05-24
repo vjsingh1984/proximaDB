@@ -124,6 +124,7 @@ fn detect_backend(connection_string: &str) -> OltpBackend {
     }
 }
 
+#[allow(dead_code)] // Scaffolding for oltp-catalog feature work
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -143,6 +144,7 @@ fn now_ms() -> i64 {
     feature = "oltp-catalog-mysql",
     feature = "oltp-catalog-sqlite"
 )))]
+#[allow(dead_code)] // Stub fallback when no oltp-catalog-* feature is enabled
 mod pool_impl {
     use anyhow::{Result, anyhow};
 
@@ -200,6 +202,7 @@ pub struct OltpCatalog {
     name: String,
     backend: OltpBackend,
     config: OltpCatalogConfig,
+    #[allow(dead_code)] // Wired in by upcoming catalog cache integration
     cache: Arc<CatalogCache>,
     /// In-memory write-through cache (populated from DB on startup)
     namespaces: tokio::sync::RwLock<HashMap<String, CatalogNamespace>>,
@@ -381,6 +384,7 @@ impl OltpCatalog {
         Ok(())
     }
 
+    #[cfg(feature = "oltp-catalog")]
     fn generate_ddl(&self) -> Vec<String> {
         let p = self.prefix();
 
@@ -577,10 +581,12 @@ impl OltpCatalog {
         format!("{}.{}", identifier.namespace.join("."), identifier.name)
     }
 
+    #[allow(dead_code)] // Used by upcoming sqlx row mapping for catalog persistence
     fn catalog_schema_to_json(schema: &CatalogTableSchema) -> serde_json::Value {
         serde_json::to_value(schema).unwrap_or_default()
     }
 
+    #[allow(dead_code)] // Used by upcoming sqlx row mapping for catalog persistence
     fn json_to_catalog_schema(json: &serde_json::Value) -> CatalogTableSchema {
         serde_json::from_value(json.clone()).unwrap_or_else(|_| CatalogTableSchema::default())
     }

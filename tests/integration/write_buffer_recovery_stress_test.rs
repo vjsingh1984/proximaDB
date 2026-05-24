@@ -47,7 +47,7 @@ fn create_test_vectors_with_metadata(
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim: dimension as u32,
-                    values: vec![(i % 256) as f32; dimension],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![(i % 256) as f32; dimension]),
                     ..Default::default()
                 }],
                 props,

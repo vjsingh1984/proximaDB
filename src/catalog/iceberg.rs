@@ -371,6 +371,13 @@ impl IcebergCatalog {
 
         format!("{:032x}", timestamp)
     }
+
+    /// Inherent accessor for the catalog metadata cache.
+    /// Was a trait method before Option B consolidation; moved to inherent
+    /// since the canonical `proximadb_catalog::Catalog` trait omits it.
+    pub fn cache(&self) -> Option<Arc<CatalogCache>> {
+        Some(self.cache.clone())
+    }
 }
 
 #[async_trait]
@@ -1181,14 +1188,6 @@ impl Catalog for IcebergCatalog {
             identifier, new_order_id
         );
         Ok(())
-    }
-
-    // ========================
-    // Cache Integration
-    // ========================
-
-    fn cache(&self) -> Option<Arc<CatalogCache>> {
-        Some(self.cache.clone())
     }
 
     // ========================

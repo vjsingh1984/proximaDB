@@ -32,7 +32,7 @@ use proximadb::streaming::{
     BackpressureLevel, RingBuffer, SessionConfig, SessionState, StreamConfig, StreamCoordinator,
     StreamId, Watermarks,
 };
-use proximadb_records::{EmbeddingCell, ProximaRecord};
+use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
 
 // =============================================================================
 // Helper Functions
@@ -46,7 +46,7 @@ fn create_test_vectors(count: usize, start_id: usize, dimension: usize) -> Vec<P
             embeddings: vec![EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "dense_vector".to_string(),
-                values: vec![0.1 * (i as f32); dimension],
+                values: EmbeddingValues::Fp32(vec![0.1 * (i as f32); dimension]),
                 dim,
                 ..Default::default()
             }],

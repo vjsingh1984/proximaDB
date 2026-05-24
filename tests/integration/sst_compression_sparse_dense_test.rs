@@ -44,7 +44,7 @@ async fn test_compression_sparse_data() -> anyhow::Result<()> {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim: 1024,
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     ..Default::default()
                 }],
                 props,
@@ -179,7 +179,7 @@ async fn test_compression_dense_data() -> anyhow::Result<()> {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim: 1024,
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     ..Default::default()
                 }],
                 props,

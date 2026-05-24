@@ -3951,7 +3951,7 @@ impl VectorOperationsService {
 mod tenant_tests {
     use super::*;
     use proximadb_data_model::ProximaValue;
-    use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
+    use proximadb_records::ProximaRecord;
 
     #[test]
     fn ensure_tenant_on_records_adds_missing_tenant_id() {

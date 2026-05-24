@@ -13,7 +13,7 @@
 
 use crate::core::service_types::IndexStats;
 use crate::observability::search_plan_trace::{
-    CacheResult, FailureClass, FilterStrategy, IndexRoute, SearchPlanTrace, SureSignals,
+    CacheResult, FailureClass, SearchPlanTrace, SureSignals,
 };
 use crate::query::federated::optimizer::plan_builder::PlanOutput;
 
@@ -94,6 +94,7 @@ fn derive_actual_scan_gb(stats: &IndexStats, bytes_per_vector: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::observability::search_plan_trace::{FilterStrategy, IndexRoute};
 
     fn plan() -> PlanOutput {
         PlanOutput {

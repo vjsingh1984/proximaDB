@@ -155,7 +155,6 @@ impl QueryExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_kernel::uuid::Uuid;
     use std::collections::HashMap;
 
     #[tokio::test]
@@ -216,6 +215,6 @@ mod tests {
         let results = executor.execute(&plan, &context).await.unwrap();
 
         // Stub returns empty results
-        assert!(results.is_empty() || results.len() >= 0);
+        assert!(results.is_empty());
     }
 }

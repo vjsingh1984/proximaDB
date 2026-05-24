@@ -18,7 +18,17 @@
 pub mod types;
 
 // Core traits
-pub mod traits;
+// `traits` was the local Catalog trait module. Option B consolidation
+// (PR INT-3 line-of-work) merged its method surface into
+// `proximadb_catalog::Catalog`. The module now lives only as a shim
+// that re-exports the canonical types so historical import paths
+// (`crate::catalog::traits::Catalog`, etc.) keep working without
+// touching every importer.
+pub mod traits {
+    pub use proximadb_catalog::{
+        Catalog, CatalogHealth, LakehouseExtension, TableFormat,
+    };
+}
 
 // Metadata cache
 pub mod cache;
@@ -120,7 +130,7 @@ pub use self::traits::*;
 pub use self::types::*;
 // Explicitly re-export the local Catalog trait to disambiguate from proximadb_catalog::Catalog
 // (which is also pulled in via `pub use self::types::*` through proximadb_catalog::*).
-pub use self::traits::Catalog;
+pub use self::traits::{Catalog, CatalogHealth};
 
 /// Catalog manager - manages multiple catalog instances
 pub struct CatalogManager {
@@ -610,51 +620,11 @@ impl Default for CatalogManager {
     }
 }
 
-/// Table identifier with namespace path
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TableIdentifier {
-    /// Namespace path (e.g., ["db", "schema"])
-    pub namespace: Vec<String>,
-    /// Table name
-    pub name: String,
-}
-
-impl TableIdentifier {
-    /// Create a new table identifier with the given namespace path and table name
-    pub fn new(namespace: Vec<String>, name: String) -> Self {
-        Self { namespace, name }
-    }
-
-    /// Parse from string (e.g., "db.schema.table")
-    pub fn parse(s: &str) -> Self {
-        let parts: Vec<&str> = s.split('.').collect();
-        if parts.len() == 1 {
-            Self::new(vec![], parts[0].to_string())
-        } else {
-            let namespace: Vec<String> = parts[..parts.len() - 1]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
-            let name = parts[parts.len() - 1].to_string();
-            Self::new(namespace, name)
-        }
-    }
-
-    /// Convert to fully-qualified name
-    pub fn to_fqn(&self) -> String {
-        if self.namespace.is_empty() {
-            self.name.clone()
-        } else {
-            format!("{}.{}", self.namespace.join("."), self.name)
-        }
-    }
-}
-
-impl std::fmt::Display for TableIdentifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_fqn())
-    }
-}
+// `TableIdentifier` lives in `proximadb_catalog` and is re-exported via
+// `pub use self::types::*` above. The previous duplicate definition
+// here shadowed the canonical type and caused the in-flight catalog
+// trait migration to keep "two TableIdentifier" type-identity errors.
+// Removed as part of Option B consolidation.
 
 #[cfg(test)]
 mod tests {

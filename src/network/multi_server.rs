@@ -481,7 +481,15 @@ impl MultiServer {
             warn!(
                 "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
             );
-            let server = server_builder
+
+            // Standard grpc.health.v1.Health service for k8s/LB probes.
+            let (health_reporter, standard_health_server) =
+                tonic_health::server::health_reporter();
+            health_reporter
+                .set_service_status("", tonic_health::ServingStatus::Serving)
+                .await;
+
+            let mut server = server_builder
                 .add_service(vector_service)
                 .add_service(sql_service)
                 .add_service(col_service)
@@ -492,18 +500,14 @@ impl MultiServer {
                 .add_service(entity_service)
                 .add_service(observability_service)
                 .add_service(streaming_service)
-                .add_service(proxima_record_service);
+                .add_service(proxima_record_service)
+                .add_service(standard_health_server);
 
-            // Add reflection if enabled
+            // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
             if self.config.grpc_config.enable_reflection {
                 debug!("Adding gRPC reflection service");
-                // Deferred: Add reflection service when descriptor binary is available
-                // let file_descriptor_data = include_bytes!("../proto/proximadb_descriptor.bin");
-                // server_builder = server_builder.add_service(
-                //     tonic_reflection::server::Builder::configure()
-                //         .register_encoded_file_descriptor_set(file_descriptor_data)
-                //         .build()?,
-                // );
+                let reflection_service = build_grpc_reflection_service()?;
+                server = server.add_service(reflection_service);
             }
 
             let grpc_bind_addr = self.config.grpc_bind_address();
@@ -901,7 +905,15 @@ impl MultiServer {
                     None
                 }),
             );
-            let server = server_builder
+
+            // Standard grpc.health.v1.Health service for k8s/LB probes.
+            let (health_reporter, standard_health_server) =
+                tonic_health::server::health_reporter();
+            health_reporter
+                .set_service_status("", tonic_health::ServingStatus::Serving)
+                .await;
+
+            let mut server = server_builder
                 .add_service(vector_service)
                 .add_service(sql_service)
                 .add_service(col_service)
@@ -909,7 +921,15 @@ impl MultiServer {
                 .add_service(hybrid_search_service)
                 .add_service(security_service)
                 .add_service(proxima_record_service)
-                .add_service(flight_server);
+                .add_service(flight_server)
+                .add_service(standard_health_server);
+
+            // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
+            if self.config.grpc_config.enable_reflection {
+                debug!("Adding gRPC reflection service (unified mode)");
+                let reflection_service = build_grpc_reflection_service()?;
+                server = server.add_service(reflection_service);
+            }
 
             info!(
                 "🔗 gRPC + Arrow Flight Server starting on {} (internal)",
@@ -1237,6 +1257,14 @@ impl MultiServer {
             warn!(
                 "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
             );
+
+            // Standard grpc.health.v1.Health service for k8s/LB probes.
+            let (mut std_health_reporter, standard_health_server) =
+                tonic_health::server::health_reporter();
+            std_health_reporter
+                .set_service_status("", tonic_health::ServingStatus::Serving)
+                .await;
+
             let mut server = server_builder
                 .add_service(vector_service)
                 .add_service(sql_service)
@@ -1244,7 +1272,15 @@ impl MultiServer {
                 .add_service(graph_service)
                 .add_service(hybrid_search_service)
                 .add_service(security_service)
-                .add_service(proxima_record_service);
+                .add_service(proxima_record_service)
+                .add_service(standard_health_server);
+
+            // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
+            if self.config.grpc_config.enable_reflection {
+                debug!("Adding gRPC reflection service (cluster mode)");
+                let reflection_service = build_grpc_reflection_service()?;
+                server = server.add_service(reflection_service);
+            }
 
             // Add consensus service if enabled
             if cluster_config.enable_consensus {
@@ -1435,6 +1471,25 @@ impl MultiServer {
             tls_enabled: self.config.is_tls_enabled(),
         }
     }
+}
+
+/// Build a gRPC server-reflection service (grpc.reflection.v1.ServerReflection)
+/// pre-loaded with the checked-in ProximaDB file descriptor sets so standard
+/// gRPC clients (grpcurl, Postman, etc.) can introspect services at runtime.
+fn build_grpc_reflection_service() -> Result<
+    tonic_reflection::server::v1::ServerReflectionServer<
+        impl tonic_reflection::server::v1::ServerReflection,
+    >,
+> {
+    tonic_reflection::server::Builder::configure()
+        .register_encoded_file_descriptor_set(include_bytes!(
+            "../proto/proximadb_v1_descriptor.bin"
+        ))
+        .register_encoded_file_descriptor_set(include_bytes!(
+            "../proto/proximadb_descriptor.bin"
+        ))
+        .build_v1()
+        .context("failed to build gRPC reflection service")
 }
 
 // Deferred: Re-add TTL sweeper code in proper function context if needed

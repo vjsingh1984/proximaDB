@@ -340,7 +340,7 @@ mod helix_integration_tests {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim: 128,
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     ..Default::default()
                 }],
                 props,
@@ -368,7 +368,7 @@ mod helix_integration_tests {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim: 128,
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     ..Default::default()
                 }],
                 props,
@@ -515,7 +515,7 @@ mod helix_integration_tests {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim: 128,
-                    values: vec![i as f32 / 100.0; 128],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![i as f32 / 100.0; 128]),
                     ..Default::default()
                 }],
                 props,
@@ -721,7 +721,7 @@ mod helix_integration_tests {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim: 128,
-                    values: vec![i as f32 / 100.0; 128],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![i as f32 / 100.0; 128]),
                     ..Default::default()
                 }],
                 props,
@@ -838,7 +838,7 @@ mod helix_integration_tests {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim: 128,
-                    values: vec![i as f32 / 100.0; 128],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![i as f32 / 100.0; 128]),
                     ..Default::default()
                 }],
                 props,

@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::graph::GraphOperationsService;
     use crate::proto::proximadb_v1::{
         CreateGraphRequest, Node, Node as ProtoNode, PropertyValue, SqlObject, SqlValue,

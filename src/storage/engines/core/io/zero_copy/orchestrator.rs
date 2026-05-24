@@ -129,9 +129,6 @@ pub enum OperationType {
     ValidateDownload,
 }
 
-/// Backwards-compat alias for [`ZeroCopyResourceRequirements`].
-pub type ResourceRequirements = ZeroCopyResourceRequirements;
-
 /// Resource requirements for execution
 #[derive(Debug, Clone, Default)]
 pub struct ZeroCopyResourceRequirements {

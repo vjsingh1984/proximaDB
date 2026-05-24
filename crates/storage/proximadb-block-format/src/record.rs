@@ -422,7 +422,7 @@ mod tests {
             embeddings: vec![EmbeddingCell {
                 model_id: "text-embed-v1".into(),
                 modality: "text".into(),
-                values: vec![0.1, 0.2, 0.3, 0.4],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1, 0.2, 0.3, 0.4]),
                 dim: 4,
                 ..Default::default()
             }],

@@ -3201,6 +3201,14 @@ impl CatalogHealth {
             details: HashMap::new(),
         }
     }
+
+    /// Attach an additional key-value detail to the health status.
+    /// Returns `self` for builder-style chaining. Ported from the
+    /// local CatalogHealth as part of Option B consolidation.
+    pub fn with_detail(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.details.insert(key.into(), value.into());
+        self
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3315,11 +3323,95 @@ pub trait Catalog: Send + Sync {
         ))
     }
 
+    // Sort Order (for Iceberg-compatible catalogs; default: not supported)
+    async fn get_sort_order(
+        &self,
+        identifier: &TableIdentifier,
+    ) -> anyhow::Result<Option<CatalogSortOrder>> {
+        let _ = identifier;
+        Ok(None)
+    }
+
+    async fn update_sort_order(
+        &self,
+        identifier: &TableIdentifier,
+        order: CatalogSortOrder,
+    ) -> anyhow::Result<()> {
+        let _ = (identifier, order);
+        Err(anyhow::anyhow!(
+            "sort order updates not supported by this catalog"
+        ))
+    }
+
+    // Note: cache() / invalidate_cache were on the legacy local Catalog
+    // trait, but had zero external trait-method callers (CatalogManager::cache()
+    // is a separate struct method). Not ported — implementors that want
+    // a cache accessor can expose an inherent method instead.
+
     async fn health_check(&self) -> anyhow::Result<CatalogHealth> {
         Ok(CatalogHealth::healthy(0))
     }
 
     async fn close(&self) -> anyhow::Result<()> {
         Ok(())
+    }
+}
+
+// =============================================================================
+// LakehouseExtension — table-format-specific operations for lakehouse catalogs
+// (Iceberg / Delta / Hudi / Polaris). Ported from the local trait at
+// src/catalog/traits.rs as part of Option B consolidation.
+// =============================================================================
+
+/// Extension trait for lakehouse table format operations.
+///
+/// Implemented by `IcebergCatalog`, `DeltaCatalog`, `PolarisCatalog`
+/// — anything that exposes snapshot / location / schema-history
+/// semantics that are specific to open table formats.
+#[async_trait::async_trait]
+pub trait LakehouseExtension: Catalog {
+    /// Get the table format (Iceberg / Delta / Hudi / etc.).
+    fn table_format(&self) -> TableFormat;
+
+    /// Get the table's storage location URI.
+    async fn get_table_location(&self, identifier: &TableIdentifier) -> anyhow::Result<String>;
+
+    /// Get the current snapshot id (Iceberg) / version (Delta).
+    async fn get_current_snapshot(
+        &self,
+        identifier: &TableIdentifier,
+    ) -> anyhow::Result<Option<i64>>;
+
+    /// List all snapshot / version ids in chronological order.
+    async fn list_snapshots(&self, identifier: &TableIdentifier) -> anyhow::Result<Vec<i64>>;
+
+    /// Get the table's schema-version history (list of schema version ids).
+    async fn get_schema_history(&self, identifier: &TableIdentifier) -> anyhow::Result<Vec<i32>>;
+}
+
+/// Table format for lakehouse tables.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableFormat {
+    /// Native ProximaDB table format.
+    ProximaDB,
+    /// Apache Iceberg open table format.
+    Iceberg,
+    /// Linux Foundation Delta Lake format.
+    Delta,
+    /// Apache Hudi transactional data lake format.
+    Hudi,
+    /// Raw Apache Parquet files (read-only, no transaction log).
+    Parquet,
+}
+
+impl std::fmt::Display for TableFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TableFormat::ProximaDB => write!(f, "proximadb"),
+            TableFormat::Iceberg => write!(f, "iceberg"),
+            TableFormat::Delta => write!(f, "delta"),
+            TableFormat::Hudi => write!(f, "hudi"),
+            TableFormat::Parquet => write!(f, "parquet"),
+        }
     }
 }

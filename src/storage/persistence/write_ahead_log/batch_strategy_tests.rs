@@ -486,7 +486,7 @@ mod write_ahead_log_batch_strategy_tests {
 
     #[test]
     fn test_vector_serialization_deserialization() {
-        let strategy = MockWALBatchStrategy::new("test_serialization");
+        let _strategy = MockWALBatchStrategy::new("test_serialization");
 
         // Create test vectors
         let vectors = vec![
