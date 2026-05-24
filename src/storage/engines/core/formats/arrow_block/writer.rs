@@ -425,6 +425,88 @@ mod tests {
         assert_eq!(metadata.total_records, 200);
     }
 
+    /// INT-3-followup-c: fp16 records survive an end-to-end SST-equivalent
+    /// flush cycle (write to disk via ArrowBlockWriter, read back via
+    /// ArrowBlockReader) bit-exact. This validates the engine flush path
+    /// "just works" with the typed bridge from INT-3-followup-a — no
+    /// engine-layer coercion needed when the records already match the
+    /// collection's canonical precision.
+    #[test]
+    fn fp16_records_survive_write_read_cycle_bit_exact() {
+        use crate::storage::engines::core::formats::arrow_block::ArrowBlockReader;
+
+        let dir = tempdir().expect("Failed to create tempdir");
+        let path = dir.path().join("fp16_e2e.arrow");
+
+        let dimension = 16;
+        let config = ArrowBlockConfig::new(dimension as u32);
+        let mut writer =
+            ArrowBlockWriter::new(&path, config).expect("Failed to create ArrowBlockWriter");
+
+        // Spread input across fp16 dynamic range to catch any silent
+        // downconversion through the file format layer.
+        let sources: Vec<Vec<f32>> = (0..50)
+            .map(|i| {
+                (0..dimension)
+                    .map(|j| ((i as f32) * 1.5 - 8.0) + (j as f32) * 0.125)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = sources
+            .iter()
+            .enumerate()
+            .map(|(i, src)| {
+                let f16s: Vec<half::f16> =
+                    src.iter().map(|&x| half::f16::from_f32(x)).collect();
+                ProximaRecord {
+                    oid: format!("fp16_{:05}", i),
+                    created_at_ns: chrono::Utc::now().timestamp_millis().saturating_mul(1_000_000),
+                    record_version: 1,
+                    embeddings: vec![EmbeddingCell {
+                        model_id: "test".to_string(),
+                        modality: "dense_vector".to_string(),
+                        dim: dimension as u32,
+                        values: proximadb_records::EmbeddingValues::Fp16(f16s),
+                        precision: proximadb_records::EmbeddingScalarType::Fp16,
+                        ..Default::default()
+                    }],
+                    ..ProximaRecord::default()
+                }
+            })
+            .collect();
+
+        writer
+            .write_block(&records)
+            .expect("write_block must accept fp16 records");
+        let metadata = writer.finalize().expect("Failed to finalize writer");
+        assert_eq!(metadata.total_records, 50);
+
+        // Read back and verify the column dtype stayed fp16 + values are bit-exact.
+        let reader = ArrowBlockReader::open(&path).expect("open reader");
+        let read_records = reader.read_all().expect("read_all");
+        assert_eq!(read_records.len(), 50);
+
+        for (orig, got) in records.iter().zip(read_records.iter()) {
+            let orig_f16 = match &orig.embeddings[0].values {
+                proximadb_records::EmbeddingValues::Fp16(v) => v.clone(),
+                other => panic!("orig should be Fp16, got {:?}", other.scalar_type()),
+            };
+            let got_f16 = match &got.embeddings[0].values {
+                proximadb_records::EmbeddingValues::Fp16(v) => v.clone(),
+                other => panic!(
+                    "recovered must be Fp16 (file-format layer must not downconvert), got {:?}",
+                    other.scalar_type()
+                ),
+            };
+            assert_eq!(orig_f16, got_f16, "fp16 bit-exact round-trip through SST file");
+            assert_eq!(
+                got.embeddings[0].precision,
+                proximadb_records::EmbeddingScalarType::Fp16,
+                "EmbeddingCell.precision must be stamped from the recovered column dtype"
+            );
+        }
+    }
+
     #[test]
     fn test_id_range_tracking() {
         let dir = tempdir().expect("Failed to create tempdir");
