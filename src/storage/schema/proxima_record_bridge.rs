@@ -27,16 +27,19 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use arrow_array::{
-    Array, ArrayRef, BooleanArray, FixedSizeListArray, Float32Array, Float64Array, Int64Array,
-    RecordBatch, StringArray, StructArray,
+    Array, ArrayRef, BooleanArray, FixedSizeListArray, Float16Array, Float32Array, Float64Array,
+    Int64Array, RecordBatch, StringArray, StructArray,
     builder::{
-        BooleanBuilder, FixedSizeListBuilder, Float32Builder, Float64Builder, Int64Builder,
-        StringBuilder,
+        BooleanBuilder, FixedSizeListBuilder, Float16Builder, Float32Builder, Float64Builder,
+        Int64Builder, StringBuilder,
     },
 };
 use arrow_schema::{DataType, Field, Schema as ArrowSchema};
 use proximadb_data_model::ProximaValue;
-use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
+use proximadb_records::{
+    EmbeddingCell, EmbeddingScalarType, EmbeddingValues, ProximaRecord, ProximaTree,
+    ProximaTreeNode,
+};
 use serde_json::Value as JsonValue;
 
 use super::proxima_schema::{ProximaDataType, ProximaSchema};
@@ -176,6 +179,14 @@ impl DefaultProximaRecordBridge {
     }
 
     /// Build vector array from records.
+    ///
+    /// INT-3-followup-a: dispatches on the batch's homogeneous precision
+    /// (inferred via [`Self::infer_batch_vector_precision`]). Fp16
+    /// records flow through a `Float16Array`-backed
+    /// `FixedSizeListArray<Float16>` so the on-disk Arrow column is
+    /// native fp16 (no downconversion). Fp32 batches stay on the
+    /// legacy `Float32Builder` path, byte-identical with what shipped
+    /// before this commit.
     fn build_vector_array(&self, records: &[ProximaRecord]) -> Result<ArrayRef> {
         let dimension =
             self.vector_dimension()
@@ -184,7 +195,28 @@ impl DefaultProximaRecordBridge {
             return Err(anyhow!("Schema has no vector column"));
         }
 
-        // Use FixedSizeListArray so each row has exactly one vector
+        let precision = Self::infer_batch_vector_precision(records)?;
+        match precision {
+            EmbeddingScalarType::Fp32 => self.build_vector_array_fp32(records, dimension),
+            EmbeddingScalarType::Fp16 => self.build_vector_array_fp16(records, dimension),
+            // Bf16/Int8/UInt8 don't have a battle-tested Arrow column dtype
+            // story in this bridge yet — defer to Phase 3 (int8) and a future
+            // bf16 enablement PR. Downconverting silently would defeat the
+            // whole point of typed precision, so error explicitly.
+            other => Err(anyhow!(
+                "vector precision {:?} not yet supported by the Arrow bridge \
+                 (only Fp32 and Fp16 are wired; Bf16/Int8/UInt8 pending Phase 3)",
+                other
+            )),
+        }
+    }
+
+    /// Legacy Fp32 path — preserved bit-identical from pre-INT-3-followup-a.
+    fn build_vector_array_fp32(
+        &self,
+        records: &[ProximaRecord],
+        dimension: usize,
+    ) -> Result<ArrayRef> {
         let values_builder = Float32Builder::with_capacity(records.len() * dimension);
         let mut builder = FixedSizeListBuilder::new(values_builder, dimension as i32);
 
@@ -209,6 +241,94 @@ impl DefaultProximaRecordBridge {
         }
 
         Ok(Arc::new(builder.finish()))
+    }
+
+    /// INT-3-followup-a: native fp16 Arrow column path.
+    ///
+    /// Precondition: every non-empty record's first embedding cell is
+    /// `EmbeddingValues::Fp16` with `dim == dimension`
+    /// ([`Self::infer_batch_vector_precision`] enforces this).
+    /// Empty-embedding records get a row of zero `half::f16` so the
+    /// column array stays rectangular — matches the fp32 path's
+    /// behavior for missing-embedding rows.
+    fn build_vector_array_fp16(
+        &self,
+        records: &[ProximaRecord],
+        dimension: usize,
+    ) -> Result<ArrayRef> {
+        let values_builder = Float16Builder::with_capacity(records.len() * dimension);
+        let mut builder = FixedSizeListBuilder::new(values_builder, dimension as i32);
+
+        for record in records {
+            let cell_values = record.embeddings.first().map(|e| &e.values);
+            let values_dst = builder.values();
+            match cell_values {
+                Some(EmbeddingValues::Fp16(vs)) => {
+                    if vs.len() != dimension {
+                        return Err(anyhow!(
+                            "Vector dimension mismatch: expected {}, got {}",
+                            dimension,
+                            vs.len()
+                        ));
+                    }
+                    for &v in vs {
+                        values_dst.append_value(v);
+                    }
+                }
+                None => {
+                    // Empty-embedding row: zero-fill to keep the column rectangular.
+                    for _ in 0..dimension {
+                        values_dst.append_value(half::f16::ZERO);
+                    }
+                }
+                Some(other) => {
+                    // infer_batch_vector_precision should have rejected this batch.
+                    return Err(anyhow!(
+                        "internal: fp16 path saw non-Fp16 record (variant {:?}); \
+                         infer_batch_vector_precision should have prevented this",
+                        other.scalar_type()
+                    ));
+                }
+            }
+            builder.append(true);
+        }
+
+        Ok(Arc::new(builder.finish()))
+    }
+
+    /// INT-3-followup-a: infer the homogeneous precision of the batch's
+    /// vector column.
+    ///
+    /// Returns `Fp32` if every non-empty record is fp32 (the legacy
+    /// default), `Fp16` if every non-empty record is fp16, and errors
+    /// on a mixed batch — the engine layer (followup-c) is expected
+    /// to batch records by precision before reaching the bridge.
+    /// Records with no embedding cells are ignored for precision
+    /// inference; an all-empty batch defaults to Fp32.
+    fn infer_batch_vector_precision(
+        records: &[ProximaRecord],
+    ) -> Result<EmbeddingScalarType> {
+        let mut precision: Option<EmbeddingScalarType> = None;
+        for record in records {
+            if let Some(cell) = record.embeddings.first() {
+                let st = cell.values.scalar_type();
+                match precision {
+                    None => precision = Some(st),
+                    Some(existing) if existing == st => {}
+                    Some(existing) => {
+                        return Err(anyhow!(
+                            "mixed-precision batch: record {} is {:?}, expected {:?}. \
+                             Engine layer must batch records by canonical precision \
+                             before reaching the Arrow bridge (INT-3-followup-c).",
+                            record.oid,
+                            st,
+                            existing
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(precision.unwrap_or(EmbeddingScalarType::Fp32))
     }
 
     /// Build metadata array from records based on mode.
@@ -535,6 +655,39 @@ impl DefaultProximaRecordBridge {
     }
 
     /// Extract vector from batch at given row.
+    /// INT-3-followup-a: extract the vector at `row` preserving the
+    /// Arrow column's native scalar type. Returns
+    /// `EmbeddingValues::Fp16` when the column is a `Float16Array`-
+    /// backed `FixedSizeListArray`, otherwise `EmbeddingValues::Fp32`
+    /// via the legacy `extract_vector` path.
+    fn extract_typed_vector(
+        &self,
+        batch: &RecordBatch,
+        row: usize,
+    ) -> Result<EmbeddingValues> {
+        let dimension =
+            self.vector_dimension()
+                .ok_or_else(|| anyhow!("Schema has no vector dimension"))? as usize;
+        if dimension == 0 || !self.include_vectors {
+            return Ok(EmbeddingValues::Fp32(Vec::new()));
+        }
+
+        let vector_col = batch
+            .column_by_name("vector")
+            .ok_or_else(|| anyhow!("Missing 'vector' column"))?;
+
+        // Native fp16 path: FixedSizeListArray<Float16>.
+        if let Some(list_array) = vector_col.as_any().downcast_ref::<FixedSizeListArray>() {
+            let values = list_array.value(row);
+            if let Some(f16_array) = values.as_any().downcast_ref::<Float16Array>() {
+                return Ok(EmbeddingValues::Fp16(f16_array.values().to_vec()));
+            }
+        }
+
+        // Fall back to the legacy fp32 extractor for every other column shape.
+        self.extract_vector(batch, row).map(EmbeddingValues::Fp32)
+    }
+
     fn extract_vector(&self, batch: &RecordBatch, row: usize) -> Result<Vec<f32>> {
         let dimension =
             self.vector_dimension()
@@ -771,7 +924,7 @@ impl ProximaRecordBridge for DefaultProximaRecordBridge {
 
         for row in 0..num_rows {
             let id = self.extract_id(batch, row)?;
-            let vector = self.extract_vector(batch, row)?;
+            let typed_values = self.extract_typed_vector(batch, row)?;
             let props = self.extract_metadata(batch, row)?;
             let timestamp = self.extract_timestamp(batch, row);
             let version = self.extract_version(batch, row);
@@ -784,14 +937,17 @@ impl ProximaRecordBridge for DefaultProximaRecordBridge {
                         .as_nanos() as i64
                 });
 
-            let embeddings = if vector.is_empty() {
+            let embeddings = if typed_values.is_empty() {
                 Vec::new()
             } else {
+                let dim = typed_values.len() as u32;
+                let scalar_type = typed_values.scalar_type();
                 vec![EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "dense_vector".to_string(),
-                    dim: vector.len() as u32,
-                    values: proximadb_records::EmbeddingValues::Fp32(vector),
+                    dim,
+                    values: typed_values,
+                    precision: scalar_type,
                     ..Default::default()
                 }]
             };
@@ -1257,5 +1413,142 @@ mod tests {
             .expect("Failed to convert batch to records");
 
         assert!(recovered[0].props.contains_key("nested"));
+    }
+
+    // ---- INT-3-followup-a: fp16 bridge round-trip tests --------------------
+
+    fn fp16_record(oid: &str, fp32_src: &[f32]) -> ProximaRecord {
+        let f16s: Vec<half::f16> = fp32_src.iter().map(|&x| half::f16::from_f32(x)).collect();
+        ProximaRecord {
+            oid: oid.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "test-fp16".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: f16s.len() as u32,
+                values: proximadb_records::EmbeddingValues::Fp16(f16s),
+                precision: proximadb_records::EmbeddingScalarType::Fp16,
+                ..Default::default()
+            }],
+            ..ProximaRecord::default()
+        }
+    }
+
+    #[test]
+    fn fp16_batch_writes_native_float16_column() {
+        let schema = ProximaSchema::vector_record_schema(4);
+        let bridge = DefaultProximaRecordBridge::new(schema);
+
+        let recs = vec![
+            fp16_record("a", &[1.0, 2.0, 3.0, 4.0]),
+            fp16_record("b", &[5.0, 6.0, 7.0, 8.0]),
+        ];
+        let batch = bridge.records_to_batch(&recs).expect("records_to_batch");
+
+        let vector_col = batch.column_by_name("vector").expect("vector column");
+        let list_array = vector_col
+            .as_any()
+            .downcast_ref::<FixedSizeListArray>()
+            .expect("FixedSizeListArray expected");
+        // Inner array must be Float16, not Float32 — proves no downconversion.
+        let _f16 = list_array
+            .values()
+            .as_any()
+            .downcast_ref::<Float16Array>()
+            .expect("inner array must be Float16Array");
+        match list_array.data_type() {
+            DataType::FixedSizeList(field, _) => {
+                assert_eq!(field.data_type(), &DataType::Float16);
+            }
+            other => panic!("expected FixedSizeList, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn fp16_batch_round_trips_bit_exact() {
+        let schema = ProximaSchema::vector_record_schema(8);
+        let bridge = DefaultProximaRecordBridge::new(schema);
+
+        // Spread across the fp16 dynamic range to catch any silent
+        // downconversion: large, fractional, negative, denormal-ish.
+        let src_a = vec![1.0_f32, -2.5, 65504.0, 0.0001, 100.25, -0.5, 42.0, 7.125];
+        let src_b = vec![0.0_f32, 1.0, -1.0, 0.5, -0.25, 32.0, -16.5, 3.140625];
+        let recs = vec![fp16_record("a", &src_a), fp16_record("b", &src_b)];
+
+        let batch = bridge.records_to_batch(&recs).expect("records_to_batch");
+        let recovered = bridge.batch_to_records(&batch).expect("batch_to_records");
+
+        assert_eq!(recovered.len(), 2);
+        for (orig, got) in recs.iter().zip(recovered.iter()) {
+            let orig_vs = match &orig.embeddings[0].values {
+                proximadb_records::EmbeddingValues::Fp16(v) => v.clone(),
+                other => panic!("orig should be Fp16, got {:?}", other.scalar_type()),
+            };
+            let got_vs = match &got.embeddings[0].values {
+                proximadb_records::EmbeddingValues::Fp16(v) => v.clone(),
+                other => panic!("recovered should be Fp16 (no downconvert), got {:?}", other.scalar_type()),
+            };
+            assert_eq!(orig_vs, got_vs, "bit-exact fp16 round-trip");
+            assert_eq!(got.embeddings[0].precision, proximadb_records::EmbeddingScalarType::Fp16);
+        }
+    }
+
+    #[test]
+    fn fp32_batch_still_writes_native_float32_column() {
+        // Regression: pre-followup-a behavior unchanged for fp32-only batches.
+        let schema = ProximaSchema::vector_record_schema(4);
+        let bridge = DefaultProximaRecordBridge::new(schema);
+
+        let rec = ProximaRecord {
+            oid: "fp32".to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: 4,
+                values: proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0, 4.0]),
+                ..Default::default()
+            }],
+            ..ProximaRecord::default()
+        };
+        let batch = bridge
+            .records_to_batch(&[rec])
+            .expect("fp32 records_to_batch");
+        let vector_col = batch.column_by_name("vector").unwrap();
+        let list_array = vector_col
+            .as_any()
+            .downcast_ref::<FixedSizeListArray>()
+            .expect("FixedSizeListArray");
+        assert!(
+            list_array.values().as_any().is::<Float32Array>(),
+            "fp32 batch must still produce Float32Array; got {:?}",
+            list_array.values().data_type()
+        );
+    }
+
+    #[test]
+    fn mixed_precision_batch_is_rejected_at_writer() {
+        let schema = ProximaSchema::vector_record_schema(2);
+        let bridge = DefaultProximaRecordBridge::new(schema);
+
+        let fp32_rec = ProximaRecord {
+            oid: "fp32".to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: 2,
+                values: proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0]),
+                ..Default::default()
+            }],
+            ..ProximaRecord::default()
+        };
+        let recs = vec![fp32_rec, fp16_record("fp16", &[3.0, 4.0])];
+
+        let err = bridge
+            .records_to_batch(&recs)
+            .expect_err("mixed precision must error");
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("mixed-precision") && msg.contains("INT-3-followup-c"),
+            "expected mixed-precision error pointing at engine layering, got: {msg}"
+        );
     }
 }
