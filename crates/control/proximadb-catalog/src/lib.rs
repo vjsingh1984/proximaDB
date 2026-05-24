@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 pub mod cache;
+pub mod canonical_precision;
 // Embedding-precision rollout (PR 6 of EMBEDDING_PRECISION_LLD_2026_05_22).
 pub mod embedding_precision_policy;
 pub mod oltp;
