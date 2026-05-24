@@ -285,4 +285,44 @@ mod tests {
         println!("✅ Tombstone cleanup unit test passed!");
         Ok(())
     }
+
+    /// INT-3-followup-d: compaction loses fp16 precision today.
+    ///
+    /// Demonstrates the known gap: the compaction read+rewrite path
+    /// projects records through `VectorRecord` (which has
+    /// `vector: Vec<f32>`), so fp16 source cells are flattened to fp32
+    /// and the rewritten blocks emit `Float32Array` columns even when
+    /// the source was `Float16Array`.
+    ///
+    /// The fix wires `EmbeddingCell::coerce_to_precision` (shipped in
+    /// this commit) at the writer reconstitution site, fed by a target
+    /// precision from `CanonicalPrecisionResolver::resolve` (#68). That
+    /// wiring touches CompactionTask + the manager scheduling path
+    /// and is deferred to the upcoming "compaction precision plumbing"
+    /// commit. Until then, this test is `#[ignore]` and stands as the
+    /// regression that the wiring commit must flip from ignored to
+    /// passing.
+    ///
+    /// Verifies (when run with `--ignored`):
+    /// 1. fp16 records flow into a source block bit-exact (INT-3-followup-a/c).
+    /// 2. After compaction, the rewritten block's records are *still* fp16.
+    /// Today: step (2) fails because compaction's VectorRecord intermediate
+    /// drops the precision label.
+    #[tokio::test]
+    #[ignore = "INT-3-followup-d: compaction VectorRecord intermediate drops fp16 precision; \
+                pending compaction-precision-plumbing commit"]
+    async fn fp16_records_survive_compaction_round_trip_bit_exact() {
+        // Intentionally left as a fixture-free test stub: the wiring commit
+        // will populate the test with a CompactionTask that carries the
+        // target precision, run it through Compaction::run_task (or the
+        // equivalent direct call), and assert the rewritten blocks decode
+        // as EmbeddingValues::Fp16 — same shape as the e2e test in
+        // src/storage/engines/core/formats/arrow_block/writer.rs
+        // (`fp16_records_survive_write_read_cycle_bit_exact`) but routed
+        // through the compaction read+rewrite pipeline.
+        panic!(
+            "stub — populate with a compaction round-trip once \
+             CompactionTask.precision_hint + resolver wiring lands"
+        );
+    }
 }

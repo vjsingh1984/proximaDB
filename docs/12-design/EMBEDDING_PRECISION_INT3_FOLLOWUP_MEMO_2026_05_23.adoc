@@ -147,6 +147,54 @@ chain works.
   catalog-lookup design with INT-3-followup-b.
 * INT-4-full — gated on followup-d completing.
 
+[#followup-d-gap]
+== INT-3-followup-d gap discovered during scoping
+
+INT-3-followup-d landed the precision-preservation primitive
+(`EmbeddingCell::coerce_to_precision`) + 4 unit tests, but the actual
+compaction wire-up is held by a separate gap: **compaction reads
+records via the legacy `VectorRecord` intermediate
+(`crates/foundation/proximadb-records/src/conversions.rs:181`
+`proxima_record_to_vector`), which has `vector: Vec<f32>` and
+unconditionally calls `to_fp32_owned()`**. The precision label is
+lost at this hop, so even with a fp16 source block and a fp16-typed
+bridge, the rewritten block emits Float32Array.
+
+A failing-by-design `#[ignore]`'d test
+(`sst::compaction::tests::tests::fp16_records_survive_compaction_round_trip_bit_exact`)
+stands as the regression that the next wiring commit must flip from
+ignored to passing. The wiring commit needs:
+
+* `CompactionTask.precision_hint: Option<EmbeddingScalarType>` — the
+  target precision the writer should reconstitute to, populated by
+  the compaction scheduler.
+* Compaction manager calls `CanonicalPrecisionResolver::resolve` (#68)
+  to populate the hint before enqueueing the task.
+* `compaction.rs` writer reconstitution sites
+  (`src/storage/engines/sst/compaction.rs:1083-1087, 1190-1194`)
+  call `cell.coerce_to_precision(target)` before passing records to
+  `ArrowBlockWriter::write_block`.
+
+Scope of the wiring commit: ~3 small edits + flip the ignored test
+to passing + add a recall@10 assertion on the rewritten block. Held
+out of INT-3-followup-d because it touches CompactionTask
+construction sites broadly and benefits from a focused review.
+
+== INT-4-full readiness
+
+After the wiring commit lands, the e2e + byte-halving assertion has
+all its prerequisites:
+
+* fp16 ingest path (followup-c) ✓
+* fp16 storage on flush (followup-a + -c) ✓
+* fp16 preservation through compaction (followup-d primitive ✓ +
+  wiring commit pending)
+* canonical-bytes per-precision metric (INT-2b — already shipped)
+
+The e2e test writes a fp16 collection, forces a flush + compaction,
+scrapes `/metrics/prometheus`, asserts the byte ratio is ~50% of an
+fp32 baseline.
+
 == Decision needed
 
 Two paths forward:

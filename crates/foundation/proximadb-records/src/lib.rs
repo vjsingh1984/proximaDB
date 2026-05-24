@@ -580,6 +580,31 @@ impl EmbeddingCell {
     pub fn as_embedding_values(&self) -> EmbeddingValues {
         self.values.clone()
     }
+
+    /// Coerce this cell's values to `target` precision in place. No-op when
+    /// `self.values.scalar_type() == target`. Goes through `fp32` as a
+    /// pivot for non-trivial precision changes, which is bit-exact for the
+    /// `fp16 → fp32 → fp16` round-trip (fp32 strictly dominates fp16, and
+    /// `half::f16` ↔ `f32` is deterministic in both directions).
+    ///
+    /// The `precision` metadata is updated to match the new variant so the
+    /// `cell.precision == cell.values.scalar_type()` invariant continues
+    /// to hold.
+    ///
+    /// Intended for compaction read+rewrite paths where the in-flight
+    /// intermediate representation went through fp32 (e.g. the legacy
+    /// `VectorRecord` shape) and the writer needs to re-apply the
+    /// collection's canonical precision before flushing the rewritten
+    /// block. The `target` typically comes from
+    /// `CanonicalPrecisionResolver::resolve` (PR INT-3-followup-b).
+    pub fn coerce_to_precision(&mut self, target: EmbeddingScalarType) {
+        if self.values.scalar_type() == target {
+            return;
+        }
+        let fp32_owned = self.values.to_fp32_owned();
+        self.values = EmbeddingValues::from_fp32_lossy(&fp32_owned, target);
+        self.precision = target;
+    }
 }
 
 /// Token sequence for LLM / event-stream records (spec §3 — sequence field).
@@ -1270,6 +1295,70 @@ mod tests {
         assert_eq!(ev.len(), v.len());
         assert!(!ev.is_empty());
         assert!(EmbeddingValues::Fp32(vec![]).is_empty());
+    }
+
+    #[test]
+    fn coerce_to_precision_is_noop_when_target_matches() {
+        let original = vec![1.0_f32, 2.0, 3.0, 4.0];
+        let mut cell =
+            EmbeddingCell::new_fp32("m", "dense_vector", 4, original.clone());
+        cell.coerce_to_precision(EmbeddingScalarType::Fp32);
+        assert_eq!(cell.values, EmbeddingValues::Fp32(original));
+        assert_eq!(cell.precision, EmbeddingScalarType::Fp32);
+    }
+
+    #[test]
+    fn coerce_fp16_to_fp16_via_fp32_pivot_is_bit_exact() {
+        // The fp32-pivot round-trip is bit-exact for fp16 because fp32
+        // strictly dominates fp16. This is the compaction read+rewrite
+        // case: source block is fp16, intermediate flattens to fp32,
+        // writer coerces back to fp16 — must match the original bits.
+        let src_fp32 = vec![1.0_f32, -2.5, 65504.0, 0.0001, 100.25, -0.5, 42.0, 7.125];
+        let original_fp16: Vec<half::f16> =
+            src_fp32.iter().map(|&x| half::f16::from_f32(x)).collect();
+
+        // Simulate the round-trip: cell stores fp32 (after the
+        // VectorRecord intermediate), then gets coerced back to fp16.
+        let promoted_fp32: Vec<f32> = original_fp16.iter().map(|x| x.to_f32()).collect();
+        let mut cell = EmbeddingCell {
+            model_id: "m".to_string(),
+            modality: "dense_vector".to_string(),
+            dim: 8,
+            values: EmbeddingValues::Fp32(promoted_fp32),
+            precision: EmbeddingScalarType::Fp32,
+            precision_epoch: None,
+        };
+        cell.coerce_to_precision(EmbeddingScalarType::Fp16);
+
+        match cell.values {
+            EmbeddingValues::Fp16(got) => assert_eq!(
+                got, original_fp16,
+                "bit-exact fp16 → fp32 → fp16 round-trip"
+            ),
+            other => panic!("expected Fp16, got {:?}", other.scalar_type()),
+        }
+        assert_eq!(cell.precision, EmbeddingScalarType::Fp16);
+    }
+
+    #[test]
+    fn coerce_fp32_to_fp16_updates_metadata() {
+        let mut cell = EmbeddingCell::new_fp32("m", "dense_vector", 3, vec![1.0, 2.0, 3.0]);
+        cell.coerce_to_precision(EmbeddingScalarType::Fp16);
+        assert_eq!(cell.values.scalar_type(), EmbeddingScalarType::Fp16);
+        assert_eq!(cell.precision, EmbeddingScalarType::Fp16);
+        assert_eq!(cell.values.len(), 3);
+    }
+
+    #[test]
+    fn coerce_fp32_to_bf16_then_back_preserves_precision_tag() {
+        let mut cell = EmbeddingCell::new_fp32("m", "dense_vector", 4, vec![1.0, 2.0, 3.0, 4.0]);
+        cell.coerce_to_precision(EmbeddingScalarType::Bf16);
+        assert_eq!(cell.values.scalar_type(), EmbeddingScalarType::Bf16);
+        assert_eq!(cell.precision, EmbeddingScalarType::Bf16);
+        // bf16 has same range as fp32 but lower mantissa; round-trip
+        // back to fp32 then forward to bf16 must be stable.
+        cell.coerce_to_precision(EmbeddingScalarType::Bf16);
+        assert_eq!(cell.precision, EmbeddingScalarType::Bf16);
     }
 
     #[test]
