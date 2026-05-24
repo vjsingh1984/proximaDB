@@ -82,11 +82,12 @@ ENV RUST_LOG=info \
     PROXIMADB_METRICS_PORT=9090
 
 # Expose ports
-# 5678: REST API
+# 5678: REST API (Prometheus metrics also served here at /metrics)
 # 5679: gRPC API
-# 5680: Arrow IPC (bulk operations)
-# 9090: Prometheus metrics
-EXPOSE 5678 5679 5680 9090
+# 5680: Arrow Flight (bulk ingest, columnar zero-copy)
+# 5433: PostgreSQL wire protocol (pgwire) — pgvector / psql / pgAdmin
+#       compatibility; enabled by default per PostgresServerConfig
+EXPOSE 5678 5679 5680 5433
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
@@ -98,6 +99,14 @@ VOLUME ["/data/proximadb"]
 # Working directory
 WORKDIR /data/proximadb
 
-# Entrypoint
-ENTRYPOINT ["/usr/local/bin/proximadb-server"]
+# Entrypoint: fetches latest pricing from CF R2 (published by the
+# anvaiops repo's publish-pricing-r2.yml workflow) at boot, then
+# execs the server. Replaces the prior hand-synced
+# scripts/sync_pricing_to_proximadb.sh flow. Fallback: if the fetch
+# fails (offline, R2 outage, env override), the baked-in
+# /config/pricing.json wins — pod never crashes on network blips.
+# See deploy/docker/entrypoint.sh for the full fetch + fallback logic.
+COPY deploy/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["--config", "/config/config.toml"]
