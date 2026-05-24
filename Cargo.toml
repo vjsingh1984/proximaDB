@@ -50,6 +50,7 @@ members = [
     "crates/modalities/proximadb-queue",
     "crates/modalities/proximadb-rank-core",
     "crates/modalities/proximadb-rank-features",
+    "crates/modalities/proximadb-rank-expr",
     "crates/storage/proximadb-storage-common",
     "crates/storage/proximadb-block-format",
     "crates/query/proximadb-document-query",
@@ -127,6 +128,7 @@ proximadb-observability = { path = "crates/modalities/proximadb-observability" }
 proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
 proximadb-rank-core = { path = "crates/modalities/proximadb-rank-core" }
 proximadb-rank-features = { path = "crates/modalities/proximadb-rank-features" }
+proximadb-rank-expr = { path = "crates/modalities/proximadb-rank-expr" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
 proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
@@ -206,6 +208,7 @@ proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
 proximadb-queue = { path = "crates/modalities/proximadb-queue" }
 proximadb-rank-core = { path = "crates/modalities/proximadb-rank-core" }
 proximadb-rank-features = { path = "crates/modalities/proximadb-rank-features" }
+proximadb-rank-expr = { path = "crates/modalities/proximadb-rank-expr" }
 proximadb-vector = { path = "crates/modalities/proximadb-vector" }
 proximadb-graph-arrow = { path = "crates/query/proximadb-graph-arrow" }
 proximadb-graph-query = { path = "crates/query/proximadb-graph-query" }
@@ -241,7 +244,8 @@ lazy_static = "1.5"
 # Networking & gRPC
 tonic = { version = "0.14", features = ["gzip", "tls-native-roots"] }
 tonic-prost = "0.14"  # Runtime codec for tonic-build 0.14+ generated code
-# tonic-reflection = "0.14"  # REMOVED: Unused in production code (confirmed by cargo-udeps)
+tonic-health = "0.14"  # Standard grpc.health.v1.Health service
+tonic-reflection = "0.14"  # Server reflection (grpc.reflection.v1alpha.ServerReflection)
 prost = "0.14"
 prost-types = { version = "0.14" }
 hyper = "0.14"  # Used by axum 0.6

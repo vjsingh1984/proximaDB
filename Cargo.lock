@@ -6097,6 +6097,7 @@ dependencies = [
  "proximadb-query-fusion",
  "proximadb-queue",
  "proximadb-rank-core",
+ "proximadb-rank-expr",
  "proximadb-rank-features",
  "proximadb-records",
  "proximadb-runtime",
@@ -6139,8 +6140,10 @@ dependencies = [
  "toml 0.8.23",
  "tonic",
  "tonic-build",
+ "tonic-health",
  "tonic-prost",
  "tonic-prost-build",
+ "tonic-reflection",
  "tower 0.4.13",
  "tower-http 0.4.4",
  "tracing",
@@ -6655,6 +6658,16 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-rank-expr"
+version = "0.2.0"
+dependencies = [
+ "proximadb-kernel",
+ "proximadb-rank-core",
+ "smallvec",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -8979,6 +8992,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -9135,6 +9149,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tonic-health"
+version = "0.14.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fcfab99db777fba2802f0dfa861d1628d1ae916fb199d29819941f139ae85082"
+dependencies = [
+ "prost",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-prost",
+]
+
+[[package]]
 name = "tonic-prost"
 version = "0.14.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9159,6 +9186,20 @@ dependencies = [
  "syn 2.0.117",
  "tempfile",
  "tonic-build",
+]
+
+[[package]]
+name = "tonic-reflection"
+version = "0.14.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "acccd136a4bf19810a1fde9c74edc6129b42a66b44d0c1c8aaa67aeb49a146a7"
+dependencies = [
+ "prost",
+ "prost-types",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-prost",
 ]
 
 [[package]]
