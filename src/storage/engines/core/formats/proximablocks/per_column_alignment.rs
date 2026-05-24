@@ -39,7 +39,7 @@
 //! per-column alignment (Q7)" and §"PR 5 — PAX per-column alignment header".
 
 use anyhow::{Result, bail};
-use proximadb_records::EmbeddingScalarType;
+use proximadb_records::{EmbeddingScalarType, EmbeddingValues, ProximaRecord};
 
 /// File-format magic for a PAX precision-aware block.
 pub const PAX_BLOCK_MAGIC: &[u8; 4] = b"PXBL";
@@ -308,6 +308,190 @@ impl PaxBlockHeaderV2 {
 
         Ok((Self { columns, row_count }, header_len))
     }
+}
+
+/// INT-3 dispatch lever: should this batch of records be written as a v2
+/// PAX block? Returns true iff at least one [`EmbeddingCell`] carries a
+/// non-Fp32 [`EmbeddingValues`] variant. fp32-only batches stay on the
+/// existing v1 path so the format risk is bounded to collections that
+/// explicitly opt into a non-fp32 canonical precision (LLD risk knob
+/// "gate writer choice on column types FIRST, then on the feature flag").
+pub fn should_use_v2_for_records(records: &[ProximaRecord]) -> bool {
+    records.iter().any(|r| {
+        r.embeddings
+            .iter()
+            .any(|cell| cell.values.scalar_type() != EmbeddingScalarType::Fp32)
+    })
+}
+
+/// Flatten an [`EmbeddingValues`] payload to little-endian native bytes
+/// (no header, no scale/zero_point metadata — those live elsewhere).
+///
+/// Returns `Err` for Int8Scalar / UInt8Scalar because the v2 PAX column
+/// layout has no slot for per-cell scale/zero_point — int8 column
+/// payload format is Phase 3 (`EMBEDDING_PRECISION_LLD_2026_05_22.adoc`
+/// §"Phase 3 — int8 canonical").
+fn write_native_bytes_into(values: &EmbeddingValues, buf: &mut Vec<u8>) -> Result<()> {
+    match values {
+        EmbeddingValues::Fp32(vs) => {
+            buf.reserve(vs.len() * 4);
+            for &v in vs {
+                buf.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        EmbeddingValues::Fp16(vs) => {
+            buf.reserve(vs.len() * 2);
+            for &v in vs {
+                buf.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        EmbeddingValues::Bf16(vs) => {
+            buf.reserve(vs.len() * 2);
+            for &v in vs {
+                buf.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        EmbeddingValues::Int8Scalar { .. } | EmbeddingValues::UInt8Scalar { .. } => {
+            bail!(
+                "int8/uint8 columns are not yet supported by v2 PAX block encoding (Phase 3 work)"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Encode a batch of records as a single v2 PAX block.
+///
+/// Column model: each `record.embeddings[c]` is column `c`. All records
+/// must agree on (1) the number of embedding cells and (2) the scalar
+/// type of every cell at each slot — these are per-collection invariants
+/// (one canonical precision per collection, fixed embedding-cell schema).
+///
+/// Returns `(block_bytes, column_table)`. The column_table mirrors the
+/// header's offsets so callers don't have to re-decode to find a column.
+/// Pad bytes between columns are zero-filled.
+///
+/// Errors:
+/// - records is empty (callers should skip the v2 path for empty batches)
+/// - mixed scalar_type for the same column slot across records
+/// - mixed embedding cell count across records
+/// - any column carries Int8/UInt8 (Phase 3 work)
+pub fn encode_pax_v2_block(
+    records: &[ProximaRecord],
+) -> Result<(Vec<u8>, Vec<ColumnTableEntry>)> {
+    if records.is_empty() {
+        bail!("cannot encode empty record batch as v2 PAX block");
+    }
+    let num_columns = records[0].embeddings.len();
+    if num_columns == 0 {
+        bail!("v2 PAX block requires at least one embedding column");
+    }
+
+    // First pass: validate per-column scalar_type consistency + build
+    // per-column native-bytes payloads.
+    let mut column_scalar_types: Vec<EmbeddingScalarType> = Vec::with_capacity(num_columns);
+    for c in 0..num_columns {
+        column_scalar_types.push(records[0].embeddings[c].values.scalar_type());
+    }
+
+    let mut column_payloads: Vec<Vec<u8>> = vec![Vec::new(); num_columns];
+    for (r_idx, record) in records.iter().enumerate() {
+        if record.embeddings.len() != num_columns {
+            bail!(
+                "record {} has {} embedding cells; expected {} (first record)",
+                r_idx,
+                record.embeddings.len(),
+                num_columns
+            );
+        }
+        for (c_idx, cell) in record.embeddings.iter().enumerate() {
+            let st = cell.values.scalar_type();
+            if st != column_scalar_types[c_idx] {
+                bail!(
+                    "record {} column {} scalar_type {:?} mismatches column scalar_type {:?}",
+                    r_idx,
+                    c_idx,
+                    st,
+                    column_scalar_types[c_idx]
+                );
+            }
+            write_native_bytes_into(&cell.values, &mut column_payloads[c_idx])?;
+        }
+    }
+
+    // Build layout requests + delegate to plan_layout for the header.
+    let requests: Vec<ColumnLayoutRequest> = column_scalar_types
+        .iter()
+        .zip(column_payloads.iter())
+        .enumerate()
+        .map(|(c_idx, (&scalar_type, payload))| {
+            // Column id == slot index; callers that want catalog column
+            // ids can post-process the returned ColumnTableEntry list.
+            ColumnLayoutRequest {
+                column_id: c_idx as u16,
+                scalar_type,
+                payload_len: payload.len() as u32,
+            }
+        })
+        .collect();
+    let row_count: u32 = records.len() as u32;
+    let (header, table) = PaxBlockHeaderV2::plan_layout(&requests, row_count)?;
+
+    // Stitch: header || pad to col[0].offset || col[0].payload || pad ||
+    // col[1].payload || ... Pad bytes are zero (alignment slack only).
+    let total_len = table
+        .last()
+        .map(|t| t.offset as usize + column_payloads.last().map(|p| p.len()).unwrap_or(0))
+        .unwrap_or(header.len());
+    let mut out = Vec::with_capacity(total_len);
+    out.extend_from_slice(&header);
+    for (entry, payload) in table.iter().zip(column_payloads.iter()) {
+        let target = entry.offset as usize;
+        if out.len() < target {
+            out.resize(target, 0u8); // zero-fill alignment pad
+        }
+        debug_assert_eq!(out.len(), target, "writer offset drift at column {}", entry.column_id);
+        out.extend_from_slice(payload);
+    }
+    Ok((out, table))
+}
+
+/// Decode a v2 PAX block's header + per-column raw byte slices.
+///
+/// Returns the parsed header and a `Vec<&[u8]>` of column-payload slices
+/// in the same order as the header's column_table. Each slice spans
+/// `[col[i].offset, col[i+1].offset)` for non-final columns and
+/// `[col[last].offset, data.len())` for the last column, which means
+/// the slice **may include trailing alignment-pad bytes** that satisfy
+/// the next column's alignment. The caller is responsible for chopping
+/// the slice to its actual payload length (typically
+/// `row_count * scalar_type.bytes_per_element()`) before casting to a
+/// typed slice (`&[f16]`, `&[bf16]`, etc.).
+///
+/// The slice start is guaranteed by [`PaxBlockHeaderV2::decode`] to be
+/// aligned to `1 << alignment_log2`, so the typed cast is safe.
+pub fn decode_pax_v2_block(data: &[u8]) -> Result<(PaxBlockHeaderV2, Vec<&[u8]>)> {
+    let (header, _header_len) = PaxBlockHeaderV2::decode(data)?;
+    let mut slices = Vec::with_capacity(header.columns.len());
+    for (i, entry) in header.columns.iter().enumerate() {
+        let start = entry.offset as usize;
+        let end = if i + 1 < header.columns.len() {
+            header.columns[i + 1].offset as usize
+        } else {
+            data.len()
+        };
+        if start > end || end > data.len() {
+            bail!(
+                "column {} bounds [{}, {}) outside block (len={})",
+                entry.column_id,
+                start,
+                end,
+                data.len()
+            );
+        }
+        slices.push(&data[start..end]);
+    }
+    Ok((header, slices))
 }
 
 #[cfg(test)]
@@ -645,5 +829,204 @@ mod tests {
                 bytes_aligned
             );
         }
+    }
+
+    // ---- INT-3 writer/reader/dispatch tests --------------------------------
+
+    use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
+
+    fn record_with_cell(oid: &str, values: EmbeddingValues) -> ProximaRecord {
+        ProximaRecord {
+            oid: oid.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: values.len() as u32,
+                values,
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn should_use_v2_for_records_is_false_for_all_fp32() {
+        let recs = vec![
+            record_with_cell("a", EmbeddingValues::Fp32(vec![1.0, 2.0])),
+            record_with_cell("b", EmbeddingValues::Fp32(vec![3.0, 4.0])),
+        ];
+        assert!(!should_use_v2_for_records(&recs));
+    }
+
+    #[test]
+    fn should_use_v2_for_records_is_true_when_any_record_is_fp16() {
+        let recs = vec![
+            record_with_cell("a", EmbeddingValues::Fp32(vec![1.0, 2.0])),
+            record_with_cell(
+                "b",
+                EmbeddingValues::Fp16(vec![half::f16::from_f32(3.0), half::f16::from_f32(4.0)]),
+            ),
+        ];
+        assert!(should_use_v2_for_records(&recs));
+    }
+
+    #[test]
+    fn should_use_v2_for_records_is_false_for_empty_input() {
+        let recs: Vec<ProximaRecord> = vec![];
+        assert!(!should_use_v2_for_records(&recs));
+    }
+
+    #[test]
+    fn encode_pax_v2_block_round_trips_fp16_column() {
+        // 3 records, 1 column, 4 fp16 elements each = 3*4*2 = 24 payload bytes.
+        let mkv = |xs: &[f32]| {
+            EmbeddingValues::Fp16(xs.iter().map(|&x| half::f16::from_f32(x)).collect())
+        };
+        let recs = vec![
+            record_with_cell("r0", mkv(&[1.0, 2.0, 3.0, 4.0])),
+            record_with_cell("r1", mkv(&[5.0, 6.0, 7.0, 8.0])),
+            record_with_cell("r2", mkv(&[9.0, 10.0, 11.0, 12.0])),
+        ];
+        let (bytes, table) = encode_pax_v2_block(&recs).unwrap();
+
+        // Header: 8 prefix + 1*8 entry + 8 suffix = 24 bytes.
+        // fp16 alignment_log2 = 1 (2-byte) → offset 24 is already 2-aligned.
+        // Payload: 3 rows * 4 elts * 2 B = 24 bytes.
+        assert_eq!(bytes.len(), 24 + 24);
+        assert_eq!(table.len(), 1);
+        assert_eq!(table[0].column_id, 0);
+        assert_eq!(table[0].scalar_type, EmbeddingScalarType::Fp16);
+        assert_eq!(table[0].alignment_log2, 1);
+        assert_eq!(table[0].offset, 24);
+
+        // Decode + verify the column slice round-trips the fp16 elements.
+        let (parsed, slices) = decode_pax_v2_block(&bytes).unwrap();
+        assert_eq!(parsed.row_count, 3);
+        assert_eq!(parsed.columns, table);
+        assert_eq!(slices.len(), 1);
+        assert_eq!(slices[0].len(), 24);
+
+        let mut got = Vec::with_capacity(12);
+        for chunk in slices[0].chunks_exact(2) {
+            got.push(half::f16::from_le_bytes([chunk[0], chunk[1]]).to_f32());
+        }
+        assert_eq!(
+            got,
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+        );
+    }
+
+    #[test]
+    fn encode_pax_v2_block_pads_fp32_column_after_int_alignment_boundary() {
+        // Mixed: a small fp32 column followed by an fp16 column.
+        // Test that the offset table places each column at its native
+        // alignment and that decode_pax_v2_block hands back the right bytes.
+        let recs = vec![
+            ProximaRecord {
+                oid: "r0".into(),
+                embeddings: vec![
+                    EmbeddingCell {
+                        model_id: "fp32-col".into(),
+                        modality: "v".into(),
+                        values: EmbeddingValues::Fp32(vec![1.0, 2.0]),
+                        dim: 2,
+                        ..Default::default()
+                    },
+                    EmbeddingCell {
+                        model_id: "fp16-col".into(),
+                        modality: "v".into(),
+                        values: EmbeddingValues::Fp16(vec![half::f16::from_f32(7.0)]),
+                        dim: 1,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+            ProximaRecord {
+                oid: "r1".into(),
+                embeddings: vec![
+                    EmbeddingCell {
+                        model_id: "fp32-col".into(),
+                        modality: "v".into(),
+                        values: EmbeddingValues::Fp32(vec![3.0, 4.0]),
+                        dim: 2,
+                        ..Default::default()
+                    },
+                    EmbeddingCell {
+                        model_id: "fp16-col".into(),
+                        modality: "v".into(),
+                        values: EmbeddingValues::Fp16(vec![half::f16::from_f32(8.0)]),
+                        dim: 1,
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            },
+        ];
+        let (bytes, table) = encode_pax_v2_block(&recs).unwrap();
+        assert_eq!(table.len(), 2);
+        assert_eq!(table[0].scalar_type, EmbeddingScalarType::Fp32);
+        assert_eq!(table[1].scalar_type, EmbeddingScalarType::Fp16);
+        // Header is 8 prefix + 2*8 entries + 8 suffix = 32 bytes.
+        // col[0] starts at 32 (already 4-aligned). 4 fp32 * 4 B = 16 B. Ends at 48.
+        // col[1] is fp16 (2-aligned), 48 is already 2-aligned → no pad.
+        assert_eq!(table[0].offset, 32);
+        assert_eq!(table[1].offset, 48);
+
+        let (_, slices) = decode_pax_v2_block(&bytes).unwrap();
+        // Column 0: 4 fp32 elements
+        assert_eq!(slices[0].len(), 16);
+        let fp32_got: Vec<f32> = slices[0]
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        assert_eq!(fp32_got, vec![1.0, 2.0, 3.0, 4.0]);
+        // Column 1: 2 fp16 elements
+        assert!(slices[1].len() >= 4);
+        let fp16_got: Vec<f32> = slices[1][..4]
+            .chunks_exact(2)
+            .map(|c| half::f16::from_le_bytes([c[0], c[1]]).to_f32())
+            .collect();
+        assert_eq!(fp16_got, vec![7.0, 8.0]);
+    }
+
+    #[test]
+    fn encode_pax_v2_block_rejects_per_column_scalar_type_mismatch() {
+        let recs = vec![
+            record_with_cell("r0", EmbeddingValues::Fp16(vec![half::f16::from_f32(1.0)])),
+            record_with_cell("r1", EmbeddingValues::Fp32(vec![2.0])),
+        ];
+        let err = encode_pax_v2_block(&recs).unwrap_err().to_string();
+        assert!(err.contains("scalar_type"), "got: {err}");
+    }
+
+    #[test]
+    fn encode_pax_v2_block_rejects_int8_column_with_phase3_message() {
+        let recs = vec![record_with_cell(
+            "r0",
+            EmbeddingValues::Int8Scalar {
+                values: vec![1, 2, 3],
+                scale: 1.0,
+                zero_point: 0,
+            },
+        )];
+        let err = encode_pax_v2_block(&recs).unwrap_err().to_string();
+        assert!(err.contains("Phase 3"), "got: {err}");
+    }
+
+    #[test]
+    fn encode_pax_v2_block_rejects_empty_input() {
+        assert!(encode_pax_v2_block(&[]).is_err());
+    }
+
+    #[test]
+    fn encode_pax_v2_block_rejects_records_with_zero_embedding_cells() {
+        let rec = ProximaRecord {
+            oid: "r0".into(),
+            embeddings: vec![],
+            ..Default::default()
+        };
+        let err = encode_pax_v2_block(&[rec]).unwrap_err().to_string();
+        assert!(err.contains("at least one"), "got: {err}");
     }
 }
