@@ -243,6 +243,17 @@ pub enum EmbeddingValues {
     },
 }
 
+impl Default for EmbeddingValues {
+    /// `Fp32(Vec::new())` so an empty default matches what `Vec<f32>`'s
+    /// own default produced before INT-2.5b's field flip. Lets
+    /// `#[derive(Default)]` continue to work on `EmbeddingCell` + lets
+    /// callers spread `..Default::default()` over the struct without
+    /// having to spell out an explicit variant.
+    fn default() -> Self {
+        Self::Fp32(Vec::new())
+    }
+}
+
 impl EmbeddingValues {
     pub fn len(&self) -> usize {
         match self {
@@ -373,11 +384,20 @@ pub struct EmbeddingCell {
     pub model_id: String,
     /// Modality tag (e.g. "text", "image", "audio").
     pub modality: String,
-    /// Dense float32 vector values.
-    pub values: Vec<f32>,
+    /// Typed vector payload. INT-2.5b flipped this from `Vec<f32>` to
+    /// `EmbeddingValues` so non-fp32 precisions (fp16, bf16, int8) can
+    /// flow through the ingest → WAL → memtable → PAX chain without
+    /// being downconverted to fp32. The PR 1 advisory `precision` tag
+    /// is now structurally enforced: `cell.precision ==
+    /// cell.values.scalar_type()` is the invariant the custom serde
+    /// impls + the v1 ingest validator (PR 3b) maintain together.
+    pub values: EmbeddingValues,
     /// Declared dimensionality (must equal `values.len()` for dense vectors).
     pub dim: u32,
-    /// Declared scalar storage precision (PR 1 advisory; PR 3 authoritative).
+    /// Scalar storage precision. INT-2.5b: structurally implied by the
+    /// active `values` variant; kept on the struct for ergonomics (some
+    /// readers want the tag without matching the enum) and for the
+    /// custom Serialize impl's wire layout.
     pub precision: EmbeddingScalarType,
     /// Precision epoch this cell was written under, when known.
     pub precision_epoch: Option<u64>,
@@ -399,15 +419,40 @@ impl Serialize for EmbeddingCell {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        // Field count is 5 when precision_epoch is None (skipped), 6 otherwise.
-        // serialize_struct's count is advisory for some formats and required
-        // for others; 6 covers the maximum case and skip_field handles the
-        // optional case correctly for human-readable formats.
+
+        // INT-2.5b Q1 (accepted recommendation): hard-error on non-Fp32
+        // variants for the v1 bincode/JSON wire shape. The PR 3b ingest
+        // validator makes this unreachable in production; converting the
+        // bug into a loud error here means recovery / compaction /
+        // cross-region replication paths that bypass the validator can't
+        // silently downconvert + write fp32 bytes for a record the
+        // catalog claims is fp16.
+        //
+        // The future v2 wire path (PWAL-prefixed segments from INT-2b)
+        // will use a separate serializer that emits the natural enum
+        // shape — that path's code lives in a different method on the
+        // WAL serializer trait and bypasses this impl.
+        let values_fp32: &[f32] = match &self.values {
+            EmbeddingValues::Fp32(v) => v.as_slice(),
+            other => {
+                return Err(serde::ser::Error::custom(format!(
+                    "v1 EmbeddingCell serializer refuses non-Fp32 variant {:?}: \
+                     PR 3b ingest validator should have rejected this record. \
+                     If this fires from a recovery/compaction/replication path, \
+                     wire that path through the v2 serializer instead.",
+                    other.scalar_type()
+                )));
+            }
+        };
+
         let field_count = if self.precision_epoch.is_some() { 6 } else { 5 };
         let mut state = serializer.serialize_struct("EmbeddingCell", field_count)?;
         state.serialize_field("model_id", &self.model_id)?;
         state.serialize_field("modality", &self.modality)?;
-        state.serialize_field("values", &self.values)?;
+        // Emit as a length-prefixed fp32 sequence — byte-identical to
+        // what the pre-INT-2.5b `Vec<f32>` field's derived Serialize
+        // produced. The fixture test locks this.
+        state.serialize_field("values", values_fp32)?;
         state.serialize_field("dim", &self.dim)?;
         state.serialize_field("precision", &self.precision)?;
         match &self.precision_epoch {
@@ -423,10 +468,10 @@ impl<'de> Deserialize<'de> for EmbeddingCell {
     where
         D: serde::Deserializer<'de>,
     {
-        // Use serde's derived-style visitor via #[derive(Deserialize)] on a
-        // shadow struct that mirrors EmbeddingCell's field shape exactly.
-        // This keeps the deserialization logic in sync with the derived
-        // back-compat behavior (#[serde(default)] on the new fields).
+        // Shadow struct mirrors the v1 wire shape exactly. `values` is
+        // read as `Vec<f32>` (the legacy field type) and immediately
+        // wrapped in `EmbeddingValues::Fp32(v)` because v1 wire format
+        // always carries fp32.
         #[derive(Deserialize)]
         #[serde(rename = "EmbeddingCell")]
         struct Shadow {
@@ -440,12 +485,21 @@ impl<'de> Deserialize<'de> for EmbeddingCell {
             precision_epoch: Option<u64>,
         }
         let s = Shadow::deserialize(deserializer)?;
+        // INT-2.5b Q2 (accepted recommendation): stamp precision = Fp32
+        // unconditionally on v1 deserialize. Enforces the invariant
+        // `cell.precision == cell.values.scalar_type()` for every cell
+        // returned by the v1 reader. The on-disk `precision` tag is
+        // discarded — it was always advisory and the actual bytes are
+        // always fp32 on the v1 wire. (No log: the records crate has no
+        // tracing dep; if writers ever stamp non-Fp32 on a v1 record,
+        // the bug will surface via the inevitable downstream mismatch.)
+        let _ignored_on_disk_precision = s.precision;
         Ok(EmbeddingCell {
             model_id: s.model_id,
             modality: s.modality,
-            values: s.values,
+            values: EmbeddingValues::Fp32(s.values),
             dim: s.dim,
-            precision: s.precision,
+            precision: EmbeddingScalarType::Fp32,
             precision_epoch: s.precision_epoch,
         })
     }
@@ -462,43 +516,69 @@ impl EmbeddingCell {
         Self {
             model_id: model_id.into(),
             modality: modality.into(),
-            values,
+            values: EmbeddingValues::Fp32(values),
             dim,
             precision: EmbeddingScalarType::Fp32,
             precision_epoch: None,
         }
     }
 
+    /// Construct a cell from already-typed values. The `precision` field
+    /// is set to match the variant so the
+    /// `cell.precision == cell.values.scalar_type()` invariant holds.
+    pub fn new_typed(
+        model_id: impl Into<String>,
+        modality: impl Into<String>,
+        dim: u32,
+        values: EmbeddingValues,
+    ) -> Self {
+        let precision = values.scalar_type();
+        Self {
+            model_id: model_id.into(),
+            modality: modality.into(),
+            values,
+            dim,
+            precision,
+            precision_epoch: None,
+        }
+    }
+
+    /// Borrowed fp32 view. Returns `Some(&[f32])` only when the underlying
+    /// variant is `Fp32`. For non-fp32 variants, callers must use
+    /// `as_fp32_cow()` (one-shot promote) or `as_embedding_values()`
+    /// (typed view).
     pub fn as_fp32_slice(&self) -> &[f32] {
-        &self.values
+        match &self.values {
+            EmbeddingValues::Fp32(v) => v.as_slice(),
+            // Non-fp32 path returns empty rather than panic — callers
+            // that need the actual bytes should use as_fp32_cow().
+            _ => &[],
+        }
     }
 
-    /// INT-2.5a: borrowed-or-owned fp32 view of the cell's values.
+    /// Borrowed-or-owned fp32 view of the cell's values.
     ///
-    /// This is the migration target for the 145 read sites that currently
-    /// access `cell.values` directly. Today every cell stores `Vec<f32>`
-    /// internally so this returns `Cow::Borrowed(&self.values)` — zero
-    /// copy, same behavior as `&cell.values`.
-    ///
-    /// After INT-2.5b flips the storage to `EmbeddingValues`, the Fp32
-    /// variant continues to return `Cow::Borrowed`; non-fp32 variants
-    /// promote to fp32 once and return `Cow::Owned`. Callers that need
-    /// to read fp32 (distance compute, legacy proto bridges, capacity
-    /// dashboards) work unchanged through both shapes.
-    ///
-    /// Callers that need the typed payload (PAX writer in INT-3, future
-    /// fp16-native distance kernels) should call `as_embedding_values()`
-    /// instead so they get the variant without the lossy promote.
+    /// `Fp32` → `Cow::Borrowed` (zero copy). All other variants promote
+    /// to fp32 once and return `Cow::Owned`. The 145+ read sites that
+    /// just want fp32 bytes use this as their migration target.
     pub fn as_fp32_cow(&self) -> std::borrow::Cow<'_, [f32]> {
-        std::borrow::Cow::Borrowed(&self.values)
+        match &self.values {
+            EmbeddingValues::Fp32(v) => std::borrow::Cow::Borrowed(v.as_slice()),
+            other => std::borrow::Cow::Owned(other.to_fp32_owned()),
+        }
     }
 
+    /// Total bytes the cell's values occupy in canonical storage.
+    /// Uses the variant's `byte_size()` directly so it's correct for
+    /// every precision (4 bytes/elem for fp32, 2 for fp16/bf16, etc.).
     pub fn values_byte_size(&self) -> usize {
-        self.values.len() * self.precision.bytes_per_element()
+        self.values.byte_size()
     }
 
+    /// Clone the typed values. Cheap when the underlying Vec is the
+    /// natural representation; semantically identical to `self.values.clone()`.
     pub fn as_embedding_values(&self) -> EmbeddingValues {
-        EmbeddingValues::from_fp32_lossy(&self.values, self.precision)
+        self.values.clone()
     }
 }
 
@@ -1270,7 +1350,7 @@ mod tests {
         assert_eq!(cell.model_id, "bge-small");
         assert_eq!(cell.modality, "text");
         assert_eq!(cell.dim, 4);
-        assert_eq!(cell.values, vec![0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(cell.as_fp32_slice(), &[0.1, 0.2, 0.3, 0.4]);
         assert_eq!(cell.precision, EmbeddingScalarType::Fp32);
         assert_eq!(cell.precision_epoch, None);
     }
@@ -1304,14 +1384,24 @@ mod tests {
     }
 
     #[test]
-    fn embedding_cell_byte_size_reflects_declared_precision() {
+    fn embedding_cell_byte_size_reflects_active_variant() {
+        // INT-2.5b: values are now authoritative for byte size — the
+        // precision tag must match the variant (the
+        // cell.precision == cell.values.scalar_type() invariant).
+        // Constructing via new_fp32 builds an Fp32 variant (4 bytes/elem).
         let cell = EmbeddingCell::new_fp32("m", "text", 1024, vec![0.0; 1024]);
         assert_eq!(cell.values_byte_size(), 4096);
-        let cell16 = EmbeddingCell {
-            precision: EmbeddingScalarType::Fp16,
-            ..cell
-        };
+        // Switching to a fp16 cell requires building the variant explicitly;
+        // mutating the precision tag alone (the pre-INT-2.5b pattern) is no
+        // longer enough because byte_size() reads from the variant directly.
+        let cell16 = EmbeddingCell::new_typed(
+            "m",
+            "text",
+            1024,
+            EmbeddingValues::Fp16(vec![half::f16::from_f32(0.0); 1024]),
+        );
         assert_eq!(cell16.values_byte_size(), 2048);
+        assert_eq!(cell16.precision, EmbeddingScalarType::Fp16);
     }
 
     /// INT-2.5b fixture: locks the on-disk bincode bytes for a known
@@ -1328,7 +1418,7 @@ mod tests {
         let cell = EmbeddingCell {
             model_id: "fixture-model".to_string(),
             modality: "text".to_string(),
-            values: vec![0.1, 0.2, 0.3, 0.4],
+            values: EmbeddingValues::Fp32(vec![0.1, 0.2, 0.3, 0.4]),
             dim: 4,
             precision: EmbeddingScalarType::Fp32,
             precision_epoch: None,
@@ -1426,16 +1516,35 @@ text\\x04\\x00\\x00\\x00\\x00\\x00\\x00\\x00\
         let cell: EmbeddingCell = serde_json::from_str(old_json).unwrap();
         assert_eq!(cell.precision, EmbeddingScalarType::Fp32);
         assert_eq!(cell.precision_epoch, None);
-        assert_eq!(cell.values, vec![0.1, 0.2, 0.3]);
+        assert_eq!(cell.as_fp32_slice(), &[0.1, 0.2, 0.3]);
     }
 
     #[test]
-    fn embedding_cell_as_embedding_values_uses_declared_precision() {
-        let mut cell = EmbeddingCell::new_fp32("m", "text", 3, vec![0.0, 1.0, 2.0]);
-        cell.precision = EmbeddingScalarType::Fp16;
-        let ev = cell.as_embedding_values();
-        assert_eq!(ev.scalar_type(), EmbeddingScalarType::Fp16);
-        assert_eq!(ev.len(), 3);
+    fn embedding_cell_as_embedding_values_returns_active_variant() {
+        // INT-2.5b: as_embedding_values now returns a clone of the
+        // stored variant directly — the pre-INT-2.5b behavior of
+        // "promote-then-tag-from-precision-field" no longer applies
+        // because the variant IS the source of truth. A cell built
+        // with new_typed(Fp16(...)) returns Fp16; one built with
+        // new_fp32 returns Fp32.
+        let cell_fp32 = EmbeddingCell::new_fp32("m", "text", 3, vec![0.0, 1.0, 2.0]);
+        let ev_fp32 = cell_fp32.as_embedding_values();
+        assert_eq!(ev_fp32.scalar_type(), EmbeddingScalarType::Fp32);
+        assert_eq!(ev_fp32.len(), 3);
+
+        let cell_fp16 = EmbeddingCell::new_typed(
+            "m",
+            "text",
+            3,
+            EmbeddingValues::Fp16(vec![
+                half::f16::from_f32(0.0),
+                half::f16::from_f32(1.0),
+                half::f16::from_f32(2.0),
+            ]),
+        );
+        let ev_fp16 = cell_fp16.as_embedding_values();
+        assert_eq!(ev_fp16.scalar_type(), EmbeddingScalarType::Fp16);
+        assert_eq!(ev_fp16.len(), 3);
     }
 
     // === PR 2: ProximaRecord.schema_version ===

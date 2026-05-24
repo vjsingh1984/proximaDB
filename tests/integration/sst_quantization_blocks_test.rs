@@ -116,7 +116,7 @@ async fn test_quantization_with_256kb_blocks() -> Result<()> {
         let query = vectors[0]
             .embeddings
             .first()
-            .map(|e| e.values.clone())
+            .map(|e| e.values.to_fp32_owned())
             .unwrap_or_default();
         use proximadb::storage::traits::StorageQueryContext;
 

@@ -404,7 +404,7 @@ impl ColumnarSerializer {
             .map(|r| {
                 r.embeddings
                     .first()
-                    .map_or(&[][..], |e| e.values.as_slice())
+                    .map_or(&[][..], |e| e.as_fp32_slice())
             })
             .collect();
 
@@ -590,7 +590,7 @@ impl ColumnarSerializer {
                     record.embeddings.push(EmbeddingCell {
                         model_id: "default".to_string(),
                         modality: "vector".to_string(),
-                        values: vector,
+                        values: proximadb_records::EmbeddingValues::Fp32(vector),
                         dim,
                         ..Default::default()
                     });

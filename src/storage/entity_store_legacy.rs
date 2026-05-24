@@ -278,7 +278,7 @@ impl ProximaEntityStore {
                             model_id: e.model_id.clone(),
                             modality: format!("{:?}", e.modality),
                             dim: e.dimension,
-                            values: e.vector.clone(),
+                            values: proximadb_records::EmbeddingValues::Fp32(e.vector.clone()),
                             ..Default::default()
                         }],
                         record_version: 1,

@@ -365,7 +365,7 @@ mod tests {
                 _vector
                     .embeddings
                     .first()
-                    .map(|e| e.values.clone())
+                    .map(|e| e.values.to_fp32_owned())
                     .unwrap_or_default(),
             ),
             top_k: Some(1),

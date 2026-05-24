@@ -785,7 +785,7 @@ impl AdvancedSearchOptimizer {
             let embedding_values = record
                 .embeddings
                 .first()
-                .map(|e| e.values.clone())
+                .map(|e| e.values.to_fp32_owned())
                 .unwrap_or_default();
             let dim = embedding_values.len();
             let vector_bytes = dim * std::mem::size_of::<f32>();
@@ -1012,7 +1012,7 @@ impl AdvancedSearchOptimizer {
             let embedding_values = record
                 .embeddings
                 .first()
-                .map(|e| e.values.as_slice())
+                .map(|e| e.as_fp32_slice())
                 .unwrap_or(&[]);
             let dist_result = distance_compute.calculate_distance(
                 query_vector,

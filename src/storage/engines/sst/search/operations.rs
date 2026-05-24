@@ -200,7 +200,7 @@ impl SearchOperations {
                 let vector = record
                     .embeddings
                     .first()
-                    .map(|embedding| embedding.values.clone())
+                    .map(|embedding| embedding.values.to_fp32_owned())
                     .unwrap_or_default();
 
                 let result = OptimizedSearchRecord {

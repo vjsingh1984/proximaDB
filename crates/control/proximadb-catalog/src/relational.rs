@@ -398,7 +398,8 @@ impl CatalogRow {
                     .cloned()
                     .unwrap_or_else(|| "dense_vector".to_string()),
                 dim: vector.len() as u32,
-                values: vector.clone(),
+                // INT-2.5b: vector is Vec<f32>, wrap in the typed variant.
+                values: proximadb_records::EmbeddingValues::Fp32(vector.clone()),
                 ..Default::default()
             });
         }

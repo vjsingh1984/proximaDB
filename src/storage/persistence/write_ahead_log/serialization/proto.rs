@@ -79,8 +79,8 @@ mod tests {
         assert_eq!(deserialized.len(), 1);
         assert_eq!(deserialized[0].oid, vectors[0].oid);
         assert_eq!(
-            deserialized[0].embeddings.first().map(|e| &e.values),
-            vectors[0].embeddings.first().map(|e| &e.values)
+            deserialized[0].embeddings.first().map(|e| &*e.as_fp32_cow()),
+            vectors[0].embeddings.first().map(|e| &*e.as_fp32_cow())
         );
     }
 

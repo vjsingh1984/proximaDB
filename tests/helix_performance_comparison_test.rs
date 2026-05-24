@@ -355,7 +355,7 @@ mod performance_comparison_tests {
                 vectors[i * 100]
                     .embeddings
                     .first()
-                    .map(|e| e.values.clone())
+                    .map(|e| e.values.to_fp32_owned())
                     .unwrap_or_default()
             })
             .collect();
@@ -443,7 +443,7 @@ mod performance_comparison_tests {
                 vectors[i * 100]
                     .embeddings
                     .first()
-                    .map(|e| e.values.clone())
+                    .map(|e| e.values.to_fp32_owned())
                     .unwrap_or_default()
             })
             .collect();
@@ -519,7 +519,7 @@ mod performance_comparison_tests {
                     vectors[i]
                         .embeddings
                         .first()
-                        .map(|e| e.values.clone())
+                        .map(|e| e.values.to_fp32_owned())
                         .unwrap_or_default()
                 })
                 .collect();
@@ -682,17 +682,17 @@ mod performance_comparison_tests {
             vectors[50]
                 .embeddings
                 .first()
-                .map(|e| e.values.clone())
+                .map(|e| e.values.to_fp32_owned())
                 .unwrap_or_default(), // Cluster 0
             vectors[1050]
                 .embeddings
                 .first()
-                .map(|e| e.values.clone())
+                .map(|e| e.values.to_fp32_owned())
                 .unwrap_or_default(), // Cluster 1
             vectors[2050]
                 .embeddings
                 .first()
-                .map(|e| e.values.clone())
+                .map(|e| e.values.to_fp32_owned())
                 .unwrap_or_default(), // Cluster 2
         ];
 
@@ -881,7 +881,7 @@ mod performance_comparison_tests {
                 vectors[i * 200]
                     .embeddings
                     .first()
-                    .map(|e| e.values.clone())
+                    .map(|e| e.values.to_fp32_owned())
                     .unwrap_or_default()
             })
             .collect();

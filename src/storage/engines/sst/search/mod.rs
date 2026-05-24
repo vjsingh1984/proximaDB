@@ -898,7 +898,7 @@ impl SstEngine {
             }
 
             // Compute raw distance
-            let raw_distance = distance_computer.distance(query_vector, &embedding.values);
+            let raw_distance = distance_computer.distance(query_vector, &*embedding.as_fp32_cow());
 
             // Use SimilarityResult to get normalized_score (higher = more similar)
             // This ensures consistency with the rest of the codebase and BoundedPriorityQueue
@@ -912,7 +912,7 @@ impl SstEngine {
                 vector_id: Some(record.oid.clone()),
                 score: similarity_result.normalized_score, // Use normalized_score (higher = better)
                 similarity: Some(similarity_result.normalized_score),
-                vector: Some(Arc::new(embedding.values.clone())),
+                vector: Some(Arc::new(embedding.values.to_fp32_owned())),
                 metadata,
                 ..Default::default()
             });

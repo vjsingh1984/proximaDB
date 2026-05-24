@@ -329,10 +329,13 @@ pub fn proto_record_to_envelope(proto: &v2::ProximaRecord) -> Result<ProximaReco
 
 /// Convert a canonical Rust `ProximaRecord` into the v2 protobuf record shape.
 pub fn envelope_to_proto_record(record: &ProximaRecord) -> v2::ProximaRecord {
-    let vector = record
+    // INT-2.5b: v2 proto's `vector: Vec<f32>` is a v1-style fp32 field.
+    // Promote non-Fp32 variants on the way out; native precision-aware
+    // proto fields land in a future v3 proto.
+    let vector: Vec<f32> = record
         .embeddings
         .first()
-        .map(|embedding| embedding.values.clone())
+        .map(|embedding| embedding.values.to_fp32_owned())
         .unwrap_or_default();
 
     v2::ProximaRecord {
@@ -643,7 +646,7 @@ mod tests {
 
         let envelope = proto_record_to_envelope(&proto).expect("decode proto record");
         assert_eq!(envelope.oid, "r1");
-        assert_eq!(envelope.embeddings[0].values, vec![0.1, 0.2]);
+        assert_eq!(envelope.embeddings[0].as_fp32_slice(), &[0.1, 0.2]);
         assert_eq!(
             envelope.props.get("price"),
             Some(&ProximaTreeNode::Value(ProximaValue::Decimal(

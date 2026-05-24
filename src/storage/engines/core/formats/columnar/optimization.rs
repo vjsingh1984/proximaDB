@@ -401,7 +401,7 @@ impl ColumnarOptimizer {
                         .embeddings
                         .into_iter()
                         .next()
-                        .map(|e| Arc::new(e.values)),
+                        .map(|e| Arc::new(e.values.to_fp32_owned())),
                     metadata: HashMap::new(), // Use SqlValue metadata
                     ..Default::default()
                 });
@@ -593,7 +593,7 @@ impl ColumnarOptimizer {
         record.embeddings.push(EmbeddingCell {
             model_id: "default".to_string(),
             modality: "vector".to_string(),
-            values,
+            values: proximadb_records::EmbeddingValues::Fp32(values),
             dim,
             ..Default::default()
         });

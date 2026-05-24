@@ -294,7 +294,7 @@ impl QuantizedProximaSearch {
         for (record, _approximate_score) in candidates {
             let exact_distance =
                 self.distance_compute
-                    .compute_distance(query, &record.values, metric)?;
+                    .compute_distance(query, &*record.as_fp32_cow(), metric)?;
             reranked.push((record, exact_distance));
         }
 
@@ -332,7 +332,7 @@ impl QuantizedProximaSearch {
             for record in block.records {
                 let distance =
                     self.distance_compute
-                        .compute_distance(query, &record.values, metric)?;
+                        .compute_distance(query, &*record.as_fp32_cow(), metric)?;
                 all_results.push((record, distance));
             }
         }

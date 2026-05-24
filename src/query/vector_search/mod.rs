@@ -175,7 +175,7 @@ impl VectorSearchEngine {
                 let values = record
                     .embeddings
                     .first()
-                    .map(|e| e.values.clone())
+                    .map(|e| e.values.to_fp32_owned())
                     .unwrap_or_default();
                 index.add(id, values).await?;
             }

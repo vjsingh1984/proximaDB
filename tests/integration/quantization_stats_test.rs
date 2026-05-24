@@ -209,7 +209,7 @@ async fn run_quantization_test(
             .map(|v| {
                 v.embeddings
                     .first()
-                    .map(|e| e.values.clone())
+                    .map(|e| e.values.to_fp32_owned())
                     .unwrap_or_default()
             })
             .collect();
@@ -267,7 +267,7 @@ async fn run_quantization_test(
     let query = vectors[0]
         .embeddings
         .first()
-        .map(|e| e.values.clone())
+        .map(|e| e.values.to_fp32_owned())
         .unwrap_or_default();
     let search_params = std::sync::Arc::new(proximadb::core::search::SearchParams {
         vector: Some(query),

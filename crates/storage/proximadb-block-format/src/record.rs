@@ -199,10 +199,14 @@ impl FlatRow {
             None => (None, None, None, None),
         };
 
+        // INT-2.5b: FlatRow holds fp32 vectors; promote non-Fp32
+        // variants on the way in. INT-3's PAX writer will receive
+        // typed values directly via a different code path that
+        // bypasses FlatRow.
         let embeddings: Vec<Vec<f32>> = record
             .embeddings
             .iter()
-            .map(|emb| emb.values.clone())
+            .map(|emb| emb.values.to_fp32_owned())
             .collect();
 
         Ok(FlatRow {
@@ -260,13 +264,15 @@ impl FlatRow {
             .enumerate()
             .map(|(i, values)| {
                 let dim = values.len() as u32;
+                // INT-2.5b: FlatRow stores fp32, wrap in the typed
+                // variant on the way out.
                 EmbeddingCell {
                     model_id: embedding_model_ids
                         .get(i)
                         .cloned()
                         .unwrap_or_else(|| format!("model_{i}")),
                     modality: "dense".into(),
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     dim,
                     ..Default::default()
                 }

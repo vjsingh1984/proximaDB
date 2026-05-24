@@ -367,7 +367,7 @@ impl SwiftCandidateLoader {
                         record
                             .embeddings
                             .first()
-                            .map_or(Vec::new(), |embedding| embedding.values.clone()),
+                            .map_or(Vec::new(), |embedding| embedding.values.to_fp32_owned()),
                     );
 
                     // Add quantized data if available

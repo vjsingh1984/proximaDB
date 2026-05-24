@@ -150,7 +150,7 @@ mod helix_cold_search_recall {
             .map(|v| {
                 v.embeddings
                     .first()
-                    .map(|e| e.values.clone())
+                    .map(|e| e.values.to_fp32_owned())
                     .unwrap_or_default()
             })
             .collect();
@@ -304,7 +304,7 @@ mod helix_cold_search_recall {
         let query = vectors[0]
             .embeddings
             .first()
-            .map(|e| e.values.clone())
+            .map(|e| e.values.to_fp32_owned())
             .unwrap_or_default();
         let expected_id = vectors[0].oid.clone();
 

@@ -1860,7 +1860,7 @@ mod block_operations {
             .filter_map(|r| {
                 r.embeddings
                     .first()
-                    .map(|embedding| embedding.values.clone())
+                    .map(|embedding| embedding.values.to_fp32_owned())
             })
             .collect();
 
@@ -1927,7 +1927,7 @@ mod block_operations {
                 block.records.get(idx).and_then(|r| {
                     r.embeddings
                         .first()
-                        .map(|embedding| (idx, embedding.values.clone()))
+                        .map(|embedding| (idx, embedding.values.to_fp32_owned()))
                 })
             })
             .collect()
@@ -2365,7 +2365,7 @@ mod compression_tests_unified {
             let values = deserialized.records[0]
                 .embeddings
                 .first()
-                .map(|embedding| embedding.values.as_slice())
+                .map(|embedding| embedding.as_fp32_slice())
                 .unwrap_or(&[]);
             assert_eq!(values.len(), 1000);
             assert_eq!(values[0], 42.0);
@@ -3710,7 +3710,7 @@ mod simple_sstable_tests {
             record
                 .embeddings
                 .first()
-                .map(|embedding| embedding.values.as_slice())
+                .map(|embedding| embedding.as_fp32_slice())
                 .unwrap_or(&[]),
             &[1.0, 2.0, 3.0]
         );

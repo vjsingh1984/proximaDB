@@ -89,7 +89,7 @@ mod helix_prune_debug {
         let query = vectors[0]
             .embeddings
             .first()
-            .map(|e| e.values.clone())
+            .map(|e| e.values.to_fp32_owned())
             .unwrap_or_default();
         let expected_id = &vectors[0].oid;
 
@@ -216,7 +216,7 @@ mod helix_prune_debug {
             let q = vectors[i]
                 .embeddings
                 .first()
-                .map(|e| e.values.clone())
+                .map(|e| e.values.to_fp32_owned())
                 .unwrap_or_default();
             let expected = &vectors[i].oid;
 
@@ -295,7 +295,7 @@ mod helix_prune_debug {
             .map(|v| {
                 v.embeddings
                     .first()
-                    .map(|e| e.values.clone())
+                    .map(|e| e.values.to_fp32_owned())
                     .unwrap_or_default()
             })
             .collect();
@@ -457,7 +457,7 @@ mod helix_prune_debug {
         let _query = vectors[0]
             .embeddings
             .first()
-            .map(|e| e.values.clone())
+            .map(|e| e.values.to_fp32_owned())
             .unwrap_or_default();
 
         let collection = create_collection(collection_id, &temp_dir);
@@ -550,7 +550,7 @@ mod helix_prune_debug {
                 let q = vectors[i]
                     .embeddings
                     .first()
-                    .map(|e| e.values.clone())
+                    .map(|e| e.values.to_fp32_owned())
                     .unwrap_or_default();
                 let expected = &vectors[i].oid;
 
@@ -639,7 +639,7 @@ mod helix_prune_debug {
             let query = vectors[idx]
                 .embeddings
                 .first()
-                .map(|e| e.values.clone())
+                .map(|e| e.values.to_fp32_owned())
                 .unwrap_or_default();
             let expected_id = &vectors[idx].oid;
 
@@ -662,7 +662,7 @@ mod helix_prune_debug {
             let query = vectors[idx]
                 .embeddings
                 .first()
-                .map(|e| e.values.clone())
+                .map(|e| e.values.to_fp32_owned())
                 .unwrap_or_default();
             let expected_id = &vectors[idx].oid;
 

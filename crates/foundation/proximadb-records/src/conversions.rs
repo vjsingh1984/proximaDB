@@ -179,10 +179,13 @@ pub fn proxima_tree_to_value_map(tree: &ProximaTree) -> HashMap<String, ProximaV
 /// Convert the canonical envelope to `VectorRecord` for the current vector
 /// operations service. This should be deleted once storage accepts envelopes.
 pub fn proxima_record_to_vector(record: &ProximaRecord) -> VectorRecord {
-    let vector = record
+    // INT-2.5b: extract a fp32 view regardless of underlying variant.
+    // VectorRecord is a v1 proto with `vector: Vec<f32>`, so non-Fp32
+    // variants get a one-shot promote here.
+    let vector: Vec<f32> = record
         .embeddings
         .first()
-        .map(|embedding| embedding.values.clone())
+        .map(|embedding| embedding.values.to_fp32_owned())
         .unwrap_or_default();
 
     VectorRecord {
@@ -838,7 +841,7 @@ mod tests {
         assert_eq!(cell.model_id, "e5");
         assert_eq!(cell.modality, "1");
         assert_eq!(cell.dim, 2);
-        assert_eq!(cell.values, vec![0.4, 0.5]);
+        assert_eq!(cell.as_fp32_slice(), &[0.4, 0.5]);
 
         let node = Node {
             id: "node-img".to_string(),

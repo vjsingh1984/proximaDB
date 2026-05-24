@@ -110,7 +110,7 @@ mod small_batch_tests {
             let query_vector = vectors[i]
                 .embeddings
                 .first()
-                .map(|e| e.values.clone())
+                .map(|e| e.values.to_fp32_owned())
                 .unwrap_or_default();
 
             let ctx = create_search_context(query_vector, collection.clone());
@@ -539,7 +539,7 @@ mod small_batch_tests {
             let query_vector = vectors[i]
                 .embeddings
                 .first()
-                .map(|e| e.values.clone())
+                .map(|e| e.values.to_fp32_owned())
                 .unwrap_or_default();
 
             let ctx = create_approx_search_context(query_vector, collection.clone());
@@ -702,7 +702,7 @@ mod small_batch_tests {
             let query_vector = vectors[i]
                 .embeddings
                 .first()
-                .map(|e| e.values.clone())
+                .map(|e| e.values.to_fp32_owned())
                 .unwrap_or_default();
 
             let ctx = create_sst_approx_search_context(query_vector, collection.clone());
@@ -743,7 +743,7 @@ mod small_batch_tests {
             let query_vector = vectors[i]
                 .embeddings
                 .first()
-                .map(|e| e.values.clone())
+                .map(|e| e.values.to_fp32_owned())
                 .unwrap_or_default();
 
             let ctx = create_search_context(query_vector, collection.clone());

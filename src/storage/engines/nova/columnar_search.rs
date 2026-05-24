@@ -444,7 +444,7 @@ impl NovaColumnarSearch {
                     record
                         .embeddings
                         .first()
-                        .map_or(&[][..], |embedding| embedding.values.as_slice()),
+                        .map_or(&[][..], |embedding| embedding.as_fp32_slice()),
                     &distance_metric,
                 );
                 let distance = distance_result.distance;
@@ -648,7 +648,7 @@ impl NovaColumnarSearch {
                     let vector = record
                         .embeddings
                         .first()
-                        .map_or(&[][..], |embedding| embedding.values.as_slice());
+                        .map_or(&[][..], |embedding| embedding.as_fp32_slice());
                     if !vector.is_empty() {
                         let distance = self.distance_compute.calculate_distance(
                             query_vector,
@@ -901,7 +901,7 @@ impl NovaColumnarSearch {
                     .map(|r| {
                         r.embeddings
                             .first()
-                            .map_or(&[][..], |embedding| embedding.values.as_slice())
+                            .map_or(&[][..], |embedding| embedding.as_fp32_slice())
                     })
                     .collect();
 

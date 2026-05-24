@@ -111,7 +111,7 @@ mod helix_integration_tests {
         let query = vectors[0]
             .embeddings
             .first()
-            .map(|e| e.values.clone())
+            .map(|e| e.values.to_fp32_owned())
             .unwrap_or_default(); // Store query before moving vectors
 
         // Create collection config with storage assignment

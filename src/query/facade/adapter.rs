@@ -573,7 +573,7 @@ impl QueryFacadeAdapter {
                         .record
                         .embeddings
                         .first()
-                        .map(|e| e.values.clone())
+                        .map(|e| e.values.to_fp32_owned())
                         .unwrap_or_default();
                     search_records.push(SearchVectorRecord {
                         id: m.record.oid,

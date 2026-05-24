@@ -562,7 +562,7 @@ impl UnifiedProgressiveSearchPipeline {
             let embedding_values = record
                 .embeddings
                 .first()
-                .map(|e| e.values.as_slice())
+                .map(|e| e.as_fp32_slice())
                 .unwrap_or(&[]);
             let result =
                 distance_compute.calculate_distance(query_fp32, embedding_values, distance_metric);
@@ -719,7 +719,7 @@ impl UnifiedProgressiveSearchPipeline {
                     .record
                     .embeddings
                     .first()
-                    .map(|e| e.values.clone())
+                    .map(|e| e.values.to_fp32_owned())
                     .unwrap_or_default();
 
                 let metadata: HashMap<String, ProximaValue> = candidate

@@ -339,7 +339,7 @@ impl KafkaVectorConsumer {
                         model_id: "default".to_string(),
                         modality: "vector".to_string(),
                         dim,
-                        values: v.vector,
+                        values: proximadb_records::EmbeddingValues::Fp32(v.vector),
                         ..Default::default()
                     }],
                     props,

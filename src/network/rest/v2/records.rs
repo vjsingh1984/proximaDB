@@ -1089,7 +1089,7 @@ pub async fn insert_records(
                 model_id: "default".to_string(),
                 modality: "dense_vector".to_string(),
                 dim,
-                values: vector,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
                 ..Default::default()
             }],
             ..ProximaRecord::default()

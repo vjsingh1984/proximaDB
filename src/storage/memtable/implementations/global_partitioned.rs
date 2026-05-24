@@ -495,7 +495,7 @@ impl CollectionPartition {
                         let vec_values = vector_record
                             .embeddings
                             .first()
-                            .map(|e| e.values.as_slice())
+                            .map(|e| e.as_fp32_slice())
                             .unwrap_or(&[]);
                         let is_tombstone = vec_values.is_empty()
                             && vector_record
@@ -532,7 +532,7 @@ impl CollectionPartition {
                     let vec_values = vector_record
                         .embeddings
                         .first()
-                        .map(|e| e.values.as_slice())
+                        .map(|e| e.as_fp32_slice())
                         .unwrap_or(&[]);
                     if vec_values.is_empty() {
                         continue;
@@ -1723,7 +1723,7 @@ mod tests {
         let found_vector = result.unwrap();
         assert_eq!(found_vector.record_version, 2);
         assert_eq!(
-            found_vector.embeddings.first().map(|e| e.values.as_slice()),
+            found_vector.embeddings.first().map(|e| e.as_fp32_slice()),
             Some(vec![0.0, 1.0, 0.0].as_slice())
         );
 
@@ -1817,7 +1817,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            record_1.embeddings.first().map(|e| e.values.as_slice()),
+            record_1.embeddings.first().map(|e| e.as_fp32_slice()),
             Some(vec![1.0, 0.0].as_slice())
         );
     }
@@ -1844,7 +1844,7 @@ mod tests {
             current_vector
                 .embeddings
                 .first()
-                .map(|e| e.values.as_slice()),
+                .map(|e| e.as_fp32_slice()),
             Some(vec![1.0, 2.0, 3.0].as_slice())
         );
         assert_eq!(current_vector.record_version, 1);
@@ -1866,7 +1866,7 @@ mod tests {
         let found_vector = result.unwrap();
         assert_eq!(found_vector.oid, vector_id.to_string());
         assert_eq!(
-            found_vector.embeddings.first().map(|e| e.values.as_slice()),
+            found_vector.embeddings.first().map(|e| e.as_fp32_slice()),
             Some(vec![4.0, 5.0, 6.0].as_slice())
         );
         assert_eq!(found_vector.record_version, 2);
@@ -1916,7 +1916,7 @@ mod tests {
         let found_vector = result.unwrap();
         assert_eq!(found_vector.record_version, 3);
         assert_eq!(
-            found_vector.embeddings.first().map(|e| e.values.as_slice()),
+            found_vector.embeddings.first().map(|e| e.as_fp32_slice()),
             Some(vec![3.0, 3.0, 3.0].as_slice())
         );
 
@@ -2013,7 +2013,7 @@ mod tests {
         assert_eq!(found_vector.oid, vector_id.to_string());
         assert_eq!(found_vector.record_version, 2);
         assert_eq!(
-            found_vector.embeddings.first().map(|e| e.values.as_slice()),
+            found_vector.embeddings.first().map(|e| e.as_fp32_slice()),
             Some(vec![0.0, 0.0, 1.0].as_slice())
         );
 
@@ -2035,7 +2035,7 @@ mod tests {
                 .1
                 .embeddings
                 .first()
-                .map(|e| e.values.as_slice()),
+                .map(|e| e.as_fp32_slice()),
             Some(vec![0.0, 0.0, 1.0].as_slice())
         );
     }
@@ -2084,7 +2084,7 @@ mod tests {
                 .unwrap()
                 .embeddings
                 .first()
-                .map(|e| e.values.as_slice()),
+                .map(|e| e.as_fp32_slice()),
             Some(vec![0.0, 1.0, 0.0].as_slice())
         );
     }

@@ -176,16 +176,20 @@ impl VectorServiceImpl {
             .iter()
             .find(|embedding| embedding.values.len() == query_vector.len())?;
 
+        // INT-2.5b: distance functions take &[f32]. as_fp32_cow gives a
+        // borrowed slice for Fp32 (zero copy) and a one-shot owned
+        // promote for non-Fp32 variants.
+        let embedding_fp32 = embedding.as_fp32_cow();
         let score = match metric {
-            DistanceMetric::Cosine => cosine_similarity(query_vector, &embedding.values),
+            DistanceMetric::Cosine => cosine_similarity(query_vector, &embedding_fp32),
             DistanceMetric::Euclidean => {
-                1.0 / (1.0 + euclidean_distance(query_vector, &embedding.values))
+                1.0 / (1.0 + euclidean_distance(query_vector, &embedding_fp32))
             }
-            DistanceMetric::DotProduct => dot_product(query_vector, &embedding.values),
+            DistanceMetric::DotProduct => dot_product(query_vector, &embedding_fp32),
             DistanceMetric::Manhattan => {
-                1.0 / (1.0 + manhattan_distance(query_vector, &embedding.values))
+                1.0 / (1.0 + manhattan_distance(query_vector, &embedding_fp32))
             }
-            _ => 1.0 / (1.0 + euclidean_distance(query_vector, &embedding.values)),
+            _ => 1.0 / (1.0 + euclidean_distance(query_vector, &embedding_fp32)),
         };
 
         let mut scored = record.clone();

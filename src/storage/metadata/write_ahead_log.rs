@@ -518,7 +518,7 @@ impl MetadataWriteAheadLog {
                 embeddings: vec![proximadb_records::EmbeddingCell {
                     model_id: "metadata".to_string(),
                     modality: "tombstone".to_string(),
-                    values: vec![0.0], // Content irrelevant for delete.
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![0.0]), // Content irrelevant for delete.
                     dim: 1,
                     ..Default::default()
                 }],
@@ -650,7 +650,7 @@ impl MetadataWriteAheadLog {
                 model_id: "metadata".to_string(),
                 modality: "collection_metadata".to_string(),
                 dim: vector.len() as u32,
-                values: vector,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
                 ..Default::default()
             }],
             created_at_ns: timestamp_secs as i64 * 1_000_000_000,
@@ -669,7 +669,7 @@ impl MetadataWriteAheadLog {
         let bytes: Vec<u8> = record
             .embeddings
             .first()
-            .map(|embedding| embedding.values.iter().map(|&f| f as u8).collect())
+            .map(|embedding| embedding.as_fp32_cow().iter().map(|&f| f as u8).collect())
             .unwrap_or_default();
 
         // Deserialize from JSON

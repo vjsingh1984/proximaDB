@@ -305,7 +305,7 @@ impl DrainerInsertSink for BulkLoadDrainerSink {
                         model_id: "native".to_string(),
                         modality: "dense_vector".to_string(),
                         dim: r.vector_dim,
-                        values: r.vector,
+                        values: proximadb_records::EmbeddingValues::Fp32(r.vector),
                         ..Default::default()
                     }],
                     ..ProximaRecord::default()

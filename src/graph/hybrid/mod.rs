@@ -1431,7 +1431,7 @@ impl HybridQueryEngine {
                                     embeddings: vec![EmbeddingCell {
                                         model_id: "default".to_string(),
                                         modality: "vector".to_string(),
-                                        values: vector,
+                                        values: proximadb_records::EmbeddingValues::Fp32(vector),
                                         dim,
                                         ..Default::default()
                                     }],
@@ -1504,7 +1504,9 @@ impl HybridQueryEngine {
                             embeddings: vec![EmbeddingCell {
                                 model_id: "default".to_string(),
                                 modality: "vector".to_string(),
-                                values: embedding.vector.clone(),
+                                values: proximadb_records::EmbeddingValues::Fp32(
+                                    embedding.vector.clone(),
+                                ),
                                 dim,
                                 ..Default::default()
                             }],

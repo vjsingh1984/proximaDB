@@ -471,7 +471,7 @@ impl UnifiedQueryRequest {
                     embeddings: vec![proximadb_records::EmbeddingCell {
                         model_id: "default".to_string(),
                         modality: "vector".to_string(),
-                        values: v.vector.clone(),
+                        values: proximadb_records::EmbeddingValues::Fp32(v.vector.clone()),
                         dim,
                         ..Default::default()
                     }],
@@ -1212,7 +1212,7 @@ impl UnifiedQueryHandler {
                 let vector = record
                     .embeddings
                     .first()
-                    .map(|embedding| embedding.values.clone());
+                    .map(|embedding| embedding.values.to_fp32_owned());
 
                 NetworkSearchResult {
                     id: record.oid,

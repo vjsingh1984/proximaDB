@@ -110,7 +110,7 @@ fn vector_values(record: &ProximaRecord) -> &[f32] {
     record
         .embeddings
         .first()
-        .map(|embedding| embedding.values.as_slice())
+        .map(|embedding| embedding.as_fp32_slice())
         .unwrap_or(&[])
 }
 

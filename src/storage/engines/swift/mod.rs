@@ -424,7 +424,7 @@ fn compute_block_centroid(block: &ProximaDataBlock) -> Vec<f32> {
         Some(r) => r
             .embeddings
             .first()
-            .map_or(&[][..], |embedding| embedding.values.as_slice()),
+            .map_or(&[][..], |embedding| embedding.as_fp32_slice()),
         None => return Vec::new(),
     };
     let dim = first.len();
@@ -437,7 +437,7 @@ fn compute_block_centroid(block: &ProximaDataBlock) -> Vec<f32> {
         let vector = record
             .embeddings
             .first()
-            .map_or(&[][..], |embedding| embedding.values.as_slice());
+            .map_or(&[][..], |embedding| embedding.as_fp32_slice());
         if vector.len() != dim {
             return Vec::new();
         }
@@ -673,7 +673,7 @@ impl SwiftFile {
                 .filter_map(|r| {
                     r.embeddings
                         .first()
-                        .map(|embedding| embedding.values.clone())
+                        .map(|embedding| embedding.values.to_fp32_owned())
                 })
                 .collect();
             if !vectors.is_empty() && !vectors[0].is_empty() {
@@ -1366,13 +1366,19 @@ impl SwiftFile {
         for superblock in &mut self.superblocks {
             // Columnar analysis: transpose vectors to analyze dimension-wise
             let mut all_vectors = Vec::new();
+            // INT-2.5b: as_fp32_cow returns Cow<'_, [f32]> which is
+            // owned for non-Fp32 variants — the temporary would drop
+            // before we use it. Materialize the owned Vec<f32> and
+            // hold it for the duration of the analysis.
+            let mut owned_vectors: Vec<Vec<f32>> = Vec::new();
             for block in &superblock.blocks {
                 for record in &block.records {
                     if let Some(embedding) = record.embeddings.first() {
-                        all_vectors.push(&embedding.values);
+                        owned_vectors.push(embedding.as_fp32_cow().into_owned());
                     }
                 }
             }
+            all_vectors.extend(owned_vectors.iter().map(|v| v.as_slice()));
 
             if all_vectors.is_empty() {
                 continue;

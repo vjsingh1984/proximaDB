@@ -1094,7 +1094,7 @@ async fn test_viper_search_with_none_compression() -> anyhow::Result<()> {
     let query_vector = vectors[0]
         .embeddings
         .first()
-        .map(|e| e.values.clone())
+        .map(|e| e.values.to_fp32_owned())
         .unwrap_or_default();
     let collection =
         env.create_test_collection_with_settings(StorageEngine::Viper, dimension as i32, None);
@@ -1217,7 +1217,7 @@ async fn test_nova_search_with_none_compression() -> anyhow::Result<()> {
     let query_vector = vectors[0]
         .embeddings
         .first()
-        .map(|e| e.values.clone())
+        .map(|e| e.values.to_fp32_owned())
         .unwrap_or_default();
 
     // Test the wrapper function that benchmarks use

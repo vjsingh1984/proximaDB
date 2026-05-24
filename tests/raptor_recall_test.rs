@@ -52,7 +52,7 @@ mod raptor_recall_tests {
                 let values = v
                     .embeddings
                     .first()
-                    .map(|e| e.values.as_slice())
+                    .map(|e| e.as_fp32_slice())
                     .unwrap_or(&[]);
                 let dist: f32 = values
                     .iter()
@@ -171,7 +171,7 @@ mod raptor_recall_tests {
             .map(|v| {
                 v.embeddings
                     .first()
-                    .map(|e| e.values.clone())
+                    .map(|e| e.values.to_fp32_owned())
                     .unwrap_or_default()
             })
             .collect();

@@ -489,7 +489,7 @@ impl StorageEngine {
         let vector_ref = record
             .embeddings
             .first()
-            .map(|e| e.values.as_slice())
+            .map(|e| e.as_fp32_slice())
             .unwrap_or(&[]);
         let vector_size = std::mem::size_of_val(vector_ref) + std::mem::size_of::<ProximaRecord>();
         let start = std::time::Instant::now();
@@ -1224,7 +1224,7 @@ impl StorageEngine {
                                     vec![EmbeddingCell {
                                         model_id: "default".to_string(),
                                         modality: "vector".to_string(),
-                                        values: v.vector,
+                                        values: proximadb_records::EmbeddingValues::Fp32(v.vector),
                                         dim,
                                         ..Default::default()
                                     }]

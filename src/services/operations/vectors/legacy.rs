@@ -388,11 +388,12 @@ fn v1_search_result_to_rich(
 }
 
 fn vector_record_to_rich_result(record: ProximaRecord) -> RichSearchResult {
-    let vector = record
+    // INT-2.5b: RichSearchResult holds Vec<f32>; promote non-Fp32 variants.
+    let vector: Vec<f32> = record
         .embeddings
         .into_iter()
         .next()
-        .map(|e| e.values)
+        .map(|e| e.values.to_fp32_owned())
         .unwrap_or_default();
     let props = record
         .props
@@ -3493,7 +3494,7 @@ impl VectorOperationsService {
                     vec![proximadb_records::EmbeddingCell {
                         model_id: "default".to_string(),
                         modality: "vector".to_string(),
-                        values: vector_values,
+                        values: proximadb_records::EmbeddingValues::Fp32(vector_values),
                         dim,
                         ..Default::default()
                     }]

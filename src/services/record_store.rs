@@ -737,7 +737,7 @@ fn proxima_record_to_get_response(
             .embeddings
             .iter()
             .next()
-            .map(|embedding| embedding.values.clone())
+            .map(|embedding| embedding.values.to_fp32_owned())
             .unwrap_or_default()
     } else {
         Vec::new()

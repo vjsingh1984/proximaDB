@@ -383,7 +383,7 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
                                         model_id: "default".to_string(),
                                         modality: "vector".to_string(),
                                         dim,
-                                        values: v.vector,
+                                        values: proximadb_records::EmbeddingValues::Fp32(v.vector),
                                         ..Default::default()
                                     }],
                                     props,

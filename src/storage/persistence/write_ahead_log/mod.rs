@@ -2393,7 +2393,7 @@ impl WriteAheadLogManager {
                             model_id: "wal".to_string(),
                             modality: "dense_vector".to_string(),
                             dim,
-                            values: r.vector,
+                            values: proximadb_records::EmbeddingValues::Fp32(r.vector),
                             ..Default::default()
                         }],
                         ..Default::default()
@@ -2477,7 +2477,7 @@ impl WriteAheadLogManager {
         for batch in filtered_batches {
             for vector_record in batch.vector_records.iter() {
                 let embedding = vector_record.embeddings.first();
-                let vec_values = embedding.map(|e| e.values.as_slice()).unwrap_or(&[]);
+                let vec_values = embedding.map(|e| e.as_fp32_slice()).unwrap_or(&[]);
                 let expires_at_secs = vector_record.valid_to_ns.map(|ns| ns / 1_000_000_000);
 
                 // Check if this is a tombstone (empty vector + valid_to in past)

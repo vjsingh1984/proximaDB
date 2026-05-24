@@ -668,7 +668,7 @@ impl ProximaFlightService {
                 model_id: "native".to_string(),
                 modality: "dense_vector".to_string(),
                 dim,
-                values: vector,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
                 ..Default::default()
             });
         }
@@ -1607,7 +1607,7 @@ impl FlightService for ProximaFlightService {
                             model_id: "default".to_string(),
                             modality: "vector".to_string(),
                             dim,
-                            values,
+                            values: proximadb_records::EmbeddingValues::Fp32(values),
                             ..Default::default()
                         }],
                         props,
@@ -1753,8 +1753,11 @@ impl FlightService for ProximaFlightService {
                         found_vectors.push(serde_json::json!({
                             "id": &record.oid,
                             "oid": &record.oid,
+                            // INT-2.5b: as_fp32_cow returns a Cow whose temporary
+                            // would drop before json! consumes the borrow. Owned
+                            // Vec<f32> avoids the lifetime hazard.
                             "vector": if include_vectors {
-                                record.embeddings.first().map(|embedding| &embedding.values)
+                                record.embeddings.first().map(|embedding| embedding.as_fp32_cow().into_owned())
                             } else {
                                 None
                             },
@@ -2366,7 +2369,7 @@ impl ProximaFlightService {
                 let query_vector = query_record
                     .embeddings
                     .first()
-                    .map(|e| e.values.clone())
+                    .map(|e| e.values.to_fp32_owned())
                     .unwrap_or_default();
 
                 let search_request = crate::proto::proximadb_v1::VectorSearchRequest {
@@ -3121,7 +3124,7 @@ mod tests {
                 model_id: "client-provided".to_string(),
                 modality: "dense_vector".to_string(),
                 dim: 1536,
-                values: vec![0.1_f32; 1536],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1_f32; 1536]),
                 ..Default::default()
             }],
             ..ProximaRecord::default()

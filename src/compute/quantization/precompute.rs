@@ -223,7 +223,7 @@ impl QuantizationPrecomputeService {
         let start_time = std::time::Instant::now();
 
         // Extract vectors for quantization
-        let vectors: Vec<Vec<f32>> = batch.iter().map(|r| r.values.clone()).collect();
+        let vectors: Vec<Vec<f32>> = batch.iter().map(|r| r.values.to_fp32_owned()).collect();
 
         if vectors.is_empty() {
             return Ok(vec![]);

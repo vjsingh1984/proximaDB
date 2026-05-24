@@ -129,7 +129,7 @@ impl RowBasedUtilities {
             let vector = record
                 .embeddings
                 .first()
-                .map(|embedding| embedding.values.as_slice());
+                .map(|embedding| embedding.as_fp32_slice());
             if vector.is_none_or(|values| values.is_empty()) {
                 record_issues.push("Empty vector".to_string());
             }

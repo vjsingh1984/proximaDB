@@ -356,7 +356,7 @@ impl PipelineExecutor {
         let mut vector_values = Vec::with_capacity(records.len() * vector_dim);
         for record in records {
             if let Some(embedding) = record.embeddings.first() {
-                vector_values.extend_from_slice(&embedding.values);
+                vector_values.extend_from_slice(&*embedding.as_fp32_cow());
             } else {
                 vector_values.extend(std::iter::repeat_n(0.0, vector_dim));
             }
@@ -672,7 +672,7 @@ impl PipelineExecutor {
                     model_id: "pipeline".to_string(),
                     modality: "dense_vector".to_string(),
                     dim: vector.len() as u32,
-                    values: vector,
+                    values: proximadb_records::EmbeddingValues::Fp32(vector),
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -747,7 +747,7 @@ mod tests {
                     model_id: "test".to_string(),
                     modality: "dense_vector".to_string(),
                     dim: 384,
-                    values: vec![0.1; 384],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![0.1; 384]),
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -758,7 +758,7 @@ mod tests {
                     model_id: "test".to_string(),
                     modality: "dense_vector".to_string(),
                     dim: 384,
-                    values: vec![0.2; 384],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![0.2; 384]),
                     ..Default::default()
                 }],
                 ..Default::default()

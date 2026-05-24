@@ -686,7 +686,7 @@ impl SstEngine {
                     .embeddings
                     .first()
                     .filter(|embedding| !embedding.values.is_empty())
-                    .map(|embedding| embedding.values.clone())
+                    .map(|embedding| embedding.values.to_fp32_owned())
             })
             .collect();
 

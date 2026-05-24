@@ -87,7 +87,7 @@ fn record_vector(record: &ProximaRecord) -> &[f32] {
     record
         .embeddings
         .first()
-        .map_or(&[][..], |embedding| embedding.values.as_slice())
+        .map_or(&[][..], |embedding| embedding.as_fp32_slice())
 }
 
 /// Configuration for the SST-to-Arrow conversion cache

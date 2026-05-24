@@ -198,7 +198,7 @@ mod tests {
             let values = vec
                 .embeddings
                 .first()
-                .map(|embedding| embedding.values.as_slice())
+                .map(|embedding| embedding.as_fp32_slice())
                 .unwrap_or(&[]);
             assert_eq!(values.len(), 3, "Vector should have 3 dimensions");
             assert_eq!(values, &[0.0, 0.0, 0.0], "Vector values should match");

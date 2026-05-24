@@ -2957,7 +2957,7 @@ impl PostgresProtocol {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim,
-                    values: vector,
+                    values: proximadb_records::EmbeddingValues::Fp32(vector),
                     ..Default::default()
                 }],
                 created_at_ns: now_ns,
@@ -3021,7 +3021,7 @@ impl PostgresProtocol {
                         model_id: "default".to_string(),
                         modality: "vector".to_string(),
                         dim,
-                        values: vector,
+                        values: proximadb_records::EmbeddingValues::Fp32(vector),
                         ..Default::default()
                     }],
                     created_at_ns: now_ns,
@@ -3117,7 +3117,7 @@ impl PostgresProtocol {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim,
-                    values: vector,
+                    values: proximadb_records::EmbeddingValues::Fp32(vector),
                     ..Default::default()
                 }],
                 created_at_ns: now_ns,

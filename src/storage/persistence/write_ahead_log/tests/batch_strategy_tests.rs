@@ -123,7 +123,7 @@ mod tests {
         record
             .embeddings
             .first()
-            .map(|embedding| embedding.values.as_slice())
+            .map(|embedding| embedding.as_fp32_slice())
             .unwrap_or(&[])
     }
 

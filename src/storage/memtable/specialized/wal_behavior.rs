@@ -602,7 +602,7 @@ impl WALBehaviorWrapper {
                     vector_record
                         .embeddings
                         .first()
-                        .map(|e| e.values.clone())
+                        .map(|e| e.values.to_fp32_owned())
                         .unwrap_or_default()
                 } else {
                     Vec::new()

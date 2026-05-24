@@ -425,7 +425,7 @@ impl ProximaBlocksArrowReader {
             let vector = record
                 .embeddings
                 .first()
-                .map_or(&[][..], |embedding| embedding.values.as_slice());
+                .map_or(&[][..], |embedding| embedding.as_fp32_slice());
             if vector.len() != dimension {
                 // Pad or truncate to match expected dimension
                 for i in 0..dimension {

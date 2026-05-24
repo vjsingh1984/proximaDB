@@ -589,7 +589,7 @@ impl SstableWriter {
             .filter_map(|r| {
                 r.embeddings
                     .first()
-                    .map(|embedding| embedding.values.clone())
+                    .map(|embedding| embedding.values.to_fp32_owned())
             })
             .collect();
 

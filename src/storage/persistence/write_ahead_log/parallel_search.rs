@@ -141,7 +141,7 @@ impl ParallelWALSearch {
                 let vector = record
                     .embeddings
                     .first()
-                    .map(|embedding| embedding.values.as_slice())
+                    .map(|embedding| embedding.as_fp32_slice())
                     .unwrap_or(&[]);
 
                 // Skip tombstones (no vector payload + expired validity marker)
@@ -475,7 +475,7 @@ impl WalSearchCandidate {
 
         if self.include_vectors {
             if let Some(embedding) = self.record.embeddings.first() {
-                result = result.add_vector(embedding.values.clone());
+                result = result.add_vector(embedding.values.to_fp32_owned());
             }
         }
 

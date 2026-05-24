@@ -249,7 +249,7 @@ async fn test_nova_search_basic() {
     let query_vector = vectors[0]
         .embeddings
         .first()
-        .map(|e| e.values.clone())
+        .map(|e| e.values.to_fp32_owned())
         .unwrap_or_default();
     let search_params = Arc::new(SearchParams {
         vector: Some(query_vector),

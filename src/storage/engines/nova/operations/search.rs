@@ -210,7 +210,7 @@ impl NovaSearchOperations {
                 let vector = record
                     .embeddings
                     .first()
-                    .map_or(Vec::new(), |embedding| embedding.values.clone());
+                    .map_or(Vec::new(), |embedding| embedding.values.to_fp32_owned());
                 let similarity_result = self.distance_engine.calculate_distance(
                     query_vector,
                     &vector,

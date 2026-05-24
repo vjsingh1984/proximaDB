@@ -1087,7 +1087,7 @@ impl ProximaDataBlock {
         record
             .embeddings
             .first()
-            .map_or(&[][..], |embedding| embedding.values.as_slice())
+            .map_or(&[][..], |embedding| embedding.as_fp32_slice())
     }
 
     /// **🚀 Create a new Proxima data block with AUTOMATIC optimization capabilities**
@@ -1688,7 +1688,7 @@ impl ProximaDataBlock {
             for &val in record
                 .embeddings
                 .first()
-                .map(|e| e.values.as_slice())
+                .map(|e| e.as_fp32_slice())
                 .unwrap_or(&[])
             {
                 min_val = min_val.min(val);
@@ -4748,7 +4748,7 @@ impl ProximaDataBlock {
                     r.embeddings.push(EmbeddingCell {
                         model_id: "default".to_string(),
                         modality: "vector".to_string(),
-                        values: vector,
+                        values: proximadb_records::EmbeddingValues::Fp32(vector),
                         dim,
                         ..Default::default()
                     });
@@ -4778,7 +4778,7 @@ impl ProximaDataBlock {
                     r.embeddings.push(EmbeddingCell {
                         model_id: "default".to_string(),
                         modality: "vector".to_string(),
-                        values: vector,
+                        values: proximadb_records::EmbeddingValues::Fp32(vector),
                         dim,
                         ..Default::default()
                     });
@@ -5014,7 +5014,7 @@ impl ProximaDataBlock {
             record.embeddings.push(EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values: vector,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
                 dim,
                 ..Default::default()
             });
@@ -5157,7 +5157,7 @@ impl ProximaDataBlock {
             record.embeddings.push(EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values: vector,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
                 dim,
                 ..Default::default()
             });
@@ -5226,7 +5226,7 @@ impl ProximaDataBlock {
             record.embeddings.push(EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values: vector,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
                 dim,
                 ..Default::default()
             });
@@ -5398,7 +5398,7 @@ impl ProximaDataBlock {
             record.embeddings.push(EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values: vector,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
                 dim,
                 ..Default::default()
             });
@@ -5542,7 +5542,7 @@ impl ProximaDataBlock {
             record.embeddings.push(EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values: vector,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
                 dim,
                 ..Default::default()
             });
@@ -5719,7 +5719,7 @@ mod tests {
                 r.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     dim,
                     ..Default::default()
                 });
@@ -5736,7 +5736,7 @@ mod tests {
                 r.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     dim,
                     ..Default::default()
                 });
@@ -5789,7 +5789,7 @@ mod tests {
                 r.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     dim,
                     ..Default::default()
                 });
@@ -5817,7 +5817,7 @@ mod tests {
             let vec = record
                 .embeddings
                 .first()
-                .map(|e| e.values.as_slice())
+                .map(|e| e.as_fp32_slice())
                 .unwrap_or(&[]);
             assert_eq!(vec.len(), dimension);
             // Check first value to ensure correctness
@@ -5863,7 +5863,7 @@ mod tests {
             r.embeddings.push(EmbeddingCell {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
-                values,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
                 dim,
                 ..Default::default()
             });
@@ -5894,7 +5894,7 @@ mod tests {
                 r.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     dim,
                     ..Default::default()
                 });
@@ -5937,7 +5937,7 @@ mod tests {
             let vec = record
                 .embeddings
                 .first()
-                .map(|e| e.values.as_slice())
+                .map(|e| e.as_fp32_slice())
                 .unwrap_or(&[]);
             assert_eq!(vec.len(), dimension);
             for &val in vec {
@@ -5970,7 +5970,7 @@ mod tests {
                 r.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     dim,
                     ..Default::default()
                 });
@@ -6027,12 +6027,12 @@ mod tests {
                     let orig_vec = original
                         .embeddings
                         .first()
-                        .map(|e| e.values.as_slice())
+                        .map(|e| e.as_fp32_slice())
                         .unwrap_or(&[]);
                     let deser_vec = deserialized
                         .embeddings
                         .first()
-                        .map(|e| e.values.as_slice())
+                        .map(|e| e.as_fp32_slice())
                         .unwrap_or(&[]);
                     assert_eq!(
                         orig_vec.len(),
@@ -6089,7 +6089,7 @@ mod tests {
                     r.embeddings.push(EmbeddingCell {
                         model_id: "default".to_string(),
                         modality: "vector".to_string(),
-                        values: vector,
+                        values: proximadb_records::EmbeddingValues::Fp32(vector),
                         dim,
                         ..Default::default()
                     });
@@ -6137,12 +6137,12 @@ mod tests {
                     let orig_vec = original
                         .embeddings
                         .first()
-                        .map(|e| e.values.as_slice())
+                        .map(|e| e.as_fp32_slice())
                         .unwrap_or(&[]);
                     let deser_vec = deserialized
                         .embeddings
                         .first()
-                        .map(|e| e.values.as_slice())
+                        .map(|e| e.as_fp32_slice())
                         .unwrap_or(&[]);
                     assert_eq!(
                         orig_vec.len(),
@@ -6188,7 +6188,7 @@ mod tests {
                 r.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     dim,
                     ..Default::default()
                 });
@@ -6204,7 +6204,7 @@ mod tests {
                 r.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     dim,
                     ..Default::default()
                 });
@@ -6220,7 +6220,7 @@ mod tests {
                 r.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     dim,
                     ..Default::default()
                 });
@@ -6264,7 +6264,7 @@ mod tests {
                 r.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     dim,
                     ..Default::default()
                 });
@@ -6280,7 +6280,7 @@ mod tests {
                 r.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values,
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
                     dim,
                     ..Default::default()
                 });
@@ -6337,7 +6337,7 @@ mod tests {
         async_rec.embeddings.push(EmbeddingCell {
             model_id: "default".to_string(),
             modality: "vector".to_string(),
-            values,
+            values: proximadb_records::EmbeddingValues::Fp32(values),
             dim,
             ..Default::default()
         });
@@ -6420,7 +6420,7 @@ mod tests {
                         r.embeddings.push(EmbeddingCell {
                             model_id: "default".to_string(),
                             modality: "vector".to_string(),
-                            values: vector,
+                            values: proximadb_records::EmbeddingValues::Fp32(vector),
                             dim,
                             ..Default::default()
                         });
@@ -6439,12 +6439,12 @@ mod tests {
                 let orig_vec = orig
                     .embeddings
                     .first()
-                    .map(|e| e.values.as_slice())
+                    .map(|e| e.as_fp32_slice())
                     .unwrap_or(&[]);
                 let dec_vec = dec
                     .embeddings
                     .first()
-                    .map(|e| e.values.as_slice())
+                    .map(|e| e.as_fp32_slice())
                     .unwrap_or(&[]);
                 assert_eq!(
                     orig_vec.len(),
@@ -6801,12 +6801,12 @@ mod tests {
                 let t_vector = t
                     .embeddings
                     .first()
-                    .map(|embedding| embedding.values.as_slice())
+                    .map(|embedding| embedding.as_fp32_slice())
                     .unwrap_or(&[]);
                 let g_vector = g
                     .embeddings
                     .first()
-                    .map(|embedding| embedding.values.as_slice())
+                    .map(|embedding| embedding.as_fp32_slice())
                     .unwrap_or(&[]);
                 for (tv, gv) in t_vector.iter().zip(g_vector.iter()) {
                     assert!(

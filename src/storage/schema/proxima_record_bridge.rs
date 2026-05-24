@@ -192,7 +192,7 @@ impl DefaultProximaRecordBridge {
             let vector = record
                 .embeddings
                 .first()
-                .map(|embedding| embedding.values.as_slice())
+                .map(|embedding| embedding.as_fp32_slice())
                 .unwrap_or(&[]);
             if vector.len() != dimension {
                 return Err(anyhow!(
@@ -791,7 +791,7 @@ impl ProximaRecordBridge for DefaultProximaRecordBridge {
                     model_id: "default".to_string(),
                     modality: "dense_vector".to_string(),
                     dim: vector.len() as u32,
-                    values: vector,
+                    values: proximadb_records::EmbeddingValues::Fp32(vector),
                     ..Default::default()
                 }]
             };
@@ -1016,7 +1016,7 @@ mod tests {
                 model_id: "test".to_string(),
                 modality: "dense_vector".to_string(),
                 dim: dim as u32,
-                values: (0..dim).map(|i| i as f32 * 0.1).collect(),
+                values: proximadb_records::EmbeddingValues::Fp32((0..dim).map(|i| i as f32 * 0.1).collect()),
                 ..Default::default()
             }],
             ..ProximaRecord::default()
@@ -1121,7 +1121,7 @@ mod tests {
                 model_id: "test".to_string(),
                 modality: "dense_vector".to_string(),
                 dim: 128,
-                values: vec![0.1; 128],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1; 128]),
                 ..Default::default()
             }],
             ..ProximaRecord::default()
@@ -1134,7 +1134,7 @@ mod tests {
                 model_id: "test".to_string(),
                 modality: "dense_vector".to_string(),
                 dim: 64,
-                values: vec![0.1; 64], // Wrong dimension,
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1; 64]), // Wrong dimension
                 ..Default::default()
             }],
             ..ProximaRecord::default()
@@ -1202,7 +1202,7 @@ mod tests {
                 model_id: "test".to_string(),
                 modality: "dense_vector".to_string(),
                 dim: 64,
-                values: vec![0.1; 64],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1; 64]),
                 ..Default::default()
             }],
             created_at_ns: 1_234_567_890_000_000,
@@ -1243,7 +1243,7 @@ mod tests {
                 model_id: "test".to_string(),
                 modality: "dense_vector".to_string(),
                 dim: 32,
-                values: vec![0.1; 32],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1; 32]),
                 ..Default::default()
             }],
             ..ProximaRecord::default()

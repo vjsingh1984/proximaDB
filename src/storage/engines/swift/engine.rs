@@ -66,7 +66,7 @@ fn swift_record_vector(record: &ProximaRecord) -> &[f32] {
     record
         .embeddings
         .first()
-        .map(|embedding| embedding.values.as_slice())
+        .map(|embedding| embedding.as_fp32_slice())
         .unwrap_or(&[])
 }
 
@@ -775,7 +775,7 @@ impl SwiftEngine {
                         let vector = record
                             .embeddings
                             .first()
-                            .map_or(&[][..], |embedding| embedding.values.as_slice());
+                            .map_or(&[][..], |embedding| embedding.as_fp32_slice());
                         // Compute approximate distance
                         let distance = query
                             .iter()

@@ -1497,7 +1497,7 @@ impl EmbeddedProximaDB {
                         model_id: "default".to_string(),
                         modality: "vector".to_string(),
                         dim,
-                        values,
+                        values: proximadb_records::EmbeddingValues::Fp32(values),
                         ..Default::default()
                     }],
                     props,

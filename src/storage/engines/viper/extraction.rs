@@ -135,7 +135,7 @@ impl VectorExtractor for ViperExtractor {
                         record
                             .embeddings
                             .first()
-                            .map(|embedding| embedding.values.clone())
+                            .map(|embedding| embedding.values.to_fp32_owned())
                             .filter(|values| !values.is_empty())
                     }
                     ExtractionMode::QuantizedOnly => None,

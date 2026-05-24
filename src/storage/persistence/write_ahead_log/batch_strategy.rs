@@ -443,7 +443,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                             model_id: "default".to_string(),
                             modality: "dense_vector".to_string(),
                             dim: search_result.vector.len() as u32,
-                            values: search_result.vector,
+                            values: proximadb_records::EmbeddingValues::Fp32(search_result.vector),
                             ..Default::default()
                         }]
                     };

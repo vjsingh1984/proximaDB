@@ -1056,7 +1056,7 @@ impl DmlService {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
                 dim: result.vector.len() as u32,
-                values: result.vector,
+                values: proximadb_records::EmbeddingValues::Fp32(result.vector),
                 ..Default::default()
             }]
         };
@@ -1127,7 +1127,7 @@ impl DmlService {
             CatalogDataType::Vector | CatalogDataType::SparseVector | CatalogDataType::BinaryVector
         ) && let Some(embedding) = record.embeddings.first()
         {
-            return Ok(ProximaValue::DenseVector(embedding.values.clone()));
+            return Ok(ProximaValue::DenseVector(embedding.values.to_fp32_owned()));
         }
         Ok(ProximaValue::Null)
     }
@@ -2927,7 +2927,7 @@ mod tests {
                 model_id: "default".to_string(),
                 modality: "vector".to_string(),
                 dim: 2,
-                values: vec![0.1, 0.2],
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1, 0.2]),
                 ..Default::default()
             }],
             ..Default::default()

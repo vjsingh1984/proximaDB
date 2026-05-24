@@ -508,7 +508,7 @@ impl AxisManager {
         let vec_values = processed_vector
             .embeddings
             .first()
-            .map(|e| &e.values[..])
+            .map(|e| e.as_fp32_slice())
             .unwrap_or(&[]);
         let has_dense_vector_index = search_strategy
             .indexes
@@ -751,7 +751,7 @@ impl AxisManager {
         let vec_values = vector
             .embeddings
             .first()
-            .map(|e| e.values.clone())
+            .map(|e| e.values.to_fp32_owned())
             .unwrap_or_default();
         // Get or create HNSW index for this collection
         let dimension = vec_values.len();
@@ -930,7 +930,7 @@ impl AxisManager {
         let vec_values = vector
             .embeddings
             .first()
-            .map(|e| e.values.clone())
+            .map(|e| e.values.to_fp32_owned())
             .unwrap_or_default();
         let dimension = vec_values.len();
         if dimension == 0 || vector.oid.is_empty() {
@@ -1815,7 +1815,7 @@ impl AxisManager {
                 .map(|v| {
                     v.embeddings
                         .first()
-                        .map(|e| e.values.clone())
+                        .map(|e| e.values.to_fp32_owned())
                         .unwrap_or_default()
                 })
                 .collect()
@@ -1825,7 +1825,7 @@ impl AxisManager {
                 .map(|v| {
                     v.embeddings
                         .first()
-                        .map(|e| e.values.clone())
+                        .map(|e| e.values.to_fp32_owned())
                         .unwrap_or_default()
                 })
                 .collect()
@@ -1953,7 +1953,7 @@ impl AxisManager {
         let vector_data = vector
             .embeddings
             .first()
-            .map(|e| &e.values[..])
+            .map(|e| e.as_fp32_slice())
             .unwrap_or(&[]);
         if vector_data.is_empty() {
             return Ok(vector.clone());
@@ -2211,7 +2211,7 @@ impl AxisManager {
                     similarity_threshold,
                 }) => {
                     let record_vec = match record.embeddings.first() {
-                        Some(e) => &e.values,
+                        Some(e) => &*e.as_fp32_cow(),
                         None => continue,
                     };
                     let result = compute.similarity(vector, record_vec, Some(metric));
@@ -2317,7 +2317,7 @@ impl AxisManager {
             .embeddings
             .iter()
             .find(|embedding| !embedding.values.is_empty())
-            .map(|embedding| embedding.values.as_slice())
+            .map(|embedding| embedding.as_fp32_slice())
     }
 
     fn tree_node_to_json(node: &ProximaTreeNode) -> Value {
@@ -2629,7 +2629,7 @@ impl AxisManager {
         let vec_values = record
             .embeddings
             .first()
-            .map(|e| e.values.clone())
+            .map(|e| e.values.to_fp32_owned())
             .unwrap_or_default();
         let dimension = if vec_values.is_empty() {
             128

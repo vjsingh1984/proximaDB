@@ -507,7 +507,7 @@ mod write_ahead_log_batch_strategy_tests {
             recovered_vectors[0]
                 .embeddings
                 .first()
-                .map(|e| e.values.as_slice())
+                .map(|e| e.as_fp32_slice())
                 .unwrap_or(&[]),
             &[1.0f32, 2.0, 3.0]
         );
@@ -515,7 +515,7 @@ mod write_ahead_log_batch_strategy_tests {
             recovered_vectors[1]
                 .embeddings
                 .first()
-                .map(|e| e.values.as_slice())
+                .map(|e| e.as_fp32_slice())
                 .unwrap_or(&[]),
             &[4.0f32, 5.0, 6.0]
         );

@@ -197,11 +197,13 @@ impl IntegratedStreamingService {
             let vectors: Vec<(String, Vec<f32>, f32)> = records
                 .into_iter()
                 .map(|r| {
+                    // INT-2.5b: streaming subscriptions advertise fp32 vectors.
+                    // Promote non-Fp32 variants on the way out.
                     let v = r
                         .embeddings
                         .into_iter()
                         .next()
-                        .map(|e| e.values)
+                        .map(|e| e.values.to_fp32_owned())
                         .unwrap_or_default();
                     (r.oid, v, 0.0)
                 })

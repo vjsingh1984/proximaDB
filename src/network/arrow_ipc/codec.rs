@@ -271,7 +271,7 @@ impl ArrowProtoCodec {
                     model_id: "default".to_string(),
                     modality: "dense_vector".to_string(),
                     dim,
-                    values: row_values,
+                    values: proximadb_records::EmbeddingValues::Fp32(row_values),
                     ..Default::default()
                 });
             }
@@ -779,7 +779,7 @@ impl ArrowProtoCodec {
             let vals = record
                 .embeddings
                 .first()
-                .map(|e| e.values.as_slice())
+                .map(|e| e.as_fp32_slice())
                 .unwrap_or(&[]);
             vector_values.extend_from_slice(vals);
             if vals.len() < dimension {
@@ -1680,7 +1680,7 @@ mod tests {
                 embeddings: vec![EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "dense_vector".to_string(),
-                    values: vec![1.0, 2.0, 3.0],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0]),
                     dim: 3,
                     ..Default::default()
                 }],
@@ -1692,7 +1692,7 @@ mod tests {
                 embeddings: vec![EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "dense_vector".to_string(),
-                    values: vec![4.0, 5.0, 6.0],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![4.0, 5.0, 6.0]),
                     dim: 3,
                     ..Default::default()
                 }],
@@ -1726,7 +1726,7 @@ mod tests {
                 embeddings: vec![EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "dense_vector".to_string(),
-                    values: vec![0.5, 1.5, 2.5, 3.5],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![0.5, 1.5, 2.5, 3.5]),
                     dim: 4,
                     ..Default::default()
                 }],
@@ -1737,7 +1737,7 @@ mod tests {
                 embeddings: vec![EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "dense_vector".to_string(),
-                    values: vec![4.5, 5.5, 6.5, 7.5],
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![4.5, 5.5, 6.5, 7.5]),
                     dim: 4,
                     ..Default::default()
                 }],

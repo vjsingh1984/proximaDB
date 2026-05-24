@@ -586,7 +586,7 @@ impl UnifiedParquetReader {
                     let vector = record
                         .embeddings
                         .first()
-                        .map(|e| Arc::new(e.values.clone()));
+                        .map(|e| Arc::new(e.values.to_fp32_owned()));
                     let metadata = if needs_metadata {
                         record
                             .props
@@ -2115,7 +2115,7 @@ impl UnifiedParquetReader {
                 record.embeddings.push(EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values: vector,
+                    values: proximadb_records::EmbeddingValues::Fp32(vector),
                     dim,
                     ..Default::default()
                 });

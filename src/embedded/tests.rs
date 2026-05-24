@@ -286,7 +286,7 @@ mod tests {
         let updated_vec = updated_record
             .embeddings
             .first()
-            .map(|e| e.values.as_slice())
+            .map(|e| e.as_fp32_slice())
             .unwrap_or(&[]);
         assert_eq!(updated_vec.len(), 64);
         assert!((updated_vec[0] - 9.9).abs() < 0.001);
