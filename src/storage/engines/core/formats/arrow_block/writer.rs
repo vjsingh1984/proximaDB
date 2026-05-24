@@ -507,6 +507,135 @@ mod tests {
         }
     }
 
+    /// INT-4-full: the demonstrable fp16 storage payoff. Writes the same
+    /// content as both fp32 and fp16 to two real Arrow files, then asserts
+    /// the fp16 file's vector-column bytes are ~half the fp32 file's.
+    ///
+    /// Why a tolerance band (45-55%) instead of exact 50%: the file
+    /// includes the schema header, B+ tree index, metadata footer, and
+    /// other fixed per-file overhead that doesn't shrink with the vector
+    /// column. With a large enough vector payload (records × dim × bytes)
+    /// the fixed overhead is amortized below the noise floor and the ratio
+    /// approaches 0.5; we pick a deliberately wide band that still rejects
+    /// any silent downconversion (which would make the ratio ~1.0).
+    ///
+    /// This is the file-format-level proof. The metric-endpoint flavor
+    /// (`/metrics/prometheus` `proximadb_embedding_precision_canonical_bytes`)
+    /// needs a running server and is the next layer up.
+    #[test]
+    fn fp16_file_is_approximately_half_the_fp32_size() {
+        use crate::storage::engines::core::formats::arrow_block::ArrowBlockReader;
+
+        let dir = tempdir().expect("Failed to create tempdir");
+        let dimension: usize = 256;
+        let num_records: usize = 500;
+
+        // Generate the same source content twice — once as fp32, once as fp16.
+        // Same input bytes means the only delta in output bytes is the column
+        // encoding, which is the signal we're measuring.
+        let make_src = |i: usize| -> Vec<f32> {
+            (0..dimension)
+                .map(|j| ((i as f32) * 0.001) + ((j as f32) * 0.0001))
+                .collect()
+        };
+
+        // ---- fp32 file ----
+        let fp32_path = dir.path().join("baseline_fp32.arrow");
+        let mut writer_fp32 = ArrowBlockWriter::new(
+            &fp32_path,
+            ArrowBlockConfig::new(dimension as u32),
+        )
+        .expect("fp32 writer");
+        let fp32_records: Vec<ProximaRecord> = (0..num_records)
+            .map(|i| {
+                let src = make_src(i);
+                ProximaRecord {
+                    oid: format!("fp32_{:06}", i),
+                    record_version: 1,
+                    embeddings: vec![EmbeddingCell {
+                        model_id: "test".to_string(),
+                        modality: "dense_vector".to_string(),
+                        dim: dimension as u32,
+                        values: proximadb_records::EmbeddingValues::Fp32(src),
+                        ..Default::default()
+                    }],
+                    ..ProximaRecord::default()
+                }
+            })
+            .collect();
+        writer_fp32
+            .write_block(&fp32_records)
+            .expect("fp32 write_block");
+        writer_fp32.finalize().expect("fp32 finalize");
+
+        // ---- fp16 file ----
+        let fp16_path = dir.path().join("native_fp16.arrow");
+        let mut writer_fp16 = ArrowBlockWriter::new(
+            &fp16_path,
+            ArrowBlockConfig::new(dimension as u32),
+        )
+        .expect("fp16 writer");
+        let fp16_records: Vec<ProximaRecord> = (0..num_records)
+            .map(|i| {
+                let src = make_src(i);
+                let f16s: Vec<half::f16> =
+                    src.iter().map(|&x| half::f16::from_f32(x)).collect();
+                ProximaRecord {
+                    oid: format!("fp16_{:06}", i),
+                    record_version: 1,
+                    embeddings: vec![EmbeddingCell {
+                        model_id: "test".to_string(),
+                        modality: "dense_vector".to_string(),
+                        dim: dimension as u32,
+                        values: proximadb_records::EmbeddingValues::Fp16(f16s),
+                        precision: proximadb_records::EmbeddingScalarType::Fp16,
+                        ..Default::default()
+                    }],
+                    ..ProximaRecord::default()
+                }
+            })
+            .collect();
+        writer_fp16
+            .write_block(&fp16_records)
+            .expect("fp16 write_block");
+        writer_fp16.finalize().expect("fp16 finalize");
+
+        // ---- measure + assert ----
+        let fp32_size = std::fs::metadata(&fp32_path)
+            .expect("fp32 metadata")
+            .len();
+        let fp16_size = std::fs::metadata(&fp16_path)
+            .expect("fp16 metadata")
+            .len();
+        let ratio = fp16_size as f64 / fp32_size as f64;
+        assert!(
+            (0.45..=0.55).contains(&ratio),
+            "fp16 file should be 45-55% of the fp32 file (vector column \
+             is the dominant payload at {dimension} dims × {num_records} records). \
+             Got fp32={fp32_size}B, fp16={fp16_size}B, ratio={ratio:.4}. \
+             A ratio near 1.0 indicates the fp16 column was silently \
+             downconverted to fp32 somewhere in the bridge / Arrow IPC stack."
+        );
+
+        // Sanity check the contents are recoverable + still fp16 / fp32 typed —
+        // size-only assertion could pass for a malformed file; we want both.
+        let reader_fp16 = ArrowBlockReader::open(&fp16_path).expect("open fp16 reader");
+        let read_fp16 = reader_fp16.read_all().expect("read fp16");
+        assert_eq!(read_fp16.len(), num_records);
+        assert!(matches!(
+            read_fp16[0].embeddings[0].values,
+            proximadb_records::EmbeddingValues::Fp16(_)
+        ));
+
+        let reader_fp32 = ArrowBlockReader::open(&fp32_path).expect("open fp32 reader");
+        let read_fp32 = reader_fp32.read_all().expect("read fp32");
+        assert_eq!(read_fp32.len(), num_records);
+        assert!(matches!(
+            read_fp32[0].embeddings[0].values,
+            proximadb_records::EmbeddingValues::Fp32(_)
+        ));
+    }
+
     #[test]
     fn test_id_range_tracking() {
         let dir = tempdir().expect("Failed to create tempdir");
