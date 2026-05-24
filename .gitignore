@@ -305,10 +305,12 @@ docs/log/
 !package.json
 !config.json
 !config/pricing.json
+!config/tier-config.example.json
 !docs/_internal/roadmap/PANIC_POLICY_BASELINE.json
 !clients/**/package.json
 !clients/**/tsconfig.json
 !clients/**/tsconfig.*.json
+!clients/python/tests/unit/grpc_drift_baseline.json
 !clients/**/package-lock.json
 !examples/**/*.json
 bert_*.json
@@ -465,3 +467,7 @@ GEMINI.md
 
 # AI tool data folders
 .victor/
+
+# Root-level placeholder go.mod for tools that probe for it
+# (real Go modules live at clients/go/go.mod and clients/go-embedded/go.mod)
+/go.mod
