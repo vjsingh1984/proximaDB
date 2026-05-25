@@ -88,7 +88,7 @@ pub use learned_fusion::{
     TrainingMetrics, TrainingSample,
 };
 pub use proximadb_query::{
-    ComponentPlan, QueryMetrics, QueryPlan, QueryResult, UnifiedRecord,
+    ComponentPlan, QueryMetrics, QueryPlanSummary, QueryResult, UnifiedRecord,
     reorder_components_with_optimizer,
 };
 pub use reranking::{CrossModalReranker, QueryContext, QueryIntent, RerankConfig, RerankedResult};
@@ -314,7 +314,7 @@ impl UnifiedQueryEngine {
     }
 
     /// Explain the query execution plan
-    pub fn explain(&self, query: &str) -> Result<QueryPlan> {
+    pub fn explain(&self, query: &str) -> Result<QueryPlanSummary> {
         let multi_model_query = self.decomposer.decompose(query)?;
         Ok(proximadb_query::explain_query_plan(
             &multi_model_query,

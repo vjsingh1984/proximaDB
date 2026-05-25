@@ -9,9 +9,15 @@ use proximadb_query_fusion::FusionStrategy;
 
 use crate::optimizer_support::OptimizedPlan;
 
-/// Query execution plan summary for explain-style surfaces.
+/// Orchestration-layer plan summary for explain-style surfaces.
+///
+/// Naming note: this type used to be called `QueryPlan` and collided with
+/// the graph/distributed/federated/proto `QueryPlan` types. Renamed to
+/// `QueryPlanSummary` because it is intentionally lossy — a compact
+/// component+fusion+cost view for EXPLAIN, not the executable plan that
+/// the layer-specific planners produce.
 #[derive(Debug, Clone)]
-pub struct QueryPlan {
+pub struct QueryPlanSummary {
     /// Component plans.
     pub components: Vec<ComponentPlan>,
     /// Fusion strategy.
@@ -100,8 +106,11 @@ pub fn estimate_total_cost(query: &MultiModelQuery, max_parallel_queries: usize)
 }
 
 /// Build an explain-plan summary for a query.
-pub fn explain_query_plan(query: &MultiModelQuery, max_parallel_queries: usize) -> QueryPlan {
-    QueryPlan {
+pub fn explain_query_plan(
+    query: &MultiModelQuery,
+    max_parallel_queries: usize,
+) -> QueryPlanSummary {
+    QueryPlanSummary {
         components: query
             .components
             .iter()
