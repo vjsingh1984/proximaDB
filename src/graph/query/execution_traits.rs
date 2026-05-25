@@ -11,9 +11,17 @@ pub struct ColumnSpec {
     pub value_type: ValueType,
 }
 
-/// Execution statistics
+/// Per-physical-operator execution statistics for graph query traits.
+///
+/// Naming note: this type used to be called `ExecutionStats` and collided
+/// with the federated/router/proto `ExecutionStats` types. Renamed because
+/// the field set is operator-scoped (rows + time only). Distinct from
+/// `proximadb_query::graph_runtime::GraphExecutionStats`, which captures
+/// query-level counts (rows + matched nodes + matched edges). The proto
+/// `proximadb.explain.v1::ExecutionStats` remains the canonical EXPLAIN
+/// form per ADR-004.
 #[derive(Debug, Clone, Default)]
-pub struct ExecutionStats {
+pub struct GraphOperatorExecutionStats {
     pub rows_processed: usize,
     pub execution_time_ms: u64,
 }
@@ -86,7 +94,7 @@ pub struct ExecutionContext<E: GraphEngine + ?Sized = dyn GraphEngine> {
     pub profile: bool,
 
     /// Execution statistics (accumulated during execution)
-    pub stats: ExecutionStats,
+    pub stats: GraphOperatorExecutionStats,
 }
 
 impl<E: GraphEngine + ?Sized> ExecutionContext<E> {
@@ -97,7 +105,7 @@ impl<E: GraphEngine + ?Sized> ExecutionContext<E> {
             timeout_ms: None,
             limit: None,
             profile: false,
-            stats: ExecutionStats::default(),
+            stats: GraphOperatorExecutionStats::default(),
         }
     }
 

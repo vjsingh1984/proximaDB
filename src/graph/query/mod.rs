@@ -68,8 +68,8 @@ pub use cypher_ast::{CypherClause, CypherStatement, MatchClause, ReturnClause};
 pub use cypher_functions::CypherFunctionRegistry;
 pub use cypher_parser::CypherParser;
 pub use execution_traits::{
-    ColumnSpec, ExecutionContext, ExecutionStats, PathElement, PhysicalOperator, QueryValue,
-    ResultTuple, ValueType,
+    ColumnSpec, ExecutionContext, GraphOperatorExecutionStats, PathElement, PhysicalOperator,
+    QueryValue, ResultTuple, ValueType,
 };
 pub use graph_parser::{parse_cypher, parse_cypher_with_context};
 pub use pattern::PatternMatcher;
