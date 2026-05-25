@@ -113,7 +113,7 @@ pub struct AppendEntriesRequest {
     pub prev_log_term: u64,
 
     /// Log entries to store (empty for heartbeat)
-    pub entries: Vec<LogEntry>,
+    pub entries: Vec<RpcLogEntry>,
 
     /// Leader's commit index
     pub leader_commit: u64,
@@ -138,9 +138,18 @@ pub struct AppendEntriesResponse {
     pub conflict_index: Option<u64>,
 }
 
-/// A log entry in the Raft log
+/// Raft log entry in over-the-wire RPC form (serialized command bytes).
+///
+/// Naming note: this type used to be called `LogEntry` and collided with
+/// `cluster::consensus::LogEntry` (the in-memory typed Raft entry with a
+/// `Command` enum payload). consensus.rs already imported this type with
+/// `as RpcLogEntry` to disambiguate at every call site — renaming the
+/// canonical type to match that alias eliminates the alias bookkeeping.
+/// The 4 other LogEntry types in the workspace (proto v1, proto
+/// cluster.v1, observability-query log search result, and the now-
+/// distinguished consensus one) are unrelated domains.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LogEntry {
+pub struct RpcLogEntry {
     /// Term when entry was received by leader
     pub term: u64,
 
@@ -669,7 +678,7 @@ mod tests {
 
     #[test]
     fn test_log_entry() {
-        let entry = LogEntry {
+        let entry = RpcLogEntry {
             term: 1,
             index: 1,
             command: vec![1, 2, 3],

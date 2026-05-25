@@ -32,7 +32,7 @@ use tokio::task::JoinHandle;
 
 use super::rpc::{
     AppendEntriesRequest, AppendEntriesResponse, CircuitBreaker, ConnectionManager,
-    ConnectionPoolConfig, ConsensusTransport, LogEntry as RpcLogEntry, LogEntryType, NodeEndpoint,
+    ConnectionPoolConfig, ConsensusTransport, LogEntryType, NodeEndpoint, RpcLogEntry,
     RequestVoteRequest, RetryPolicy,
 };
 // Re-export for external use
