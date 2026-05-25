@@ -436,6 +436,282 @@ impl ProviderError {
 }
 
 // ---------------------------------------------------------------------------
+// Provider adapter contract (P4)
+// ---------------------------------------------------------------------------
+
+/// Provider observation snapshot returned by
+/// [`DrProviderAdapter::fetch_state`]. The reconciler diffs this against
+/// the policy's intent to detect drift, mark `DrHealth`, and decide
+/// repair vs escalate.
+///
+/// All fields except `rule_exists` are `Option` because providers vary
+/// in what they report; absent values mean "could not observe", not
+/// "observed as missing".
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ProviderObservedState {
+    /// True iff a provider rule keyed on this policy currently exists.
+    pub rule_exists: bool,
+    /// Observed prefix filter on the provider rule. Drift if it differs
+    /// from `policy.placement.source_prefix`.
+    pub observed_prefix: Option<String>,
+    /// Observed destination bucket/account on the provider rule. Drift
+    /// if it differs from `policy.placement.destination_bucket_or_account`.
+    pub observed_destination: Option<String>,
+    /// Observed destination container (Azure) or `None` (S3 — bucket-only).
+    pub observed_destination_container: Option<String>,
+    /// True iff the provider rule status is "enabled" / "active".
+    pub rule_enabled: bool,
+    /// True iff source-side prerequisites (S3 versioning, Azure change
+    /// feed) are still active. Drift if false.
+    pub source_versioning_enabled: bool,
+    /// True iff the destination bucket/container rejects application
+    /// writes. Drift if false.
+    pub destination_write_protected: bool,
+    /// Last lag observed by the provider, in seconds. `None` if
+    /// unknown.
+    pub observed_lag_seconds: Option<u32>,
+    /// Opaque provider-side rule ID. Cross-correlates with the catalog's
+    /// `ProviderReplicationBinding::provider_rule_id`.
+    pub provider_rule_id: Option<String>,
+    /// Optional KMS key ID the provider rule is using. Drift if it
+    /// differs from `policy.provider_binding.provider_kms_key_id`.
+    pub provider_kms_key_id: Option<String>,
+}
+
+/// Provider adapter trait — engine surface only. The reconciler (P3)
+/// calls this; concrete adapters (S3, Azure Blob, ADLS HNS worker)
+/// live in the operator layer.
+///
+/// All methods are async because real provider SDKs (`aws-sdk-s3`,
+/// `azure_storage_blobs`) are async-only; making the trait async avoids
+/// `block_on` smuggling inside the reconciler.
+///
+/// Idempotency contract:
+/// - `ensure_rule` must be safe to retry against the same
+///   `(policy_id, policy_version)`. Calling it twice with the same
+///   policy version must converge to the same provider binding, not
+///   create a duplicate rule.
+/// - `retire_rule` must be safe to retry; calling it after the rule is
+///   already disabled returns `Ok(())`.
+///
+/// See `docs/12-design/COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc` "LLD:
+/// Provider Adapter Contract".
+#[async_trait::async_trait]
+pub trait DrProviderAdapter: Send + Sync {
+    /// Stable identifier for logs and metric labels, e.g. `"aws_s3"`,
+    /// `"azure_blob"`, `"azure_adls_hns"`, `"mock"`.
+    fn name(&self) -> &'static str;
+
+    /// Create or update the provider rule to match `policy`. Returns
+    /// the binding the reconciler should persist on the catalog row.
+    /// Must be idempotent against `(policy_id, policy_version)`.
+    async fn ensure_rule(
+        &self,
+        policy: &CollectionDrPolicy,
+    ) -> Result<ProviderReplicationBinding, ProviderError>;
+
+    /// Fetch current provider state. Read-only — never mutates.
+    async fn fetch_state(
+        &self,
+        policy: &CollectionDrPolicy,
+    ) -> Result<ProviderObservedState, ProviderError>;
+
+    /// Disable and tombstone the provider rule. Idempotent. Returns
+    /// `Ok(())` even if no rule exists.
+    async fn retire_rule(&self, policy: &CollectionDrPolicy)
+        -> Result<(), ProviderError>;
+}
+
+// ---------------------------------------------------------------------------
+// Reference test-double adapter (P4)
+// ---------------------------------------------------------------------------
+
+/// In-memory reference `DrProviderAdapter` for tests. Simulates the
+/// idempotent provider-rule lifecycle without any provider SDK access.
+///
+/// Use in:
+/// - Reconciler tests in this crate (P3, when it lands).
+/// - Integration tests in dependent crates.
+/// - Operator-side wiring tests to validate engine plumbing before the
+///   real S3/Azure adapter is plugged in.
+///
+/// Supports error injection so tests can drive the full retry/escalate
+/// matrix.
+pub struct MockDrProviderAdapter {
+    inner: parking_lot::Mutex<MockState>,
+}
+
+#[derive(Default)]
+struct MockState {
+    /// Provider-side rules keyed by `(policy_id, policy_version)` so
+    /// retry against the same version returns the same binding.
+    rules: std::collections::HashMap<String, ProviderReplicationBinding>,
+    /// Observed states keyed by `policy_id` (whatever the adapter
+    /// would report on the next `fetch_state` for that policy).
+    observed: std::collections::HashMap<String, ProviderObservedState>,
+    /// Injected error consumed by the next call. `None` means normal
+    /// operation.
+    next_error: Option<ProviderError>,
+    /// Counter of `ensure_rule` calls — lets tests verify idempotency.
+    ensure_calls: usize,
+    /// Counter of `retire_rule` calls.
+    retire_calls: usize,
+    /// Counter of `fetch_state` calls.
+    fetch_calls: usize,
+}
+
+impl MockDrProviderAdapter {
+    /// Build an empty mock adapter. No rules, no observed state, no
+    /// injected errors.
+    pub fn new() -> Self {
+        Self {
+            inner: parking_lot::Mutex::new(MockState::default()),
+        }
+    }
+
+    /// Inject an error to be returned by the next adapter call. Cleared
+    /// after one consumption. Useful for exercising the reconciler's
+    /// retry vs escalate decision.
+    pub fn inject_error(&self, err: ProviderError) {
+        self.inner.lock().next_error = Some(err);
+    }
+
+    /// Pre-seed the observed state for a policy so `fetch_state` can
+    /// return a synthetic drift scenario.
+    pub fn seed_observed(&self, policy_id: &str, state: ProviderObservedState) {
+        self.inner
+            .lock()
+            .observed
+            .insert(policy_id.to_string(), state);
+    }
+
+    /// Number of times `ensure_rule` has been called.
+    pub fn ensure_call_count(&self) -> usize {
+        self.inner.lock().ensure_calls
+    }
+
+    /// Number of times `retire_rule` has been called.
+    pub fn retire_call_count(&self) -> usize {
+        self.inner.lock().retire_calls
+    }
+
+    /// Number of times `fetch_state` has been called.
+    pub fn fetch_call_count(&self) -> usize {
+        self.inner.lock().fetch_calls
+    }
+
+    /// Key used internally for idempotency: `(policy_id, policy_version)`.
+    fn idem_key(policy: &CollectionDrPolicy) -> String {
+        format!("{}@{}", policy.policy_id, policy.policy_version)
+    }
+}
+
+impl Default for MockDrProviderAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait::async_trait]
+impl DrProviderAdapter for MockDrProviderAdapter {
+    fn name(&self) -> &'static str {
+        "mock"
+    }
+
+    async fn ensure_rule(
+        &self,
+        policy: &CollectionDrPolicy,
+    ) -> Result<ProviderReplicationBinding, ProviderError> {
+        let mut state = self.inner.lock();
+        state.ensure_calls += 1;
+        if let Some(err) = state.next_error.take() {
+            return Err(err);
+        }
+        let key = Self::idem_key(policy);
+        // Idempotency: same (policy_id, policy_version) returns the
+        // same binding rather than creating a new one.
+        let binding =
+            state.rules.entry(key.clone()).or_insert_with(|| {
+                ProviderReplicationBinding {
+                    provider_policy_id: Some(format!("mock_policy_{key}")),
+                    provider_rule_id: format!(
+                        "dr-{}-v{}",
+                        policy.policy_id, policy.policy_version
+                    ),
+                    provider_role_arn: None,
+                    provider_kms_key_id: policy
+                        .provider_binding
+                        .as_ref()
+                        .and_then(|b| b.provider_kms_key_id.clone()),
+                }
+            });
+        // Reflect the rule into observed state so the next fetch_state
+        // call sees it.
+        state.observed.insert(
+            policy.policy_id.clone(),
+            ProviderObservedState {
+                rule_exists: true,
+                observed_prefix: Some(policy.placement.source_prefix.clone()),
+                observed_destination: Some(
+                    policy.placement.destination_bucket_or_account.clone(),
+                ),
+                observed_destination_container: policy
+                    .placement
+                    .destination_container
+                    .clone(),
+                rule_enabled: true,
+                source_versioning_enabled: true,
+                destination_write_protected: true,
+                observed_lag_seconds: Some(0),
+                provider_rule_id: Some(binding.provider_rule_id.clone()),
+                provider_kms_key_id: binding.provider_kms_key_id.clone(),
+            },
+        );
+        Ok(binding.clone())
+    }
+
+    async fn fetch_state(
+        &self,
+        policy: &CollectionDrPolicy,
+    ) -> Result<ProviderObservedState, ProviderError> {
+        let mut state = self.inner.lock();
+        state.fetch_calls += 1;
+        if let Some(err) = state.next_error.take() {
+            return Err(err);
+        }
+        Ok(state
+            .observed
+            .get(&policy.policy_id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn retire_rule(
+        &self,
+        policy: &CollectionDrPolicy,
+    ) -> Result<(), ProviderError> {
+        let mut state = self.inner.lock();
+        state.retire_calls += 1;
+        if let Some(err) = state.next_error.take() {
+            return Err(err);
+        }
+        // Remove all bindings for this policy_id regardless of version.
+        state
+            .rules
+            .retain(|key, _| !key.starts_with(&format!("{}@", policy.policy_id)));
+        // Reflect retirement in observed state.
+        state.observed.insert(
+            policy.policy_id.clone(),
+            ProviderObservedState {
+                rule_exists: false,
+                ..ProviderObservedState::default()
+            },
+        );
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -790,5 +1066,178 @@ mod tests {
         assert!(misconfig.requires_ops_ack());
         assert!(quota.requires_ops_ack());
         assert!(auth.requires_ops_ack());
+    }
+
+    // --- DrProviderAdapter / MockDrProviderAdapter -------------------------
+
+    #[tokio::test]
+    async fn mock_adapter_name_is_stable() {
+        let m = MockDrProviderAdapter::new();
+        assert_eq!(m.name(), "mock");
+    }
+
+    #[tokio::test]
+    async fn mock_ensure_rule_creates_binding_and_observable_state() {
+        let m = MockDrProviderAdapter::new();
+        let p = sample_policy();
+
+        let binding = m.ensure_rule(&p).await.unwrap();
+        assert!(binding.provider_rule_id.contains(&p.policy_id));
+        assert_eq!(m.ensure_call_count(), 1);
+
+        // The rule is now visible to fetch_state.
+        let state = m.fetch_state(&p).await.unwrap();
+        assert!(state.rule_exists);
+        assert!(state.rule_enabled);
+        assert_eq!(state.observed_prefix.as_deref(), Some(p.placement.source_prefix.as_str()));
+        assert_eq!(
+            state.observed_destination.as_deref(),
+            Some(p.placement.destination_bucket_or_account.as_str()),
+        );
+        assert!(state.source_versioning_enabled);
+        assert!(state.destination_write_protected);
+    }
+
+    #[tokio::test]
+    async fn mock_ensure_rule_is_idempotent_against_policy_version() {
+        let m = MockDrProviderAdapter::new();
+        let p = sample_policy();
+
+        let b1 = m.ensure_rule(&p).await.unwrap();
+        let b2 = m.ensure_rule(&p).await.unwrap();
+        let b3 = m.ensure_rule(&p).await.unwrap();
+
+        // Same policy_version → same binding, no duplication.
+        assert_eq!(b1.provider_rule_id, b2.provider_rule_id);
+        assert_eq!(b2.provider_rule_id, b3.provider_rule_id);
+        assert_eq!(b1.provider_policy_id, b2.provider_policy_id);
+        assert_eq!(m.ensure_call_count(), 3);
+    }
+
+    #[tokio::test]
+    async fn mock_ensure_rule_bumps_provider_rule_id_when_policy_version_changes() {
+        let m = MockDrProviderAdapter::new();
+        let mut p = sample_policy();
+
+        let b_v1 = m.ensure_rule(&p).await.unwrap();
+        // S2: policy_version bumps for changes that touch provider rule
+        // (destination prefix change). The adapter must produce a new
+        // rule for the new version.
+        p.policy_version = 2;
+        let b_v2 = m.ensure_rule(&p).await.unwrap();
+
+        assert_ne!(b_v1.provider_rule_id, b_v2.provider_rule_id);
+        assert!(b_v2.provider_rule_id.ends_with("-v2"));
+    }
+
+    #[tokio::test]
+    async fn mock_retire_rule_removes_binding_and_marks_observed_missing() {
+        let m = MockDrProviderAdapter::new();
+        let p = sample_policy();
+
+        m.ensure_rule(&p).await.unwrap();
+        assert!(m.fetch_state(&p).await.unwrap().rule_exists);
+
+        m.retire_rule(&p).await.unwrap();
+        let state = m.fetch_state(&p).await.unwrap();
+        assert!(!state.rule_exists);
+        assert!(!state.rule_enabled);
+        assert_eq!(m.retire_call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn mock_retire_rule_is_idempotent() {
+        let m = MockDrProviderAdapter::new();
+        let p = sample_policy();
+
+        // Retiring before ensure must still be Ok per the contract.
+        m.retire_rule(&p).await.unwrap();
+        m.retire_rule(&p).await.unwrap();
+        m.retire_rule(&p).await.unwrap();
+        assert_eq!(m.retire_call_count(), 3);
+
+        let state = m.fetch_state(&p).await.unwrap();
+        assert!(!state.rule_exists);
+    }
+
+    #[tokio::test]
+    async fn mock_fetch_state_on_unknown_policy_returns_default() {
+        let m = MockDrProviderAdapter::new();
+        let p = sample_policy();
+        let state = m.fetch_state(&p).await.unwrap();
+        // Default observed state: rule_exists = false, everything else
+        // bottomed out. This is what the reconciler sees the first time
+        // it polls a brand-new policy before ensure_rule runs.
+        assert!(!state.rule_exists);
+        assert!(!state.rule_enabled);
+        assert_eq!(state.observed_prefix, None);
+        assert_eq!(m.fetch_call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn mock_error_injection_returns_then_clears() {
+        let m = MockDrProviderAdapter::new();
+        let p = sample_policy();
+
+        m.inject_error(ProviderError::Transient("flake".into()));
+        let err = m.ensure_rule(&p).await.unwrap_err();
+        assert!(matches!(err, ProviderError::Transient(_)));
+        assert!(err.is_retryable());
+
+        // Error is consumed — the next call succeeds.
+        let binding = m.ensure_rule(&p).await.unwrap();
+        assert!(!binding.provider_rule_id.is_empty());
+    }
+
+    #[tokio::test]
+    async fn mock_error_injection_covers_full_taxonomy() {
+        let m = MockDrProviderAdapter::new();
+        let p = sample_policy();
+
+        for err in [
+            ProviderError::Transient("5xx".into()),
+            ProviderError::Misconfiguration("no bucket".into()),
+            ProviderError::QuotaExceeded("rule cap".into()),
+            ProviderError::AuthDenied("403".into()),
+        ] {
+            m.inject_error(err.clone());
+            let got = m.ensure_rule(&p).await.unwrap_err();
+            assert_eq!(got, err);
+        }
+    }
+
+    #[tokio::test]
+    async fn mock_seed_observed_drives_drift_scenarios() {
+        // Pre-seed an observed state that doesn't match the policy.
+        // Lets reconciler tests assert drift detection without going
+        // through a full ensure_rule first.
+        let m = MockDrProviderAdapter::new();
+        let p = sample_policy();
+        let drift = ProviderObservedState {
+            rule_exists: true,
+            observed_prefix: Some("data/wrong/prefix/".into()),
+            observed_destination: Some("wrong-bucket".into()),
+            rule_enabled: true,
+            source_versioning_enabled: false, // <-- drift!
+            destination_write_protected: true,
+            ..Default::default()
+        };
+        m.seed_observed(&p.policy_id, drift.clone());
+
+        let got = m.fetch_state(&p).await.unwrap();
+        assert_eq!(got, drift);
+    }
+
+    #[tokio::test]
+    async fn mock_adapter_is_object_safe_via_trait_object() {
+        // The reconciler will hold the adapter as `Arc<dyn DrProviderAdapter>`.
+        // This test pins object safety so a future trait change can't
+        // accidentally break dynamic dispatch.
+        let mock: std::sync::Arc<dyn DrProviderAdapter> =
+            std::sync::Arc::new(MockDrProviderAdapter::new());
+        assert_eq!(mock.name(), "mock");
+        let p = sample_policy();
+        let binding = mock.ensure_rule(&p).await.unwrap();
+        assert!(!binding.provider_rule_id.is_empty());
     }
 }
