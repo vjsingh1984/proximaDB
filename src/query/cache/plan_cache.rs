@@ -113,9 +113,15 @@ impl Default for PlanCacheConfig {
     }
 }
 
-/// EMA-tracked counters surfaced for observability.
+/// EMA-tracked plan-cache counters surfaced for observability.
+///
+/// Naming note: this type used to be called `PlanCacheStats` and collided
+/// with the federated/execution/proximadb-query variants. Renamed because
+/// the field set is observability-specific — only this variant tracks
+/// the EMA hit rate and invalidation count. The canonical
+/// `proximadb_query::PlanCacheStats` is what generic callers should use.
 #[derive(Debug, Default, Clone, PartialEq)]
-pub struct PlanCacheStats {
+pub struct ObservabilityPlanCacheStats {
     pub entries: usize,
     pub total_lookups: u64,
     pub total_hits: u64,
@@ -138,7 +144,7 @@ struct Inner {
     /// the touch-on-lookup pattern is O(n) worst case but the cap is small
     /// (defaults to 10k entries) and avoids the doubly-linked-list dance.
     lru: Vec<PlanCacheKey>,
-    stats: PlanCacheStats,
+    stats: ObservabilityPlanCacheStats,
 }
 
 /// Process-wide PlanCache singleton — lazy-initialized on first
@@ -155,7 +161,7 @@ impl PlanCache {
             inner: Arc::new(RwLock::new(Inner {
                 map: HashMap::new(),
                 lru: Vec::new(),
-                stats: PlanCacheStats::default(),
+                stats: ObservabilityPlanCacheStats::default(),
             })),
             config,
         }
@@ -258,7 +264,7 @@ impl PlanCache {
     }
 
     /// Snapshot the counters.
-    pub async fn stats(&self) -> PlanCacheStats {
+    pub async fn stats(&self) -> ObservabilityPlanCacheStats {
         let g = self.inner.read().await;
         let mut s = g.stats.clone();
         s.entries = g.map.len();
