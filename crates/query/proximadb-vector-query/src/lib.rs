@@ -1,3 +1,21 @@
+//! # ProximaDB Vector-Query Contract
+//!
+//! Narrow Rust-typed contract for cross-modal query orchestrators that need
+//! to invoke a single vector probe inside a larger multi-modal plan. The
+//! `VectorQueryService` trait + `VectorQueryRequest` shape are intentionally
+//! modality-clean: this crate has no dependency on the proto crate or the
+//! root crate, so the Phase 3 modality-extracted runtime
+//! (`crates/modalities/proximadb-vector::VectorServiceImpl`) can implement
+//! it without coupling back to the wire layer.
+//!
+//! For REST/gRPC handler paths (wide CRUD surface, proto-typed), use the
+//! `proximadb_runtime::VectorOpsPort` trait instead. The same concrete
+//! struct (`src/services/operations/vectors/legacy.rs::VectorOperationsService`)
+//! implements both — the two trait surfaces serve different architectural
+//! layers (orchestration-plane vs runtime-plane) and are NOT a candidate
+//! for collapse. See `docs/12-design/adr/ADR-014-vector-query-2-shape.adoc`
+//! for the deliberate-not-duplicate rationale.
+
 /// Vector search expression used by cross-model query orchestration.
 #[derive(Debug, Clone)]
 pub struct VectorSearchExpr {

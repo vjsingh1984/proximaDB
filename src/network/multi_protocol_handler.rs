@@ -1181,8 +1181,13 @@ impl UnifiedQueryHandler {
             "Executing vector search via trait object"
         );
 
-        // Convert UnifiedQueryRequest to VectorSearchRequest
-        use proximadb_vector_query::VectorQueryRequest as VectorSearchRequest;
+        // Canonical proto → Rust-contract conversion site per ADR-014
+        // (vector-query 2-shape boundary). This is the orchestration plane:
+        // the UnifiedQueryRequest carries a proto-derived shape and we lower
+        // it to the modality-clean `VectorQueryRequest` here before calling
+        // the `VectorQueryService` trait object. Do not invert this
+        // direction — see ADR-014 for why Rust-contract → proto is rejected.
+        use proximadb_vector_query::VectorQueryRequest;
 
         let query_vector = query
             .query_vectors
@@ -1192,7 +1197,7 @@ impl UnifiedQueryHandler {
 
         let distance_metric = query.distance_metric;
 
-        let request = VectorSearchRequest {
+        let request = VectorQueryRequest {
             collection_id: query.collection_id.clone(),
             query_vector,
             top_k: query.top_k as usize,

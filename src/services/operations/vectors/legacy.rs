@@ -4907,6 +4907,12 @@ mod index_first_search_tests {
 /// - **Distance Metric**: Maps contract metric to search config (TODO: full metric support)
 /// - **Threshold**: Applies post-search filtering on result scores
 /// - **Result Conversion**: Uses `proto_results_to_vector_records` for stable VectorRecord types
+///
+/// Two-shape boundary: this is the Rust-typed orchestration-plane impl.
+/// The proto-typed runtime-plane impl is `impl VectorOpsPort for
+/// VectorOperationsService` ~70 lines below. Both delegate to `search_v1`.
+/// See `docs/12-design/adr/ADR-014-vector-query-2-shape.adoc` for why the
+/// two trait surfaces are deliberate rather than duplication.
 #[async_trait::async_trait]
 impl VectorQueryService for VectorOperationsService {
     async fn vector_search(
@@ -4976,6 +4982,11 @@ impl VectorQueryService for VectorOperationsService {
 
 // ── VectorOpsPort impl ────────────────────────────────────────────────────────
 
+/// Proto-typed runtime-plane impl of `VectorOpsPort` for cross-crate
+/// runtime/REST/gRPC callers. The Rust-typed orchestration-plane impl
+/// (`VectorQueryService`) is ~70 lines above. Both delegate to
+/// `search_v1` — see `docs/12-design/adr/ADR-014-vector-query-2-shape.adoc`
+/// for the deliberate-not-duplicate rationale.
 #[async_trait::async_trait]
 impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
     async fn search(

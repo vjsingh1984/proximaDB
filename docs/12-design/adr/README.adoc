@@ -56,7 +56,15 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Schema Modes and ProximaRecord-Centric API Surfaces
 | Accepted
 | REST/gRPC/Arrow/SQL/SDK schema-on-read and schema-on-write convergence
+
+| link:ADR-014-vector-query-2-shape.adoc[ADR-014]
+| Vector Query Two-Shape Boundary
+| Accepted
+| `VectorOpsPort` (proto-typed runtime port) vs `VectorQueryService` (Rust-typed orchestration contract) — deliberate, not duplication
 |===
+
+NOTE: ADR-010 through ADR-013 exist in this directory but are not yet
+indexed in the table above; that catalogue gap is separate cleanup work.
 
 == Relationship to Design Resolution Doc
 
