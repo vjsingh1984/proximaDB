@@ -182,6 +182,8 @@ pub mod aggregator;
 pub mod cache;
 pub mod collectors;
 pub mod compression;
+/// Prometheus bridge for `proximadb_catalog::dr_reconciler::DrMetrics`.
+pub mod dr_metrics;
 pub mod exporters;
 pub mod query_service;
 pub mod schema;
