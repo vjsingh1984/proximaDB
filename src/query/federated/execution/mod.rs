@@ -53,7 +53,7 @@ pub struct ExecutionResult {
     /// Result schema
     pub schema: Arc<Schema>,
     /// Execution statistics
-    pub stats: ExecutionStats,
+    pub stats: FederatedExecutionStats,
 }
 
 impl ExecutionResult {
@@ -63,7 +63,7 @@ impl ExecutionResult {
         Self {
             batches: vec![],
             schema,
-            stats: ExecutionStats::default(),
+            stats: FederatedExecutionStats::default(),
         }
     }
 
@@ -74,7 +74,7 @@ impl ExecutionResult {
         Self {
             batches: vec![batch],
             schema,
-            stats: ExecutionStats {
+            stats: FederatedExecutionStats {
                 rows_produced: rows,
                 ..Default::default()
             },
@@ -86,7 +86,7 @@ impl ExecutionResult {
         Self {
             batches: vec![],
             schema,
-            stats: ExecutionStats::default(),
+            stats: FederatedExecutionStats::default(),
         }
     }
 
@@ -96,9 +96,15 @@ impl ExecutionResult {
     }
 }
 
-/// Execution statistics
+/// Federated query execution statistics.
+///
+/// Naming note: this type used to be called `ExecutionStats` and collided
+/// with the graph/router/proto `ExecutionStats` types. Renamed to make
+/// the federation-layer scope explicit. The proto
+/// `proximadb.explain.v1::ExecutionStats` remains the canonical EXPLAIN
+/// form per ADR-004.
 #[derive(Debug, Default, Clone)]
-pub struct ExecutionStats {
+pub struct FederatedExecutionStats {
     /// Total rows produced
     pub rows_produced: usize,
     /// Execution time in microseconds
@@ -3790,7 +3796,7 @@ impl FederatedExecutor {
         Ok(ExecutionResult {
             batches,
             schema: joined_schema,
-            stats: ExecutionStats {
+            stats: FederatedExecutionStats {
                 rows_produced,
                 ..Default::default()
             },
@@ -4122,7 +4128,7 @@ impl FederatedExecutor {
         Ok(ExecutionResult {
             batches: output_batches,
             schema: result.schema,
-            stats: ExecutionStats {
+            stats: FederatedExecutionStats {
                 rows_produced: limit.saturating_sub(remaining_limit),
                 ..Default::default()
             },
@@ -4220,7 +4226,7 @@ impl FederatedExecutor {
             return Ok(ExecutionResult {
                 batches: vec![aggregated],
                 schema,
-                stats: ExecutionStats {
+                stats: FederatedExecutionStats {
                     rows_produced: grouped_rows.len(),
                     ..Default::default()
                 },
@@ -4254,7 +4260,7 @@ impl FederatedExecutor {
         Ok(ExecutionResult {
             batches: vec![aggregated],
             schema,
-            stats: ExecutionStats {
+            stats: FederatedExecutionStats {
                 rows_produced: 1,
                 ..Default::default()
             },
@@ -4277,7 +4283,7 @@ impl FederatedExecutor {
         Ok(ExecutionResult {
             batches: all_batches,
             schema: schema.unwrap_or_else(|| Arc::new(Schema::empty())),
-            stats: ExecutionStats::default(),
+            stats: FederatedExecutionStats::default(),
         })
     }
 }
