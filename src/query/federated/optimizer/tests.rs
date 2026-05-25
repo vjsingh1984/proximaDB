@@ -5,7 +5,7 @@ mod tests {
     use crate::query::federated::parser::{
         self, FederatedQuery, QueryType, SqlExtension, TargetModelType, VectorQuery,
     };
-    use crate::storage::multimodal::ModelType;
+    use crate::storage::multimodel::ModelType;
     use std::collections::HashMap;
 
     #[test]

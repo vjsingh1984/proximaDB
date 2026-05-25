@@ -17,7 +17,7 @@ use super::parser::{
     FederatedQuery, QueryTarget, QueryType, SqlExtension, TargetModelType, VectorQuery,
 };
 use crate::query::capability::{Capability, CapabilitySet};
-use crate::storage::multimodal::ModelType;
+use crate::storage::multimodel::ModelType;
 use proximadb_kernel::error::VectorDBError;
 
 mod sql_parsing;
