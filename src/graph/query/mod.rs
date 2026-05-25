@@ -73,7 +73,7 @@ pub use execution_traits::{
 };
 pub use graph_parser::{parse_cypher, parse_cypher_with_context};
 pub use pattern::PatternMatcher;
-pub use planner::{CostEstimate, PlanStep, QueryPlan, QueryPlanner};
+pub use planner::{CostEstimate, GraphQueryPlan, PlanStep, QueryPlanner};
 pub use proximadb_graph_query::{
     GraphQueryContext as QueryContext, GraphQueryExecutionResult as QueryExecutionResult,
     GraphQueryStats as QueryStats,

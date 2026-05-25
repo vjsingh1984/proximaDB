@@ -37,7 +37,7 @@ use crate::query::multimodal::plan::{
 };
 // TODO: Move to proximadb-graph crate
 // For now, use local definitions
-use crate::graph::query::planner::{GraphStatistics, PlanStepType, QueryPlan as GraphQueryPlan};
+use crate::graph::query::planner::{GraphQueryPlan, GraphStatistics, PlanStepType};
 
 use crate::storage::multimodal::ModelType;
 

@@ -66,9 +66,15 @@ pub enum JoinType {
     FullOuter,
 }
 
-/// Query plan
+/// Graph traversal query plan produced by [`QueryPlanner`].
+///
+/// Naming note: this type used to be called `QueryPlan` and collided with
+/// the federated/distributed/orchestration/proto `QueryPlan` types. Renamed
+/// to make the layer explicit at call sites. The proto `QueryPlan` in
+/// `proximadb_proto::v1` remains the canonical wire/EXPLAIN form
+/// (per ADR-004 unified EXPLAIN contract).
 #[derive(Debug, Clone)]
-pub struct QueryPlan {
+pub struct GraphQueryPlan {
     pub steps: Vec<PlanStep>,
     pub estimated_cost: GraphPlannerCostEstimate,
     pub estimated_result_size: usize,
@@ -195,8 +201,8 @@ impl QueryPlanner {
     }
 
     /// Plan a graph query.
-    pub fn plan(&self, _query: &str) -> QueryResult<QueryPlan> {
-        Ok(QueryPlan {
+    pub fn plan(&self, _query: &str) -> QueryResult<GraphQueryPlan> {
+        Ok(GraphQueryPlan {
             steps: vec![],
             estimated_cost: GraphPlannerCostEstimate::default(),
             estimated_result_size: 0,
@@ -204,8 +210,8 @@ impl QueryPlanner {
     }
 
     /// Create a plan from a compiled pattern.
-    pub fn plan_pattern(&self, _pattern: &CompiledPattern) -> QueryResult<QueryPlan> {
-        Ok(QueryPlan {
+    pub fn plan_pattern(&self, _pattern: &CompiledPattern) -> QueryResult<GraphQueryPlan> {
+        Ok(GraphQueryPlan {
             steps: vec![],
             estimated_cost: GraphPlannerCostEstimate::default(),
             estimated_result_size: 0,

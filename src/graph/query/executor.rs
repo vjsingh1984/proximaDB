@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 // Import from local modules instead of extracted crates
 use super::graph_parser::QueryContext;
-use super::planner::QueryPlan;
+use super::planner::GraphQueryPlan;
 
 /// Query result type
 pub type QueryResult<T> = Result<T, String>;
@@ -45,7 +45,7 @@ impl InnerQueryExecutor {
 
     pub async fn execute(
         &self,
-        _plan: &QueryPlan,
+        _plan: &GraphQueryPlan,
         _context: &QueryContext,
     ) -> QueryResult<Vec<QueryRow>> {
         Ok(vec![])
@@ -112,7 +112,7 @@ impl QueryExecutor {
 
     pub async fn execute(
         &self,
-        plan: &QueryPlan,
+        plan: &GraphQueryPlan,
         context: &QueryContext,
     ) -> QueryResult<Vec<QueryRow>> {
         self.inner.execute(plan, context).await
@@ -120,7 +120,7 @@ impl QueryExecutor {
 
     pub async fn execute_as_arrow(
         &self,
-        plan: &QueryPlan,
+        plan: &GraphQueryPlan,
         context: &QueryContext,
         include_edges: bool,
     ) -> QueryResult<arrow::record_batch::RecordBatch> {
@@ -130,7 +130,7 @@ impl QueryExecutor {
 
     pub async fn stream_as_arrow<'a>(
         &'a self,
-        plan: &'a QueryPlan,
+        plan: &'a GraphQueryPlan,
         context: &'a QueryContext,
         batch_size: usize,
     ) -> QueryResult<
@@ -202,9 +202,9 @@ mod tests {
             Err(e) => panic!("Unexpected error: {}", e),
         }
 
-        // Use stub QueryPlan structure
+        // Use stub GraphQueryPlan structure
         use super::super::planner::{CostEstimate, PlanStep, PlanStepType};
-        let plan = QueryPlan {
+        let plan = GraphQueryPlan {
             steps: vec![PlanStep {
                 step_type: PlanStepType::Scan,
                 cost: CostEstimate::default(),
