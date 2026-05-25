@@ -73,6 +73,18 @@ pub struct SharedServices {
     /// Unified query facade - single entry point for all query types
     /// Consolidates vector search, SQL, and graph query paths
     pub query_facade: Arc<UnifiedQueryFacade>,
+    /// Optional cluster orchestration port (Phase 9.12 / Task #72).
+    ///
+    /// Production bootstrap currently passes `None` for single-node
+    /// deployments. When `[distributed]` config is populated, a
+    /// `ClusterManager` (which `impl proximadb_runtime::ClusterPort for`
+    /// — see `src/cluster/mod.rs:305`) should be constructed and stored
+    /// here. No consumer reads this field yet; the slot exists so that
+    /// future health-endpoint / cluster-state-reporting code can pull
+    /// cluster state via the port without re-plumbing.
+    /// See `docs/_internal/status/PHASE9_REMAINING_2026_05_25.adoc`
+    /// for the full Task #72 wiring plan.
+    pub cluster_port: Option<Arc<dyn proximadb_runtime::ClusterPort>>,
 }
 
 impl SharedServices {
@@ -856,6 +868,10 @@ impl SharedServices {
                 metrics_updater: Some(metrics_updater.clone()),
                 query_facade,
                 api_handlers: runtime_api_handlers,
+                // Task #72: ClusterPort wiring slot. Defaults to None for
+                // single-node bootstrap; populate via builder when [distributed]
+                // config is present and a ClusterManager has been constructed.
+                cluster_port: None,
             },
             collection_service,
         ))
@@ -867,6 +883,20 @@ impl SharedServices {
         &self,
     ) -> Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>> {
         self.metrics_updater.clone()
+    }
+
+    /// Set the cluster orchestration port. Phase 9.12 / Task #72.
+    ///
+    /// Use this when bootstrap detects `[distributed]` config and has
+    /// constructed a `ClusterManager` (or any other `ClusterPort` impl —
+    /// see `crates/platform/proximadb-runtime/src/cluster_port.rs`).
+    /// Single-node deployments leave it as `None`.
+    pub fn with_cluster_port(
+        mut self,
+        port: Arc<dyn proximadb_runtime::ClusterPort>,
+    ) -> Self {
+        self.cluster_port = Some(port);
+        self
     }
 
     /// Get the unified query facade - single entry point for all query types
