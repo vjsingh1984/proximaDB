@@ -25,9 +25,10 @@
 //! - One policy per `(tenant_id, namespace_id, collection_id)`.
 
 use crate::collection_dr_policy::{
-    CollectionDrPolicy, DrApiError, DrBillingBinding, DrHealth, DrPlacement,
+    CollectionDrPolicy, DrBillingBinding, DrHealth, DrPlacement,
     DrReplicationBehavior, DrState, ObjectProvider,
 };
+use crate::dr_reconciler::DrApiError;
 use crate::CatalogAuthorityMode;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
