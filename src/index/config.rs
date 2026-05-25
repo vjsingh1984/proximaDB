@@ -19,9 +19,16 @@ pub enum IndexUpdateMode {
     Hybrid,
 }
 
-/// HNSW algorithm configuration
+/// HNSW algorithm runtime configuration (defaults applied, concrete types).
+///
+/// Naming note: this type used to be called `HnswConfig` and collided with
+/// the proto `proximadb_proto::v1::HnswConfig` wire form. Renamed to
+/// `RuntimeHnswConfig` because the in-crate version is a runtime extension
+/// of the proto: it adds `prune_connections` + `level_multiplier` and uses
+/// non-Option concrete types (defaults are resolved at conversion time, not
+/// optional on the wire). The proto type remains the canonical wire form.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct HnswConfig {
+pub struct RuntimeHnswConfig {
     /// Number of bi-directional links for each node
     pub m: usize,
     /// Size of candidate set during construction
@@ -44,7 +51,7 @@ pub struct HnswConfig {
     pub level_multiplier: f32,
 }
 
-impl Default for HnswConfig {
+impl Default for RuntimeHnswConfig {
     fn default() -> Self {
         Self {
             m: 16,
@@ -148,7 +155,7 @@ pub struct IndexConfig {
     /// Background index optimization
     pub enable_background_optimization: bool,
     /// HNSW-specific configuration
-    pub hnsw_config: Option<HnswConfig>,
+    pub hnsw_config: Option<RuntimeHnswConfig>,
     /// IVF-specific configuration
     pub ivf_config: Option<IvfConfig>,
     /// LSH-specific configuration
@@ -188,7 +195,7 @@ impl IndexConfig {
             _ => IndexUpdateMode::Synchronous,
         };
 
-        let hnsw_config = proto.hnsw_config.as_ref().map(|h| HnswConfig {
+        let hnsw_config = proto.hnsw_config.as_ref().map(|h| RuntimeHnswConfig {
             m: h.m.unwrap_or(16) as usize,
             ef_construction: h.ef_construction.unwrap_or(200) as usize,
             ef_search: h.ef_search.unwrap_or(100) as usize,
@@ -594,7 +601,7 @@ impl IndexConfig {
 
         match algorithm {
             "HNSW" => {
-                let mut hnsw = HnswConfig::default();
+                let mut hnsw = RuntimeHnswConfig::default();
 
                 // Adjust parameters based on collection size
                 if let Some(size) = collection_size_hint {
@@ -961,20 +968,20 @@ mod tests {
     #[test]
     fn test_hnsw_config_validation() {
         let mut config = IndexConfig::default();
-        config.hnsw_config = Some(HnswConfig {
+        config.hnsw_config = Some(RuntimeHnswConfig {
             m: 0, // Invalid
             ..Default::default()
         });
         assert!(config.validate().is_err());
 
-        config.hnsw_config = Some(HnswConfig {
+        config.hnsw_config = Some(RuntimeHnswConfig {
             m: 16,
             ef_construction: 10, // Invalid: < m
             ..Default::default()
         });
         assert!(config.validate().is_err());
 
-        config.hnsw_config = Some(HnswConfig::default());
+        config.hnsw_config = Some(RuntimeHnswConfig::default());
         assert!(config.validate().is_ok());
     }
 
@@ -1022,7 +1029,7 @@ mod tests {
     #[test]
     fn test_get_algorithm_config() {
         let mut config = IndexConfig::default();
-        config.hnsw_config = Some(HnswConfig::default());
+        config.hnsw_config = Some(RuntimeHnswConfig::default());
 
         let hnsw_config = config.algorithm_config("HNSW");
         assert!(hnsw_config.contains_key("m"));
