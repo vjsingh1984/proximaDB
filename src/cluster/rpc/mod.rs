@@ -155,8 +155,8 @@ pub use types::{
     HealthCheckResponse,
     InstallSnapshotRequest,
     InstallSnapshotResponse,
-    LogEntry,
     LogEntryType,
+    RpcLogEntry,
     // Common types
     NodeEndpoint,
     NodeRole,
