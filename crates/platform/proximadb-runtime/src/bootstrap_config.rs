@@ -3,11 +3,17 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! Server configuration types for ProximaDB multi-protocol server.
+//! Server bootstrap configuration types for the ProximaDB multi-protocol server.
 //!
-//! Contains all configuration structures for the REST, gRPC, Arrow Flight,
-//! PostgreSQL wire protocol, and TLS subsystems. These are pure data types
-//! with no I/O or service dependencies.
+//! Pure data types — no I/O, no service dependencies. Contains REST, gRPC,
+//! Arrow Flight, PostgreSQL wire, cluster, and TLS subsystem configs.
+//!
+//! Phase 9.9 / Task #70 pre-work: lifted from `src/network/server_config.rs`
+//! into the horizontal runtime crate so future bootstrap extraction (the
+//! main Phase 9.9 work) doesn't have to drag a root-crate dependency along.
+//! No behavioural change vs the previous location; downstream root-crate
+//! callers continue to import via `crate::network::multi_server::*`
+//! re-exports of `proximadb_runtime::bootstrap_config::*`.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

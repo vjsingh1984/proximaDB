@@ -89,11 +89,13 @@ use crate::proto::proximadb_cluster_v1::{
 
 use crate::security::SecurityCoordinator;
 
-// Server configuration types extracted to src/network/server_config.rs
-// All existing call sites using `crate::network::multi_server::MultiServerConfig` etc continue to work.
+// Server configuration types extracted to proximadb_runtime::bootstrap_config
+// (Phase 9.9 / Task #70 pre-work). All existing call sites using
+// `crate::network::multi_server::MultiServerConfig` etc continue to work via
+// these re-exports — only the home crate changed.
 #[cfg(feature = "cluster")]
-pub use crate::network::server_config::ClusterServerConfig;
-pub use crate::network::server_config::{
+pub use proximadb_runtime::bootstrap_config::ClusterServerConfig;
+pub use proximadb_runtime::bootstrap_config::{
     ArrowIpcServerConfig, GrpcHttpServerConfig, MultiServerConfig, PostgresServerConfig,
     RestHttpServerConfig, ServerStatus, TLSConfig,
 };

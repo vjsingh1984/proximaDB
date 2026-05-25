@@ -192,8 +192,10 @@ pub mod multiplex;
 pub mod postgres;
 pub mod rest;
 pub mod server_builder;
-/// Server configuration types (MultiServerConfig, TLSConfig, etc.)
-pub mod server_config;
+// Server configuration types (MultiServerConfig, TLSConfig, etc.) have moved
+// to `proximadb_runtime::bootstrap_config` (Phase 9.9 / Task #70 pre-work).
+// They remain accessible as `crate::network::multi_server::MultiServerConfig`
+// etc via re-exports in `multi_server.rs`.
 /// Shared business-logic service composition layer (SharedServices)
 pub mod shared_services;
 pub mod tls;
