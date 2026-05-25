@@ -57,9 +57,20 @@ impl Default for CollectionHandler {
 
 // ── Request / Response types ──────────────────────────────────────────────────
 
-/// Simple collection creation / update request (REST-only body shape).
+/// Simple vector-collection creation / update request (REST-only body shape).
+///
+/// Naming note: this type used to be called `CreateCollectionRequest` and
+/// collided with `super::document::CreateDocumentCollectionRequestBody`
+/// (also previously `CreateCollectionRequest`) in the same crate, which has
+/// a completely different shape (`{name, indexes}` rather than
+/// `{name, dimension, metric}`). Renamed to make the vector-vs-document
+/// split explicit at call sites.
+///
+/// Currently unused by `collection_operation()` (the handler takes the
+/// proto `CollectionRequest` JSON directly); kept as a documented shape
+/// for the simpler REST entry point.
 #[derive(Debug, Deserialize)]
-pub struct CreateCollectionRequest {
+pub struct CreateVectorCollectionRequest {
     pub name: String,
     pub dimension: Option<usize>,
     pub metric: Option<String>,

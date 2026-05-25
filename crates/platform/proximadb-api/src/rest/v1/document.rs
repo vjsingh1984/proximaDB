@@ -92,8 +92,17 @@ pub struct CreateDocumentRequest {
     pub document: serde_json::Value,
 }
 
+/// REST request body for document-collection creation.
+///
+/// Naming note: this type used to be called `CreateCollectionRequest` and
+/// collided with `super::catalog::CreateVectorCollectionRequest` in the
+/// same crate, which has a completely different shape
+/// (`{name, dimension, metric}` rather than `{name, indexes}`). The
+/// `…Body` suffix distinguishes it from the proto-generated
+/// `proximadb_proto::v1::CreateDocumentCollectionRequest` (the gRPC/wire
+/// type the handler converts into) — imported at the top of this module.
 #[derive(Debug, Deserialize)]
-pub struct CreateCollectionRequest {
+pub struct CreateDocumentCollectionRequestBody {
     pub name: String,
     #[serde(default)]
     pub indexes: Vec<IndexDefinitionRequest>,
@@ -199,7 +208,7 @@ pub fn create_document_router() -> Router<DocumentRestState> {
 
 async fn create_collection(
     State(state): State<DocumentRestState>,
-    Json(request): Json<CreateCollectionRequest>,
+    Json(request): Json<CreateDocumentCollectionRequestBody>,
 ) -> RestResult<JsonResponse<serde_json::Value>> {
     info!("Creating document collection: {}", request.name);
 
@@ -990,7 +999,7 @@ mod tests {
     async fn document_collection_handlers_route_through_document_port() {
         let JsonResponse(created) = create_collection(
             state(),
-            Json(CreateCollectionRequest {
+            Json(CreateDocumentCollectionRequestBody {
                 name: "docs".to_string(),
                 indexes: vec![
                     IndexDefinitionRequest {

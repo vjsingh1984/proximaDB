@@ -60,9 +60,14 @@ pub struct CreateDocumentRequest {
     pub document: serde_json::Value,
 }
 
-/// Create collection request
+/// REST request body for document-collection creation (legacy root-crate copy).
+///
+/// Mirrors `proximadb_api::rest::v1::document::CreateDocumentCollectionRequestBody`
+/// — Phase 9 will delete this file. The `…Body` suffix distinguishes the
+/// REST shape from the proto-generated `crate::proto::v1::CreateDocumentCollectionRequest`
+/// (the gRPC/wire type) already used in `crate::network::rest::v1::handlers`.
 #[derive(Debug, Deserialize)]
-pub struct CreateCollectionRequest {
+pub struct CreateDocumentCollectionRequestBody {
     /// Collection name
     pub name: String,
     /// Initial indexes to create
@@ -194,7 +199,7 @@ pub fn create_document_router() -> Router<DocumentApiState> {
 /// Create a document collection
 async fn create_collection(
     State(state): State<DocumentApiState>,
-    Json(request): Json<CreateCollectionRequest>,
+    Json(request): Json<CreateDocumentCollectionRequestBody>,
 ) -> ApiResult<JsonResponse<serde_json::Value>> {
     info!("Creating document collection: {}", request.name);
 
