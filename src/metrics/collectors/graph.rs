@@ -28,8 +28,11 @@ use std::time::{Duration, Instant};
 use super::{MetricsCollector, MetricsSample};
 use crate::graph::GraphOperationsService;
 
+/// Backwards-compat alias for [`MetricsCollectorGraphMetrics`].
+pub type GraphMetricsCollector = MetricsCollectorGraphMetrics;
+
 /// Metrics collector for graph operations
-pub struct GraphMetricsCollector {
+pub struct MetricsCollectorGraphMetrics {
     _graph_service: Arc<GraphOperationsService>,
     name: &'static str,
     last_sample: Arc<tokio::sync::RwLock<Option<GraphMetricsSample>>>,
@@ -66,7 +69,7 @@ struct GraphMetricsSample {
     cpu_usage_percent: f64,
 }
 
-impl GraphMetricsCollector {
+impl MetricsCollectorGraphMetrics {
     /// Create new graph metrics collector
     pub fn new(graph_service: Arc<GraphOperationsService>) -> Self {
         Self {
@@ -299,7 +302,7 @@ impl GraphMetricsCollector {
 }
 
 #[async_trait]
-impl MetricsCollector for GraphMetricsCollector {
+impl MetricsCollector for MetricsCollectorGraphMetrics {
     async fn collect(&self) -> Result<MetricsSample> {
         // Collect current graph metrics
         let current_sample = self.collect_graph_metrics().await?;
@@ -453,7 +456,7 @@ mod tests {
     #[tokio::test]
     async fn test_graph_metrics_collector() {
         let graph_service = Arc::new(GraphOperationsService::new());
-        let collector = GraphMetricsCollector::new(graph_service);
+        let collector = MetricsCollectorGraphMetrics::new(graph_service);
 
         let sample = collector.collect().await.unwrap();
         assert_eq!(sample.collector, "graph_engine");

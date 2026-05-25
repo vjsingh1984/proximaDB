@@ -25,7 +25,7 @@ pub struct ClusterStatistics {
     /// Hilbert range -> access count
     pub range_access_counts: BTreeMap<(HilbertKey, HilbertKey), usize>,
     /// Vector ID -> cluster assignment
-    pub vector_clusters: HashMap<String, ClusterInfo>,
+    pub vector_clusters: HashMap<String, LiquidClusterInfo>,
     /// Cluster quality score (0.0 - 1.0)
     pub clustering_quality: f32,
     /// Number of re-clustering operations
@@ -34,8 +34,11 @@ pub struct ClusterStatistics {
     pub last_recluster: Option<chrono::DateTime<chrono::Utc>>,
 }
 
+/// Backwards-compat alias for [`LiquidClusterInfo`].
+pub type ClusterInfo = LiquidClusterInfo;
+
 #[derive(Debug, Clone)]
-pub struct ClusterInfo {
+pub struct LiquidClusterInfo {
     pub cluster_id: u32,
     pub hilbert_key: HilbertKey,
     pub access_count: usize,

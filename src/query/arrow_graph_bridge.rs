@@ -11,9 +11,12 @@ use proximadb_kernel::error::VectorDBError;
 // TODO: Move implementation to proximadb-graph-arrow crate
 // For now, provide stub implementations and use local QueryPlan
 
+/// Backwards-compat alias for [`QueryGraphArrowBridge`].
+pub type GraphArrowBridge = QueryGraphArrowBridge;
+
 /// Graph Arrow bridge
 #[derive(Debug, Clone)]
-pub struct GraphArrowBridge;
+pub struct QueryGraphArrowBridge;
 
 /// Graph Arrow query executor trait
 #[async_trait]

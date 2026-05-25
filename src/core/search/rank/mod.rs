@@ -10,7 +10,9 @@
 //! See `roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md` (R-6).
 
 pub mod cross_modal_adapter;
+pub mod metrics;
 pub mod orchestrator;
 
 pub use cross_modal_adapter::CrossModalGlobalScorer;
+pub use metrics::{PhaseScopedSink, RankMetrics};
 pub use orchestrator::{run_pipeline, RankRun};

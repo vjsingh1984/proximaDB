@@ -43,7 +43,7 @@ pub struct ViperCachedMetadata {
     pub column_stats: HashMap<String, ParquetColumnStats>,
 
     /// Cluster metadata for vector search optimization
-    pub cluster_metadata: Option<Vec<ClusterInfo>>,
+    pub cluster_metadata: Option<Vec<ParquetClusterInfo>>,
 
     /// Cached Parquet footer (avoids repeated reads)
     pub parquet_footer: Option<Vec<u8>>,
@@ -85,8 +85,11 @@ pub struct ParquetColumnStats {
     pub max_value: Option<serde_json::Value>,
 }
 
+/// Backwards-compat alias for [`ParquetClusterInfo`].
+pub type ClusterInfo = ParquetClusterInfo;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClusterInfo {
+pub struct ParquetClusterInfo {
     pub cluster_id: u32,
     pub centroid: Vec<f32>,
     pub vector_count: usize,
@@ -211,7 +214,7 @@ mod tests {
                 radius: Some(0.5),
             }],
             column_stats: HashMap::new(),
-            cluster_metadata: Some(vec![ClusterInfo {
+            cluster_metadata: Some(vec![ParquetClusterInfo {
                 cluster_id: 0,
                 centroid: vec![0.1, 0.2, 0.3],
                 vector_count: 1000,

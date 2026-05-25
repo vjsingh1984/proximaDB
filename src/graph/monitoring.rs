@@ -66,7 +66,7 @@ const METRIC_EVENT_CHANNEL_CAPACITY: usize = 10_000;
 /// Main monitoring system for graph operations
 pub struct GraphMonitor {
     /// Metrics collection and reporting
-    metrics_collector: Arc<GraphMetricsCollector>,
+    metrics_collector: Arc<MonitoringGraphMetricsCollector>,
     /// Slow query logger
     slow_query_logger: Arc<SlowQueryLogger>,
     /// Performance profiler
@@ -98,8 +98,11 @@ pub struct GraphMonitoringConfig {
     pub slow_query_log_path: Option<String>,
 }
 
+/// Backwards-compat alias for [`MonitoringGraphMetricsCollector`].
+pub type GraphMetricsCollector = MonitoringGraphMetricsCollector;
+
 /// Metrics collector for graph operations
-pub struct GraphMetricsCollector {
+pub struct MonitoringGraphMetricsCollector {
     /// Operation counters
     operation_counts: Arc<RwLock<HashMap<String, u64>>>,
     /// Error counters
@@ -374,7 +377,7 @@ impl Default for GraphMonitoringConfig {
 impl GraphMonitor {
     /// Create a new graph monitor
     pub fn new(config: GraphMonitoringConfig) -> Self {
-        let metrics_collector = Arc::new(GraphMetricsCollector::new());
+        let metrics_collector = Arc::new(MonitoringGraphMetricsCollector::new());
         let slow_query_logger = Arc::new(SlowQueryLogger::new(Arc::new(config.clone())));
         let profiler = Arc::new(GraphProfiler::new(Arc::new(config.clone())));
 
@@ -638,7 +641,7 @@ impl GraphMonitor {
 
     /// Process metric events
     async fn process_metric_event(
-        collector: &GraphMetricsCollector,
+        collector: &MonitoringGraphMetricsCollector,
         event: MetricEvent,
     ) -> Result<(), ProximaDBError> {
         match event {
@@ -744,7 +747,7 @@ impl GraphMonitor {
 
     /// Collect system-level metrics
     async fn collect_system_metrics(
-        collector: &GraphMetricsCollector,
+        collector: &MonitoringGraphMetricsCollector,
     ) -> Result<(), ProximaDBError> {
         // This is a simplified implementation
         // In production, you would use proper system monitoring libraries
@@ -868,7 +871,7 @@ pub struct GraphMetricsSnapshot {
     pub cache_metrics: GraphCacheMetrics,
 }
 
-impl GraphMetricsCollector {
+impl MonitoringGraphMetricsCollector {
     /// Create a new metrics collector with empty counters and default resource metrics.
     pub fn new() -> Self {
         Self {
@@ -882,7 +885,7 @@ impl GraphMetricsCollector {
     }
 }
 
-impl Default for GraphMetricsCollector {
+impl Default for MonitoringGraphMetricsCollector {
     fn default() -> Self {
         Self::new()
     }

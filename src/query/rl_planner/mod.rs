@@ -70,6 +70,7 @@ pub mod experience;
 pub mod integration;
 pub mod logging;
 pub mod paths;
+pub mod rank_choice;
 pub mod reward;
 pub mod state;
 

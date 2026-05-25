@@ -716,13 +716,16 @@ pub enum StagedGraphOperation {
     DeleteEdge { graph_id: String, edge_id: String },
 }
 
+/// Backwards-compat alias for [`MultimodalGraphStoreParticipant`].
+pub type GraphStoreParticipant = MultimodalGraphStoreParticipant;
+
 /// Graph-service-backed participant for multi-model 2PC.
-pub struct GraphStoreParticipant {
+pub struct MultimodalGraphStoreParticipant {
     service: Arc<dyn GraphWriteOperations>,
     transactions: RwLock<HashMap<String, ParticipantTransactionState<StagedGraphOperation>>>,
 }
 
-impl GraphStoreParticipant {
+impl MultimodalGraphStoreParticipant {
     pub fn new(service: Arc<dyn GraphWriteOperations>) -> Self {
         Self {
             service,
@@ -850,7 +853,7 @@ impl GraphStoreParticipant {
 }
 
 #[async_trait::async_trait]
-impl TwoPhaseParticipant for GraphStoreParticipant {
+impl TwoPhaseParticipant for MultimodalGraphStoreParticipant {
     async fn prepare(&self, transaction_id: &str) -> PrepareResult {
         let mut transactions = self.transactions.write().await;
         if let Some(state) = transactions.get_mut(transaction_id) {

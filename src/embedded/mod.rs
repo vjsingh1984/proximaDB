@@ -713,9 +713,12 @@ impl EmbeddedGraphEdge {
     }
 }
 
+/// Backwards-compat alias for [`EmbeddedGraphStats`].
+pub type GraphStats = EmbeddedGraphStats;
+
 /// Graph statistics
 #[derive(Debug, Clone)]
-pub struct GraphStats {
+pub struct EmbeddedGraphStats {
     /// Total number of nodes
     pub total_nodes: u64,
     /// Total number of edges
@@ -3442,7 +3445,7 @@ impl EmbeddedProximaDB {
     pub fn graph_stats(
         &self,
         graph_id: &str,
-    ) -> Result<GraphStats, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<EmbeddedGraphStats, Box<dyn std::error::Error + Send + Sync>> {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
@@ -3452,7 +3455,7 @@ impl EmbeddedProximaDB {
                 },
             )?;
 
-            Ok(GraphStats {
+            Ok(EmbeddedGraphStats {
                 total_nodes: proto_stats.total_nodes,
                 total_edges: proto_stats.total_edges,
             })

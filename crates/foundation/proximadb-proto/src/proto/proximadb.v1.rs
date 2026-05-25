@@ -6148,6 +6148,48 @@ pub struct CollectionConfig {
     /// When true, indicates the same embedding is used for retrieval AND context.
     #[prost(bool, optional, tag = "24")]
     pub enable_dual_use_embeddings: ::core::option::Option<bool>,
+    /// Canonical embedding precision for this collection. Mirrors
+    /// `CatalogTableSchema.canonical_embedding_precision`. Unset / Fp32
+    /// keeps the legacy fp32 path; Fp16/Bf16/Int8/UInt8 routes records
+    /// through the precision-preservation chain (drainer coercion,
+    /// Arrow Float16Array column, compaction precision_hint).
+    #[prost(enumeration = "EmbeddingPrecision", optional, tag = "26")]
+    pub canonical_embedding_precision: ::core::option::Option<i32>,
+}
+/// Canonical scalar type for a collection's embedding column. Mirrors
+/// `proximadb_records::EmbeddingScalarType`.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum EmbeddingPrecision {
+    Unspecified = 0,
+    Fp32 = 1,
+    Fp16 = 2,
+    Bf16 = 3,
+    Int8 = 4,
+    Uint8 = 5,
+}
+impl EmbeddingPrecision {
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "EMBEDDING_PRECISION_UNSPECIFIED",
+            Self::Fp32 => "EMBEDDING_PRECISION_FP32",
+            Self::Fp16 => "EMBEDDING_PRECISION_FP16",
+            Self::Bf16 => "EMBEDDING_PRECISION_BF16",
+            Self::Int8 => "EMBEDDING_PRECISION_INT8",
+            Self::Uint8 => "EMBEDDING_PRECISION_UINT8",
+        }
+    }
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "EMBEDDING_PRECISION_UNSPECIFIED" => Some(Self::Unspecified),
+            "EMBEDDING_PRECISION_FP32" => Some(Self::Fp32),
+            "EMBEDDING_PRECISION_FP16" => Some(Self::Fp16),
+            "EMBEDDING_PRECISION_BF16" => Some(Self::Bf16),
+            "EMBEDDING_PRECISION_INT8" => Some(Self::Int8),
+            "EMBEDDING_PRECISION_UINT8" => Some(Self::Uint8),
+            _ => None,
+        }
+    }
 }
 #[derive(
     serde::Serialize, serde::Deserialize, Clone, Copy, PartialEq, Eq, Hash, ::prost::Message,

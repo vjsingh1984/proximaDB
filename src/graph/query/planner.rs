@@ -139,9 +139,12 @@ pub enum FilterOperator {
     Ge,
 }
 
+/// Backwards-compat alias for [`PlannerEdgeFilter`].
+pub type EdgeFilter = PlannerEdgeFilter;
+
 /// Edge filter
 #[derive(Debug, Clone)]
-pub struct EdgeFilter {
+pub struct PlannerEdgeFilter {
     pub conditions: Vec<FilterCondition>,
 }
 

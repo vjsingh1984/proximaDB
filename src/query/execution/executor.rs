@@ -2463,6 +2463,7 @@ mod executor_tests {
             text_columns: vec![],
             text_storage_configs: vec![],
             enable_dual_use_embeddings: None,
+            canonical_embedding_precision: None,
         };
         let _ = collection_service.create_collection(&config).await;
 

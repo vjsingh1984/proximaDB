@@ -26,9 +26,13 @@ use super::super::transaction::participants::{
 // Use the graph engine's Result type
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
+/// Backwards-compat aliases.
+pub type GraphStore = MultimodalGraphStore;
+pub type GraphStoreConfig = MultimodalGraphStoreConfig;
+
 /// Configuration for the graph store
 #[derive(Debug, Clone)]
-pub struct GraphStoreConfig {
+pub struct MultimodalGraphStoreConfig {
     /// Enable WAL persistence
     pub enable_wal: bool,
     /// WAL path (if enabled)
@@ -37,7 +41,7 @@ pub struct GraphStoreConfig {
     pub enable_property_indexes: bool,
 }
 
-impl Default for GraphStoreConfig {
+impl Default for MultimodalGraphStoreConfig {
     fn default() -> Self {
         Self {
             enable_wal: true,
@@ -67,7 +71,7 @@ impl Default for GraphStoreConfig {
 /// │    └─────────────────────────────────┘  │
 /// └─────────────────────────────────────────┘
 /// ```
-pub struct GraphStore {
+pub struct MultimodalGraphStore {
     /// The underlying graph engine (ORION, PULSAR, or QUASAR)
     engine: Option<Arc<dyn GraphEngine>>,
     /// Shared graph service used by the server/runtime path
@@ -75,12 +79,12 @@ pub struct GraphStore {
     /// Optional default graph identifier for service-backed queries
     default_graph: Option<String>,
     /// Configuration
-    config: GraphStoreConfig,
+    config: MultimodalGraphStoreConfig,
 }
 
 impl GraphStore {
     /// Create a new GraphStore with the given configuration
-    pub fn new(config: GraphStoreConfig) -> Self {
+    pub fn new(config: MultimodalGraphStoreConfig) -> Self {
         Self {
             engine: None,
             service: None,
@@ -132,7 +136,7 @@ impl GraphStore {
     }
 
     /// Get the configuration
-    pub fn config(&self) -> &GraphStoreConfig {
+    pub fn config(&self) -> &MultimodalGraphStoreConfig {
         &self.config
     }
 
@@ -469,14 +473,14 @@ mod tests {
 
     #[test]
     fn test_graph_store_config_default() {
-        let config = GraphStoreConfig::default();
+        let config = MultimodalGraphStoreConfig::default();
         assert!(config.enable_wal);
         assert!(config.enable_property_indexes);
     }
 
     #[test]
     fn test_graph_store_capabilities() {
-        let store = GraphStore::new(GraphStoreConfig::default());
+        let store = GraphStore::new(MultimodalGraphStoreConfig::default());
         let caps = store.capabilities();
 
         assert_eq!(caps.model_type, ModelType::Graph);

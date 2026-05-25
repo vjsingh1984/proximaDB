@@ -919,9 +919,12 @@ pub struct VectorCollectionStats {
     pub avg_query_latency_ms: Option<f64>,
 }
 
+/// Backwards-compat alias for [`FederatedGraphStats`].
+pub type GraphStats = FederatedGraphStats;
+
 /// Statistics for a graph
 #[derive(Debug, Clone, Default)]
-pub struct GraphStats {
+pub struct FederatedGraphStats {
     /// Total number of nodes
     pub node_count: u64,
     /// Total number of edges
@@ -964,7 +967,7 @@ pub struct ObservabilityStats {
 #[derive(Debug, Clone)]
 pub enum ModelStatistics {
     Vector(VectorCollectionStats),
-    Graph(GraphStats),
+    Graph(FederatedGraphStats),
     Document(DocumentCollectionStats),
     Observability(ObservabilityStats),
     Relational { row_count: u64, avg_row_size: usize },
@@ -1028,7 +1031,7 @@ impl CachedStatisticsProvider {
 
     /// Create default statistics for a graph
     pub fn default_graph_stats(node_count: u64, edge_count: u64) -> ModelStatistics {
-        ModelStatistics::Graph(GraphStats {
+        ModelStatistics::Graph(FederatedGraphStats {
             node_count,
             edge_count,
             avg_degree: if node_count > 0 {
@@ -1151,7 +1154,7 @@ impl AdvancedCostEstimator {
     /// Cost model:
     /// - BFS/DFS: O(V + E) for full traversal, O(branching_factor^depth) for limited depth
     /// - With label index: reduces initial node lookup to O(log V)
-    pub fn graph_traversal_cost(&self, stats: &GraphStats, max_depth: usize) -> f64 {
+    pub fn graph_traversal_cost(&self, stats: &FederatedGraphStats, max_depth: usize) -> f64 {
         let v = stats.node_count as f64;
         let _e = stats.edge_count as f64; // Used in future sophisticated cost models
 
@@ -1613,7 +1616,7 @@ impl CardinalityEstimator {
     /// Estimate output cardinality for a graph traversal
     pub fn estimate_graph_traversal_cardinality(
         &self,
-        stats: &GraphStats,
+        stats: &FederatedGraphStats,
         max_depth: usize,
     ) -> u64 {
         let avg_degree = stats.avg_degree.max(1.0);
@@ -2730,7 +2733,7 @@ impl CrossModelOptimizer {
             (cost, rows)
         } else {
             // Default estimation
-            let default_stats = GraphStats {
+            let default_stats = FederatedGraphStats {
                 node_count: 10000,
                 edge_count: 50000,
                 avg_degree: 5.0,
@@ -2872,7 +2875,7 @@ impl CrossModelOptimizer {
                     let graph_shape = GraphQueryPlanShape::from_cypher(cypher);
                     let max_depth = cypher.matches("->").count().max(1);
                     // Use default stats for graph
-                    let default_stats = GraphStats::default();
+                    let default_stats = FederatedGraphStats::default();
                     let cost = self
                         .advanced_cost_estimator
                         .graph_traversal_cost(&default_stats, max_depth);

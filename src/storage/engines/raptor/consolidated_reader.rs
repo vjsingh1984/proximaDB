@@ -154,12 +154,15 @@ pub struct CandidateResult {
     pub vector: Vec<f32>,
     pub distance: f32,
     pub cluster_id: u32,
-    pub cluster_info: ClusterInfo,
+    pub cluster_info: RaptorClusterInfo,
 }
+
+/// Backwards-compat alias for [`RaptorClusterInfo`].
+pub type ClusterInfo = RaptorClusterInfo;
 
 /// Cluster information for 5-component boosting
 #[derive(Debug, Clone, Default)]
-pub struct ClusterInfo {
+pub struct RaptorClusterInfo {
     pub inter_cluster_penalty: f32,
     pub cluster_distance: f32,
     pub cluster_id: u32,
@@ -2999,7 +3002,7 @@ impl RaptorReader {
                     vector: vectors[candidate_idx].clone(),
                     distance: candidate_dist,
                     cluster_id: 0, // Will be set by caller
-                    cluster_info: ClusterInfo::default(),
+                    cluster_info: RaptorClusterInfo::default(),
                 });
 
                 // Use P² matrix to find vectors close to this candidate
@@ -3027,7 +3030,7 @@ impl RaptorReader {
                                         vector: vectors[other_idx].clone(),
                                         distance: query_dist,
                                         cluster_id: 0,
-                                        cluster_info: ClusterInfo::default(),
+                                        cluster_info: RaptorClusterInfo::default(),
                                     });
                                 }
                             }
@@ -3075,7 +3078,7 @@ impl RaptorReader {
                 vector: vector.clone(),
                 distance,
                 cluster_id: 0,
-                cluster_info: ClusterInfo::default(),
+                cluster_info: RaptorClusterInfo::default(),
             });
         }
 
@@ -3144,7 +3147,7 @@ impl RaptorReader {
     }
 
     /// Apply 5-component boosting formula (simplified)
-    fn apply_5_component_boosting(&self, base_distance: f32, cluster_info: &ClusterInfo) -> f32 {
+    fn apply_5_component_boosting(&self, base_distance: f32, cluster_info: &RaptorClusterInfo) -> f32 {
         // Simplified 5-component boosting
         // In full implementation, this would use the complete formula from the design
         let alpha_own = 1.0; // Weight for intra-cluster distance

@@ -256,7 +256,7 @@ pub struct GraphQueryComponent {
     /// Node filters
     pub node_filters: Vec<NodeFilter>,
     /// Edge filters
-    pub edge_filters: Vec<EdgeFilter>,
+    pub edge_filters: Vec<HybridEdgeFilter>,
     /// Traversal algorithm
     pub algorithm: TraversalAlgorithm,
     /// Optional query vector used by semantic traversal algorithms.
@@ -274,9 +274,12 @@ pub struct NodeFilter {
     pub value: serde_json::Value,
 }
 
+/// Backwards-compat alias for [`HybridEdgeFilter`].
+pub type EdgeFilter = HybridEdgeFilter;
+
 /// Edge filter for graph component
 #[derive(Debug, Clone)]
-pub struct EdgeFilter {
+pub struct HybridEdgeFilter {
     /// Property name to filter on
     pub property: String,
     /// Filter operator
@@ -1096,7 +1099,7 @@ impl HybridQueryEngine {
     }
 
     /// Check if edge matches filters
-    fn edge_matches_filters(&self, edge: &Edge, filters: &[EdgeFilter]) -> QueryResult<bool> {
+    fn edge_matches_filters(&self, edge: &Edge, filters: &[HybridEdgeFilter]) -> QueryResult<bool> {
         for filter in filters {
             if let Some(prop_value) = edge.properties.get(&filter.property) {
                 let json_value = self.property_value_to_json(prop_value);

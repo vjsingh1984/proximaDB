@@ -52,10 +52,13 @@ impl InnerQueryExecutor {
     }
 }
 
-/// Stub for GraphArrowBridge
-pub struct GraphArrowBridge;
+/// Backwards-compat alias for [`ExecutorGraphArrowBridge`].
+pub type GraphArrowBridge = ExecutorGraphArrowBridge;
 
-impl GraphArrowBridge {
+/// Stub for ExecutorGraphArrowBridge
+pub struct ExecutorGraphArrowBridge;
+
+impl ExecutorGraphArrowBridge {
     pub fn graph_results_to_arrow(
         _results: &[QueryRow],
         _include_edges: bool,
@@ -148,7 +151,7 @@ impl QueryExecutor {
         results: &[QueryRow],
         include_edges: bool,
     ) -> QueryResult<arrow::record_batch::RecordBatch> {
-        GraphArrowBridge::graph_results_to_arrow(results, include_edges)
+        ExecutorGraphArrowBridge::graph_results_to_arrow(results, include_edges)
     }
 }
 
