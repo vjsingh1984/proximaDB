@@ -474,8 +474,10 @@ fn jittered_delay_ns(
 /// provider call now.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PerPolicyRateLimit {
-    /// Last `try_acquire(_ok)` timestamp per policy. 0 = never called.
-    pub last_call_ns: i64,
+    /// Last successful `try_acquire` timestamp. `None` until the
+    /// first call — using `Option` avoids the sentinel-vs-actual-zero
+    /// ambiguity that a bare `i64 = 0` would create at the epoch.
+    pub last_call_ns: Option<i64>,
 }
 
 impl PerPolicyRateLimit {
@@ -489,14 +491,14 @@ impl PerPolicyRateLimit {
     ) -> bool {
         let min_interval_ns =
             (policy.min_call_interval_secs as i64).saturating_mul(1_000_000_000);
-        if self.last_call_ns == 0
-            || now_ns.saturating_sub(self.last_call_ns) >= min_interval_ns
-        {
-            self.last_call_ns = now_ns;
-            true
-        } else {
-            false
+        let allowed = match self.last_call_ns {
+            None => true,
+            Some(last) => now_ns.saturating_sub(last) >= min_interval_ns,
+        };
+        if allowed {
+            self.last_call_ns = Some(now_ns);
         }
+        allowed
     }
 }
 
