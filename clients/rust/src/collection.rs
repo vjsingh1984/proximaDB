@@ -90,6 +90,75 @@ impl IndexType {
     }
 }
 
+/// Canonical embedding precision for a collection.
+///
+/// Mirrors the server's proto `EmbeddingPrecision` enum and the
+/// SQL DDL `WITH (canonical_embedding_precision = '...')` syntax.
+/// Set once at collection-create time via
+/// [`CollectionBuilder::precision`]; controls the on-disk + in-memory
+/// scalar type for the embedding column. See
+/// `docs/05-concepts/embedding-precision.adoc` for the operator guide.
+///
+/// `Fp32` is the default and matches pre-precision-rollout behavior —
+/// existing SDK callers that never touch `.precision()` see no change
+/// in the wire payload or server-side semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum EmbeddingPrecision {
+    /// 32-bit float (legacy default, byte-identical with pre-rollout
+    /// SDK requests).
+    #[default]
+    Fp32,
+    /// 16-bit float (IEEE 754 half). ~50% storage vs fp32.
+    Fp16,
+    /// Brain float 16 (fp32 dynamic range with fp16 width).
+    Bf16,
+    /// Signed 8-bit scalar quantization (~25% of fp32).
+    Int8,
+    /// Unsigned 8-bit scalar quantization with zero-point.
+    Uint8,
+}
+
+impl EmbeddingPrecision {
+    /// String form matching the server's `apply_proto_enum_workarounds`
+    /// and SQL DDL parser. Lowercase, no prefix.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EmbeddingPrecision::Fp32 => "fp32",
+            EmbeddingPrecision::Fp16 => "fp16",
+            EmbeddingPrecision::Bf16 => "bf16",
+            EmbeddingPrecision::Int8 => "int8",
+            EmbeddingPrecision::Uint8 => "uint8",
+        }
+    }
+}
+
+impl std::str::FromStr for EmbeddingPrecision {
+    type Err = ProximaError;
+
+    fn from_str(s: &str) -> Result<Self> {
+        // Normalize: lowercase, strip the proto SCREAMING prefix if present.
+        let normalised = s.trim().to_ascii_lowercase();
+        let stripped = normalised
+            .strip_prefix("embedding_precision_")
+            .unwrap_or(&normalised);
+        match stripped {
+            "fp32" | "f32" | "float32" => Ok(EmbeddingPrecision::Fp32),
+            "fp16" | "f16" | "half" | "float16" => Ok(EmbeddingPrecision::Fp16),
+            "bf16" | "bfloat16" => Ok(EmbeddingPrecision::Bf16),
+            "int8" | "i8" | "int8_scalar" => Ok(EmbeddingPrecision::Int8),
+            "uint8" | "u8" | "uint8_scalar" => Ok(EmbeddingPrecision::Uint8),
+            _ => Err(ProximaError::Collection(CollectionError::InvalidConfig {
+                reason: format!(
+                    "unrecognised canonical_embedding_precision '{}'; \
+                     accepted: fp32, fp16, bf16, int8, uint8 (case-insensitive)",
+                    s
+                ),
+            })),
+        }
+    }
+}
+
 /// Distance metric for similarity search
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -128,6 +197,7 @@ pub struct CollectionBuilder<'a> {
     engine: StorageEngine,
     index: IndexType,
     metric: DistanceMetric,
+    pub(crate) precision: EmbeddingPrecision,
 }
 
 impl<'a> CollectionBuilder<'a> {
@@ -143,6 +213,7 @@ impl<'a> CollectionBuilder<'a> {
             engine: StorageEngine::default(),
             index: IndexType::default(),
             metric: DistanceMetric::default(),
+            precision: EmbeddingPrecision::default(),
         }
     }
 
@@ -158,6 +229,7 @@ impl<'a> CollectionBuilder<'a> {
             engine: StorageEngine::default(),
             index: IndexType::default(),
             metric: DistanceMetric::default(),
+            precision: EmbeddingPrecision::default(),
         }
     }
 
@@ -191,6 +263,29 @@ impl<'a> CollectionBuilder<'a> {
         self
     }
 
+    /// Set the canonical embedding precision (default
+    /// [`EmbeddingPrecision::Fp32`]).
+    ///
+    /// Non-fp32 values trade a small recall delta for ~50% storage
+    /// reduction (`Fp16` / `Bf16`) or up to ~75% (`Int8` / `Uint8`).
+    /// Immutable after collection creation — set at build time.
+    pub fn precision(mut self, precision: EmbeddingPrecision) -> Self {
+        self.precision = precision;
+        self
+    }
+
+    /// Set the canonical embedding precision from a string (mirrors
+    /// [`Self::engine_str`]).
+    ///
+    /// Accepts the canonical labels (`"fp32"`, `"fp16"`, `"bf16"`,
+    /// `"int8"`, `"uint8"`), case-insensitive variants, the proto
+    /// SCREAMING form (`"EMBEDDING_PRECISION_FP16"`), and common
+    /// aliases (`"half"`, `"float16"`, `"bfloat16"`, etc.).
+    pub fn precision_str(mut self, precision: &str) -> Result<Self> {
+        self.precision = precision.parse()?;
+        Ok(self)
+    }
+
     /// Execute the collection creation (async, client mode)
     #[cfg(feature = "client")]
     pub async fn execute(self) -> Result<()> {
@@ -204,11 +299,22 @@ impl<'a> CollectionBuilder<'a> {
             })
         })?;
 
+        // Omit canonical_embedding_precision when fp32 (default) so the
+        // wire payload is byte-identical with pre-precision-rollout SDK
+        // requests. Servers that don't yet know the field stay happy;
+        // newer servers see the field for non-fp32 callers and persist
+        // it on the catalog row.
+        let precision_payload = match self.precision {
+            EmbeddingPrecision::Fp32 => None,
+            other => Some(other.as_str().to_string()),
+        };
+
         let request = CreateCollectionRequest {
             name: self.name,
             dimension,
             engine: Some(self.engine.as_str().to_string()),
             index_type: Some(self.index.as_str().to_string()),
+            canonical_embedding_precision: precision_payload,
         };
 
         let url = format!("{}/api/v2/collections", client.url());
@@ -828,6 +934,12 @@ struct CreateCollectionRequest {
     engine: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     index_type: Option<String>,
+    /// `None` for the legacy fp32 default — omitted from the wire
+    /// payload to keep requests byte-identical with pre-precision-
+    /// rollout SDKs. `Some("fp16")` etc. when the caller asks for a
+    /// non-fp32 collection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    canonical_embedding_precision: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1112,6 +1224,7 @@ mod tests {
             dimension: 384,
             engine: Some("sst".to_string()),
             index_type: Some("hnsw".to_string()),
+            canonical_embedding_precision: None,
         };
         assert_eq!(
             serde_json::to_value(create).unwrap(),
@@ -1139,5 +1252,161 @@ mod tests {
         assert_eq!(info.collection_id.as_deref(), Some("uuid-1"));
         assert_eq!(info.vector_count, 9);
         assert_eq!(info.stats.as_ref().unwrap().record_count, 11);
+    }
+
+    // ── EmbeddingPrecision (mirrors proto EmbeddingPrecision) ────────────────
+    //
+    // The SDK accepts the same string-or-int shape the server's
+    // `apply_proto_enum_workarounds` accepts. Set on a collection at
+    // create time; immutable after creation; controls the on-disk +
+    // in-memory scalar type for the embedding column. See
+    // `docs/05-concepts/embedding-precision.adoc` for the operator
+    // guide.
+
+    #[test]
+    fn embedding_precision_as_str_matches_proto_screaming_label() {
+        assert_eq!(EmbeddingPrecision::Fp32.as_str(), "fp32");
+        assert_eq!(EmbeddingPrecision::Fp16.as_str(), "fp16");
+        assert_eq!(EmbeddingPrecision::Bf16.as_str(), "bf16");
+        assert_eq!(EmbeddingPrecision::Int8.as_str(), "int8");
+        assert_eq!(EmbeddingPrecision::Uint8.as_str(), "uint8");
+    }
+
+    #[test]
+    fn embedding_precision_parses_canonical_lowercase() {
+        assert_eq!(
+            "fp16".parse::<EmbeddingPrecision>().unwrap(),
+            EmbeddingPrecision::Fp16
+        );
+        assert_eq!(
+            "FP16".parse::<EmbeddingPrecision>().unwrap(),
+            EmbeddingPrecision::Fp16
+        );
+        assert_eq!(
+            "EMBEDDING_PRECISION_FP16"
+                .parse::<EmbeddingPrecision>()
+                .unwrap(),
+            EmbeddingPrecision::Fp16
+        );
+    }
+
+    #[test]
+    fn embedding_precision_accepts_common_aliases() {
+        // Same alias set the server's apply_proto_enum_workarounds takes
+        // so SDK round-trip matches what curl/manual requests look like.
+        for fp16_alias in ["fp16", "f16", "half", "float16"] {
+            assert_eq!(
+                fp16_alias.parse::<EmbeddingPrecision>().unwrap(),
+                EmbeddingPrecision::Fp16
+            );
+        }
+        for bf16_alias in ["bf16", "bfloat16"] {
+            assert_eq!(
+                bf16_alias.parse::<EmbeddingPrecision>().unwrap(),
+                EmbeddingPrecision::Bf16
+            );
+        }
+        for int8_alias in ["int8", "i8", "int8_scalar"] {
+            assert_eq!(
+                int8_alias.parse::<EmbeddingPrecision>().unwrap(),
+                EmbeddingPrecision::Int8
+            );
+        }
+        for uint8_alias in ["uint8", "u8", "uint8_scalar"] {
+            assert_eq!(
+                uint8_alias.parse::<EmbeddingPrecision>().unwrap(),
+                EmbeddingPrecision::Uint8
+            );
+        }
+    }
+
+    #[test]
+    fn embedding_precision_unknown_label_errors_with_recognisable_message() {
+        let err = "definitely_not_a_precision"
+            .parse::<EmbeddingPrecision>()
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.to_lowercase().contains("precision"),
+            "error message should mention 'precision' so SDK users \
+             know what field they typo'd; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn embedding_precision_serializes_as_lowercase_string() {
+        // Matches what the server's REST workaround accepts so a
+        // ProximaRecord-style direct JSON build (without the SDK)
+        // sees the same wire format.
+        assert_eq!(
+            serde_json::to_value(EmbeddingPrecision::Fp16).unwrap(),
+            json!("fp16")
+        );
+    }
+
+    #[test]
+    fn collection_builder_default_precision_is_fp32() {
+        // Backward compatibility: existing callers that never touch
+        // .precision() must continue to land fp32 collections.
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let builder = CollectionBuilder::new(&client, "items").dimension(8);
+        assert_eq!(builder.precision, EmbeddingPrecision::Fp32);
+    }
+
+    #[test]
+    fn collection_builder_precision_setter_records_target() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let builder = CollectionBuilder::new(&client, "items")
+            .dimension(8)
+            .precision(EmbeddingPrecision::Fp16);
+        assert_eq!(builder.precision, EmbeddingPrecision::Fp16);
+    }
+
+    #[test]
+    fn collection_builder_precision_str_setter_accepts_aliases() {
+        // Mirrors `engine_str` — lets callers spec the precision from
+        // a string without importing the enum (handy for CLI / config-
+        // driven builds).
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let builder = CollectionBuilder::new(&client, "items")
+            .dimension(8)
+            .precision_str("fp16")
+            .unwrap();
+        assert_eq!(builder.precision, EmbeddingPrecision::Fp16);
+    }
+
+    #[test]
+    fn create_collection_request_includes_precision_when_non_fp32() {
+        // The REST POST body must carry canonical_embedding_precision
+        // when set, so the server's create-handler path materializes
+        // the right catalog row. Fp32 (default) is omitted from the
+        // payload to keep the wire shape byte-identical with
+        // pre-precision-rollout SDK requests.
+        let req = CreateCollectionRequest {
+            name: "rust_sdk_fp16".to_string(),
+            dimension: 384,
+            engine: None,
+            index_type: None,
+            canonical_embedding_precision: Some("fp16".to_string()),
+        };
+        let body = serde_json::to_value(&req).unwrap();
+        assert_eq!(body["canonical_embedding_precision"], json!("fp16"));
+    }
+
+    #[test]
+    fn create_collection_request_omits_precision_when_fp32_default() {
+        let req = CreateCollectionRequest {
+            name: "rust_sdk_fp32".to_string(),
+            dimension: 384,
+            engine: None,
+            index_type: None,
+            canonical_embedding_precision: None,
+        };
+        let body = serde_json::to_value(&req).unwrap();
+        assert!(
+            body.get("canonical_embedding_precision").is_none(),
+            "fp32 default must not appear in the wire payload — \
+             keeps requests byte-identical with pre-rollout SDKs. Got: {body}"
+        );
     }
 }

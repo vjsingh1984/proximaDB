@@ -236,9 +236,9 @@ pub use client::{
 
 #[allow(deprecated)]
 pub use collection::{
-    CollectionBuilder, CollectionHandle, DistanceMetric, IndexType, InsertBuilder,
-    InsertBuilderBatch, InsertBuilderWithId, ProximaRecord, StorageEngine, UpdateBuilder,
-    VectorRecord,
+    CollectionBuilder, CollectionHandle, DistanceMetric, EmbeddingPrecision, IndexType,
+    InsertBuilder, InsertBuilderBatch, InsertBuilderWithId, ProximaRecord, StorageEngine,
+    UpdateBuilder, VectorRecord,
 };
 
 pub use search::{SearchBuilder, SearchMode, SearchResult};
