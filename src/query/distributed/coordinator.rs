@@ -302,7 +302,7 @@ impl DistributedQueryCoordinator {
     }
 
     /// Plan query distribution across the cluster
-    async fn plan_query(&self, query: &MultiModelQuery) -> Result<QueryPlan> {
+    async fn plan_query(&self, query: &MultiModelQuery) -> Result<DistributedQueryPlan> {
         // Get cluster topology
         let nodes = self.get_available_nodes().await?;
 
@@ -369,7 +369,7 @@ impl DistributedQueryCoordinator {
     async fn execute_local_only(
         &self,
         _query: &MultiModelQuery,
-        plan: &QueryPlan,
+        plan: &DistributedQueryPlan,
     ) -> Result<Vec<SubQueryResult>> {
         debug!("Executing {} local subqueries", plan.local_subqueries.len());
 
@@ -387,7 +387,7 @@ impl DistributedQueryCoordinator {
     async fn execute_distributed(
         &self,
         query: &MultiModelQuery,
-        plan: &QueryPlan,
+        plan: &DistributedQueryPlan,
     ) -> Result<Vec<SubQueryResult>> {
         let start = Instant::now();
 
@@ -466,7 +466,7 @@ impl DistributedQueryCoordinator {
     async fn execute_broadcast(
         &self,
         _query: &MultiModelQuery,
-        plan: &QueryPlan,
+        plan: &DistributedQueryPlan,
     ) -> Result<Vec<SubQueryResult>> {
         // For broadcast, send to all nodes and aggregate
         let mut all_subqueries = plan.local_subqueries.clone();
@@ -579,7 +579,7 @@ impl DistributedQueryCoordinator {
     /// 1. Query has multiple collections that are sharded differently
     /// 2. Query has JOIN operations between collections on different nodes
     /// 3. Query has GROUP BY that needs data redistribution
-    fn requires_shuffle(&self, query: &MultiModelQuery, plan: &QueryPlan) -> bool {
+    fn requires_shuffle(&self, query: &MultiModelQuery, plan: &DistributedQueryPlan) -> bool {
         if !self.config.enable_shuffle {
             return false;
         }
@@ -721,9 +721,13 @@ pub struct ShardInfo {
     pub replica_nodes: Vec<String>,
 }
 
-/// Query plan with distribution strategy
+/// Distributed query plan: shard/locality split with cost estimate.
+///
+/// Naming note: this type used to be called `QueryPlan` and collided with
+/// the graph/federated/orchestration/proto `QueryPlan` types. Renamed
+/// to make the distribution-layer specialisation explicit at call sites.
 #[derive(Debug, Clone)]
-pub struct QueryPlan {
+pub struct DistributedQueryPlan {
     /// Distribution strategy to use
     pub strategy: DistributionStrategy,
     /// Subqueries to execute locally
@@ -734,7 +738,7 @@ pub struct QueryPlan {
     pub estimated_cost: f64,
 }
 
-impl QueryPlan {
+impl DistributedQueryPlan {
     /// Create an empty query plan
     pub fn empty() -> Self {
         Self {

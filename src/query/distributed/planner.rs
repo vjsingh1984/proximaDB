@@ -27,7 +27,7 @@ use crate::cluster::NodeInfo;
 use crate::query::unified::ast::{DataModel, MultiModelQuery, QueryComponent};
 pub use proximadb_query::distributed::planner::ShardedSubQuery;
 
-use super::coordinator::{QueryPlan, ShardInfo};
+use super::coordinator::{DistributedQueryPlan, ShardInfo};
 
 /// Distribution strategy for query execution
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -59,7 +59,7 @@ impl QueryPlanner {
         local_node_id: &str,
         available_nodes: &[NodeInfo],
         shard_info: &HashMap<String, Vec<ShardInfo>>,
-    ) -> Result<QueryPlan> {
+    ) -> Result<DistributedQueryPlan> {
         // Determine collections involved
         let collections: HashSet<String> = query
             .components
@@ -107,7 +107,7 @@ impl QueryPlanner {
         // Estimate cost
         let estimated_cost = self.estimate_cost(&local_subqueries, &remote_subqueries);
 
-        Ok(QueryPlan {
+        Ok(DistributedQueryPlan {
             strategy,
             local_subqueries,
             remote_subqueries,
