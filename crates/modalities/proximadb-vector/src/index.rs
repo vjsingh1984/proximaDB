@@ -15,9 +15,17 @@ use std::collections::HashMap;
 
 use super::distance::DistanceMetric;
 
-/// Vector index configuration
+/// Vector-modality index builder triple (algorithm + metric + params).
+///
+/// Naming note: this type used to be called `IndexConfig` and collided
+/// with the proto `proximadb_proto::v1::IndexConfig` wire form and with
+/// the root-crate runtime-resolved `RuntimeIndexConfig` (now renamed
+/// from `IndexConfig` in `src/index/config.rs`). Renamed to
+/// `VectorIndexConfig` because the field set here is intentionally
+/// minimal — 3 fields (`index_type`, `metric`, `parameters`) — used as a
+/// type-safe builder for vector-specific algorithms.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IndexConfig {
+pub struct VectorIndexConfig {
     /// Index type
     pub index_type: IndexType,
     /// Distance metric to use
@@ -26,7 +34,7 @@ pub struct IndexConfig {
     pub parameters: IndexParameters,
 }
 
-impl IndexConfig {
+impl VectorIndexConfig {
     /// Create a new index configuration
     pub fn new(index_type: IndexType, metric: DistanceMetric) -> Self {
         Self {
@@ -68,7 +76,7 @@ impl IndexConfig {
     }
 }
 
-impl Default for IndexConfig {
+impl Default for VectorIndexConfig {
     fn default() -> Self {
         Self::new(IndexType::HNSW, DistanceMetric::Euclidean)
     }
@@ -391,7 +399,7 @@ mod tests {
 
     #[test]
     fn test_index_config() {
-        let config = IndexConfig::hnsw(DistanceMetric::Euclidean, 16, 200);
+        let config = VectorIndexConfig::hnsw(DistanceMetric::Euclidean, 16, 200);
         assert_eq!(config.index_type, IndexType::HNSW);
     }
 

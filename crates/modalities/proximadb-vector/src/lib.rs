@@ -56,8 +56,8 @@ pub use quantization::{
 };
 
 pub use index::{
-    FlatIndex, IndexConfig, IndexError, IndexParameters, IndexStats, IndexType, Neighbor,
-    VectorIndex,
+    FlatIndex, IndexError, IndexParameters, IndexStats, IndexType, Neighbor, VectorIndex,
+    VectorIndexConfig,
 };
 
 pub use search::{

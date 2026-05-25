@@ -18,7 +18,7 @@ use std::time::Instant;
 use tracing::{debug, info};
 
 use crate::distance::DistanceMetric;
-use crate::index::IndexConfig;
+use crate::index::VectorIndexConfig;
 
 /// Vector service implementation using modality-native components.
 ///
@@ -44,7 +44,7 @@ use crate::index::IndexConfig;
 /// - **Compatibility**: Implements stable VectorQueryService trait
 pub struct VectorServiceImpl {
     /// Index configuration for search
-    index_config: IndexConfig,
+    index_config: VectorIndexConfig,
     /// Enable progressive search (multi-stage refinement)
     enable_progressive: bool,
     /// Canonical records supplied to the extracted modality runtime.
@@ -55,14 +55,14 @@ impl VectorServiceImpl {
     /// Create a new vector service with default configuration.
     pub fn new() -> Result<Self, ProximaDBError> {
         Ok(Self {
-            index_config: IndexConfig::default(),
+            index_config: VectorIndexConfig::default(),
             enable_progressive: true,
             records: RwLock::new(HashMap::new()),
         })
     }
 
     /// Create a new vector service with custom index configuration.
-    pub fn with_config(config: IndexConfig) -> Result<Self, ProximaDBError> {
+    pub fn with_config(config: VectorIndexConfig) -> Result<Self, ProximaDBError> {
         Ok(Self {
             index_config: config,
             enable_progressive: true,
@@ -71,7 +71,7 @@ impl VectorServiceImpl {
     }
 
     /// Create a new vector service without progressive search.
-    pub fn without_progressive(config: IndexConfig) -> Result<Self, ProximaDBError> {
+    pub fn without_progressive(config: VectorIndexConfig) -> Result<Self, ProximaDBError> {
         Ok(Self {
             index_config: config,
             enable_progressive: false,
@@ -351,7 +351,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_service_without_progressive() {
-        let service = VectorServiceImpl::without_progressive(IndexConfig::default()).unwrap();
+        let service = VectorServiceImpl::without_progressive(VectorIndexConfig::default()).unwrap();
         assert!(!service.enable_progressive);
     }
 
