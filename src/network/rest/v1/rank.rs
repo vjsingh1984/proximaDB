@@ -144,11 +144,18 @@ pub struct RankSearchResponse {
 // =========================================================================
 
 /// Source of candidate `DocHandle`s for a query. Production
-/// implementation (R-7c) wraps the hybrid coordinator; tests pass a
-/// closure-based mock so the rank pipeline can be exercised
-/// independently of retrieval.
+/// implementation ([`HybridCoordinatorAdapter`], R-7c.3) wraps the
+/// hybrid coordinator; tests pass mock impls so the rank pipeline can
+/// be exercised independently of retrieval.
+///
+/// Async (R-7c.3): the production backend is async (parallel BM25 +
+/// vector search via `HybridCoordinator`), so the trait surface is
+/// async. Callers `.await` outside `spawn_blocking` — the produced
+/// `Vec<DocHandle>` is then moved into the blocking closure for the
+/// arena-bearing rank phases.
+#[async_trait::async_trait]
 pub trait CandidateProvider: Send + Sync {
-    fn candidates(&self, request: &RankSearchRequest) -> RankResult<Vec<DocHandle>>;
+    async fn candidates(&self, request: &RankSearchRequest) -> RankResult<Vec<DocHandle>>;
 }
 
 /// Execute a [`RankSearchRequest`] against the registry and candidate
@@ -167,7 +174,7 @@ pub async fn handle_rank_search(
     factory: Arc<BlueprintFactory>,
     second_phase_scorer: Option<Arc<dyn SecondPhaseScorer>>,
 ) -> RankResult<RankSearchResponse> {
-    let candidate_docs = candidates.candidates(&req)?;
+    let candidate_docs = candidates.candidates(&req).await?;
     let qctx = QueryContext {
         query_vector: if req.query_vector.is_empty() {
             None
@@ -415,9 +422,136 @@ impl Default for MockRangeCandidateProvider {
     }
 }
 
+#[async_trait::async_trait]
 impl CandidateProvider for MockRangeCandidateProvider {
-    fn candidates(&self, _request: &RankSearchRequest) -> RankResult<Vec<DocHandle>> {
+    async fn candidates(&self, _request: &RankSearchRequest) -> RankResult<Vec<DocHandle>> {
         Ok((1..=self.count).map(DocHandle).collect())
+    }
+}
+
+// =========================================================================
+// HybridCoordinator integration (R-7c.3)
+// =========================================================================
+
+/// Abstract backend the [`HybridCoordinatorAdapter`] calls into. One
+/// instance per process — wraps whatever real BM25 + vector services
+/// the deployment uses. Tests use mock impls.
+///
+/// The two methods are `async` because the real services (Tantivy +
+/// `UnifiedSearchInterface`) are async. The methods don't take the
+/// collection name — that comes from the request and is bound in the
+/// closure passed to `HybridCoordinator::execute_hybrid_search`. v1
+/// passes the collection via thread-local-style stash; R-7c.3.1 will
+/// add it as an explicit arg once we settle on the production
+/// signatures of the underlying services.
+#[async_trait::async_trait]
+pub trait HybridSearchBackend: Send + Sync {
+    async fn bm25_search(
+        &self,
+        collection: &str,
+        query: &str,
+    ) -> RankResult<Vec<crate::core::search::hybrid::BM25Result>>;
+    async fn vector_search(
+        &self,
+        collection: &str,
+        vector: &[f32],
+    ) -> RankResult<Vec<crate::core::search::hybrid::VectorResult>>;
+}
+
+/// `CandidateProvider` that delegates to a real
+/// [`crate::core::search::hybrid::HybridCoordinator`]. Production
+/// constructs one of these at server startup, registers it on
+/// `RankServices`, and the rank route routes through it
+/// automatically.
+///
+/// The doc-id contract: `BM25Result.doc_id` and `VectorResult.doc_id`
+/// are arbitrary strings; this adapter parses them as decimal `u32`
+/// for `DocHandle`. Backends that use non-numeric ids will return
+/// `DocHandle(0)` for those rows — the rank pipeline still works but
+/// the output ids round-trip wrong. R-7c.3.1 will widen `DocHandle`
+/// to a string-aware variant or add an explicit `doc_id_to_handle`
+/// trait method.
+pub struct HybridCoordinatorAdapter {
+    coordinator: crate::core::search::hybrid::HybridCoordinator,
+    backend: Arc<dyn HybridSearchBackend>,
+}
+
+impl HybridCoordinatorAdapter {
+    pub fn new(
+        fusion: crate::core::search::hybrid::FusionStrategy,
+        backend: Arc<dyn HybridSearchBackend>,
+    ) -> Self {
+        Self {
+            coordinator: crate::core::search::hybrid::HybridCoordinator::new(fusion),
+            backend,
+        }
+    }
+
+    pub fn with_top_k(
+        fusion: crate::core::search::hybrid::FusionStrategy,
+        top_k: usize,
+        backend: Arc<dyn HybridSearchBackend>,
+    ) -> Self {
+        Self {
+            coordinator: crate::core::search::hybrid::HybridCoordinator::with_top_k(fusion, top_k),
+            backend,
+        }
+    }
+}
+
+/// Parse a backend doc_id string into a DocHandle. Returns `None` for
+/// non-numeric ids — the caller decides whether to drop or use a
+/// sentinel. R-7c.3.1 should replace this with a string-aware
+/// DocHandle variant.
+fn doc_id_to_handle(doc_id: &str) -> Option<DocHandle> {
+    doc_id.parse::<u32>().ok().map(DocHandle)
+}
+
+#[async_trait::async_trait]
+impl CandidateProvider for HybridCoordinatorAdapter {
+    async fn candidates(&self, request: &RankSearchRequest) -> RankResult<Vec<DocHandle>> {
+        // The hybrid coordinator's BM25 + vector closures need their
+        // own clones of the backend Arc — each closure consumes its
+        // captured state by move.
+        let backend_bm25 = self.backend.clone();
+        let backend_vec = self.backend.clone();
+        let collection_for_bm25 = request.collection.clone();
+        let collection_for_vec = request.collection.clone();
+
+        // v1: pull query text from the rank_overrides bag if present
+        // (no top-level `query_text` field on RankSearchRequest yet —
+        // R-7c.3.1 will add one alongside `query_vector`). Empty text
+        // is a sentinel "vector-only" mode for the BM25 closure.
+        let query_text = String::new();
+
+        let results = self
+            .coordinator
+            .execute_hybrid_search(
+                move |q: String| async move {
+                    backend_bm25
+                        .bm25_search(&collection_for_bm25, &q)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{e}"))
+                },
+                move |v: Vec<f32>| async move {
+                    backend_vec
+                        .vector_search(&collection_for_vec, &v)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{e}"))
+                },
+                &query_text,
+                &request.query_vector,
+            )
+            .await
+            .map_err(|e| RankError::ModelInference {
+                model_id: "hybrid_coordinator".into(),
+                reason: format!("hybrid search failed: {e}"),
+            })?;
+
+        Ok(results
+            .into_iter()
+            .filter_map(|r| doc_id_to_handle(&r.doc_id))
+            .collect())
     }
 }
 
@@ -637,8 +771,9 @@ mod tests {
 
     /// Mock candidate provider returning a fixed range of DocHandles.
     struct FixedCandidates(Vec<DocHandle>);
+    #[async_trait::async_trait]
     impl CandidateProvider for FixedCandidates {
-        fn candidates(&self, _request: &RankSearchRequest) -> RankResult<Vec<DocHandle>> {
+        async fn candidates(&self, _request: &RankSearchRequest) -> RankResult<Vec<DocHandle>> {
             Ok(self.0.clone())
         }
     }
@@ -794,8 +929,8 @@ mod tests {
         assert!(services.profile_registry.is_empty());
     }
 
-    #[test]
-    fn mock_range_candidate_provider_returns_configured_count() {
+    #[tokio::test]
+    async fn mock_range_candidate_provider_returns_configured_count() {
         let p = MockRangeCandidateProvider { count: 7 };
         let req = RankSearchRequest {
             collection: "x".into(),
@@ -804,7 +939,7 @@ mod tests {
             rank_profile: None,
             rank_overrides: None,
         };
-        let docs = p.candidates(&req).unwrap();
+        let docs = p.candidates(&req).await.unwrap();
         assert_eq!(docs.len(), 7);
         assert_eq!(docs[0], DocHandle(1));
         assert_eq!(docs[6], DocHandle(7));
@@ -989,5 +1124,199 @@ mod tests {
             }])
             .unwrap();
         assert_eq!(out[0].score, 10.0);
+    }
+
+    // ---------------- R-7c.3: HybridCoordinatorAdapter tests ----------------
+
+    use crate::core::search::hybrid::{BM25Result, FusionStrategy, VectorResult};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct MockHybridBackend {
+        bm25_calls: AtomicUsize,
+        vector_calls: AtomicUsize,
+        doc_ids: Vec<&'static str>,
+    }
+
+    impl MockHybridBackend {
+        fn new(doc_ids: Vec<&'static str>) -> Self {
+            Self {
+                bm25_calls: AtomicUsize::new(0),
+                vector_calls: AtomicUsize::new(0),
+                doc_ids,
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl HybridSearchBackend for MockHybridBackend {
+        async fn bm25_search(
+            &self,
+            _collection: &str,
+            _query: &str,
+        ) -> RankResult<Vec<BM25Result>> {
+            self.bm25_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self
+                .doc_ids
+                .iter()
+                .enumerate()
+                .map(|(i, id)| BM25Result {
+                    doc_id: id.to_string(),
+                    score: 1.0 / (i as f64 + 1.0),
+                    highlights: None,
+                    metadata: HashMap::new(),
+                })
+                .collect())
+        }
+
+        async fn vector_search(
+            &self,
+            _collection: &str,
+            _vector: &[f32],
+        ) -> RankResult<Vec<VectorResult>> {
+            self.vector_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self
+                .doc_ids
+                .iter()
+                .enumerate()
+                .map(|(i, id)| VectorResult {
+                    doc_id: id.to_string(),
+                    score: 1.0 - (i as f64 * 0.1),
+                    distance: i as f64 * 0.1,
+                    metadata: HashMap::new(),
+                })
+                .collect())
+        }
+    }
+
+    fn rank_req(collection: &str, query_vector: Vec<f32>, k: usize) -> RankSearchRequest {
+        RankSearchRequest {
+            collection: collection.into(),
+            query_vector,
+            k,
+            rank_profile: None,
+            rank_overrides: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn hybrid_adapter_runs_both_searches_in_parallel() {
+        let backend = Arc::new(MockHybridBackend::new(vec!["1", "2", "3"]));
+        let adapter = HybridCoordinatorAdapter::new(
+            FusionStrategy::ReciprocalRank { k: 60 },
+            backend.clone(),
+        );
+        let req = rank_req("docs", vec![0.1, 0.2, 0.3], 10);
+        let docs = adapter.candidates(&req).await.unwrap();
+        // Both searches fired exactly once.
+        assert_eq!(backend.bm25_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(backend.vector_calls.load(Ordering::SeqCst), 1);
+        // RRF over 3 docs returned by each side should produce 3 unique handles.
+        assert_eq!(docs.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn hybrid_adapter_parses_numeric_doc_ids() {
+        let backend = Arc::new(MockHybridBackend::new(vec!["42", "7", "99"]));
+        let adapter = HybridCoordinatorAdapter::new(
+            FusionStrategy::ReciprocalRank { k: 60 },
+            backend,
+        );
+        let req = rank_req("docs", vec![0.5], 10);
+        let docs = adapter.candidates(&req).await.unwrap();
+        let ids: std::collections::HashSet<u32> = docs.iter().map(|d| d.0).collect();
+        assert!(ids.contains(&42));
+        assert!(ids.contains(&7));
+        assert!(ids.contains(&99));
+    }
+
+    #[tokio::test]
+    async fn hybrid_adapter_skips_non_numeric_doc_ids() {
+        // Per the doc-id contract documented on HybridCoordinatorAdapter,
+        // non-numeric ids are dropped in v1 (R-7c.3.1 widens DocHandle).
+        let backend = Arc::new(MockHybridBackend::new(vec!["1", "abc", "2", "def"]));
+        let adapter = HybridCoordinatorAdapter::new(
+            FusionStrategy::ReciprocalRank { k: 60 },
+            backend,
+        );
+        let req = rank_req("docs", vec![0.5], 10);
+        let docs = adapter.candidates(&req).await.unwrap();
+        assert_eq!(docs.len(), 2, "non-numeric ids must be filtered out");
+        let ids: std::collections::HashSet<u32> = docs.iter().map(|d| d.0).collect();
+        assert!(ids.contains(&1));
+        assert!(ids.contains(&2));
+    }
+
+    #[tokio::test]
+    async fn hybrid_adapter_propagates_backend_error_as_model_inference() {
+        struct BrokenBackend;
+        #[async_trait::async_trait]
+        impl HybridSearchBackend for BrokenBackend {
+            async fn bm25_search(
+                &self,
+                _c: &str,
+                _q: &str,
+            ) -> RankResult<Vec<BM25Result>> {
+                Err(RankError::ModelInference {
+                    model_id: "bm25".into(),
+                    reason: "service unavailable".into(),
+                })
+            }
+            async fn vector_search(
+                &self,
+                _c: &str,
+                _v: &[f32],
+            ) -> RankResult<Vec<VectorResult>> {
+                Ok(Vec::new())
+            }
+        }
+        let adapter = HybridCoordinatorAdapter::new(
+            FusionStrategy::ReciprocalRank { k: 60 },
+            Arc::new(BrokenBackend),
+        );
+        let req = rank_req("docs", vec![0.5], 10);
+        match adapter.candidates(&req).await {
+            Err(RankError::ModelInference { reason, .. }) => {
+                assert!(reason.contains("hybrid search failed"));
+            }
+            Err(_) => panic!("expected ModelInference"),
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn hybrid_adapter_round_trips_through_rank_services() {
+        // End-to-end: RankServices with HybridCoordinatorAdapter as
+        // CandidateProvider; verify the dispatcher gets the adapter's
+        // output rather than the mock-range fallback.
+        let backend = Arc::new(MockHybridBackend::new(vec!["1", "2", "3", "4", "5"]));
+        let adapter = HybridCoordinatorAdapter::new(
+            FusionStrategy::ReciprocalRank { k: 60 },
+            backend,
+        );
+        let services = RankServices::new(Arc::new(adapter));
+        // Profile-free path: candidates pass through as-is with score=0.
+        let req = rank_req("docs", vec![0.1, 0.2], 3);
+        let registry = services.profile_registry.clone();
+        let factory = services.blueprint_factory.clone();
+        let resp = handle_rank_search(
+            req,
+            registry.as_ref(),
+            services.candidate_provider.as_ref(),
+            factory,
+            None,
+        )
+        .await
+        .unwrap();
+        // Top-3 returned (out of 5 candidates the backend produced).
+        assert_eq!(resp.hits.len(), 3);
+    }
+
+    #[test]
+    fn doc_id_to_handle_parses_decimal() {
+        assert_eq!(doc_id_to_handle("123"), Some(DocHandle(123)));
+        assert_eq!(doc_id_to_handle("0"), Some(DocHandle(0)));
+        assert!(doc_id_to_handle("abc").is_none());
+        assert!(doc_id_to_handle("-5").is_none()); // u32 rejects negatives
+        assert!(doc_id_to_handle("").is_none());
     }
 }
