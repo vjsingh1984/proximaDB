@@ -19,8 +19,12 @@
 //! function itself — keeps the decision logic free of async lifetimes.
 
 use crate::collection_dr_policy::{
-    CollectionDrPolicy, DrHealthState, DrState, ProviderObservedState,
+    CollectionDrEvent, CollectionDrPolicy, DrEventType, DrHealth, DrHealthState,
+    DrProviderAdapter, DrState, ProviderError, ProviderObservedState,
+    ProviderReplicationBinding,
 };
+use async_trait::async_trait;
+use std::sync::Arc;
 
 /// What the reconciler should do for a single policy on this poll.
 ///
@@ -323,6 +327,417 @@ pub fn next_health_state(decision: &ReconcileDecision) -> DrHealthState {
         ReconcileDecision::MarkDrifted { .. } => DrHealthState::Drifted,
         ReconcileDecision::MarkProviderBlocked { .. } => DrHealthState::ProviderBlocked,
         ReconcileDecision::MarkBillingBlocked { .. } => DrHealthState::BillingBlocked,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Driver (P3b) — async dispatch layer
+// ---------------------------------------------------------------------------
+
+/// Errors surfaced by the engine API surface and the reconciler
+/// dispatch layer. Per the contract §"Engine API Surface" / S14.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DrApiError {
+    /// Caller passed an invalid input (unknown policy_id, missing
+    /// required field, malformed value).
+    #[error("validation failed: {0}")]
+    ValidationFailed(String),
+
+    /// Caller lacks the operator service-account capability required
+    /// for this mutation. Customer-facing surfaces wrap this as 401/403.
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
+
+    /// The requested state transition is not permitted by the state
+    /// machine (e.g. `Active -> Disabled`).
+    #[error("invalid state transition: {from:?} -> {to:?}")]
+    InvalidStateTransition { from: DrState, to: DrState },
+
+    /// The owning collection's authority mode is `ExternalAuthoritative`
+    /// (Iceberg / Delta / Hudi); per D8 the engine refuses DR for those.
+    #[error("external-authoritative collection refused: {0}")]
+    ExternalAuthoritativeRefused(String),
+
+    /// `ObjectProvider` variant has no adapter implementation in this
+    /// build (per S13, `GcsFuture` is reserved-not-implemented).
+    #[error("unsupported provider: {0}")]
+    UnsupportedProvider(String),
+
+    /// xCatalog store could not be reached. Retryable.
+    #[error("store unavailable: {0}")]
+    StoreUnavailable(String),
+
+    /// Optimistic concurrency: caller's `expected_version` did not match
+    /// the current `policy_version`. Caller should reload and retry.
+    #[error(
+        "policy version conflict for {policy_id}: \
+         expected {expected}, got {actual}"
+    )]
+    VersionConflict {
+        policy_id: String,
+        expected: u64,
+        actual: u64,
+    },
+}
+
+/// Narrow store surface the reconciler needs to drive a policy through
+/// one tick. Implementations are operator-owned (sqlx/filestore); the
+/// `MockDrPolicyStore` ships here for tests.
+#[async_trait]
+pub trait DrPolicyStore: Send + Sync {
+    /// Persist a state transition. Returns the new `policy_version`.
+    /// Bumps `policy_version` because the contract S2 rule says state
+    /// transitions always bump.
+    async fn transition_state(
+        &self,
+        policy_id: &str,
+        next: DrState,
+        expected_version: u64,
+    ) -> Result<u64, DrApiError>;
+
+    /// Persist a provider binding after a successful `ensure_rule`.
+    /// Bumps `policy_version` per S2 (binding change is a
+    /// provider-rule-touching change).
+    async fn set_provider_binding(
+        &self,
+        policy_id: &str,
+        binding: ProviderReplicationBinding,
+        expected_version: u64,
+    ) -> Result<u64, DrApiError>;
+
+    /// Update the row's health. Health updates do NOT bump
+    /// `policy_version` — they are reconciler observations only.
+    async fn update_health(
+        &self,
+        policy_id: &str,
+        health: DrHealth,
+    ) -> Result<(), DrApiError>;
+
+    /// Append a row to `xcatalog_collection_dr_events`. Append-only;
+    /// the caller (driver) generates the `event_id`.
+    async fn record_event(&self, event: CollectionDrEvent) -> Result<(), DrApiError>;
+}
+
+/// One-shot outcome of `DrReconcilerDriver::reconcile_one`. The async
+/// loop layer aggregates these and feeds them to metrics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReconcileOutcome {
+    /// No action taken.
+    Idle(IdleReason),
+    /// Provider rule was successfully created/updated and the binding
+    /// was persisted. Carries the new `policy_version`.
+    EnsuredRule { policy_version: u64 },
+    /// Provider rule retired and the row transitioned to `Retired`.
+    Retired,
+    /// Safe drift was repaired via `ensure_rule`.
+    RepairedDrift(DriftReason),
+    /// Unsafe drift recorded; health flipped to `Drifted`.
+    MarkedDrifted(DriftReason),
+    /// Provider blocked; health flipped, ops paged.
+    MarkedProviderBlocked(BlockReason),
+    /// Billing binding missing/revoked; health flipped.
+    MarkedBillingBlocked(BlockReason),
+    /// Adapter call failed transiently. Driver does NOT escalate;
+    /// caller's retry logic decides next.
+    AdapterTransient(String),
+    /// Adapter call failed with a non-retryable error. Driver flipped
+    /// health to `ProviderBlocked`.
+    AdapterEscalated(BlockReason),
+}
+
+/// The dispatch layer that turns one [`ReconcileDecision`] into
+/// adapter + store calls. Generic over store + adapter so tests can
+/// inject mocks.
+///
+/// One driver per shard; the caller handles iteration and scheduling
+/// (P3c). This struct is `Clone`-able through `Arc` so multiple loops
+/// can share one configuration.
+pub struct DrReconcilerDriver<S, A> {
+    store: Arc<S>,
+    adapter: Arc<A>,
+    /// Actor identity recorded on every emitted event.
+    actor: String,
+    /// Source of monotonically-increasing event IDs. Tests supply a
+    /// deterministic counter; production wires a ULID generator.
+    event_id_source: Arc<dyn Fn() -> String + Send + Sync>,
+    /// Wall-clock source for `created_at_ns`. Pluggable for tests.
+    now_ns: Arc<dyn Fn() -> i64 + Send + Sync>,
+}
+
+impl<S, A> DrReconcilerDriver<S, A>
+where
+    S: DrPolicyStore + 'static,
+    A: DrProviderAdapter + 'static,
+{
+    /// Build a driver with the given store, adapter, and actor label.
+    /// Uses ULID-ish event IDs from the system clock; tests should
+    /// prefer [`with_clocks`].
+    pub fn new(store: Arc<S>, adapter: Arc<A>, actor: impl Into<String>) -> Self {
+        let now_ns: Arc<dyn Fn() -> i64 + Send + Sync> = Arc::new(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as i64)
+                .unwrap_or(0)
+        });
+        let counter = std::sync::atomic::AtomicU64::new(0);
+        let counter = Arc::new(counter);
+        let event_id_source: Arc<dyn Fn() -> String + Send + Sync> = Arc::new(move || {
+            let n = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            format!("evt_{n:020}")
+        });
+        Self {
+            store,
+            adapter,
+            actor: actor.into(),
+            event_id_source,
+            now_ns,
+        }
+    }
+
+    /// Build a driver with explicit clock + event-id source. Tests use
+    /// this to make outcomes deterministic.
+    pub fn with_clocks(
+        store: Arc<S>,
+        adapter: Arc<A>,
+        actor: impl Into<String>,
+        event_id_source: Arc<dyn Fn() -> String + Send + Sync>,
+        now_ns: Arc<dyn Fn() -> i64 + Send + Sync>,
+    ) -> Self {
+        Self {
+            store,
+            adapter,
+            actor: actor.into(),
+            event_id_source,
+            now_ns,
+        }
+    }
+
+    /// Drive one policy through one tick: fetch state, decide, dispatch,
+    /// persist health, emit event. Returns the outcome for metric
+    /// aggregation.
+    ///
+    /// This method is `&self` so a single driver can be shared across
+    /// concurrent policy ticks (the underlying adapter/store traits
+    /// are `Send + Sync`).
+    pub async fn reconcile_one(
+        &self,
+        policy: &CollectionDrPolicy,
+    ) -> Result<ReconcileOutcome, DrApiError> {
+        // 1. Fetch observed state. A transient adapter failure here
+        //    returns AdapterTransient — caller decides retry cadence.
+        let observed = match self.adapter.fetch_state(policy).await {
+            Ok(o) => o,
+            Err(e) => return self.handle_adapter_error(policy, e, "fetch_state").await,
+        };
+
+        // 2. Decide.
+        let decision = reconcile_step(policy, &observed);
+
+        // 3. Dispatch.
+        self.dispatch(policy, decision).await
+    }
+
+    async fn dispatch(
+        &self,
+        policy: &CollectionDrPolicy,
+        decision: ReconcileDecision,
+    ) -> Result<ReconcileOutcome, DrApiError> {
+        match decision {
+            ReconcileDecision::Idle { reason } => {
+                // Heartbeat-only — record observation but no event spam
+                // for idle ticks beyond first.
+                let mut health = policy.health.clone();
+                health.state = next_health_state(&ReconcileDecision::Idle { reason });
+                health.last_reconciled_at_ns = Some((self.now_ns)());
+                self.store.update_health(&policy.policy_id, health).await?;
+                Ok(ReconcileOutcome::Idle(reason))
+            }
+
+            ReconcileDecision::EnsureRule => self.do_ensure(policy, None).await,
+
+            ReconcileDecision::RetireRule => self.do_retire(policy).await,
+
+            ReconcileDecision::RepairDrift { reason } => {
+                self.emit_event(policy, DrEventType::DriftDetected, Some(format!("{reason:?}")))
+                    .await?;
+                let outcome = self.do_ensure(policy, Some(reason)).await?;
+                // Successful repair → emit drift_repaired.
+                if matches!(outcome, ReconcileOutcome::RepairedDrift(_)) {
+                    self.emit_event(
+                        policy,
+                        DrEventType::DriftRepaired,
+                        Some(format!("{reason:?}")),
+                    )
+                    .await?;
+                }
+                Ok(outcome)
+            }
+
+            ReconcileDecision::MarkDrifted { reason } => {
+                self.set_health(
+                    policy,
+                    DrHealthState::Drifted,
+                    Some(format!("{reason:?}")),
+                )
+                .await?;
+                self.emit_event(policy, DrEventType::DriftDetected, Some(format!("{reason:?}")))
+                    .await?;
+                Ok(ReconcileOutcome::MarkedDrifted(reason))
+            }
+
+            ReconcileDecision::MarkProviderBlocked { reason } => {
+                self.set_health(
+                    policy,
+                    DrHealthState::ProviderBlocked,
+                    Some(format!("{reason:?}")),
+                )
+                .await?;
+                Ok(ReconcileOutcome::MarkedProviderBlocked(reason))
+            }
+
+            ReconcileDecision::MarkBillingBlocked { reason } => {
+                self.set_health(
+                    policy,
+                    DrHealthState::BillingBlocked,
+                    Some(format!("{reason:?}")),
+                )
+                .await?;
+                self.emit_event(
+                    policy,
+                    DrEventType::BillingBlocked,
+                    Some(format!("{reason:?}")),
+                )
+                .await?;
+                Ok(ReconcileOutcome::MarkedBillingBlocked(reason))
+            }
+        }
+    }
+
+    async fn do_ensure(
+        &self,
+        policy: &CollectionDrPolicy,
+        drift_reason: Option<DriftReason>,
+    ) -> Result<ReconcileOutcome, DrApiError> {
+        match self.adapter.ensure_rule(policy).await {
+            Ok(binding) => {
+                let new_version = self
+                    .store
+                    .set_provider_binding(
+                        &policy.policy_id,
+                        binding,
+                        policy.policy_version,
+                    )
+                    .await?;
+                // Drive to Active if we were in PendingProviderProvisioning.
+                let next_state = if policy.state == DrState::PendingProviderProvisioning
+                {
+                    Some(DrState::Active)
+                } else {
+                    None
+                };
+                if let Some(next) = next_state {
+                    self.store
+                        .transition_state(&policy.policy_id, next, new_version)
+                        .await?;
+                    self.emit_event(policy, DrEventType::Active, None).await?;
+                }
+                self.set_health(policy, DrHealthState::Healthy, None).await?;
+                Ok(match drift_reason {
+                    Some(r) => ReconcileOutcome::RepairedDrift(r),
+                    None => ReconcileOutcome::EnsuredRule {
+                        policy_version: new_version,
+                    },
+                })
+            }
+            Err(e) => self.handle_adapter_error(policy, e, "ensure_rule").await,
+        }
+    }
+
+    async fn do_retire(
+        &self,
+        policy: &CollectionDrPolicy,
+    ) -> Result<ReconcileOutcome, DrApiError> {
+        match self.adapter.retire_rule(policy).await {
+            Ok(()) => {
+                self.store
+                    .transition_state(
+                        &policy.policy_id,
+                        DrState::Retired,
+                        policy.policy_version,
+                    )
+                    .await?;
+                self.emit_event(policy, DrEventType::ProviderRuleDisabled, None)
+                    .await?;
+                self.emit_event(policy, DrEventType::Retired, None).await?;
+                Ok(ReconcileOutcome::Retired)
+            }
+            Err(e) => self.handle_adapter_error(policy, e, "retire_rule").await,
+        }
+    }
+
+    async fn handle_adapter_error(
+        &self,
+        policy: &CollectionDrPolicy,
+        err: ProviderError,
+        op: &'static str,
+    ) -> Result<ReconcileOutcome, DrApiError> {
+        if err.is_retryable() {
+            // Transient: do not flip health, do not emit a blocking
+            // event. The async loop's backoff layer (P3c) will retry.
+            return Ok(ReconcileOutcome::AdapterTransient(format!(
+                "{op}: {err}"
+            )));
+        }
+        let reason = match err {
+            ProviderError::Misconfiguration(_) => BlockReason::ProviderMisconfiguration,
+            ProviderError::QuotaExceeded(_) => BlockReason::ProviderQuotaExceeded,
+            ProviderError::AuthDenied(_) => BlockReason::ProviderAuthDenied,
+            // Transient already handled above; the catch-all keeps the
+            // match exhaustive without a panic path.
+            ProviderError::Transient(_) => BlockReason::ProviderMisconfiguration,
+        };
+        self.set_health(
+            policy,
+            DrHealthState::ProviderBlocked,
+            Some(format!("{op}: {reason:?}")),
+        )
+        .await?;
+        Ok(ReconcileOutcome::AdapterEscalated(reason))
+    }
+
+    async fn set_health(
+        &self,
+        policy: &CollectionDrPolicy,
+        state: DrHealthState,
+        reason: Option<String>,
+    ) -> Result<(), DrApiError> {
+        let mut h = policy.health.clone();
+        h.state = state;
+        h.reason = reason;
+        h.last_reconciled_at_ns = Some((self.now_ns)());
+        self.store.update_health(&policy.policy_id, h).await
+    }
+
+    async fn emit_event(
+        &self,
+        policy: &CollectionDrPolicy,
+        event_type: DrEventType,
+        reason: Option<String>,
+    ) -> Result<(), DrApiError> {
+        let event = CollectionDrEvent {
+            event_id: (self.event_id_source)(),
+            policy_id: policy.policy_id.clone(),
+            tenant_id: policy.tenant_id.clone(),
+            collection_id: policy.collection_id.clone(),
+            event_type,
+            actor: self.actor.clone(),
+            reason,
+            before_state: Some(policy.state),
+            after_state: Some(policy.state),
+            provider_state: None,
+            created_at_ns: (self.now_ns)(),
+        };
+        self.store.record_event(event).await
     }
 }
 
@@ -738,5 +1153,362 @@ mod tests {
                 "{decision:?} → {expected:?}"
             );
         }
+    }
+
+    // --- Driver (P3b) -------------------------------------------------
+
+    use crate::collection_dr_policy::MockDrProviderAdapter;
+    use parking_lot::Mutex;
+    use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+
+    /// In-memory store for driver tests. Records every store mutation
+    /// so assertions can pin the order and contents.
+    #[derive(Default)]
+    struct MockDrPolicyStore {
+        events: Mutex<Vec<CollectionDrEvent>>,
+        health_updates: Mutex<Vec<(String, DrHealth)>>,
+        state_transitions: Mutex<Vec<(String, DrState, u64)>>,
+        bindings: Mutex<Vec<(String, ProviderReplicationBinding, u64)>>,
+        next_version: AtomicU64,
+        inject_error: Mutex<Option<DrApiError>>,
+    }
+
+    impl MockDrPolicyStore {
+        fn new(starting_version: u64) -> Arc<Self> {
+            let s = Self::default();
+            s.next_version.store(starting_version, Ordering::Relaxed);
+            Arc::new(s)
+        }
+
+        fn events_snapshot(&self) -> Vec<CollectionDrEvent> {
+            self.events.lock().clone()
+        }
+        fn health_snapshot(&self) -> Vec<(String, DrHealth)> {
+            self.health_updates.lock().clone()
+        }
+        fn transitions_snapshot(&self) -> Vec<(String, DrState, u64)> {
+            self.state_transitions.lock().clone()
+        }
+        fn bindings_snapshot(&self) -> Vec<(String, ProviderReplicationBinding, u64)> {
+            self.bindings.lock().clone()
+        }
+    }
+
+    #[async_trait]
+    impl DrPolicyStore for MockDrPolicyStore {
+        async fn transition_state(
+            &self,
+            policy_id: &str,
+            next: DrState,
+            expected_version: u64,
+        ) -> Result<u64, DrApiError> {
+            if let Some(e) = self.inject_error.lock().take() {
+                return Err(e);
+            }
+            self.state_transitions
+                .lock()
+                .push((policy_id.into(), next, expected_version));
+            Ok(self.next_version.fetch_add(1, Ordering::Relaxed) + 1)
+        }
+
+        async fn set_provider_binding(
+            &self,
+            policy_id: &str,
+            binding: ProviderReplicationBinding,
+            expected_version: u64,
+        ) -> Result<u64, DrApiError> {
+            if let Some(e) = self.inject_error.lock().take() {
+                return Err(e);
+            }
+            self.bindings
+                .lock()
+                .push((policy_id.into(), binding, expected_version));
+            Ok(self.next_version.fetch_add(1, Ordering::Relaxed) + 1)
+        }
+
+        async fn update_health(
+            &self,
+            policy_id: &str,
+            health: DrHealth,
+        ) -> Result<(), DrApiError> {
+            if let Some(e) = self.inject_error.lock().take() {
+                return Err(e);
+            }
+            self.health_updates
+                .lock()
+                .push((policy_id.into(), health));
+            Ok(())
+        }
+
+        async fn record_event(&self, event: CollectionDrEvent) -> Result<(), DrApiError> {
+            if let Some(e) = self.inject_error.lock().take() {
+                return Err(e);
+            }
+            self.events.lock().push(event);
+            Ok(())
+        }
+    }
+
+    fn make_driver(
+        store: Arc<MockDrPolicyStore>,
+        adapter: Arc<MockDrProviderAdapter>,
+    ) -> DrReconcilerDriver<MockDrPolicyStore, MockDrProviderAdapter> {
+        // Deterministic clocks for assertable outcomes.
+        let counter = Arc::new(AtomicU64::new(0));
+        let counter_clone = counter.clone();
+        let event_id: Arc<dyn Fn() -> String + Send + Sync> = Arc::new(move || {
+            let n = counter_clone.fetch_add(1, Ordering::Relaxed);
+            format!("evt_{n:04}")
+        });
+        let clock_counter = Arc::new(AtomicI64::new(1_700_000_000_000_000_000));
+        let clock_clone = clock_counter.clone();
+        let now_ns: Arc<dyn Fn() -> i64 + Send + Sync> = Arc::new(move || {
+            clock_clone.fetch_add(1_000, Ordering::Relaxed)
+        });
+        DrReconcilerDriver::with_clocks(store, adapter, "reconciler", event_id, now_ns)
+    }
+
+    #[tokio::test]
+    async fn driver_active_healthy_updates_health_and_emits_no_event() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        // Pre-seed adapter observation to "healthy" for the policy.
+        let mut p = base_policy();
+        p.provider_binding = Some(ProviderReplicationBinding {
+            provider_policy_id: None,
+            provider_rule_id: "dr-drp_1-v1".into(),
+            provider_role_arn: None,
+            provider_kms_key_id: None,
+        });
+        let healthy = healthy_observed(&p);
+        adapter.seed_observed(&p.policy_id, healthy);
+        let driver = make_driver(store.clone(), adapter.clone());
+
+        let outcome = driver.reconcile_one(&p).await.unwrap();
+        assert_eq!(outcome, ReconcileOutcome::Idle(IdleReason::HealthyActive));
+
+        // Health update recorded, no events fired.
+        let h = store.health_snapshot();
+        assert_eq!(h.len(), 1);
+        assert_eq!(h[0].1.state, DrHealthState::Healthy);
+        assert!(h[0].1.last_reconciled_at_ns.is_some());
+        assert!(store.events_snapshot().is_empty());
+    }
+
+    #[tokio::test]
+    async fn driver_pending_provisioning_drives_to_active_via_ensure() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.state = DrState::PendingProviderProvisioning;
+        p.provider_binding = None;
+        let driver = make_driver(store.clone(), adapter.clone());
+
+        let outcome = driver.reconcile_one(&p).await.unwrap();
+        assert!(matches!(
+            outcome,
+            ReconcileOutcome::EnsuredRule { policy_version: _ }
+        ));
+
+        // Adapter ensure_rule was called.
+        assert_eq!(adapter.ensure_call_count(), 1);
+        // Store recorded a binding write AND a transition to Active.
+        assert_eq!(store.bindings_snapshot().len(), 1);
+        let transitions = store.transitions_snapshot();
+        assert_eq!(transitions.len(), 1);
+        assert_eq!(transitions[0].1, DrState::Active);
+        // An `active` event was emitted.
+        let events = store.events_snapshot();
+        assert!(events.iter().any(|e| e.event_type == DrEventType::Active));
+        // Health was set to Healthy.
+        let h = store.health_snapshot();
+        assert!(h.iter().any(|(_, h)| h.state == DrHealthState::Healthy));
+    }
+
+    #[tokio::test]
+    async fn driver_repair_drift_emits_detected_then_repaired() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let p = base_policy();
+        // Seed adapter to report a missing rule (drift).
+        let mut obs = healthy_observed(&p);
+        obs.rule_exists = false;
+        adapter.seed_observed(&p.policy_id, obs);
+        let driver = make_driver(store.clone(), adapter.clone());
+
+        let outcome = driver.reconcile_one(&p).await.unwrap();
+        assert_eq!(
+            outcome,
+            ReconcileOutcome::RepairedDrift(DriftReason::RuleMissing)
+        );
+
+        // Both drift_detected and drift_repaired events fired, in order.
+        let events = store.events_snapshot();
+        let drift_types: Vec<_> = events.iter().map(|e| e.event_type).collect();
+        let detected_idx = drift_types
+            .iter()
+            .position(|t| *t == DrEventType::DriftDetected)
+            .expect("drift_detected fired");
+        let repaired_idx = drift_types
+            .iter()
+            .position(|t| *t == DrEventType::DriftRepaired)
+            .expect("drift_repaired fired");
+        assert!(
+            detected_idx < repaired_idx,
+            "detected must precede repaired"
+        );
+        assert_eq!(adapter.ensure_call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn driver_mark_drifted_does_not_call_adapter_ensure() {
+        // Destination mismatch is unsafe drift — must NOT trigger
+        // ensure_rule (which could overwrite into the hostile dest).
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let p = base_policy();
+        let mut obs = healthy_observed(&p);
+        obs.observed_destination = Some("hostile-bucket".into());
+        adapter.seed_observed(&p.policy_id, obs);
+        let driver = make_driver(store.clone(), adapter.clone());
+
+        let outcome = driver.reconcile_one(&p).await.unwrap();
+        assert_eq!(
+            outcome,
+            ReconcileOutcome::MarkedDrifted(DriftReason::DestinationMismatch)
+        );
+        assert_eq!(adapter.ensure_call_count(), 0);
+        assert_eq!(adapter.retire_call_count(), 0);
+
+        // Health flipped to Drifted.
+        let h = store.health_snapshot();
+        assert!(h.iter().any(|(_, h)| h.state == DrHealthState::Drifted));
+        // drift_detected event recorded.
+        let events = store.events_snapshot();
+        assert!(events
+            .iter()
+            .any(|e| e.event_type == DrEventType::DriftDetected));
+    }
+
+    #[tokio::test]
+    async fn driver_provider_blocked_skips_provider_calls() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let p = base_policy();
+        let mut obs = healthy_observed(&p);
+        obs.source_versioning_enabled = false;
+        adapter.seed_observed(&p.policy_id, obs);
+        let driver = make_driver(store.clone(), adapter.clone());
+
+        let outcome = driver.reconcile_one(&p).await.unwrap();
+        assert_eq!(
+            outcome,
+            ReconcileOutcome::MarkedProviderBlocked(
+                BlockReason::ProviderMisconfiguration
+            )
+        );
+        assert_eq!(adapter.ensure_call_count(), 0);
+        let h = store.health_snapshot();
+        assert!(h
+            .iter()
+            .any(|(_, h)| h.state == DrHealthState::ProviderBlocked));
+    }
+
+    #[tokio::test]
+    async fn driver_pending_retirement_calls_retire_and_emits_two_events() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.state = DrState::PendingRetirement;
+        let driver = make_driver(store.clone(), adapter.clone());
+
+        let outcome = driver.reconcile_one(&p).await.unwrap();
+        assert_eq!(outcome, ReconcileOutcome::Retired);
+
+        assert_eq!(adapter.retire_call_count(), 1);
+        let transitions = store.transitions_snapshot();
+        assert_eq!(transitions.len(), 1);
+        assert_eq!(transitions[0].1, DrState::Retired);
+        let event_types: Vec<_> =
+            store.events_snapshot().iter().map(|e| e.event_type).collect();
+        assert!(event_types.contains(&DrEventType::ProviderRuleDisabled));
+        assert!(event_types.contains(&DrEventType::Retired));
+    }
+
+    #[tokio::test]
+    async fn driver_billing_revoked_marks_billing_blocked_with_event() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.billing.billing_approval_id = None;
+        // Observation doesn't matter — billing gate fires first.
+        let driver = make_driver(store.clone(), adapter.clone());
+
+        let outcome = driver.reconcile_one(&p).await.unwrap();
+        assert_eq!(
+            outcome,
+            ReconcileOutcome::MarkedBillingBlocked(BlockReason::BillingApprovalMissing)
+        );
+        assert_eq!(adapter.ensure_call_count(), 0);
+        let event_types: Vec<_> =
+            store.events_snapshot().iter().map(|e| e.event_type).collect();
+        assert!(event_types.contains(&DrEventType::BillingBlocked));
+    }
+
+    #[tokio::test]
+    async fn driver_transient_adapter_failure_does_not_flip_health() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.state = DrState::PendingProviderProvisioning;
+        adapter.inject_error(ProviderError::Transient("blip".into()));
+        let driver = make_driver(store.clone(), adapter.clone());
+
+        let outcome = driver.reconcile_one(&p).await.unwrap();
+        assert!(matches!(outcome, ReconcileOutcome::AdapterTransient(_)));
+        // No health flip — the retry layer will try again.
+        assert!(store.health_snapshot().is_empty());
+        assert!(store.events_snapshot().is_empty());
+    }
+
+    #[tokio::test]
+    async fn driver_auth_denied_escalates_to_provider_blocked() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.state = DrState::PendingProviderProvisioning;
+        // First call is fetch_state; second is ensure_rule. Inject the
+        // auth error on fetch_state since it runs first.
+        adapter.inject_error(ProviderError::AuthDenied("403".into()));
+        let driver = make_driver(store.clone(), adapter.clone());
+
+        let outcome = driver.reconcile_one(&p).await.unwrap();
+        assert_eq!(
+            outcome,
+            ReconcileOutcome::AdapterEscalated(BlockReason::ProviderAuthDenied)
+        );
+        let h = store.health_snapshot();
+        assert!(h
+            .iter()
+            .any(|(_, h)| h.state == DrHealthState::ProviderBlocked));
+    }
+
+    #[tokio::test]
+    async fn driver_disabled_policy_records_heartbeat_only() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.state = DrState::Disabled;
+        let driver = make_driver(store.clone(), adapter.clone());
+
+        let outcome = driver.reconcile_one(&p).await.unwrap();
+        assert_eq!(outcome, ReconcileOutcome::Idle(IdleReason::Disabled));
+        // Heartbeat only — no events, no adapter calls.
+        assert_eq!(adapter.ensure_call_count(), 0);
+        assert!(store.events_snapshot().is_empty());
+        // BUT fetch_state still runs (read-only, cheap) and health is
+        // updated for the heartbeat.
+        assert_eq!(adapter.fetch_call_count(), 1);
+        assert_eq!(store.health_snapshot().len(), 1);
     }
 }
