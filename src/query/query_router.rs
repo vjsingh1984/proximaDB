@@ -66,7 +66,7 @@ pub struct UnifiedQueryResult {
     /// Result schema metadata
     pub metadata: ResultMetadata,
     /// Execution statistics
-    pub stats: ExecutionStats,
+    pub stats: RouterExecutionStats,
 }
 
 /// Result metadata
@@ -80,9 +80,14 @@ pub struct ResultMetadata {
     pub row_count: usize,
 }
 
-/// Execution statistics
+/// Router-layer execution statistics for cross-engine query routing.
+///
+/// Naming note: this type used to be called `ExecutionStats` and collided
+/// with the graph/federated/proto `ExecutionStats` types. Renamed to make
+/// the router-layer scope explicit. The proto `proximadb.explain.v1::ExecutionStats`
+/// remains the canonical EXPLAIN form per ADR-004.
 #[derive(Debug, Clone, Default)]
-pub struct ExecutionStats {
+pub struct RouterExecutionStats {
     /// Plan statistics before execution
     pub plan_stats: PlanStats,
     /// Execution time in milliseconds
@@ -301,7 +306,7 @@ impl UnifiedQueryRouter {
                 column_types: HashMap::from([("id".to_string(), "text".to_string())]),
                 row_count,
             },
-            stats: ExecutionStats {
+            stats: RouterExecutionStats {
                 plan_stats,
                 execution_time_ms: start.elapsed().as_millis() as u64,
                 operators_executed: execution_result.operator_stats.len(),
