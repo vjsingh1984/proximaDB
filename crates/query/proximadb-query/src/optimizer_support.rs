@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tracing::info;
 
 /// Configuration for the query optimizer.
@@ -347,132 +347,78 @@ impl Default for QueryStatistics {
     }
 }
 
-#[derive(Debug, Clone)]
-struct CachedPlan {
-    plan: OptimizedPlan,
-    created_at: Instant,
-    last_accessed: Instant,
-    hit_count: u64,
-}
-
 /// LRU cache for query plans with TTL expiration.
+///
+/// Thin wrapper over `proximadb_runtime_common::ThreadSafeLruCache` — the
+/// horizontal-layer primitive that provides O(1) LRU (via doubly-linked
+/// list, not the O(n) scan this used to do), TTL eviction, and atomic
+/// hit/miss/eviction counters. Wrapping rather than re-exporting keeps the
+/// existing public API (`get`/`insert`/`invalidate_all`/`invalidate_collection`/
+/// `stats`) and the `PlanCacheStats` shape stable for downstream callers.
+///
+/// Previously this file shipped a hand-rolled LRU + TTL + stats (~150 lines)
+/// that was strictly worse than the shared primitive — the LRU was an O(n)
+/// scan per insert and the eviction loop walked the map twice.
 pub struct PlanCache {
-    /// Cached plans keyed by query hash.
-    cache: RwLock<HashMap<u64, CachedPlan>>,
-    /// Maximum number of cached plans.
+    inner: proximadb_runtime_common::ThreadSafeLruCache<u64, OptimizedPlan>,
     max_entries: usize,
-    /// Time-to-live for cached plans.
-    ttl: Duration,
-    /// Cache hit counter.
-    hits: AtomicU64,
-    /// Cache miss counter.
-    misses: AtomicU64,
-    /// Eviction counter.
-    evictions: AtomicU64,
 }
 
 impl PlanCache {
     /// Create a new plan cache.
     pub fn new(max_entries: usize, ttl_secs: u64) -> Self {
         Self {
-            cache: RwLock::new(HashMap::new()),
+            inner: proximadb_runtime_common::ThreadSafeLruCache::with_ttl(
+                max_entries,
+                Duration::from_secs(ttl_secs),
+            ),
             max_entries,
-            ttl: Duration::from_secs(ttl_secs),
-            hits: AtomicU64::new(0),
-            misses: AtomicU64::new(0),
-            evictions: AtomicU64::new(0),
         }
     }
 
     /// Get a cached plan if it exists and hasn't expired.
     pub fn get(&self, query_hash: u64) -> Option<OptimizedPlan> {
-        let now = Instant::now();
-
-        {
-            let cache = self.cache.read();
-            if let Some(entry) = cache.get(&query_hash)
-                && now.duration_since(entry.created_at) < self.ttl
-            {
-                self.hits.fetch_add(1, Ordering::Relaxed);
-                let plan = entry.plan.clone();
-                drop(cache);
-
-                if let Some(entry) = self.cache.write().get_mut(&query_hash) {
-                    entry.last_accessed = now;
-                    entry.hit_count += 1;
-                }
-
-                return Some(plan);
-            }
-        }
-
-        self.misses.fetch_add(1, Ordering::Relaxed);
-        None
+        self.inner.get(&query_hash)
     }
 
     /// Insert a plan into the cache.
     pub fn insert(&self, query_hash: u64, plan: OptimizedPlan) {
-        let now = Instant::now();
-        let mut cache = self.cache.write();
-
-        let expired: Vec<u64> = cache
-            .iter()
-            .filter(|(_, entry)| now.duration_since(entry.created_at) >= self.ttl)
-            .map(|(k, _)| *k)
-            .collect();
-
-        for key in expired {
-            cache.remove(&key);
-            self.evictions.fetch_add(1, Ordering::Relaxed);
-        }
-
-        while cache.len() >= self.max_entries {
-            if let Some(lru_key) = cache
-                .iter()
-                .min_by_key(|(_, entry)| entry.last_accessed)
-                .map(|(k, _)| *k)
-            {
-                cache.remove(&lru_key);
-                self.evictions.fetch_add(1, Ordering::Relaxed);
-            } else {
-                break;
-            }
-        }
-
-        cache.insert(
-            query_hash,
-            CachedPlan {
-                plan,
-                created_at: now,
-                last_accessed: now,
-                hit_count: 0,
-            },
-        );
+        self.inner.put(query_hash, plan);
     }
 
     /// Invalidate all cached plans.
     pub fn invalidate_all(&self) {
-        let mut cache = self.cache.write();
-        let count = cache.len();
-        cache.clear();
-        self.evictions.fetch_add(count as u64, Ordering::Relaxed);
-        info!("Invalidated {} cached query plans", count);
+        let size_before = self.inner.len();
+        self.inner.clear();
+        info!("Invalidated {} cached query plans", size_before);
     }
 
     /// Invalidate cached plans for a specific collection.
+    ///
+    /// Currently a coarse `clear()` — the primitive doesn't expose a
+    /// predicate-based eviction, and the prior implementation did the same
+    /// thing (this method was already a `clear` in disguise).
     pub fn invalidate_collection(&self, _collection: &str) {
         self.invalidate_all();
     }
 
     /// Get cache statistics.
     pub fn stats(&self) -> PlanCacheStats {
-        let cache = self.cache.read();
-        PlanCacheStats {
-            size: cache.len(),
-            max_entries: self.max_entries,
-            hits: self.hits.load(Ordering::Relaxed),
-            misses: self.misses.load(Ordering::Relaxed),
-            evictions: self.evictions.load(Ordering::Relaxed),
+        match self.inner.stats() {
+            Some(s) => PlanCacheStats {
+                size: s.size,
+                max_entries: self.max_entries,
+                hits: s.hits,
+                misses: s.misses,
+                evictions: s.evictions + s.expirations,
+            },
+            None => PlanCacheStats {
+                size: 0,
+                max_entries: self.max_entries,
+                hits: 0,
+                misses: 0,
+                evictions: 0,
+            },
         }
     }
 }

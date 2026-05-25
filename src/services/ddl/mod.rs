@@ -923,6 +923,43 @@ impl DdlService {
                 (false, false) => "relational".to_string(),
             });
 
+        // Honor `WITH (canonical_embedding_precision = '<fp32|fp16|bf16|int8|uint8>')`
+        // on CREATE TABLE so pgwire SQL DDL clients can opt into a
+        // non-fp32 collection. The property name matches what the
+        // proto / REST handler expose. Same string-label dispatch as
+        // `apply_proto_enum_workarounds` in
+        // `crates/platform/proximadb-api/src/rest/v1/catalog.rs` so
+        // mixed-protocol clients see consistent semantics. Unknown
+        // values fall back to Fp32 with a warn-level trace rather
+        // than failing the CREATE — the legacy fp32 path is the
+        // safe default.
+        if let Some(raw) = schema.properties.get("canonical_embedding_precision") {
+            use proximadb_records::EmbeddingScalarType as P;
+            let normalised = raw.trim().to_ascii_lowercase();
+            let stripped = normalised
+                .strip_prefix("embedding_precision_")
+                .unwrap_or(&normalised);
+            let target = match stripped {
+                "fp32" | "f32" | "float32" | "" => Some(P::Fp32),
+                "fp16" | "f16" | "float16" | "half" => Some(P::Fp16),
+                "bf16" | "bfloat16" | "brain_float16" => Some(P::Bf16),
+                "int8" | "i8" | "int8_scalar" => Some(P::Int8Scalar),
+                "uint8" | "u8" | "uint8_scalar" => Some(P::UInt8Scalar),
+                _ => {
+                    tracing::warn!(
+                        raw = %raw,
+                        table = %table_name,
+                        "CREATE TABLE WITH (canonical_embedding_precision=...): \
+                         unrecognized value; defaulting to fp32"
+                    );
+                    None
+                }
+            };
+            if let Some(t) = target {
+                schema.canonical_embedding_precision = t;
+            }
+        }
+
         self.apply_storage_profile(&mut schema, has_json, has_vector)?;
 
         Ok(schema)
@@ -2013,6 +2050,192 @@ mod tests {
                 .storage_layouts
                 .iter()
                 .any(|layout| layout.name == "vector_ann")
+        );
+    }
+
+    // ── canonical_embedding_precision via WITH (...) properties ───────────────
+    //
+    // pgwire SQL clients write
+    //   CREATE TABLE t (...) WITH (canonical_embedding_precision = 'fp16')
+    // which lands on DdlStatement::CreateTable.properties. The handler
+    // path tested below is what `apply_proto_enum_workarounds` is for
+    // the REST/gRPC route, and what
+    // `services::collection::manager.rs::catalog_schema_from_collection`
+    // is for the proto CollectionConfig path.
+
+    async fn create_with_precision_property(
+        value: &str,
+    ) -> proximadb_records::EmbeddingScalarType {
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("default", "file:///tmp/proximadb-ddl-precision-test")
+            .await
+            .expect("create catalog");
+        let service = DdlService::new(manager.clone());
+
+        let mut properties = HashMap::new();
+        properties.insert(
+            "canonical_embedding_precision".to_string(),
+            value.to_string(),
+        );
+
+        let stmt = DdlStatement::CreateTable {
+            table_name: format!(
+                "ddl_precision_{}_{}",
+                value.replace('-', "_"),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ),
+            columns: vec![ColumnDefinition {
+                name: "id".to_string(),
+                data_type: SqlDataType::BigInt,
+                nullable: false,
+                default_value: None,
+                comment: None,
+                primary_key: true,
+            }],
+            constraints: vec![],
+            if_not_exists: false,
+            properties,
+        };
+
+        let table_name = match &stmt {
+            DdlStatement::CreateTable { table_name, .. } => table_name.clone(),
+            _ => unreachable!(),
+        };
+
+        service.execute(stmt).await.expect("execute create table");
+
+        let (catalog, table_id) = manager
+            .resolve_table(&table_name)
+            .await
+            .expect("resolve table");
+        catalog
+            .get_table(&table_id)
+            .await
+            .expect("get schema")
+            .canonical_embedding_precision
+    }
+
+    #[tokio::test]
+    async fn create_table_with_canonical_embedding_precision_fp16() {
+        assert_eq!(
+            create_with_precision_property("fp16").await,
+            proximadb_records::EmbeddingScalarType::Fp16
+        );
+    }
+
+    #[tokio::test]
+    async fn create_table_with_canonical_embedding_precision_bf16() {
+        assert_eq!(
+            create_with_precision_property("bf16").await,
+            proximadb_records::EmbeddingScalarType::Bf16
+        );
+    }
+
+    #[tokio::test]
+    async fn create_table_with_canonical_embedding_precision_int8() {
+        assert_eq!(
+            create_with_precision_property("int8").await,
+            proximadb_records::EmbeddingScalarType::Int8Scalar
+        );
+    }
+
+    #[tokio::test]
+    async fn create_table_with_canonical_embedding_precision_uint8() {
+        assert_eq!(
+            create_with_precision_property("uint8").await,
+            proximadb_records::EmbeddingScalarType::UInt8Scalar
+        );
+    }
+
+    #[tokio::test]
+    async fn create_table_with_canonical_embedding_precision_screaming_label() {
+        // The proto-generated SCREAMING form ("EMBEDDING_PRECISION_FP16")
+        // should normalize the same way as "fp16".
+        assert_eq!(
+            create_with_precision_property("EMBEDDING_PRECISION_FP16").await,
+            proximadb_records::EmbeddingScalarType::Fp16
+        );
+    }
+
+    #[tokio::test]
+    async fn create_table_with_canonical_embedding_precision_aliases() {
+        // SDKs and users send a variety of shorthand — accept all.
+        assert_eq!(
+            create_with_precision_property("f16").await,
+            proximadb_records::EmbeddingScalarType::Fp16
+        );
+        assert_eq!(
+            create_with_precision_property("half").await,
+            proximadb_records::EmbeddingScalarType::Fp16
+        );
+        assert_eq!(
+            create_with_precision_property("float16").await,
+            proximadb_records::EmbeddingScalarType::Fp16
+        );
+    }
+
+    #[tokio::test]
+    async fn create_table_unknown_precision_value_falls_back_to_fp32_silently() {
+        // Don't fail CREATE TABLE on a typo — log a warn and use the
+        // legacy fp32 path. This matches the proto enum behavior
+        // (Unspecified → Fp32 default).
+        assert_eq!(
+            create_with_precision_property("bogus_precision").await,
+            proximadb_records::EmbeddingScalarType::Fp32
+        );
+    }
+
+    #[tokio::test]
+    async fn create_table_without_precision_property_defaults_to_fp32() {
+        // No WITH option set → legacy fp32 (no behavior change for
+        // existing CREATE TABLE statements).
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("default", "file:///tmp/proximadb-ddl-precision-test-default")
+            .await
+            .expect("create catalog");
+        let service = DdlService::new(manager.clone());
+
+        let stmt = DdlStatement::CreateTable {
+            table_name: format!(
+                "ddl_precision_default_{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ),
+            columns: vec![ColumnDefinition {
+                name: "id".to_string(),
+                data_type: SqlDataType::BigInt,
+                nullable: false,
+                default_value: None,
+                comment: None,
+                primary_key: true,
+            }],
+            constraints: vec![],
+            if_not_exists: false,
+            properties: HashMap::new(),
+        };
+
+        let table_name = match &stmt {
+            DdlStatement::CreateTable { table_name, .. } => table_name.clone(),
+            _ => unreachable!(),
+        };
+
+        service.execute(stmt).await.expect("execute create table");
+
+        let (catalog, table_id) = manager
+            .resolve_table(&table_name)
+            .await
+            .expect("resolve");
+        let schema = catalog.get_table(&table_id).await.expect("get schema");
+        assert_eq!(
+            schema.canonical_embedding_precision,
+            proximadb_records::EmbeddingScalarType::Fp32
         );
     }
 }

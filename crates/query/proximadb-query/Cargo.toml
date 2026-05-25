@@ -36,5 +36,6 @@ proximadb-observability-query = { path = "../proximadb-observability-query" }
 proximadb-proto = { path = "../../foundation/proximadb-proto" }
 proximadb-query-filter = { path = "../proximadb-query-filter" }
 proximadb-query-fusion = { path = "../proximadb-query-fusion" }
+proximadb-runtime-common = { path = "../../horizontal/proximadb-runtime-common" }
 proximadb-uql = { path = "../proximadb-uql" }
 proximadb-vector-query = { path = "../proximadb-vector-query" }
