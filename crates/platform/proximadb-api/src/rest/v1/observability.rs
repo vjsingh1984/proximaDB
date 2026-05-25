@@ -66,8 +66,13 @@ impl Default for MetricsHandler {
 
 // ── Request / Response types ──────────────────────────────────────────────────
 
+/// REST request body for observability-namespace creation.
+///
+/// `…Body` suffix distinguishes this local REST shape from the proto-
+/// generated `proximadb_proto::v1::CreateNamespaceRequest` (the gRPC/wire
+/// type). Same convention as `CreateDocumentCollectionRequestBody`.
 #[derive(Debug, Deserialize)]
-pub struct CreateNamespaceRequest {
+pub struct CreateNamespaceRequestBody {
     pub name: String,
     #[serde(default = "default_hot")]
     pub hot_retention_days: u32,
@@ -266,7 +271,7 @@ pub fn create_observability_router() -> Router<ObservabilityRestState> {
 
 async fn create_namespace(
     State(state): State<ObservabilityRestState>,
-    Json(request): Json<CreateNamespaceRequest>,
+    Json(request): Json<CreateNamespaceRequestBody>,
 ) -> RestResult<JsonResponse<serde_json::Value>> {
     let retention = RetentionConfig {
         hot_retention_hours: (request.hot_retention_days * 24) as u64,
@@ -923,7 +928,7 @@ mod tests {
     async fn observability_handlers_route_successful_requests_through_port() {
         let JsonResponse(namespace) = create_namespace(
             state(),
-            Json(CreateNamespaceRequest {
+            Json(CreateNamespaceRequestBody {
                 name: "ops".to_string(),
                 hot_retention_days: 2,
                 warm_retention_days: 8,

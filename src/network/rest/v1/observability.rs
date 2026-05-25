@@ -30,9 +30,13 @@ pub struct ObservabilityApiState {
     pub observability_service: Arc<ObservabilityService>,
 }
 
-/// Create namespace request
+/// REST request body for observability-namespace creation (legacy root-crate copy).
+///
+/// Mirrors `proximadb_api::rest::v1::observability::CreateNamespaceRequestBody`
+/// — Phase 9 will delete this file. The `…Body` suffix distinguishes the
+/// REST shape from the proto-generated `crate::proto::v1::CreateNamespaceRequest`.
 #[derive(Debug, Deserialize)]
-pub struct CreateNamespaceRequest {
+pub struct CreateNamespaceRequestBody {
     /// Namespace name
     pub name: String,
     /// Retention days for hot tier
@@ -320,7 +324,7 @@ pub fn create_observability_router() -> Router<ObservabilityApiState> {
 /// Create a namespace
 async fn create_namespace(
     State(state): State<ObservabilityApiState>,
-    Json(request): Json<CreateNamespaceRequest>,
+    Json(request): Json<CreateNamespaceRequestBody>,
 ) -> ApiResult<JsonResponse<serde_json::Value>> {
     info!("Creating observability namespace: {}", request.name);
 
@@ -1161,7 +1165,7 @@ mod tests {
 
         // Verify CreateNamespaceRequest defaults
         let ns_json = serde_json::json!({ "name": "production" });
-        let ns: CreateNamespaceRequest = serde_json::from_value(ns_json).expect("should parse");
+        let ns: CreateNamespaceRequestBody = serde_json::from_value(ns_json).expect("should parse");
         assert_eq!(ns.name, "production");
         assert_eq!(ns.hot_retention_days, 1); // default_hot_retention
         assert_eq!(ns.warm_retention_days, 7); // default_warm_retention
