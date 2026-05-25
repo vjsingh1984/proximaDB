@@ -23,7 +23,7 @@ pub struct QueryGraphArrowBridge;
 pub trait GraphArrowQueryExecutor: Send + Sync {
     async fn execute_query_rows(
         &self,
-        plan: &crate::graph::query::planner::QueryPlan,
+        plan: &crate::graph::query::planner::GraphQueryPlan,
         context: &GraphQueryContext,
     ) -> Result<Vec<GraphQueryRow>, VectorDBError>;
 }
@@ -48,13 +48,13 @@ pub struct GraphSchema {
 }
 
 // Re-export local QueryPlan for compatibility
-pub use crate::graph::query::planner::QueryPlan;
+pub use crate::graph::query::planner::GraphQueryPlan;
 
 #[async_trait]
 impl GraphArrowQueryExecutor for crate::graph::query::executor::QueryExecutor {
     async fn execute_query_rows(
         &self,
-        _plan: &crate::graph::query::planner::QueryPlan,
+        _plan: &crate::graph::query::planner::GraphQueryPlan,
         _context: &GraphQueryContext,
     ) -> Result<Vec<GraphQueryRow>, VectorDBError> {
         Ok(vec![])
