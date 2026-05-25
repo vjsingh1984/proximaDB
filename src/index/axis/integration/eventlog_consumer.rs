@@ -413,7 +413,7 @@ impl AxisEventLogConsumer {
                     "[AXIS Consumer] Failed to get index config for {}: {}, using defaults",
                     event.collection_id, e
                 );
-                crate::index::config::IndexConfig::default()
+                crate::index::config::RuntimeIndexConfig::default()
             });
 
         // Update AXIS indexes using hybrid indexing (adapts based on batch size)

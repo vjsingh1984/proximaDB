@@ -439,7 +439,7 @@ impl AxisManager {
     pub async fn get_native_index_config(
         &self,
         collection_id: &str,
-    ) -> Result<crate::index::config::IndexConfig> {
+    ) -> Result<crate::index::config::RuntimeIndexConfig> {
         if let Some(collection_service) = &self.collection_service {
             match collection_service.native_index_config(collection_id).await {
                 Ok(Some(config)) => {
@@ -455,7 +455,7 @@ impl AxisManager {
                         collection_id
                     );
                     // Return default IndexConfig as fallback
-                    Ok(crate::index::config::IndexConfig::default())
+                    Ok(crate::index::config::RuntimeIndexConfig::default())
                 }
                 Err(e) => {
                     tracing::error!(
@@ -464,13 +464,13 @@ impl AxisManager {
                         e
                     );
                     // Return default IndexConfig as fallback
-                    Ok(crate::index::config::IndexConfig::default())
+                    Ok(crate::index::config::RuntimeIndexConfig::default())
                 }
             }
         } else {
             tracing::warn!("⚠️ AXIS: Collection service not available, using default IndexConfig");
             // Default implementation: return default IndexConfig
-            Ok(crate::index::config::IndexConfig::default())
+            Ok(crate::index::config::RuntimeIndexConfig::default())
         }
     }
 
@@ -1529,10 +1529,10 @@ impl AxisManager {
     pub async fn native_index_config(
         &self,
         _collection_id: &str,
-    ) -> Result<crate::index::config::IndexConfig> {
+    ) -> Result<crate::index::config::RuntimeIndexConfig> {
         // Return default config for now
         // In production, this would look up collection-specific configuration
-        Ok(crate::index::config::IndexConfig::default())
+        Ok(crate::index::config::RuntimeIndexConfig::default())
     }
 
     /// Notify AXIS about newly flushed vectors that need indexing
@@ -1568,7 +1568,7 @@ impl AxisManager {
                     e
                 );
                 // Use default synchronous indexing if config retrieval fails
-                crate::index::config::IndexConfig::default()
+                crate::index::config::RuntimeIndexConfig::default()
             }
         };
 
@@ -1861,7 +1861,7 @@ impl AxisManager {
         collection_id: &str,
         vectors: Vec<R>,
         files_created: Vec<String>,
-        index_config: &crate::index::config::IndexConfig,
+        index_config: &crate::index::config::RuntimeIndexConfig,
     ) -> Result<()>
     where
         R: Into<ProximaRecord>,
