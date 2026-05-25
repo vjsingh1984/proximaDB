@@ -20,7 +20,7 @@
 
 use crate::collection_dr_policy::{
     CollectionDrEvent, CollectionDrPolicy, DrEventType, DrHealth, DrHealthState,
-    DrProviderAdapter, DrState, ProviderError, ProviderObservedState,
+    DrProviderAdapter, DrState, ObjectProvider, ProviderError, ProviderObservedState,
     ProviderReplicationBinding,
 };
 use async_trait::async_trait;
@@ -1022,6 +1022,75 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// Metric sink (P3c4) — abstract observability hook
+// ---------------------------------------------------------------------------
+
+/// Bounded label set the shard hands to [`DrMetrics`] for every tick
+/// outcome. Strings are owned to keep the trait object-safe and
+/// avoid lifetime gymnastics. Cardinality is bounded by the contract:
+/// `tier` is one of 5 canonical values, `provider` is one of 4,
+/// `region_pair_id` is operator-curated, and `state` is one of 7.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PolicyLabels {
+    pub tenant_id: String,
+    pub tier: String,
+    pub provider: ObjectProvider,
+    pub region_pair_id: String,
+    /// Snapshot of the policy's `state` at the start of this tick.
+    pub state_at_tick_start: DrState,
+}
+
+impl PolicyLabels {
+    /// Snapshot a policy's label set. Cheap clone of the small
+    /// string fields; no allocation if the caller owns the policy.
+    pub fn from_policy(policy: &CollectionDrPolicy) -> Self {
+        Self {
+            tenant_id: policy.tenant_id.clone(),
+            tier: policy.tier.clone(),
+            provider: policy.provider,
+            region_pair_id: policy.region_pair_id.clone(),
+            state_at_tick_start: policy.state,
+        }
+    }
+}
+
+/// Engine-side metric sink. The shard calls this once per policy per
+/// tick. The catalog crate ships an abstract trait and two reference
+/// implementations (Noop + Recording); concrete Prometheus families
+/// live outside this crate (root crate or the operator layer) so the
+/// catalog stays free of the `prometheus` dependency.
+///
+/// Implementations must be `Send + Sync` so the shard can hold
+/// `Arc<dyn DrMetrics>` and share it across concurrent ticks.
+///
+/// Forward-compatibility: future passes may add methods (e.g.
+/// `observe_lag` for `proximadb_dr_provider_lag_seconds`); all
+/// additions are default-implemented to keep existing implementations
+/// source-compatible.
+pub trait DrMetrics: Send + Sync {
+    /// Record the result of one policy's tick. Implementations
+    /// typically increment per-outcome counters and update gauges
+    /// keyed on `labels`.
+    fn observe_tick(&self, labels: &PolicyLabels, outcome: &TickOutcome);
+
+    /// Record a shard-wide pause event. Called once each time the
+    /// shard transitions from "running" to "paused", not on every
+    /// tick during the pause window.
+    fn observe_shard_paused(&self, reason: ShardPauseReason) {
+        let _ = reason;
+    }
+}
+
+/// Default no-op sink. Use in tests that don't care about metrics
+/// and in production deployments that haven't wired Prometheus yet.
+#[derive(Debug, Default)]
+pub struct NoopDrMetrics;
+
+impl DrMetrics for NoopDrMetrics {
+    fn observe_tick(&self, _labels: &PolicyLabels, _outcome: &TickOutcome) {}
+}
+
+// ---------------------------------------------------------------------------
 // Shard loop (P3c2) — async iteration with gates
 // ---------------------------------------------------------------------------
 
@@ -1078,6 +1147,10 @@ pub struct DrReconcilerShard<S, A> {
     /// short enough that a crashed shard's lease frees within one
     /// recovery interval.
     lease_ttl_ns: i64,
+    /// Metric sink. Defaults to [`NoopDrMetrics`]; production wires a
+    /// Prometheus-backed implementation from outside the catalog
+    /// crate via `with_metrics`.
+    metrics: Arc<dyn DrMetrics>,
 }
 
 impl<S, A> DrReconcilerShard<S, A>
@@ -1107,6 +1180,7 @@ where
             jitter_source,
             holder_id: "shard-default".into(),
             lease_ttl_ns: 5 * 60 * 1_000_000_000,
+            metrics: Arc::new(NoopDrMetrics),
         }
     }
 
@@ -1121,6 +1195,14 @@ where
     /// values to exercise expiry without long waits.
     pub fn with_lease_ttl_ns(mut self, ttl_ns: i64) -> Self {
         self.lease_ttl_ns = ttl_ns;
+        self
+    }
+
+    /// Inject a [`DrMetrics`] implementation. Production wires a
+    /// Prometheus-backed sink from the root or operator crate;
+    /// tests use the recording double.
+    pub fn with_metrics(mut self, metrics: Arc<dyn DrMetrics>) -> Self {
+        self.metrics = metrics;
         self
     }
 
@@ -1142,8 +1224,12 @@ where
         let mut results = Vec::with_capacity(pending.len());
 
         for policy in pending {
+            let labels = PolicyLabels::from_policy(&policy);
+
             if paused {
-                results.push((policy.policy_id.clone(), TickOutcome::SkippedShardPaused));
+                let outcome = TickOutcome::SkippedShardPaused;
+                self.metrics.observe_tick(&labels, &outcome);
+                results.push((policy.policy_id.clone(), outcome));
                 continue;
             }
 
@@ -1164,17 +1250,15 @@ where
                     h.last_reconciled_at_ns = Some(now);
                     self.store.update_health(&policy.policy_id, h).await?;
                     self.backoffs.lock().remove(&policy.policy_id);
-                    results.push((
-                        policy.policy_id.clone(),
-                        TickOutcome::EscalatedAfterMaxAttempts,
-                    ));
+                    let outcome = TickOutcome::EscalatedAfterMaxAttempts;
+                    self.metrics.observe_tick(&labels, &outcome);
+                    results.push((policy.policy_id.clone(), outcome));
                     continue;
                 }
                 if !is_ready(entry, now) {
-                    results.push((
-                        policy.policy_id.clone(),
-                        TickOutcome::DeferredBackoff,
-                    ));
+                    let outcome = TickOutcome::DeferredBackoff;
+                    self.metrics.observe_tick(&labels, &outcome);
+                    results.push((policy.policy_id.clone(), outcome));
                     continue;
                 }
             }
@@ -1186,10 +1270,9 @@ where
                 entry.try_acquire(self.config, now)
             };
             if !proceed {
-                results.push((
-                    policy.policy_id.clone(),
-                    TickOutcome::DeferredRateLimit,
-                ));
+                let outcome = TickOutcome::DeferredRateLimit;
+                self.metrics.observe_tick(&labels, &outcome);
+                results.push((policy.policy_id.clone(), outcome));
                 continue;
             }
 
@@ -1212,13 +1295,12 @@ where
                     current_holder,
                     until_ns,
                 } => {
-                    results.push((
-                        policy.policy_id.clone(),
-                        TickOutcome::DeferredLeaseHeldElsewhere {
-                            current_holder,
-                            until_ns,
-                        },
-                    ));
+                    let outcome = TickOutcome::DeferredLeaseHeldElsewhere {
+                        current_holder,
+                        until_ns,
+                    };
+                    self.metrics.observe_tick(&labels, &outcome);
+                    results.push((policy.policy_id.clone(), outcome));
                     continue;
                 }
                 LeaseAcquireResult::Acquired { .. } => {
@@ -1228,7 +1310,15 @@ where
 
             // Dispatch.
             let outcome = self.driver.reconcile_one(&policy).await?;
+            // Record the shard pause event exactly once on the
+            // transition, not on subsequent ticks during the pause.
+            let was_paused_before = self.pause.lock().paused.is_some();
             self.feedback(&policy.policy_id, &outcome, now);
+            let is_paused_after = self.pause.lock().paused.is_some();
+            if !was_paused_before && is_paused_after {
+                self.metrics
+                    .observe_shard_paused(ShardPauseReason::QuotaExceeded);
+            }
             // Best-effort release; the lease will expire naturally if
             // the release call fails (the store impl can return a
             // transient error). Don't surface release errors back to
@@ -1237,7 +1327,9 @@ where
                 .store
                 .release_lease(&policy.policy_id, &self.holder_id)
                 .await;
-            results.push((policy.policy_id, TickOutcome::Reconciled(outcome)));
+            let tick_outcome = TickOutcome::Reconciled(outcome);
+            self.metrics.observe_tick(&labels, &tick_outcome);
+            results.push((policy.policy_id, tick_outcome));
         }
 
         Ok(results)
@@ -2783,5 +2875,163 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(r, LeaseAcquireResult::Acquired { .. }));
+    }
+
+    // --- DrMetrics sink (P3c4) ----------------------------------------
+
+    #[derive(Default)]
+    struct RecordingDrMetrics {
+        ticks: Mutex<Vec<(PolicyLabels, TickOutcome)>>,
+        pauses: Mutex<Vec<ShardPauseReason>>,
+    }
+
+    impl RecordingDrMetrics {
+        fn new() -> Arc<Self> {
+            Arc::new(Self::default())
+        }
+        fn ticks(&self) -> Vec<(PolicyLabels, TickOutcome)> {
+            self.ticks.lock().clone()
+        }
+        fn pauses(&self) -> Vec<ShardPauseReason> {
+            self.pauses.lock().clone()
+        }
+    }
+
+    impl DrMetrics for RecordingDrMetrics {
+        fn observe_tick(&self, labels: &PolicyLabels, outcome: &TickOutcome) {
+            self.ticks.lock().push((labels.clone(), outcome.clone()));
+        }
+        fn observe_shard_paused(&self, reason: ShardPauseReason) {
+            self.pauses.lock().push(reason);
+        }
+    }
+
+    #[test]
+    fn policy_labels_snapshot_carries_label_set() {
+        let p = base_policy();
+        let labels = PolicyLabels::from_policy(&p);
+        assert_eq!(labels.tenant_id, "tnt_acme");
+        assert_eq!(labels.tier, "business");
+        assert_eq!(labels.provider, ObjectProvider::AwsS3);
+        assert_eq!(labels.region_pair_id, "aws:us-east-1:us-west-2");
+        assert_eq!(labels.state_at_tick_start, DrState::Active);
+    }
+
+    #[test]
+    fn noop_metrics_is_safe_to_share_as_default() {
+        let m: Arc<dyn DrMetrics> = Arc::new(NoopDrMetrics);
+        let p = base_policy();
+        let labels = PolicyLabels::from_policy(&p);
+        // Calling the trait methods must not panic.
+        m.observe_tick(&labels, &TickOutcome::DeferredBackoff);
+        m.observe_shard_paused(ShardPauseReason::QuotaExceeded);
+    }
+
+    #[tokio::test]
+    async fn shard_with_metrics_records_each_outcome_once() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.provider_binding = Some(ProviderReplicationBinding {
+            provider_policy_id: None,
+            provider_rule_id: "dr-drp_1-v1".into(),
+            provider_role_arn: None,
+            provider_kms_key_id: None,
+        });
+        adapter.seed_observed(&p.policy_id, healthy_observed(&p));
+        store.seed_pending(vec![p.clone()]);
+        let clock = Arc::new(AtomicI64::new(0));
+        let metrics = RecordingDrMetrics::new();
+        let shard = make_shard(
+            store.clone(),
+            adapter,
+            BackoffPolicy::default(),
+            clock,
+            0.5,
+        )
+        .with_metrics(metrics.clone());
+
+        let _ = shard.tick().await.unwrap();
+        let recorded = metrics.ticks();
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].0.tenant_id, "tnt_acme");
+        assert!(matches!(
+            recorded[0].1,
+            TickOutcome::Reconciled(ReconcileOutcome::Idle(IdleReason::HealthyActive))
+        ));
+        // No pause event during normal operation.
+        assert!(metrics.pauses().is_empty());
+    }
+
+    #[tokio::test]
+    async fn shard_with_metrics_records_rate_limit_defer() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.provider_binding = Some(ProviderReplicationBinding {
+            provider_policy_id: None,
+            provider_rule_id: "dr-drp_1-v1".into(),
+            provider_role_arn: None,
+            provider_kms_key_id: None,
+        });
+        adapter.seed_observed(&p.policy_id, healthy_observed(&p));
+        store.seed_pending(vec![p.clone()]);
+        let clock = Arc::new(AtomicI64::new(100));
+        let metrics = RecordingDrMetrics::new();
+        let shard = make_shard(
+            store.clone(),
+            adapter,
+            BackoffPolicy::default(),
+            clock,
+            0.5,
+        )
+        .with_metrics(metrics.clone());
+
+        // Tick 1: reconciles successfully.
+        let _ = shard.tick().await.unwrap();
+        // Tick 2 at same clock: rate-limit defer.
+        let _ = shard.tick().await.unwrap();
+
+        let kinds: Vec<_> = metrics
+            .ticks()
+            .into_iter()
+            .map(|(_, o)| match o {
+                TickOutcome::Reconciled(_) => "reconciled",
+                TickOutcome::DeferredRateLimit => "rate_limit",
+                TickOutcome::DeferredBackoff => "backoff",
+                TickOutcome::DeferredLeaseHeldElsewhere { .. } => "lease",
+                TickOutcome::SkippedShardPaused => "shard_paused",
+                TickOutcome::EscalatedAfterMaxAttempts => "escalated",
+            })
+            .collect();
+        assert_eq!(kinds, vec!["reconciled", "rate_limit"]);
+    }
+
+    #[tokio::test]
+    async fn shard_with_metrics_records_pause_transition_once() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.state = DrState::PendingProviderProvisioning;
+        store.seed_pending(vec![p.clone()]);
+        adapter.inject_error(ProviderError::QuotaExceeded("rule cap".into()));
+        let clock = Arc::new(AtomicI64::new(1_000));
+        let metrics = RecordingDrMetrics::new();
+        let shard = make_shard(
+            store.clone(),
+            adapter,
+            BackoffPolicy::default(),
+            clock,
+            0.5,
+        )
+        .with_metrics(metrics.clone());
+
+        // First tick triggers the pause.
+        let _ = shard.tick().await.unwrap();
+        // Second tick happens during pause — the policy is skipped.
+        let _ = shard.tick().await.unwrap();
+        // Pause was observed exactly once at the transition, not on
+        // every tick during the pause window.
+        assert_eq!(metrics.pauses(), vec![ShardPauseReason::QuotaExceeded]);
     }
 }
