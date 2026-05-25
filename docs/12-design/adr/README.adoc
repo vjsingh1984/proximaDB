@@ -61,6 +61,16 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Vector Query Two-Shape Boundary
 | Accepted
 | `VectorOpsPort` (proto-typed runtime port) vs `VectorQueryService` (Rust-typed orchestration contract) — deliberate, not duplication
+
+| link:ADR-015-port-impl-location.adoc[ADR-015]
+| Port Impl Location — Bare Concrete Service vs gRPC Wrapper
+| Accepted
+| `impl XxxPort` lives on the bare concrete service; the gRPC wrapper is a thin proto-conversion shim that delegates to the port
+
+| link:ADR-016-port-user-context.adoc[ADR-016]
+| `PortUserContext` — Boundary Type for `SecurityPort` Authentication
+| Accepted
+| Lossy projection of root-crate `UnifiedUserContext` so `SecurityPort::authenticate` can exist at the runtime boundary without dragging the typed permission graph into the runtime crate
 |===
 
 NOTE: ADR-010 through ADR-013 exist in this directory but are not yet
