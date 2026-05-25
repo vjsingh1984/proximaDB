@@ -690,9 +690,23 @@ struct VectorSearchInput {
     score: f32,
 }
 
-/// Request body for hybrid search
+/// Legacy request body for hybrid search — DEAD CODE kept only for
+/// deserialization-shape tests.
+///
+/// The hybrid_search handler that used this struct was removed (see
+/// comment ~line 805 in this file): "Routes are now served by
+/// create_hybrid_search_router() from proximadb-api backed by
+/// Bm25IndexPortImpl and RestHybridPortImpl."
+///
+/// Naming note: this type used to be called `HybridSearchRequest` and
+/// collided with `crate::proto::v1::HybridSearchRequest` (proto wire form
+/// for vector+graph hybrid) AND with
+/// `src/network/rest/v1/hybrid.rs::ExperimentalHybridSearchRequest`.
+/// Renamed to `LegacyHybridSearchRequest` to mark it as deprecated; the
+/// struct can be deleted once the deserialization tests are moved to the
+/// active proximadb-api hybrid handlers.
 #[derive(Debug, Deserialize)]
-pub struct HybridSearchRequest {
+pub struct LegacyHybridSearchRequest {
     /// Collection to search
     pub collection: String,
     /// Query vector for similarity search (optional if keyword-only)
@@ -1708,7 +1722,7 @@ mod tests {
             "top_k": 5,
             "vector_weight": 0.7
         });
-        let req: HybridSearchRequest =
+        let req: LegacyHybridSearchRequest =
             serde_json::from_value(json).expect("failed to deserialize HybridSearchRequest");
         assert_eq!(req.collection, "test_col");
         assert_eq!(req.vector.expect("vector should be present").len(), 3);
@@ -1727,7 +1741,7 @@ mod tests {
             "collection": "test_col",
             "text_query": "hello"
         });
-        let req: HybridSearchRequest =
+        let req: LegacyHybridSearchRequest =
             serde_json::from_value(json).expect("failed to deserialize HybridSearchRequest");
         assert_eq!(req.top_k, 10);
         assert!((req.vector_weight - 0.5).abs() < 0.001);
@@ -2618,7 +2632,7 @@ mod tests {
             "rrf_k": 100,
             "min_bm25_score": 0.5
         });
-        let full_req: HybridSearchRequest =
+        let full_req: LegacyHybridSearchRequest =
             serde_json::from_value(full_json).expect("full HybridSearchRequest should deserialize");
         assert_eq!(full_req.collection, "hybrid_col");
         assert_eq!(full_req.vector.as_ref().unwrap().len(), 4);
@@ -2637,7 +2651,7 @@ mod tests {
             "collection": "vec_only",
             "vector": [1.0, 2.0, 3.0]
         });
-        let vec_req: HybridSearchRequest = serde_json::from_value(vector_only_json)
+        let vec_req: LegacyHybridSearchRequest = serde_json::from_value(vector_only_json)
             .expect("vector-only HybridSearchRequest should deserialize");
         assert_eq!(vec_req.collection, "vec_only");
         assert!(vec_req.vector.is_some());
@@ -2651,7 +2665,7 @@ mod tests {
             "collection": "text_only",
             "text_query": "database systems"
         });
-        let text_req: HybridSearchRequest = serde_json::from_value(text_only_json)
+        let text_req: LegacyHybridSearchRequest = serde_json::from_value(text_only_json)
             .expect("text-only HybridSearchRequest should deserialize");
         assert_eq!(text_req.collection, "text_only");
         assert!(text_req.vector.is_none());
