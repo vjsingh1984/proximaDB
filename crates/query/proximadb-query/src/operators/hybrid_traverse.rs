@@ -45,9 +45,17 @@ pub struct TraversalNode {
     pub payload: serde_json::Value,
 }
 
-/// Statistics from one traversal execution.
+/// Statistics from one hybrid-traverse execution.
+///
+/// Naming note: this type used to be called `TraversalStats` and collided
+/// with the proto `proximadb_v1::TraversalStats` wire form (which has a
+/// different shape: nodes/edges/max_depth/exec_time_us). Renamed to
+/// `HybridTraverseStats` because the field set is operator-scoped
+/// (tracks `iterations` + `results_returned`, not depth/time). The proto
+/// type remains the canonical wire form. Distinct also from the per-engine
+/// stats (OrionTraversalStats, PulsarTraversalStats, CanonicalTraversalStats).
 #[derive(Debug, Clone, Default)]
-pub struct TraversalStats {
+pub struct HybridTraverseStats {
     /// Total frontier expansions performed.
     pub iterations: u32,
     /// Total nodes visited (including pruned).
@@ -97,8 +105,8 @@ impl HybridTraverseExecutor {
         edge_pattern: &EdgePattern,
         ann: &dyn AnnSeedProvider,
         graph: &dyn GraphNeighbourProvider,
-    ) -> Result<(Vec<TraversalNode>, TraversalStats)> {
-        let mut stats = TraversalStats::default();
+    ) -> Result<(Vec<TraversalNode>, HybridTraverseStats)> {
+        let mut stats = HybridTraverseStats::default();
 
         // Seed from ANN
         let seeds = ann.find_seeds(query_vector, self.beam_width)?;

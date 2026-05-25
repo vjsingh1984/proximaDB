@@ -50,7 +50,8 @@ pub use results::*;
 pub use vector_adapter::*;
 
 pub use operators::hybrid_traverse::{
-    AnnSeedProvider, GraphNeighbourProvider, HybridTraverseExecutor, TraversalNode, TraversalStats,
+    AnnSeedProvider, GraphNeighbourProvider, HybridTraverseExecutor, HybridTraverseStats,
+    TraversalNode,
 };
 pub use operators::mshj::{MshjExecutor, MshjRow, MshjStats};
 pub use plan_executor::{
