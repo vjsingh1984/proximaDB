@@ -207,12 +207,11 @@ fn full_offline_evaluation_pipeline_composes() {
         },
         &RecommendationPolicy::default(),
     );
-    // FreeTrial + highly concentrated → upgrade recommendation.
-    // 2026-Q2 tier rename: FreeTrial → Team is now the upgrade step
-    // (was FreeTrial → Community). See memory note
-    // project_tier_rename_2026_05_22.
+    // Tier1 (lowest) + highly concentrated → upgrade recommendation.
+    // 2026-Q3 rename: positional labels (tier1..tier5) replaced
+    // name-based ones. The upgrade step from Tier1 is Tier2.
     assert_eq!(rec.kind, RecommendationKind::Upgrade);
-    assert_eq!(rec.suggested_tier.as_deref(), Some("team"));
+    assert_eq!(rec.suggested_tier.as_deref(), Some("tier2"));
 }
 
 /// Disagreement pipeline — the candidate proposes a different

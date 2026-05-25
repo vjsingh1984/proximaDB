@@ -111,7 +111,10 @@ fn full_pipeline_composes_for_a_single_trace() {
     // The metering metadata carries the trace's tenant + event type.
     assert_eq!(metering.metadata["tenant_id"], "tenant-a");
     assert_eq!(metering.metadata["event_type"], "kru");
-    assert_eq!(metering.metadata["tier"], "free");
+    // 2026-Q3 rename: bundled prometheus labels use positional
+    // tier1..tier5 instead of name-based labels. Tier1 is the lowest
+    // tier (the former FreeTrial slot).
+    assert_eq!(metering.metadata["tier"], "tier1");
 
     // Stage 4: digest + fingerprint.
     let digest = digest_hex(&DigestInputs {

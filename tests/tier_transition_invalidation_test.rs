@@ -74,15 +74,19 @@ async fn upgrade_emits_event_and_invalidates_warm_cache() {
     let hit = build_for_search_cached_with_collection(&cache, &inputs_before, "kb").await;
     assert!(hit.cache_hit, "cache should be warm");
 
-    // Stage 2: tier transitions to business.
+    // Stage 2: tier transitions to business (Tier4 in the positional
+    // numbering).
     let after = record(Tier::Tier4, None, None, None);
     let event = detect_transition(&before, &after);
     assert_eq!(event.class, TransitionClass::Upgrade);
-    // 2026-Q2 tier rename: Community → Team. See memory note
-    // project_tier_rename_2026_05_22.
-    assert_eq!(event.tier_before, "team");
-    assert_eq!(event.tier_after, "business");
-    // Scan budget axis moves up (team default < business default).
+    // 2026-Q3 rename: prometheus labels switched from name-based
+    // (free/team/business/...) to operator-neutral positional
+    // (tier1..tier5). Operators can overlay name-based labels via
+    // pricing-config overrides, but the bundled baseline is
+    // positional.
+    assert_eq!(event.tier_before, "tier2");
+    assert_eq!(event.tier_after, "tier4");
+    // Scan budget axis moves up (tier2 default < tier4 default).
     assert_eq!(event.scan_budget_gb.direction, AxisDirection::Up);
 
     // Stage 3: flush the caches that held the old budget.
