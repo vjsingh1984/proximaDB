@@ -75,6 +75,66 @@ pub trait GlobalScorer: Send + Sync {
 /// Useful as a default and in tests.
 pub struct IdentityGlobalScorer;
 
+/// Second-phase scorer — rescores the top-K from first phase.
+///
+/// Unlike `GlobalScorer`, this is synchronous: the cross-encoder /
+/// model call may itself be CPU-bound (ONNX inference), but the
+/// scorer-level interface doesn't await. Callers that need to run
+/// the work off the main runtime should wrap invocations in
+/// `tokio::task::spawn_blocking` (as `handle_rank_search` does for
+/// the first-phase work in R-7c.1).
+///
+/// Production implementations:
+///   - `OnnxSecondPhaseScorer` (R-7c.2): wraps `OnnxBatchedScorer` +
+///     a `DocFeatureExtractor` that reads attribute fields for each
+///     candidate.
+///   - Future: remote-rerank adapters (Cohere / Voyage) that batch
+///     N hits per HTTP call.
+pub trait SecondPhaseScorer: Send + Sync {
+    /// Rescore the supplied hits. The returned `Vec` length must equal
+    /// the input length and contain the same set of `DocHandle`s
+    /// (rescorers re-rank, they don't filter — that's the global
+    /// phase's job).
+    fn rescore(&self, hits: Vec<ScoredHit>) -> RankResult<Vec<ScoredHit>>;
+}
+
+/// Pass-through second-phase scorer — returns hits unchanged but tagged
+/// with `PhaseId::SECOND`. Useful as a no-op default and in tests that
+/// want to verify the phase ran without changing scores.
+pub struct PassthroughSecondPhaseScorer;
+
+impl SecondPhaseScorer for PassthroughSecondPhaseScorer {
+    fn rescore(&self, hits: Vec<ScoredHit>) -> RankResult<Vec<ScoredHit>> {
+        Ok(hits
+            .into_iter()
+            .map(|h| ScoredHit {
+                phase: PhaseId::SECOND,
+                ..h
+            })
+            .collect())
+    }
+}
+
+/// Constant-multiplier second-phase scorer — multiplies every score by
+/// `factor`. Test fixture; the production OnnxSecondPhaseScorer is in
+/// `proximadb-rank-onnx` (R-7c.2).
+pub struct ConstantMultiplierSecondPhaseScorer {
+    pub factor: f32,
+}
+
+impl SecondPhaseScorer for ConstantMultiplierSecondPhaseScorer {
+    fn rescore(&self, hits: Vec<ScoredHit>) -> RankResult<Vec<ScoredHit>> {
+        Ok(hits
+            .into_iter()
+            .map(|h| ScoredHit {
+                score: h.score * self.factor,
+                phase: PhaseId::SECOND,
+                ..h
+            })
+            .collect())
+    }
+}
+
 #[async_trait::async_trait]
 impl GlobalScorer for IdentityGlobalScorer {
     async fn score(
@@ -171,6 +231,74 @@ impl RankPipeline {
             hits,
             truncated,
             elapsed_us,
+        })
+    }
+
+    /// Run the second phase: rescore the top `self.rerank_count` hits
+    /// using the supplied scorer, then re-sort all hits by the new
+    /// scores. Hits beyond `rerank_count` keep their first-phase
+    /// scores and `PhaseId::FIRST` tag — they participate in the
+    /// re-sort but aren't rescored.
+    ///
+    /// When `self.second` is `None` the method is a pass-through
+    /// (returns `first_outcome` unchanged) — preserves the contract
+    /// that profiles without a second phase don't pay for it.
+    ///
+    /// Returns a `PhaseOutcome` with the merged + re-sorted hits and a
+    /// budget-truncated flag carried forward. Budget enforcement at
+    /// this layer is per-call (the scorer is synchronous); a future
+    /// `second_max_us` integration would wrap the scorer call in a
+    /// timeout via `tokio::time::timeout` at the orchestrator layer.
+    pub fn run_second_phase(
+        &self,
+        first_outcome: PhaseOutcome,
+        scorer: &dyn SecondPhaseScorer,
+    ) -> RankResult<PhaseOutcome> {
+        // No second phase configured → pass-through. `PhaseId::FIRST`
+        // tags on the inputs are preserved so the caller can tell
+        // whether the phase ran.
+        if self.second.is_none() {
+            return Ok(first_outcome);
+        }
+
+        let t0 = Instant::now();
+        let take = self.rerank_count.min(first_outcome.hits.len());
+
+        // Split: top `take` get rescored; the tail keeps first-phase
+        // scores and rejoins for the final sort.
+        let mut iter = first_outcome.hits.into_iter();
+        let to_rescore: Vec<ScoredHit> = iter.by_ref().take(take).collect();
+        let tail: Vec<ScoredHit> = iter.collect();
+
+        let rescored = scorer.rescore(to_rescore)?;
+
+        // Defensive: scorers must preserve hit count + identity. If
+        // length drifts, surface a clear error rather than producing
+        // partial / duplicate results downstream.
+        if rescored.len() != take {
+            return Err(crate::error::RankError::ModelInference {
+                model_id: "second_phase_scorer".into(),
+                reason: format!(
+                    "rescore returned {} hits, expected {}",
+                    rescored.len(),
+                    take
+                ),
+            });
+        }
+
+        let mut all = rescored;
+        all.extend(tail);
+        all.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let elapsed_us = t0.elapsed().as_micros() as u64;
+        Ok(PhaseOutcome {
+            hits: all,
+            truncated: first_outcome.truncated,
+            elapsed_us: first_outcome.elapsed_us.saturating_add(elapsed_us),
         })
     }
 }
@@ -340,5 +468,211 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].doc, DocHandle(2));
         assert_eq!(out[1].doc, DocHandle(3));
+    }
+
+    // ---------------- R-6b: SecondPhaseScorer + run_second_phase ----------------
+
+    fn pipeline_with_second_phase(heap: usize, rerank: usize) -> RankPipeline {
+        let mut b = RankProgram::builder();
+        let idx = b.add(Box::new(DocIdExecutor));
+        b.set_score(idx);
+        let first = b.build().unwrap();
+
+        // Build a placeholder second-phase RankProgram. The current
+        // run_second_phase signature consumes a SecondPhaseScorer
+        // directly (not the second RankProgram); the second field is
+        // here purely to mark "this profile has a second phase
+        // configured" so the pass-through branch doesn't fire.
+        let mut b2 = RankProgram::builder();
+        let idx2 = b2.add(Box::new(DocIdExecutor));
+        b2.set_score(idx2);
+        let second = b2.build().unwrap();
+
+        let mut pipe = RankPipeline::first_phase_only("test".into(), first, heap);
+        pipe.second = Some(second);
+        pipe.rerank_count = rerank;
+        pipe
+    }
+
+    fn outcome(scores: &[(u32, f32)], truncated: bool) -> PhaseOutcome {
+        PhaseOutcome {
+            hits: scores
+                .iter()
+                .map(|(doc, s)| ScoredHit {
+                    doc: DocHandle(*doc),
+                    score: *s,
+                    phase: PhaseId::FIRST,
+                })
+                .collect(),
+            truncated,
+            elapsed_us: 0,
+        }
+    }
+
+    #[test]
+    fn passthrough_second_phase_scorer_tags_phase_id() {
+        let s = PassthroughSecondPhaseScorer;
+        let hits = vec![
+            ScoredHit {
+                doc: DocHandle(1),
+                score: 1.0,
+                phase: PhaseId::FIRST,
+            },
+            ScoredHit {
+                doc: DocHandle(2),
+                score: 2.0,
+                phase: PhaseId::FIRST,
+            },
+        ];
+        let out = s.rescore(hits).unwrap();
+        assert_eq!(out.len(), 2);
+        for h in &out {
+            assert_eq!(h.phase, PhaseId::SECOND);
+        }
+        // Scores unchanged.
+        assert_eq!(out[0].score, 1.0);
+        assert_eq!(out[1].score, 2.0);
+    }
+
+    #[test]
+    fn constant_multiplier_second_phase_scorer_scales_scores() {
+        let s = ConstantMultiplierSecondPhaseScorer { factor: 3.0 };
+        let hits = vec![ScoredHit {
+            doc: DocHandle(1),
+            score: 2.5,
+            phase: PhaseId::FIRST,
+        }];
+        let out = s.rescore(hits).unwrap();
+        assert_eq!(out[0].score, 7.5);
+        assert_eq!(out[0].phase, PhaseId::SECOND);
+    }
+
+    #[test]
+    fn run_second_phase_without_configured_phase_passes_through() {
+        // pipeline.second == None → input returned unchanged.
+        let pipe = RankPipeline::first_phase_only(
+            "test".into(),
+            {
+                let mut b = RankProgram::builder();
+                let idx = b.add(Box::new(DocIdExecutor));
+                b.set_score(idx);
+                b.build().unwrap()
+            },
+            10,
+        );
+        let inp = outcome(&[(1, 1.0), (2, 2.0), (3, 3.0)], false);
+        let out = pipe
+            .run_second_phase(inp.clone(), &PassthroughSecondPhaseScorer)
+            .unwrap();
+        assert_eq!(out.hits.len(), 3);
+        // PhaseId remains FIRST because the scorer never ran.
+        for h in &out.hits {
+            assert_eq!(h.phase, PhaseId::FIRST);
+        }
+    }
+
+    #[test]
+    fn run_second_phase_rescores_top_k_and_re_sorts() {
+        // First-phase order by score desc: 5, 4, 3, 2, 1.
+        // rerank_count=3 → top 3 (5, 4, 3) get rescored.
+        // ConstantMultiplier(0.1) → those become 0.5, 0.4, 0.3.
+        // Tail (2, 1) keeps scores 2.0, 1.0.
+        // Final re-sort: 2.0 (doc 2), 1.0 (doc 1), 0.5 (doc 5), 0.4 (4), 0.3 (3).
+        let pipe = pipeline_with_second_phase(10, 3);
+        let inp = outcome(&[(5, 5.0), (4, 4.0), (3, 3.0), (2, 2.0), (1, 1.0)], false);
+        let scorer = ConstantMultiplierSecondPhaseScorer { factor: 0.1 };
+        let out = pipe.run_second_phase(inp, &scorer).unwrap();
+        assert_eq!(out.hits.len(), 5);
+        assert_eq!(out.hits[0].doc, DocHandle(2));
+        assert_eq!(out.hits[0].score, 2.0);
+        assert_eq!(out.hits[1].doc, DocHandle(1));
+        assert_eq!(out.hits[2].doc, DocHandle(5));
+        // Top-3 carry PhaseId::SECOND, tail keeps PhaseId::FIRST.
+        let docs_second: Vec<u32> = out
+            .hits
+            .iter()
+            .filter(|h| h.phase == PhaseId::SECOND)
+            .map(|h| h.doc.0)
+            .collect();
+        assert_eq!(docs_second.len(), 3);
+        let docs_first: Vec<u32> = out
+            .hits
+            .iter()
+            .filter(|h| h.phase == PhaseId::FIRST)
+            .map(|h| h.doc.0)
+            .collect();
+        assert_eq!(docs_first, vec![2, 1]);
+    }
+
+    #[test]
+    fn run_second_phase_with_rerank_count_ge_hits_rescores_all() {
+        let pipe = pipeline_with_second_phase(10, 100);
+        let inp = outcome(&[(1, 1.0), (2, 2.0), (3, 3.0)], false);
+        let out = pipe
+            .run_second_phase(inp, &PassthroughSecondPhaseScorer)
+            .unwrap();
+        // Every hit got the SECOND tag.
+        for h in &out.hits {
+            assert_eq!(h.phase, PhaseId::SECOND);
+        }
+    }
+
+    #[test]
+    fn run_second_phase_preserves_truncated_flag() {
+        let pipe = pipeline_with_second_phase(10, 3);
+        let inp = outcome(&[(1, 1.0)], true);
+        let out = pipe
+            .run_second_phase(inp, &PassthroughSecondPhaseScorer)
+            .unwrap();
+        assert!(out.truncated);
+    }
+
+    #[test]
+    fn run_second_phase_accumulates_elapsed_us() {
+        let pipe = pipeline_with_second_phase(10, 3);
+        let inp = PhaseOutcome {
+            hits: vec![ScoredHit {
+                doc: DocHandle(1),
+                score: 1.0,
+                phase: PhaseId::FIRST,
+            }],
+            truncated: false,
+            elapsed_us: 1234,
+        };
+        let out = pipe
+            .run_second_phase(inp, &PassthroughSecondPhaseScorer)
+            .unwrap();
+        // Carries first-phase elapsed forward AND adds second-phase time.
+        assert!(out.elapsed_us >= 1234);
+    }
+
+    #[test]
+    fn run_second_phase_rejects_scorer_that_drops_hits() {
+        // A buggy scorer that returns fewer hits than input → ModelInference.
+        struct DropsFirst;
+        impl SecondPhaseScorer for DropsFirst {
+            fn rescore(&self, mut hits: Vec<ScoredHit>) -> RankResult<Vec<ScoredHit>> {
+                hits.pop();
+                Ok(hits)
+            }
+        }
+        let pipe = pipeline_with_second_phase(10, 3);
+        let inp = outcome(&[(1, 1.0), (2, 2.0), (3, 3.0)], false);
+        match pipe.run_second_phase(inp, &DropsFirst) {
+            Err(crate::error::RankError::ModelInference { reason, .. }) => {
+                assert!(reason.contains("returned 2 hits, expected 3"));
+            }
+            other => panic!("expected ModelInference, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn run_second_phase_empty_input_short_circuits() {
+        let pipe = pipeline_with_second_phase(10, 3);
+        let inp = outcome(&[], false);
+        let out = pipe
+            .run_second_phase(inp, &PassthroughSecondPhaseScorer)
+            .unwrap();
+        assert!(out.hits.is_empty());
     }
 }

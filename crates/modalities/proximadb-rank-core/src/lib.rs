@@ -27,7 +27,11 @@ pub use context::{
 };
 pub use error::{RankError, RankResult};
 pub use executor::{FeatureExecutor, FeatureLookup};
-pub use pipeline::{GlobalScorer, PhaseBudget, PhaseOutcome, RankPipeline, ScoredHit};
+pub use pipeline::{
+    ConstantMultiplierSecondPhaseScorer, GlobalScorer, IdentityGlobalScorer,
+    PassthroughSecondPhaseScorer, PhaseBudget, PhaseOutcome, RankPipeline, ScoredHit,
+    SecondPhaseScorer,
+};
 pub use program::RankProgram;
 pub use proximadb_kernel::{PhaseId, ScoreComponent, ScoreVector};
 pub use types::{DocHandle, ExecutorIdx, FeatureRef};
