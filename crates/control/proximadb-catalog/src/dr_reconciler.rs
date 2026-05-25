@@ -613,6 +613,12 @@ pub enum DrApiError {
 /// `MockDrPolicyStore` ships here for tests.
 #[async_trait]
 pub trait DrPolicyStore: Send + Sync {
+    /// Return the set of policies the shard should consider this tick.
+    /// Implementations typically filter out `Disabled` and `Retired`
+    /// rows server-side. The shard applies backoff/rate-limit gates on
+    /// top.
+    async fn pending_reconcile(&self) -> Result<Vec<CollectionDrPolicy>, DrApiError>;
+
     /// Persist a state transition. Returns the new `policy_version`.
     /// Bumps `policy_version` because the contract S2 rule says state
     /// transitions always bump.
@@ -966,6 +972,210 @@ where
             created_at_ns: (self.now_ns)(),
         };
         self.store.record_event(event).await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shard loop (P3c2) — async iteration with gates
+// ---------------------------------------------------------------------------
+
+/// Per-policy result of one [`DrReconcilerShard::tick`] pass. The loop
+/// layer aggregates these for metric emission.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TickOutcome {
+    /// Policy was reconciled. Carries the driver's outcome.
+    Reconciled(ReconcileOutcome),
+    /// Backoff entry not yet ready — skipped this tick.
+    DeferredBackoff,
+    /// Per-policy rate limit refused — skipped this tick.
+    DeferredRateLimit,
+    /// Shard is paused (quota); mutations skipped. Health
+    /// observations are also skipped in this simplified design — see
+    /// `DrReconcilerShard::tick` for the trade-off note.
+    SkippedShardPaused,
+    /// Backoff hit `max_attempts`; the driver was directed to flip
+    /// health to `ProviderBlocked` and the backoff was cleared.
+    EscalatedAfterMaxAttempts,
+}
+
+/// Reconciler shard — one async loop per shard, one shard per range
+/// of `policy_id` ULIDs. Default deployment is a single shard.
+///
+/// Holds the per-policy backoff and rate-limit state plus the
+/// shard-wide pause state. The `tick` method does one synchronous
+/// pass over the store's pending list; `run` wraps it in a
+/// `tokio::time::interval` with a shutdown signal.
+pub struct DrReconcilerShard<S, A> {
+    driver: Arc<DrReconcilerDriver<S, A>>,
+    store: Arc<S>,
+    config: BackoffPolicy,
+    backoffs: parking_lot::Mutex<std::collections::HashMap<String, BackoffEntry>>,
+    rate_limits:
+        parking_lot::Mutex<std::collections::HashMap<String, PerPolicyRateLimit>>,
+    pause: parking_lot::Mutex<ShardPauseState>,
+    now_ns: Arc<dyn Fn() -> i64 + Send + Sync>,
+    /// Sampled per `apply_backoff_signal` call. Production wires
+    /// `rand::random`; tests inject a constant.
+    jitter_source: Arc<dyn Fn() -> f64 + Send + Sync>,
+}
+
+impl<S, A> DrReconcilerShard<S, A>
+where
+    S: DrPolicyStore + 'static,
+    A: DrProviderAdapter + 'static,
+{
+    /// Construct a shard with default config and explicit clock /
+    /// jitter sources. Tests use this; production callers can call
+    /// `new` instead.
+    pub fn with_clocks(
+        driver: Arc<DrReconcilerDriver<S, A>>,
+        store: Arc<S>,
+        config: BackoffPolicy,
+        now_ns: Arc<dyn Fn() -> i64 + Send + Sync>,
+        jitter_source: Arc<dyn Fn() -> f64 + Send + Sync>,
+    ) -> Self {
+        Self {
+            driver,
+            store,
+            config,
+            backoffs: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            rate_limits: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            pause: parking_lot::Mutex::new(ShardPauseState::default()),
+            now_ns,
+            jitter_source,
+        }
+    }
+
+    /// One synchronous-from-the-shard's-perspective pass: load the
+    /// pending list, gate each policy on shard-pause/backoff/rate-
+    /// limit, run `reconcile_one`, feed the outcome back into local
+    /// state.
+    ///
+    /// Trade-off note: under shard pause we skip the policy entirely
+    /// instead of running `fetch_state` for drift observation. The
+    /// contract permits read-only observation during pause; we trade
+    /// that responsiveness for a simpler dispatch path. P3c2.1 can
+    /// add the observe-only branch if drift visibility during quota
+    /// pause matters.
+    pub async fn tick(&self) -> Result<Vec<(String, TickOutcome)>, DrApiError> {
+        let now = (self.now_ns)();
+        let paused = self.pause.lock().is_paused(now);
+        let pending = self.store.pending_reconcile().await?;
+        let mut results = Vec::with_capacity(pending.len());
+
+        for policy in pending {
+            if paused {
+                results.push((policy.policy_id.clone(), TickOutcome::SkippedShardPaused));
+                continue;
+            }
+
+            // Escalation check FIRST so a stuck entry doesn't sit at
+            // max_attempts forever.
+            let backoff_now = self.backoffs.lock().get(&policy.policy_id).cloned();
+            if let Some(entry) = &backoff_now {
+                if should_escalate(self.config, entry) {
+                    // The driver's health update happens through the
+                    // store directly so the loop layer doesn't need
+                    // to know the driver internals.
+                    let mut h = policy.health.clone();
+                    h.state = DrHealthState::ProviderBlocked;
+                    h.reason = Some(format!(
+                        "escalated after {} transient attempts",
+                        entry.attempt
+                    ));
+                    h.last_reconciled_at_ns = Some(now);
+                    self.store.update_health(&policy.policy_id, h).await?;
+                    self.backoffs.lock().remove(&policy.policy_id);
+                    results.push((
+                        policy.policy_id.clone(),
+                        TickOutcome::EscalatedAfterMaxAttempts,
+                    ));
+                    continue;
+                }
+                if !is_ready(entry, now) {
+                    results.push((
+                        policy.policy_id.clone(),
+                        TickOutcome::DeferredBackoff,
+                    ));
+                    continue;
+                }
+            }
+
+            // Rate-limit gate.
+            let proceed = {
+                let mut rl_map = self.rate_limits.lock();
+                let entry = rl_map.entry(policy.policy_id.clone()).or_default();
+                entry.try_acquire(self.config, now)
+            };
+            if !proceed {
+                results.push((
+                    policy.policy_id.clone(),
+                    TickOutcome::DeferredRateLimit,
+                ));
+                continue;
+            }
+
+            // Dispatch.
+            let outcome = self.driver.reconcile_one(&policy).await?;
+            self.feedback(&policy.policy_id, &outcome, now);
+            results.push((policy.policy_id, TickOutcome::Reconciled(outcome)));
+        }
+
+        Ok(results)
+    }
+
+    /// Map a [`ReconcileOutcome`] back into shard state.
+    fn feedback(&self, policy_id: &str, outcome: &ReconcileOutcome, now_ns: i64) {
+        match outcome {
+            ReconcileOutcome::AdapterTransient(_) => {
+                let mut bs = self.backoffs.lock();
+                let current = bs.get(policy_id).cloned().unwrap_or_default();
+                let jitter = (self.jitter_source)();
+                if let Some(new_entry) = apply_backoff_signal(
+                    self.config,
+                    current,
+                    BackoffSignal::TransientFailure,
+                    now_ns,
+                    jitter,
+                ) {
+                    bs.insert(policy_id.to_string(), new_entry);
+                }
+            }
+            ReconcileOutcome::AdapterEscalated(BlockReason::ProviderQuotaExceeded) => {
+                self.pause.lock().pause_for_quota(now_ns);
+                self.backoffs.lock().remove(policy_id);
+            }
+            ReconcileOutcome::AdapterEscalated(_) => {
+                // Misconfig / AuthDenied → driver already flipped
+                // health; just clear backoff so we stop retrying.
+                self.backoffs.lock().remove(policy_id);
+            }
+            // Any success path clears the backoff entry.
+            ReconcileOutcome::EnsuredRule { .. }
+            | ReconcileOutcome::Retired
+            | ReconcileOutcome::RepairedDrift(_)
+            | ReconcileOutcome::Idle(_) => {
+                self.backoffs.lock().remove(policy_id);
+            }
+            // Marked-* outcomes leave backoff as-is. They reflect a
+            // catalog-side condition (drift/billing) the operator
+            // must resolve; reconciler doesn't retry on its own.
+            ReconcileOutcome::MarkedDrifted(_)
+            | ReconcileOutcome::MarkedProviderBlocked(_)
+            | ReconcileOutcome::MarkedBillingBlocked(_) => {}
+        }
+    }
+
+    /// Expose the current backoff state for metric emission and
+    /// observability. Caller must not mutate.
+    pub fn backoffs_snapshot(&self) -> std::collections::HashMap<String, BackoffEntry> {
+        self.backoffs.lock().clone()
+    }
+
+    /// Is the shard currently paused at `now_ns`? Mutating: clears
+    /// the pause if expired.
+    pub fn is_paused(&self, now_ns: i64) -> bool {
+        self.pause.lock().is_paused(now_ns)
     }
 }
 
@@ -1399,6 +1609,9 @@ mod tests {
         bindings: Mutex<Vec<(String, ProviderReplicationBinding, u64)>>,
         next_version: AtomicU64,
         inject_error: Mutex<Option<DrApiError>>,
+        /// Policies the mock returns from `pending_reconcile`. Tests
+        /// seed this via `seed_pending`.
+        pending: Mutex<Vec<CollectionDrPolicy>>,
     }
 
     impl MockDrPolicyStore {
@@ -1420,10 +1633,23 @@ mod tests {
         fn bindings_snapshot(&self) -> Vec<(String, ProviderReplicationBinding, u64)> {
             self.bindings.lock().clone()
         }
+
+        fn seed_pending(&self, policies: Vec<CollectionDrPolicy>) {
+            *self.pending.lock() = policies;
+        }
     }
 
     #[async_trait]
     impl DrPolicyStore for MockDrPolicyStore {
+        async fn pending_reconcile(
+            &self,
+        ) -> Result<Vec<CollectionDrPolicy>, DrApiError> {
+            if let Some(e) = self.inject_error.lock().take() {
+                return Err(e);
+            }
+            Ok(self.pending.lock().clone())
+        }
+
         async fn transition_state(
             &self,
             policy_id: &str,
@@ -1968,5 +2194,251 @@ mod tests {
         s.pause_for_quota(t0 - 30 * 1_000_000_000);
         let second_until = s.paused.as_ref().unwrap().until_ns;
         assert_eq!(second_until, first_until, "pause must not shrink");
+    }
+
+    // --- Shard loop (P3c2) --------------------------------------------
+
+    fn make_shard(
+        store: Arc<MockDrPolicyStore>,
+        adapter: Arc<MockDrProviderAdapter>,
+        config: BackoffPolicy,
+        clock: Arc<AtomicI64>,
+        jitter: f64,
+    ) -> DrReconcilerShard<MockDrPolicyStore, MockDrProviderAdapter> {
+        let driver = Arc::new(make_driver(store.clone(), adapter.clone()));
+        let clock_clone = clock.clone();
+        let now: Arc<dyn Fn() -> i64 + Send + Sync> = Arc::new(move || {
+            clock_clone.load(Ordering::Relaxed)
+        });
+        let jitter_src: Arc<dyn Fn() -> f64 + Send + Sync> = Arc::new(move || jitter);
+        DrReconcilerShard::with_clocks(driver, store, config, now, jitter_src)
+    }
+
+    #[tokio::test]
+    async fn shard_tick_empty_pending_list_yields_no_results() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let clock = Arc::new(AtomicI64::new(0));
+        let shard =
+            make_shard(store, adapter, BackoffPolicy::default(), clock, 0.5);
+        let results = shard.tick().await.unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[tokio::test]
+    async fn shard_tick_reconciles_healthy_policy() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.provider_binding = Some(ProviderReplicationBinding {
+            provider_policy_id: None,
+            provider_rule_id: "dr-drp_1-v1".into(),
+            provider_role_arn: None,
+            provider_kms_key_id: None,
+        });
+        adapter.seed_observed(&p.policy_id, healthy_observed(&p));
+        store.seed_pending(vec![p.clone()]);
+        let clock = Arc::new(AtomicI64::new(0));
+        let shard = make_shard(
+            store.clone(),
+            adapter,
+            BackoffPolicy::default(),
+            clock,
+            0.5,
+        );
+
+        let results = shard.tick().await.unwrap();
+        assert_eq!(results.len(), 1);
+        match &results[0].1 {
+            TickOutcome::Reconciled(ReconcileOutcome::Idle(IdleReason::HealthyActive)) => {}
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn shard_tick_transient_increments_backoff_and_defers_next_tick() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.state = DrState::PendingProviderProvisioning;
+        store.seed_pending(vec![p.clone()]);
+        // First call (fetch_state) returns transient.
+        adapter.inject_error(ProviderError::Transient("blip".into()));
+        let clock = Arc::new(AtomicI64::new(0));
+        let shard = make_shard(
+            store.clone(),
+            adapter.clone(),
+            BackoffPolicy::default(),
+            clock.clone(),
+            0.5,
+        );
+
+        let results = shard.tick().await.unwrap();
+        assert!(matches!(
+            results[0].1,
+            TickOutcome::Reconciled(ReconcileOutcome::AdapterTransient(_))
+        ));
+        // Backoff was recorded for this policy.
+        let bs = shard.backoffs_snapshot();
+        assert_eq!(bs.len(), 1);
+        assert_eq!(bs[&p.policy_id].attempt, 1);
+
+        // Second tick at the SAME timestamp: backoff not ready yet
+        // (next retry is ~30s away with default policy).
+        // But rate limit would also trip first since clock didn't
+        // advance. To isolate the backoff gate, advance past the
+        // rate-limit window AND keep within the backoff window.
+        // Default min_call_interval=5s, initial_delay=30s. Tick at
+        // 6s: rate limit OK, backoff NOT OK.
+        clock.store(6 * 1_000_000_000, Ordering::Relaxed);
+        let results2 = shard.tick().await.unwrap();
+        assert_eq!(results2[0].1, TickOutcome::DeferredBackoff);
+    }
+
+    #[tokio::test]
+    async fn shard_tick_rate_limit_defers_repeated_call_within_window() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.provider_binding = Some(ProviderReplicationBinding {
+            provider_policy_id: None,
+            provider_rule_id: "dr-drp_1-v1".into(),
+            provider_role_arn: None,
+            provider_kms_key_id: None,
+        });
+        adapter.seed_observed(&p.policy_id, healthy_observed(&p));
+        store.seed_pending(vec![p.clone()]);
+        let clock = Arc::new(AtomicI64::new(0));
+        let shard = make_shard(
+            store.clone(),
+            adapter,
+            BackoffPolicy::default(),
+            clock.clone(),
+            0.5,
+        );
+
+        // First tick: reconciles (success → no backoff entry).
+        let r1 = shard.tick().await.unwrap();
+        assert!(matches!(r1[0].1, TickOutcome::Reconciled(_)));
+        // Same clock value → rate limit deferral.
+        let r2 = shard.tick().await.unwrap();
+        assert_eq!(r2[0].1, TickOutcome::DeferredRateLimit);
+        // Advance past 5s → rate limit clears.
+        clock.store(5 * 1_000_000_000, Ordering::Relaxed);
+        let r3 = shard.tick().await.unwrap();
+        assert!(matches!(r3[0].1, TickOutcome::Reconciled(_)));
+    }
+
+    #[tokio::test]
+    async fn shard_tick_quota_exceeded_pauses_shard() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.state = DrState::PendingProviderProvisioning;
+        store.seed_pending(vec![p.clone()]);
+        adapter.inject_error(ProviderError::QuotaExceeded("rule cap".into()));
+        let clock = Arc::new(AtomicI64::new(1_000));
+        let shard = make_shard(
+            store.clone(),
+            adapter,
+            BackoffPolicy::default(),
+            clock.clone(),
+            0.5,
+        );
+
+        let r1 = shard.tick().await.unwrap();
+        assert!(matches!(
+            r1[0].1,
+            TickOutcome::Reconciled(ReconcileOutcome::AdapterEscalated(
+                BlockReason::ProviderQuotaExceeded
+            ))
+        ));
+        // Shard is now paused.
+        assert!(shard.is_paused(clock.load(Ordering::Relaxed)));
+
+        // Next tick: subsequent policies skipped (here just the same
+        // policy still in pending).
+        let r2 = shard.tick().await.unwrap();
+        assert_eq!(r2[0].1, TickOutcome::SkippedShardPaused);
+    }
+
+    #[tokio::test]
+    async fn shard_tick_escalates_after_max_transient_attempts() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.state = DrState::PendingProviderProvisioning;
+        store.seed_pending(vec![p.clone()]);
+        // Small max_attempts to keep the test tight.
+        let config = BackoffPolicy {
+            max_attempts: 3,
+            initial_delay_secs: 1, // tiny so test clock advance is easy
+            max_delay_secs: 1,
+            jitter_factor: 0.0,
+            min_call_interval_secs: 1,
+        };
+        let clock = Arc::new(AtomicI64::new(1_000));
+        let shard = make_shard(store.clone(), adapter.clone(), config, clock.clone(), 0.5);
+
+        // Drive 3 transient failures with clock advances between them.
+        for _ in 0..3 {
+            adapter.inject_error(ProviderError::Transient("blip".into()));
+            let _ = shard.tick().await.unwrap();
+            // Advance past 1s rate limit + 1s backoff.
+            let cur = clock.load(Ordering::Relaxed);
+            clock.store(cur + 2_500_000_000, Ordering::Relaxed);
+        }
+        // Backoff state now has attempt = 3 == max_attempts.
+        let bs = shard.backoffs_snapshot();
+        assert_eq!(bs[&p.policy_id].attempt, 3);
+
+        // Next tick: escalation fires.
+        let r = shard.tick().await.unwrap();
+        assert_eq!(r[0].1, TickOutcome::EscalatedAfterMaxAttempts);
+        // Backoff entry cleared.
+        assert!(!shard.backoffs_snapshot().contains_key(&p.policy_id));
+        // Store recorded a health flip to ProviderBlocked.
+        let h = store.health_snapshot();
+        assert!(h
+            .iter()
+            .any(|(_, h)| h.state == DrHealthState::ProviderBlocked));
+    }
+
+    #[tokio::test]
+    async fn shard_tick_success_clears_backoff_entry() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.provider_binding = Some(ProviderReplicationBinding {
+            provider_policy_id: None,
+            provider_rule_id: "dr-drp_1-v1".into(),
+            provider_role_arn: None,
+            provider_kms_key_id: None,
+        });
+        adapter.seed_observed(&p.policy_id, healthy_observed(&p));
+        store.seed_pending(vec![p.clone()]);
+        let clock = Arc::new(AtomicI64::new(0));
+        let shard = make_shard(
+            store.clone(),
+            adapter.clone(),
+            BackoffPolicy::default(),
+            clock.clone(),
+            0.5,
+        );
+
+        // Inject a transient failure first.
+        adapter.inject_error(ProviderError::Transient("blip".into()));
+        let _ = shard.tick().await.unwrap();
+        assert!(shard.backoffs_snapshot().contains_key(&p.policy_id));
+
+        // Advance past rate-limit + backoff windows, then tick
+        // cleanly. Success should clear the backoff.
+        clock.store(60 * 1_000_000_000, Ordering::Relaxed);
+        let r = shard.tick().await.unwrap();
+        assert!(matches!(
+            r[0].1,
+            TickOutcome::Reconciled(ReconcileOutcome::Idle(IdleReason::HealthyActive))
+        ));
+        assert!(!shard.backoffs_snapshot().contains_key(&p.policy_id));
     }
 }
