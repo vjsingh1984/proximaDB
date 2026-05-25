@@ -24,6 +24,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
+use async_trait::async_trait;
 use tokio::sync::RwLock;
 
 /// Composite key: tenant + collection. Owned strings keep the
@@ -43,13 +44,84 @@ impl VersionKey {
     }
 }
 
+/// Persistence boundary for corpus_version state.
+///
+/// The in-memory registry is the hot path — every search call reads it,
+/// every catalog write bumps it. A `CorpusVersionStore` lets the
+/// registry hydrate from a durable source on startup and write back on
+/// each bump so the value survives process restart and propagates
+/// across replicas.
+///
+/// Backends can implement this trait independently — the registry only
+/// depends on the trait, not on any specific catalog backend
+/// (Delta/Iceberg/Native/etc.). Implementations should be cheap for
+/// `load_all` (called once at startup) and reasonably fast for
+/// `persist` (called once per catalog write); a backend can choose
+/// batched persistence by queueing bumps if write amplification is a
+/// concern.
+///
+/// Errors are intentionally `anyhow::Error` rather than a typed enum:
+/// durable-store failures are non-fatal — the in-memory registry keeps
+/// working — and the caller logs the error without translation.
+#[async_trait]
+pub trait CorpusVersionStore: Send + Sync {
+    /// Read every persisted `(tenant, collection) → version` row.
+    /// Called once at startup to prime the registry. Returns an empty
+    /// map for a fresh install.
+    async fn load_all(&self) -> anyhow::Result<HashMap<(String, String), u64>>;
+
+    /// Persist a single version. Called from the registry after each
+    /// successful bump or set. A backend may queue writes and flush
+    /// asynchronously — the registry only requires that the value
+    /// will eventually be durable, not that it has flushed by return.
+    async fn persist(
+        &self,
+        tenant_id: &str,
+        collection: &str,
+        version: u64,
+    ) -> anyhow::Result<()>;
+}
+
+/// In-memory store — the default for tests and for deployments that
+/// don't need cross-restart durability. `load_all` returns an empty
+/// map; `persist` is a no-op.
+#[derive(Debug, Clone, Default)]
+pub struct InMemoryCorpusVersionStore;
+
+#[async_trait]
+impl CorpusVersionStore for InMemoryCorpusVersionStore {
+    async fn load_all(&self) -> anyhow::Result<HashMap<(String, String), u64>> {
+        Ok(HashMap::new())
+    }
+    async fn persist(
+        &self,
+        _tenant_id: &str,
+        _collection: &str,
+        _version: u64,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
 /// Process-wide corpus version registry.
 ///
 /// Cheap to clone — wraps an `Arc<RwLock<HashMap<…>>>` so handlers
-/// can hand it around without ownership gymnastics.
-#[derive(Clone, Default)]
+/// can hand it around without ownership gymnastics. The optional
+/// `store` is the durable backend — `None` means the registry is
+/// purely in-memory (the default).
+#[derive(Clone)]
 pub struct CorpusVersionRegistry {
     inner: Arc<RwLock<HashMap<VersionKey, u64>>>,
+    store: Option<Arc<dyn CorpusVersionStore>>,
+}
+
+impl Default for CorpusVersionRegistry {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(HashMap::new())),
+            store: None,
+        }
+    }
 }
 
 static GLOBAL_REGISTRY: OnceLock<CorpusVersionRegistry> = OnceLock::new();
@@ -58,6 +130,56 @@ impl CorpusVersionRegistry {
     /// Process-wide singleton. Lazy-init on first call.
     pub fn global() -> &'static CorpusVersionRegistry {
         GLOBAL_REGISTRY.get_or_init(CorpusVersionRegistry::default)
+    }
+
+    /// Build a registry backed by a durable store. The store is
+    /// consulted on every successful bump + set; the in-memory map is
+    /// still the hot-path read source. Use this from startup wiring
+    /// after a `load_all + set` pass primes the registry.
+    pub fn with_store(store: Arc<dyn CorpusVersionStore>) -> Self {
+        Self {
+            inner: Arc::new(RwLock::new(HashMap::new())),
+            store: Some(store),
+        }
+    }
+
+    /// Replace the backing store on an existing registry. Useful when
+    /// the global singleton was lazily constructed without a store and
+    /// the server bootstrap wires durability in later.
+    pub fn set_store(&mut self, store: Arc<dyn CorpusVersionStore>) {
+        self.store = Some(store);
+    }
+
+    /// Hydrate the registry from the configured store. Called once at
+    /// startup. Silently no-ops when no store is attached. Returns the
+    /// number of rows loaded.
+    ///
+    /// Errors from the store are logged but not propagated — durability
+    /// failure must not block server startup. A registry with a broken
+    /// store still works (it just won't persist).
+    pub async fn hydrate_from_store(&self) -> usize {
+        let Some(store) = &self.store else { return 0 };
+        match store.load_all().await {
+            Ok(rows) => {
+                let mut map = self.inner.write().await;
+                let n = rows.len();
+                for ((tenant_id, collection), version) in rows {
+                    map.insert(VersionKey::new(&tenant_id, &collection), version);
+                }
+                tracing::info!(
+                    rows = n,
+                    "🔄 corpus_version registry hydrated from durable store"
+                );
+                n
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "corpus_version registry hydrate failed; starting empty"
+                );
+                0
+            }
+        }
     }
 
     /// Current corpus version for `(tenant_id, collection)`. Returns
@@ -71,21 +193,48 @@ impl CorpusVersionRegistry {
 
     /// Atomically bump the version for `(tenant_id, collection)`.
     /// Returns the new value. Monotonic — saturates at `u64::MAX`
-    /// without overflow.
+    /// without overflow. Writes through to the configured store on
+    /// success; store failures are logged but don't roll back the
+    /// in-memory bump (the registry stays correct for in-process
+    /// reads even if persistence fails).
     pub async fn bump(&self, tenant_id: &str, collection: &str) -> u64 {
         let key = VersionKey::new(tenant_id, collection);
-        let mut map = self.inner.write().await;
-        let entry = map.entry(key).or_insert(1);
-        *entry = entry.saturating_add(1);
-        *entry
+        let new_version = {
+            let mut map = self.inner.write().await;
+            let entry = map.entry(key).or_insert(1);
+            *entry = entry.saturating_add(1);
+            *entry
+        };
+        self.persist_through(tenant_id, collection, new_version).await;
+        new_version
     }
 
     /// Set a specific version. Use when restoring from a durable
     /// store on startup. Returns the previous value if one existed.
+    /// Writes through to the store on success (same caveats as bump).
     pub async fn set(&self, tenant_id: &str, collection: &str, version: u64) -> Option<u64> {
         let key = VersionKey::new(tenant_id, collection);
-        let mut map = self.inner.write().await;
-        map.insert(key, version)
+        let prev = {
+            let mut map = self.inner.write().await;
+            map.insert(key, version)
+        };
+        self.persist_through(tenant_id, collection, version).await;
+        prev
+    }
+
+    /// Internal: write through to the durable store. Logs but never
+    /// propagates errors — durability is best-effort.
+    async fn persist_through(&self, tenant_id: &str, collection: &str, version: u64) {
+        let Some(store) = &self.store else { return };
+        if let Err(e) = store.persist(tenant_id, collection, version).await {
+            tracing::warn!(
+                tenant = %tenant_id,
+                collection = %collection,
+                version,
+                error = %e,
+                "corpus_version persist failed; in-memory value still authoritative for this process"
+            );
+        }
     }
 
     /// Number of distinct (tenant, collection) pairs the registry
@@ -295,5 +444,177 @@ mod tests {
             r.current("tenant-a", &format!("kb-{i}")).await;
         }
         assert_eq!(r.tracked_pairs().await, 0);
+    }
+
+    // ── Durability layer tests ───────────────────────────────────
+
+    /// Recording store — captures every persist() call so tests can
+    /// assert the write-through pattern. Backed by a Mutex<Vec> so
+    /// per-call ordering is preserved for assertion.
+    #[derive(Default)]
+    struct RecordingStore {
+        seed: HashMap<(String, String), u64>,
+        persisted: std::sync::Mutex<Vec<(String, String, u64)>>,
+    }
+    impl RecordingStore {
+        fn with_seed(seed: Vec<((&'static str, &'static str), u64)>) -> Self {
+            Self {
+                seed: seed
+                    .into_iter()
+                    .map(|((t, c), v)| ((t.to_string(), c.to_string()), v))
+                    .collect(),
+                persisted: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+        fn persisted_calls(&self) -> Vec<(String, String, u64)> {
+            self.persisted.lock().unwrap().clone()
+        }
+    }
+    #[async_trait]
+    impl CorpusVersionStore for RecordingStore {
+        async fn load_all(&self) -> anyhow::Result<HashMap<(String, String), u64>> {
+            Ok(self.seed.clone())
+        }
+        async fn persist(
+            &self,
+            tenant_id: &str,
+            collection: &str,
+            version: u64,
+        ) -> anyhow::Result<()> {
+            self.persisted
+                .lock()
+                .unwrap()
+                .push((tenant_id.to_string(), collection.to_string(), version));
+            Ok(())
+        }
+    }
+
+    /// Failing store — every persist returns an error. Lets us pin
+    /// the "durability failure must not corrupt the in-memory state"
+    /// contract.
+    struct FailingStore;
+    #[async_trait]
+    impl CorpusVersionStore for FailingStore {
+        async fn load_all(&self) -> anyhow::Result<HashMap<(String, String), u64>> {
+            Err(anyhow::anyhow!("durable store unavailable"))
+        }
+        async fn persist(
+            &self,
+            _tenant_id: &str,
+            _collection: &str,
+            _version: u64,
+        ) -> anyhow::Result<()> {
+            Err(anyhow::anyhow!("persistence error"))
+        }
+    }
+
+    #[tokio::test]
+    async fn hydrate_loads_seeded_rows_into_registry() {
+        let store = Arc::new(RecordingStore::with_seed(vec![
+            (("tenant-a", "kb"), 42),
+            (("tenant-b", "logs"), 7),
+        ]));
+        let r = CorpusVersionRegistry::with_store(store);
+        let loaded = r.hydrate_from_store().await;
+        assert_eq!(loaded, 2);
+        assert_eq!(r.current("tenant-a", "kb").await, 42);
+        assert_eq!(r.current("tenant-b", "logs").await, 7);
+        assert_eq!(r.tracked_pairs().await, 2);
+    }
+
+    #[tokio::test]
+    async fn hydrate_is_zero_noop_when_no_store_attached() {
+        let r = CorpusVersionRegistry::default();
+        assert_eq!(r.hydrate_from_store().await, 0);
+    }
+
+    #[tokio::test]
+    async fn hydrate_silently_recovers_from_store_failure() {
+        let r = CorpusVersionRegistry::with_store(Arc::new(FailingStore));
+        // Must not panic; returns 0 rows and leaves the registry empty.
+        let loaded = r.hydrate_from_store().await;
+        assert_eq!(loaded, 0);
+        // The registry is fully usable after a failed hydrate.
+        assert_eq!(r.current("tenant-a", "kb").await, 1);
+        let v = r.bump("tenant-a", "kb").await;
+        assert_eq!(v, 2);
+    }
+
+    #[tokio::test]
+    async fn bump_writes_through_to_durable_store() {
+        let store = Arc::new(RecordingStore::default());
+        let r = CorpusVersionRegistry::with_store(store.clone());
+        r.bump("tenant-a", "kb").await;
+        r.bump("tenant-a", "kb").await;
+        r.bump("tenant-b", "logs").await;
+        let calls = store.persisted_calls();
+        assert_eq!(calls.len(), 3);
+        // Bump 1: tenant-a/kb → 2
+        assert_eq!(calls[0], ("tenant-a".into(), "kb".into(), 2));
+        // Bump 2: tenant-a/kb → 3
+        assert_eq!(calls[1], ("tenant-a".into(), "kb".into(), 3));
+        // Bump 3: tenant-b/logs → 2
+        assert_eq!(calls[2], ("tenant-b".into(), "logs".into(), 2));
+    }
+
+    #[tokio::test]
+    async fn set_writes_through_to_durable_store() {
+        let store = Arc::new(RecordingStore::default());
+        let r = CorpusVersionRegistry::with_store(store.clone());
+        r.set("tenant-a", "kb", 100).await;
+        let calls = store.persisted_calls();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0], ("tenant-a".into(), "kb".into(), 100));
+    }
+
+    #[tokio::test]
+    async fn store_persist_failure_does_not_corrupt_in_memory_version() {
+        // After a failed persist, the in-memory bump still holds —
+        // the registry keeps working for in-process reads. This
+        // pins the LLD contract: durability is best-effort, not a
+        // gate on the hot path.
+        let r = CorpusVersionRegistry::with_store(Arc::new(FailingStore));
+        let v = r.bump("tenant-a", "kb").await;
+        assert_eq!(v, 2);
+        // Reading reflects the bump even though persistence failed.
+        assert_eq!(r.current("tenant-a", "kb").await, 2);
+        let v2 = r.bump("tenant-a", "kb").await;
+        assert_eq!(v2, 3);
+    }
+
+    #[tokio::test]
+    async fn registry_without_store_does_not_panic_on_bump() {
+        // Default registry has no store. Bump + set must work
+        // without trying to write through.
+        let r = CorpusVersionRegistry::default();
+        assert_eq!(r.bump("tenant-a", "kb").await, 2);
+        assert_eq!(r.set("tenant-a", "kb", 50).await, Some(2));
+        assert_eq!(r.current("tenant-a", "kb").await, 50);
+    }
+
+    #[tokio::test]
+    async fn in_memory_store_is_a_safe_noop_default() {
+        // The InMemoryCorpusVersionStore is the safe default for
+        // deployments that don't need cross-restart durability —
+        // load_all returns empty, persist is a no-op.
+        let store = InMemoryCorpusVersionStore;
+        let loaded = store.load_all().await.unwrap();
+        assert!(loaded.is_empty());
+        // Persist returns Ok and doesn't track.
+        store.persist("tenant-a", "kb", 5).await.unwrap();
+        // load_all stays empty (no persistence happened).
+        assert!(store.load_all().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn set_store_after_construction_wires_durability_late() {
+        // The global singleton may be constructed lazily without a
+        // store; the server bootstrap later attaches one via
+        // `set_store`. This test pins that injection point.
+        let mut r = CorpusVersionRegistry::default();
+        let store = Arc::new(RecordingStore::default());
+        r.set_store(store.clone());
+        r.bump("tenant-a", "kb").await;
+        assert_eq!(store.persisted_calls().len(), 1);
     }
 }
