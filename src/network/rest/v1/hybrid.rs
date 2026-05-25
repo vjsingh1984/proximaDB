@@ -81,9 +81,18 @@ impl Default for HybridSearchApiState {
     }
 }
 
-/// Hybrid search request
+/// Experimental hybrid (BM25 + vector) search request for
+/// `/api/v1/experimental/hybrid/search`.
+///
+/// Naming note: this type used to be called `HybridSearchRequest` and
+/// collided with `crate::proto::v1::HybridSearchRequest` (proto wire
+/// form for vector+graph hybrid — different concept) and with the now-
+/// renamed `LegacyHybridSearchRequest` in `handlers.rs`. Renamed to
+/// mark the experimental scope; the canonical production path is the
+/// proximadb-api `create_hybrid_search_router()` backed by
+/// `RestHybridPortImpl`.
 #[derive(Debug, Deserialize)]
-pub struct HybridSearchRequest {
+pub struct ExperimentalHybridSearchRequest {
     /// Collection name to search
     pub collection: String,
     /// Text query for BM25 full-text search
@@ -244,7 +253,7 @@ pub fn create_router() -> Router<HybridSearchApiState> {
 /// ```
 async fn execute_hybrid_search(
     State(_state): State<HybridSearchApiState>,
-    Json(request): Json<HybridSearchRequest>,
+    Json(request): Json<ExperimentalHybridSearchRequest>,
 ) -> ApiResult<Json<HybridSearchResponse>> {
     let start = std::time::Instant::now();
 
@@ -452,7 +461,9 @@ fn parse_fusion_strategy(strategy_str: &str) -> Result<FusionStrategy, ApiError>
 /// Create mock BM25 and vector results for demonstration
 ///
 /// Deferred: Replace with actual search backend integration
-fn create_mock_results(request: &HybridSearchRequest) -> (Vec<BM25Result>, Vec<VectorResult>) {
+fn create_mock_results(
+    request: &ExperimentalHybridSearchRequest,
+) -> (Vec<BM25Result>, Vec<VectorResult>) {
     let mock_count = request.top_k * 2; // Create more results than needed
 
     // Import TextHighlight for use in mock results
