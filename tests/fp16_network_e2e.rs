@@ -274,6 +274,140 @@ async fn rest_metrics_prometheus_endpoint_serves_precision_gauge_family() {
     );
 }
 
+/// Full end-to-end through the real network: create fp16 collection
+/// via REST → insert records via REST `/api/v1/vectors/batch` → scrape
+/// `/metrics/prometheus` → assert canonical_bytes for the collection
+/// reflects the inserted data with `precision="fp16"`.
+///
+/// Network-level equivalent of the embedded
+/// `fp16_canonical_bytes_metric_e2e` — proves the metric pipeline
+/// works through the production HTTP path (REST handler → bridge →
+/// canonical_precision coercion → WAL flush → metric increment),
+/// not just the in-process embedded shortcut.
+///
+/// Sync mode defaults to `PerBatch` (see
+/// `src/storage/persistence/write_ahead_log/config.rs:133`), so each
+/// REST insert triggers an immediate WAL flush + canonical_bytes
+/// accumulation — no explicit flush endpoint needed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rest_insert_into_fp16_collection_increments_canonical_bytes_metric() {
+    let server = NetworkTestServer::start().await.expect("server start");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let collection_name = format!(
+        "rest_fp16_ingest_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let dim: usize = 16;
+    let num_records: usize = 25;
+
+    // 1. Create fp16 collection via REST.
+    let create_body = serde_json::json!({
+        "operation": 1,
+        "collection_id": collection_name,
+        "collection_config": {
+            "name": collection_name,
+            "dimension": dim,
+            "canonical_embedding_precision": 2, // Fp16
+        }
+    });
+    let create_resp = client
+        .post(format!("{}/api/v1/collections", server.rest_base_url()))
+        .json(&create_body)
+        .send()
+        .await
+        .expect("REST create");
+    assert!(
+        create_resp.status().is_success(),
+        "create-collection failed: {} {}",
+        create_resp.status(),
+        create_resp.text().await.unwrap_or_default()
+    );
+
+    // 2. Insert records via POST /api/v1/vectors/batch. The v1 wire
+    // payload uses Vec<f32>; the bridge coerces to the collection's
+    // canonical fp16 at write time.
+    let vectors: Vec<serde_json::Value> = (0..num_records)
+        .map(|i| {
+            let v: Vec<f32> =
+                (0..dim).map(|j| (i as f32) * 0.1 + (j as f32) * 0.01).collect();
+            serde_json::json!({
+                "id": format!("rec-{:03}", i),
+                "vector": v,
+                "metadata": {},
+            })
+        })
+        .collect();
+    let insert_body = serde_json::json!({
+        "collection": collection_name,
+        "vectors": vectors,
+    });
+    let insert_resp = client
+        .post(format!("{}/api/v1/vectors/batch", server.rest_base_url()))
+        .json(&insert_body)
+        .send()
+        .await
+        .expect("REST insert");
+    let insert_status = insert_resp.status();
+    let insert_body_text = insert_resp.text().await.unwrap_or_default();
+    assert!(
+        insert_status.is_success(),
+        "insert failed: {insert_status} {insert_body_text}"
+    );
+
+    // 3. Brief settling window — PerBatch sync mode flushes inside the
+    // insert but the metric write may be on a different task.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // 4. Scrape /metrics/prometheus and assert canonical_bytes for the
+    // collection under precision="fp16".
+    let metrics_resp = client
+        .get(format!("{}/metrics/prometheus", server.rest_base_url()))
+        .send()
+        .await
+        .expect("scrape");
+    assert!(
+        metrics_resp.status().is_success(),
+        "metrics scrape failed"
+    );
+    let scrape = metrics_resp.text().await.expect("body");
+
+    // Expected: num_records × dim × bytes_per_element(fp16)
+    // = 25 × 16 × 2 = 800 bytes
+    let expected_bytes: i64 = (num_records as i64) * (dim as i64) * 2;
+
+    let metric_prefix = "proximadb_embedding_precision_canonical_bytes";
+    let coll_fragment = format!(r#"collection="{}""#, collection_name);
+    let mut observed: Option<i64> = None;
+    for line in scrape.lines() {
+        if !line.starts_with(metric_prefix) {
+            continue;
+        }
+        if !line.contains(&coll_fragment) || !line.contains(r#"precision="fp16""#) {
+            continue;
+        }
+        if let Some((_, tail)) = line.split_once('}') {
+            if let Ok(value) = tail.trim().parse::<i64>() {
+                observed = Some(value);
+                break;
+            }
+        }
+    }
+    assert_eq!(
+        observed,
+        Some(expected_bytes),
+        "canonical_bytes{{collection={collection_name},precision=fp16}} = {observed:?}, \
+         expected {expected_bytes} (= {num_records} × {dim} × 2 B/fp16). Scrape:\n{scrape}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn grpc_create_fp16_collection_persists_canonical_precision() {
     let server = NetworkTestServer::start().await.expect("server start");
