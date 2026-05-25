@@ -1,0 +1,233 @@
+= Phase 9 (Platform Extraction) — Remaining Work Audit, 2026-05-25
+:toc:
+:toclevels: 2
+
+== Scope
+
+Re-verification of the 4 remaining Phase 9 tasks last documented on 2026-05-16
+in `memory/project_phase9_refactor_state.md` (~97% complete).  Branch:
+`proximadb-embedding` (tip `cdbe28516`).
+
+Since the memory was written, 35+ commits landed (rank pipeline R-6/R-7c,
+pgwire DDL `canonical_embedding_precision`, catalog DR reconciler P3a/P3b/P3c1-3
+and P4, ingest precision coercion, plus ~25 disambiguation renames).  None
+of those commits touched `src/security/`, `src/cluster/`, `src/server/`,
+`src/network/auth/`, `src/network/multi_server.rs`, or `src/network/rest/server.rs`
+in ways that lift the Phase 9 blockers.  The four tasks remain in the
+same architectural state as memory describes.
+
+== Baseline build status
+
+`cargo check -p proximadb` against `cdbe28516` fails with two import errors:
+
+----
+src/cluster/consensus.rs:35: unresolved import `super::rpc::RpcLogEntry`
+src/cluster/rpc/mod.rs:158: unresolved import `types::LogEntry`
+----
+
+Root cause: commit `cdbe28516 refactor(cluster): rename rpc::LogEntry →
+RpcLogEntry` renamed the type in `src/cluster/rpc/types.rs` but missed the
+re-export in `src/cluster/rpc/mod.rs:158`.  `consensus.rs` already imports
+`RpcLogEntry` (correctly) but cannot resolve it because the re-export is
+still `LogEntry`.
+
+This is an in-flight regression from the user, **not** a Phase 9 issue.
+This audit fixed only that re-export so the rest of the verification could
+proceed.  See "Concrete change made" below.
+
+== Task #69 — Phase 9.11 Security integration to runtime
+
+=== Current state
+
+* `proximadb_runtime::SecurityPort` exists with the RBAC / role / audit /
+  policy surface (12 RPC-shaped methods).
+* gRPC side fully port-backed:
+  `proximadb_api::grpc::v1::security::SecurityServiceImpl` holds
+  `Option<Arc<dyn SecurityPort>>` and delegates each RPC.
+* REST side still uses `Arc<SecurityCoordinator>` directly via
+  `src/network/auth/middleware.rs::auth_middleware_unified`.
+* Production wiring: `src/network/rest/server.rs:461-476` passes
+  `Arc<SecurityCoordinator>` into the axum layer with `from_fn_with_state`.
+
+=== Actual blocker (file:line)
+
+`SecurityCoordinator::authenticate_request` at
+`src/security/security_coordinator.rs:329-348` returns
+`UnifiedUserContext`, which is a **root-crate concrete type** used in 20+
+files (117 references):
+
+* `src/security/auth_service.rs`, `rbac_service.rs`, `rls/service.rs`,
+  `auth/mod.rs`, `auth/ldap.rs`, `auth/oidc.rs`
+* `src/network/auth/middleware.rs`, `src/network/middleware/tenant.rs`,
+  `src/network/grpc/auth.rs`, `src/network/grpc/security_service.rs`
+* `src/services/collection/security.rs`, `src/services/operations/secure_operations.rs`
+* `src/query/unified/executor.rs`, `src/storage/traits/query.rs`,
+  `src/graph/service.rs`
+
+`SecurityPort` deliberately does NOT expose `authenticate_request` because
+its return type cannot be moved to the runtime crate without either
+(a) duplicating `UnifiedUserContext` as a port-level type and wrapping it
+on both ends, or (b) extracting the entire `UnifiedUserContext` graph
+(`UnifiedPermission`, `UnifiedAuthMethod`, effective-permissions cache,
+session id, capability scopes) into a shared contracts crate.
+
+=== Recommended next step (multi-session)
+
+. Add a minimal `proximadb_runtime::PortUserContext` (string user_id,
+  string tenant_id, Vec<String> roles, Vec<String> scopes, JSON-serialized
+  effective_permissions).
+. Add `SecurityPort::authenticate(AuthenticationData) -> PortUserContext`.
+. Implement on `SecurityCoordinator` by lossy projection of
+  `UnifiedUserContext`.
+. Cut a parallel `auth_middleware_unified_port` that uses the port and
+  stores `PortUserContext` in request extensions; consumers in
+  `request.extensions` need to read both shapes during transition.
+
+Estimated 3-4 commits across 8-10 files, plus a longer follow-up to
+migrate the 20 consumers off `UnifiedUserContext`.  **Not actionable as a
+single mechanical pass.**
+
+== Task #70 — Phase 9.9 Server bootstrap to runtime crate
+
+=== Current state
+
+* Bootstrap concretely lives in `src/database.rs` (1000+ lines, mut
+  `MultiServer`, async startup ordering) and
+  `src/network/multi_server.rs::MultiServer` (gRPC + REST + Arrow Flight
+  + pgwire wiring, 2000+ lines).
+* `proximadb_runtime` has no `Bootstrap` / `Server` module — only ports.
+* `src/server/builder.rs` (628 lines) is a separate legacy
+  `ServerBuilder` not used by the current `main`.
+
+=== Actual blocker (file:line)
+
+`src/database.rs:318` instantiates `network::MultiServer::new_with_queue_client`
+with `shared_services: SharedServices` (1049 lines of root-crate
+composition), `security: Option<Arc<SecurityCoordinator>>`, and
+`llm_engine: Option<Arc<LLMIntegrationEngine>>` — all root-crate types.
+
+Bootstrap cannot move until at least **Task #76** ships (SharedServices
+must be expressible against ports) and Task #69 unblocks (SecurityCoordinator
+→ SecurityPort + SecurityAuthPort).
+
+=== Recommended next step
+
+Defer until #69 + #76 are at least partially done.  Pre-work that can land
+independently: extract `MultiServerConfig` (already in
+`src/network/server_config.rs`) into `proximadb_runtime::bootstrap_config`
+since it has no root-crate dependencies.
+
+== Task #72 — Phase 9.12 Cluster orchestration to runtime crate
+
+=== Current state — actually further along than memory suggests
+
+* `proximadb_runtime::ClusterPort` trait + `ClusterHealthStatus` snapshot
+  type already defined (`crates/platform/proximadb-runtime/src/cluster_port.rs`).
+* `impl proximadb_runtime::ClusterPort for ClusterManager` already lives
+  at `src/cluster/mod.rs:305-329` and is feature-complete.
+
+=== Actual blocker (file:line)
+
+**No consumers exist.**  A workspace-wide grep for `dyn ClusterPort` or
+`ClusterPort>` returns zero hits outside the trait definition and the impl.
+
+`ClusterManager::new` is only called from a unit test in
+`src/cluster/mod.rs:345` and from clustering tests under
+`src/index/axis/cluster_manager.rs`.  Production bootstrap
+(`src/database.rs`) does not construct a `ClusterManager` at all.
+
+=== Recommended next step (small, actionable)
+
+. Add `cluster_port: Option<Arc<dyn proximadb_runtime::ClusterPort>>` to
+  `SharedServices` (`src/network/shared_services.rs:42-76`).
+. Plumb it through `MultiServer::new_with_queue_client` so health
+  endpoints can report cluster state.
+. Construct a `ClusterManager` and inject when `[distributed]` config is
+  populated; pass `None` for single-node.
+
+That's a 2-3 file change and is the most actionable concrete progress
+among the four tasks — but it has zero behavioral payoff today because
+no health endpoint actually consumes cluster state yet.
+
+== Task #76 — Phase 9.10 Service composition to runtime crate
+
+=== Current state
+
+* `proximadb_runtime::composition` is a 52-line stub
+  (`ServiceComposer`, `DIContainer`) marked `TODO: Move service
+  composition logic from src/services/mod.rs`.
+* Real composition is `SharedServices` at
+  `src/network/shared_services.rs` (1049 lines), holding 14 `Arc<>`-wrapped
+  root-crate concrete services (`CatalogManager`, `SegmentRegistry`,
+  `CollectionService`, `VectorOperationsService`, `GraphService`,
+  `DocumentService`, `ObservabilityService`, `UnifiedHandlers`,
+  `MetricsCollector`, `InternalMetricsUpdater`, `UnifiedQueryFacade`,
+  `GraphQueryService`, `GraphExecutionService`, `ApiHandlersPort`).
+
+=== Actual blocker
+
+Of the 14 fields in `SharedServices`, only `ApiHandlersPort` is already a
+trait object.  The remaining 13 are concrete root-crate types whose
+construction graph deeply uses xCatalog + WAL + metadata + storage
+internals that have not been crate-extracted yet.
+
+The convergence work (Phase 1-5 of the workspace refactor) extracted
+foundations and modality runtimes but stopped before pulling the
+composition layer apart.  Service composition cannot move until each
+service either: (a) is itself extracted into a sibling crate, or
+(b) exposes a port trait that can live in `proximadb-runtime`.
+
+=== Recommended next step (multi-session)
+
+Pick one service at a time, define a port for it (mirroring the
+existing `VectorOpsPort` / `CollectionPort` pattern), and migrate
+`SharedServices` to hold `Arc<dyn XxxPort>`.  Estimated 13 such
+port-trait + impl pairs.  Not appropriate for a single mechanical pass.
+
+== Concrete change made this audit
+
+----
+src/cluster/rpc/mod.rs: re-export RpcLogEntry instead of stale LogEntry
+                         (fixes baseline build break from commit cdbe28516)
+----
+
+No commit was made — the change reverts the in-flight rename damage,
+which the user is presumably about to fix in their next commit.
+
+== Summary table
+
+[cols="3,2,5"]
+|===
+| Task | Status (2026-05-25) | One-line blocker
+
+| #69 Security to runtime
+| Still blocked
+| `SecurityCoordinator::authenticate_request` returns root-crate `UnifiedUserContext` used in 117 sites; needs a `PortUserContext` design first
+
+| #70 Server bootstrap to runtime
+| Still blocked
+| Depends on #69 + #76; `database.rs:318` instantiates `MultiServer` with 3 root-crate types
+
+| #72 Cluster orchestration
+| Trait/impl done, no consumer
+| `ClusterPort` exists at `src/cluster/mod.rs:305` but nothing in `src/network/` or `src/database.rs` holds an `Arc<dyn ClusterPort>`; small follow-up possible
+
+| #76 Service composition
+| Still blocked
+| `SharedServices` holds 13 root-crate concrete services; each needs its own port trait first
+|===
+
+== Memory update proposal
+
+Update `memory/project_phase9_refactor_state.md` to record:
+
+. Phase 9 still at ~97%; no movement since 2026-05-16.
+. **Task #72 partial-done update:** `ClusterPort` trait + impl already
+  shipped before session 6 (at `src/cluster/mod.rs:302-329`); only
+  consumer wiring remains.
+. **Task #69 precise blocker:** `UnifiedUserContext` proliferation
+  (117 refs, 20 files) — not the `SecurityCoordinator` deps that the
+  memory currently calls out.
+. **Baseline:** the `cdbe28516` rename is incomplete; the `rpc/mod.rs`
+  re-export needs `RpcLogEntry` substituted for `LogEntry` before any
+  Phase 9 work can verify against the branch.
