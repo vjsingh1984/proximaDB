@@ -29,8 +29,8 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use super::optimizer::{
-    JoinType, ObservabilityQueryType, PlanNode, PlanNodeType, PredicateOp, PredicateValue,
-    QueryPlan, VectorSource,
+    FederatedQueryPlan, JoinType, ObservabilityQueryType, PlanNode, PlanNodeType, PredicateOp,
+    PredicateValue, VectorSource,
 };
 use crate::core::search::SearchParams;
 use crate::proto::proximadb_v1::{
@@ -299,7 +299,7 @@ impl FederatedExecutor {
     }
 
     /// Execute a query plan
-    pub async fn execute(&self, plan: QueryPlan) -> Result<ExecutionResult> {
+    pub async fn execute(&self, plan: FederatedQueryPlan) -> Result<ExecutionResult> {
         let start = std::time::Instant::now();
 
         let result = self.execute_node(&plan.root, true).await?;

@@ -175,8 +175,8 @@ pub use validator::{PlanValidator, ValidationResult};
 // Re-export federated query types
 pub use federated::{
     CrossModelOptimizer, ExecutionResult as FederatedExecutionResult, FederatedExecutor,
-    FederatedParser, FederatedQuery, FederatedQueryContext, PlanNode,
-    QueryPlan as FederatedQueryPlan, QueryType as FederatedQueryType,
+    FederatedParser, FederatedQuery, FederatedQueryContext, FederatedQueryPlan, PlanNode,
+    QueryType as FederatedQueryType,
 };
 
 // Re-export compute bridge types for storage-compute separation

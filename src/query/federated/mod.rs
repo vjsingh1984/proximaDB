@@ -125,7 +125,7 @@ pub mod parser;
 
 // Re-exports
 pub use execution::{ExecutionResult, FederatedExecutor};
-pub use optimizer::{CrossModelOptimizer, PlanNode, QueryPlan};
+pub use optimizer::{CrossModelOptimizer, FederatedQueryPlan, PlanNode};
 pub use parser::{FederatedParser, FederatedQuery, QueryType};
 
 use anyhow::Result;

@@ -9,7 +9,9 @@ use dashmap::DashMap;
 use thiserror::Error;
 use tracing::{debug, info};
 
-use crate::query::federated::{CrossModelOptimizer, FederatedParser, FederatedQuery, QueryPlan};
+use crate::query::federated::{
+    CrossModelOptimizer, FederatedParser, FederatedQuery, FederatedQueryPlan,
+};
 
 /// Unique identifier for a prepared statement
 pub type PreparedStatementId = String;
@@ -184,7 +186,7 @@ pub struct PreparedStatement {
     /// Parsed federated query (Arc for sharing without Clone)
     pub parsed_query: Arc<FederatedQuery>,
     /// Optimized query plan (Arc for sharing without Clone)
-    pub optimized_plan: Arc<QueryPlan>,
+    pub optimized_plan: Arc<FederatedQueryPlan>,
     /// Parameter bindings extracted from the SQL
     pub parameter_bindings: Vec<ParameterBinding>,
     /// Creation timestamp
@@ -607,7 +609,7 @@ impl PreparedStatementCache {
     }
 
     /// Get the optimized query plan for a prepared statement
-    pub fn get_plan(&self, id: &str) -> PreparedResult<Arc<QueryPlan>> {
+    pub fn get_plan(&self, id: &str) -> PreparedResult<Arc<FederatedQueryPlan>> {
         let entry = self
             .cache
             .get(id)

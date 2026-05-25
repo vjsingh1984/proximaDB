@@ -749,9 +749,15 @@ impl PlanNodeType {
     }
 }
 
-/// Complete query plan
+/// Cross-model federated query plan: PlanNode tree + cost + metadata.
+///
+/// Naming note: this type used to be called `QueryPlan` and collided with
+/// the graph/distributed/orchestration/proto `QueryPlan` types. Renamed
+/// to make the federation-layer specialisation explicit at call sites.
+/// `src/query/mod.rs` previously re-exported it as `FederatedQueryPlan`;
+/// the rename makes that alias redundant.
 #[derive(Debug, Clone)]
-pub struct QueryPlan {
+pub struct FederatedQueryPlan {
     /// Root of the plan tree
     pub root: PlanNode,
     /// Total estimated cost
@@ -2083,7 +2089,7 @@ impl PlanCacheKey {
 #[derive(Debug, Clone)]
 pub struct CachedPlan {
     /// The cached query plan
-    pub plan: QueryPlan,
+    pub plan: FederatedQueryPlan,
     /// When the plan was created
     pub created_at: std::time::Instant,
     /// Number of times this plan was used
@@ -2119,7 +2125,7 @@ impl PlanCache {
     }
 
     /// Get a cached plan if available
-    pub fn get(&self, key: &PlanCacheKey) -> Option<QueryPlan> {
+    pub fn get(&self, key: &PlanCacheKey) -> Option<FederatedQueryPlan> {
         let mut cache = self.cache.write();
 
         if let Some(entry) = cache.get_mut(key) {
@@ -2137,7 +2143,7 @@ impl PlanCache {
     }
 
     /// Cache a plan
-    pub fn put(&self, key: PlanCacheKey, plan: QueryPlan) {
+    pub fn put(&self, key: PlanCacheKey, plan: FederatedQueryPlan) {
         let mut cache = self.cache.write();
 
         // Evict if at capacity
@@ -2547,7 +2553,7 @@ impl CrossModelOptimizer {
     ///
     /// If a statistics provider is configured, uses cardinality-aware
     /// cost estimation for better plan selection.
-    pub fn optimize(&self, query: &FederatedQuery) -> Result<QueryPlan> {
+    pub fn optimize(&self, query: &FederatedQuery) -> Result<FederatedQueryPlan> {
         // If we have a statistics provider, collect stats for referenced collections
         // and delegate to optimize_with_statistics for cardinality-aware planning
         if let Some(ref provider) = self.statistics_provider {
@@ -2603,7 +2609,7 @@ impl CrossModelOptimizer {
         &self,
         query: &FederatedQuery,
         stats: &HashMap<String, ModelStatistics>,
-    ) -> Result<QueryPlan> {
+    ) -> Result<FederatedQueryPlan> {
         // Check plan cache first
         let cache_key = PlanCacheKey::from_query(query);
         if let Some(cached_plan) = self.plan_cache.get(&cache_key) {
@@ -5033,11 +5039,11 @@ impl CrossModelOptimizer {
     }
 
     /// Build physical plan from logical plan
-    fn build_physical_plan(&self, plan: PlanNode) -> Result<QueryPlan> {
+    fn build_physical_plan(&self, plan: PlanNode) -> Result<FederatedQueryPlan> {
         let total_cost = self.calculate_total_cost(&plan);
         let involved_models = self.collect_involved_models(&plan);
 
-        Ok(QueryPlan {
+        Ok(FederatedQueryPlan {
             root: plan,
             total_cost,
             metadata: PlanMetadata {

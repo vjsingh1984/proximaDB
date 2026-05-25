@@ -17,7 +17,7 @@ use super::refresh::RefreshStrategy;
 use crate::catalog::internal::{
     CatalogObject, ModelProperties, ObjectSchema, ObjectType, SchemaEnforcementMode,
 };
-use crate::query::federated::{ExecutionResult, FederatedQuery, QueryPlan};
+use crate::query::federated::{ExecutionResult, FederatedQuery, FederatedQueryPlan};
 
 /// Unique identifier for a materialized view
 pub type MaterializedViewId = String;
@@ -325,7 +325,7 @@ pub struct MaterializedView {
     /// Parsed query (cached)
     pub parsed_query: Option<Arc<FederatedQuery>>,
     /// Optimized query plan (cached)
-    pub query_plan: Option<Arc<QueryPlan>>,
+    pub query_plan: Option<Arc<FederatedQueryPlan>>,
     /// Creation timestamp
     pub created_at: DateTime<Utc>,
     /// Last updated timestamp
