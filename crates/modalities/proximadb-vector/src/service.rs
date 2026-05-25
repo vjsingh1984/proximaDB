@@ -9,7 +9,7 @@ use proximadb_data_model::ProximaValue;
 use proximadb_kernel::error::{ProximaDBError, QueryError};
 use proximadb_records::{ProximaRecord, ProximaTreeNode};
 use proximadb_vector_query::{
-    DistanceMetric as ContractDistanceMetric, VectorQueryService, VectorSearchRequest,
+    DistanceMetric as ContractDistanceMetric, VectorQueryService, VectorQueryRequest,
     VectorSearchResult,
 };
 use std::collections::HashMap;
@@ -106,7 +106,7 @@ impl VectorServiceImpl {
     /// modules (distance, index, search) without depending on legacy services or storage.
     async fn execute_search(
         &self,
-        request: &VectorSearchRequest,
+        request: &VectorQueryRequest,
     ) -> Result<Vec<ProximaRecord>, ProximaDBError> {
         info!(
             collection = %request.collection_id,
@@ -264,7 +264,7 @@ impl Default for VectorServiceImpl {
 impl VectorQueryService for VectorServiceImpl {
     async fn vector_search(
         &self,
-        request: VectorSearchRequest,
+        request: VectorQueryRequest,
     ) -> proximadb_vector_query::VectorQueryResult<VectorSearchResult> {
         let start = Instant::now();
 
@@ -312,7 +312,7 @@ impl VectorQueryService for VectorServiceImpl {
 mod tests {
     use super::*;
     use proximadb_records::{EmbeddingCell, ProximaRecord};
-    use proximadb_vector_query::{DistanceMetric as ContractMetric, VectorSearchRequest};
+    use proximadb_vector_query::{DistanceMetric as ContractMetric, VectorQueryRequest};
 
     fn vector_record(id: &str, values: Vec<f32>) -> ProximaRecord {
         ProximaRecord {
@@ -369,7 +369,7 @@ mod tests {
         let service = VectorServiceImpl::new().unwrap();
         seed_service(&service);
 
-        let request = VectorSearchRequest {
+        let request = VectorQueryRequest {
             collection_id: "test_collection".to_string(),
             query_vector: vec![0.1, 0.2, 0.3],
             top_k: 5,
@@ -390,7 +390,7 @@ mod tests {
         let service = VectorServiceImpl::new().unwrap();
         seed_service(&service);
 
-        let request = VectorSearchRequest {
+        let request = VectorQueryRequest {
             collection_id: "test_collection".to_string(),
             query_vector: vec![0.1, 0.2, 0.3],
             top_k: 10,
@@ -421,7 +421,7 @@ mod tests {
         let service = VectorServiceImpl::new().unwrap();
         seed_service(&service);
 
-        let request = VectorSearchRequest {
+        let request = VectorQueryRequest {
             collection_id: "test_collection".to_string(),
             query_vector: vec![1.0, 0.0, 0.0],
             top_k: 3,
@@ -440,7 +440,7 @@ mod tests {
     async fn test_empty_vector_service_does_not_fabricate_results() {
         let service = VectorServiceImpl::new().unwrap();
 
-        let request = VectorSearchRequest {
+        let request = VectorQueryRequest {
             collection_id: "missing_collection".to_string(),
             query_vector: vec![0.1, 0.2, 0.3],
             top_k: 5,

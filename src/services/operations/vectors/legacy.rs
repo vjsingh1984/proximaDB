@@ -76,7 +76,7 @@ use super::validation::{
 };
 
 // Import vector query service contract (Phase 2.1)
-use proximadb_vector_query::{VectorQueryService, VectorSearchRequest, VectorSearchResult};
+use proximadb_vector_query::{VectorQueryRequest, VectorQueryService, VectorSearchResult};
 
 use crate::services::operations::{BatchOperationResult, BulkWriteRouter, OperationMetrics};
 use crate::storage::cache::specialized::query_cache::{QueryCache, QueryKey};
@@ -4871,7 +4871,7 @@ mod index_first_search_tests {
 impl VectorQueryService for VectorOperationsService {
     async fn vector_search(
         &self,
-        request: VectorSearchRequest,
+        request: VectorQueryRequest,
     ) -> proximadb_vector_query::VectorQueryResult<VectorSearchResult> {
         use std::time::Instant;
 

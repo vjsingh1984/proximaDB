@@ -26,12 +26,19 @@ use proximadb_records::ProximaRecord;
 /// Canonical vector-query contract result type.
 pub type VectorQueryResult<T> = std::result::Result<T, ProximaDBError>;
 
-/// Core vector search request for stable cross-modal queries.
+/// Core vector-query request for stable cross-modal queries.
 ///
 /// This request type uses `ProximaRecord` for results and stable primitive types
 /// for parameters, making it suitable for trait-based service contracts.
+///
+/// Naming note: this type used to be called `VectorQueryRequest` and collided
+/// with the proto `proximadb_v1::VectorQueryRequest` (wire form with
+/// `queries: Vec<SearchQuery>`) and the now-renamed
+/// `LegacyVectorQueryRequest` in `core::service_types`. Renamed to
+/// `VectorQueryRequest` to match the crate name (proximadb-vector-query)
+/// and to mark this as the in-process query-service request shape.
 #[derive(Debug, Clone)]
-pub struct VectorSearchRequest {
+pub struct VectorQueryRequest {
     /// Collection to search.
     pub collection_id: String,
     /// Query vector.
@@ -84,7 +91,7 @@ pub trait VectorQueryService: Send + Sync {
     /// # Examples
     ///
     /// ```ignore
-    /// let request = VectorSearchRequest {
+    /// let request = VectorQueryRequest {
     ///     collection_id: "embeddings".to_string(),
     ///     query_vector: vec![0.1, 0.2, 0.3],
     ///     top_k: 10,
@@ -96,7 +103,7 @@ pub trait VectorQueryService: Send + Sync {
     /// ```
     async fn vector_search(
         &self,
-        request: VectorSearchRequest,
+        request: VectorQueryRequest,
     ) -> VectorQueryResult<VectorSearchResult>;
 }
 
@@ -159,7 +166,7 @@ mod tests {
 
     #[test]
     fn vector_search_request_has_required_fields() {
-        let request = VectorSearchRequest {
+        let request = VectorQueryRequest {
             collection_id: "test_collection".to_string(),
             query_vector: vec![0.1, 0.2, 0.3],
             top_k: 10,
@@ -176,7 +183,7 @@ mod tests {
 
     #[test]
     fn vector_search_request_uses_foundation_metric_default() {
-        let request = VectorSearchRequest {
+        let request = VectorQueryRequest {
             collection_id: "test".to_string(),
             query_vector: vec![0.0],
             top_k: 5,
