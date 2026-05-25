@@ -50,6 +50,13 @@ pub struct RankSearchRequest {
     /// provider but required so the wire shape is the production one.
     #[serde(default)]
     pub query_vector: Vec<f32>,
+    /// Optional query text for the BM25 / full-text side of hybrid
+    /// retrieval (R-7c.3.1). The `HybridCoordinatorAdapter` forwards
+    /// it to the BM25 backend; absent / empty text means "vector-only"
+    /// mode (the BM25 closure still fires but with an empty query, so
+    /// the backend can return nothing or apply its own fallback).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub query_text: Option<String>,
     /// Result count after the global phase.
     #[serde(default = "default_top_k")]
     pub k: usize,
@@ -518,11 +525,11 @@ impl CandidateProvider for HybridCoordinatorAdapter {
         let collection_for_bm25 = request.collection.clone();
         let collection_for_vec = request.collection.clone();
 
-        // v1: pull query text from the rank_overrides bag if present
-        // (no top-level `query_text` field on RankSearchRequest yet —
-        // R-7c.3.1 will add one alongside `query_vector`). Empty text
-        // is a sentinel "vector-only" mode for the BM25 closure.
-        let query_text = String::new();
+        // R-7c.3.1: query_text now flows from the request. Empty
+        // string is the documented "vector-only" sentinel — backends
+        // can short-circuit on empty input or apply their own
+        // fallback (e.g. broad recall).
+        let query_text = request.query_text.clone().unwrap_or_default();
 
         let results = self
             .coordinator
@@ -627,6 +634,7 @@ mod tests {
         let req = RankSearchRequest {
             collection: "docs".into(),
             query_vector: vec![0.1, 0.2, 0.3],
+            query_text: None,
             k: 50,
             rank_profile: Some("semantic_plus_ce".into()),
             rank_overrides: Some(RankOverrides {
@@ -659,6 +667,7 @@ mod tests {
         let req = RankSearchRequest {
             collection: "docs".into(),
             query_vector: vec![],
+            query_text: None,
             k: 10,
             rank_profile: None,
             rank_overrides: None,
@@ -806,6 +815,7 @@ mod tests {
         let req = RankSearchRequest {
             collection: "docs".into(),
             query_vector: vec![],
+            query_text: None,
             k: 10,
             rank_profile: None,
             rank_overrides: None,
@@ -828,6 +838,7 @@ mod tests {
         let req = RankSearchRequest {
             collection: "docs".into(),
             query_vector: vec![],
+            query_text: None,
             k: 10,
             rank_profile: Some("ghost".into()),
             rank_overrides: None,
@@ -849,6 +860,7 @@ mod tests {
         let req = RankSearchRequest {
             collection: "docs".into(),
             query_vector: vec![],
+            query_text: None,
             k: 3,
             rank_profile: Some("test".into()),
             rank_overrides: None,
@@ -878,6 +890,7 @@ mod tests {
         let req = RankSearchRequest {
             collection: "docs".into(),
             query_vector: vec![],
+            query_text: None,
             k: 5,
             rank_profile: Some("test".into()),
             rank_overrides: None,
@@ -902,6 +915,7 @@ mod tests {
         let req = RankSearchRequest {
             collection: "docs".into(),
             query_vector: vec![0.5; 384],
+            query_text: None,
             k: 1,
             rank_profile: Some("test".into()),
             rank_overrides: None,
@@ -935,6 +949,7 @@ mod tests {
         let req = RankSearchRequest {
             collection: "x".into(),
             query_vector: vec![],
+            query_text: None,
             k: 5,
             rank_profile: None,
             rank_overrides: None,
@@ -975,6 +990,7 @@ mod tests {
         let req = RankSearchRequest {
             collection: "docs".into(),
             query_vector: vec![],
+            query_text: None,
             k: 5,
             rank_profile: Some("test".into()),
             rank_overrides: Some(RankOverrides {
@@ -1033,6 +1049,7 @@ mod tests {
         let req = RankSearchRequest {
             collection: "docs".into(),
             query_vector: vec![],
+            query_text: None,
             k: 5,
             rank_profile: Some("two_phase".into()),
             rank_overrides: None,
@@ -1065,6 +1082,7 @@ mod tests {
         let req = RankSearchRequest {
             collection: "docs".into(),
             query_vector: vec![],
+            query_text: None,
             k: 5,
             rank_profile: Some("two_phase".into()),
             rank_overrides: None,
@@ -1192,6 +1210,7 @@ mod tests {
         RankSearchRequest {
             collection: collection.into(),
             query_vector,
+            query_text: None,
             k,
             rank_profile: None,
             rank_overrides: None,
@@ -1318,5 +1337,123 @@ mod tests {
         assert!(doc_id_to_handle("abc").is_none());
         assert!(doc_id_to_handle("-5").is_none()); // u32 rejects negatives
         assert!(doc_id_to_handle("").is_none());
+    }
+
+    // ---------------- R-7c.3.1: query_text plumbing tests ----------------
+
+    #[tokio::test]
+    async fn hybrid_adapter_forwards_query_text_to_bm25() {
+        use std::sync::Mutex;
+        struct CapturingBackend {
+            last_bm25_query: Mutex<Option<String>>,
+        }
+        #[async_trait::async_trait]
+        impl HybridSearchBackend for CapturingBackend {
+            async fn bm25_search(
+                &self,
+                _c: &str,
+                query: &str,
+            ) -> RankResult<Vec<BM25Result>> {
+                *self.last_bm25_query.lock().unwrap() = Some(query.to_string());
+                Ok(vec![BM25Result {
+                    doc_id: "1".into(),
+                    score: 0.5,
+                    highlights: None,
+                    metadata: HashMap::new(),
+                }])
+            }
+            async fn vector_search(
+                &self,
+                _c: &str,
+                _v: &[f32],
+            ) -> RankResult<Vec<VectorResult>> {
+                Ok(vec![VectorResult {
+                    doc_id: "1".into(),
+                    score: 0.8,
+                    distance: 0.2,
+                    metadata: HashMap::new(),
+                }])
+            }
+        }
+        let backend = Arc::new(CapturingBackend {
+            last_bm25_query: Mutex::new(None),
+        });
+        let adapter = HybridCoordinatorAdapter::new(
+            FusionStrategy::ReciprocalRank { k: 60 },
+            backend.clone(),
+        );
+        let mut req = rank_req("docs", vec![0.1], 5);
+        req.query_text = Some("laptop computer".into());
+        let _ = adapter.candidates(&req).await.unwrap();
+        let captured = backend.last_bm25_query.lock().unwrap().clone();
+        assert_eq!(captured.as_deref(), Some("laptop computer"));
+    }
+
+    #[tokio::test]
+    async fn hybrid_adapter_uses_empty_string_when_query_text_absent() {
+        // Contract: missing query_text → empty string sentinel.
+        use std::sync::Mutex;
+        struct CapturingBackend {
+            last_bm25_query: Mutex<Option<String>>,
+        }
+        #[async_trait::async_trait]
+        impl HybridSearchBackend for CapturingBackend {
+            async fn bm25_search(
+                &self,
+                _c: &str,
+                query: &str,
+            ) -> RankResult<Vec<BM25Result>> {
+                *self.last_bm25_query.lock().unwrap() = Some(query.to_string());
+                Ok(Vec::new())
+            }
+            async fn vector_search(
+                &self,
+                _c: &str,
+                _v: &[f32],
+            ) -> RankResult<Vec<VectorResult>> {
+                Ok(Vec::new())
+            }
+        }
+        let backend = Arc::new(CapturingBackend {
+            last_bm25_query: Mutex::new(None),
+        });
+        let adapter = HybridCoordinatorAdapter::new(
+            FusionStrategy::ReciprocalRank { k: 60 },
+            backend.clone(),
+        );
+        let req = rank_req("docs", vec![0.5], 5); // query_text omitted by rank_req()
+        let _ = adapter.candidates(&req).await.unwrap();
+        let captured = backend.last_bm25_query.lock().unwrap().clone();
+        assert_eq!(captured.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn request_query_text_round_trips_through_json() {
+        let req = RankSearchRequest {
+            collection: "docs".into(),
+            query_vector: vec![0.1],
+            query_text: Some("hello world".into()),
+            k: 5,
+            rank_profile: None,
+            rank_overrides: None,
+        };
+        let j = serde_json::to_string(&req).unwrap();
+        assert!(j.contains("query_text"));
+        let back: RankSearchRequest = serde_json::from_str(&j).unwrap();
+        assert_eq!(back.query_text.as_deref(), Some("hello world"));
+    }
+
+    #[test]
+    fn request_query_text_omitted_from_json_when_none() {
+        let req = RankSearchRequest {
+            collection: "docs".into(),
+            query_vector: vec![0.1],
+            query_text: None,
+            k: 5,
+            rank_profile: None,
+            rank_overrides: None,
+        };
+        let j = serde_json::to_string(&req).unwrap();
+        assert!(!j.contains("query_text"));
     }
 }
