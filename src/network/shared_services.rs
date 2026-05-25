@@ -85,6 +85,20 @@ pub struct SharedServices {
     /// See `docs/_internal/status/PHASE9_REMAINING_2026_05_25.adoc`
     /// for the full Task #72 wiring plan.
     pub cluster_port: Option<Arc<dyn proximadb_runtime::ClusterPort>>,
+    /// Port-typed view of `collection_service` for Phase 9.10 / Task #76
+    /// consumer migration.
+    ///
+    /// Same underlying `CollectionService` instance as `collection_service`,
+    /// just held behind the `CollectionPort` trait object so consumers can
+    /// migrate off the concrete type incrementally. Once all consumers use
+    /// `collection_port`, the concrete `collection_service` field can be
+    /// dropped — that landing is what completes the Task #76 collection-service
+    /// slice. Same parallel-field pattern as the existing `api_handlers`
+    /// (which shadows `request_handlers`).
+    pub collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
+    /// Port-typed view of `vector_operations_service` for Phase 9.10 / Task #76
+    /// consumer migration. Same pattern as `collection_port` above.
+    pub vector_ops_port: Arc<dyn proximadb_runtime::VectorOpsPort>,
 }
 
 impl SharedServices {
@@ -857,7 +871,7 @@ impl SharedServices {
                 catalog_manager,
                 segment_registry: Arc::new(crate::catalog::SegmentRegistry::new()),
                 collection_service: collection_service.clone(),
-                vector_operations_service,
+                vector_operations_service: vector_operations_service.clone(),
                 graph_service,
                 graph_query_service,
                 graph_execution_service,
@@ -872,6 +886,15 @@ impl SharedServices {
                 // single-node bootstrap; populate via builder when [distributed]
                 // config is present and a ClusterManager has been constructed.
                 cluster_port: None,
+                // Task #76 collection slice: port-typed view of the same
+                // CollectionService instance held by `collection_service`.
+                // Consumers should prefer `collection_port` going forward.
+                collection_port: collection_service.clone()
+                    as Arc<dyn proximadb_runtime::CollectionPort>,
+                // Task #76 vector-ops slice: port-typed view of the same
+                // VectorOperationsService instance held by `vector_operations_service`.
+                vector_ops_port: vector_operations_service.clone()
+                    as Arc<dyn proximadb_runtime::VectorOpsPort>,
             },
             collection_service,
         ))
