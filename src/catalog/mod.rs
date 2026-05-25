@@ -322,7 +322,7 @@ impl CatalogManager {
         token: &str,
         catalog_name: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use crate::proto::proximadb_v1::UnityCatalogConfig;
+        use unity::UnityCatalogConfig;
 
         let config = UnityCatalogConfig {
             workspace_url: workspace_url.to_string(),
