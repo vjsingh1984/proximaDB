@@ -629,22 +629,25 @@ impl DrProviderAdapter for MockDrProviderAdapter {
         }
         let key = Self::idem_key(policy);
         // Idempotency: same (policy_id, policy_version) returns the
-        // same binding rather than creating a new one.
-        let binding =
-            state.rules.entry(key.clone()).or_insert_with(|| {
-                ProviderReplicationBinding {
-                    provider_policy_id: Some(format!("mock_policy_{key}")),
-                    provider_rule_id: format!(
-                        "dr-{}-v{}",
-                        policy.policy_id, policy.policy_version
-                    ),
-                    provider_role_arn: None,
-                    provider_kms_key_id: policy
-                        .provider_binding
-                        .as_ref()
-                        .and_then(|b| b.provider_kms_key_id.clone()),
-                }
-            });
+        // same binding rather than creating a new one. Build the
+        // binding eagerly then clone it so we can release the
+        // `rules` borrow before touching `observed`.
+        let binding = state
+            .rules
+            .entry(key.clone())
+            .or_insert_with(|| ProviderReplicationBinding {
+                provider_policy_id: Some(format!("mock_policy_{key}")),
+                provider_rule_id: format!(
+                    "dr-{}-v{}",
+                    policy.policy_id, policy.policy_version
+                ),
+                provider_role_arn: None,
+                provider_kms_key_id: policy
+                    .provider_binding
+                    .as_ref()
+                    .and_then(|b| b.provider_kms_key_id.clone()),
+            })
+            .clone();
         // Reflect the rule into observed state so the next fetch_state
         // call sees it.
         state.observed.insert(
@@ -667,7 +670,7 @@ impl DrProviderAdapter for MockDrProviderAdapter {
                 provider_kms_key_id: binding.provider_kms_key_id.clone(),
             },
         );
-        Ok(binding.clone())
+        Ok(binding)
     }
 
     async fn fetch_state(
