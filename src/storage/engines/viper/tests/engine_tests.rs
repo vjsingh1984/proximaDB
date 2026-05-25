@@ -132,6 +132,7 @@ mod tests {
                 text_columns: vec![],
                 text_storage_configs: vec![],
                 enable_dual_use_embeddings: None,
+                canonical_embedding_precision: None,
             }),
             stats: None,
             created_at: chrono::Utc::now().timestamp(),

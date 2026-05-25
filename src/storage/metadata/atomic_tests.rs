@@ -74,6 +74,7 @@ mod tests {
                 text_columns: vec![],
                 text_storage_configs: vec![],
                 enable_dual_use_embeddings: None,
+                canonical_embedding_precision: None,
             }),
             stats: Some(proximadb_v1::CollectionStats {
                 vector_count: 0,
@@ -279,6 +280,7 @@ mod tests {
                         filterable_columns: vec![],
                         index_configs: vec![],
                         enable_dual_use_embeddings: None,
+                        canonical_embedding_precision: None,
                         quantization: None,
                         storage_config: None,
                         primary_index: Some("default".to_string()),
@@ -343,6 +345,7 @@ mod tests {
                         filterable_columns: vec![],
                         index_configs: vec![],
                         enable_dual_use_embeddings: None,
+                        canonical_embedding_precision: None,
                         quantization: None,
                         storage_config: None,
                         primary_index: Some("default".to_string()),

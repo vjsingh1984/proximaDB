@@ -3253,6 +3253,7 @@ mod minimal_compaction_tests {
                 text_columns: vec![],
                 text_storage_configs: vec![],
                 enable_dual_use_embeddings: None,
+                canonical_embedding_precision: None,
             }),
             stats: Some(crate::proto::proximadb_v1::CollectionStats {
                 vector_count: 0,

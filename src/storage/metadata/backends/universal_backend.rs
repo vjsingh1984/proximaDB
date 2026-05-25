@@ -1819,6 +1819,7 @@ mod tests {
             text_columns: vec![],
             text_storage_configs: vec![],
             enable_dual_use_embeddings: None,
+            canonical_embedding_precision: None,
         };
 
         // Create a proto collection
@@ -1971,6 +1972,7 @@ mod integration_tests {
                 text_columns: vec![],
                 text_storage_configs: vec![],
                 enable_dual_use_embeddings: None,
+                canonical_embedding_precision: None,
             }),
             stats: Some(CollectionStats {
                 vector_count: 0,
@@ -2071,6 +2073,7 @@ mod integration_tests {
                 text_columns: vec![],
                 text_storage_configs: vec![],
                 enable_dual_use_embeddings: None,
+                canonical_embedding_precision: None,
             }),
             stats: Some(CollectionStats {
                 vector_count: 0,
@@ -2179,6 +2182,7 @@ mod integration_tests {
                 text_columns: vec![],
                 text_storage_configs: vec![],
                 enable_dual_use_embeddings: None,
+                canonical_embedding_precision: None,
             }),
             stats: Some(CollectionStats {
                 vector_count: 1000,
