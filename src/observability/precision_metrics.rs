@@ -280,8 +280,25 @@ pub fn precision_metrics_registry() -> &'static Registry {
 /// hot-path callers read via `metrics()` and never re-init.
 pub fn init_precision_metrics() -> &'static PrecisionMetrics {
     METRICS.get_or_init(|| {
-        PrecisionMetrics::register(precision_metrics_registry())
-            .expect("PrecisionMetrics::register must succeed on first init")
+        let metrics = PrecisionMetrics::register(precision_metrics_registry())
+            .expect("PrecisionMetrics::register must succeed on first init");
+        // Seed `canonical_bytes` with a zero-valued observation under a
+        // sentinel `(collection, precision)` label so the family
+        // appears on `/metrics/prometheus` scrapes BEFORE any
+        // production write observes a real value. Without this,
+        // prometheus's `Registry::gather()` returns nothing for an
+        // unobserved `*Vec` and the family stays invisible to
+        // operators on a cold server. The sentinel uses a reserved
+        // label value (`__init__`) that production code won't collide
+        // with. Only the test-asserted family is seeded; the rest
+        // surface naturally once writes happen.
+        let init = "__init__";
+        let fp32_label = precision_label(proximadb_records::EmbeddingScalarType::Fp32);
+        metrics
+            .canonical_bytes
+            .with_label_values(&[init, fp32_label])
+            .set(0);
+        metrics
     })
 }
 
