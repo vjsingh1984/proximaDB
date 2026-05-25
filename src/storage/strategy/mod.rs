@@ -24,7 +24,7 @@ pub struct CollectionStrategyConfig {
     pub indexing_config: IndexingConfig,
 
     /// Storage engine configuration
-    pub storage_config: StorageConfig,
+    pub storage_config: StrategyStorageConfig,
 
     /// Search engine configuration
     pub search_config: StrategySearchConfig,
@@ -118,9 +118,12 @@ impl IndexingAlgorithm {
     }
 }
 
+/// Backwards-compat alias for [`StrategyStorageConfig`].
+pub type StorageConfig = StrategyStorageConfig;
+
 /// Storage engine configuration
 #[derive(Debug, Clone)]
-pub struct StorageConfig {
+pub struct StrategyStorageConfig {
     /// Storage engine type
     pub engine_type: StorageEngineType,
     /// Engine-specific parameters
@@ -186,7 +189,7 @@ impl Default for CollectionStrategyConfig {
                 },
                 parameters: HashMap::new(),
             },
-            storage_config: StorageConfig {
+            storage_config: StrategyStorageConfig {
                 engine_type: ProtoStorageEngine::Sst,
                 parameters: HashMap::new(),
             },

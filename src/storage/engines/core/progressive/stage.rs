@@ -105,9 +105,12 @@ impl ScoredCandidate {
     }
 }
 
+/// Backwards-compat alias for [`ProgressiveStageResult`].
+pub type StageResult = ProgressiveStageResult;
+
 /// Result from a stage execution
 #[derive(Debug)]
-pub struct StageResult {
+pub struct ProgressiveStageResult {
     /// Candidates that passed the stage filter
     pub candidates: Vec<ScoredCandidate>,
     /// Number of candidates before filtering

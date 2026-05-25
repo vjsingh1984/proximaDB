@@ -562,9 +562,12 @@ impl Default for StorageConfig {
 
 pub use proximadb_config::ServerConfig;
 
+/// Backwards-compat alias for [`CoreStorageConfig`].
+pub type StorageConfig = CoreStorageConfig;
+
 /// Storage engine layout, WAL, compaction, and filesystem optimization settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StorageConfig {
+pub struct CoreStorageConfig {
     /// Storage locations - each can host WriteBuffer, data, and indexes
     pub storage_locations: Vec<StorageLocation>,
 

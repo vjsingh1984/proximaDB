@@ -64,9 +64,12 @@ impl Ord for ScheduledTask {
     }
 }
 
+/// Backwards-compat alias for [`CompactionSchedulerStats`].
+pub type SchedulerStats = CompactionSchedulerStats;
+
 /// Statistics about scheduler operations
 #[derive(Debug, Clone, Default)]
-pub struct SchedulerStats {
+pub struct CompactionSchedulerStats {
     pub pending_tasks: usize,
     pub active_compactions: usize,
     pub completed_compactions: u64,
@@ -123,7 +126,7 @@ pub struct CompactionScheduler {
     /// Last compaction time per collection
     last_compaction: RwLock<HashMap<String, Instant>>,
     /// Statistics
-    stats: RwLock<SchedulerStats>,
+    stats: RwLock<CompactionSchedulerStats>,
     /// Shutdown flag
     shutdown: RwLock<bool>,
 }
@@ -144,7 +147,7 @@ impl CompactionScheduler {
             active_tasks: RwLock::new(HashMap::new()),
             concurrency_semaphore: Arc::new(Semaphore::new(max_concurrent)),
             last_compaction: RwLock::new(HashMap::new()),
-            stats: RwLock::new(SchedulerStats::default()),
+            stats: RwLock::new(CompactionSchedulerStats::default()),
             shutdown: RwLock::new(false),
         }
     }
@@ -369,7 +372,7 @@ impl CompactionScheduler {
     }
 
     /// Get current scheduler statistics
-    pub async fn get_stats(&self) -> SchedulerStats {
+    pub async fn get_stats(&self) -> CompactionSchedulerStats {
         self.stats.read().await.clone()
     }
 

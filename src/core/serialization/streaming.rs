@@ -18,9 +18,12 @@ use tracing::{debug, info, trace, warn};
 use crate::core::serialization::VectorSerializationConfig;
 use proximadb_runtime_common::pool::VectorMemoryPool;
 
+/// Backwards-compat alias for [`SerializationStreamingConfig`].
+pub type StreamingConfig = SerializationStreamingConfig;
+
 /// Configuration for streaming compression
 #[derive(Debug, Clone)]
-pub struct StreamingConfig {
+pub struct SerializationStreamingConfig {
     /// Buffer size for batching vectors
     pub buffer_size: usize,
     /// Maximum time to wait before flushing buffer
@@ -37,7 +40,7 @@ pub struct StreamingConfig {
     pub enable_monitoring: bool,
 }
 
-impl Default for StreamingConfig {
+impl Default for SerializationStreamingConfig {
     fn default() -> Self {
         Self {
             buffer_size: 100,                         // Vectors per batch
@@ -51,9 +54,12 @@ impl Default for StreamingConfig {
     }
 }
 
+/// Backwards-compat alias for [`SerializationStreamingMetrics`].
+pub type StreamingMetrics = SerializationStreamingMetrics;
+
 /// Performance metrics for streaming compression
 #[derive(Debug, Clone, Default)]
-pub struct StreamingMetrics {
+pub struct SerializationStreamingMetrics {
     /// Total number of vectors processed
     pub vectors_processed: u64,
     /// Number of batches processed
@@ -76,7 +82,7 @@ pub struct StreamingMetrics {
     pub queue_depth: usize,
 }
 
-impl StreamingMetrics {
+impl SerializationStreamingMetrics {
     /// Log a human-readable summary of streaming compression metrics
     pub fn print_summary(&self) {
         info!("🌊 Streaming Compression Metrics:");
@@ -132,11 +138,11 @@ pub struct CompressionResult {
 
 /// Streaming vector compressor for real-time workloads
 pub struct StreamingCompressor {
-    config: StreamingConfig,
+    config: SerializationStreamingConfig,
     #[allow(dead_code)]
     memory_pool: Arc<VectorMemoryPool>,
     work_tx: mpsc::Sender<CompressionWork>,
-    metrics: Arc<RwLock<StreamingMetrics>>,
+    metrics: Arc<RwLock<SerializationStreamingMetrics>>,
     workers: Vec<JoinHandle<()>>,
     next_batch_id: Arc<std::sync::atomic::AtomicU64>,
     adaptive_controller: Arc<RwLock<AdaptiveController>>,
@@ -222,10 +228,10 @@ impl AdaptiveController {
 
 impl StreamingCompressor {
     /// Create a new streaming compressor
-    pub fn new(config: StreamingConfig) -> Result<Self> {
+    pub fn new(config: SerializationStreamingConfig) -> Result<Self> {
         let memory_pool = Arc::new(VectorMemoryPool::new());
         let (work_tx, work_rx) = mpsc::channel(config.channel_capacity);
-        let metrics = Arc::new(RwLock::new(StreamingMetrics::default()));
+        let metrics = Arc::new(RwLock::new(SerializationStreamingMetrics::default()));
         let next_batch_id = Arc::new(std::sync::atomic::AtomicU64::new(1));
         let adaptive_controller =
             Arc::new(RwLock::new(AdaptiveController::new(config.buffer_size)));
@@ -323,7 +329,7 @@ impl StreamingCompressor {
     }
 
     /// Get current performance metrics
-    pub fn metrics(&self) -> StreamingMetrics {
+    pub fn metrics(&self) -> SerializationStreamingMetrics {
         self.metrics.read().clone()
     }
 
@@ -351,7 +357,7 @@ impl StreamingCompressor {
         worker_count: usize,
         work_rx: mpsc::Receiver<CompressionWork>,
         memory_pool: Arc<VectorMemoryPool>,
-        metrics: Arc<RwLock<StreamingMetrics>>,
+        metrics: Arc<RwLock<SerializationStreamingMetrics>>,
     ) -> Result<Vec<JoinHandle<()>>> {
         let work_rx = Arc::new(tokio::sync::Mutex::new(work_rx));
         let mut handles = Vec::new();
@@ -378,7 +384,7 @@ impl StreamingCompressor {
         worker_id: usize,
         work_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<CompressionWork>>>,
         memory_pool: Arc<VectorMemoryPool>,
-        metrics: Arc<RwLock<StreamingMetrics>>,
+        metrics: Arc<RwLock<SerializationStreamingMetrics>>,
     ) {
         trace!("🔧 Worker {} started", worker_id);
 
@@ -574,7 +580,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_streaming_compression_basic() -> Result<()> {
-        let config = StreamingConfig {
+        let config = SerializationStreamingConfig {
             worker_count: 2,
             buffer_size: 10,
             ..Default::default()
@@ -615,7 +621,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_compression() -> Result<()> {
-        let config = StreamingConfig::default();
+        let config = SerializationStreamingConfig::default();
         let compressor =
             StreamingCompressor::new(config).context("Failed to create streaming compressor")?;
 
@@ -649,7 +655,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_performance_monitoring() -> Result<()> {
-        let mut config = StreamingConfig::default();
+        let mut config = SerializationStreamingConfig::default();
         config.enable_monitoring = true;
         config.worker_count = 1;
 
@@ -680,7 +686,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adaptive_sizing() -> Result<()> {
-        let mut config = StreamingConfig::default();
+        let mut config = SerializationStreamingConfig::default();
         config.adaptive_sizing = true;
         config.target_latency_us = 1000; // 1ms target
         config.buffer_size = 20;
@@ -718,7 +724,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_compression() -> Result<()> {
-        let config = StreamingConfig {
+        let config = SerializationStreamingConfig {
             worker_count: 4,
             channel_capacity: 100,
             ..Default::default()

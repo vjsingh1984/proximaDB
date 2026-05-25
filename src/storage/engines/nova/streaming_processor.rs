@@ -11,9 +11,12 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, Semaphore, mpsc};
 use tokio::time::{Duration, timeout};
 use tracing::{debug, info, warn};
+/// Backwards-compat alias for [`NovaStreamingProcessorConfig`].
+pub type StreamingConfig = NovaStreamingProcessorConfig;
+
 /// Configuration for streaming row group processing
 #[derive(Debug, Clone)]
-pub struct StreamingConfig {
+pub struct NovaStreamingProcessorConfig {
     /// Maximum memory usage per processing pipeline
     pub max_memory_bytes: usize,
 
@@ -30,7 +33,7 @@ pub struct StreamingConfig {
     /// Memory threshold for backpressure (percentage)
     pub backpressure_threshold: f32,
 }
-impl Default for StreamingConfig {
+impl Default for NovaStreamingProcessorConfig {
     fn default() -> Self {
         Self {
             max_memory_bytes: 512 * 1024 * 1024, // 512MB
@@ -88,7 +91,7 @@ pub struct RowGroupCandidate {
 
 /// Streaming row group processor with memory management
 pub struct StreamingRowGroupProcessor {
-    pub(crate) config: StreamingConfig,
+    pub(crate) config: NovaStreamingProcessorConfig,
     memory_tracker: Arc<RwLock<MemoryTracker>>,
     semaphore: Arc<Semaphore>,
     processing_pipeline: Vec<ProcessingStage>,
@@ -114,7 +117,7 @@ pub struct StreamingContext {
 
 impl StreamingRowGroupProcessor {
     /// Create a new streaming processor
-    pub fn new(config: StreamingConfig) -> Self {
+    pub fn new(config: NovaStreamingProcessorConfig) -> Self {
         let semaphore = Arc::new(Semaphore::new(config.max_concurrent_processors));
         let memory_tracker = Arc::new(RwLock::new(MemoryTracker::new(config.max_memory_bytes)));
 
@@ -589,7 +592,7 @@ mod tests {
     use super::*;
     #[allow(dead_code)]
     fn test_streaming_config_defaults() {
-        let config = StreamingConfig::default();
+        let config = NovaStreamingProcessorConfig::default();
         assert_eq!(config.max_memory_bytes, 512 * 1024 * 1024);
         assert_eq!(config.prefetch_queue_size, 4);
         assert_eq!(config.max_concurrent_processors, 8);
@@ -617,7 +620,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_streaming_processor_creation() {
-        let config = StreamingConfig::default();
+        let config = NovaStreamingProcessorConfig::default();
         let processor = StreamingRowGroupProcessor::new(config);
         assert_eq!(processor.processing_pipeline.len(), 7);
         assert_eq!(

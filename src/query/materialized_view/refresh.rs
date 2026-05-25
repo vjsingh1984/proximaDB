@@ -279,7 +279,7 @@ pub struct RefreshScheduler {
     #[allow(dead_code)]
     is_running: AtomicBool,
     /// Statistics
-    stats: SchedulerStats,
+    stats: MaterializedViewSchedulerStats,
 }
 
 /// A scheduled view entry
@@ -306,9 +306,12 @@ struct PendingChange {
     debounce: Duration,
 }
 
+/// Backwards-compat alias for [`MaterializedViewSchedulerStats`].
+pub type SchedulerStats = MaterializedViewSchedulerStats;
+
 /// Scheduler statistics
 #[derive(Debug, Default)]
-pub struct SchedulerStats {
+pub struct MaterializedViewSchedulerStats {
     /// Total scheduled refreshes triggered
     pub scheduled_triggers: AtomicU64,
     /// Total data change triggers
@@ -329,7 +332,7 @@ impl RefreshScheduler {
                 pending_changes: DashMap::new(),
                 event_tx: tx,
                 is_running: AtomicBool::new(false),
-                stats: SchedulerStats::default(),
+                stats: MaterializedViewSchedulerStats::default(),
             },
             rx,
         )
@@ -504,7 +507,7 @@ impl RefreshScheduler {
     }
 
     /// Get scheduler statistics
-    pub fn stats(&self) -> &SchedulerStats {
+    pub fn stats(&self) -> &MaterializedViewSchedulerStats {
         &self.stats
     }
 

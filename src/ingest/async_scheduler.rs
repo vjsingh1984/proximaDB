@@ -108,8 +108,11 @@ impl Default for SchedulerConfig {
     }
 }
 
+/// Backwards-compat alias for [`IngestSchedulerStats`].
+pub type SchedulerStats = IngestSchedulerStats;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct SchedulerStats {
+pub struct IngestSchedulerStats {
     pub queued_by_priority: [usize; IngestPriority::COUNT],
     pub total_queued: usize,
     pub total_enqueued: u64,
@@ -189,13 +192,13 @@ impl IngestQueue {
         Some(task)
     }
 
-    pub async fn stats(&self) -> SchedulerStats {
+    pub async fn stats(&self) -> IngestSchedulerStats {
         let state = self.state.lock().await;
         let mut queued_by_priority = [0; IngestPriority::COUNT];
         for (idx, lane) in state.lanes.iter().enumerate() {
             queued_by_priority[idx] = lane.len();
         }
-        SchedulerStats {
+        IngestSchedulerStats {
             queued_by_priority,
             total_queued: queued_by_priority.iter().sum(),
             total_enqueued: state.total_enqueued,

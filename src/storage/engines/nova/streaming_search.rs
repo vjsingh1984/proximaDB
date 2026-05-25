@@ -88,7 +88,7 @@ pub struct StreamingSearchResult {
     pub progressive_metrics: ProgressiveSearchResult,
 
     /// Streaming metrics
-    pub streaming_metrics: StreamingMetrics,
+    pub streaming_metrics: NovaStreamingMetrics,
 
     /// Zone map metrics
     pub zone_map_metrics: ZoneMapMetrics,
@@ -100,9 +100,12 @@ pub struct StreamingSearchResult {
     pub quality_score: f32,
 }
 
+/// Backwards-compat alias for [`NovaStreamingMetrics`].
+pub type StreamingMetrics = NovaStreamingMetrics;
+
 /// Streaming-specific metrics
 #[derive(Debug)]
-pub struct StreamingMetrics {
+pub struct NovaStreamingMetrics {
     pub row_groups_scanned: usize,
     pub row_groups_pruned: usize,
     pub superblocks_pruned: usize,
@@ -300,7 +303,7 @@ impl StreamingSearchEngine {
         .await?;
 
         // Calculate streaming metrics before moving results
-        let streaming_metrics = StreamingMetrics {
+        let streaming_metrics = NovaStreamingMetrics {
             row_groups_scanned,
             row_groups_pruned: superblocks.len() - pruned_superblocks.len(),
             superblocks_pruned,
@@ -626,7 +629,7 @@ impl StreamingSearchEngine {
     fn calculate_efficiency_score(
         &self,
         progressive_result: &ProgressiveSearchResult,
-        streaming_metrics: &StreamingMetrics,
+        streaming_metrics: &NovaStreamingMetrics,
     ) -> f32 {
         // Weighted combination of different efficiency metrics
         let time_efficiency = 1.0 / (progressive_result.total_time_ms as f32 / 1000.0).max(0.1);

@@ -1151,7 +1151,7 @@ pub struct ProgressiveSearchResult {
     pub statistics: ProgressiveSearchStatistics,
 
     /// Stage results
-    pub stage_results: Vec<StageResult>,
+    pub stage_results: Vec<SearchModeStageResult>,
 
     /// Overall quality metrics
     pub quality_metrics: QualityMetrics,
@@ -1179,9 +1179,12 @@ pub struct ProgressiveSearchStatistics {
     pub early_termination: bool,
 }
 
+/// Backwards-compat alias for [`SearchModeStageResult`].
+pub type StageResult = SearchModeStageResult;
+
 /// Stage result
 #[derive(Debug, Clone)]
-pub struct StageResult {
+pub struct SearchModeStageResult {
     /// Stage name
     pub stage_name: String,
 

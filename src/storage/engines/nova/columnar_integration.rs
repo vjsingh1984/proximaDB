@@ -57,7 +57,7 @@ pub struct NovaSpecificConfig {
     pub zone_map_config: NovaColumnarZoneMapConfig,
 
     /// Streaming processing settings
-    pub streaming_config: StreamingConfig,
+    pub streaming_config: NovaColumnarStreamingConfig,
 
     /// Advanced caching configuration
     pub caching_config: AdvancedCachingConfig,
@@ -85,9 +85,12 @@ pub struct NovaColumnarZoneMapConfig {
     pub pruning_threshold: f32,
 }
 
+/// Backwards-compat alias for [`NovaColumnarStreamingConfig`].
+pub type StreamingConfig = NovaColumnarStreamingConfig;
+
 /// Streaming configuration for NOVA
 #[derive(Debug, Clone)]
-pub struct StreamingConfig {
+pub struct NovaColumnarStreamingConfig {
     /// Enable streaming processing
     pub enable_streaming: bool,
 
@@ -312,12 +315,12 @@ impl NovaColumnarZoneMapManager {
 
 /// Streaming processor for large-scale operations
 pub struct StreamingProcessor {
-    config: StreamingConfig,
+    config: NovaColumnarStreamingConfig,
     active_streams: Arc<tokio::sync::RwLock<HashMap<String, StreamingSession>>>,
 }
 
 impl StreamingProcessor {
-    pub fn new(config: StreamingConfig) -> Self {
+    pub fn new(config: NovaColumnarStreamingConfig) -> Self {
         Self {
             config,
             active_streams: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
@@ -703,7 +706,7 @@ impl NovaUnifiedEngine {
             pruning_effectiveness: 0.9,
         };
 
-        let streaming_metrics = StreamingMetrics {
+        let streaming_metrics = NovaColumnarStreamingMetrics {
             active_streams: 0,
             completed_streams: 0,
             total_vectors_streamed: 0,
@@ -1082,7 +1085,7 @@ pub struct NovaPerformanceMetrics {
     pub resource_metrics: crate::storage::engines::core::formats::columnar::common::ResourceMetrics,
     pub hierarchical_metrics: HierarchicalMetrics,
     pub zone_map_metrics: NovaColumnarZoneMapMetrics,
-    pub streaming_metrics: StreamingMetrics,
+    pub streaming_metrics: NovaColumnarStreamingMetrics,
 }
 
 /// Hierarchical statistics metrics
@@ -1103,9 +1106,12 @@ pub struct NovaColumnarZoneMapMetrics {
     pub pruning_effectiveness: f32,
 }
 
+/// Backwards-compat alias for [`NovaColumnarStreamingMetrics`].
+pub type StreamingMetrics = NovaColumnarStreamingMetrics;
+
 /// Streaming processing metrics
 #[derive(Debug)]
-pub struct StreamingMetrics {
+pub struct NovaColumnarStreamingMetrics {
     pub active_streams: usize,
     pub completed_streams: usize,
     pub total_vectors_streamed: usize,
@@ -1203,9 +1209,9 @@ impl StreamingProcessor {
     }
 
     #[allow(dead_code)]
-    async fn get_metrics(&self) -> StreamingMetrics {
+    async fn get_metrics(&self) -> NovaColumnarStreamingMetrics {
         let active_streams = self.active_streams.read().await;
-        StreamingMetrics {
+        NovaColumnarStreamingMetrics {
             active_streams: active_streams.len(),
             completed_streams: 0,      // Would track in real implementation
             total_vectors_streamed: 0, // Would track in real implementation
@@ -1221,7 +1227,7 @@ impl Default for NovaSpecificConfig {
         Self {
             enable_hierarchical_stats: true,
             zone_map_config: NovaColumnarZoneMapConfig::default(),
-            streaming_config: StreamingConfig::default(),
+            streaming_config: NovaColumnarStreamingConfig::default(),
             caching_config: AdvancedCachingConfig::default(),
             progressive_search_config: NovaColumnarProgressiveSearchConfig::default(),
         }
@@ -1240,7 +1246,7 @@ impl Default for NovaColumnarZoneMapConfig {
     }
 }
 
-impl Default for StreamingConfig {
+impl Default for NovaColumnarStreamingConfig {
     fn default() -> Self {
         Self {
             enable_streaming: true,
@@ -1307,7 +1313,7 @@ mod tests {
 
     #[test]
     fn test_streaming_config() {
-        let config = StreamingConfig::default();
+        let config = NovaColumnarStreamingConfig::default();
 
         assert_eq!(config.stream_buffer_size, 1000);
         assert_eq!(config.max_concurrent_streams, 8);

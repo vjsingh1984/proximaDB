@@ -82,9 +82,12 @@ impl ProgressiveSearchPipeline {
     }
 }
 
+/// Backwards-compat alias for [`PipelineStageResult`].
+pub type StageResult = PipelineStageResult;
+
 /// Stage result from progressive search pipeline.
 #[derive(Debug, Clone)]
-pub struct StageResult {
+pub struct PipelineStageResult {
     /// Stage name
     pub stage: String,
     /// Candidates retrieved
@@ -95,7 +98,7 @@ pub struct StageResult {
     pub estimated_recall: Option<f32>,
 }
 
-impl StageResult {
+impl PipelineStageResult {
     /// Create a new stage result.
     pub fn new(stage: String, candidates: usize, duration_ms: u64) -> Self {
         Self {
@@ -119,7 +122,7 @@ pub struct PipelineResult {
     /// Final results
     pub results: Vec<proximadb_records::ProximaRecord>,
     /// Results from each intermediate stage
-    pub stages: Vec<StageResult>,
+    pub stages: Vec<PipelineStageResult>,
     /// Total pipeline execution time in milliseconds
     pub total_duration_ms: u64,
 }
@@ -162,7 +165,7 @@ mod tests {
 
     #[test]
     fn test_stage_result() {
-        let result = StageResult::new("binary".to_string(), 1000, 50).with_recall(0.95);
+        let result = PipelineStageResult::new("binary".to_string(), 1000, 50).with_recall(0.95);
 
         assert_eq!(result.stage, "binary");
         assert_eq!(result.candidates, 1000);
