@@ -43,14 +43,17 @@ pub struct RecoveryManager {
     /// Recovery mode
     recovery_mode: RecoveryMode,
     /// Statistics
-    stats: Arc<tokio::sync::RwLock<RecoveryStats>>,
+    stats: Arc<tokio::sync::RwLock<WalRecoveryStats>>,
     /// Metadata provider for getting real collection configs
     metadata_provider: Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
 }
 
+/// Backwards-compat alias for [`WalRecoveryStats`].
+pub type RecoveryStats = WalRecoveryStats;
+
 /// Statistics for recovery operations
 #[derive(Debug, Clone, Default)]
-pub struct RecoveryStats {
+pub struct WalRecoveryStats {
     pub total_files_recovered: u64,
     pub total_vectors_recovered: u64,
     pub total_collections_recovered: usize,
@@ -115,7 +118,7 @@ impl RecoveryManager {
             // This recovers vectors to memtable where they're immediately searchable
             // Can be flushed to storage later when engines are ready
             recovery_mode: RecoveryMode::ViaMemtable,
-            stats: Arc::new(tokio::sync::RwLock::new(RecoveryStats::default())),
+            stats: Arc::new(tokio::sync::RwLock::new(WalRecoveryStats::default())),
             metadata_provider,
         }
     }
@@ -151,7 +154,7 @@ impl RecoveryManager {
     }
 
     /// Recover all collections from disk to storage engines in parallel
-    pub async fn recover_all(&self) -> Result<RecoveryStats> {
+    pub async fn recover_all(&self) -> Result<WalRecoveryStats> {
         info!(
             "🔄 Starting WAL recovery using global manifest (mode: {:?})",
             self.recovery_mode
@@ -178,7 +181,7 @@ impl RecoveryManager {
         if all_entries.is_empty() {
             info!("📝 No active WAL entries to recover (manifest is empty or all entries flushed)");
             recovery_guard.complete(0, 0).await;
-            return Ok(RecoveryStats::default());
+            return Ok(WalRecoveryStats::default());
         }
 
         info!(
@@ -211,7 +214,7 @@ impl RecoveryManager {
         if collections.is_empty() {
             // Recovery phase complete
             recovery_guard.complete(0, 0).await;
-            return Ok(RecoveryStats::default());
+            return Ok(WalRecoveryStats::default());
         }
 
         // Create recovery tasks for all collections
@@ -337,8 +340,8 @@ impl RecoveryManager {
     }
 
     /// Recover a specific collection (public API)
-    /// Returns RecoveryStats with detailed recovery information
-    pub async fn recover_collection(&self, collection_id: &str) -> Result<RecoveryStats> {
+    /// Returns WalRecoveryStats with detailed recovery information
+    pub async fn recover_collection(&self, collection_id: &str) -> Result<WalRecoveryStats> {
         eprintln!(
             "🔍 DEBUG: RecoveryManager::recover_collection() called for: {}",
             collection_id
@@ -369,7 +372,7 @@ impl RecoveryManager {
         }
 
         // Return recovery stats for this collection
-        Ok(RecoveryStats {
+        Ok(WalRecoveryStats {
             total_files_recovered: files_recovered,
             total_vectors_recovered: vectors_recovered,
             total_collections_recovered: if vectors_recovered > 0 { 1 } else { 0 },
@@ -864,7 +867,7 @@ impl RecoveryManager {
     }
 
     /// Get recovery statistics
-    pub async fn get_stats(&self) -> Result<RecoveryStats> {
+    pub async fn get_stats(&self) -> Result<WalRecoveryStats> {
         let stats = self.stats.read().await;
         Ok(stats.clone())
     }
@@ -872,7 +875,7 @@ impl RecoveryManager {
     /// Clear recovery statistics
     pub async fn clear_stats(&self) -> Result<()> {
         let mut stats = self.stats.write().await;
-        *stats = RecoveryStats::default();
+        *stats = WalRecoveryStats::default();
         Ok(())
     }
 }
@@ -935,7 +938,7 @@ impl ParallelRecoveryManager {
     }
 
     /// Recover all collections in parallel
-    pub async fn recover_all_parallel(&self) -> Result<RecoveryStats> {
+    pub async fn recover_all_parallel(&self) -> Result<WalRecoveryStats> {
         info!(
             "🔄 Starting parallel WAL recovery with {} workers",
             self.num_workers

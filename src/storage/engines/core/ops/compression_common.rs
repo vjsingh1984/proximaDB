@@ -1095,12 +1095,15 @@ pub struct OptimizationConstraints {
     pub min_improvement_percent: f32,
 
     /// Resource limits during optimization
-    pub resource_limits: ResourceLimits,
+    pub resource_limits: CompressionResourceLimits,
 }
+
+/// Backwards-compat alias for [`CompressionResourceLimits`].
+pub type ResourceLimits = CompressionResourceLimits;
 
 /// Resource limits
 #[derive(Debug, Clone)]
-pub struct ResourceLimits {
+pub struct CompressionResourceLimits {
     /// Maximum CPU usage during optimization (%)
     pub max_cpu_usage_percent: f32,
 
@@ -1850,7 +1853,7 @@ impl Default for CompressionPerformanceConfig {
                     max_optimization_time_ms: 5000,
                     max_regression_percent: 5.0,
                     min_improvement_percent: 10.0,
-                    resource_limits: ResourceLimits {
+                    resource_limits: CompressionResourceLimits {
                         max_cpu_usage_percent: 50.0,
                         max_memory_usage_mb: 256,
                         max_io_bandwidth_mbps: 100.0,

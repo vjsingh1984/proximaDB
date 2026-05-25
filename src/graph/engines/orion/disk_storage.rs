@@ -522,8 +522,8 @@ impl DiskCsrStorage {
     }
 
     /// Recover graph state from WAL on startup
-    pub async fn recover_from_wal(&mut self) -> Result<RecoveryStats> {
-        let mut stats = RecoveryStats {
+    pub async fn recover_from_wal(&mut self) -> Result<OrionDiskRecoveryStats> {
+        let mut stats = OrionDiskRecoveryStats {
             operations_replayed: 0,
             edges_recovered: 0,
             duration_ms: 0,
@@ -631,9 +631,12 @@ pub struct DiskCsrSnapshot {
     pub timestamp: i64,
 }
 
+/// Backwards-compat alias for [`OrionDiskRecoveryStats`].
+pub type RecoveryStats = OrionDiskRecoveryStats;
+
 /// Statistics from WAL recovery after a restart or crash.
 #[derive(Debug, Clone)]
-pub struct RecoveryStats {
+pub struct OrionDiskRecoveryStats {
     /// Total number of WAL operations replayed.
     pub operations_replayed: u64,
     /// Number of edges successfully recovered.

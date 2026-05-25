@@ -70,7 +70,7 @@ impl Default for RecoveryConfig {
 }
 
 /// Convenience type alias for recovery operation results
-pub type RecoveryResult = Result<RecoveryStats, SerializationError>;
+pub type RecoveryResult = Result<AxisRecoveryStats, SerializationError>;
 /// Type alias for `RecoveryConfig` for compatibility
 pub type RecoveryStrategy = RecoveryConfig;
 
@@ -102,9 +102,12 @@ pub enum RecoveryStatus {
     },
 }
 
+/// Backwards-compat alias for [`AxisRecoveryStats`].
+pub type RecoveryStats = AxisRecoveryStats;
+
 /// Recovery statistics
 #[derive(Debug, Clone, Default)]
-pub struct RecoveryStats {
+pub struct AxisRecoveryStats {
     /// Number of collections successfully recovered
     pub collections_recovered: u32,
     /// Number of collections whose recovery failed
@@ -140,7 +143,7 @@ pub struct IndexRecoveryManager {
     delta_managers: Arc<DashMap<String, DeltaManager>>,
 
     /// Recovery statistics
-    stats: Arc<RwLock<RecoveryStats>>,
+    stats: Arc<RwLock<AxisRecoveryStats>>,
 
     /// Checkpoint storage locations (collection_id -> checkpoint path)
     checkpoint_locations: Arc<DashMap<String, String>>,
@@ -161,7 +164,7 @@ impl IndexRecoveryManager {
             tiering_manager,
             recovery_status: Arc::new(DashMap::new()),
             delta_managers: Arc::new(DashMap::new()),
-            stats: Arc::new(RwLock::new(RecoveryStats::default())),
+            stats: Arc::new(RwLock::new(AxisRecoveryStats::default())),
             checkpoint_locations: Arc::new(DashMap::new()),
         }
     }

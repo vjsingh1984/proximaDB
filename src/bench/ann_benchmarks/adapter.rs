@@ -114,12 +114,15 @@ pub struct BenchmarkResults {
     /// Memory usage in bytes
     pub memory_usage_bytes: u64,
     /// Query statistics
-    pub query_stats: QueryStats,
+    pub query_stats: AnnBenchQueryStats,
 }
+
+/// Backwards-compat alias for [`AnnBenchQueryStats`].
+pub type QueryStats = AnnBenchQueryStats;
 
 /// Query statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueryStats {
+pub struct AnnBenchQueryStats {
     /// Number of queries
     pub num_queries: usize,
     /// Average queries per second
@@ -275,7 +278,7 @@ impl ANNBenchmarksRunner {
         &self,
         _metadata: &DatasetMetadata,
         _search_params: &AnnBenchSearchParams,
-    ) -> Result<QueryStats, String> {
+    ) -> Result<AnnBenchQueryStats, String> {
         // In production, this would:
         // 1. Load test queries from the dataset
         // 2. Run queries with the specified algorithm
@@ -297,7 +300,7 @@ impl ANNBenchmarksRunner {
 
         let avg_latency_ms = 1000.0 / avg_qps;
 
-        Ok(QueryStats {
+        Ok(AnnBenchQueryStats {
             num_queries: self.config.runs,
             avg_qps,
             median_qps: avg_qps * 1.1, // Median slightly better than average

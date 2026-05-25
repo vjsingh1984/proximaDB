@@ -286,12 +286,15 @@ pub struct QueryOptimizer {
     /// Result cache
     cache: Arc<SmartResultCache>,
     /// Query history for optimization
-    query_stats: Arc<RwLock<QueryStats>>,
+    query_stats: Arc<RwLock<HelixQueryStats>>,
 }
+
+/// Backwards-compat alias for [`HelixQueryStats`].
+pub type QueryStats = HelixQueryStats;
 
 /// Query statistics for optimization decisions
 #[derive(Debug, Default, Clone)]
-pub struct QueryStats {
+pub struct HelixQueryStats {
     /// Total number of queries executed
     pub total_queries: u64,
     /// Number of cache hits
@@ -312,7 +315,7 @@ impl QueryOptimizer {
         Self {
             prefetcher: Arc::new(PredictivePrefetcher::new(max_history, 0.3)),
             cache: Arc::new(SmartResultCache::new(cache_capacity, cache_ttl_secs)),
-            query_stats: Arc::new(RwLock::new(QueryStats::default())),
+            query_stats: Arc::new(RwLock::new(HelixQueryStats::default())),
         }
     }
 
@@ -393,7 +396,7 @@ impl QueryOptimizer {
     }
 
     /// Get optimization statistics
-    pub async fn get_stats(&self) -> (QueryStats, HelixQueryCacheStats) {
+    pub async fn get_stats(&self) -> (HelixQueryStats, HelixQueryCacheStats) {
         let query_stats = self.query_stats.read().await.clone();
         let cache_stats = self.cache.get_stats().await;
         (query_stats, cache_stats)

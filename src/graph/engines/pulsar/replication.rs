@@ -42,12 +42,15 @@ pub struct ReplicationManager {
     /// Consistent hash ring for primary selection
     hash_ring: Arc<RwLock<ConsistentHashRing>>,
     /// Replication statistics
-    stats: Arc<RwLock<ReplicationStats>>,
+    stats: Arc<RwLock<PulsarReplicationStats>>,
 }
+
+/// Backwards-compat alias for [`PulsarReplicationStats`].
+pub type ReplicationStats = PulsarReplicationStats;
 
 /// Replication statistics
 #[derive(Debug, Default)]
-pub struct ReplicationStats {
+pub struct PulsarReplicationStats {
     pub successful_replications: u64,
     pub failed_replications: u64,
     pub average_replication_time_ms: f64,
@@ -84,7 +87,7 @@ impl ReplicationManager {
             replica_mapping: Arc::new(RwLock::new(replica_mapping)),
             shards: Arc::clone(shards),
             hash_ring,
-            stats: Arc::new(RwLock::new(ReplicationStats::default())),
+            stats: Arc::new(RwLock::new(PulsarReplicationStats::default())),
         }
     }
 
@@ -401,9 +404,9 @@ impl ReplicationManager {
     }
 
     /// Get replication statistics
-    pub async fn get_stats(&self) -> ReplicationStats {
+    pub async fn get_stats(&self) -> PulsarReplicationStats {
         let stats = self.stats.read().await;
-        ReplicationStats {
+        PulsarReplicationStats {
             successful_replications: stats.successful_replications,
             failed_replications: stats.failed_replications,
             average_replication_time_ms: stats.average_replication_time_ms,

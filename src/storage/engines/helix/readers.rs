@@ -304,9 +304,12 @@ pub async fn parallel_search(
     Ok(all_results)
 }
 
+/// Backwards-compat alias for [`HelixReaderQueryStats`].
+pub type QueryStats = HelixReaderQueryStats;
+
 /// Statistics for query execution
 #[derive(Debug, Default)]
-pub struct QueryStats {
+pub struct HelixReaderQueryStats {
     pub sstables_scanned: usize,
     pub sstables_pruned: usize,
     pub blocks_scanned: usize,
@@ -326,8 +329,8 @@ pub async fn search_with_stats(
     k: usize,
     distance_metric: &DistanceMetric,
     distance_compute: &Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
-) -> Result<(Vec<OptimizedSearchRecord>, QueryStats)> {
-    let mut stats = QueryStats::default();
+) -> Result<(Vec<OptimizedSearchRecord>, HelixReaderQueryStats)> {
+    let mut stats = HelixReaderQueryStats::default();
     let mut priority_queue = BoundedPriorityQueue::new(k);
 
     stats.sstables_scanned = sstables.len();
@@ -593,7 +596,7 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn test_query_stats() {
-        let stats = QueryStats {
+        let stats = HelixReaderQueryStats {
             sstables_scanned: 10,
             sstables_pruned: 7,
             blocks_scanned: 30,

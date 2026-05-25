@@ -34,9 +34,12 @@ use super::rpc::{
 };
 use super::shard::{Shard, ShardId};
 
+/// Backwards-compat alias for [`ClusterReplicationConfig`].
+pub type ReplicationConfig = ClusterReplicationConfig;
+
 /// Configuration for replication
 #[derive(Debug, Clone)]
-pub struct ReplicationConfig {
+pub struct ClusterReplicationConfig {
     /// Maximum replication lag allowed in milliseconds
     pub max_lag_ms: u64,
     /// Replication timeout in milliseconds
@@ -53,7 +56,7 @@ pub struct ReplicationConfig {
     pub retry_config: ReplicationRetryConfig,
 }
 
-impl Default for ReplicationConfig {
+impl Default for ClusterReplicationConfig {
     fn default() -> Self {
         Self {
             max_lag_ms: 1000,
@@ -170,7 +173,7 @@ pub struct ReplicaState {
 
 /// Engine replication service
 pub struct EngineReplication {
-    config: ReplicationConfig,
+    config: ClusterReplicationConfig,
     /// Current LSN counter
     current_lsn: Arc<AtomicU64>,
     /// Entry ID counter
@@ -206,7 +209,7 @@ struct ReplicationStats {
 
 impl EngineReplication {
     /// Create a new engine replication service (local-only mode, no RPC)
-    pub fn new(config: ReplicationConfig, local_node_id: String) -> Self {
+    pub fn new(config: ClusterReplicationConfig, local_node_id: String) -> Self {
         let max_concurrent = config.batch_size * 2;
 
         Self {
@@ -237,7 +240,7 @@ impl EngineReplication {
     /// * `connection_manager` - Connection manager for resilient connections
     /// * `node_registry` - Registry for looking up node addresses
     pub fn with_rpc(
-        config: ReplicationConfig,
+        config: ClusterReplicationConfig,
         local_node_id: String,
         sink: Arc<dyn ReplicationSink>,
         connection_manager: Arc<ConnectionManager>,
@@ -1105,7 +1108,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_replication_creation() {
-        let config = ReplicationConfig::default();
+        let config = ClusterReplicationConfig::default();
         let replication = EngineReplication::new(config, "local-node".to_string());
 
         let lsn = replication.current_lsn().await;
@@ -1115,7 +1118,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_entry() {
         let replication =
-            EngineReplication::new(ReplicationConfig::default(), "local-node".to_string());
+            EngineReplication::new(ClusterReplicationConfig::default(), "local-node".to_string());
 
         let shard_id = ShardId::generate("test", 0);
         let entry = replication
@@ -1136,7 +1139,7 @@ mod tests {
     #[tokio::test]
     async fn test_replicate_to_shard() {
         let replication =
-            EngineReplication::new(ReplicationConfig::default(), "primary-node".to_string());
+            EngineReplication::new(ClusterReplicationConfig::default(), "primary-node".to_string());
 
         let shard = create_test_shard();
         let shard_id = shard.id.clone();
@@ -1165,7 +1168,7 @@ mod tests {
     #[tokio::test]
     async fn test_calculate_required_acks() {
         let replication =
-            EngineReplication::new(ReplicationConfig::default(), "local-node".to_string());
+            EngineReplication::new(ClusterReplicationConfig::default(), "local-node".to_string());
 
         // 3 total replicas (including primary)
         assert_eq!(
@@ -1185,7 +1188,7 @@ mod tests {
     #[tokio::test]
     async fn test_health_check() {
         let replication =
-            EngineReplication::new(ReplicationConfig::default(), "local-node".to_string());
+            EngineReplication::new(ClusterReplicationConfig::default(), "local-node".to_string());
 
         let health = replication.check_health().await;
 
@@ -1197,7 +1200,7 @@ mod tests {
     #[tokio::test]
     async fn test_replica_state_tracking() {
         let replication =
-            EngineReplication::new(ReplicationConfig::default(), "local-node".to_string());
+            EngineReplication::new(ClusterReplicationConfig::default(), "local-node".to_string());
 
         let ack = ReplicationAck {
             node_id: "replica-1".to_string(),
@@ -1221,7 +1224,7 @@ mod tests {
     async fn test_replication_without_rpc() {
         // Test that replication works in local-only mode (no RPC configured)
         let replication =
-            EngineReplication::new(ReplicationConfig::default(), "local-node".to_string());
+            EngineReplication::new(ClusterReplicationConfig::default(), "local-node".to_string());
 
         assert!(!replication.has_rpc());
         assert!(replication.sink().is_none());
