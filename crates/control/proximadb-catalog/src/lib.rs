@@ -18,6 +18,8 @@ pub mod canonical_precision;
 // Collection-level DR / CRR engine contract (P1 of
 // COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc).
 pub mod collection_dr_policy;
+// Customer-facing DR policy mutation surface (S14 of the same contract).
+pub mod dr_policy_store;
 // DR reconciler decision logic (P3a of the same contract).
 pub mod dr_reconciler;
 // DR restore-readiness primitives (P5 of the same contract).
