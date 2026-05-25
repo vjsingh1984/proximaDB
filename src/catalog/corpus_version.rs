@@ -127,9 +127,37 @@ impl Default for CorpusVersionRegistry {
 static GLOBAL_REGISTRY: OnceLock<CorpusVersionRegistry> = OnceLock::new();
 
 impl CorpusVersionRegistry {
-    /// Process-wide singleton. Lazy-init on first call.
+    /// Process-wide singleton. Lazy-init on first call. If a server
+    /// bootstrap wants the singleton to carry a durable store, it
+    /// must call `init_global_with_store(store)` BEFORE any code
+    /// path touches `global()` — this matches the OnceLock contract:
+    /// the first writer wins, all subsequent reads return the same
+    /// value.
+    ///
+    /// If `init_global_with_store` was never called, lazy-init falls
+    /// back to a store-less default (in-process behavior identical
+    /// to pre-durability code).
     pub fn global() -> &'static CorpusVersionRegistry {
         GLOBAL_REGISTRY.get_or_init(CorpusVersionRegistry::default)
+    }
+
+    /// Initialize the global registry with a durable store. Returns
+    /// `true` if this call performed the init, `false` if the global
+    /// was already set (either via a prior `init_global_with_store`
+    /// call or via lazy-init from `global()`).
+    ///
+    /// The intended ordering on server bootstrap is:
+    ///   1. Construct the backend `CorpusVersionStore`.
+    ///   2. Call `init_global_with_store(store)`.
+    ///   3. Call `global().hydrate_from_store().await` once.
+    ///   4. Allow request handlers to start serving traffic.
+    ///
+    /// Bootstrap that skips step 2 still gets a working in-memory
+    /// registry; bootstrap that runs step 2 after step 4 has the
+    /// store ignored (the global was already lazy-initialized).
+    pub fn init_global_with_store(store: Arc<dyn CorpusVersionStore>) -> bool {
+        let registry = CorpusVersionRegistry::with_store(store);
+        GLOBAL_REGISTRY.set(registry).is_ok()
     }
 
     /// Build a registry backed by a durable store. The store is
@@ -616,5 +644,28 @@ mod tests {
         r.set_store(store.clone());
         r.bump("tenant-a", "kb").await;
         assert_eq!(store.persisted_calls().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn init_global_with_store_does_not_panic_when_already_initialized() {
+        // The OnceLock global is shared across the entire test
+        // binary; another test may have called `global()` first,
+        // lazy-initializing it. In that case `init_global_with_store`
+        // returns false (the second writer loses). This test pins
+        // that semantic — the call is safe to make from bootstrap
+        // even if some early code touched `global()` first.
+        // (We can't deterministically test the success path without
+        // isolating to a separate process, but the second-call
+        // contract is what production cares about.)
+        let store: Arc<dyn CorpusVersionStore> =
+            Arc::new(InMemoryCorpusVersionStore);
+        // Force the lazy-init to fire by reading the global first.
+        let _ = CorpusVersionRegistry::global();
+        // Now the init_global_with_store must return false.
+        let inited = CorpusVersionRegistry::init_global_with_store(store);
+        assert!(
+            !inited,
+            "init must return false when the global was already initialized"
+        );
     }
 }
