@@ -57,7 +57,7 @@ pub struct MultiServerConfig {
 
     /// API configuration (request limits, timeouts, etc.)
     /// Shared limits and policies across all protocols
-    pub api_config: Option<crate::core::config::ApiConfig>,
+    pub api_config: Option<proximadb_config::ApiConfig>,
 
     /// Data directory from server config (server.data_dir from TOML)
     /// Used by REST handlers for document/observability storage paths
