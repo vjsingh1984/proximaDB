@@ -305,11 +305,20 @@ pub struct TraversalResults {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paths: Option<Vec<Vec<String>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub stats: Option<TraversalStats>,
+    pub stats: Option<RestTraversalStats>,
 }
 
+/// REST-layer traversal statistics for graph endpoints.
+///
+/// Naming note: this type used to be called `TraversalStats` and collided
+/// with the proto `proximadb_v1::TraversalStats` wire form
+/// (execution_time_microseconds: u64) and with the proximadb-query
+/// `HybridTraverseStats` operator-level stats. Renamed to match the
+/// existing pattern in `src/network/rest/v1/graph.rs::RestTraversalStats`
+/// (legacy root-crate REST DTO with the same field set) so the Phase 9
+/// migration deletes-rather-than-renames.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TraversalStats {
+pub struct RestTraversalStats {
     pub nodes_visited: u64,
     pub edges_traversed: u64,
     pub max_depth_reached: u32,
@@ -1241,7 +1250,7 @@ async fn traverse_graph(
                         .collect(),
                 )
             };
-            let stats = resp.stats.as_ref().map(|st| TraversalStats {
+            let stats = resp.stats.as_ref().map(|st| RestTraversalStats {
                 nodes_visited: st.nodes_visited as u64,
                 edges_traversed: st.edges_traversed as u64,
                 max_depth_reached: st.max_depth_reached,
