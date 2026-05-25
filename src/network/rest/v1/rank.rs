@@ -158,11 +158,61 @@ pub struct RankSearchResponse {
 /// Async (R-7c.3): the production backend is async (parallel BM25 +
 /// vector search via `HybridCoordinator`), so the trait surface is
 /// async. Callers `.await` outside `spawn_blocking` — the produced
-/// `Vec<DocHandle>` is then moved into the blocking closure for the
-/// arena-bearing rank phases.
+/// `CandidateBatch.docs` is then moved into the blocking closure for
+/// the arena-bearing rank phases; the optional `original_ids` map
+/// stays in the outer async scope and is consulted at response-build
+/// time (R-7c.3.2).
 #[async_trait::async_trait]
 pub trait CandidateProvider: Send + Sync {
-    async fn candidates(&self, request: &RankSearchRequest) -> RankResult<Vec<DocHandle>>;
+    async fn candidates(&self, request: &RankSearchRequest) -> RankResult<CandidateBatch>;
+}
+
+/// Output of a [`CandidateProvider`] — the set of candidate
+/// `DocHandle`s plus an optional translation table for backends that
+/// use string ids (R-7c.3.2).
+///
+/// `docs` is the canonical list the rank pipeline iterates over.
+/// `original_ids`, when `Some`, maps each handle back to the backend's
+/// original string id; the dispatcher consults it at response-build
+/// time so clients see their backend ids round-tripped exactly.
+/// When `None`, the dispatcher falls back to stringifying `DocHandle.0`
+/// (legacy behavior — covers numeric-id backends + tests).
+#[derive(Debug, Clone, Default)]
+pub struct CandidateBatch {
+    pub docs: Vec<DocHandle>,
+    pub original_ids: Option<HashMap<DocHandle, std::sync::Arc<str>>>,
+}
+
+impl CandidateBatch {
+    /// Build from a `Vec<DocHandle>` with no id translation (typical
+    /// for numeric or test backends).
+    pub fn from_docs(docs: Vec<DocHandle>) -> Self {
+        Self {
+            docs,
+            original_ids: None,
+        }
+    }
+
+    /// Build from arbitrary string ids — assigns sequential synthetic
+    /// `DocHandle`s (1..=N) and stashes the original strings so the
+    /// response can round-trip them exactly.
+    pub fn from_string_ids<I, S>(ids: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<std::sync::Arc<str>>,
+    {
+        let mut docs = Vec::new();
+        let mut map = HashMap::new();
+        for (i, s) in ids.into_iter().enumerate() {
+            let handle = DocHandle((i + 1) as u32);
+            docs.push(handle);
+            map.insert(handle, s.into());
+        }
+        Self {
+            docs,
+            original_ids: Some(map),
+        }
+    }
 }
 
 /// Execute a [`RankSearchRequest`] against the registry and candidate
@@ -181,7 +231,18 @@ pub async fn handle_rank_search(
     factory: Arc<BlueprintFactory>,
     second_phase_scorer: Option<Arc<dyn SecondPhaseScorer>>,
 ) -> RankResult<RankSearchResponse> {
-    let candidate_docs = candidates.candidates(&req).await?;
+    let batch = candidates.candidates(&req).await?;
+    let candidate_docs = batch.docs;
+    // R-7c.3.2: optional backend-id translation table. Stays in the
+    // outer async scope; consulted at response-build time.
+    let original_ids = batch.original_ids;
+    let render_id = |doc: DocHandle| -> String {
+        original_ids
+            .as_ref()
+            .and_then(|m| m.get(&doc))
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| doc.0.to_string())
+    };
     let qctx = QueryContext {
         query_vector: if req.query_vector.is_empty() {
             None
@@ -197,10 +258,10 @@ pub async fn handle_rank_search(
     // path.
     let Some(profile_name) = req.rank_profile.as_deref() else {
         let hits = candidate_docs
-            .into_iter()
+            .iter()
             .take(req.k)
-            .map(|doc| ScoredHitDto {
-                id: doc.0.to_string(),
+            .map(|&doc| ScoredHitDto {
+                id: render_id(doc),
                 score: 0.0,
                 score_vector: None,
                 match_features: HashMap::new(),
@@ -287,7 +348,7 @@ pub async fn handle_rank_search(
         .map(|h| {
             let sv = ScoreVector::from_primary(h.score, h.phase);
             ScoredHitDto {
-                id: h.doc.0.to_string(),
+                id: render_id(h.doc),
                 score: h.score,
                 score_vector: Some(ScoreVectorDto::from(&sv)),
                 match_features: HashMap::new(),
@@ -431,8 +492,10 @@ impl Default for MockRangeCandidateProvider {
 
 #[async_trait::async_trait]
 impl CandidateProvider for MockRangeCandidateProvider {
-    async fn candidates(&self, _request: &RankSearchRequest) -> RankResult<Vec<DocHandle>> {
-        Ok((1..=self.count).map(DocHandle).collect())
+    async fn candidates(&self, _request: &RankSearchRequest) -> RankResult<CandidateBatch> {
+        Ok(CandidateBatch::from_docs(
+            (1..=self.count).map(DocHandle).collect(),
+        ))
     }
 }
 
@@ -516,7 +579,7 @@ fn doc_id_to_handle(doc_id: &str) -> Option<DocHandle> {
 
 #[async_trait::async_trait]
 impl CandidateProvider for HybridCoordinatorAdapter {
-    async fn candidates(&self, request: &RankSearchRequest) -> RankResult<Vec<DocHandle>> {
+    async fn candidates(&self, request: &RankSearchRequest) -> RankResult<CandidateBatch> {
         // The hybrid coordinator's BM25 + vector closures need their
         // own clones of the backend Arc — each closure consumes its
         // captured state by move.
@@ -555,10 +618,22 @@ impl CandidateProvider for HybridCoordinatorAdapter {
                 reason: format!("hybrid search failed: {e}"),
             })?;
 
-        Ok(results
-            .into_iter()
-            .filter_map(|r| doc_id_to_handle(&r.doc_id))
-            .collect())
+        // R-7c.3.2: build CandidateBatch with sequential synthetic
+        // DocHandles + the original string ids in `original_ids`. This
+        // preserves the backend's ids exactly for the wire response,
+        // regardless of whether they're numeric.
+        let mut docs = Vec::with_capacity(results.len());
+        let mut original_ids: HashMap<DocHandle, std::sync::Arc<str>> =
+            HashMap::with_capacity(results.len());
+        for (i, r) in results.into_iter().enumerate() {
+            let handle = DocHandle((i + 1) as u32);
+            docs.push(handle);
+            original_ids.insert(handle, std::sync::Arc::from(r.doc_id.as_str()));
+        }
+        Ok(CandidateBatch {
+            docs,
+            original_ids: Some(original_ids),
+        })
     }
 }
 
@@ -782,8 +857,8 @@ mod tests {
     struct FixedCandidates(Vec<DocHandle>);
     #[async_trait::async_trait]
     impl CandidateProvider for FixedCandidates {
-        async fn candidates(&self, _request: &RankSearchRequest) -> RankResult<Vec<DocHandle>> {
-            Ok(self.0.clone())
+        async fn candidates(&self, _request: &RankSearchRequest) -> RankResult<CandidateBatch> {
+            Ok(CandidateBatch::from_docs(self.0.clone()))
         }
     }
 
@@ -954,7 +1029,7 @@ mod tests {
             rank_profile: None,
             rank_overrides: None,
         };
-        let docs = p.candidates(&req).await.unwrap();
+        let docs = p.candidates(&req).await.unwrap().docs;
         assert_eq!(docs.len(), 7);
         assert_eq!(docs[0], DocHandle(1));
         assert_eq!(docs[6], DocHandle(7));
@@ -1225,7 +1300,7 @@ mod tests {
             backend.clone(),
         );
         let req = rank_req("docs", vec![0.1, 0.2, 0.3], 10);
-        let docs = adapter.candidates(&req).await.unwrap();
+        let docs = adapter.candidates(&req).await.unwrap().docs;
         // Both searches fired exactly once.
         assert_eq!(backend.bm25_calls.load(Ordering::SeqCst), 1);
         assert_eq!(backend.vector_calls.load(Ordering::SeqCst), 1);
@@ -1241,7 +1316,7 @@ mod tests {
             backend,
         );
         let req = rank_req("docs", vec![0.5], 10);
-        let docs = adapter.candidates(&req).await.unwrap();
+        let docs = adapter.candidates(&req).await.unwrap().docs;
         let ids: std::collections::HashSet<u32> = docs.iter().map(|d| d.0).collect();
         assert!(ids.contains(&42));
         assert!(ids.contains(&7));
@@ -1258,7 +1333,7 @@ mod tests {
             backend,
         );
         let req = rank_req("docs", vec![0.5], 10);
-        let docs = adapter.candidates(&req).await.unwrap();
+        let docs = adapter.candidates(&req).await.unwrap().docs;
         assert_eq!(docs.len(), 2, "non-numeric ids must be filtered out");
         let ids: std::collections::HashSet<u32> = docs.iter().map(|d| d.0).collect();
         assert!(ids.contains(&1));
