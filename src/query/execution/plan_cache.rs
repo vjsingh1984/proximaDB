@@ -301,7 +301,7 @@ impl QueryPlanCache {
     }
 
     /// Get cache statistics
-    pub fn stats(&self) -> PlanCacheStats {
+    pub fn stats(&self) -> ExecutionPlanCacheStats {
         let hits = self.hits.load(std::sync::atomic::Ordering::Relaxed);
         let misses = self.misses.load(std::sync::atomic::Ordering::Relaxed);
         let total = hits + misses;
@@ -311,7 +311,7 @@ impl QueryPlanCache {
             0.0
         };
 
-        PlanCacheStats {
+        ExecutionPlanCacheStats {
             total_plans: self.cache.len(),
             hits,
             misses,
@@ -327,9 +327,16 @@ impl QueryPlanCache {
     }
 }
 
-/// Plan cache statistics
+/// Execution-layer plan cache statistics with cached hit_rate.
+///
+/// Naming note: this type used to be called `PlanCacheStats` and collided
+/// with the federated/observability/proximadb-query types. Renamed
+/// because the shape caches `hit_rate` rather than computing it from
+/// hits+misses, and includes a `Display` impl that the others don't.
+/// The canonical `proximadb_query::PlanCacheStats` is what generic
+/// callers should use.
 #[derive(Debug, Clone)]
-pub struct PlanCacheStats {
+pub struct ExecutionPlanCacheStats {
     /// Total number of cached plans
     pub total_plans: usize,
     /// Total cache hits
@@ -342,11 +349,11 @@ pub struct PlanCacheStats {
     pub max_plans: usize,
 }
 
-impl fmt::Display for PlanCacheStats {
+impl fmt::Display for ExecutionPlanCacheStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "PlanCacheStats{{ plans: {}, hit_rate: {:.1}%, hits: {}, misses: {} }}",
+            "ExecutionPlanCacheStats{{ plans: {}, hit_rate: {:.1}%, hits: {}, misses: {} }}",
             self.total_plans,
             self.hit_rate * 100.0,
             self.hits,

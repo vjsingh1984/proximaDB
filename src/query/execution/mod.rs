@@ -18,7 +18,8 @@ pub use low_latency_executor::{
     LowLatencyConfig, LowLatencyExecutor, LowLatencyMetrics, StreamedQueryResult,
 };
 pub use plan_cache::{
-    CachedPlan, PlanCacheConfig as QueryPlanCacheConfig, PlanCacheStats, PlanKey, QueryPlanCache,
+    CachedPlan, ExecutionPlanCacheStats, PlanCacheConfig as QueryPlanCacheConfig, PlanKey,
+    QueryPlanCache,
 };
 
 // Re-export set_operations
