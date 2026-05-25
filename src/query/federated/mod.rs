@@ -134,12 +134,12 @@ use tracing::debug;
 
 use super::cache::{CacheInvalidator, QueryKey, QueryResultCache};
 use crate::catalog::CatalogManager;
-use crate::storage::MultiModalStorageFacade;
+use crate::storage::MultiModelStorageFacade;
 
 /// Federated query context containing all necessary components
 pub struct FederatedQueryContext {
     /// Multi-model storage facade
-    pub storage: Arc<MultiModalStorageFacade>,
+    pub storage: Arc<MultiModelStorageFacade>,
     /// Parser for SQL with extensions
     pub parser: FederatedParser,
     /// Cross-model optimizer
@@ -193,7 +193,7 @@ impl FederatedQueryContext {
     }
 
     /// Create a new federated query context
-    pub fn new(storage: Arc<MultiModalStorageFacade>) -> Self {
+    pub fn new(storage: Arc<MultiModelStorageFacade>) -> Self {
         Self {
             storage: storage.clone(),
             parser: FederatedParser::new(),
@@ -206,7 +206,7 @@ impl FederatedQueryContext {
     }
 
     /// Create a new federated query context with caching enabled
-    pub fn with_cache(storage: Arc<MultiModalStorageFacade>, cache: Arc<QueryResultCache>) -> Self {
+    pub fn with_cache(storage: Arc<MultiModelStorageFacade>, cache: Arc<QueryResultCache>) -> Self {
         let invalidator = Arc::new(CacheInvalidator::new(cache.clone()));
         Self {
             storage: storage.clone(),
@@ -221,7 +221,7 @@ impl FederatedQueryContext {
 
     /// Create with external catalog manager
     pub fn with_catalog_manager(
-        storage: Arc<MultiModalStorageFacade>,
+        storage: Arc<MultiModelStorageFacade>,
         catalog_manager: Arc<CatalogManager>,
     ) -> Self {
         Self {
@@ -388,8 +388,8 @@ mod tests {
         property_value, sql_value,
     };
     use crate::query::federated::{FederatedQueryContext, QueryResultCache};
-    use crate::storage::MultiModalStorageFacade;
-    use crate::storage::multimodal::stores::{
+    use crate::storage::MultiModelStorageFacade;
+    use crate::storage::multimodel::stores::{
         DocumentStore, DocumentStoreConfig, GraphStore, GraphStoreConfig, ObservabilityStore,
         ObservabilityStoreConfig, VectorStore, VectorStoreConfig,
     };
@@ -993,14 +993,14 @@ mod tests {
 
     #[test]
     fn test_federated_context_creation() {
-        let storage = Arc::new(MultiModalStorageFacade::new());
+        let storage = Arc::new(MultiModelStorageFacade::new());
         let ctx = FederatedQueryContext::new(storage);
         assert!(ctx.parser.supported_extensions().len() > 0);
     }
 
     #[test]
     fn test_federated_context_with_cache() {
-        let storage = Arc::new(MultiModalStorageFacade::new());
+        let storage = Arc::new(MultiModelStorageFacade::new());
         let cache = Arc::new(QueryResultCache::with_defaults());
         let ctx = FederatedQueryContext::with_cache(storage, cache);
 
@@ -1084,7 +1084,7 @@ mod tests {
                 .await,
         );
         let vector_store = Arc::new(VectorStore::with_engine(vector_engine.clone()));
-        let storage = Arc::new(MultiModalStorageFacade::new().with_vector_store(vector_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
         let ctx =
             FederatedQueryContext::new(storage).with_collection_service(collection_service.clone());
 
@@ -1150,7 +1150,7 @@ mod tests {
         ) as Arc<dyn UnifiedStorageEngine>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
-        let storage = Arc::new(MultiModalStorageFacade::new().with_vector_store(vector_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let result = ctx
@@ -1174,7 +1174,7 @@ mod tests {
 
     #[test]
     fn test_federated_context_enable_cache() {
-        let storage = Arc::new(MultiModalStorageFacade::new());
+        let storage = Arc::new(MultiModelStorageFacade::new());
         let mut ctx = FederatedQueryContext::new(storage);
 
         assert!(ctx.cache.is_none());
@@ -1188,7 +1188,7 @@ mod tests {
 
     #[test]
     fn test_cache_stats() {
-        let storage = Arc::new(MultiModalStorageFacade::new());
+        let storage = Arc::new(MultiModelStorageFacade::new());
         let cache = Arc::new(QueryResultCache::with_defaults());
         let ctx = FederatedQueryContext::with_cache(storage, cache);
 
@@ -1203,7 +1203,7 @@ mod tests {
 
     #[test]
     fn test_invalidate_collection() {
-        let storage = Arc::new(MultiModalStorageFacade::new());
+        let storage = Arc::new(MultiModelStorageFacade::new());
         let cache = Arc::new(QueryResultCache::with_defaults());
         let ctx = FederatedQueryContext::with_cache(storage, cache);
 
@@ -1214,7 +1214,7 @@ mod tests {
 
     #[test]
     fn test_context_without_cache_stats() {
-        let storage = Arc::new(MultiModalStorageFacade::new());
+        let storage = Arc::new(MultiModelStorageFacade::new());
         let ctx = FederatedQueryContext::new(storage);
 
         assert!(ctx.cache_stats().is_none());
@@ -1222,7 +1222,7 @@ mod tests {
 
     #[test]
     fn test_context_without_cache_invalidation() {
-        let storage = Arc::new(MultiModalStorageFacade::new());
+        let storage = Arc::new(MultiModelStorageFacade::new());
         let ctx = FederatedQueryContext::new(storage);
 
         // Without cache, invalidation is a no-op
@@ -1232,7 +1232,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_plain_sql_requires_non_federated_backend() {
-        let storage = Arc::new(MultiModalStorageFacade::new());
+        let storage = Arc::new(MultiModelStorageFacade::new());
         let ctx = FederatedQueryContext::new(storage);
 
         let error = ctx
@@ -1249,7 +1249,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_vector_search_requires_configured_store() {
-        let storage = Arc::new(MultiModalStorageFacade::new());
+        let storage = Arc::new(MultiModelStorageFacade::new());
         let ctx = FederatedQueryContext::new(storage);
 
         let error = ctx
@@ -1303,7 +1303,7 @@ mod tests {
         );
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_document_store(document_store),
         );
@@ -1337,7 +1337,7 @@ mod tests {
         ) as Arc<dyn UnifiedStorageEngine>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
-        let storage = Arc::new(MultiModalStorageFacade::new().with_vector_store(vector_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let result = ctx
@@ -1378,7 +1378,7 @@ mod tests {
         ) as Arc<dyn UnifiedStorageEngine>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
-        let storage = Arc::new(MultiModalStorageFacade::new().with_vector_store(vector_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let result = ctx
@@ -1419,7 +1419,7 @@ mod tests {
         ) as Arc<dyn UnifiedStorageEngine>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
-        let storage = Arc::new(MultiModalStorageFacade::new().with_vector_store(vector_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let result = ctx
@@ -1475,7 +1475,7 @@ mod tests {
         ) as Arc<dyn UnifiedStorageEngine>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
-        let storage = Arc::new(MultiModalStorageFacade::new().with_vector_store(vector_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let result = ctx
@@ -1524,7 +1524,7 @@ mod tests {
         ) as Arc<dyn UnifiedStorageEngine>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
-        let storage = Arc::new(MultiModalStorageFacade::new().with_vector_store(vector_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let result = ctx
@@ -1553,7 +1553,7 @@ mod tests {
         ) as Arc<dyn UnifiedStorageEngine>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
-        let storage = Arc::new(MultiModalStorageFacade::new().with_vector_store(vector_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let result = ctx
@@ -1584,7 +1584,7 @@ mod tests {
         ) as Arc<dyn UnifiedStorageEngine>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
-        let storage = Arc::new(MultiModalStorageFacade::new().with_vector_store(vector_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let result = ctx
@@ -1660,7 +1660,7 @@ mod tests {
         );
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_document_store(document_store),
         );
@@ -1737,7 +1737,7 @@ mod tests {
         );
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_document_store(document_store),
         );
@@ -1819,7 +1819,7 @@ mod tests {
         ));
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_graph_store(graph_store),
         );
@@ -1889,7 +1889,7 @@ mod tests {
         );
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_document_store(document_store),
         );
@@ -1952,7 +1952,7 @@ mod tests {
         ));
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_graph_store(graph_store),
         );
@@ -1995,7 +1995,7 @@ mod tests {
         );
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_document_store(document_store),
         );
@@ -2075,7 +2075,7 @@ mod tests {
         );
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_document_store(document_store),
         );
@@ -2157,7 +2157,7 @@ mod tests {
         );
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_document_store(document_store),
         );
@@ -2239,7 +2239,7 @@ mod tests {
         );
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_document_store(document_store),
         );
@@ -2321,7 +2321,7 @@ mod tests {
         );
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_document_store(document_store),
         );
@@ -2389,7 +2389,7 @@ mod tests {
         );
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_document_store(document_store),
         );
@@ -2468,7 +2468,7 @@ mod tests {
         ));
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_graph_store(graph_store),
         );
@@ -2549,7 +2549,7 @@ mod tests {
         ));
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_graph_store(graph_store),
         );
@@ -2630,7 +2630,7 @@ mod tests {
         ));
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_graph_store(graph_store),
         );
@@ -2696,7 +2696,7 @@ mod tests {
         ));
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_graph_store(graph_store),
         );
@@ -2775,7 +2775,7 @@ mod tests {
         ));
 
         let storage = Arc::new(
-            MultiModalStorageFacade::new()
+            MultiModelStorageFacade::new()
                 .with_vector_store(vector_store)
                 .with_graph_store(graph_store),
         );
@@ -2813,7 +2813,7 @@ mod tests {
             DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
         );
 
-        let storage = Arc::new(MultiModalStorageFacade::new().with_document_store(document_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_document_store(document_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let result = ctx
@@ -2877,7 +2877,7 @@ mod tests {
             DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
         );
 
-        let storage = Arc::new(MultiModalStorageFacade::new().with_document_store(document_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_document_store(document_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let result = ctx
@@ -2931,7 +2931,7 @@ mod tests {
             DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
         );
 
-        let storage = Arc::new(MultiModalStorageFacade::new().with_document_store(document_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_document_store(document_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let result = ctx
@@ -2968,7 +2968,7 @@ mod tests {
             DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
         );
 
-        let storage = Arc::new(MultiModalStorageFacade::new().with_document_store(document_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_document_store(document_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let error = ctx
@@ -3003,7 +3003,7 @@ mod tests {
             DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
         );
 
-        let storage = Arc::new(MultiModalStorageFacade::new().with_document_store(document_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_document_store(document_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let error = ctx
@@ -3042,7 +3042,7 @@ mod tests {
         );
 
         let storage =
-            Arc::new(MultiModalStorageFacade::new().with_observability_store(observability_store));
+            Arc::new(MultiModelStorageFacade::new().with_observability_store(observability_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let result = ctx
@@ -3097,7 +3097,7 @@ mod tests {
         );
 
         let storage =
-            Arc::new(MultiModalStorageFacade::new().with_observability_store(observability_store));
+            Arc::new(MultiModelStorageFacade::new().with_observability_store(observability_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let result = ctx
@@ -3173,7 +3173,7 @@ mod tests {
         );
 
         let storage =
-            Arc::new(MultiModalStorageFacade::new().with_observability_store(observability_store));
+            Arc::new(MultiModelStorageFacade::new().with_observability_store(observability_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let result = ctx
@@ -3218,7 +3218,7 @@ mod tests {
         );
 
         let storage =
-            Arc::new(MultiModalStorageFacade::new().with_observability_store(observability_store));
+            Arc::new(MultiModelStorageFacade::new().with_observability_store(observability_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let result = ctx
@@ -3297,7 +3297,7 @@ mod tests {
         );
 
         let storage =
-            Arc::new(MultiModalStorageFacade::new().with_observability_store(observability_store));
+            Arc::new(MultiModelStorageFacade::new().with_observability_store(observability_store));
         let ctx = FederatedQueryContext::new(storage);
 
         let result = ctx
@@ -3322,7 +3322,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lateral_join_still_requires_relational_scan_backend_for_tables() {
-        let storage = Arc::new(MultiModalStorageFacade::new());
+        let storage = Arc::new(MultiModelStorageFacade::new());
         let ctx = FederatedQueryContext::new(storage);
 
         let error = ctx
