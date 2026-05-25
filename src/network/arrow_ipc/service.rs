@@ -1308,10 +1308,46 @@ impl FlightService for ProximaFlightService {
                     .and_then(|v| v.as_str())
                     .unwrap_or("cosine");
 
+                // Read canonical_embedding_precision from the action body so
+                // Arrow Flight clients can opt their collections into
+                // non-fp32 storage. Accept the same string-or-int format
+                // the REST `apply_proto_enum_workarounds` does so SDKs see
+                // consistent semantics across protocols.
+                let canonical_embedding_precision: Option<i32> = match params
+                    .get("canonical_embedding_precision")
+                {
+                    Some(serde_json::Value::String(s)) => {
+                        use crate::proto::proximadb_v1::EmbeddingPrecision;
+                        let key = s.to_ascii_lowercase();
+                        let stripped =
+                            key.strip_prefix("embedding_precision_").unwrap_or(&key);
+                        match stripped {
+                            "unspecified" => Some(EmbeddingPrecision::Unspecified as i32),
+                            "fp32" | "f32" | "float32" => {
+                                Some(EmbeddingPrecision::Fp32 as i32)
+                            }
+                            "fp16" | "f16" | "float16" | "half" => {
+                                Some(EmbeddingPrecision::Fp16 as i32)
+                            }
+                            "bf16" | "bfloat16" => Some(EmbeddingPrecision::Bf16 as i32),
+                            "int8" | "i8" | "int8_scalar" => {
+                                Some(EmbeddingPrecision::Int8 as i32)
+                            }
+                            "uint8" | "u8" | "uint8_scalar" => {
+                                Some(EmbeddingPrecision::Uint8 as i32)
+                            }
+                            _ => None,
+                        }
+                    }
+                    Some(serde_json::Value::Number(n)) => n.as_i64().map(|v| v as i32),
+                    _ => None,
+                };
+
                 info!(
                     name = %name,
                     dimension = dimension,
                     engine = %engine,
+                    precision = ?canonical_embedding_precision,
                     "Arrow Flight: create_collection"
                 );
 
@@ -1352,7 +1388,7 @@ impl FlightService for ProximaFlightService {
                     text_columns: vec![],
                     text_storage_configs: vec![],
                     enable_dual_use_embeddings: None,
-                    canonical_embedding_precision: None,
+                    canonical_embedding_precision,
                 };
 
                 // Create collection via service
