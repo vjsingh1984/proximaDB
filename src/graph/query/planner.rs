@@ -154,9 +154,20 @@ pub struct PlannerEdgeFilter {
     pub conditions: Vec<FilterCondition>,
 }
 
-/// Property filter
+/// Property filter for the graph query planner — conditions-list form.
+///
+/// Naming note: this type used to be called `PropertyFilter` and collided
+/// with 4 other PropertyFilter types in the workspace (proto wire form,
+/// multimodel-query unified AST, proximadb-graph KV form, proximadb-graph-query
+/// relational form). Renamed to `PlannerPropertyFilter` to make the
+/// conditions-list semantics explicit; the other variants are already
+/// disambiguated by qualified paths and the `as UnifiedPropertyFilter`
+/// alias in proximadb-query.
+///
+/// The proto `proximadb_proto::v1::PropertyFilter` remains the canonical
+/// wire form.
 #[derive(Debug, Clone)]
-pub struct PropertyFilter {
+pub struct PlannerPropertyFilter {
     pub property: String,
     pub conditions: Vec<FilterCondition>,
 }
