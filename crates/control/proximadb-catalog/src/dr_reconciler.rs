@@ -3034,4 +3034,180 @@ mod tests {
         // every tick during the pause window.
         assert_eq!(metrics.pauses(), vec![ShardPauseReason::QuotaExceeded]);
     }
+
+    // --- Lifecycle integration test (P6.1) ----------------------------
+
+    /// Walk one policy through the contract's full state machine via
+    /// the shard, asserting that each phase produces the expected
+    /// outcome + event log entries. The mock store doesn't auto-apply
+    /// state transitions to its pending list, so the test re-seeds
+    /// between phases to mirror what a real store would project on
+    /// the next `pending_reconcile` call.
+    ///
+    /// This is the engine-side proof that every primitive we landed
+    /// in P1..P3c4 + P4 composes into the documented lifecycle. If a
+    /// future refactor breaks the contract, this test names the
+    /// regression at the phase boundary.
+    #[tokio::test]
+    async fn lifecycle_full_state_machine_walk() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let metrics = RecordingDrMetrics::new();
+        let clock = Arc::new(AtomicI64::new(1_000_000_000_000));
+        let shard = make_shard(
+            store.clone(),
+            adapter.clone(),
+            BackoffPolicy::default(),
+            clock.clone(),
+            0.5,
+        )
+        .with_metrics(metrics.clone());
+
+        // Each phase advances 6s — past the 5s per-policy rate-limit
+        // floor — so successive ticks aren't deferred.
+        let advance = |clock: &Arc<AtomicI64>| {
+            clock.fetch_add(6_000_000_000, Ordering::Relaxed);
+        };
+
+        // ---------- Phase 1: PendingProviderProvisioning ----------
+        let mut policy = base_policy();
+        policy.state = DrState::PendingProviderProvisioning;
+        policy.provider_binding = None;
+        store.seed_pending(vec![policy.clone()]);
+
+        let phase1 = shard.tick().await.unwrap();
+        match &phase1[0].1 {
+            TickOutcome::Reconciled(ReconcileOutcome::EnsuredRule { .. }) => {}
+            other => panic!("phase 1 expected EnsuredRule, got {other:?}"),
+        }
+        // The driver: ensure_rule → binding write → state transition
+        // to Active → `active` event → health = Healthy.
+        assert_eq!(adapter.ensure_call_count(), 1);
+        let bindings = store.bindings_snapshot();
+        assert_eq!(bindings.len(), 1);
+        let new_binding = bindings[0].1.clone();
+        assert_eq!(
+            store
+                .transitions_snapshot()
+                .iter()
+                .filter(|(_, s, _)| *s == DrState::Active)
+                .count(),
+            1
+        );
+        assert!(store
+            .events_snapshot()
+            .iter()
+            .any(|e| e.event_type == DrEventType::Active));
+
+        // ---------- Phase 2: Active + healthy ----------
+        // Mirror what the store would project: state = Active, binding set.
+        policy.state = DrState::Active;
+        policy.provider_binding = Some(new_binding.clone());
+        store.seed_pending(vec![policy.clone()]);
+        adapter.seed_observed(&policy.policy_id, healthy_observed(&policy));
+        advance(&clock);
+
+        let phase2 = shard.tick().await.unwrap();
+        match &phase2[0].1 {
+            TickOutcome::Reconciled(ReconcileOutcome::Idle(IdleReason::HealthyActive)) => {}
+            other => panic!("phase 2 expected Idle(HealthyActive), got {other:?}"),
+        }
+
+        // ---------- Phase 3: drift detected (rule missing) ----------
+        let mut drift = healthy_observed(&policy);
+        drift.rule_exists = false;
+        adapter.seed_observed(&policy.policy_id, drift);
+        advance(&clock);
+
+        let phase3 = shard.tick().await.unwrap();
+        match &phase3[0].1 {
+            TickOutcome::Reconciled(ReconcileOutcome::RepairedDrift(
+                DriftReason::RuleMissing,
+            )) => {}
+            other => panic!("phase 3 expected RepairedDrift(RuleMissing), got {other:?}"),
+        }
+        let event_types: Vec<_> = store
+            .events_snapshot()
+            .iter()
+            .map(|e| e.event_type)
+            .collect();
+        let detected = event_types
+            .iter()
+            .filter(|t| **t == DrEventType::DriftDetected)
+            .count();
+        let repaired = event_types
+            .iter()
+            .filter(|t| **t == DrEventType::DriftRepaired)
+            .count();
+        assert_eq!(detected, 1, "exactly one drift_detected event after repair");
+        assert_eq!(repaired, 1, "exactly one drift_repaired event");
+
+        // ---------- Phase 4: PendingRetirement ----------
+        policy.state = DrState::PendingRetirement;
+        // The mock adapter's ensure_rule reflected the rule back into
+        // observed state, so a fresh healthy read is what fetch_state
+        // returns; nothing further to seed here.
+        store.seed_pending(vec![policy.clone()]);
+        advance(&clock);
+
+        let phase4 = shard.tick().await.unwrap();
+        match &phase4[0].1 {
+            TickOutcome::Reconciled(ReconcileOutcome::Retired) => {}
+            other => panic!("phase 4 expected Retired, got {other:?}"),
+        }
+        // retire_rule was called once; transition to Retired recorded.
+        assert_eq!(adapter.retire_call_count(), 1);
+        assert!(store
+            .transitions_snapshot()
+            .iter()
+            .any(|(_, s, _)| *s == DrState::Retired));
+        let event_types: Vec<_> = store
+            .events_snapshot()
+            .iter()
+            .map(|e| e.event_type)
+            .collect();
+        assert!(event_types.contains(&DrEventType::ProviderRuleDisabled));
+        assert!(event_types.contains(&DrEventType::Retired));
+
+        // ---------- Phase 5: terminal Retired ----------
+        policy.state = DrState::Retired;
+        store.seed_pending(vec![policy.clone()]);
+        advance(&clock);
+
+        let phase5 = shard.tick().await.unwrap();
+        match &phase5[0].1 {
+            TickOutcome::Reconciled(ReconcileOutcome::Idle(IdleReason::Retired)) => {}
+            other => panic!("phase 5 expected Idle(Retired), got {other:?}"),
+        }
+        // No further mutations after Retired.
+        let bindings_after = store.bindings_snapshot().len();
+        let transitions_after = store.transitions_snapshot().len();
+        advance(&clock);
+        let phase5b = shard.tick().await.unwrap();
+        assert!(matches!(
+            phase5b[0].1,
+            TickOutcome::Reconciled(ReconcileOutcome::Idle(IdleReason::Retired))
+        ));
+        assert_eq!(
+            store.bindings_snapshot().len(),
+            bindings_after,
+            "no new bindings after Retired"
+        );
+        assert_eq!(
+            store.transitions_snapshot().len(),
+            transitions_after,
+            "no new transitions after Retired"
+        );
+
+        // ---------- Metric layer sanity check ----------
+        // Every tick produced exactly one observe_tick call.
+        let recorded = metrics.ticks();
+        assert_eq!(
+            recorded.len(),
+            6,
+            "5 phases + 1 phase-5b idempotency tick = 6 observed ticks"
+        );
+        // No shard pauses occurred (no QuotaExceeded errors).
+        assert!(metrics.pauses().is_empty());
+    }
 }
