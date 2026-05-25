@@ -8,7 +8,7 @@
 use serde_json::json;
 
 use proximadb::network::rest::v1::handlers::{
-    HybridIndexRequest, HybridSearchHit, HybridSearchRequest, HybridSearchResponse,
+    HybridIndexRequest, HybridSearchHit, LegacyHybridSearchRequest, LegacyHybridSearchResponse,
 };
 
 // Test hybrid search request deserialization
@@ -25,7 +25,7 @@ fn test_hybrid_search_request_full() {
         "min_bm25_score": 0.5
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     assert!(result.is_ok());
 
     let request = result.unwrap();
@@ -45,7 +45,7 @@ fn test_hybrid_search_request_vector_only() {
         "vector": [0.1, 0.2, 0.3]
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     assert!(result.is_ok());
 
     let request = result.unwrap();
@@ -64,7 +64,7 @@ fn test_hybrid_search_request_text_only() {
         "text_query": "machine learning"
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     assert!(result.is_ok());
 
     let request = result.unwrap();
@@ -79,7 +79,7 @@ fn test_hybrid_search_request_minimal() {
         "collection": "test_collection"
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     assert!(result.is_ok());
 
     let request = result.unwrap();
@@ -95,7 +95,7 @@ fn test_hybrid_search_request_empty_collection() {
         "vector": [0.1, 0.2, 0.3]
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     // Empty collection name is accepted but may be rejected by handler logic
     assert!(result.is_ok());
 
@@ -110,7 +110,7 @@ fn test_hybrid_search_request_invalid_vector() {
         "vector": "not_an_array"
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     assert!(result.is_err());
 }
 
@@ -122,7 +122,7 @@ fn test_hybrid_search_request_zero_top_k() {
         "top_k": 0
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     assert!(result.is_ok());
 
     let request = result.unwrap();
@@ -137,7 +137,7 @@ fn test_hybrid_search_request_large_top_k() {
         "top_k": 10000
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     assert!(result.is_ok());
 
     let request = result.unwrap();
@@ -153,7 +153,7 @@ fn test_hybrid_search_request_vector_weight_bounds() {
         "vector_weight": 0.0
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     assert!(result.is_ok());
 
     let request = result.unwrap();
@@ -166,7 +166,7 @@ fn test_hybrid_search_request_vector_weight_bounds() {
         "vector_weight": 1.0
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     assert!(result.is_ok());
 
     let request = result.unwrap();
@@ -180,7 +180,7 @@ fn test_hybrid_search_request_rrf_k_default() {
         "vector": [0.1, 0.2, 0.3]
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     assert!(result.is_ok());
 
     let request = result.unwrap();
@@ -196,7 +196,7 @@ fn test_hybrid_search_request_custom_rrf_k() {
         "rrf_k": 100
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     assert!(result.is_ok());
 
     let request = result.unwrap();
@@ -211,7 +211,7 @@ fn test_hybrid_search_request_min_bm25_score() {
         "min_bm25_score": 0.75
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     assert!(result.is_ok());
 
     let request = result.unwrap();
@@ -339,7 +339,7 @@ fn test_hybrid_index_request_missing_text() {
 
 #[test]
 fn test_hybrid_search_response_serialization() {
-    let response = HybridSearchResponse {
+    let response = LegacyHybridSearchResponse {
         success: true,
         results: vec![HybridSearchHit {
             id: "doc1".to_string(),
@@ -389,7 +389,7 @@ fn test_hybrid_search_hit_serialization() {
 
 #[test]
 fn test_malformed_json() {
-    let malformed = serde_json::from_str::<HybridSearchRequest>("{invalid json}");
+    let malformed = serde_json::from_str::<LegacyHybridSearchRequest>("{invalid json}");
     assert!(malformed.is_err());
 }
 
@@ -401,7 +401,7 @@ fn test_extra_fields_ignored() {
         "unknown_field": "ignored"
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     // Extra fields should be ignored
     assert!(result.is_ok());
 }
@@ -413,7 +413,7 @@ fn test_null_values_handling() {
         "vector": [0.1, 0.2, 0.3]
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     // Null collection should error
     assert!(result.is_err());
 }
@@ -428,7 +428,7 @@ fn test_large_vector_handling() {
         "top_k": 10
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     // Should handle large vectors
     assert!(result.is_ok());
 
@@ -443,7 +443,7 @@ fn test_unicode_text_query() {
         "text_query": "机器学习 学习算法"
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     assert!(result.is_ok());
 
     let request = result.unwrap();
@@ -457,7 +457,7 @@ fn test_special_characters_in_text() {
         "text_query": "C++ & Rust: <lang> \"programming\""
     });
 
-    let result: Result<HybridSearchRequest, _> = serde_json::from_value(json);
+    let result: Result<LegacyHybridSearchRequest, _> = serde_json::from_value(json);
     assert!(result.is_ok());
 
     let request = result.unwrap();

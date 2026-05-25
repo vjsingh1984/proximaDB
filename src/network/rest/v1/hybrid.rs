@@ -118,9 +118,16 @@ fn default_top_k() -> usize {
     10
 }
 
-/// Hybrid search response
+/// Experimental hybrid (BM25 + vector) search response paired with
+/// `ExperimentalHybridSearchRequest`. Serves the
+/// `/api/v1/experimental/hybrid/search` endpoint.
+///
+/// Naming note: renamed from `HybridSearchResponse` to
+/// `ExperimentalHybridSearchResponse` to mark the experimental scope
+/// and to distinguish from the proto wire form
+/// `proximadb_proto::v1::HybridSearchResponse`.
 #[derive(Debug, Serialize)]
-pub struct HybridSearchResponse {
+pub struct ExperimentalHybridSearchResponse {
     /// Fused search results
     pub results: Vec<HybridSearchResult>,
     /// Number of results returned
@@ -254,7 +261,7 @@ pub fn create_router() -> Router<HybridSearchApiState> {
 async fn execute_hybrid_search(
     State(_state): State<HybridSearchApiState>,
     Json(request): Json<ExperimentalHybridSearchRequest>,
-) -> ApiResult<Json<HybridSearchResponse>> {
+) -> ApiResult<Json<ExperimentalHybridSearchResponse>> {
     let start = std::time::Instant::now();
 
     info!(
@@ -301,7 +308,7 @@ async fn execute_hybrid_search(
         "Hybrid search completed"
     );
 
-    Ok(Json(HybridSearchResponse {
+    Ok(Json(ExperimentalHybridSearchResponse {
         results,
         results_count,
         fusion_strategy: request.fusion_strategy,

@@ -755,9 +755,18 @@ pub struct HybridDocument {
     pub text: String,
 }
 
-/// Response for hybrid search
+/// Legacy response for hybrid search — DEAD CODE paired with
+/// `LegacyHybridSearchRequest` (see ~line 695). The handler that produced
+/// this response was removed (routes now served by proximadb-api's
+/// create_hybrid_search_router backed by RestHybridPortImpl). The struct
+/// survives only for serialization-shape tests in this file + tests/rest_api_v1_test.rs.
+///
+/// Naming note: renamed from `HybridSearchResponse` to
+/// `LegacyHybridSearchResponse` to mark it as dead-code-eligible and to
+/// distinguish from the proto wire form
+/// `crate::proto::v1::HybridSearchResponse`.
 #[derive(Debug, Serialize)]
-pub struct HybridSearchResponse {
+pub struct LegacyHybridSearchResponse {
     /// Whether the search completed successfully
     pub success: bool,
     /// Fused search result hits
@@ -1808,7 +1817,7 @@ mod tests {
 
     #[test]
     fn test_hybrid_search_response_serialization() {
-        let response = HybridSearchResponse {
+        let response = LegacyHybridSearchResponse {
             success: true,
             results: vec![
                 HybridSearchHit {
@@ -2676,7 +2685,7 @@ mod tests {
     #[test]
     fn test_hybrid_search_response_serialization_extended() {
         // Response with mixed hit types: some have vector scores, some have bm25 only
-        let response = HybridSearchResponse {
+        let response = LegacyHybridSearchResponse {
             success: true,
             results: vec![
                 HybridSearchHit {
