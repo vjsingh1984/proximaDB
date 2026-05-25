@@ -93,13 +93,16 @@ impl IngestTask {
     }
 }
 
+/// Backwards-compat alias for [`IngestSchedulerConfig`].
+pub type SchedulerConfig = IngestSchedulerConfig;
+
 #[derive(Debug, Clone)]
-pub struct SchedulerConfig {
+pub struct IngestSchedulerConfig {
     pub max_depth: usize,
     pub fairness_window: usize,
 }
 
-impl Default for SchedulerConfig {
+impl Default for IngestSchedulerConfig {
     fn default() -> Self {
         Self {
             max_depth: 65_536,
@@ -143,19 +146,19 @@ impl Default for QueueState {
 
 #[derive(Debug)]
 pub struct IngestQueue {
-    config: SchedulerConfig,
+    config: IngestSchedulerConfig,
     state: Mutex<QueueState>,
     notify: Notify,
 }
 
 impl Default for IngestQueue {
     fn default() -> Self {
-        Self::new(SchedulerConfig::default())
+        Self::new(IngestSchedulerConfig::default())
     }
 }
 
 impl IngestQueue {
-    pub fn new(config: SchedulerConfig) -> Self {
+    pub fn new(config: IngestSchedulerConfig) -> Self {
         Self {
             config,
             state: Mutex::new(QueueState::default()),
@@ -280,7 +283,7 @@ mod tests {
 
     #[tokio::test]
     async fn fairness_window_allows_lower_lane_to_drain() {
-        let queue = IngestQueue::new(SchedulerConfig {
+        let queue = IngestQueue::new(IngestSchedulerConfig {
             max_depth: 100,
             fairness_window: 2,
         });
@@ -306,7 +309,7 @@ mod tests {
 
     #[tokio::test]
     async fn bounded_queue_rejects_when_full() {
-        let queue = IngestQueue::new(SchedulerConfig {
+        let queue = IngestQueue::new(IngestSchedulerConfig {
             max_depth: 1,
             fairness_window: 1,
         });

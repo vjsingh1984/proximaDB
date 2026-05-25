@@ -158,8 +158,11 @@ pub struct ParquetFooterCache {
     pub last_access: Instant,
 }
 
+/// Backwards-compat alias for [`ParquetIoRowGroupMetadata`].
+pub type RowGroupMetadata = ParquetIoRowGroupMetadata;
+
 #[derive(Clone, Debug)]
-pub struct RowGroupMetadata {
+pub struct ParquetIoRowGroupMetadata {
     pub index: usize,
     pub offset: u64,
     pub size: u64,

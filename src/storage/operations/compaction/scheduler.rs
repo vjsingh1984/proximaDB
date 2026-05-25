@@ -78,9 +78,12 @@ pub struct CompactionSchedulerStats {
     pub average_compaction_time: Duration,
 }
 
+/// Backwards-compat alias for [`CompactionSchedulerConfig`].
+pub type SchedulerConfig = CompactionSchedulerConfig;
+
 /// Configuration for the compaction scheduler
 #[derive(Debug, Clone)]
-pub struct SchedulerConfig {
+pub struct CompactionSchedulerConfig {
     /// Maximum concurrent compactions
     pub max_concurrent: usize,
     /// Check interval for new compaction needs
@@ -93,7 +96,7 @@ pub struct SchedulerConfig {
     pub auto_schedule: bool,
 }
 
-impl Default for SchedulerConfig {
+impl Default for CompactionSchedulerConfig {
     fn default() -> Self {
         Self {
             max_concurrent: 2,
@@ -114,7 +117,7 @@ impl Default for SchedulerConfig {
 /// - Per-collection rate limiting
 pub struct CompactionScheduler {
     /// Configuration
-    config: SchedulerConfig,
+    config: CompactionSchedulerConfig,
     /// Strategy registry for selecting strategies
     strategy_registry: Arc<CompactionStrategyRegistry>,
     /// Priority queue of pending tasks
@@ -134,11 +137,11 @@ pub struct CompactionScheduler {
 impl CompactionScheduler {
     /// Create a new scheduler with default configuration
     pub fn new() -> Self {
-        Self::with_config(SchedulerConfig::default())
+        Self::with_config(CompactionSchedulerConfig::default())
     }
 
     /// Create a new scheduler with custom configuration
-    pub fn with_config(config: SchedulerConfig) -> Self {
+    pub fn with_config(config: CompactionSchedulerConfig) -> Self {
         let max_concurrent = config.max_concurrent;
         Self {
             config,
@@ -544,7 +547,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_collection_rate_limit() {
-        let config = SchedulerConfig {
+        let config = CompactionSchedulerConfig {
             min_collection_interval: Duration::from_secs(60),
             ..Default::default()
         };
@@ -647,7 +650,7 @@ mod tests {
     #[tokio::test]
     async fn test_compaction_trigger_conditions() {
         // Verify that the max_pending_tasks limit is enforced
-        let config = SchedulerConfig {
+        let config = CompactionSchedulerConfig {
             max_pending_tasks: 3,
             min_collection_interval: Duration::from_secs(0), // disable rate limit for this test
             ..Default::default()
@@ -804,7 +807,7 @@ mod tests {
     #[tokio::test]
     async fn test_concurrent_compaction_limit() {
         // Configure max_concurrent = 1 so only one compaction can run at a time
-        let config = SchedulerConfig {
+        let config = CompactionSchedulerConfig {
             max_concurrent: 1,
             min_collection_interval: Duration::from_secs(0),
             ..Default::default()

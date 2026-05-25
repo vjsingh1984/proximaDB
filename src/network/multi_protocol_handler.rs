@@ -284,7 +284,7 @@ pub struct UnifiedQueryResponse {
     /// Response data
     pub data: ResponseData,
     /// Execution metadata
-    pub metadata: ResponseMetadata,
+    pub metadata: NetworkResponseMetadata,
 }
 
 /// Response data variants
@@ -390,9 +390,12 @@ pub struct NetworkGraphEdge {
     pub properties: HashMap<String, serde_json::Value>,
 }
 
+/// Backwards-compat alias for [`NetworkResponseMetadata`].
+pub type ResponseMetadata = NetworkResponseMetadata;
+
 /// Response metadata
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ResponseMetadata {
+pub struct NetworkResponseMetadata {
     /// Total execution time in milliseconds
     pub execution_time_ms: u64,
     /// Unique request identifier for tracing
@@ -1086,7 +1089,7 @@ impl UnifiedQueryHandler {
                 success: false,
                 error: Some(e.to_string()),
                 data: ResponseData::Empty,
-                metadata: ResponseMetadata {
+                metadata: NetworkResponseMetadata {
                     execution_time_ms: elapsed,
                     ..Default::default()
                 },
@@ -1152,7 +1155,7 @@ impl UnifiedQueryHandler {
             success: true,
             error: None,
             data: ResponseData::NetworkSearchResults(results),
-            metadata: ResponseMetadata::default(),
+            metadata: NetworkResponseMetadata::default(),
         })
     }
 
@@ -1231,7 +1234,7 @@ impl UnifiedQueryHandler {
             success: true,
             error: None,
             data: ResponseData::NetworkSearchResults(results),
-            metadata: ResponseMetadata {
+            metadata: NetworkResponseMetadata {
                 execution_time_ms: response.execution_time_ms,
                 ..Default::default()
             },
@@ -1286,7 +1289,7 @@ impl UnifiedQueryHandler {
             success: true,
             error: None,
             data: ResponseData::NetworkSearchResults(results),
-            metadata: ResponseMetadata::default(),
+            metadata: NetworkResponseMetadata::default(),
         })
     }
 
@@ -1384,7 +1387,7 @@ impl UnifiedQueryHandler {
                 updated: 0,
                 deleted: 0,
             },
-            metadata: ResponseMetadata::default(),
+            metadata: NetworkResponseMetadata::default(),
         })
     }
 
@@ -1401,7 +1404,7 @@ impl UnifiedQueryHandler {
                     "SQL execution not yet integrated".to_string(),
                 )]],
             },
-            metadata: ResponseMetadata::default(),
+            metadata: NetworkResponseMetadata::default(),
         })
     }
 
@@ -1447,7 +1450,7 @@ impl UnifiedQueryHandler {
                     success: true,
                     error: None,
                     data: ResponseData::CollectionList(collection_info),
-                    metadata: ResponseMetadata::default(),
+                    metadata: NetworkResponseMetadata::default(),
                 })
             }
             CollectionOperationType::Get => {
@@ -1488,14 +1491,14 @@ impl UnifiedQueryHandler {
                         storage_engine,
                         created_at: collection.created_at,
                     }),
-                    metadata: ResponseMetadata::default(),
+                    metadata: NetworkResponseMetadata::default(),
                 })
             }
             _ => Ok(UnifiedQueryResponse {
                 success: false,
                 error: Some("Collection operation not yet implemented".to_string()),
                 data: ResponseData::Empty,
-                metadata: ResponseMetadata::default(),
+                metadata: NetworkResponseMetadata::default(),
             }),
         }
     }
@@ -1528,14 +1531,14 @@ impl UnifiedQueryHandler {
                         nodes: vec![],
                         edges: vec![],
                     },
-                    metadata: ResponseMetadata::default(),
+                    metadata: NetworkResponseMetadata::default(),
                 })
             }
             _ => Ok(UnifiedQueryResponse {
                 success: false,
                 error: Some("Graph operation not yet implemented".to_string()),
                 data: ResponseData::Empty,
-                metadata: ResponseMetadata::default(),
+                metadata: NetworkResponseMetadata::default(),
             }),
         }
     }
@@ -1549,7 +1552,7 @@ impl UnifiedQueryHandler {
                 status: "healthy".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             },
-            metadata: ResponseMetadata::default(),
+            metadata: NetworkResponseMetadata::default(),
         })
     }
 }
@@ -1665,7 +1668,7 @@ mod tests {
                     metadata: HashMap::new(),
                 },
             ]),
-            metadata: ResponseMetadata::default(),
+            metadata: NetworkResponseMetadata::default(),
         };
 
         let pg_result = response.into_postgres_rows().unwrap();
@@ -1682,7 +1685,7 @@ mod tests {
                 status: "healthy".to_string(),
                 version: "0.1.0".to_string(),
             },
-            metadata: ResponseMetadata::default(),
+            metadata: NetworkResponseMetadata::default(),
         };
 
         let json = response.into_rest_json().unwrap();

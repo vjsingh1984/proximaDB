@@ -110,9 +110,12 @@ impl QueryCharacteristics {
     }
 }
 
+/// Backwards-compat alias for [`HtapRoutingDecision`].
+pub type RoutingDecision = HtapRoutingDecision;
+
 /// Routing decision with explanation
 #[derive(Debug, Clone)]
-pub struct RoutingDecision {
+pub struct HtapRoutingDecision {
     /// Workload type classification
     pub workload_type: WorkloadType,
     /// Should use OLAP store
@@ -127,7 +130,7 @@ pub struct RoutingDecision {
     pub olap_cost_estimate: u64,
 }
 
-impl RoutingDecision {
+impl HtapRoutingDecision {
     /// Create an OLTP routing decision
     pub fn oltp(reason: impl Into<String>) -> Self {
         Self {
@@ -253,13 +256,13 @@ impl WorkloadRouter {
     }
 
     /// Route a query based on its characteristics
-    pub async fn route(&self, query_id: &str, chars: &QueryCharacteristics) -> RoutingDecision {
+    pub async fn route(&self, query_id: &str, chars: &QueryCharacteristics) -> HtapRoutingDecision {
         // First, check if OLAP is even available and fresh enough
         if let Some(replication) = &self.replication {
             // Check freshness for all tables
             for table in &chars.tables {
                 if !replication.can_use_olap(table, true).await {
-                    return RoutingDecision::oltp("OLAP not fresh enough for required tables");
+                    return HtapRoutingDecision::oltp("OLAP not fresh enough for required tables");
                 }
             }
         }
@@ -267,19 +270,19 @@ impl WorkloadRouter {
         // Point lookups always go to OLTP
         if chars.is_point_lookup {
             self.oltp_queries.fetch_add(1, Ordering::Relaxed);
-            return RoutingDecision::oltp("Point lookup - optimized for OLTP");
+            return HtapRoutingDecision::oltp("Point lookup - optimized for OLTP");
         }
 
         // Aggregations with GROUP BY go to OLAP
         if chars.has_aggregation && chars.has_group_by && self.config.olap_for_aggregations {
             self.olap_queries.fetch_add(1, Ordering::Relaxed);
-            return RoutingDecision::olap("Aggregation with GROUP BY - optimized for OLAP");
+            return HtapRoutingDecision::olap("Aggregation with GROUP BY - optimized for OLAP");
         }
 
         // Full table scans go to OLAP
         if chars.is_full_scan && self.config.olap_for_full_scans {
             self.olap_queries.fetch_add(1, Ordering::Relaxed);
-            return RoutingDecision::olap("Full table scan - optimized for OLAP");
+            return HtapRoutingDecision::olap("Full table scan - optimized for OLAP");
         }
 
         // Check row count threshold
@@ -287,7 +290,7 @@ impl WorkloadRouter {
             && rows >= self.config.olap_row_threshold
         {
             self.olap_queries.fetch_add(1, Ordering::Relaxed);
-            return RoutingDecision::olap(format!(
+            return HtapRoutingDecision::olap(format!(
                 "Large result set ({} rows >= {} threshold)",
                 rows, self.config.olap_row_threshold
             ));
@@ -296,7 +299,7 @@ impl WorkloadRouter {
         // Check complexity score
         if chars.complexity_score >= self.config.olap_complexity_threshold {
             self.olap_queries.fetch_add(1, Ordering::Relaxed);
-            return RoutingDecision::olap(format!(
+            return HtapRoutingDecision::olap(format!(
                 "High complexity score ({} >= {})",
                 chars.complexity_score, self.config.olap_complexity_threshold
             ));
@@ -316,11 +319,11 @@ impl WorkloadRouter {
 
         // Default to OLTP for uncertain cases
         self.oltp_queries.fetch_add(1, Ordering::Relaxed);
-        RoutingDecision::oltp("Default routing - no clear OLAP indicators")
+        HtapRoutingDecision::oltp("Default routing - no clear OLAP indicators")
     }
 
     /// Check historical performance for adaptive routing
-    async fn check_history(&self, query_id: &str) -> Option<RoutingDecision> {
+    async fn check_history(&self, query_id: &str) -> Option<HtapRoutingDecision> {
         let history = self.query_history.read().await;
 
         if let Some(h) = history.get(query_id) {
@@ -343,12 +346,12 @@ impl WorkloadRouter {
             };
 
             if olap_avg < oltp_avg / 2 {
-                return Some(RoutingDecision::olap(format!(
+                return Some(HtapRoutingDecision::olap(format!(
                     "Adaptive learning: OLAP {}ms vs OLTP {}ms",
                     olap_avg, oltp_avg
                 )));
             } else if oltp_avg < olap_avg / 2 {
-                return Some(RoutingDecision::oltp(format!(
+                return Some(HtapRoutingDecision::oltp(format!(
                     "Adaptive learning: OLTP {}ms vs OLAP {}ms",
                     oltp_avg, olap_avg
                 )));
@@ -384,8 +387,8 @@ impl WorkloadRouter {
     }
 
     /// Get routing statistics
-    pub fn stats(&self) -> RouterStats {
-        RouterStats {
+    pub fn stats(&self) -> HtapRouterStats {
+        HtapRouterStats {
             oltp_queries: self.oltp_queries.load(Ordering::Relaxed),
             olap_queries: self.olap_queries.load(Ordering::Relaxed),
         }
@@ -410,16 +413,19 @@ impl Default for WorkloadRouter {
     }
 }
 
+/// Backwards-compat alias for [`HtapRouterStats`].
+pub type RouterStats = HtapRouterStats;
+
 /// Router statistics
 #[derive(Debug, Clone, Default)]
-pub struct RouterStats {
+pub struct HtapRouterStats {
     /// Total queries routed to OLTP
     pub oltp_queries: u64,
     /// Total queries routed to OLAP
     pub olap_queries: u64,
 }
 
-impl RouterStats {
+impl HtapRouterStats {
     /// Get percentage routed to OLAP
     pub fn olap_percentage(&self) -> f64 {
         let total = self.oltp_queries + self.olap_queries;
@@ -540,15 +546,15 @@ mod tests {
 
     #[test]
     fn test_routing_decision_builders() {
-        let oltp = RoutingDecision::oltp("Test OLTP");
+        let oltp = HtapRoutingDecision::oltp("Test OLTP");
         assert!(!oltp.use_olap);
         assert_eq!(oltp.workload_type, WorkloadType::OLTP);
 
-        let olap = RoutingDecision::olap("Test OLAP");
+        let olap = HtapRoutingDecision::olap("Test OLAP");
         assert!(olap.use_olap);
         assert_eq!(olap.workload_type, WorkloadType::OLAP);
 
-        let hybrid = RoutingDecision::hybrid("Test Hybrid", true);
+        let hybrid = HtapRoutingDecision::hybrid("Test Hybrid", true);
         assert!(hybrid.use_olap);
         assert_eq!(hybrid.workload_type, WorkloadType::Hybrid);
     }

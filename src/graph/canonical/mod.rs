@@ -63,7 +63,7 @@ pub struct GraphResponse<T> {
     pub error: Option<GraphError>,
     /// Optional execution metadata
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<ResponseMetadata>,
+    pub metadata: Option<CanonicalResponseMetadata>,
 }
 
 impl<T> GraphResponse<T> {
@@ -78,7 +78,7 @@ impl<T> GraphResponse<T> {
     }
 
     /// Create a success response with data and metadata
-    pub fn success_with_metadata(data: T, metadata: ResponseMetadata) -> Self {
+    pub fn success_with_metadata(data: T, metadata: CanonicalResponseMetadata) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -201,9 +201,12 @@ impl ErrorCode {
     }
 }
 
+/// Backwards-compat alias for [`CanonicalResponseMetadata`].
+pub type ResponseMetadata = CanonicalResponseMetadata;
+
 /// Response metadata for debugging and monitoring
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResponseMetadata {
+pub struct CanonicalResponseMetadata {
     /// Unique request ID for tracing
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,

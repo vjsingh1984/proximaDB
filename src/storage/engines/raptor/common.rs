@@ -16,7 +16,7 @@ pub use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 ///
 /// This structure replaces:
 /// - RowGroup (common.rs) - original definition
-/// - RowGroupMetadata (common.rs) - compact representation
+/// - RaptorRowGroupMetadata (common.rs) - compact representation
 /// - HybridRowGroup (rowgroup_manager.rs) - columnar variant
 /// - RowGroups duplicates (rowgroup.rs, rowgroup_manager.rs)
 ///
@@ -34,7 +34,7 @@ pub struct RowGroup {
     pub vector_count: usize,    // Number of vectors in this rowgroup
     pub max_vectors: usize,     // Maximum capacity (from smart sizing)
 
-    // Column pages with individual compression (from RowGroupMetadata)
+    // Column pages with individual compression (from RaptorRowGroupMetadata)
     pub column_pages: HashMap<ColumnType, ColumnPageMetadata>,
 
     // Statistics
@@ -107,8 +107,8 @@ impl RowGroup {
     }
 
     /// Convert to compact metadata for serialization (backward compatibility)
-    pub fn to_metadata(&self) -> RowGroupMetadata {
-        RowGroupMetadata {
+    pub fn to_metadata(&self) -> RaptorRowGroupMetadata {
+        RaptorRowGroupMetadata {
             id: self.id,
             vector_count: self.vector_count,
             offset: self.offset,
@@ -125,7 +125,7 @@ impl RowGroup {
     }
 
     /// Create from metadata (for deserialization)
-    pub fn from_metadata(metadata: RowGroupMetadata) -> Self {
+    pub fn from_metadata(metadata: RaptorRowGroupMetadata) -> Self {
         Self {
             id: metadata.id,
             offset: 0,                           // Will be set during file reading
@@ -267,10 +267,13 @@ pub enum ColumnType {
     BloomFilter,
 }
 
+/// Backwards-compat alias for [`RaptorRowGroupMetadata`].
+pub type RowGroupMetadata = RaptorRowGroupMetadata;
+
 /// Compact metadata representation for serialization
 /// This is a lightweight version of RowGroup for storage in footer
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
-pub struct RowGroupMetadata {
+pub struct RaptorRowGroupMetadata {
     pub id: u16,             // Rowgroup ID == Centroid ID
     pub vector_count: usize, // Number of vectors in this rowgroup
 
@@ -524,7 +527,7 @@ pub struct RaptorFileMetadata {
     pub collection_id: String,
 
     // Row groups
-    pub row_groups: Vec<RowGroupMetadata>,
+    pub row_groups: Vec<RaptorRowGroupMetadata>,
     pub num_rowgroups: usize,
     pub rowgroup_offsets: Vec<u64>,
     pub rowgroup_sizes: Vec<u64>,

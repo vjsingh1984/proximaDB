@@ -113,9 +113,12 @@ pub enum SchedulingPolicy {
     Fixed { provider_index: usize },
 }
 
+/// Backwards-compat alias for [`ComputeSchedulerConfig`].
+pub type SchedulerConfig = ComputeSchedulerConfig;
+
 /// Configuration for the scheduler
 #[derive(Debug, Clone)]
-pub struct SchedulerConfig {
+pub struct ComputeSchedulerConfig {
     /// Scheduling policy
     pub policy: SchedulingPolicy,
 
@@ -138,7 +141,7 @@ pub struct SchedulerConfig {
     pub cost_weights: CostWeights,
 }
 
-impl Default for SchedulerConfig {
+impl Default for ComputeSchedulerConfig {
     fn default() -> Self {
         Self {
             policy: SchedulingPolicy::CostBased,
@@ -315,7 +318,7 @@ pub struct ComputeScheduler {
     default_provider_index: usize,
 
     /// Scheduler configuration
-    config: SchedulerConfig,
+    config: ComputeSchedulerConfig,
 
     /// Round-robin counter (for RoundRobin policy)
     round_robin_counter: AtomicUsize,
@@ -345,7 +348,7 @@ impl ComputeScheduler {
         Self {
             providers: vec![ProviderState::new(provider)],
             default_provider_index: 0,
-            config: SchedulerConfig::default(),
+            config: ComputeSchedulerConfig::default(),
             round_robin_counter: AtomicUsize::new(0),
             statistics: RwLock::new(SchedulerStatistics::default()),
         }
@@ -756,7 +759,7 @@ pub struct ComputeSchedulerBuilder {
     /// Provider used when no specific provider is requested
     default_provider: Option<Arc<dyn ComputeProvider>>,
     /// Scheduler configuration (retry policy, timeouts, etc.)
-    config: SchedulerConfig,
+    config: ComputeSchedulerConfig,
 }
 
 impl ComputeSchedulerBuilder {
@@ -765,7 +768,7 @@ impl ComputeSchedulerBuilder {
         Self {
             providers: Vec::new(),
             default_provider: None,
-            config: SchedulerConfig::default(),
+            config: ComputeSchedulerConfig::default(),
         }
     }
 
@@ -788,7 +791,7 @@ impl ComputeSchedulerBuilder {
     }
 
     /// Set configuration
-    pub fn config(mut self, config: SchedulerConfig) -> Self {
+    pub fn config(mut self, config: ComputeSchedulerConfig) -> Self {
         self.config = config;
         self
     }

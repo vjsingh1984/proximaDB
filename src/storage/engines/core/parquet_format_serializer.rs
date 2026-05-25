@@ -37,7 +37,7 @@ pub struct ViperCachedMetadata {
     pub row_group_count: usize,
 
     /// Row group metadata
-    pub row_groups: Vec<RowGroupMetadata>,
+    pub row_groups: Vec<ParquetSerializerRowGroupMetadata>,
 
     /// Column statistics
     pub column_stats: HashMap<String, ParquetColumnStats>,
@@ -55,8 +55,11 @@ pub struct ViperCachedMetadata {
     pub last_modified: i64,
 }
 
+/// Backwards-compat alias for [`ParquetSerializerRowGroupMetadata`].
+pub type RowGroupMetadata = ParquetSerializerRowGroupMetadata;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RowGroupMetadata {
+pub struct ParquetSerializerRowGroupMetadata {
     pub id: u32,
     pub row_count: usize,
     pub file_offset: u64,
@@ -198,7 +201,7 @@ mod tests {
             file_path: "/data/viper/collection1.parquet".to_string(),
             total_rows: 1000000,
             row_group_count: 10,
-            row_groups: vec![RowGroupMetadata {
+            row_groups: vec![ParquetSerializerRowGroupMetadata {
                 id: 0,
                 row_count: 100000,
                 file_offset: 0,
