@@ -1,4 +1,4 @@
-//! Hardware capability probe — embedding-precision rollout PR 7 (Q14).
+//! Embedding precision probe — embedding-precision rollout PR 7 (Q14).
 //!
 //! Runs a small one-shot micro-bench at server startup so the policy
 //! resolver and ANN distance kernels can decide whether to fast-path on
@@ -6,10 +6,16 @@
 //! matmul × 3 dtype pairs) so it never blocks startup more than a few
 //! milliseconds.
 //!
-//! Singleton: process-wide `OnceLock<HardwareCapabilities>`. The server
-//! binary calls `init_capabilities()` exactly once during boot, and the
-//! rest of the codebase reads via `capabilities()`. Test code that needs a
-//! deterministic value uses `init_capabilities_for_test()` (test-only).
+//! Singleton: process-wide `OnceLock<EmbeddingPrecisionProbe>`. The server
+//! binary calls `init_precision_probe()` exactly once during boot, and the
+//! rest of the codebase reads via `precision_probe()`. Test code that needs
+//! a deterministic value uses `init_precision_probe_for_test()`.
+//!
+//! Naming note: this type used to be called `HardwareCapabilities`, which
+//! collided with the SIMD-feature detector in `proximadb-hardware` and the
+//! richer detector in `src/core/hardware_capabilities.rs`. It was renamed
+//! because the payload here is fp16/fp32 matmul latency measurements — not
+//! CPU-feature flags. For SIMD/CPU/GPU detection use `proximadb_hardware`.
 //!
 //! Spec: `docs/12-design/EMBEDDING_PRECISION_LLD_2026_05_22.adoc`
 //! §"`HardwareCapabilities` registry (Q14)" and §"PR 7".
@@ -32,7 +38,7 @@ pub const DEFAULT_PROBE_DIM: usize = 1024;
 /// hasn't run yet (callers should treat this as "unknown" and fall back
 /// to the policy's `canonical_default`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct HardwareCapabilities {
+pub struct EmbeddingPrecisionProbe {
     /// fp32 × fp32 dot product latency, nanoseconds per output element.
     pub f32_f32_matmul_ns: u64,
     /// fp16 promoted to fp32 then dot-product. Models the "store fp16,
@@ -54,7 +60,7 @@ pub struct HardwareCapabilities {
     pub probed_at: SystemTime,
 }
 
-impl HardwareCapabilities {
+impl EmbeddingPrecisionProbe {
     /// Run the startup micro-bench and return the populated struct.
     ///
     /// The probe deliberately allocates its own buffers (no shared state)
@@ -109,34 +115,37 @@ impl HardwareCapabilities {
 // Process-wide singleton
 // ---------------------------------------------------------------------------
 
-static CAPABILITIES: OnceLock<HardwareCapabilities> = OnceLock::new();
+static PROBE: OnceLock<EmbeddingPrecisionProbe> = OnceLock::new();
 
-/// Initialize the process-wide capabilities cache. Idempotent — second and
-/// later callers see the value the first caller installed (probe runs
+/// Initialize the process-wide precision-probe cache. Idempotent — second
+/// and later callers see the value the first caller installed (probe runs
 /// exactly once per process).
 ///
 /// The server binary calls this from main after argument parsing.
-pub fn init_capabilities() -> &'static HardwareCapabilities {
-    CAPABILITIES.get_or_init(HardwareCapabilities::probe)
+pub fn init_precision_probe() -> &'static EmbeddingPrecisionProbe {
+    PROBE.get_or_init(EmbeddingPrecisionProbe::probe)
 }
 
-/// Read the cached capabilities. Returns `None` if `init_capabilities()`
+/// Read the cached precision-probe. Returns `None` if `init_precision_probe()`
 /// has not been called yet — production callers should treat that case as
 /// "the policy must fall back to fp32" rather than panic.
-pub fn capabilities() -> Option<&'static HardwareCapabilities> {
-    CAPABILITIES.get()
+pub fn precision_probe() -> Option<&'static EmbeddingPrecisionProbe> {
+    PROBE.get()
 }
 
-/// Test-only initializer that installs a caller-supplied capabilities
-/// snapshot. Safe to call from `#[cfg(test)]` modules that want to assert
-/// behavior in `best_canonical_for_inference()` without depending on the
-/// host's real micro-bench.
+/// Test-only initializer that installs a caller-supplied probe snapshot.
+/// Safe to call from `#[cfg(test)]` modules that want to assert behavior
+/// in `best_canonical_for_inference()` without depending on the host's
+/// real micro-bench.
 ///
-/// Returns `Err(())` if init_capabilities() (or this fn) was already called.
+/// Returns `Err(())` if `init_precision_probe()` (or this fn) was already
+/// called.
 #[cfg(test)]
-pub fn init_capabilities_for_test(caps: HardwareCapabilities) -> Result<&'static HardwareCapabilities, ()> {
-    CAPABILITIES.set(caps).map_err(|_| ())?;
-    Ok(CAPABILITIES.get().unwrap())
+pub fn init_precision_probe_for_test(
+    probe: EmbeddingPrecisionProbe,
+) -> Result<&'static EmbeddingPrecisionProbe, ()> {
+    PROBE.set(probe).map_err(|_| ())?;
+    Ok(PROBE.get().unwrap())
 }
 
 // ---------------------------------------------------------------------------
@@ -245,7 +254,7 @@ mod tests {
     #[test]
     fn probe_returns_nonzero_latencies_for_all_three_pairs() {
         // Use a tiny dim so the test is instant under load.
-        let caps = HardwareCapabilities::probe_with_dim(64);
+        let caps = EmbeddingPrecisionProbe::probe_with_dim(64);
         assert!(caps.f32_f32_matmul_ns > 0, "f32_f32 latency must be measured");
         assert!(caps.f16_f32_matmul_ns > 0, "f16_f32 latency must be measured");
         assert!(caps.f16_f16_matmul_ns > 0, "f16_f16 latency must be measured");
@@ -256,7 +265,7 @@ mod tests {
 
     #[test]
     fn best_canonical_falls_back_to_fp32_when_unprobed() {
-        let caps = HardwareCapabilities {
+        let caps = EmbeddingPrecisionProbe {
             f32_f32_matmul_ns: 0,
             f16_f32_matmul_ns: 0,
             f16_f16_matmul_ns: 0,
@@ -273,7 +282,7 @@ mod tests {
     #[test]
     fn best_canonical_picks_fp16_when_native_is_1_5x_faster() {
         // f32: 300ns, f16: 200ns → ratio 1.5 → choose fp16.
-        let caps = HardwareCapabilities {
+        let caps = EmbeddingPrecisionProbe {
             f32_f32_matmul_ns: 300,
             f16_f32_matmul_ns: 250,
             f16_f16_matmul_ns: 200,
@@ -291,7 +300,7 @@ mod tests {
     fn best_canonical_stays_fp32_when_native_is_below_threshold() {
         // f32: 300ns, f16: 250ns → ratio 1.2 → stay on fp32 (downconvert
         // tax isn't worth a sub-1.5× speedup).
-        let caps = HardwareCapabilities {
+        let caps = EmbeddingPrecisionProbe {
             f32_f32_matmul_ns: 300,
             f16_f32_matmul_ns: 280,
             f16_f16_matmul_ns: 250,
@@ -308,7 +317,7 @@ mod tests {
     #[test]
     fn best_canonical_stays_fp32_when_native_is_slower() {
         // Worst case: f16 is slower than fp32 (no hardware support).
-        let caps = HardwareCapabilities {
+        let caps = EmbeddingPrecisionProbe {
             f32_f32_matmul_ns: 200,
             f16_f32_matmul_ns: 350,
             f16_f16_matmul_ns: 400,
@@ -326,7 +335,7 @@ mod tests {
     fn best_canonical_threshold_exactly_at_1_5x_picks_fp16() {
         // Boundary: f32_ns * 2 == f16_ns * 3 → exactly 1.5× → take fp16
         // (LLD prefers the storage/IO win when the compute path ties).
-        let caps = HardwareCapabilities {
+        let caps = EmbeddingPrecisionProbe {
             f32_f32_matmul_ns: 300,
             f16_f32_matmul_ns: 250,
             f16_f16_matmul_ns: 200, // 300 * 2 == 200 * 3
@@ -340,9 +349,9 @@ mod tests {
         );
     }
 
-    // Note: the OnceLock singleton (init_capabilities / capabilities) is
-    // intentionally not unit-tested here because OnceLock is process-wide
+    // Note: the OnceLock singleton (init_precision_probe / precision_probe)
+    // is intentionally not unit-tested here because OnceLock is process-wide
     // and would leak state across tests. The integration test path runs
-    // init_capabilities() once at server startup; the unit tests above
+    // init_precision_probe() once at server startup; the unit tests above
     // exercise the pure data layer.
 }

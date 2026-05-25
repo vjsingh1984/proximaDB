@@ -500,16 +500,24 @@ pub struct SimdCapabilities {
 }
 
 impl SimdCapabilities {
-    /// Detect SIMD capabilities of the CPU
+    /// Detect SIMD capabilities of the CPU.
+    ///
+    /// The four foundation-tracked bools (avx512, avx2, neon, sse41) are
+    /// read from `proximadb_hardware::hardware_capabilities()` so detection
+    /// happens in exactly one place and the result is cached process-wide.
+    /// `has_sse`, `has_avx`, and `has_fma` are detected here because the
+    /// foundation singleton does not yet track them.
     pub fn detect() -> Self {
+        let foundation = proximadb_hardware::hardware_capabilities();
+
         #[cfg(target_arch = "x86_64")]
         {
             Self {
                 has_sse: is_x86_feature_detected!("sse"),
-                has_sse41: is_x86_feature_detected!("sse4.1"),
+                has_sse41: foundation.has_sse41,
                 has_avx: is_x86_feature_detected!("avx"),
-                has_avx2: is_x86_feature_detected!("avx2"),
-                has_avx512: is_x86_feature_detected!("avx512f"),
+                has_avx2: foundation.has_avx2,
+                has_avx512: foundation.has_avx512,
                 has_neon: false,
                 has_fma: is_x86_feature_detected!("fma"),
             }
@@ -522,13 +530,17 @@ impl SimdCapabilities {
                 has_avx: false,
                 has_avx2: false,
                 has_avx512: false,
-                // NEON is always available on aarch64 (ARMv8-A baseline requirement)
-                has_neon: true,
+                has_neon: foundation.has_neon,
                 has_fma: cfg!(target_feature = "fma"),
             }
         }
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
+            // Foundation reads only NEON on aarch64 and SSE/AVX on x86_64; for
+            // other targets the foundation result is all-false too. Keep the
+            // explicit Default::default() here so adding fields to foundation
+            // doesn't silently change behavior on unsupported targets.
+            let _ = foundation;
             Self::default()
         }
     }
@@ -1264,18 +1276,18 @@ impl HardwareCapabilities {
         }
     }
 
-    /// Detect memory information
+    /// Detect memory information.
+    ///
+    /// Total/available bytes are read from the process-wide foundation
+    /// singleton so `sysinfo::System::new_all()` (an expensive process scan)
+    /// runs once per process. `recommended_cache_size` is a local policy
+    /// derivation (10% of available, capped at 8GB, 1GB fallback if
+    /// detection returned zero).
     fn detect_memory() -> Result<MemoryInfo> {
-        use sysinfo::System;
+        let foundation = proximadb_hardware::hardware_capabilities();
+        let total_memory = foundation.total_memory_bytes;
+        let available_memory = foundation.available_memory_bytes;
 
-        let mut sys = System::new_all();
-        sys.refresh_memory();
-
-        let total_memory = sys.total_memory(); // Already in bytes in sysinfo 0.30+
-        let available_memory = sys.available_memory(); // Already in bytes
-
-        // Recommend cache size as 10% of available memory, capped at 8GB
-        // Ensure minimum of 1GB if detection returns 0 (environment-specific issue)
         let recommended_cache_size = if available_memory > 0 {
             std::cmp::min(
                 available_memory / 10,

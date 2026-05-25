@@ -70,9 +70,19 @@ impl fmt::Display for HardwareBackend {
     }
 }
 
-/// Hardware capabilities for quantization operations
+/// Hardware capability descriptor used by the [`HardwareAcceleration`] trait.
+///
+/// This is a *contract type*, not a detector. Implementations of the trait
+/// build this descriptor from whatever runtime detection they prefer — the
+/// canonical SIMD/CPU/memory probe lives in `proximadb_hardware`, and the
+/// richer CPU-topology/GPU detector lives in `src/core/hardware_capabilities`.
+///
+/// Naming note: this type used to be called `HardwareCapabilities`, which
+/// collided with both of the above. It was renamed because its role is to
+/// describe quantization-relevant fields (backend choice + GPU batch
+/// threshold) to a trait method, not to perform detection.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HardwareCapabilities {
+pub struct QuantizationHardwareDescriptor {
     /// Selected hardware backend
     pub backend: HardwareBackend,
 
@@ -121,13 +131,17 @@ pub enum GpuBackend {
 #[async_trait::async_trait]
 pub trait HardwareAcceleration: Send + Sync {
     /// Get current hardware capabilities
-    async fn get_capabilities(&self) -> Result<HardwareCapabilities>;
+    async fn get_capabilities(&self) -> Result<QuantizationHardwareDescriptor>;
 
     /// Select optimal backend for the given operation and data size
     async fn select_backend(&self, data_size: usize) -> Result<HardwareBackend>;
 
     /// Check if GPU should be used for the given batch size
-    fn should_use_gpu(&self, data_size: usize, capabilities: &HardwareCapabilities) -> bool {
+    fn should_use_gpu(
+        &self,
+        data_size: usize,
+        capabilities: &QuantizationHardwareDescriptor,
+    ) -> bool {
         data_size >= capabilities.gpu_batch_threshold
     }
 

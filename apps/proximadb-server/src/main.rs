@@ -221,7 +221,7 @@ async fn main() -> anyhow::Result<()> {
     // re-running the micro-bench. Idempotent — OnceLock guards re-init.
     // Runs BEFORE the embedding service so BgeModel can read the result
     // when picking its default loaded precision.
-    let caps = proximadb_embedding::precision::hw_capability::init_capabilities();
+    let caps = proximadb_embedding::precision::hw_capability::init_precision_probe();
     info!(
         "🎯 Precision hw probe (dim={}): f32_f32={}ns, f16_f32={}ns, f16_f16={}ns, \
          bf16_supported={}, best_canonical={:?}",

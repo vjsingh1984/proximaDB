@@ -21,6 +21,11 @@
 use std::sync::OnceLock;
 
 /// Detected hardware capabilities (SIMD, CPU count, memory).
+///
+/// Memory is stored in bytes (not MB) because every real consumer does size
+/// math (`total / (1024*1024*1024)` for GB, fractional-percent calculations
+/// for cache sizing) and MB truncation loses precision. Use the
+/// [`total_memory_mb`](Self::total_memory_mb) helper if MB is what you want.
 #[derive(Debug, Clone, Copy)]
 pub struct HardwareCapabilities {
     pub has_avx512: bool,
@@ -28,7 +33,10 @@ pub struct HardwareCapabilities {
     pub has_neon: bool,
     pub has_sse41: bool,
     pub cpu_count: usize,
-    pub physical_memory_mb: usize,
+    /// Total physical memory in bytes (as reported by `sysinfo`).
+    pub total_memory_bytes: u64,
+    /// Currently-available memory in bytes at detection time.
+    pub available_memory_bytes: u64,
 }
 
 impl Default for HardwareCapabilities {
@@ -40,14 +48,22 @@ impl Default for HardwareCapabilities {
 impl HardwareCapabilities {
     /// Detect hardware capabilities at runtime.
     pub fn detect() -> Self {
+        let (total_memory_bytes, available_memory_bytes) = Self::detect_memory_bytes();
         Self {
             has_avx512: Self::detect_avx512(),
             has_avx2: Self::detect_avx2(),
             has_neon: Self::detect_neon(),
             has_sse41: Self::detect_sse41(),
             cpu_count: num_cpus::get(),
-            physical_memory_mb: Self::detect_memory_mb(),
+            total_memory_bytes,
+            available_memory_bytes,
         }
+    }
+
+    /// Total physical memory expressed in whole megabytes (lossy — use
+    /// [`total_memory_bytes`](Self::total_memory_bytes) for size math).
+    pub fn total_memory_mb(&self) -> usize {
+        (self.total_memory_bytes / (1024 * 1024)) as usize
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -90,9 +106,10 @@ impl HardwareCapabilities {
         false
     }
 
-    fn detect_memory_mb() -> usize {
-        let sys = sysinfo::System::new_all();
-        (sys.total_memory() / 1024 / 1024) as usize
+    fn detect_memory_bytes() -> (u64, u64) {
+        let mut sys = sysinfo::System::new_all();
+        sys.refresh_memory();
+        (sys.total_memory(), sys.available_memory())
     }
 
     /// Return the best available SIMD instruction set.
@@ -140,7 +157,10 @@ mod tests {
     fn test_hardware_detection() {
         let caps = HardwareCapabilities::detect();
         assert!(caps.cpu_count > 0);
-        assert!(caps.physical_memory_mb > 0);
+        assert!(caps.total_memory_bytes > 0);
+        assert!(caps.total_memory_mb() > 0);
+        // available <= total is invariant on every real OS reading.
+        assert!(caps.available_memory_bytes <= caps.total_memory_bytes);
     }
 
     #[test]
