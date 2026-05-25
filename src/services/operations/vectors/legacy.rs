@@ -917,11 +917,51 @@ impl VectorOperationsService {
         let collection_id = req.collection_id.clone();
 
         // Convert v1 wire VectorRecord → ProximaRecord at the protocol boundary.
-        let native_vectors: Vec<proximadb_records::ProximaRecord> = req
+        let mut native_vectors: Vec<proximadb_records::ProximaRecord> = req
             .vectors
             .into_iter()
             .map(crate::proto::defaults::vector_record_to_proxima_record)
             .collect();
+
+        // Coerce embeddings to the collection's canonical precision so
+        // REST / gRPC inserts into a non-fp32 collection produce the
+        // right typed cells (and the right per-precision metric
+        // accumulation at WAL flush). The queue-drainer path gets this
+        // via BulkLoadDrainerSink + CanonicalPrecisionResolver; this
+        // is the equivalent for the direct insert path, using the
+        // collection metadata that this service already has access to.
+        if let Ok(Some(collection)) =
+            self.collection_service.collection(&collection_id).await
+        {
+            if let Some(cfg) = collection.config.as_ref() {
+                if let Some(precision_value) = cfg.canonical_embedding_precision {
+                    use crate::proto::proximadb_v1::EmbeddingPrecision;
+                    let target = match EmbeddingPrecision::try_from(precision_value) {
+                        Ok(EmbeddingPrecision::Fp16) => {
+                            Some(proximadb_records::EmbeddingScalarType::Fp16)
+                        }
+                        Ok(EmbeddingPrecision::Bf16) => {
+                            Some(proximadb_records::EmbeddingScalarType::Bf16)
+                        }
+                        Ok(EmbeddingPrecision::Int8) => {
+                            Some(proximadb_records::EmbeddingScalarType::Int8Scalar)
+                        }
+                        Ok(EmbeddingPrecision::Uint8) => {
+                            Some(proximadb_records::EmbeddingScalarType::UInt8Scalar)
+                        }
+                        // Unspecified / Fp32 — leave records as fp32.
+                        _ => None,
+                    };
+                    if let Some(target) = target {
+                        for record in &mut native_vectors {
+                            for cell in &mut record.embeddings {
+                                cell.coerce_to_precision(target);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         match self
             .handle_vector_batch_proto_vec(&collection_id, native_vectors)

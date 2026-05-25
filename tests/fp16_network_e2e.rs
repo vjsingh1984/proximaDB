@@ -60,6 +60,18 @@ struct NetworkTestServer {
 
 impl NetworkTestServer {
     async fn start() -> anyhow::Result<Self> {
+        // Enable WAL schema v2 BEFORE anything touches the cached
+        // EmbeddingPrecisionConfig — the v1 EmbeddingCell serializer
+        // hard-refuses non-Fp32 records (INT-2.5b step 2 Q1). Without
+        // this, REST inserts into a fp16 collection silently fail at
+        // WAL flush and the per-precision metric stays empty.
+        // SAFETY: set before any threads inspect the OnceLock-backed
+        // cache. Each `tests/*.rs` file compiles as its own binary so
+        // the env var is isolated.
+        unsafe {
+            std::env::set_var("PROXIMADB_EMBED_PRECISION_SCHEMA_V2", "true");
+        }
+
         let rest_port = free_port();
         let grpc_port = free_port();
         let tmp_data = TempDir::new()?;

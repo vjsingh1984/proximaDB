@@ -263,6 +263,17 @@ pub struct UnifiedHandlers {
     /// detected in execute_sql_v1 are dispatched here instead of the legacy SQL frontend).
     /// Optional; settable post-initialization via `set_dml_service`.
     dml_service: std::sync::RwLock<Option<Arc<DmlService>>>,
+    /// Set-once resolver — populated after server bootstrap so the
+    /// v1 vector batch path can look up each collection's
+    /// `canonical_embedding_precision` and coerce records to that
+    /// precision before WAL append. Without this, REST clients
+    /// inserting into a fp16 collection see their records written
+    /// (and metered) as fp32 — the queue-drainer ingest path coerces
+    /// correctly via BulkLoadDrainerSink but the direct REST path
+    /// bypasses that sink.
+    precision_resolver: std::sync::OnceLock<
+        Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>,
+    >,
 }
 
 impl UnifiedHandlers {
@@ -309,6 +320,7 @@ impl UnifiedHandlers {
             collection_id_cache: CollectionIdCache::new(),
             query_adapter: std::sync::RwLock::new(None),
             dml_service: std::sync::RwLock::new(None),
+            precision_resolver: std::sync::OnceLock::new(),
         }
     }
 
@@ -339,6 +351,7 @@ impl UnifiedHandlers {
             collection_id_cache: CollectionIdCache::new(),
             query_adapter: std::sync::RwLock::new(None),
             dml_service: std::sync::RwLock::new(None),
+            precision_resolver: std::sync::OnceLock::new(),
         }
     }
 
@@ -374,6 +387,41 @@ impl UnifiedHandlers {
 
     fn get_dml_service(&self) -> Option<Arc<DmlService>> {
         self.dml_service.read().ok().and_then(|guard| guard.clone())
+    }
+
+    /// Post-construction setter for the canonical-precision resolver.
+    /// Called once at server bootstrap (`ProximaDB::new` in
+    /// `src/database.rs`) so the v1 vector-batch path can coerce
+    /// records to each collection's canonical precision before WAL
+    /// append. Without this wire-up the REST insert path bypasses
+    /// the precision-coercion that the queue-drainer ingest path
+    /// gets via BulkLoadDrainerSink + the resolver — fp16
+    /// collections receiving REST inserts would have their records
+    /// stored as fp32.
+    pub fn set_precision_resolver(
+        &self,
+        resolver: Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>,
+    ) {
+        if self.precision_resolver.set(resolver).is_ok() {
+            tracing::info!(
+                "✅ CanonicalPrecisionResolver wired into UnifiedHandlers — \
+                 REST/gRPC inserts into non-fp32 collections will coerce records"
+            );
+        }
+    }
+
+    /// Mirror of `CollectionManager::collection_table_identifier`
+    /// (src/services/collection/manager.rs:2048) so the resolver hits
+    /// the same catalog key the manager wrote at create time.
+    fn collection_to_table_identifier(
+        target_collection: &str,
+    ) -> proximadb_catalog::TableIdentifier {
+        let parsed = proximadb_catalog::TableIdentifier::parse(target_collection);
+        if parsed.namespace.is_empty() {
+            proximadb_catalog::TableIdentifier::new(vec!["default".to_string()], parsed.name)
+        } else {
+            parsed
+        }
     }
 
     /// Set hybrid runtime configuration (thread-safe; callable post-initialization)
@@ -1057,11 +1105,47 @@ impl UnifiedHandlers {
         };
 
         // Convert v1 wire VectorRecord → ProximaRecord at the protocol boundary.
-        let records: Vec<proximadb_records::ProximaRecord> = request
+        let mut records: Vec<proximadb_records::ProximaRecord> = request
             .vectors
             .into_iter()
             .map(crate::proto::defaults::vector_record_to_proxima_record)
             .collect();
+
+        // Coerce embeddings to the collection's canonical precision so
+        // REST/gRPC inserts into a non-fp32 collection produce the
+        // right typed cells (and the right per-precision metric
+        // accumulation at WAL flush). The queue-drainer path gets this
+        // via BulkLoadDrainerSink; this is the equivalent for the
+        // direct insert path. Resolver failure or unset (degraded
+        // boot / fp32 collection / no catalog wired) keeps the legacy
+        // fp32 behavior.
+        if let Some(resolver) = self.precision_resolver.get() {
+            let table_id =
+                Self::collection_to_table_identifier(collection_identifier);
+            match resolver.resolve(&table_id).await {
+                Ok(target_precision)
+                    if target_precision
+                        != proximadb_records::EmbeddingScalarType::Fp32 =>
+                {
+                    for record in &mut records {
+                        for cell in &mut record.embeddings {
+                            cell.coerce_to_precision(target_precision);
+                        }
+                    }
+                }
+                Ok(_) => {
+                    // Fp32 — no coercion needed.
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        collection = %collection_identifier,
+                        error = %e,
+                        "vector batch v1 (UnifiedHandlers path): precision resolver \
+                         lookup failed; records will land at their input precision"
+                    );
+                }
+            }
+        }
 
         match self
             .vector_operations_service

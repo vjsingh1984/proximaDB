@@ -169,7 +169,7 @@ impl ProximaDB {
                 );
                 if storage_engine
                     .compaction_manager()
-                    .set_precision_resolver(resolver)
+                    .set_precision_resolver(resolver.clone())
                     .is_ok()
                 {
                     tracing::info!(
@@ -177,6 +177,13 @@ impl ProximaDB {
                          fp16 collections will preserve precision through compaction"
                     );
                 }
+                // Also wire the resolver into the REST/gRPC vector
+                // batch path so direct inserts coerce to the
+                // collection's canonical precision (matches what the
+                // queue drainer does via BulkLoadDrainerSink).
+                shared_services
+                    .request_handlers
+                    .set_precision_resolver(resolver);
             }
             Err(e) => {
                 tracing::warn!(
