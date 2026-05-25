@@ -209,7 +209,7 @@ impl CatalogManager {
         name: &str,
         thrift_uri: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use crate::proto::proximadb_v1::HiveCatalogConfig;
+        use hive::HiveCatalogConfig;
 
         let config = HiveCatalogConfig {
             thrift_uri: thrift_uri.to_string(),

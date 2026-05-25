@@ -6902,7 +6902,6 @@ dependencies = [
  "async-trait",
  "proximadb-distance-types",
  "proximadb-kernel",
- "proximadb-proto",
  "proximadb-records",
 ]
 
