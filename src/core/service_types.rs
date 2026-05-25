@@ -800,31 +800,6 @@ pub enum OperationResult {
 
 // Search metadata, index stats, and debug info are already defined above
 
-/// Health response structure for binary Avro serialization
-#[derive(Debug, Clone)]
-pub struct HealthResponse {
-    /// Service health status: "HEALTHY", "DEGRADED", "UNHEALTHY"
-    pub status: String,
-    /// Service version
-    pub version: String,
-    /// Server uptime in seconds
-    pub uptime_seconds: i64,
-    /// Total operations processed
-    pub total_operations: i64,
-    /// Successful operations count
-    pub successful_operations: i64,
-    /// Failed operations count
-    pub failed_operations: i64,
-    /// Average processing time in microseconds
-    pub avg_processing_time_us: f64,
-    /// Storage subsystem health
-    pub storage_healthy: bool,
-    /// WAL subsystem health
-    pub wal_healthy: bool,
-    /// Timestamp when health check was performed (microseconds)
-    pub timestamp: i64,
-}
-
 /// Metrics response structure for binary Avro serialization
 #[derive(Debug, Clone)]
 pub struct MetricsResponse {
@@ -881,56 +856,6 @@ pub struct OperationResponse {
     pub processing_time_us: i64,
     /// Additional metadata
     pub metadata: HashMap<String, String>,
-}
-
-impl HealthResponse {
-    /// Create a healthy status response
-    pub fn healthy(
-        version: String,
-        uptime_seconds: i64,
-        total_operations: i64,
-        successful_operations: i64,
-        failed_operations: i64,
-        avg_processing_time_us: f64,
-    ) -> Self {
-        Self {
-            status: "HEALTHY".to_string(),
-            version,
-            uptime_seconds,
-            total_operations,
-            successful_operations,
-            failed_operations,
-            avg_processing_time_us,
-            storage_healthy: true,
-            wal_healthy: true,
-            timestamp: chrono::Utc::now().timestamp_micros(),
-        }
-    }
-
-    /// Create a degraded status response
-    pub fn degraded(
-        version: String,
-        uptime_seconds: i64,
-        total_operations: i64,
-        successful_operations: i64,
-        failed_operations: i64,
-        avg_processing_time_us: f64,
-        storage_healthy: bool,
-        wal_healthy: bool,
-    ) -> Self {
-        Self {
-            status: "DEGRADED".to_string(),
-            version,
-            uptime_seconds,
-            total_operations,
-            successful_operations,
-            failed_operations,
-            avg_processing_time_us,
-            storage_healthy,
-            wal_healthy,
-            timestamp: chrono::Utc::now().timestamp_micros(),
-        }
-    }
 }
 
 impl OperationResponse {

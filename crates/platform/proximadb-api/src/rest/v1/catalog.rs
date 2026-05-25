@@ -57,14 +57,6 @@ impl Default for CollectionHandler {
 
 // ── Request / Response types ──────────────────────────────────────────────────
 
-/// Simple collection response body shape.
-#[derive(Debug, Serialize)]
-pub struct CollectionResponse {
-    pub name: String,
-    pub dimension: usize,
-    pub metric: String,
-}
-
 /// Query parameters for the `GET /api/v1/collections` list endpoint.
 #[derive(Debug, Deserialize)]
 pub struct ListCollectionsQuery {
@@ -539,11 +531,5 @@ mod tests {
         let _router = create_collection_router();
         let _catalog = CatalogHandler::default();
         let _collection = CollectionHandler::new();
-        let response = CollectionResponse {
-            name: "docs".to_string(),
-            dimension: 128,
-            metric: "cosine".to_string(),
-        };
-        assert_eq!(response.name, "docs");
     }
 }
