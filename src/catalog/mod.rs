@@ -188,7 +188,7 @@ impl CatalogManager {
         name: &str,
         storage_url: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use crate::proto::proximadb_v1::NativeCatalogConfig;
+        use native::NativeCatalogConfig;
 
         let config = NativeCatalogConfig {
             storage_url: storage_url.to_string(),
