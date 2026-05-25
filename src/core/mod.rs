@@ -123,11 +123,11 @@ pub use error::*;
 pub use service_types::{
     BatchSearchRequest, CollectionConfig, CollectionOperation, CollectionRequest,
     CollectionResponse, CompactionConfig, CompactionStrategy, CompressionAlgorithm, DistanceMetric,
-    FieldCondition, HealthResponse, IndexStats, IndexingAlgorithm, LegacyVectorSearchRequest,
-    MetadataFilter, MetricsResponse, NodeId, OperationResponse, SearchDebugInfo, SearchMetadata,
-    SearchRequest, SearchStrategy, ServiceMetrics, StorageEngine, String, Vector, VectorId,
-    VectorInsertRequest, VectorInsertResponse, VectorOperation, VectorOperationMetrics,
-    VectorSearchResponse, WriteBufferMetrics,
+    FieldCondition, HealthResponse, IndexStats, IndexingAlgorithm, MetadataFilter, MetricsResponse,
+    NodeId, OperationResponse, SearchDebugInfo, SearchMetadata, SearchRequest, SearchStrategy,
+    ServiceMetrics, StorageEngine, String, Vector, VectorId, VectorInsertRequest,
+    VectorInsertResponse, VectorOperation, VectorOperationMetrics, VectorSearchResponse,
+    WriteBufferMetrics,
 };
 
 pub use grpc_metadata_parser::*;

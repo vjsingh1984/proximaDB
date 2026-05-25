@@ -27,7 +27,7 @@ use proximadb_query::reranking::RerankConfig;
 use proximadb_rank_core::{
     BlueprintFactory, DocHandle, FeatureArena, GlobalScorer, NoopAttributeAccess,
     NoopCandidateData, NoopMetricsSink, NoopModelCache, PhaseOutcome, QueryContext, RankError,
-    RankResult, ScoreCtx, ScoredHit,
+    RankResult, ScoreCtx, ScoredHit, SecondPhaseScorer,
 };
 use proximadb_rank_features::register_builtins;
 use proximadb_rank_profile::{CompiledRankProfile, ProfileRegistry};
@@ -153,11 +153,19 @@ pub trait CandidateProvider: Send + Sync {
 
 /// Execute a [`RankSearchRequest`] against the registry and candidate
 /// provider, returning the wire response.
+///
+/// `second_phase_scorer` — optional per-request scorer to fire if the
+/// profile has a `second_phase` configured. When `None` and the
+/// profile *does* have a second phase, the dispatcher passes through
+/// (matches `RankPipeline::run_second_phase`'s no-scorer contract).
+/// The HTTP route resolves this via `RankServices::second_phase_scorer`
+/// from the profile name; tests pass directly.
 pub async fn handle_rank_search(
     req: RankSearchRequest,
     registry: &ProfileRegistry,
     candidates: &dyn CandidateProvider,
     factory: Arc<BlueprintFactory>,
+    second_phase_scorer: Option<Arc<dyn SecondPhaseScorer>>,
 ) -> RankResult<RankSearchResponse> {
     let candidate_docs = candidates.candidates(&req)?;
     let qctx = QueryContext {
@@ -235,20 +243,26 @@ pub async fn handle_rank_search(
     let qctx_for_block = qctx.clone();
     let compiled_for_block = compiled.clone();
     let candidate_docs_for_block = candidate_docs.clone();
-    let first_outcome: PhaseOutcome = tokio::task::spawn_blocking(move || {
-        run_first_phase_blocking(&compiled_for_block, &qctx_for_block, &candidate_docs_for_block)
+    let scorer_for_block = second_phase_scorer.clone();
+    let phase_outcome: PhaseOutcome = tokio::task::spawn_blocking(move || {
+        run_phases_blocking(
+            &compiled_for_block,
+            &qctx_for_block,
+            &candidate_docs_for_block,
+            scorer_for_block.as_deref(),
+        )
     })
     .await
     .map_err(|join_err| RankError::ModelInference {
-        model_id: "rank_search:first_phase".into(),
-        reason: format!("first-phase task panicked: {join_err}"),
+        model_id: "rank_search:phases".into(),
+        reason: format!("phase task panicked: {join_err}"),
     })??;
 
     // Global phase — async, no arena reference in scope so the future is Send.
     let final_hits: Vec<ScoredHit> = match global {
-        Some(g) => g.score(first_outcome.hits.clone(), topk).await?,
+        Some(g) => g.score(phase_outcome.hits.clone(), topk).await?,
         None => {
-            let mut h = first_outcome.hits.clone();
+            let mut h = phase_outcome.hits.clone();
             h.truncate(topk);
             h
         }
@@ -270,21 +284,30 @@ pub async fn handle_rank_search(
 
     Ok(RankSearchResponse {
         hits,
-        phase_truncated: first_outcome.truncated,
+        phase_truncated: phase_outcome.truncated,
         rank_profile: Some(compiled.spec.name.clone()),
         rank_profile_version: Some(compiled.spec.version),
     })
 }
 
-/// Owned-state first-phase runner. Designed to be called inside
-/// `tokio::task::spawn_blocking` — its inputs are owned / Arc-shared so
-/// the closure is `Send + 'static`, and its return type
-/// [`PhaseOutcome`] is plain data (no arena lifetime). All
-/// arena-bearing references are confined to this stack frame.
-fn run_first_phase_blocking(
+/// Owned-state phase runner: materialises the pipeline, runs first
+/// phase, then runs second phase if a scorer is supplied. Designed to
+/// be called inside `tokio::task::spawn_blocking` — inputs are owned /
+/// Arc-shared so the closure is `Send + 'static`, and the return type
+/// is plain data with no arena lifetime. All arena-bearing references
+/// are confined to this stack frame.
+///
+/// When `second_phase_scorer` is `None`, only the first phase runs.
+/// When it's `Some(_)` AND the profile has a `second_phase`
+/// configured, `RankPipeline::run_second_phase` consumes it. When
+/// `Some(_)` BUT the profile has no second phase, the scorer is
+/// silently ignored (matches the pipeline's pass-through contract —
+/// don't pay for what you didn't ask for).
+fn run_phases_blocking(
     compiled: &CompiledRankProfile,
     qctx: &QueryContext,
     candidate_docs: &[DocHandle],
+    second_phase_scorer: Option<&dyn SecondPhaseScorer>,
 ) -> RankResult<PhaseOutcome> {
     let mut pipeline = compiled.materialize(qctx)?;
     let arena = FeatureArena::new();
@@ -293,7 +316,19 @@ fn run_first_phase_blocking(
     let models = NoopModelCache;
     let metrics = NoopMetricsSink;
     let mut ctx = ScoreCtx::new(qctx, &arena, &attr, &cand, &models, &metrics);
-    pipeline.run_first_phase(candidate_docs, &mut ctx)
+    let first_outcome = pipeline.run_first_phase(candidate_docs, &mut ctx)?;
+
+    // Drop the arena-bearing context before second phase — the scorer
+    // doesn't need it (it carries its own model session) and dropping
+    // here makes the lifetime story easier for any future caller that
+    // wants to keep the pipeline alive past this function.
+    drop(ctx);
+    drop(arena);
+
+    match second_phase_scorer {
+        Some(scorer) => pipeline.run_second_phase(first_outcome, scorer),
+        None => Ok(first_outcome),
+    }
 }
 
 // =========================================================================
@@ -308,6 +343,20 @@ pub struct RankServices {
     pub profile_registry: Arc<ProfileRegistry>,
     pub blueprint_factory: Arc<BlueprintFactory>,
     pub candidate_provider: Arc<dyn CandidateProvider>,
+    /// Per-profile second-phase scorer registry (R-7c.2). Keyed by
+    /// profile name. Lookup on every request — when present + the
+    /// profile has a `second_phase` configured, the dispatcher runs
+    /// `RankPipeline::run_second_phase` inside the spawn_blocking
+    /// closure. When absent + the profile has a second phase
+    /// configured, the dispatcher passes through with `PhaseId::FIRST`
+    /// tags preserved (matches `RankPipeline::run_second_phase`'s
+    /// no-second-phase contract).
+    ///
+    /// Concurrent access via `DashMap` so registrations can happen
+    /// after `RankServices` is already shared via `Arc` — useful when
+    /// a control-plane RPC installs / swaps scorers at runtime
+    /// (R-7c.2.1 follow-up).
+    pub second_phase_scorers: dashmap::DashMap<String, Arc<dyn SecondPhaseScorer>>,
 }
 
 impl RankServices {
@@ -322,7 +371,34 @@ impl RankServices {
             profile_registry: Arc::new(ProfileRegistry::new()),
             blueprint_factory: factory,
             candidate_provider,
+            second_phase_scorers: dashmap::DashMap::new(),
         }
+    }
+
+    /// Register a second-phase scorer against a profile name. Used at
+    /// server startup after instantiating concrete scorers (e.g.
+    /// `OnnxSecondPhaseScorer` from `proximadb-rank-onnx`) and binding
+    /// each to the profile that should fire it.
+    ///
+    /// Re-registering the same name replaces the prior scorer (last-
+    /// write-wins, matches the profile registry's hot-reload contract).
+    pub fn register_second_phase_scorer(
+        &self,
+        profile_name: impl Into<String>,
+        scorer: Arc<dyn SecondPhaseScorer>,
+    ) {
+        self.second_phase_scorers
+            .insert(profile_name.into(), scorer);
+    }
+
+    /// Look up the second-phase scorer for the named profile. Returns
+    /// `None` if no scorer is registered (the dispatcher will then
+    /// pass-through the second phase even if the profile has one
+    /// configured).
+    pub fn second_phase_scorer(&self, profile_name: &str) -> Option<Arc<dyn SecondPhaseScorer>> {
+        self.second_phase_scorers
+            .get(profile_name)
+            .map(|r| r.value().clone())
     }
 }
 
@@ -364,11 +440,20 @@ pub async fn rank_search_dispatch(
         )
     })?;
 
+    // Resolve the per-profile second-phase scorer up-front. Done in the
+    // async outer scope (cheap DashMap lookup) so the inner
+    // spawn_blocking closure receives an owned Option<Arc<…>>.
+    let second_phase_scorer = req
+        .rank_profile
+        .as_deref()
+        .and_then(|name| services.second_phase_scorer(name));
+
     handle_rank_search(
         req,
         services.profile_registry.as_ref(),
         services.candidate_provider.as_ref(),
         services.blueprint_factory.clone(),
+        second_phase_scorer,
     )
     .await
     .map_err(|e| match e {
@@ -590,7 +675,7 @@ mod tests {
             rank_profile: None,
             rank_overrides: None,
         };
-        let resp = handle_rank_search(req, &registry, &candidates, factory)
+        let resp = handle_rank_search(req, &registry, &candidates, factory, None)
             .await
             .unwrap();
         assert_eq!(resp.hits.len(), 3);
@@ -612,7 +697,7 @@ mod tests {
             rank_profile: Some("ghost".into()),
             rank_overrides: None,
         };
-        match handle_rank_search(req, &registry, &candidates, factory).await {
+        match handle_rank_search(req, &registry, &candidates, factory, None).await {
             Err(RankError::ProfileNotFound(name)) => assert_eq!(name, "ghost"),
             Err(_) => panic!("expected ProfileNotFound, got a different RankError"),
             Ok(_) => panic!("expected error"),
@@ -633,7 +718,7 @@ mod tests {
             rank_profile: Some("test".into()),
             rank_overrides: None,
         };
-        let resp = handle_rank_search(req, &registry, &candidates, factory)
+        let resp = handle_rank_search(req, &registry, &candidates, factory, None)
             .await
             .unwrap();
         assert_eq!(resp.hits.len(), 3);
@@ -662,7 +747,7 @@ mod tests {
             rank_profile: Some("test".into()),
             rank_overrides: None,
         };
-        let resp = handle_rank_search(req, &registry, &candidates, factory)
+        let resp = handle_rank_search(req, &registry, &candidates, factory, None)
             .await
             .unwrap();
         assert_eq!(resp.hits.len(), 5);
@@ -686,7 +771,7 @@ mod tests {
             rank_profile: Some("test".into()),
             rank_overrides: None,
         };
-        let resp = handle_rank_search(req, &registry, &candidates, factory)
+        let resp = handle_rank_search(req, &registry, &candidates, factory, None)
             .await
             .unwrap();
         assert_eq!(resp.hits.len(), 1);
@@ -765,11 +850,144 @@ mod tests {
                 }),
             }),
         };
-        let resp = handle_rank_search(req, &registry, &candidates, factory)
+        let resp = handle_rank_search(req, &registry, &candidates, factory, None)
             .await
             .unwrap();
         // Without global scorer this profile has, override flows
         // through to the orchestrator's topk arg → 12 hits returned.
         assert_eq!(resp.hits.len(), 12);
+    }
+
+    // ---------------- R-7c.2: second-phase wiring tests ----------------
+
+    fn install_profile_with_second_phase(
+        reg: &ProfileRegistry,
+        factory: Arc<BlueprintFactory>,
+        name: &str,
+    ) {
+        let mut spec = RankProfileSpec::new(name);
+        spec.first_phase = Some(PhaseSpec {
+            expression: "docid()".into(),
+            heap_size: Some(50),
+            rerank_count: Some(3),
+            batch_size: None,
+        });
+        spec.second_phase = Some(PhaseSpec {
+            // The expression here isn't actually parsed by the scorer
+            // (the scorer is supplied externally per R-7c.2); it just
+            // marks "this profile has a second phase configured".
+            expression: "1.0".into(),
+            heap_size: None,
+            rerank_count: Some(3),
+            batch_size: None,
+        });
+        spec.version = 1;
+        let compiled = CompiledRankProfile::compile(spec, factory).unwrap();
+        reg.install(compiled);
+    }
+
+    #[tokio::test]
+    async fn handler_with_no_scorer_passes_through_second_phase() {
+        // Profile has second_phase, but no scorer is supplied → first-phase
+        // hits flow through unchanged with PhaseId::FIRST preserved.
+        let registry = ProfileRegistry::new();
+        let factory = factory_with_docid();
+        install_profile_with_second_phase(&registry, factory.clone(), "two_phase");
+
+        let candidates = FixedCandidates((1..=5).map(DocHandle).collect());
+        let req = RankSearchRequest {
+            collection: "docs".into(),
+            query_vector: vec![],
+            k: 5,
+            rank_profile: Some("two_phase".into()),
+            rank_overrides: None,
+        };
+        let resp = handle_rank_search(req, &registry, &candidates, factory, None)
+            .await
+            .unwrap();
+        assert_eq!(resp.hits.len(), 5);
+        // No second-phase scorer ran → score_vector tags FIRST.
+        for h in &resp.hits {
+            let sv = h.score_vector.as_ref().unwrap();
+            assert_eq!(sv.phase, 0, "expected PhaseId::FIRST (0)");
+        }
+    }
+
+    #[tokio::test]
+    async fn handler_with_scorer_runs_second_phase_and_rerank_top_k() {
+        // Pass a ConstantMultiplier(0.1) — top-3 first-phase scores
+        // (5, 4, 3) become (0.5, 0.4, 0.3); tail (2, 1) keeps first-
+        // phase scores 2.0, 1.0; final sort: 2.0, 1.0, 0.5, 0.4, 0.3.
+        use proximadb_rank_core::ConstantMultiplierSecondPhaseScorer;
+
+        let registry = ProfileRegistry::new();
+        let factory = factory_with_docid();
+        install_profile_with_second_phase(&registry, factory.clone(), "two_phase");
+
+        let scorer: Arc<dyn SecondPhaseScorer> =
+            Arc::new(ConstantMultiplierSecondPhaseScorer { factor: 0.1 });
+        let candidates = FixedCandidates((1..=5).map(DocHandle).collect());
+        let req = RankSearchRequest {
+            collection: "docs".into(),
+            query_vector: vec![],
+            k: 5,
+            rank_profile: Some("two_phase".into()),
+            rank_overrides: None,
+        };
+        let resp = handle_rank_search(req, &registry, &candidates, factory, Some(scorer))
+            .await
+            .unwrap();
+        assert_eq!(resp.hits.len(), 5);
+        // Top hit was originally doc 5 (score 5.0). After second phase
+        // rescore, doc 2 with score 2.0 (untouched tail) tops the list.
+        assert_eq!(resp.hits[0].id, "2");
+        assert!((resp.hits[0].score - 2.0).abs() < 1e-5);
+        assert_eq!(resp.hits[1].id, "1");
+        assert_eq!(resp.hits[2].id, "5"); // top first-phase, rescored to 0.5
+        // The top-3 (rescored) now carry PhaseId::SECOND, the tail keeps FIRST.
+        // After final sort: positions 0,1 are tail (FIRST), positions 2,3,4 are rescored (SECOND).
+        let svs: Vec<u8> = resp
+            .hits
+            .iter()
+            .map(|h| h.score_vector.as_ref().unwrap().phase)
+            .collect();
+        assert_eq!(svs, vec![0, 0, 1, 1, 1]); // FIRST, FIRST, SECOND, SECOND, SECOND
+    }
+
+    #[test]
+    fn rank_services_register_second_phase_scorer_round_trip() {
+        use proximadb_rank_core::PassthroughSecondPhaseScorer;
+        let services = RankServices::new(Arc::new(MockRangeCandidateProvider::default()));
+        assert!(services.second_phase_scorer("nope").is_none());
+        services
+            .register_second_phase_scorer("p1", Arc::new(PassthroughSecondPhaseScorer));
+        assert!(services.second_phase_scorer("p1").is_some());
+        assert!(services.second_phase_scorer("nope").is_none());
+    }
+
+    #[test]
+    fn rank_services_register_second_phase_scorer_last_write_wins() {
+        use proximadb_rank_core::{
+            ConstantMultiplierSecondPhaseScorer, PassthroughSecondPhaseScorer,
+        };
+        let services = RankServices::new(Arc::new(MockRangeCandidateProvider::default()));
+        services
+            .register_second_phase_scorer("p", Arc::new(PassthroughSecondPhaseScorer));
+        services.register_second_phase_scorer(
+            "p",
+            Arc::new(ConstantMultiplierSecondPhaseScorer { factor: 2.0 }),
+        );
+        assert_eq!(services.second_phase_scorers.len(), 1);
+        // Verify the active scorer is the multiplier (scales scores) not
+        // passthrough (preserves scores).
+        let s = services.second_phase_scorer("p").unwrap();
+        let out = s
+            .rescore(vec![ScoredHit {
+                doc: DocHandle(1),
+                score: 5.0,
+                phase: proximadb_kernel::PhaseId::FIRST,
+            }])
+            .unwrap();
+        assert_eq!(out[0].score, 10.0);
     }
 }

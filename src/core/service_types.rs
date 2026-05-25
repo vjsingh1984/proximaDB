@@ -289,34 +289,6 @@ impl VectorInsertResponse {
     }
 }
 
-/// Legacy in-process request for a vector similarity search — DEAD CODE.
-///
-/// Verified zero consumers: `src/core/conversions.rs::build_vector_search_request()`
-/// returns the proto `proximadb_v1::VectorSearchRequest`, not this type.
-/// The 36+ workspace references to `VectorSearchRequest` all import either
-/// the proto wire form or `proximadb_vector_query::VectorSearchRequest`
-/// (the modality query crate's request shape).
-///
-/// Naming note: renamed from `VectorSearchRequest` to
-/// `LegacyVectorSearchRequest` to mark it as dead-code-eligible. The
-/// struct can be deleted once a deprecation pass confirms no external
-/// callers exist outside the workspace.
-#[derive(Debug, Clone)]
-pub struct LegacyVectorSearchRequest {
-    /// Target collection to search
-    pub collection_id: String,
-    /// Query vector for similarity matching
-    pub query_vector: Vec<f32>,
-    /// Number of nearest neighbors to return
-    pub k: i32,
-    /// Metadata filter predicates
-    pub metadata_filter: HashMap<String, serde_json::Value>,
-    /// Whether to include vectors in the response
-    pub include_vector: bool,
-    /// Whether to include metadata in the response
-    pub include_metadata: bool,
-}
-
 /// Request for batch vector similarity search
 #[derive(Debug, Clone)]
 pub struct BatchSearchRequest {
