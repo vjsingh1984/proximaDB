@@ -39,7 +39,7 @@ use crate::query::multimodal::plan::{
 // For now, use local definitions
 use crate::graph::query::planner::{GraphQueryPlan, GraphStatistics, PlanStepType};
 
-use crate::storage::multimodal::ModelType;
+use crate::storage::multimodel::ModelType;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExplainPlan {
