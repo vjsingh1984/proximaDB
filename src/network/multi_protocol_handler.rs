@@ -1182,7 +1182,7 @@ impl UnifiedQueryHandler {
         );
 
         // Convert UnifiedQueryRequest to VectorSearchRequest
-        use proximadb_vector_query::VectorSearchRequest;
+        use proximadb_vector_query::VectorQueryRequest as VectorSearchRequest;
 
         let query_vector = query
             .query_vectors
