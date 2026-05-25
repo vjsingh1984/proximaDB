@@ -32,6 +32,7 @@ pub mod oltp;
 pub mod relational;
 pub mod schema;
 pub mod system_columns;
+pub mod unity;
 
 /// Storage pool class for a namespace's bytes. The path resolver routes
 /// writes to the matching bucket/container and refuses cross-class writes.
