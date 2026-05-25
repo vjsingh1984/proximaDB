@@ -165,6 +165,43 @@ fn apply_proto_enum_workarounds(request: &mut CollectionRequest, raw: &serde_jso
         config.storage_engine = Some(int);
         break;
     }
+
+    // canonical_embedding_precision: same string-or-int pattern as the
+    // other enum fields above. Accepts the proto-generated SCREAMING
+    // label ("EMBEDDING_PRECISION_FP16") AND the trimmed lowercase form
+    // ("fp16") that SDKs commonly emit. Unknown labels default to
+    // FP32 (1) to preserve the legacy fp32 path.
+    let prec_paths = [
+        raw.get("collection_config")
+            .and_then(|v| v.get("canonical_embedding_precision")),
+        raw.get("canonical_embedding_precision"),
+    ];
+    for prec_value in prec_paths.iter().filter_map(|&v| v) {
+        let int = if let Some(s) = prec_value.as_str() {
+            // Normalise: strip prefix, lowercase.
+            let key = s.to_ascii_lowercase();
+            let stripped = key
+                .strip_prefix("embedding_precision_")
+                .unwrap_or(&key);
+            match stripped {
+                "unspecified" => 0,
+                "fp32" => 1,
+                "fp16" => 2,
+                "bf16" => 3,
+                "int8" | "int8_scalar" => 4,
+                "uint8" | "uint8_scalar" => 5,
+                _ => 1,
+            }
+        } else if let Some(i) = prec_value.as_i64() {
+            i as i32
+        } else if let Some(u) = prec_value.as_u64() {
+            u as i32
+        } else {
+            continue;
+        };
+        config.canonical_embedding_precision = Some(int);
+        break;
+    }
 }
 
 // ── Handler functions ──────────────────────────────────────────────────────────

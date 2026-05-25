@@ -1947,6 +1947,30 @@ impl CollectionService {
             .map(|engine| Self::storage_engine_from_catalog(engine))
             .unwrap_or(StorageEngine::Sst as i32);
 
+        // Round-trip canonical_embedding_precision from the catalog
+        // schema. Mirror of the forward mapping in
+        // `catalog_schema_from_collection`. Unset / Fp32 maps back to
+        // None so legacy collections keep their existing serialized
+        // shape (no behavior change for fp32 callers).
+        let canonical_embedding_precision = {
+            use crate::proto::proximadb_v1::EmbeddingPrecision;
+            match schema.canonical_embedding_precision {
+                proximadb_records::EmbeddingScalarType::Fp32 => None,
+                proximadb_records::EmbeddingScalarType::Fp16 => {
+                    Some(EmbeddingPrecision::Fp16 as i32)
+                }
+                proximadb_records::EmbeddingScalarType::Bf16 => {
+                    Some(EmbeddingPrecision::Bf16 as i32)
+                }
+                proximadb_records::EmbeddingScalarType::Int8Scalar => {
+                    Some(EmbeddingPrecision::Int8 as i32)
+                }
+                proximadb_records::EmbeddingScalarType::UInt8Scalar => {
+                    Some(EmbeddingPrecision::Uint8 as i32)
+                }
+            }
+        };
+
         let mut config = CollectionConfig {
             name,
             dimension,
@@ -1963,6 +1987,7 @@ impl CollectionService {
                         .collect()
                 })
                 .unwrap_or_default(),
+            canonical_embedding_precision,
             ..Default::default()
         };
 

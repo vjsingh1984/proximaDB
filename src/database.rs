@@ -59,6 +59,14 @@ impl ProximaDB {
         // Step 1: Create metrics collector first
         tracing::debug!("🔧 ProximaDB::new - Creating metrics collector...");
         let metrics_collector = Arc::new(crate::metrics::UnifiedMetricsCollector::new());
+        // Register the embedding-precision metric family against its
+        // dedicated registry. Idempotent (OnceLock-backed). The
+        // `/metrics/prometheus` endpoint appends this registry's text
+        // to the legacy exporter output, so the
+        // `proximadb_embedding_precision_canonical_bytes` family
+        // surfaces on every scrape. Without this call, the family
+        // exists in code but is invisible to operators.
+        crate::observability::precision_metrics::init_precision_metrics();
         tracing::debug!("✅ ProximaDB::new - Metrics collector created successfully");
 
         // Step 2: Initialize SharedServices with orchestrator
