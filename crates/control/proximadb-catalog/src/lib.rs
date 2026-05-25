@@ -18,6 +18,8 @@ pub mod canonical_precision;
 // Collection-level DR / CRR engine contract (P1 of
 // COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc).
 pub mod collection_dr_policy;
+// DR reconciler decision logic (P3a of the same contract).
+pub mod dr_reconciler;
 // Embedding-precision rollout (PR 6 of EMBEDDING_PRECISION_LLD_2026_05_22).
 pub mod embedding_precision_policy;
 pub mod oltp;
