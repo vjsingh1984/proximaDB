@@ -9,7 +9,7 @@ mod tests {
 
     // Import required types from parent module
     use crate::query::federated::execution::{ExecutionConfig, ExecutionResult, FederatedExecutor};
-    use crate::storage::MultiModalStorageFacade;
+    use crate::storage::MultiModelStorageFacade;
     use crate::storage::traits::DocumentRecord;
     use arrow::array::{ArrayRef, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
@@ -52,7 +52,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_executor_creation() {
-        let storage = Arc::new(MultiModalStorageFacade::new());
+        let storage = Arc::new(MultiModelStorageFacade::new());
         let executor = FederatedExecutor::new(storage);
         assert!(executor.config.parallel_execution);
     }
@@ -130,10 +130,10 @@ mod tests {
     async fn test_graph_query_uses_service_target_and_legacy_node_shape() {
         let graph_service = seed_service_backed_graph().await;
         let graph_store = Arc::new(
-            crate::storage::multimodal::stores::GraphStore::new(Default::default())
+            crate::storage::multimodel::stores::GraphStore::new(Default::default())
                 .with_service(graph_service),
         );
-        let storage = Arc::new(MultiModalStorageFacade::new().with_graph_store(graph_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_graph_store(graph_store));
         let executor = FederatedExecutor::new(storage);
 
         let result = executor
@@ -168,10 +168,10 @@ mod tests {
     async fn test_graph_query_uses_projected_columns_for_scalar_subset_queries() {
         let graph_service = seed_service_backed_graph().await;
         let graph_store = Arc::new(
-            crate::storage::multimodal::stores::GraphStore::new(Default::default())
+            crate::storage::multimodel::stores::GraphStore::new(Default::default())
                 .with_service(graph_service),
         );
-        let storage = Arc::new(MultiModalStorageFacade::new().with_graph_store(graph_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_graph_store(graph_store));
         let executor = FederatedExecutor::new(storage);
 
         let result = executor
@@ -254,10 +254,10 @@ mod tests {
             .expect("graph edge should be created");
 
         let graph_store = Arc::new(
-            crate::storage::multimodal::stores::GraphStore::new(Default::default())
+            crate::storage::multimodel::stores::GraphStore::new(Default::default())
                 .with_service(graph_service),
         );
-        let storage = Arc::new(MultiModalStorageFacade::new().with_graph_store(graph_store));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_graph_store(graph_store));
         let executor = FederatedExecutor::new(storage);
 
         let start_nodes = vec!["alice".to_string()];
@@ -366,7 +366,7 @@ mod tests {
 
         let batch = FederatedExecutor::build_document_record_batch(&documents, None)
             .expect("document batch should build");
-        let executor = FederatedExecutor::new(Arc::new(MultiModalStorageFacade::new()));
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
 
         assert!(
             batch
@@ -441,7 +441,7 @@ mod tests {
 
         let batch = FederatedExecutor::build_document_record_batch(&documents, None)
             .expect("document batch should build");
-        let executor = FederatedExecutor::new(Arc::new(MultiModalStorageFacade::new()));
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
 
         let vector = executor
             .resolve_vector_from_outer_column(&batch, 0, "p", "document.profile.embedding")
@@ -486,7 +486,7 @@ mod tests {
 
         let batch = FederatedExecutor::build_graph_node_batch(&nodes, None)
             .expect("graph batch should build");
-        let executor = FederatedExecutor::new(Arc::new(MultiModalStorageFacade::new()));
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
 
         assert!(
             batch.schema().field_with_name("embedding").is_ok(),
@@ -539,7 +539,7 @@ mod tests {
 
         let batch = FederatedExecutor::build_graph_node_batch(&nodes, None)
             .expect("graph batch should build");
-        let executor = FederatedExecutor::new(Arc::new(MultiModalStorageFacade::new()));
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
 
         let vector = executor
             .resolve_vector_from_outer_column(&batch, 0, "g", "properties.profile.embedding")
@@ -594,7 +594,7 @@ mod tests {
             .expect("document batch should build");
         let graph_batch = FederatedExecutor::build_graph_node_batch(&nodes, None)
             .expect("graph batch should build");
-        let executor = FederatedExecutor::new(Arc::new(MultiModalStorageFacade::new()));
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
         let joined = executor
             .join_batches(&document_batch, &graph_batch, &[Some(0)], &[Some(0)])
             .expect("joined batch should build");
@@ -657,7 +657,7 @@ mod tests {
             .expect("graph batch should build");
         let document_batch = FederatedExecutor::build_document_record_batch(&documents, None)
             .expect("document batch should build");
-        let executor = FederatedExecutor::new(Arc::new(MultiModalStorageFacade::new()));
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
         let joined = executor
             .join_batches(&graph_batch, &document_batch, &[Some(0)], &[Some(0)])
             .expect("joined batch should build");
@@ -685,7 +685,7 @@ mod tests {
             vec![Arc::new(StringArray::from(vec![Some("[0.1,0.2]")])) as ArrayRef],
         )
         .expect("record batch should build");
-        let executor = FederatedExecutor::new(Arc::new(MultiModalStorageFacade::new()));
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
 
         let vector = executor
             .resolve_vector_from_outer_column(&batch, 0, "p", "document.profile.embedding")
@@ -705,7 +705,7 @@ mod tests {
             vec![Arc::new(StringArray::from(vec![Some("[0.9,0.1]")])) as ArrayRef],
         )
         .expect("record batch should build");
-        let executor = FederatedExecutor::new(Arc::new(MultiModalStorageFacade::new()));
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
 
         let vector = executor
             .resolve_vector_from_outer_column(&batch, 0, "g", "properties.embedding")
@@ -742,7 +742,7 @@ mod tests {
         }];
         let batch = FederatedExecutor::build_document_record_batch(&documents, None)
             .expect("document batch should build");
-        let executor = FederatedExecutor::new(Arc::new(MultiModalStorageFacade::new()));
+        let executor = FederatedExecutor::new(Arc::new(MultiModelStorageFacade::new()));
 
         let stripped = executor
             .project_result_to_output_columns(
