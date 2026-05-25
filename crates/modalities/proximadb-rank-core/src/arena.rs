@@ -8,24 +8,32 @@
 //! See `roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md` §4.1.3.
 
 use bumpalo::Bump;
-use std::cell::Cell;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Arena allocator threaded through the rank pipeline.
 ///
 /// Owners are `RankProgram` instances. Each call to `rank()` may emit
 /// tensor allocations that are valid until the next `reset()`.
+/// Per-query allocation arena.
+///
+/// `AtomicUsize` / `AtomicU64` (rather than `Cell`) for the counters
+/// so the arena is `Sync`. The async ranking pipeline holds a
+/// `&FeatureArena` across `.await` points (R-7c REST handler dispatch),
+/// which requires `Sync` for the future to be `Send` on a multi-
+/// threaded tokio runtime. The atomics use `Relaxed` ordering — these
+/// are diagnostic counters, not synchronization signals.
 pub struct FeatureArena {
     bump: Bump,
-    high_water: Cell<usize>,
-    reset_count: Cell<u64>,
+    high_water: AtomicUsize,
+    reset_count: AtomicU64,
 }
 
 impl FeatureArena {
     pub fn new() -> Self {
         Self {
             bump: Bump::new(),
-            high_water: Cell::new(0),
-            reset_count: Cell::new(0),
+            high_water: AtomicUsize::new(0),
+            reset_count: AtomicU64::new(0),
         }
     }
 
@@ -34,8 +42,8 @@ impl FeatureArena {
     pub fn with_capacity(bytes: usize) -> Self {
         Self {
             bump: Bump::with_capacity(bytes),
-            high_water: Cell::new(0),
-            reset_count: Cell::new(0),
+            high_water: AtomicUsize::new(0),
+            reset_count: AtomicU64::new(0),
         }
     }
 
@@ -56,26 +64,27 @@ impl FeatureArena {
 
     /// Reset all allocations. O(1) — bumpalo just rewinds the bump pointer.
     pub fn reset(&mut self) {
-        self.reset_count.set(self.reset_count.get() + 1);
+        self.reset_count.fetch_add(1, Ordering::Relaxed);
         self.bump.reset();
     }
 
     /// Current peak allocated bytes across the arena's lifetime.
     /// Used by observability to size future arenas.
     pub fn high_water_bytes(&self) -> usize {
-        self.high_water.get()
+        self.high_water.load(Ordering::Relaxed)
     }
 
     /// Total resets since construction. Useful for sanity checks in tests.
     pub fn reset_count(&self) -> u64 {
-        self.reset_count.get()
+        self.reset_count.load(Ordering::Relaxed)
     }
 
     fn bump_high_water(&self) {
         let used = self.bump.allocated_bytes();
-        if used > self.high_water.get() {
-            self.high_water.set(used);
-        }
+        // CAS-loop equivalent via fetch_max: returns the previous value;
+        // we don't actually need it, just the side effect of raising
+        // the gauge if `used` is larger.
+        self.high_water.fetch_max(used, Ordering::Relaxed);
     }
 }
 

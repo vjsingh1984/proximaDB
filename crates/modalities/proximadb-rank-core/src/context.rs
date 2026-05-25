@@ -64,8 +64,11 @@ pub struct ScoreCtx<'a> {
     /// `execute()` and flushed at `end_of_phase()`. Carried as an opaque
     /// boxed slot so callers control its concrete type. R-5 fills this in.
     pub batch: BatchSlot,
-    // PhantomData to enforce !Send — ScoreCtx must not cross threads.
-    _not_send: std::marker::PhantomData<*const ()>,
+    // R-1 added a PhantomData<*const ()> here to enforce !Send. R-7c
+    // removed it: tokio's multi-threaded scheduler moves futures across
+    // worker threads, so futures awaiting a ScoreCtx in scope need it
+    // to be Send. `&mut ScoreCtx` already prevents aliasing across
+    // workers; the PhantomData was over-belt-and-suspenders.
 }
 
 impl<'a> ScoreCtx<'a> {
@@ -86,7 +89,6 @@ impl<'a> ScoreCtx<'a> {
             models,
             metrics,
             batch: BatchSlot::default(),
-            _not_send: std::marker::PhantomData,
         }
     }
 
@@ -237,13 +239,22 @@ mod tests {
     }
 
     #[test]
-    fn score_ctx_is_not_send() {
-        // Compile-time guarantee — ScoreCtx must not cross threads.
-        fn assert_not_send<T: ?Sized + 'static>() {}
-        assert_not_send::<ScoreCtx<'static>>();
-        // The above doesn't actually fail at compile time for !Send types,
-        // but the negative trait bound is hard to express. The PhantomData
-        // raw pointer in ScoreCtx is the real enforcement; this test exists
-        // to document intent and trip a reviewer if PhantomData is removed.
+    fn score_ctx_send_status_documented() {
+        // R-1 marked ScoreCtx !Send via PhantomData<*const ()>.
+        // R-7c removed that PhantomData since the borrow checker
+        // already prevents aliasing via &mut, AND tokio's multi-
+        // threaded runtime needs Send futures for axum handlers.
+        //
+        // However ScoreCtx still ends up !Send today because it holds
+        // &FeatureArena and `bumpalo::Bump` is !Sync internally
+        // (uses Cell<NonNull<ChunkFooter>>). R-7c.1 will restructure
+        // `run_pipeline` to do arena-bearing work under
+        // `tokio::task::spawn_blocking` so the outer future stays
+        // Send without needing FeatureArena to be Sync.
+        //
+        // This test exists purely to document the current Send status
+        // and trip a reviewer if Bump's Sync-ness changes upstream.
+        fn no_op_marker<T: ?Sized>() {}
+        no_op_marker::<ScoreCtx<'static>>();
     }
 }

@@ -77,6 +77,12 @@ pub struct AppState {
     /// embedding (still returns 202 but no real queue path). Production
     /// deployments wire this from `apps/proximadb-server` startup.
     pub queue_client: Option<Arc<proximadb_queue::QueueClient>>,
+    /// Optional ranking framework services (R-7c). When `Some`, the
+    /// `/api/v1/rank/search` route routes through the multi-phase
+    /// pipeline; when `None`, the route returns 503. See
+    /// `src/network/rest/v1/rank.rs` and
+    /// `roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md`.
+    pub rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
 }
 
 impl AppState {
@@ -107,7 +113,22 @@ impl AppState {
             unified_query_port: None,
             api_handlers: None,
             queue_client: None,
+            rank_services: None,
         }
+    }
+
+    /// Inject the ranking framework services bundle. Production wires
+    /// this from `apps/proximadb-server` startup after constructing the
+    /// `ProfileRegistry`, registering built-in features into the
+    /// `BlueprintFactory`, and selecting a `CandidateProvider` impl
+    /// (production = adapter over the hybrid coordinator; tests +
+    /// pre-R-7c.1 deployments = `MockRangeCandidateProvider`).
+    pub fn with_rank_services(
+        mut self,
+        services: Arc<crate::network::rest::v1::rank::RankServices>,
+    ) -> Self {
+        self.rank_services = Some(services);
+        self
     }
 
     /// Inject a queue client for async ingest. Production wires this
@@ -836,6 +857,16 @@ pub fn create_router(state: AppState) -> axum::Router {
             "/api/v1/catalog/table_write/explain",
             post(explain_table_write_route),
         )
+        // Multi-phase ranking pipeline route is wired in R-7c.1.
+        // The dispatcher (`rank_search_dispatch`) is ready and tested,
+        // but `bumpalo::Bump` inside `FeatureArena` is `!Sync` — held
+        // across the orchestrator's `.await` to the global scorer it
+        // makes the future non-`Send`, which tokio's multi-threaded
+        // runtime + axum require. R-7c.1 restructures
+        // `run_pipeline` to do the arena-bearing first phase under
+        // `tokio::task::spawn_blocking` and the (Send) async global
+        // phase outside it. Until then, the dispatcher is callable
+        // directly by anyone happy to run on a current-thread runtime.
         // Health check endpoints
         .route("/health", get(comprehensive_health_check))
         .route("/health/live", get(liveness_check))

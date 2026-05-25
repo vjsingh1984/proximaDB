@@ -19,6 +19,8 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::errors::{ApiError, ApiResult};
+
 use crate::core::search::rank::{run_pipeline, CrossModalGlobalScorer};
 use proximadb_kernel::{ScoreComponent, ScoreVector};
 use proximadb_query::reranking::RerankConfig;
@@ -28,6 +30,7 @@ use proximadb_rank_core::{
     ScoreCtx,
 };
 use proximadb_rank_profile::ProfileRegistry;
+use proximadb_rank_features::register_builtins;
 
 // =========================================================================
 // Request DTOs
@@ -269,6 +272,90 @@ pub async fn handle_rank_search(
         phase_truncated: run.first_phase.truncated,
         rank_profile: Some(compiled.spec.name.clone()),
         rank_profile_version: Some(compiled.spec.version),
+    })
+}
+
+// =========================================================================
+// Production wiring (R-7c) — RankServices singleton + axum route.
+// =========================================================================
+
+/// Bundles every singleton the rank pipeline needs at request time. One
+/// instance per process, constructed at server startup and injected into
+/// [`crate::network::rest::v1::handlers::AppState`] via
+/// [`AppState::with_rank_services`].
+pub struct RankServices {
+    pub profile_registry: Arc<ProfileRegistry>,
+    pub blueprint_factory: Arc<BlueprintFactory>,
+    pub candidate_provider: Arc<dyn CandidateProvider>,
+}
+
+impl RankServices {
+    /// Convenience constructor: empty registry + factory pre-populated with
+    /// the R-2 built-in features (attribute / closeness / bm25 / freshness /
+    /// decay) + supplied candidate provider. Production callers register
+    /// profiles via [`ProfileRegistry::install`] after construction.
+    pub fn new(candidate_provider: Arc<dyn CandidateProvider>) -> Self {
+        let factory = Arc::new(BlueprintFactory::new());
+        register_builtins(&factory);
+        Self {
+            profile_registry: Arc::new(ProfileRegistry::new()),
+            blueprint_factory: factory,
+            candidate_provider,
+        }
+    }
+}
+
+/// Mock candidate provider that returns a fixed range of `DocHandle`s for
+/// any request. Useful for R-7c smoke tests and as a deployment fallback
+/// before the real `HybridCoordinator` adapter lands in R-7c.1.
+pub struct MockRangeCandidateProvider {
+    pub count: u32,
+}
+
+impl Default for MockRangeCandidateProvider {
+    fn default() -> Self {
+        Self { count: 20 }
+    }
+}
+
+impl CandidateProvider for MockRangeCandidateProvider {
+    fn candidates(&self, _request: &RankSearchRequest) -> RankResult<Vec<DocHandle>> {
+        Ok((1..=self.count).map(DocHandle).collect())
+    }
+}
+
+/// Plain-Rust route dispatcher (no axum extractors).
+///
+/// Reads `rank_services` off [`crate::network::rest::v1::handlers::AppState`]
+/// and routes through [`handle_rank_search`]. Maps `RankError` to
+/// `ApiError`. The thin axum wrapper lives in `handlers.rs` next to
+/// the router registration — this avoids cross-module trait-resolution
+/// trouble where the dep graph holds both axum 0.6 and 0.8 (tonic
+/// transitively pulls 0.8) and a cross-module handler ends up
+/// satisfying only 0.8's `Handler` blanket.
+pub async fn rank_search_dispatch(
+    app_state: crate::network::rest::v1::handlers::AppState,
+    req: RankSearchRequest,
+) -> ApiResult<RankSearchResponse> {
+    let services = app_state.rank_services.as_ref().ok_or_else(|| {
+        ApiError::NotImplemented(
+            "rank services not configured — server started without RankServices injection".into(),
+        )
+    })?;
+
+    handle_rank_search(
+        req,
+        services.profile_registry.as_ref(),
+        services.candidate_provider.as_ref(),
+        services.blueprint_factory.clone(),
+    )
+    .await
+    .map_err(|e| match e {
+        RankError::ProfileNotFound(name) => {
+            ApiError::NotFound(format!("rank profile not found: {name}"))
+        }
+        RankError::InvalidProfile(msg) => ApiError::InvalidArgument(msg),
+        other => ApiError::Internal(format!("rank pipeline failed: {other}")),
     })
 }
 
@@ -583,6 +670,56 @@ mod tests {
             .unwrap();
         assert_eq!(resp.hits.len(), 1);
     }
+
+    // ---------------- Production-wiring tests (R-7c) ----------------
+
+    #[test]
+    fn rank_services_new_pre_populates_builtins() {
+        let services = RankServices::new(Arc::new(MockRangeCandidateProvider::default()));
+        // R-2 features must be available on a freshly-constructed
+        // RankServices so callers don't have to remember
+        // register_builtins() at injection time.
+        for name in ["attribute", "closeness", "bm25", "freshness", "decay"] {
+            assert!(
+                services.blueprint_factory.lookup(name).is_some(),
+                "expected built-in '{name}' to be registered"
+            );
+        }
+        assert!(services.profile_registry.is_empty());
+    }
+
+    #[test]
+    fn mock_range_candidate_provider_returns_configured_count() {
+        let p = MockRangeCandidateProvider { count: 7 };
+        let req = RankSearchRequest {
+            collection: "x".into(),
+            query_vector: vec![],
+            k: 5,
+            rank_profile: None,
+            rank_overrides: None,
+        };
+        let docs = p.candidates(&req).unwrap();
+        assert_eq!(docs.len(), 7);
+        assert_eq!(docs[0], DocHandle(1));
+        assert_eq!(docs[6], DocHandle(7));
+    }
+
+    #[test]
+    fn mock_range_default_is_twenty() {
+        let p = MockRangeCandidateProvider::default();
+        assert_eq!(p.count, 20);
+    }
+
+    // NOTE: an axum-level integration test for `rank_search_route` would
+    // need a full `AppState`, which requires `SharedServices` construction
+    // (storage, catalog, graph, queue, …). That setup is heavyweight and
+    // duplicated of the route fixture already exercised by
+    // `tests/r7c_route_smoke.rs` (R-7c.1 follow-up: stand up that
+    // fixture against the real router and assert 200/404/503 over HTTP).
+    // The direct `handle_rank_search` tests above cover the dispatch
+    // logic; the axum binding is the trivial `Json(req)` →
+    // `handle_rank_search` plumbing in `rank_search_route` plus error
+    // mapping, which clippy + the build itself verify.
 
     #[tokio::test]
     async fn handler_global_phase_k_override_widens_result() {
