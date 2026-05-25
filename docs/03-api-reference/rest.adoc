@@ -117,6 +117,47 @@ curl -X POST http://localhost:5678/api/v1/collections \
   }'
 ----
 
+Optional field `canonical_embedding_precision` (default `fp32`) sets the
+on-disk + in-memory scalar type for the embedding column. Non-`fp32`
+values trade a small recall delta for ~50% storage reduction (`fp16` /
+`bf16`) or up to ~75% (`int8` / `uint8`). The field accepts either the
+SCREAMING proto label or a shorthand (`fp16`, `f16`, `half`, `float16`,
+`bf16`, `int8`, `uint8`); unknown values fall back to `fp32`.
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/collections \
+  -H "Content-Type: application/json" \
+  -d '{
+    "collection_id": "embeddings_fp16",
+    "collection_config": {
+      "dimension": 768,
+      "storage_engine": "sst",
+      "distance_metric": "cosine",
+      "canonical_embedding_precision": 2
+    }
+  }'
+----
+
+The proto enum discriminants are: 1=`fp32`, 2=`fp16`, 3=`bf16`,
+4=`int8`, 5=`uint8`. String forms (`"fp16"`, `"EMBEDDING_PRECISION_FP16"`)
+are accepted via the same field. Once set on a collection, every
+ingest path — REST `vectors/batch`, gRPC, Arrow Flight `do_action`,
+the async embedding drainer — coerces records to the collection's
+canonical precision before WAL append, and compaction preserves it
+through rewrites.
+
+Observability: `proximadb_embedding_precision_canonical_bytes` exposes
+the per-(collection, precision) byte total at the
+`/metrics/prometheus` endpoint. Operators can verify a collection is
+storing fp16 by scraping after some ingest:
+
+[source,bash]
+----
+curl -s http://localhost:5678/metrics/prometheus | grep canonical_bytes
+# proximadb_embedding_precision_canonical_bytes{collection="embeddings_fp16",precision="fp16"} N
+----
+
 === POST /api/v1/vectors/batch
 
 [source,bash]

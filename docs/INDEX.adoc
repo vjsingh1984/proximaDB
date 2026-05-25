@@ -52,6 +52,7 @@ For detailed roadmap, see link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategi
 | Multi-model design | link:05-concepts/architecture.adoc[Architecture] | How 8 models share the data plane
 | Storage engine selection | link:05-concepts/storage-engines.adoc[Storage Engines] | Pick the right engine for your workload
 | Graph engines | link:05-concepts/graph-engines.adoc[Graph Engines] | Choose traversal performance vs scale
+| Embedding precision | link:05-concepts/embedding-precision.adoc[Embedding Precision] | Per-collection fp16 / bf16 / int8 storage; ~50% byte reduction
 | Design patterns | link:12-design/DESIGN_PATTERNS.adoc[Design Patterns] | Storage, consensus, caching, query optimization patterns
 |===
 
