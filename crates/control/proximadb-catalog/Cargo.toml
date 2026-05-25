@@ -31,7 +31,7 @@ serde.workspace = true
 serde_json.workspace = true
 sqlx = { workspace = true, optional = true }
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "fs", "io-util"] }
 tracing.workspace = true
 
 [dev-dependencies]
