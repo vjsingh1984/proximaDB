@@ -54,9 +54,12 @@ fn convert_proto_value_to_typed(value: sql_value::Value) -> MetadataValue {
     }
 }
 
+/// Backwards-compat alias for [`ServicesStreamingSearchConfig`].
+pub type StreamingSearchConfig = ServicesStreamingSearchConfig;
+
 /// Configuration for streaming search
 #[derive(Debug, Clone)]
-pub struct StreamingSearchConfig {
+pub struct ServicesStreamingSearchConfig {
     /// Maximum number of results to buffer in memory
     pub buffer_size: usize,
 
@@ -76,7 +79,7 @@ pub struct StreamingSearchConfig {
     pub search_timeout_ms: u64,
 }
 
-impl Default for StreamingSearchConfig {
+impl Default for ServicesStreamingSearchConfig {
     fn default() -> Self {
         Self {
             buffer_size: 1000,
@@ -95,7 +98,7 @@ pub struct StreamingSearchService {
     direct_service: Arc<VectorOperationsService>,
 
     /// Configuration
-    config: StreamingSearchConfig,
+    config: ServicesStreamingSearchConfig,
 
     /// Unified distance computation
     distance_compute: UnifiedDistanceCompute,
@@ -171,7 +174,7 @@ impl StreamingSearchService {
     /// Create new streaming search service
     pub fn new(
         direct_service: Arc<VectorOperationsService>,
-        config: Option<StreamingSearchConfig>,
+        config: Option<ServicesStreamingSearchConfig>,
     ) -> Self {
         let config = config.clone();
         let buffer_size = config.as_ref().map_or(1000, |c| c.buffer_size);

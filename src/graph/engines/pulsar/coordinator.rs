@@ -84,12 +84,15 @@ pub struct DistributedTraversalResult {
     /// Paths taken (optional, for path-finding queries)
     pub paths: Vec<Vec<NodeId>>,
     /// Query statistics
-    pub stats: TraversalStats,
+    pub stats: PulsarTraversalStats,
 }
+
+/// Backwards-compat alias for [`PulsarTraversalStats`].
+pub type TraversalStats = PulsarTraversalStats;
 
 /// Statistics for a single traversal operation
 #[derive(Debug)]
-pub struct TraversalStats {
+pub struct PulsarTraversalStats {
     /// Total time taken
     pub duration_ms: u64,
     /// Number of shards involved
@@ -505,8 +508,8 @@ impl QueryCoordinator {
         &self,
         context: &TraversalContext,
         nodes_found: usize,
-    ) -> TraversalStats {
-        TraversalStats {
+    ) -> PulsarTraversalStats {
+        PulsarTraversalStats {
             duration_ms: context.start_time.elapsed().as_millis() as u64,
             shards_involved: context.shards_involved.len() as u32,
             nodes_visited: context.visited.len() as u32,

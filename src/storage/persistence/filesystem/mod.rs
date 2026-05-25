@@ -452,9 +452,12 @@ impl FileStorageTier {
     }
 }
 
+/// Backwards-compat alias for [`FsTierConfig`].
+pub type TierConfig = FsTierConfig;
+
 /// Tier-specific storage configuration
 #[derive(Debug, Clone)]
-pub struct TierConfig {
+pub struct FsTierConfig {
     /// Storage tier type
     pub tier: FileStorageTier,
 
@@ -502,7 +505,7 @@ pub struct FilesystemPerformanceConfig {
     pub max_concurrent_ops: usize,
 
     /// Tier-specific configurations
-    pub tier_configs: Vec<TierConfig>,
+    pub tier_configs: Vec<FsTierConfig>,
 }
 
 /// File handle trait for streaming operations on large files

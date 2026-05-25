@@ -129,8 +129,11 @@ impl Transaction {
     }
 }
 
+/// Backwards-compat alias for [`MultimodalTransactionCoordinator`].
+pub type TransactionCoordinator = MultimodalTransactionCoordinator;
+
 /// Transaction coordinator manages transactions across all stores
-pub struct TransactionCoordinator {
+pub struct MultimodalTransactionCoordinator {
     /// Configuration
     config: MultimodalTransactionConfig,
     /// Isolation manager for MVCC
@@ -143,7 +146,7 @@ pub struct TransactionCoordinator {
     stats: RwLock<MultimodalTransactionStats>,
 }
 
-impl TransactionCoordinator {
+impl MultimodalTransactionCoordinator {
     /// Create a new transaction coordinator
     pub fn new(config: MultimodalTransactionConfig) -> Self {
         Self {
@@ -456,7 +459,7 @@ impl TransactionCoordinator {
     }
 }
 
-impl Default for TransactionCoordinator {
+impl Default for MultimodalTransactionCoordinator {
     fn default() -> Self {
         Self::new(MultimodalTransactionConfig::default())
     }
@@ -502,7 +505,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_begin() {
-        let coordinator = TransactionCoordinator::new(MultimodalTransactionConfig::default());
+        let coordinator = MultimodalTransactionCoordinator::new(MultimodalTransactionConfig::default());
 
         let txn_id = coordinator
             .begin(None)
@@ -520,7 +523,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_commit() {
-        let coordinator = TransactionCoordinator::new(MultimodalTransactionConfig::default());
+        let coordinator = MultimodalTransactionCoordinator::new(MultimodalTransactionConfig::default());
 
         let txn_id = coordinator
             .begin(None)
@@ -551,7 +554,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_rollback() {
-        let coordinator = TransactionCoordinator::new(MultimodalTransactionConfig::default());
+        let coordinator = MultimodalTransactionCoordinator::new(MultimodalTransactionConfig::default());
 
         let txn_id = coordinator
             .begin(None)
@@ -580,7 +583,7 @@ mod tests {
             auto_2pc: false, // Disable auto 2PC for this test
             ..Default::default()
         };
-        let coordinator = TransactionCoordinator::new(config);
+        let coordinator = MultimodalTransactionCoordinator::new(config);
 
         let txn_id = coordinator
             .begin(None)
@@ -606,7 +609,7 @@ mod tests {
             max_concurrent: 2,
             ..Default::default()
         };
-        let coordinator = TransactionCoordinator::new(config);
+        let coordinator = MultimodalTransactionCoordinator::new(config);
 
         // First two should succeed
         coordinator
@@ -625,7 +628,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_isolation_levels() {
-        let coordinator = TransactionCoordinator::new(MultimodalTransactionConfig::default());
+        let coordinator = MultimodalTransactionCoordinator::new(MultimodalTransactionConfig::default());
 
         let _txn1 = coordinator
             .begin(Some(IsolationLevel::ReadCommitted))
@@ -649,7 +652,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_cleanup() {
-        let coordinator = TransactionCoordinator::new(MultimodalTransactionConfig::default());
+        let coordinator = MultimodalTransactionCoordinator::new(MultimodalTransactionConfig::default());
 
         let txn_id = coordinator
             .begin(None)

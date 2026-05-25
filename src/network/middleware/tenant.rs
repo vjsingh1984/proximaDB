@@ -29,14 +29,14 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! use proximadb::network::middleware::tenant::{TenantExtractor, TenantContext};
+//! use proximadb::network::middleware::tenant::{TenantExtractor, MiddlewareTenantContext};
 //!
 //! // Create tenant extractor with optional default tenant
 //! let extractor = TenantExtractor::new()
 //!     .with_default_tenant("default");
 //!
 //! // In handlers, access tenant context:
-//! async fn handler(Extension(tenant): Extension<TenantContext>) -> impl IntoResponse {
+//! async fn handler(Extension(tenant): Extension<MiddlewareTenantContext>) -> impl IntoResponse {
 //!     println!("Request from tenant: {}", tenant.tenant_id);
 //! }
 //! ```
@@ -57,8 +57,12 @@ pub const X_TENANT_ID: &str = "X-Tenant-ID";
 ///
 /// This struct is injected into request extensions and can be accessed
 /// by handlers using `Extension<TenantContext>`.
+///
+/// Backwards-compat alias for [`MiddlewareTenantContext`].
+pub type TenantContext = MiddlewareTenantContext;
+
 #[derive(Debug, Clone)]
-pub struct TenantContext {
+pub struct MiddlewareTenantContext {
     /// The tenant identifier
     pub tenant_id: String,
     /// Source of the tenant ID (for audit logging)
@@ -67,7 +71,7 @@ pub struct TenantContext {
     pub is_system_tenant: bool,
 }
 
-impl TenantContext {
+impl MiddlewareTenantContext {
     /// Create a new tenant context
     pub fn new(tenant_id: impl Into<String>, source: TenantIdSource) -> Self {
         let tenant_id = tenant_id.into();
@@ -338,7 +342,7 @@ impl Default for TenantExtractor {
 /// Tenant extraction middleware function
 ///
 /// This middleware extracts tenant_id from the request and injects
-/// TenantContext into request extensions.
+/// MiddlewareTenantContext into request extensions.
 pub async fn tenant_middleware(
     axum::extract::State(extractor): axum::extract::State<TenantExtractor>,
     mut req: Request<Body>,
@@ -357,8 +361,8 @@ pub async fn tenant_middleware(
             }
 
             // Inject tenant context into request extensions
-            let context = TenantContext::new(tenant_id, source);
-            // Also inject api-crate TenantContext for port-backed handlers in proximadb-api
+            let context = MiddlewareTenantContext::new(tenant_id, source);
+            // Also inject api-crate MiddlewareTenantContext for port-backed handlers in proximadb-api
             req.extensions_mut()
                 .insert(proximadb_api::rest::TenantContext {
                     tenant_id: context.tenant_id.clone(),
@@ -376,7 +380,7 @@ pub async fn tenant_middleware(
                 ).into_response()
             } else {
                 // No tenant required, use anonymous context
-                let default_ctx = TenantContext::default_tenant();
+                let default_ctx = MiddlewareTenantContext::default_tenant();
                 req.extensions_mut()
                     .insert(proximadb_api::rest::TenantContext {
                         tenant_id: default_ctx.tenant_id.clone(),
@@ -417,15 +421,15 @@ pub fn create_tenant_extractor(config: TenantExtractorConfig) -> TenantExtractor
 /// Extension trait to easily get tenant context from request
 pub trait TenantContextExt {
     /// Get tenant context from request extensions
-    fn tenant_context(&self) -> Option<&TenantContext>;
+    fn tenant_context(&self) -> Option<&MiddlewareTenantContext>;
 
     /// Get tenant ID or default
     fn tenant_id_or_default(&self) -> String;
 }
 
 impl<B> TenantContextExt for Request<B> {
-    fn tenant_context(&self) -> Option<&TenantContext> {
-        self.extensions().get::<TenantContext>()
+    fn tenant_context(&self) -> Option<&MiddlewareTenantContext> {
+        self.extensions().get::<MiddlewareTenantContext>()
     }
 
     fn tenant_id_or_default(&self) -> String {
@@ -440,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_tenant_context_creation() {
-        let ctx = TenantContext::new("tenant1", TenantIdSource::Header);
+        let ctx = MiddlewareTenantContext::new("tenant1", TenantIdSource::Header);
         assert_eq!(ctx.tenant_id, "tenant1");
         assert_eq!(ctx.source, TenantIdSource::Header);
         assert!(!ctx.is_system_tenant);
@@ -449,19 +453,19 @@ mod tests {
 
     #[test]
     fn test_system_tenant_detection() {
-        let ctx = TenantContext::new("system", TenantIdSource::Header);
+        let ctx = MiddlewareTenantContext::new("system", TenantIdSource::Header);
         assert!(ctx.is_system_tenant);
 
-        let ctx = TenantContext::new("admin", TenantIdSource::Header);
+        let ctx = MiddlewareTenantContext::new("admin", TenantIdSource::Header);
         assert!(ctx.is_system_tenant);
 
-        let ctx = TenantContext::new("customer1", TenantIdSource::Header);
+        let ctx = MiddlewareTenantContext::new("customer1", TenantIdSource::Header);
         assert!(!ctx.is_system_tenant);
     }
 
     #[test]
     fn test_default_tenant_context() {
-        let ctx = TenantContext::default_tenant();
+        let ctx = MiddlewareTenantContext::default_tenant();
         assert_eq!(ctx.tenant_id, "default");
         assert_eq!(ctx.source, TenantIdSource::Default);
     }

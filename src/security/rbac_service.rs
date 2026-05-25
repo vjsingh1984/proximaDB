@@ -410,7 +410,7 @@ impl ConsolidatedRBACManager {
         Ok(AuthorizationResult {
             allowed,
             permissions,
-            tenant_context: user_ctx.tenant_id.as_ref().map(|tid| TenantContext {
+            tenant_context: user_ctx.tenant_id.as_ref().map(|tid| RbacTenantContext {
                 tenant_id: tid.clone(),
                 tenant_name: tid.clone(),
                 security_policy: "default".to_string(),
@@ -912,13 +912,16 @@ pub enum CollectionPermissionType {
 pub struct AuthorizationResult {
     pub allowed: bool,
     pub permissions: HashSet<UnifiedPermission>,
-    pub tenant_context: Option<TenantContext>,
+    pub tenant_context: Option<RbacTenantContext>,
     pub reason: Option<String>,
 }
 
+/// Backwards-compat alias for [`RbacTenantContext`].
+pub type TenantContext = RbacTenantContext;
+
 /// Tenant context for authorized operations
 #[derive(Debug, Clone)]
-pub struct TenantContext {
+pub struct RbacTenantContext {
     pub tenant_id: String,
     pub tenant_name: String,
     pub security_policy: String,
@@ -1124,7 +1127,7 @@ mod tests {
         let result = AuthorizationResult {
             allowed: true,
             permissions,
-            tenant_context: Some(TenantContext {
+            tenant_context: Some(RbacTenantContext {
                 tenant_id: "tenant_1".into(),
                 tenant_name: "Acme Corp".into(),
                 security_policy: "strict".into(),

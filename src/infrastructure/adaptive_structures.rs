@@ -289,14 +289,17 @@ pub struct AdaptiveStoreConfig {
     /// Backend type configuration
     pub backend_type: BackendType,
     /// Tier management settings
-    pub tier_config: TierConfig,
+    pub tier_config: AdaptiveTierConfig,
     /// Metrics collection settings
     pub metrics_config: MetricsConfig,
 }
 
+/// Backwards-compat alias for [`AdaptiveTierConfig`].
+pub type TierConfig = AdaptiveTierConfig;
+
 /// Tier management settings for an adaptive store
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct TierConfig {
+pub struct AdaptiveTierConfig {
     /// Enable tier management
     pub enable_tiering: bool,
     /// Rebalancing interval
@@ -696,7 +699,7 @@ impl AdaptiveStoreFactory {
                         },
                     },
                 },
-                tier_config: TierConfig {
+                tier_config: AdaptiveTierConfig {
                     enable_tiering: true,
                     rebalance_interval: Duration::from_secs(300),
                     memory_pressure_threshold: 0.8,
@@ -743,7 +746,7 @@ impl AdaptiveStoreFactory {
                         },
                     },
                 },
-                tier_config: TierConfig {
+                tier_config: AdaptiveTierConfig {
                     enable_tiering: true,
                     rebalance_interval: Duration::from_secs(120),
                     memory_pressure_threshold: 0.9,
@@ -777,7 +780,7 @@ impl AdaptiveStoreFactory {
                     switch_confidence_threshold: 0.95,
                 },
             },
-            tier_config: TierConfig {
+            tier_config: AdaptiveTierConfig {
                 enable_tiering: true,
                 rebalance_interval: Duration::from_secs(180),
                 memory_pressure_threshold: 0.85,
@@ -1463,7 +1466,7 @@ mod tests {
                 },
                 tier_policy: create_default_unified_tier_policy(),
             },
-            tier_config: TierConfig {
+            tier_config: AdaptiveTierConfig {
                 enable_tiering: true,
                 rebalance_interval: Duration::from_secs(60),
                 memory_pressure_threshold: 0.8,
@@ -1840,7 +1843,7 @@ mod tests {
                     },
                 },
             },
-            tier_config: TierConfig {
+            tier_config: AdaptiveTierConfig {
                 enable_tiering: true,
                 rebalance_interval: Duration::from_secs(60),
                 memory_pressure_threshold: 0.8,

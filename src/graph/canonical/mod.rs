@@ -467,7 +467,7 @@ pub struct TraversalResults {
     pub paths: Option<Vec<CanonicalPath>>,
     /// Execution statistics
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub stats: Option<TraversalStats>,
+    pub stats: Option<CanonicalTraversalStats>,
 }
 
 /// Path representation
@@ -490,9 +490,12 @@ impl CanonicalPath {
     }
 }
 
+/// Backwards-compat alias for [`CanonicalTraversalStats`].
+pub type TraversalStats = CanonicalTraversalStats;
+
 /// Traversal statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TraversalStats {
+pub struct CanonicalTraversalStats {
     /// Number of nodes visited
     pub nodes_visited: u64,
     /// Number of edges traversed
@@ -504,8 +507,8 @@ pub struct TraversalStats {
     pub execution_time_ms: Option<u64>,
 }
 
-impl TraversalStats {
-    /// Convert from proto TraversalStats
+impl CanonicalTraversalStats {
+    /// Convert from proto CanonicalTraversalStats
     pub fn from_proto(stats: &proximadb_v1::TraversalStats) -> Self {
         Self {
             nodes_visited: stats.nodes_visited as u64,

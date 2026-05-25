@@ -52,12 +52,15 @@ pub struct TraversalResult {
     pub paths: Vec<Vec<NodeId>>,
 
     /// Traversal statistics
-    pub stats: TraversalStats,
+    pub stats: OrionTraversalStats,
 }
+
+/// Backwards-compat alias for [`OrionTraversalStats`].
+pub type TraversalStats = OrionTraversalStats;
 
 /// Statistics collected during a graph traversal operation.
 #[derive(Debug, Clone, Default)]
-pub struct TraversalStats {
+pub struct OrionTraversalStats {
     /// Number of unique nodes visited during traversal.
     pub nodes_visited: usize,
     /// Number of edges traversed (expanded) during traversal.
@@ -178,7 +181,7 @@ pub async fn breadth_first_search(
     let mut traversed_edges = Vec::new(); // NEW
     let mut paths = std::collections::HashMap::new();
 
-    let mut stats = TraversalStats::default();
+    let mut stats = OrionTraversalStats::default();
 
     // Initialize with start node
     frontier.push_back(start_node_id.clone());
@@ -382,7 +385,7 @@ pub async fn depth_first_search(
     let mut traversed_edges = Vec::new(); // NEW
     let mut paths = std::collections::HashMap::new();
 
-    let mut stats = TraversalStats::default();
+    let mut stats = OrionTraversalStats::default();
 
     // Initialize with start node
     stack.push((start_node_id.clone(), 0u32)); // (node_id, depth)
@@ -557,7 +560,7 @@ pub async fn parallel_breadth_first_search(
     use std::sync::{Arc, Mutex};
 
     let start_time = std::time::Instant::now();
-    let mut stats = TraversalStats::default();
+    let mut stats = OrionTraversalStats::default();
 
     // Start node
     let start_node = engine

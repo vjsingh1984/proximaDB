@@ -7,9 +7,12 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// Backwards-compat alias for [`StorageTenantContext`].
+pub type TenantContext = StorageTenantContext;
+
 /// Simple tenant context
 #[derive(Debug, Clone)]
-pub struct TenantContext {
+pub struct StorageTenantContext {
     pub tenant_id: String,
     pub config: TenantConfig,
     pub created_at: DateTime<Utc>,
@@ -131,7 +134,7 @@ pub enum DomainStatus {
     Migrating,
 }
 
-impl TenantContext {
+impl StorageTenantContext {
     /// Create or get domain within tenant
     pub async fn get_or_create_domain(
         &self,
@@ -215,7 +218,7 @@ mod tests {
             security_policies: SecurityPolicies::default(),
         };
 
-        let context = TenantContext {
+        let context = StorageTenantContext {
             tenant_id: "test_tenant".to_string(),
             config,
             created_at: Utc::now(),
@@ -233,7 +236,7 @@ mod tests {
     #[tokio::test]
     async fn test_domain_creation() {
         let config = TenantConfig::default();
-        let context = TenantContext {
+        let context = StorageTenantContext {
             tenant_id: "test_tenant".to_string(),
             config,
             created_at: Utc::now(),

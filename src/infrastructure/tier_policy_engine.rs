@@ -486,7 +486,7 @@ pub struct SmartTierPolicy {
     available_tiers: Vec<InfrastructureTier>,
 
     /// Tier configuration with capacity limits and costs
-    tier_configs: HashMap<InfrastructureTier, TierConfig>,
+    tier_configs: HashMap<InfrastructureTier, PolicyTierConfig>,
 
     /// Access pattern rules for intelligent placement
     placement_rules: Vec<PlacementRule>,
@@ -544,9 +544,12 @@ pub enum DurabilityPreference {
     CostOptimized,
 }
 
+/// Backwards-compat alias for [`PolicyTierConfig`].
+pub type TierConfig = PolicyTierConfig;
+
 /// Physical and cost characteristics of a single storage tier
 #[derive(Debug, Clone)]
-pub struct TierConfig {
+pub struct PolicyTierConfig {
     /// Maximum capacity for this tier (bytes)
     #[allow(dead_code)]
     max_capacity_bytes: Option<usize>,
@@ -932,7 +935,7 @@ pub struct GlobalTier {
     available_tiers: Vec<InfrastructureTier>,
 
     /// Global tier configurations (capacity, cost, latency)
-    tier_configs: HashMap<InfrastructureTier, TierConfig>,
+    tier_configs: HashMap<InfrastructureTier, PolicyTierConfig>,
 
     /// Rule-based policy engine (scalable, not per-collection)
     rule_based_policy: RuleBasedTierPolicy,
@@ -1336,26 +1339,26 @@ impl GlobalTier {
     /// Create default tier configurations based on detected hardware
     fn create_default_tier_configs(
         tiers: &[InfrastructureTier],
-    ) -> HashMap<InfrastructureTier, TierConfig> {
+    ) -> HashMap<InfrastructureTier, PolicyTierConfig> {
         let mut configs = HashMap::new();
 
         for tier in tiers {
             let config = match tier {
-                InfrastructureTier::Memory => TierConfig {
+                InfrastructureTier::Memory => PolicyTierConfig {
                     max_capacity_bytes: Self::detect_memory_capacity(),
                     cost_per_gb_per_month: 100.0, // $100/GB/month (expensive but fast)
                     access_latency: Duration::from_micros(100),
                     retrieval_latency: None,
                     min_storage_duration: None,
                 },
-                InfrastructureTier::NvmeSsd { .. } => TierConfig {
+                InfrastructureTier::NvmeSsd { .. } => PolicyTierConfig {
                     max_capacity_bytes: Self::detect_nvme_capacity(),
                     cost_per_gb_per_month: 10.0, // $10/GB/month
                     access_latency: Duration::from_millis(1),
                     retrieval_latency: None,
                     min_storage_duration: None,
                 },
-                InfrastructureTier::HardDisk { .. } => TierConfig {
+                InfrastructureTier::HardDisk { .. } => PolicyTierConfig {
                     max_capacity_bytes: Self::detect_hdd_capacity(),
                     cost_per_gb_per_month: 2.0, // $2/GB/month
                     access_latency: Duration::from_millis(10),
@@ -1477,7 +1480,7 @@ impl SmartTierPolicy {
     pub fn for_index_workload_constrained(
         collection_config: CollectionStorageConfig,
         server_available_tiers: &[InfrastructureTier],
-        _server_tier_configs: &HashMap<InfrastructureTier, TierConfig>,
+        _server_tier_configs: &HashMap<InfrastructureTier, PolicyTierConfig>,
     ) -> Self {
         // Filter server tiers by collection constraints
         let _available_tiers: Vec<InfrastructureTier> = server_available_tiers
@@ -1588,7 +1591,7 @@ impl SmartTierPolicy {
         // Memory tier config
         tier_configs.insert(
             InfrastructureTier::Memory,
-            TierConfig {
+            PolicyTierConfig {
                 max_capacity_bytes: Some(4 * 1024 * 1024 * 1024), // 4GB default
                 cost_per_gb_per_month: 100.0,                     // Expensive per GB but fast
                 access_latency: Duration::from_micros(100),
@@ -1602,7 +1605,7 @@ impl SmartTierPolicy {
             InfrastructureTier::NvmeSsd {
                 mount_path: "/mnt/nvme".to_string(),
             },
-            TierConfig {
+            PolicyTierConfig {
                 max_capacity_bytes: Some(1024 * 1024 * 1024 * 1024), // 1TB default
                 cost_per_gb_per_month: 10.0,                         // NVMe cost approximation
                 access_latency: Duration::from_millis(1),
@@ -1638,7 +1641,7 @@ impl SmartTierPolicy {
     pub fn for_cache_workload_constrained(
         collection_config: CollectionStorageConfig,
         _server_available_tiers: &[InfrastructureTier],
-        _server_tier_configs: &HashMap<InfrastructureTier, TierConfig>,
+        _server_tier_configs: &HashMap<InfrastructureTier, PolicyTierConfig>,
     ) -> Self {
         // Same as for_cache_workload but with collection constraints
         let mut policy = Self::for_cache_workload();
@@ -1753,7 +1756,7 @@ impl SmartTierPolicy {
     pub fn for_hybrid_workload_constrained(
         collection_config: CollectionStorageConfig,
         _server_available_tiers: &[InfrastructureTier],
-        _server_tier_configs: &HashMap<InfrastructureTier, TierConfig>,
+        _server_tier_configs: &HashMap<InfrastructureTier, PolicyTierConfig>,
     ) -> Self {
         // Same as for_hybrid_workload but with collection constraints
         let mut policy = Self::for_hybrid_workload();

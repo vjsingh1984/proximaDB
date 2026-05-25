@@ -34,7 +34,7 @@ pub struct StreamingSearchEngine {
     cost_optimizer: Option<CostBasedOptimizer>,
 
     /// Configuration
-    config: StreamingSearchConfig,
+    config: NovaStreamingSearchConfig,
 
     /// Performance tracking
     performance_tracker: Arc<RwLock<PerformanceTracker>>,
@@ -43,9 +43,12 @@ pub struct StreamingSearchEngine {
     zone_maps_cache: Arc<RwLock<HashMap<String, AdvancedZoneMap>>>,
 }
 
+/// Backwards-compat alias for [`NovaStreamingSearchConfig`].
+pub type StreamingSearchConfig = NovaStreamingSearchConfig;
+
 /// Configuration for streaming search
 #[derive(Debug, Clone)]
-pub struct StreamingSearchConfig {
+pub struct NovaStreamingSearchConfig {
     /// Progressive search configuration
     pub progressive_config: ProgressiveSearchConfig,
 
@@ -184,7 +187,7 @@ struct PredictedPerformance {
 
 impl StreamingSearchEngine {
     /// Create new streaming search engine
-    pub fn new(config: StreamingSearchConfig) -> Self {
+    pub fn new(config: NovaStreamingSearchConfig) -> Self {
         // Create dependencies for progressive search
         let distance_compute = Arc::new(
             crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
@@ -782,7 +785,7 @@ impl PerformanceTracker {
     }
 }
 
-impl Default for StreamingSearchConfig {
+impl Default for NovaStreamingSearchConfig {
     fn default() -> Self {
         Self {
             progressive_config: ProgressiveSearchConfig::default(),
@@ -809,7 +812,7 @@ mod tests {
 
     #[test]
     fn test_streaming_search_config() {
-        let config = StreamingSearchConfig::default();
+        let config = NovaStreamingSearchConfig::default();
         assert!(config.enable_cost_based_ordering);
         assert!(config.enable_adaptive_thresholds);
         assert_eq!(config.max_memory_usage_bytes, 512 * 1024 * 1024);

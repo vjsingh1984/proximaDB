@@ -55,9 +55,12 @@ pub struct StreamingSearchResult {
     pub metadata: HashMap<String, String>,
 }
 
+/// Backwards-compat alias for [`EmbeddedStreamingSearchConfig`].
+pub type StreamingSearchConfig = EmbeddedStreamingSearchConfig;
+
 /// Configuration for embedded streaming search
 #[derive(Debug, Clone)]
-pub struct StreamingSearchConfig {
+pub struct EmbeddedStreamingSearchConfig {
     /// Number of results per batch (default: 100)
     pub batch_size: usize,
     /// Maximum buffer size for backpressure control (default: 1000)
@@ -66,7 +69,7 @@ pub struct StreamingSearchConfig {
     pub search_mode: Option<String>,
 }
 
-impl Default for StreamingSearchConfig {
+impl Default for EmbeddedStreamingSearchConfig {
     fn default() -> Self {
         Self {
             batch_size: 100,
@@ -76,7 +79,7 @@ impl Default for StreamingSearchConfig {
     }
 }
 
-impl StreamingSearchConfig {
+impl EmbeddedStreamingSearchConfig {
     /// Create a new configuration with the given batch size
     pub fn with_batch_size(mut self, batch_size: usize) -> Self {
         self.batch_size = batch_size.max(1); // Ensure at least 1
@@ -120,7 +123,7 @@ pub struct EmbeddedSearchIterator {
     /// Current state of the iterator
     state: IteratorState,
     /// Configuration
-    config: StreamingSearchConfig,
+    config: EmbeddedStreamingSearchConfig,
     /// Total results requested
     top_k: usize,
     /// Results returned so far
@@ -139,7 +142,7 @@ impl EmbeddedSearchIterator {
     /// * `runtime_handle` - Handle to the tokio runtime for blocking
     pub(crate) fn new(
         receiver: mpsc::Receiver<Result<Vec<StreamingSearchResult>, String>>,
-        config: StreamingSearchConfig,
+        config: EmbeddedStreamingSearchConfig,
         top_k: usize,
         runtime_handle: tokio::runtime::Handle,
     ) -> Self {
@@ -265,7 +268,7 @@ pub(crate) struct StreamingSearchExecutor {
     /// Number of results to return
     top_k: usize,
     /// Configuration
-    config: StreamingSearchConfig,
+    config: EmbeddedStreamingSearchConfig,
 }
 
 impl StreamingSearchExecutor {
@@ -274,7 +277,7 @@ impl StreamingSearchExecutor {
         collection: String,
         query_vector: Vec<f32>,
         top_k: usize,
-        config: StreamingSearchConfig,
+        config: EmbeddedStreamingSearchConfig,
     ) -> Self {
         Self {
             collection,
@@ -394,12 +397,12 @@ mod tests {
     use super::*;
 
     // ========================================================================
-    // StreamingSearchConfig Tests
+    // EmbeddedStreamingSearchConfig Tests
     // ========================================================================
 
     #[test]
     fn test_streaming_config_defaults() {
-        let config = StreamingSearchConfig::default();
+        let config = EmbeddedStreamingSearchConfig::default();
         assert_eq!(config.batch_size, 100);
         assert_eq!(config.buffer_size, 1000);
         assert!(config.search_mode.is_none());
@@ -407,7 +410,7 @@ mod tests {
 
     #[test]
     fn test_streaming_config_builder() {
-        let config = StreamingSearchConfig::default()
+        let config = EmbeddedStreamingSearchConfig::default()
             .with_batch_size(50)
             .with_buffer_size(500)
             .with_search_mode("approximate");
@@ -419,13 +422,13 @@ mod tests {
 
     #[test]
     fn test_streaming_config_batch_size_minimum() {
-        let config = StreamingSearchConfig::default().with_batch_size(0);
+        let config = EmbeddedStreamingSearchConfig::default().with_batch_size(0);
         assert_eq!(config.batch_size, 1); // Minimum enforced
     }
 
     #[test]
     fn test_streaming_config_buffer_size_minimum() {
-        let config = StreamingSearchConfig::default()
+        let config = EmbeddedStreamingSearchConfig::default()
             .with_batch_size(100)
             .with_buffer_size(50);
         assert_eq!(config.buffer_size, 100); // At least batch_size
@@ -433,7 +436,7 @@ mod tests {
 
     #[test]
     fn test_streaming_config_clone() {
-        let config = StreamingSearchConfig::default()
+        let config = EmbeddedStreamingSearchConfig::default()
             .with_batch_size(25)
             .with_search_mode("exact");
 
@@ -444,19 +447,19 @@ mod tests {
 
     #[test]
     fn test_streaming_config_various_search_modes() {
-        let exact = StreamingSearchConfig::default().with_search_mode("exact");
+        let exact = EmbeddedStreamingSearchConfig::default().with_search_mode("exact");
         assert_eq!(exact.search_mode, Some("exact".to_string()));
 
-        let approx = StreamingSearchConfig::default().with_search_mode("approximate");
+        let approx = EmbeddedStreamingSearchConfig::default().with_search_mode("approximate");
         assert_eq!(approx.search_mode, Some("approximate".to_string()));
 
-        let adaptive = StreamingSearchConfig::default().with_search_mode("adaptive");
+        let adaptive = EmbeddedStreamingSearchConfig::default().with_search_mode("adaptive");
         assert_eq!(adaptive.search_mode, Some("adaptive".to_string()));
 
-        let approx_nprobe = StreamingSearchConfig::default().with_search_mode("approximate:5");
+        let approx_nprobe = EmbeddedStreamingSearchConfig::default().with_search_mode("approximate:5");
         assert_eq!(approx_nprobe.search_mode, Some("approximate:5".to_string()));
 
-        let adaptive_threshold = StreamingSearchConfig::default().with_search_mode("adaptive:5000");
+        let adaptive_threshold = EmbeddedStreamingSearchConfig::default().with_search_mode("adaptive:5000");
         assert_eq!(
             adaptive_threshold.search_mode,
             Some("adaptive:5000".to_string())
@@ -465,13 +468,13 @@ mod tests {
 
     #[test]
     fn test_streaming_config_large_batch_size() {
-        let config = StreamingSearchConfig::default().with_batch_size(10000);
+        let config = EmbeddedStreamingSearchConfig::default().with_batch_size(10000);
         assert_eq!(config.batch_size, 10000);
     }
 
     #[test]
     fn test_streaming_config_large_buffer_size() {
-        let config = StreamingSearchConfig::default()
+        let config = EmbeddedStreamingSearchConfig::default()
             .with_batch_size(100)
             .with_buffer_size(100000);
         assert_eq!(config.buffer_size, 100000);
@@ -603,7 +606,7 @@ mod tests {
         // Use spawn_blocking to avoid deadlock with block_on inside async context
         let all_results = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
-            let config = StreamingSearchConfig::default().with_batch_size(1);
+            let config = EmbeddedStreamingSearchConfig::default().with_batch_size(1);
             let iterator = EmbeddedSearchIterator::new(rx, config, 10, runtime);
             iterator.collect_all().expect("Should collect all results")
         })
@@ -633,7 +636,7 @@ mod tests {
         // Use spawn_blocking to avoid deadlock
         let all_results = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
-            let config = StreamingSearchConfig::default().with_batch_size(1);
+            let config = EmbeddedStreamingSearchConfig::default().with_batch_size(1);
             let iterator = EmbeddedSearchIterator::new(rx, config, 5, runtime);
             iterator.collect_all().expect("Should collect all results")
         })
@@ -653,7 +656,7 @@ mod tests {
         // Use spawn_blocking to avoid deadlock
         let result = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
-            let config = StreamingSearchConfig::default();
+            let config = EmbeddedStreamingSearchConfig::default();
             let mut iterator = EmbeddedSearchIterator::new(rx, config, 10, runtime);
             iterator.next()
         })
@@ -667,7 +670,7 @@ mod tests {
     #[tokio::test]
     async fn test_iterator_batch_size() {
         let (_tx, rx) = mpsc::channel(10);
-        let config = StreamingSearchConfig::default().with_batch_size(50);
+        let config = EmbeddedStreamingSearchConfig::default().with_batch_size(50);
 
         let all_results = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
@@ -684,7 +687,7 @@ mod tests {
     #[tokio::test]
     async fn test_iterator_top_k() {
         let (_tx, rx) = mpsc::channel(10);
-        let config = StreamingSearchConfig::default();
+        let config = EmbeddedStreamingSearchConfig::default();
 
         let top_k = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
@@ -715,7 +718,7 @@ mod tests {
 
         let results_count = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
-            let config = StreamingSearchConfig::default().with_batch_size(1);
+            let config = EmbeddedStreamingSearchConfig::default().with_batch_size(1);
             let mut iterator = EmbeddedSearchIterator::new(rx, config, 10, runtime);
 
             // Consume all results
@@ -737,7 +740,7 @@ mod tests {
 
         let is_complete = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
-            let config = StreamingSearchConfig::default();
+            let config = EmbeddedStreamingSearchConfig::default();
             let mut iterator = EmbeddedSearchIterator::new(rx, config, 10, runtime);
 
             // Consume until complete
@@ -759,7 +762,7 @@ mod tests {
 
         let result = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
-            let config = StreamingSearchConfig::default();
+            let config = EmbeddedStreamingSearchConfig::default();
             let mut iterator = EmbeddedSearchIterator::new(rx, config, 10, runtime);
             iterator.next()
         })
@@ -786,7 +789,7 @@ mod tests {
 
         let all_results = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
-            let config = StreamingSearchConfig::default();
+            let config = EmbeddedStreamingSearchConfig::default();
             // Request only 10 results
             let iterator = EmbeddedSearchIterator::new(rx, config, 10, runtime);
             iterator.collect_all().expect("Should collect all results")
@@ -814,7 +817,7 @@ mod tests {
 
         let results = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
-            let config = StreamingSearchConfig::default();
+            let config = EmbeddedStreamingSearchConfig::default();
             let mut iterator = EmbeddedSearchIterator::new(rx, config, 10, runtime);
 
             let first = iterator.next();
@@ -841,7 +844,7 @@ mod tests {
 
     #[test]
     fn test_streaming_search_executor_creation() {
-        let config = StreamingSearchConfig::default().with_batch_size(50);
+        let config = EmbeddedStreamingSearchConfig::default().with_batch_size(50);
         let _executor = StreamingSearchExecutor::new(
             "test_collection".to_string(),
             vec![0.1, 0.2, 0.3],
@@ -864,7 +867,7 @@ mod tests {
 
         let result = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
-            let config = StreamingSearchConfig::default();
+            let config = EmbeddedStreamingSearchConfig::default();
             // Request 0 results
             let iterator = EmbeddedSearchIterator::new(rx, config, 0, runtime);
             iterator.collect_all()
@@ -895,7 +898,7 @@ mod tests {
 
         let all_results = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
-            let config = StreamingSearchConfig::default();
+            let config = EmbeddedStreamingSearchConfig::default();
             let iterator = EmbeddedSearchIterator::new(rx, config, 500, runtime);
             iterator.collect_all().expect("Should collect all results")
         })
@@ -924,7 +927,7 @@ mod tests {
 
         let all_results = tokio::task::spawn_blocking(move || {
             let runtime = tokio::runtime::Handle::current();
-            let config = StreamingSearchConfig::default().with_batch_size(1);
+            let config = EmbeddedStreamingSearchConfig::default().with_batch_size(1);
             let iterator = EmbeddedSearchIterator::new(rx, config, 100, runtime);
             iterator.collect_all().expect("Should collect all results")
         })
