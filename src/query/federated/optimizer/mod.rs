@@ -2186,11 +2186,11 @@ impl PlanCache {
     }
 
     /// Get cache statistics
-    pub fn stats(&self) -> PlanCacheStats {
+    pub fn stats(&self) -> FederatedPlanCacheStats {
         let cache = self.cache.read();
         let total_hits: u64 = cache.values().map(|e| e.hit_count).sum();
 
-        PlanCacheStats {
+        FederatedPlanCacheStats {
             cached_plans: cache.len(),
             total_hits,
             avg_plan_age_ms: cache
@@ -2220,9 +2220,17 @@ impl PlanCache {
     }
 }
 
-/// Plan cache statistics
+/// Federated optimizer plan-cache statistics with plan-age tracking.
+///
+/// Naming note: this type used to be called `PlanCacheStats` and collided
+/// with three other `PlanCacheStats` types (proximadb-query optimizer
+/// support, src/query/cache observability, src/query/execution). Renamed
+/// because the field set is federation-specific — only this variant tracks
+/// average plan age. The canonical `proximadb_query::PlanCacheStats`
+/// (re-exported via the proximadb-query crate root) is what generic
+/// callers should reach for.
 #[derive(Debug, Clone)]
-pub struct PlanCacheStats {
+pub struct FederatedPlanCacheStats {
     /// Number of cached plans
     pub cached_plans: usize,
     /// Total cache hits
