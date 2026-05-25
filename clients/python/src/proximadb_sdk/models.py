@@ -144,6 +144,85 @@ class IndexType(int, Enum):
     LSH = 6  # Locality Sensitive Hashing
 
 
+class EmbeddingPrecision(str, Enum):
+    """Canonical embedding precision for a collection.
+
+    Mirrors the server's proto ``EmbeddingPrecision`` enum
+    (``proto/proximadb/v1/collection_types.proto``) and the Rust SDK's
+    ``EmbeddingPrecision`` (``clients/rust/src/collection.rs``). Set
+    once at collection-create time via
+    ``CollectionConfig.canonical_embedding_precision``; controls the
+    on-disk + in-memory scalar type for the embedding column.
+
+    See ``docs/05-concepts/embedding-precision.adoc`` for the operator
+    guide. ``FP32`` (the default) preserves legacy behavior — existing
+    callers that never set the field continue to produce identical
+    serialized payloads.
+
+    Example:
+        cfg = CollectionConfig(
+            name="docs_fp16",
+            dimension=768,
+            canonical_embedding_precision=EmbeddingPrecision.FP16,
+        )
+        # Or pass a string — common aliases all accepted
+        cfg = CollectionConfig(
+            name="docs_fp16",
+            dimension=768,
+            canonical_embedding_precision="fp16",  # or "half", "float16", "EMBEDDING_PRECISION_FP16"
+        )
+    """
+
+    FP32 = "fp32"
+    FP16 = "fp16"
+    BF16 = "bf16"
+    INT8 = "int8"
+    UINT8 = "uint8"
+
+    @classmethod
+    def _normalize(cls, raw):
+        """Accept the same string forms the server's
+        ``apply_proto_enum_workarounds`` accepts: canonical lowercase,
+        proto SCREAMING label (``EMBEDDING_PRECISION_FP16``), and common
+        aliases (``half``, ``float16``, ``bfloat16``, ``i8``,
+        ``int8_scalar``, ``u8``, ``uint8_scalar``).
+
+        Returns an EmbeddingPrecision or raises ValueError. Used by the
+        CollectionConfig field_validator so users can pass either the
+        enum or a string and get consistent semantics.
+        """
+        if isinstance(raw, cls):
+            return raw
+        if isinstance(raw, str):
+            key = raw.strip().lower()
+            if key.startswith("embedding_precision_"):
+                key = key[len("embedding_precision_") :]
+            aliases = {
+                "fp32": cls.FP32,
+                "f32": cls.FP32,
+                "float32": cls.FP32,
+                "fp16": cls.FP16,
+                "f16": cls.FP16,
+                "half": cls.FP16,
+                "float16": cls.FP16,
+                "bf16": cls.BF16,
+                "bfloat16": cls.BF16,
+                "int8": cls.INT8,
+                "i8": cls.INT8,
+                "int8_scalar": cls.INT8,
+                "uint8": cls.UINT8,
+                "u8": cls.UINT8,
+                "uint8_scalar": cls.UINT8,
+            }
+            if key in aliases:
+                return aliases[key]
+        raise ValueError(
+            f"unrecognised canonical_embedding_precision {raw!r}; "
+            "accepted: fp32, fp16, bf16, int8, uint8 (case-insensitive, "
+            "with shorthand half/float16/bfloat16/i8/u8/etc.)"
+        )
+
+
 class StorageEngineType(int, Enum):
     """Storage engine types for gRPC API (integer-based, matches v1 proto)
 
@@ -857,6 +936,23 @@ class CollectionConfig(BaseModel):
     # Additional Python SDK fields
     metadata_schema: Optional[Dict[str, Any]] = None
     filterable_metadata_fields: Optional[List[str]] = None
+
+    # Per-collection canonical embedding precision (fp16/bf16/int8/uint8).
+    # Default `None` means "use the server's fp32 default" — preserves the
+    # wire payload byte-identical with pre-precision-rollout SDK requests.
+    # See docs/05-concepts/embedding-precision.adoc for the operator guide.
+    canonical_embedding_precision: Optional[EmbeddingPrecision] = None
+
+    @field_validator("canonical_embedding_precision", mode="before")
+    @classmethod
+    def normalize_canonical_embedding_precision(cls, v):
+        """Accept enum, canonical string, proto SCREAMING label, or
+        common shorthand aliases (half / float16 / bfloat16 / i8 / etc.).
+        Same dispatch as the server's apply_proto_enum_workarounds so
+        REST / gRPC / SQL DDL clients see consistent semantics."""
+        if v is None:
+            return None
+        return EmbeddingPrecision._normalize(v)
 
     @field_validator("name")
     def validate_name_length(cls, v):

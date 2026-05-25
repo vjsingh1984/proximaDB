@@ -119,6 +119,7 @@ from .models import (
     CollectionStats,
     CompressionType,
     DistanceMetric,
+    EmbeddingPrecision,
     FilterableColumn,
     FilterableDataType,
     FilterDict,
