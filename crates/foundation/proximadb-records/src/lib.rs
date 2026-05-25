@@ -34,6 +34,7 @@ use serde::{Deserialize, Serialize};
 pub mod conversions;
 pub mod proto_v2;
 pub mod store;
+pub mod wire_v2;
 
 pub use store::{
     RecordKey, RecordRecoveryOperation, RecordRecoverySummary, RecordScan, RecordScanOptions,

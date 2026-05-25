@@ -29,6 +29,21 @@ pub trait VectorBatchSerializer: Send + Sync {
     /// Get the serialization format identifier.
     fn format(&self) -> SerializationFormat;
 
+    /// v2 wire path serialize. Default delegates to v1 so serializers
+    /// that haven't migrated keep working — but they'll re-trigger the
+    /// v1 fp32-only refuse-error on non-Fp32 records. Bincode (and any
+    /// other format that wants fp16 ingest) overrides this with a
+    /// natural enum-aware encoding via
+    /// `proximadb_records::wire_v2::ProximaRecordV2`.
+    fn serialize_batch_v2(&self, records: &[ProximaRecord]) -> Result<Vec<u8>> {
+        self.serialize_batch(records)
+    }
+
+    /// v2 wire path deserialize. Default delegates to v1.
+    fn deserialize_batch_v2(&self, data: &[u8]) -> Result<Vec<ProximaRecord>> {
+        self.deserialize_batch(data)
+    }
+
     /// PR 2 §schema-version-dispatch: deserialize a batch and stamp every
     /// returned record with `schema_version`.
     ///
@@ -68,7 +83,11 @@ pub trait VectorBatchSerializer: Send + Sync {
         header: &crate::storage::persistence::write_ahead_log::v2_segment_header::V2SegmentHeader,
     ) -> Result<Vec<u8>> {
         let mut out = header.encode();
-        out.extend(self.serialize_batch(records)?);
+        // v2 segment header gates the v2 wire encoding — the per-record
+        // shape (`ProximaRecordV2` with natural enum-aware embeddings
+        // serde) is what makes fp16 / bf16 / int8 records durable; the
+        // header alone just declares the schema bytes ahead.
+        out.extend(self.serialize_batch_v2(records)?);
         Ok(out)
     }
 
@@ -122,10 +141,14 @@ pub trait VectorBatchSerializer: Send + Sync {
             PeekedSegmentVersion::V2 => {
                 let (header, consumed) = V2SegmentHeader::decode(data)?;
                 let payload = &data[consumed..];
-                let records = self.deserialize_batch_with_schema_version(
-                    payload,
-                    proximadb_records::schema_version::V2,
-                )?;
+                // v2 payload uses the v2 wire shape (natural enum-aware
+                // embeddings). Decode through the typed path, then
+                // stamp the schema_version field (serde-skip on
+                // ProximaRecord, so the decoder always defaults it).
+                let mut records = self.deserialize_batch_v2(payload)?;
+                for r in &mut records {
+                    r.schema_version = proximadb_records::schema_version::V2;
+                }
                 Ok((records, Some(header)))
             }
         }

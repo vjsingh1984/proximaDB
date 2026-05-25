@@ -70,36 +70,26 @@ fn make_fp32_record(oid: &str, dim: usize) -> ProximaRecord {
     }
 }
 
-/// Blocked by a real architectural gap discovered while wiring this test:
-/// the WAL v2 segment header (`serialize_batch_with_v2_segment_header` in
-/// `src/storage/persistence/write_ahead_log/serialization/mod.rs:65`)
-/// only prepends 16 bytes of header to the output of `serialize_batch`,
-/// which still calls the v1 per-record bincode serializer. The v1
-/// `EmbeddingCell` `Serialize` impl in
-/// `crates/foundation/proximadb-records/src/lib.rs:416` deliberately
-/// hard-errors on non-Fp32 variants (INT-2.5b step 2 Q1) so an fp16
-/// record fails with "Failed to serialize batch for WAL" regardless
-/// of whether `PROXIMADB_EMBED_PRECISION_SCHEMA_V2=true` is set.
+/// End-to-end proof: a fp16 ProximaRecord, written through the embedded
+/// DB's WAL flush, increments
+/// `proximadb_embedding_precision_canonical_bytes{precision="fp16"}` by
+/// exactly its on-disk byte cost (2 B/elem × dim × record count).
 ///
-/// To make this test pass, the WAL bincode strategy needs a separate
-/// "v2 record encoding" path that handles `EmbeddingValues::Fp16` /
-/// `Bf16` natively, switched on at the same point as the v2 segment
-/// header. The current code structure was designed for this:
-/// the comment in records/src/lib.rs:431-434 explicitly says
-/// "the v2 wire path will use a separate serializer that emits the
-/// natural enum shape" — that serializer doesn't exist yet.
+/// Routes:
+/// - `PROXIMADB_EMBED_PRECISION_SCHEMA_V2=true` flips the WAL bincode
+///   strategy to `serialize_batch_with_v2_segment_header`, which now
+///   uses the v2 wire shape (`ProximaRecordV2` with natural enum-aware
+///   embeddings serde) instead of the legacy fp32-refusing v1 impl.
+/// - The per-precision canonical_bytes counter at
+///   `src/storage/persistence/write_ahead_log/bincode_serialization_strategy.rs:247`
+///   walks each cell's `.precision` field and accumulates
+///   `cell.values_byte_size()` keyed by `precision_label(cell.precision)`.
 ///
-/// Until that lands, this test stands as the regression that the v2
-/// record-format wiring commit must flip from #[ignore]'d to passing.
-/// The unit-level proof that the metric machinery itself works is
-/// covered by the assertions inside
-/// `src/storage/persistence/write_ahead_log/bincode_serialization_strategy.rs`
-/// — see the per-precision canonical_bytes accumulator at line 247.
+/// Earlier this test stood `#[ignore]`'d to surface the WAL v2 record
+/// encoding gap. The gap is now filled by the
+/// `proximadb_records::wire_v2` module and the
+/// `VectorBatchSerializer::serialize_batch_v2` trait method.
 #[test]
-#[ignore = "WAL v2 record serializer not yet implemented; v1 record \
-            serde refuses fp16. Needs separate `serialize_records_v2` \
-            method on the WAL serializer trait that handles typed \
-            EmbeddingValues. See test docstring for the gap details."]
 fn fp16_records_increment_canonical_bytes_metric_at_flush() {
     // Enable WAL schema v2 BEFORE anything touches the cached config —
     // the v1 bincode serializer for EmbeddingCell deliberately refuses

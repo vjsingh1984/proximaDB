@@ -25,6 +25,20 @@ impl super::VectorBatchSerializer for BincodeSerializer {
         bincode::deserialize(data).context("Failed to deserialize Bincode ProximaRecords")
     }
 
+    fn serialize_batch_v2(&self, records: &[ProximaRecord]) -> Result<Vec<u8>> {
+        let v2: Vec<proximadb_records::wire_v2::ProximaRecordV2> =
+            records.iter().map(Into::into).collect();
+        bincode::serialize(&v2).context(
+            "Failed to serialize ProximaRecords to Bincode v2 format (enum-aware embeddings)",
+        )
+    }
+
+    fn deserialize_batch_v2(&self, data: &[u8]) -> Result<Vec<ProximaRecord>> {
+        let v2: Vec<proximadb_records::wire_v2::ProximaRecordV2> = bincode::deserialize(data)
+            .context("Failed to deserialize Bincode v2 ProximaRecords")?;
+        Ok(v2.into_iter().map(Into::into).collect())
+    }
+
     fn format(&self) -> super::SerializationFormat {
         super::SerializationFormat::Bincode
     }

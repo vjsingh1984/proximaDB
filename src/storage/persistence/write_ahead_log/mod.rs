@@ -2093,20 +2093,78 @@ impl WriteAheadLogManager {
                 "🔄 DEBUG: Serializing {} vectors",
                 native_batch.vector_records.len()
             );
-            let serialized = match serializer.serialize_batch(native_batch.vector_records.as_ref())
+            // Same v1/v2 dispatch shape used by
+            // bincode_serialization_strategy.rs:207-218 — without this
+            // gate, fp16 records fail in the v1 EmbeddingCell::Serialize
+            // refuse-error. Header carries the global-default policy
+            // (per-collection lookup is INT-3 territory).
+            let serialized = if proximadb_config::EmbeddingPrecisionConfig::cached()
+                .schema_v2_enabled
             {
-                Ok(data) => {
-                    info!(
-                        "🔄 DEBUG: Serialization successful, size: {} bytes",
-                        data.len()
-                    );
-                    data
-                }
-                Err(e) => {
-                    trace!("🔄  ERROR: Serialization failed: {:?}", e);
-                    return Err(e).context("Failed to serialize batch for WAL");
+                let created_at_ns = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as i64)
+                    .unwrap_or(0);
+                let header = crate::storage::persistence::write_ahead_log::v2_segment_header::V2SegmentHeader {
+                    flags: 0,
+                    segment_id: 0,
+                    created_at_ns,
+                    canonical_default_precision: proximadb_records::EmbeddingScalarType::Fp32,
+                    precision_epoch: 0,
+                    policy_id: String::new(),
+                    policy_version: 0,
+                };
+                serializer
+                    .serialize_batch_with_v2_segment_header(
+                        native_batch.vector_records.as_ref(),
+                        &header,
+                    )
+                    .map_err(|e| {
+                        trace!("🔄  ERROR: v2 serialization failed: {:?}", e);
+                        e
+                    })
+                    .context("Failed to serialize batch for WAL")?
+            } else {
+                match serializer.serialize_batch(native_batch.vector_records.as_ref()) {
+                    Ok(data) => {
+                        info!(
+                            "🔄 DEBUG: Serialization successful, size: {} bytes",
+                            data.len()
+                        );
+                        data
+                    }
+                    Err(e) => {
+                        trace!("🔄  ERROR: Serialization failed: {:?}", e);
+                        return Err(e).context("Failed to serialize batch for WAL");
+                    }
                 }
             };
+
+            // Per-precision canonical_bytes accumulation. Mirrors the
+            // accumulator at bincode_serialization_strategy.rs:236-254;
+            // this codepath is the WriteAheadLogManager fallback sync,
+            // which the strategy-level path bypasses, so the metric
+            // needs its own increment here to stay accurate across
+            // both routes.
+            if let Some(pm) = crate::observability::precision_metrics::metrics() {
+                let mut per_precision: std::collections::HashMap<
+                    proximadb_records::EmbeddingScalarType,
+                    i64,
+                > = std::collections::HashMap::new();
+                for record in native_batch.vector_records.iter() {
+                    for cell in &record.embeddings {
+                        *per_precision.entry(cell.precision).or_insert(0) +=
+                            cell.values_byte_size() as i64;
+                    }
+                }
+                for (precision, delta) in per_precision {
+                    pm.add_canonical_bytes(
+                        collection_id,
+                        crate::observability::precision_metrics::precision_label(precision),
+                        delta,
+                    );
+                }
+            }
 
             // Determine if we should sync based on sync mode
             let should_sync = matches!(
