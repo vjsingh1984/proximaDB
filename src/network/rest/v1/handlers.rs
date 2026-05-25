@@ -857,16 +857,24 @@ pub fn create_router(state: AppState) -> axum::Router {
             "/api/v1/catalog/table_write/explain",
             post(explain_table_write_route),
         )
-        // Multi-phase ranking pipeline route is wired in R-7c.1.
-        // The dispatcher (`rank_search_dispatch`) is ready and tested,
-        // but `bumpalo::Bump` inside `FeatureArena` is `!Sync` — held
-        // across the orchestrator's `.await` to the global scorer it
-        // makes the future non-`Send`, which tokio's multi-threaded
-        // runtime + axum require. R-7c.1 restructures
-        // `run_pipeline` to do the arena-bearing first phase under
-        // `tokio::task::spawn_blocking` and the (Send) async global
-        // phase outside it. Until then, the dispatcher is callable
-        // directly by anyone happy to run on a current-thread runtime.
+        // Multi-phase ranking pipeline (R-7c.1).
+        // `rank_search_dispatch` runs the arena-bearing first phase
+        // inside `tokio::task::spawn_blocking` so the outer future
+        // stays `Send` — required by axum's tokio multi-threaded
+        // runtime, blocked previously by `bumpalo::Bump` being `!Sync`.
+        // The route returns:
+        //   200 — successful rank pipeline result
+        //   404 — named profile not found
+        //   501 — RankServices not injected at startup
+        //   500 — pipeline failure (model load, expression compile, …)
+        .route(
+            "/api/v1/rank/search",
+            post(|State(state): State<AppState>, Json(req): Json<crate::network::rest::v1::rank::RankSearchRequest>| async move {
+                crate::network::rest::v1::rank::rank_search_dispatch(state, req)
+                    .await
+                    .map(Json)
+            }),
+        )
         // Health check endpoints
         .route("/health", get(comprehensive_health_check))
         .route("/health/live", get(liveness_check))

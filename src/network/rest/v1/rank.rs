@@ -21,16 +21,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::errors::{ApiError, ApiResult};
 
-use crate::core::search::rank::{run_pipeline, CrossModalGlobalScorer};
+use crate::core::search::rank::CrossModalGlobalScorer;
 use proximadb_kernel::{ScoreComponent, ScoreVector};
 use proximadb_query::reranking::RerankConfig;
 use proximadb_rank_core::{
     BlueprintFactory, DocHandle, FeatureArena, GlobalScorer, NoopAttributeAccess,
-    NoopCandidateData, NoopMetricsSink, NoopModelCache, QueryContext, RankError, RankResult,
-    ScoreCtx,
+    NoopCandidateData, NoopMetricsSink, NoopModelCache, PhaseOutcome, QueryContext, RankError,
+    RankResult, ScoreCtx, ScoredHit,
 };
-use proximadb_rank_profile::ProfileRegistry;
 use proximadb_rank_features::register_builtins;
+use proximadb_rank_profile::{CompiledRankProfile, ProfileRegistry};
 
 // =========================================================================
 // Request DTOs
@@ -193,43 +193,15 @@ pub async fn handle_rank_search(
         });
     };
 
-    // Resolve + materialize the profile.
+    // Resolve the profile.
     let compiled = registry
         .get(profile_name)
         .ok_or_else(|| RankError::ProfileNotFound(profile_name.to_string()))?;
-    let _ = factory; // R-7c will use the factory directly; for now the
-                     // compiled profile already carries its own factory.
-    let mut pipeline = compiled.materialize(&qctx)?;
-
-    // Apply request-level overrides on top of the materialized pipeline.
-    if let Some(ovr) = &req.rank_overrides {
-        if let Some(g) = &ovr.global_phase
-            && let Some(rc) = g.rerank_count
-        {
-            // Global phase k override flows through to the orchestrator's
-            // topk argument below.
-            let _ = rc; // handled at run_pipeline call site
-        }
-        if let Some(_s) = &ovr.second_phase {
-            // Second-phase overrides land in R-6b once BatchedScorer is
-            // integrated into RankPipeline::run_second_phase. R-7b
-            // accepts and round-trips them on the wire so clients can
-            // start setting them today.
-        }
-    }
-
-    // Build context fixtures. Real ScoreCtx integration with actual
-    // attribute / candidate / model providers is R-7c work.
-    let arena = FeatureArena::new();
-    let (a, c, m, met) = (
-        NoopAttributeAccess,
-        NoopCandidateData,
-        NoopModelCache,
-        NoopMetricsSink,
-    );
-    let mut ctx = ScoreCtx::new(&qctx, &arena, &a, &c, &m, &met);
+    let _ = factory; // The compiled profile already carries its own factory;
+                     // the parameter exists for future extension.
 
     // Global scorer: cross-modal reranker if the profile asked for it.
+    // Selected BEFORE spawn_blocking because it crosses the async boundary.
     let global: Option<Arc<dyn GlobalScorer>> = if compiled
         .spec
         .global_phase
@@ -250,10 +222,39 @@ pub async fn handle_rank_search(
         .map(|k| k as usize)
         .unwrap_or(req.k);
 
-    let run = run_pipeline(&mut pipeline, &candidate_docs, topk, &mut ctx, global).await?;
+    // R-7c.1: run the arena-bearing first-phase work on a blocking thread
+    // so the outer future is Send. `bumpalo::Bump` is !Sync internally,
+    // and ScoreCtx holds &FeatureArena, so holding ScoreCtx across the
+    // async `global.score(...).await` below would make the future
+    // !Send and axum's tokio multi-threaded runtime reject the handler.
+    //
+    // Inside the closure we own the materialised pipeline, construct a
+    // local arena + Noop context fixtures, run the first phase, and
+    // return owned PhaseOutcome. The async global scorer (Send-friendly)
+    // runs outside.
+    let qctx_for_block = qctx.clone();
+    let compiled_for_block = compiled.clone();
+    let candidate_docs_for_block = candidate_docs.clone();
+    let first_outcome: PhaseOutcome = tokio::task::spawn_blocking(move || {
+        run_first_phase_blocking(&compiled_for_block, &qctx_for_block, &candidate_docs_for_block)
+    })
+    .await
+    .map_err(|join_err| RankError::ModelInference {
+        model_id: "rank_search:first_phase".into(),
+        reason: format!("first-phase task panicked: {join_err}"),
+    })??;
 
-    let hits: Vec<ScoredHitDto> = run
-        .final_hits
+    // Global phase — async, no arena reference in scope so the future is Send.
+    let final_hits: Vec<ScoredHit> = match global {
+        Some(g) => g.score(first_outcome.hits.clone(), topk).await?,
+        None => {
+            let mut h = first_outcome.hits.clone();
+            h.truncate(topk);
+            h
+        }
+    };
+
+    let hits: Vec<ScoredHitDto> = final_hits
         .into_iter()
         .map(|h| {
             let sv = ScoreVector::from_primary(h.score, h.phase);
@@ -269,10 +270,30 @@ pub async fn handle_rank_search(
 
     Ok(RankSearchResponse {
         hits,
-        phase_truncated: run.first_phase.truncated,
+        phase_truncated: first_outcome.truncated,
         rank_profile: Some(compiled.spec.name.clone()),
         rank_profile_version: Some(compiled.spec.version),
     })
+}
+
+/// Owned-state first-phase runner. Designed to be called inside
+/// `tokio::task::spawn_blocking` — its inputs are owned / Arc-shared so
+/// the closure is `Send + 'static`, and its return type
+/// [`PhaseOutcome`] is plain data (no arena lifetime). All
+/// arena-bearing references are confined to this stack frame.
+fn run_first_phase_blocking(
+    compiled: &CompiledRankProfile,
+    qctx: &QueryContext,
+    candidate_docs: &[DocHandle],
+) -> RankResult<PhaseOutcome> {
+    let mut pipeline = compiled.materialize(qctx)?;
+    let arena = FeatureArena::new();
+    let attr = NoopAttributeAccess;
+    let cand = NoopCandidateData;
+    let models = NoopModelCache;
+    let metrics = NoopMetricsSink;
+    let mut ctx = ScoreCtx::new(qctx, &arena, &attr, &cand, &models, &metrics);
+    pipeline.run_first_phase(candidate_docs, &mut ctx)
 }
 
 // =========================================================================
