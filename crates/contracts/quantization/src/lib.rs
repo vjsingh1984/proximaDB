@@ -330,9 +330,21 @@ pub trait CodebookStore: Send + Sync {
 // QUANTIZATION ENGINE CONTRACT
 // ============================================================================
 
-/// Quantization configuration
+/// Parameter shape for the [`QuantizationEngine`] trait methods.
+///
+/// This is a *contract type*, not the in-process or wire `QuantizationConfig`.
+/// Use the proto-generated `proximadb_proto::v1::QuantizationConfig` for
+/// wire/REST surfaces (dominant in-process type, ~80 consumers) or the
+/// strongly-typed `proximadb_quantization_types::QuantizationConfig` for the
+/// storage-layer typed selector. This struct intentionally keeps the
+/// `level_params: String` escape hatch so trait implementors can accept any
+/// level encoding without being locked to a specific enum.
+///
+/// Naming note: this type used to be called `QuantizationConfig`, which
+/// collided with both of the above. It was renamed because its role is to
+/// describe trait-method parameters, not to be the canonical config.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuantizationConfig {
+pub struct QuantizationServiceParams {
     /// Quantization type (pq, int8, binary)
     pub quantization_type: String,
 
@@ -353,13 +365,13 @@ pub struct QuantizationConfig {
 #[async_trait::async_trait]
 pub trait QuantizationEngine: Send + Sync {
     /// Quantize vectors to the specified level
-    async fn quantize(&self, vectors: &[f32], config: &QuantizationConfig) -> Result<Vec<u8>>;
+    async fn quantize(&self, vectors: &[f32], config: &QuantizationServiceParams) -> Result<Vec<u8>>;
 
     /// Dequantize vectors back to FP32
     async fn dequantize(
         &self,
         quantized: &[u8],
-        config: &QuantizationConfig,
+        config: &QuantizationServiceParams,
         dimension: usize,
     ) -> Result<Vec<f32>>;
 
@@ -368,14 +380,14 @@ pub trait QuantizationEngine: Send + Sync {
         &self,
         collection_id: &str,
         vectors: &[f32],
-        config: &QuantizationConfig,
+        config: &QuantizationServiceParams,
     ) -> Result<Codebook>;
 
     /// Get or load a codebook for quantization operations
     async fn get_or_train_codebook(
         &self,
         collection_id: &str,
-        config: &QuantizationConfig,
+        config: &QuantizationServiceParams,
     ) -> Result<Codebook>;
 }
 
