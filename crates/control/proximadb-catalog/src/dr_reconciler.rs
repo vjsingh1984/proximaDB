@@ -331,6 +331,234 @@ pub fn next_health_state(decision: &ReconcileDecision) -> DrHealthState {
 }
 
 // ---------------------------------------------------------------------------
+// Backoff, rate limit, shard pause (P3c1) — pure state machinery
+// ---------------------------------------------------------------------------
+
+/// Configurable backoff knobs. Defaults mirror the contract spec
+/// (30s → 30m, jitter 25%, 12 attempts before escalation).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BackoffPolicy {
+    /// First retry delay after the initial failure, in seconds.
+    pub initial_delay_secs: u32,
+    /// Hard ceiling on the per-attempt delay, in seconds. The
+    /// exponential growth caps at this value.
+    pub max_delay_secs: u32,
+    /// Jitter fraction in `[0.0, 1.0)`. Each attempt's delay is
+    /// `base * uniform(1.0 - jitter, 1.0 + jitter)`.
+    pub jitter_factor: f64,
+    /// Number of consecutive transient failures before the entry
+    /// escalates to `ProviderBlocked`.
+    pub max_attempts: u32,
+    /// Per-policy minimum interval between provider calls, in
+    /// seconds. Bound to keep one well-behaved policy from
+    /// monopolising a shard's outbound rate.
+    pub min_call_interval_secs: u32,
+}
+
+impl Default for BackoffPolicy {
+    fn default() -> Self {
+        // Contract values — keep in sync with §"Scheduling And
+        // Backpressure" in COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc.
+        Self {
+            initial_delay_secs: 30,
+            max_delay_secs: 30 * 60,
+            jitter_factor: 0.25,
+            max_attempts: 12,
+            min_call_interval_secs: 5,
+        }
+    }
+}
+
+/// Per-policy retry state held by the shard loop. The pure functions
+/// below mutate it without any async or real time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackoffEntry {
+    /// Consecutive transient-failure count. 0 means healthy.
+    pub attempt: u32,
+    /// Earliest nanosecond timestamp the policy may be retried at. 0
+    /// means "ready now".
+    pub earliest_retry_ns: i64,
+}
+
+impl Default for BackoffEntry {
+    fn default() -> Self {
+        Self {
+            attempt: 0,
+            earliest_retry_ns: 0,
+        }
+    }
+}
+
+/// Outcome category the backoff layer reacts to. Distinct from
+/// [`ReconcileOutcome`] because backoff doesn't care about
+/// drift/idle vs success — it only cares about retry vs success vs
+/// escalate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackoffSignal {
+    /// Adapter call returned a transient error — schedule another try.
+    TransientFailure,
+    /// Adapter call succeeded — reset to healthy.
+    Success,
+    /// Adapter call returned a non-retryable error — clear backoff and
+    /// let the driver flip health to `ProviderBlocked`.
+    Escalate,
+}
+
+/// Compute the next earliest-retry time and updated attempt count
+/// after a signal. Pure: caller supplies `now_ns` and a
+/// `jitter_uniform_01` value in `[0.0, 1.0)` (production wires a
+/// real RNG; tests inject `0.5` for the un-jittered midpoint).
+///
+/// Returns `Some(new_entry)` for `TransientFailure` (capped at
+/// `max_attempts`; the caller is responsible for treating
+/// `attempt >= max_attempts` as escalation).
+///
+/// Returns `None` for `Success` (caller deletes the entry) and for
+/// `Escalate` (caller drops the entry — escalation is handled by the
+/// driver, not by suppressing retries).
+pub fn apply_backoff_signal(
+    policy: BackoffPolicy,
+    current: BackoffEntry,
+    signal: BackoffSignal,
+    now_ns: i64,
+    jitter_uniform_01: f64,
+) -> Option<BackoffEntry> {
+    match signal {
+        BackoffSignal::Success | BackoffSignal::Escalate => None,
+        BackoffSignal::TransientFailure => {
+            let next_attempt = current.attempt.saturating_add(1);
+            let delay_ns = jittered_delay_ns(policy, next_attempt, jitter_uniform_01);
+            Some(BackoffEntry {
+                attempt: next_attempt,
+                earliest_retry_ns: now_ns.saturating_add(delay_ns),
+            })
+        }
+    }
+}
+
+/// True if the entry's escalation threshold has been reached. Caller
+/// flips the policy to `ProviderBlocked` and clears the entry.
+pub fn should_escalate(policy: BackoffPolicy, entry: &BackoffEntry) -> bool {
+    entry.attempt >= policy.max_attempts
+}
+
+/// Is the policy ready to be polled at `now_ns`?
+pub fn is_ready(entry: &BackoffEntry, now_ns: i64) -> bool {
+    entry.earliest_retry_ns <= now_ns
+}
+
+/// Compute the jittered delay for `attempt` (1-indexed). Pure helper
+/// — exponential base * 2^(attempt-1), capped at `max_delay_secs`,
+/// then multiplied by `uniform(1 - jitter, 1 + jitter)`.
+fn jittered_delay_ns(
+    policy: BackoffPolicy,
+    attempt: u32,
+    jitter_uniform_01: f64,
+) -> i64 {
+    // Cap the shift to avoid overflow on absurd attempt counts.
+    let shift = attempt.saturating_sub(1).min(30);
+    let base_secs = (policy.initial_delay_secs as u64)
+        .saturating_mul(1u64 << shift)
+        .min(policy.max_delay_secs as u64) as f64;
+    let jitter = policy.jitter_factor.clamp(0.0, 1.0);
+    let scale = 1.0 - jitter + 2.0 * jitter * jitter_uniform_01.clamp(0.0, 1.0);
+    let secs = base_secs * scale;
+    (secs * 1_000_000_000.0) as i64
+}
+
+/// Per-policy rate limiter. The shard loop uses this to enforce the
+/// contract's "one provider call per 5 seconds per policy" floor.
+///
+/// Pure — no clock, caller supplies `now_ns`. Tracks the last call
+/// timestamp; `try_acquire` returns whether the policy may issue a
+/// provider call now.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PerPolicyRateLimit {
+    /// Last `try_acquire(_ok)` timestamp per policy. 0 = never called.
+    pub last_call_ns: i64,
+}
+
+impl PerPolicyRateLimit {
+    /// Attempt to reserve a provider call slot at `now_ns`. Returns
+    /// true if the call is permitted (and updates `last_call_ns`),
+    /// false if the caller should defer until later.
+    pub fn try_acquire(
+        &mut self,
+        policy: BackoffPolicy,
+        now_ns: i64,
+    ) -> bool {
+        let min_interval_ns =
+            (policy.min_call_interval_secs as i64).saturating_mul(1_000_000_000);
+        if self.last_call_ns == 0
+            || now_ns.saturating_sub(self.last_call_ns) >= min_interval_ns
+        {
+            self.last_call_ns = now_ns;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// Why the shard is paused. The async loop reads this and skips its
+/// provider-mutation pass while the pause is active. Read-only
+/// `fetch_state` calls are still permitted per the contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShardPauseReason {
+    /// `ProviderError::QuotaExceeded` was observed on the shard.
+    QuotaExceeded,
+}
+
+/// Shard-level pause state. Distinct from per-policy backoff: a
+/// quota refusal in one policy implies the shard's entire provider
+/// account may be saturated, so every other policy waits too.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ShardPauseState {
+    /// `Some` while paused; `None` when free to mutate.
+    pub paused: Option<ShardPause>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShardPause {
+    pub reason: ShardPauseReason,
+    /// Wall-clock nanos when the pause expires. Loop layer compares
+    /// to its clock; tests inject explicit values.
+    pub until_ns: i64,
+}
+
+impl ShardPauseState {
+    /// Begin a shard pause. Contract: `QuotaExceeded` pauses for at
+    /// least 60 seconds.
+    pub fn pause_for_quota(&mut self, now_ns: i64) {
+        const SIXTY_SECS_NS: i64 = 60 * 1_000_000_000;
+        let until = now_ns.saturating_add(SIXTY_SECS_NS);
+        // Extend an existing pause rather than truncate.
+        if let Some(existing) = &self.paused {
+            if existing.until_ns >= until {
+                return;
+            }
+        }
+        self.paused = Some(ShardPause {
+            reason: ShardPauseReason::QuotaExceeded,
+            until_ns: until,
+        });
+    }
+
+    /// True if the shard is currently paused at `now_ns`. Clears the
+    /// pause if it has expired.
+    pub fn is_paused(&mut self, now_ns: i64) -> bool {
+        match &self.paused {
+            Some(p) if p.until_ns > now_ns => true,
+            Some(_) => {
+                self.paused = None;
+                false
+            }
+            None => false,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Driver (P3b) — async dispatch layer
 // ---------------------------------------------------------------------------
 
@@ -1510,5 +1738,235 @@ mod tests {
         // updated for the heartbeat.
         assert_eq!(adapter.fetch_call_count(), 1);
         assert_eq!(store.health_snapshot().len(), 1);
+    }
+
+    // --- Backoff / rate limit / shard pause (P3c1) --------------------
+
+    fn test_policy() -> BackoffPolicy {
+        BackoffPolicy {
+            initial_delay_secs: 30,
+            max_delay_secs: 30 * 60,
+            jitter_factor: 0.0, // no jitter for deterministic tests
+            max_attempts: 4,
+            min_call_interval_secs: 5,
+        }
+    }
+
+    #[test]
+    fn backoff_default_matches_contract_spec() {
+        let d = BackoffPolicy::default();
+        // §"Scheduling And Backpressure": 30s → 30m, 12 attempts.
+        assert_eq!(d.initial_delay_secs, 30);
+        assert_eq!(d.max_delay_secs, 30 * 60);
+        assert_eq!(d.max_attempts, 12);
+        assert_eq!(d.min_call_interval_secs, 5);
+        // Default jitter is 25%.
+        assert!((d.jitter_factor - 0.25).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn backoff_grows_exponentially_until_cap_no_jitter() {
+        let p = test_policy(); // jitter = 0 → deterministic
+        let now = 1_000_000_000_000_i64;
+        let cap_ns = (p.max_delay_secs as i64) * 1_000_000_000;
+
+        let mut delays = Vec::new();
+        let mut entry = BackoffEntry::default();
+        for _ in 0..6 {
+            entry = apply_backoff_signal(
+                p,
+                entry,
+                BackoffSignal::TransientFailure,
+                now,
+                0.5,
+            )
+            .expect("transient yields a new entry");
+            delays.push(entry.earliest_retry_ns - now);
+        }
+        // 30s → 60s → 120s → 240s → 480s → 960s
+        assert_eq!(delays[0], 30 * 1_000_000_000);
+        assert_eq!(delays[1], 60 * 1_000_000_000);
+        assert_eq!(delays[2], 120 * 1_000_000_000);
+        assert_eq!(delays[3], 240 * 1_000_000_000);
+        assert_eq!(delays[4], 480 * 1_000_000_000);
+        assert_eq!(delays[5], 960 * 1_000_000_000);
+        // None exceed the cap (30m = 1800s).
+        for d in &delays {
+            assert!(*d <= cap_ns);
+        }
+    }
+
+    #[test]
+    fn backoff_respects_max_delay_cap() {
+        let p = BackoffPolicy {
+            initial_delay_secs: 30,
+            max_delay_secs: 120, // unrealistically tight cap
+            jitter_factor: 0.0,
+            max_attempts: 12,
+            min_call_interval_secs: 5,
+        };
+        let now = 0_i64;
+        let mut entry = BackoffEntry::default();
+        for _ in 0..6 {
+            entry = apply_backoff_signal(p, entry, BackoffSignal::TransientFailure, now, 0.5)
+                .unwrap();
+        }
+        // Once past the cap, every subsequent delay equals 120s.
+        assert_eq!(entry.earliest_retry_ns, 120 * 1_000_000_000);
+    }
+
+    #[test]
+    fn backoff_jitter_scales_within_band() {
+        let p = BackoffPolicy {
+            initial_delay_secs: 100,
+            max_delay_secs: 10_000,
+            jitter_factor: 0.5, // ±50% band
+            max_attempts: 5,
+            min_call_interval_secs: 1,
+        };
+        let now = 0_i64;
+        // u01 = 0.0 → multiplier 0.5; u01 = 1.0 → multiplier 1.5;
+        // u01 = 0.5 → multiplier 1.0.
+        let low = apply_backoff_signal(p, BackoffEntry::default(), BackoffSignal::TransientFailure, now, 0.0)
+            .unwrap();
+        let mid = apply_backoff_signal(p, BackoffEntry::default(), BackoffSignal::TransientFailure, now, 0.5)
+            .unwrap();
+        let high = apply_backoff_signal(p, BackoffEntry::default(), BackoffSignal::TransientFailure, now, 1.0)
+            .unwrap();
+        let base_ns = 100_i64 * 1_000_000_000;
+        assert_eq!(low.earliest_retry_ns, base_ns / 2);
+        assert_eq!(mid.earliest_retry_ns, base_ns);
+        assert_eq!(high.earliest_retry_ns, base_ns * 3 / 2);
+    }
+
+    #[test]
+    fn backoff_success_drops_entry() {
+        let p = test_policy();
+        let entry = BackoffEntry {
+            attempt: 3,
+            earliest_retry_ns: 999_999,
+        };
+        // Success → caller deletes (None).
+        assert!(apply_backoff_signal(p, entry, BackoffSignal::Success, 0, 0.5).is_none());
+    }
+
+    #[test]
+    fn backoff_escalate_drops_entry() {
+        let p = test_policy();
+        let entry = BackoffEntry {
+            attempt: 3,
+            earliest_retry_ns: 999_999,
+        };
+        // Escalate → caller deletes (driver flips health separately).
+        assert!(apply_backoff_signal(p, entry, BackoffSignal::Escalate, 0, 0.5).is_none());
+    }
+
+    #[test]
+    fn should_escalate_fires_at_max_attempts() {
+        let p = test_policy(); // max_attempts = 4
+        assert!(!should_escalate(p, &BackoffEntry { attempt: 3, earliest_retry_ns: 0 }));
+        assert!(should_escalate(p, &BackoffEntry { attempt: 4, earliest_retry_ns: 0 }));
+        assert!(should_escalate(p, &BackoffEntry { attempt: 99, earliest_retry_ns: 0 }));
+    }
+
+    #[test]
+    fn is_ready_compares_against_now() {
+        let entry = BackoffEntry {
+            attempt: 2,
+            earliest_retry_ns: 1_000,
+        };
+        assert!(!is_ready(&entry, 999));
+        assert!(is_ready(&entry, 1_000));
+        assert!(is_ready(&entry, 1_001));
+    }
+
+    #[test]
+    fn rate_limit_first_call_always_succeeds() {
+        let p = test_policy();
+        let mut rl = PerPolicyRateLimit::default();
+        assert!(rl.try_acquire(p, 1_000_000));
+    }
+
+    #[test]
+    fn rate_limit_refuses_within_min_interval() {
+        let p = test_policy(); // 5s
+        let mut rl = PerPolicyRateLimit::default();
+        let t0 = 1_000_000_000_000_i64;
+        assert!(rl.try_acquire(p, t0));
+        // 4.99s later — still inside window, refused.
+        assert!(!rl.try_acquire(p, t0 + 4_990_000_000));
+        // Exactly 5s later — allowed.
+        assert!(rl.try_acquire(p, t0 + 5_000_000_000));
+        // Right after — refused again.
+        assert!(!rl.try_acquire(p, t0 + 5_001_000_000));
+    }
+
+    #[test]
+    fn shard_pause_starts_unset() {
+        let s = ShardPauseState::default();
+        assert!(s.paused.is_none());
+    }
+
+    #[test]
+    fn shard_pause_quota_sets_for_at_least_60_seconds() {
+        let mut s = ShardPauseState::default();
+        let t0 = 5_000_000_000_000_i64;
+        s.pause_for_quota(t0);
+        let p = s.paused.expect("paused after quota");
+        assert_eq!(p.reason, ShardPauseReason::QuotaExceeded);
+        assert_eq!(p.until_ns - t0, 60 * 1_000_000_000);
+    }
+
+    #[test]
+    fn shard_pause_is_paused_returns_true_then_clears_on_expiry() {
+        let mut s = ShardPauseState::default();
+        let t0 = 5_000_000_000_000_i64;
+        s.pause_for_quota(t0);
+        assert!(s.is_paused(t0));
+        assert!(s.is_paused(t0 + 59 * 1_000_000_000));
+        // After the 60s mark — pause expires and clears.
+        assert!(!s.is_paused(t0 + 60 * 1_000_000_000 + 1));
+        assert!(s.paused.is_none());
+    }
+
+    #[test]
+    fn shard_pause_extends_overlapping_quota_events() {
+        // A second quota refusal during an active pause should
+        // extend the window, not truncate it. The reconciler runs in
+        // ticks; if quota persists, we don't want the pause shrinking
+        // because the clock advanced past the second event's "until".
+        let mut s = ShardPauseState::default();
+        let t0 = 0_i64;
+        s.pause_for_quota(t0);
+        let first_until = s.paused.as_ref().unwrap().until_ns;
+        // Second event 10s later — would naively expire at t0+70s,
+        // which IS later than first_until (t0+60s), so extend.
+        s.pause_for_quota(t0 + 10 * 1_000_000_000);
+        let second_until = s.paused.as_ref().unwrap().until_ns;
+        assert!(second_until > first_until);
+        // But a second event 1s later (until = t0+61s, also later
+        // than t0+60s) extends by 1s only.
+        let mut s2 = ShardPauseState::default();
+        s2.pause_for_quota(t0);
+        s2.pause_for_quota(t0 + 1_000_000_000);
+        let until = s2.paused.as_ref().unwrap().until_ns;
+        assert_eq!(until, t0 + 61 * 1_000_000_000);
+    }
+
+    #[test]
+    fn shard_pause_does_not_shrink_on_stale_event() {
+        // A "later" quota event whose until is BEFORE the current
+        // pause's until must NOT shrink the window. Defends against
+        // a clock-skew or out-of-order event flipping the pause off
+        // early.
+        let mut s = ShardPauseState::default();
+        let t0 = 100_000_000_000_i64;
+        s.pause_for_quota(t0);
+        let first_until = s.paused.as_ref().unwrap().until_ns;
+        // Simulate a stale event at t0 - 30s (its until = t0 + 30s,
+        // earlier than first_until = t0 + 60s).
+        s.pause_for_quota(t0 - 30 * 1_000_000_000);
+        let second_until = s.paused.as_ref().unwrap().until_ns;
+        assert_eq!(second_until, first_until, "pause must not shrink");
     }
 }
