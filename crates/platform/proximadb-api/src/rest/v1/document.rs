@@ -94,13 +94,10 @@ pub struct CreateDocumentRequest {
 
 /// REST request body for document-collection creation.
 ///
-/// Naming note: this type used to be called `CreateCollectionRequest` and
-/// collided with `super::catalog::CreateVectorCollectionRequest` in the
-/// same crate, which has a completely different shape
-/// (`{name, dimension, metric}` rather than `{name, indexes}`). The
-/// `…Body` suffix distinguishes it from the proto-generated
-/// `proximadb_proto::v1::CreateDocumentCollectionRequest` (the gRPC/wire
-/// type the handler converts into) — imported at the top of this module.
+/// The `…Body` suffix distinguishes the local REST shape from the
+/// proto-generated `proximadb_proto::v1::CreateDocumentCollectionRequest`
+/// (the gRPC/wire type the handler converts into) — imported at the top
+/// of this module.
 #[derive(Debug, Deserialize)]
 pub struct CreateDocumentCollectionRequestBody {
     pub name: String,
