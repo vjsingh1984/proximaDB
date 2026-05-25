@@ -610,9 +610,27 @@ pub enum DrApiError {
     },
 }
 
+/// Result of [`DrPolicyStore::acquire_lease`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LeaseAcquireResult {
+    /// Lease granted. Carries the row's current `policy_version` so
+    /// the caller can detect a version conflict before mutating.
+    Acquired { policy_version: u64 },
+    /// Lease is held by another holder and has not expired.
+    HeldElsewhere {
+        current_holder: String,
+        until_ns: i64,
+    },
+}
+
 /// Narrow store surface the reconciler needs to drive a policy through
 /// one tick. Implementations are operator-owned (sqlx/filestore); the
 /// `MockDrPolicyStore` ships here for tests.
+///
+/// Lease contract: implementations must perform the
+/// "acquire if free or expired" check atomically (single UPDATE for
+/// sqlx backends; mutex-guarded swap for the filestore). The shard
+/// relies on this atomicity for multi-runner safety.
 #[async_trait]
 pub trait DrPolicyStore: Send + Sync {
     /// Return the set of policies the shard should consider this tick.
@@ -620,6 +638,32 @@ pub trait DrPolicyStore: Send + Sync {
     /// rows server-side. The shard applies backoff/rate-limit gates on
     /// top.
     async fn pending_reconcile(&self) -> Result<Vec<CollectionDrPolicy>, DrApiError>;
+
+    /// Atomically acquire the reconcile lease on `policy_id` for
+    /// `holder_id`. The lease is granted when either:
+    /// - no lease is currently held, or
+    /// - the held lease's `until_ns` has expired at `now_ns`, or
+    /// - the caller already holds the lease (renew).
+    ///
+    /// Implementations MUST perform this as a single atomic
+    /// compare-and-swap; otherwise two shards may race past the
+    /// "free" check and both think they hold it.
+    async fn acquire_lease(
+        &self,
+        policy_id: &str,
+        holder_id: &str,
+        ttl_ns: i64,
+        now_ns: i64,
+    ) -> Result<LeaseAcquireResult, DrApiError>;
+
+    /// Release the lease if `holder_id` currently holds it. Idempotent
+    /// — releasing a lease the caller doesn't hold is a no-op (so a
+    /// crashed shard's stale release doesn't kick a fresh holder).
+    async fn release_lease(
+        &self,
+        policy_id: &str,
+        holder_id: &str,
+    ) -> Result<(), DrApiError>;
 
     /// Persist a state transition. Returns the new `policy_version`.
     /// Bumps `policy_version` because the contract S2 rule says state
@@ -998,6 +1042,12 @@ pub enum TickOutcome {
     /// Backoff hit `max_attempts`; the driver was directed to flip
     /// health to `ProviderBlocked` and the backoff was cleared.
     EscalatedAfterMaxAttempts,
+    /// Another shard holds the reconcile lease; defer to next tick
+    /// after the lease expires.
+    DeferredLeaseHeldElsewhere {
+        current_holder: String,
+        until_ns: i64,
+    },
 }
 
 /// Reconciler shard — one async loop per shard, one shard per range
@@ -1019,6 +1069,15 @@ pub struct DrReconcilerShard<S, A> {
     /// Sampled per `apply_backoff_signal` call. Production wires
     /// `rand::random`; tests inject a constant.
     jitter_source: Arc<dyn Fn() -> f64 + Send + Sync>,
+    /// Per-process identifier this shard uses when acquiring a
+    /// reconcile lease. Two shards in the same deployment must have
+    /// distinct holder IDs for the lease gate to work.
+    holder_id: String,
+    /// Lease lifetime in nanoseconds. Default 5 minutes — long
+    /// enough that a tick under load doesn't expire mid-flight,
+    /// short enough that a crashed shard's lease frees within one
+    /// recovery interval.
+    lease_ttl_ns: i64,
 }
 
 impl<S, A> DrReconcilerShard<S, A>
@@ -1028,7 +1087,8 @@ where
 {
     /// Construct a shard with default config and explicit clock /
     /// jitter sources. Tests use this; production callers can call
-    /// `new` instead.
+    /// `new` instead. Default holder ID is `"shard-default"` and the
+    /// default lease TTL is 5 minutes.
     pub fn with_clocks(
         driver: Arc<DrReconcilerDriver<S, A>>,
         store: Arc<S>,
@@ -1045,7 +1105,23 @@ where
             pause: parking_lot::Mutex::new(ShardPauseState::default()),
             now_ns,
             jitter_source,
+            holder_id: "shard-default".into(),
+            lease_ttl_ns: 5 * 60 * 1_000_000_000,
         }
+    }
+
+    /// Override the lease holder ID. Multi-shard deployments must
+    /// give each shard a distinct ID (typically `"shard-{ordinal}-{pid}"`).
+    pub fn with_holder_id(mut self, holder_id: impl Into<String>) -> Self {
+        self.holder_id = holder_id.into();
+        self
+    }
+
+    /// Override the lease TTL. Default is 5 minutes; tests use shorter
+    /// values to exercise expiry without long waits.
+    pub fn with_lease_ttl_ns(mut self, ttl_ns: i64) -> Self {
+        self.lease_ttl_ns = ttl_ns;
+        self
     }
 
     /// One synchronous-from-the-shard's-perspective pass: load the
@@ -1117,9 +1193,50 @@ where
                 continue;
             }
 
+            // Lease gate — atomically acquire the reconcile lease
+            // before any mutating work. Multi-runner safety from the
+            // contract's "Concurrency And Provider Rule Locking"
+            // section. Single-runner deployments still go through
+            // this path; the store always returns Acquired.
+            let lease = self
+                .store
+                .acquire_lease(
+                    &policy.policy_id,
+                    &self.holder_id,
+                    self.lease_ttl_ns,
+                    now,
+                )
+                .await?;
+            match lease {
+                LeaseAcquireResult::HeldElsewhere {
+                    current_holder,
+                    until_ns,
+                } => {
+                    results.push((
+                        policy.policy_id.clone(),
+                        TickOutcome::DeferredLeaseHeldElsewhere {
+                            current_holder,
+                            until_ns,
+                        },
+                    ));
+                    continue;
+                }
+                LeaseAcquireResult::Acquired { .. } => {
+                    // Fall through to dispatch.
+                }
+            }
+
             // Dispatch.
             let outcome = self.driver.reconcile_one(&policy).await?;
             self.feedback(&policy.policy_id, &outcome, now);
+            // Best-effort release; the lease will expire naturally if
+            // the release call fails (the store impl can return a
+            // transient error). Don't surface release errors back to
+            // the caller — they shouldn't fail the tick.
+            let _ = self
+                .store
+                .release_lease(&policy.policy_id, &self.holder_id)
+                .await;
             results.push((policy.policy_id, TickOutcome::Reconciled(outcome)));
         }
 
@@ -1614,6 +1731,10 @@ mod tests {
         /// Policies the mock returns from `pending_reconcile`. Tests
         /// seed this via `seed_pending`.
         pending: Mutex<Vec<CollectionDrPolicy>>,
+        /// policy_id -> (holder_id, until_ns). Atomicity is via the
+        /// single Mutex guard around the read-modify-write inside
+        /// `acquire_lease`.
+        leases: Mutex<std::collections::HashMap<String, (String, i64)>>,
     }
 
     impl MockDrPolicyStore {
@@ -1650,6 +1771,57 @@ mod tests {
                 return Err(e);
             }
             Ok(self.pending.lock().clone())
+        }
+
+        async fn acquire_lease(
+            &self,
+            policy_id: &str,
+            holder_id: &str,
+            ttl_ns: i64,
+            now_ns: i64,
+        ) -> Result<LeaseAcquireResult, DrApiError> {
+            if let Some(e) = self.inject_error.lock().take() {
+                return Err(e);
+            }
+            let mut leases = self.leases.lock();
+            let free_or_mine = match leases.get(policy_id) {
+                None => true,
+                Some((existing_holder, until)) => {
+                    existing_holder == holder_id || *until <= now_ns
+                }
+            };
+            if free_or_mine {
+                leases.insert(
+                    policy_id.to_string(),
+                    (holder_id.to_string(), now_ns.saturating_add(ttl_ns)),
+                );
+                Ok(LeaseAcquireResult::Acquired {
+                    policy_version: self.next_version.load(Ordering::Relaxed),
+                })
+            } else {
+                let (current_holder, until_ns) = leases.get(policy_id).unwrap().clone();
+                Ok(LeaseAcquireResult::HeldElsewhere {
+                    current_holder,
+                    until_ns,
+                })
+            }
+        }
+
+        async fn release_lease(
+            &self,
+            policy_id: &str,
+            holder_id: &str,
+        ) -> Result<(), DrApiError> {
+            if let Some(e) = self.inject_error.lock().take() {
+                return Err(e);
+            }
+            let mut leases = self.leases.lock();
+            if let Some((existing, _)) = leases.get(policy_id) {
+                if existing == holder_id {
+                    leases.remove(policy_id);
+                }
+            }
+            Ok(())
         }
 
         async fn transition_state(
@@ -2442,5 +2614,174 @@ mod tests {
             TickOutcome::Reconciled(ReconcileOutcome::Idle(IdleReason::HealthyActive))
         ));
         assert!(!shard.backoffs_snapshot().contains_key(&p.policy_id));
+    }
+
+    // --- Lease / TTL (P3c3) -------------------------------------------
+
+    #[tokio::test]
+    async fn lease_acquire_on_free_row_returns_acquired() {
+        let store = MockDrPolicyStore::new(7);
+        let result = store
+            .acquire_lease("drp_1", "shard-a", 60_000_000_000, 1_000)
+            .await
+            .unwrap();
+        assert!(matches!(
+            result,
+            LeaseAcquireResult::Acquired { policy_version: 7 }
+        ));
+    }
+
+    #[tokio::test]
+    async fn lease_acquire_by_same_holder_renews() {
+        let store = MockDrPolicyStore::new(1);
+        let _ = store
+            .acquire_lease("drp_1", "shard-a", 60_000_000_000, 1_000)
+            .await
+            .unwrap();
+        // Same holder may re-acquire — used for renewal mid-tick.
+        let result = store
+            .acquire_lease("drp_1", "shard-a", 60_000_000_000, 2_000)
+            .await
+            .unwrap();
+        assert!(matches!(result, LeaseAcquireResult::Acquired { .. }));
+    }
+
+    #[tokio::test]
+    async fn lease_acquire_by_other_holder_blocks_until_expiry() {
+        let store = MockDrPolicyStore::new(1);
+        // shard-a takes a 10s lease at t=1000.
+        let _ = store
+            .acquire_lease("drp_1", "shard-a", 10_000_000_000, 1_000)
+            .await
+            .unwrap();
+        // shard-b tries at t=2000 — still held.
+        let r = store
+            .acquire_lease("drp_1", "shard-b", 10_000_000_000, 2_000)
+            .await
+            .unwrap();
+        match r {
+            LeaseAcquireResult::HeldElsewhere {
+                current_holder,
+                until_ns,
+            } => {
+                assert_eq!(current_holder, "shard-a");
+                assert_eq!(until_ns, 1_000 + 10_000_000_000);
+            }
+            other => panic!("expected HeldElsewhere, got {other:?}"),
+        }
+        // shard-b retries past the expiry — grants.
+        let r2 = store
+            .acquire_lease("drp_1", "shard-b", 10_000_000_000, 1_000 + 10_000_000_001)
+            .await
+            .unwrap();
+        assert!(matches!(r2, LeaseAcquireResult::Acquired { .. }));
+    }
+
+    #[tokio::test]
+    async fn lease_release_is_idempotent_and_holder_scoped() {
+        let store = MockDrPolicyStore::new(1);
+        let _ = store
+            .acquire_lease("drp_1", "shard-a", 60_000_000_000, 1_000)
+            .await
+            .unwrap();
+        // shard-b cannot release shard-a's lease.
+        store.release_lease("drp_1", "shard-b").await.unwrap();
+        let r = store
+            .acquire_lease("drp_1", "shard-c", 60_000_000_000, 1_500)
+            .await
+            .unwrap();
+        assert!(matches!(r, LeaseAcquireResult::HeldElsewhere { .. }));
+        // shard-a can release its own, freeing the row.
+        store.release_lease("drp_1", "shard-a").await.unwrap();
+        let r2 = store
+            .acquire_lease("drp_1", "shard-c", 60_000_000_000, 1_600)
+            .await
+            .unwrap();
+        assert!(matches!(r2, LeaseAcquireResult::Acquired { .. }));
+        // Releasing twice is fine (idempotent).
+        store.release_lease("drp_1", "shard-c").await.unwrap();
+        store.release_lease("drp_1", "shard-c").await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn shard_tick_with_held_lease_defers_with_holder_info() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.provider_binding = Some(ProviderReplicationBinding {
+            provider_policy_id: None,
+            provider_rule_id: "dr-drp_1-v1".into(),
+            provider_role_arn: None,
+            provider_kms_key_id: None,
+        });
+        adapter.seed_observed(&p.policy_id, healthy_observed(&p));
+        store.seed_pending(vec![p.clone()]);
+
+        // Pre-acquire the lease as a different holder.
+        let _ = store
+            .acquire_lease(&p.policy_id, "other-shard", 60_000_000_000, 0)
+            .await
+            .unwrap();
+
+        let clock = Arc::new(AtomicI64::new(0));
+        let shard = make_shard(
+            store.clone(),
+            adapter.clone(),
+            BackoffPolicy::default(),
+            clock,
+            0.5,
+        )
+        .with_holder_id("this-shard");
+
+        let results = shard.tick().await.unwrap();
+        match &results[0].1 {
+            TickOutcome::DeferredLeaseHeldElsewhere {
+                current_holder,
+                until_ns: _,
+            } => {
+                assert_eq!(current_holder, "other-shard");
+            }
+            other => panic!("expected DeferredLeaseHeldElsewhere, got {other:?}"),
+        }
+        // No adapter mutation should have happened — driver wasn't
+        // called because the lease gate fired first.
+        assert_eq!(adapter.ensure_call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn shard_tick_acquires_lease_and_releases_after_dispatch() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.provider_binding = Some(ProviderReplicationBinding {
+            provider_policy_id: None,
+            provider_rule_id: "dr-drp_1-v1".into(),
+            provider_role_arn: None,
+            provider_kms_key_id: None,
+        });
+        adapter.seed_observed(&p.policy_id, healthy_observed(&p));
+        store.seed_pending(vec![p.clone()]);
+
+        let clock = Arc::new(AtomicI64::new(100));
+        let shard = make_shard(
+            store.clone(),
+            adapter,
+            BackoffPolicy::default(),
+            clock,
+            0.5,
+        )
+        .with_holder_id("shard-x");
+
+        let results = shard.tick().await.unwrap();
+        assert!(matches!(results[0].1, TickOutcome::Reconciled(_)));
+
+        // The lease was released after dispatch — a different holder
+        // can immediately acquire it. (We test this via the store
+        // directly because the shard owns its own holder_id.)
+        let r = store
+            .acquire_lease(&p.policy_id, "shard-y", 60_000_000_000, 101)
+            .await
+            .unwrap();
+        assert!(matches!(r, LeaseAcquireResult::Acquired { .. }));
     }
 }
