@@ -106,7 +106,7 @@ pub struct CollectionService {
     filesystem_factory: Arc<FilesystemFactory>,
     /// Cache for IndexConfig to avoid repeated deserialization
     /// Using dashmap for lock-free concurrent access
-    index_config_cache: Arc<dashmap::DashMap<String, crate::index::config::IndexConfig>>,
+    index_config_cache: Arc<dashmap::DashMap<String, crate::index::config::RuntimeIndexConfig>>,
     /// Global storage configuration for engine and WAL settings
     storage_config: StorageConfig,
     /// Optional xCatalog manager. When present, collection lifecycle metadata is
@@ -864,7 +864,7 @@ impl CollectionService {
     pub async fn native_index_config(
         &self,
         identifier: &str,
-    ) -> Result<Option<crate::index::config::IndexConfig>> {
+    ) -> Result<Option<crate::index::config::RuntimeIndexConfig>> {
         debug!("🔍 Getting IndexConfig for collection: {}", identifier);
 
         // Check cache first
@@ -896,7 +896,7 @@ impl CollectionService {
     fn convert_proto_index_config(
         &self,
         _proto_config: &crate::proto::proximadb_v1::IndexConfig,
-    ) -> Result<crate::index::config::IndexConfig> {
+    ) -> Result<crate::index::config::RuntimeIndexConfig> {
         // Extract algorithm name from proto config
         let _algorithm_name = match _proto_config.algorithm {
             1 => "HNSW",
@@ -908,14 +908,14 @@ impl CollectionService {
         };
 
         // Use the from_proto method that handles all the config extraction
-        crate::index::config::IndexConfig::from_proto(_proto_config)
+        crate::index::config::RuntimeIndexConfig::from_proto(_proto_config)
     }
 
     /// Parse IndexConfig from Collection
     fn parse_index_config_from_proto(
         &self,
         proto: &Collection,
-    ) -> Result<crate::index::config::IndexConfig> {
+    ) -> Result<crate::index::config::RuntimeIndexConfig> {
         // Check if proto has index_config field
         if let Some(config) = proto.config.as_ref()
             && !config.index_configs.is_empty()
@@ -953,7 +953,7 @@ impl CollectionService {
             _ => "HNSW", // Default to HNSW
         };
 
-        let smart_config = crate::index::config::IndexConfig::create_smart_default(
+        let smart_config = crate::index::config::RuntimeIndexConfig::create_smart_default(
             algorithm_str,
             config.dimension as usize,
             None, // Collection size hint not available

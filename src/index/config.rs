@@ -143,9 +143,19 @@ impl Default for LshConfig {
     }
 }
 
-/// Comprehensive index configuration for collections
+/// Runtime index configuration for collections (defaults applied,
+/// concrete types, opinionated values from TOML/factory paths).
+///
+/// Naming note: this type used to be called `IndexConfig` and collided
+/// with `proximadb_proto::v1::IndexConfig` (proto wire form) and with
+/// `proximadb_vector::index::IndexConfig` (the modality's algorithm+
+/// metric+params builder triple). Renamed because this in-crate version
+/// is the runtime-resolved form: 10 concrete fields (vs proto's 15
+/// Option-typed fields), plus opinionated defaults, plus
+/// `Option<RuntimeHnswConfig>` (the proto twins for IvfConfig/LshConfig
+/// are not yet renamed but follow the same pattern).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct IndexConfig {
+pub struct RuntimeIndexConfig {
     /// Index update behavior
     pub update_mode: IndexUpdateMode,
     /// Timeout for async updates (ms)
@@ -168,7 +178,7 @@ pub struct IndexConfig {
     pub checkpoint_interval_ms: Option<u64>,
 }
 
-impl Default for IndexConfig {
+impl Default for RuntimeIndexConfig {
     fn default() -> Self {
         Self {
             update_mode: IndexUpdateMode::default(),
@@ -185,8 +195,8 @@ impl Default for IndexConfig {
     }
 }
 
-impl IndexConfig {
-    /// Create IndexConfig from protobuf with smart defaults
+impl RuntimeIndexConfig {
+    /// Create RuntimeIndexConfig from protobuf with smart defaults
     pub fn from_proto(proto: &crate::proto::proximadb_v1::IndexConfig) -> Result<Self> {
         let update_mode = match proto.update_mode.unwrap_or(0) {
             1 => IndexUpdateMode::Synchronous,
@@ -957,7 +967,7 @@ mod tests {
 
     #[test]
     fn test_default_index_config() {
-        let config = IndexConfig::default();
+        let config = RuntimeIndexConfig::default();
         assert_eq!(config.update_mode, IndexUpdateMode::Synchronous);
         assert_eq!(config.async_update_timeout_ms, Some(30000));
         assert_eq!(config.async_update_batch_size, Some(1000));
@@ -967,7 +977,7 @@ mod tests {
 
     #[test]
     fn test_hnsw_config_validation() {
-        let mut config = IndexConfig::default();
+        let mut config = RuntimeIndexConfig::default();
         config.hnsw_config = Some(RuntimeHnswConfig {
             m: 0, // Invalid
             ..Default::default()
@@ -987,7 +997,7 @@ mod tests {
 
     #[test]
     fn test_ivf_config_validation() {
-        let mut config = IndexConfig::default();
+        let mut config = RuntimeIndexConfig::default();
         config.ivf_config = Some(IvfConfig {
             n_lists: 0, // Invalid
             ..Default::default()
@@ -1007,20 +1017,20 @@ mod tests {
 
     #[test]
     fn test_create_for_algorithm() {
-        let small_config = IndexConfig::create_for_algorithm("HNSW", Some(5_000));
+        let small_config = RuntimeIndexConfig::create_for_algorithm("HNSW", Some(5_000));
         assert!(small_config.hnsw_config.is_some());
         let hnsw = small_config.hnsw_config.unwrap();
         assert_eq!(hnsw.ef_construction, 300);
         assert_eq!(hnsw.m, 32);
 
-        let large_config = IndexConfig::create_for_algorithm("HNSW", Some(500_000));
+        let large_config = RuntimeIndexConfig::create_for_algorithm("HNSW", Some(500_000));
         assert!(large_config.hnsw_config.is_some());
         let hnsw = large_config.hnsw_config.unwrap();
         assert_eq!(hnsw.ef_construction, 150);
         assert_eq!(hnsw.m, 12);
         assert_eq!(hnsw.max_partition_size, 50_000);
 
-        let ivf_config = IndexConfig::create_for_algorithm("IVF", Some(100_000));
+        let ivf_config = RuntimeIndexConfig::create_for_algorithm("IVF", Some(100_000));
         assert!(ivf_config.ivf_config.is_some());
         let ivf = ivf_config.ivf_config.unwrap();
         assert_eq!(ivf.n_lists, 317); // sqrt(100000) = 316.22, ceil(316.22) = 317
@@ -1028,7 +1038,7 @@ mod tests {
 
     #[test]
     fn test_get_algorithm_config() {
-        let mut config = IndexConfig::default();
+        let mut config = RuntimeIndexConfig::default();
         config.hnsw_config = Some(RuntimeHnswConfig::default());
 
         let hnsw_config = config.algorithm_config("HNSW");

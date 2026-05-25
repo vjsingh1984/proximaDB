@@ -90,7 +90,7 @@ pub mod sparse_hnsw;
 
 // Re-export main types for easier access
 pub use axis::{AxisConfig, AxisManager};
-pub use config::{IndexConfig, IndexUpdateMode, IvfConfig, RuntimeHnswConfig};
+pub use config::{IndexUpdateMode, IvfConfig, RuntimeHnswConfig, RuntimeIndexConfig};
 
 // Re-export geospatial types
 pub use geo::{
