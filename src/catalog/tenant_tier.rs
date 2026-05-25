@@ -85,82 +85,129 @@ fn pricing() -> &'static PricingConfig {
 
 fn validate_pricing_matches_enum(p: &PricingConfig) {
     use std::collections::HashSet;
-    let json_ids: HashSet<&str> = p.tiers.iter().map(|t| t.id.as_str()).collect();
-    let enum_ids: HashSet<&str> = Tier::all().iter().map(|t| t.id()).collect();
-    assert_eq!(
-        json_ids, enum_ids,
-        "config/pricing.json tier ids must match Tier enum variants exactly; \
-         add/remove a Tier variant or update pricing/tiers.json. \
-         json={json_ids:?} enum={enum_ids:?}"
-    );
+    // Phase B-4: validation is now alias-aware. Each JSON tier id is parsed
+    // through serde (which honors the serde aliases on the Tier enum), and
+    // we assert the resulting Tier set exactly equals Tier::all(). This lets
+    // operator overlay JSONs use either the canonical operator-neutral ids
+    // (tier1..tier5) or their own legacy ids (free_trial, team, pro, business,
+    // enterprise — recognized via serde aliases) without needing a wire-format
+    // migration.
+    let mut parsed: HashSet<Tier> = HashSet::new();
+    for json_tier in &p.tiers {
+        let v = serde_json::Value::String(json_tier.id.clone());
+        let tier: Tier = serde_json::from_value(v).unwrap_or_else(|_| {
+            panic!(
+                "config/pricing.json has unknown tier id {:?}; \
+                 expected one of {:?} or a recognized alias",
+                json_tier.id,
+                Tier::all().iter().map(|t| t.id()).collect::<Vec<_>>()
+            )
+        });
+        parsed.insert(tier);
+    }
+    let all_variants: HashSet<Tier> = Tier::all().iter().copied().collect();
+    if parsed != all_variants {
+        let missing: Vec<_> = all_variants.difference(&parsed).collect();
+        let extra: Vec<_> = parsed.difference(&all_variants).collect();
+        panic!(
+            "config/pricing.json doesn't cover all Tier variants. \
+             missing={missing:?}, extra={extra:?}"
+        );
+    }
 }
 
 fn pricing_row(tier: Tier) -> &'static PricingTier {
-    let id = tier.id();
+    // Phase B-4: alias-aware lookup. The JSON id may be the canonical id
+    // (`tier.id()`) OR any of the serde aliases — both must locate the row.
     pricing()
         .tiers
         .iter()
-        .find(|t| t.id == id)
-        .unwrap_or_else(|| panic!("tier {id} missing from config/pricing.json"))
+        .find(|t| {
+            let v = serde_json::Value::String(t.id.clone());
+            serde_json::from_value::<Tier>(v).ok() == Some(tier)
+        })
+        .unwrap_or_else(|| panic!("tier {tier:?} missing from config/pricing.json"))
 }
 
-/// Tier identifier — the baseline tier set shipped with ProximaDB. Operator
-/// deployments can override the numeric caps per tier via the runtime
-/// tier-config overlay (see `config/TIER_CONFIG.md`), but the variant set
-/// itself is compile-time exhaustive because Rust enums can't be built from
-/// runtime data.
+/// Tier identifier — the baseline tier set shipped with ProximaDB.
 ///
-/// Legacy stored values (`"community"`, `"starter"`, `"standard"`,
-/// `"enterprise_pooled"`, `"enterprise_dedicated"`) deserialize transparently
-/// via the serde aliases below so existing tenant-tier rows stay readable
-/// across a tier-naming consolidation without a data migration.
+/// **Phase B-4 rename (operator-neutral positional names).** The variants
+/// are now `Tier1` through `Tier5` rather than the prior commercial names
+/// (`FreeTrial`/`Team`/`Pro`/`Business`/`Enterprise`). Positional names
+/// avoid any naming-collision trap with the legacy serde aliases listed
+/// below: a stored `"tier": "standard"` continues to deserialize to
+/// `Tier2` (its prior `Team` mapping) rather than getting silently
+/// upgraded to a fictional `Tier::Standard`. See `config/TIER_CONFIG.md`
+/// for the operator-neutral schema; operator overlays can carry their
+/// own display names without the engine ever caring.
 ///
-/// A future major version (Phase B-4) may rename these variants to fully
-/// operator-neutral names (e.g., `Tier1` / `Tier2` / `Tier3`); the current
-/// names are kept stable to avoid breaking external callers in this
-/// release.
+/// Legacy stored values (`"free_trial"`, `"team"`, `"pro"`, `"business"`,
+/// `"enterprise"`, `"community"`, `"starter"`, `"standard"`,
+/// `"enterprise_pooled"`, `"enterprise_dedicated"`) deserialize via the
+/// serde aliases below so existing tenant-tier rows + operator overlay
+/// JSONs keep working without a data migration.
+///
+/// Operator deployments can override the numeric caps per tier via the
+/// runtime tier-config overlay (see `config/TIER_CONFIG.md`), but the
+/// variant set itself is compile-time exhaustive because Rust enums can't
+/// be built from runtime data. Adding a sixth tier requires a recompile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Tier {
-    /// Shared pool, capped resources, evaluation usage.
+    /// Lowest tier — evaluation / capped shared-pool resources.
     #[default]
-    FreeTrial,
-    /// Entry pooled tier — replaces the legacy `community` / `starter` /
-    /// `standard` SKUs from earlier naming conventions.
-    #[serde(alias = "community", alias = "starter", alias = "standard")]
-    Team,
+    #[serde(alias = "free_trial", alias = "free")]
+    Tier1,
+    /// Entry pooled tier — accepts a wide alias set so legacy SKUs from
+    /// earlier naming generations all map here.
+    #[serde(
+        alias = "team",
+        alias = "community",
+        alias = "starter",
+        alias = "standard",
+        alias = "basic"
+    )]
+    Tier2,
     /// Production pooled tier with sync ingest support.
-    Pro,
+    #[serde(alias = "pro")]
+    Tier3,
     /// Pooled tier with full connector set + webhook integration support.
-    #[serde(alias = "enterprise_pooled")]
-    Business,
+    #[serde(
+        alias = "business",
+        alias = "enterprise_pooled",
+        alias = "premium"
+    )]
+    Tier4,
     /// Dedicated single-tenant infrastructure tier.
-    #[serde(alias = "enterprise_dedicated")]
-    Enterprise,
+    #[serde(alias = "enterprise", alias = "enterprise_dedicated")]
+    Tier5,
 }
 
 impl Tier {
-    /// Stable enum-id used as the JSON key in the embedded
-    /// `config/pricing.json` baseline (and any runtime tier-config overlay).
+    /// Canonical operator-neutral id for this tier (`tier1`..`tier5`).
+    /// Stored tenant records may use any of the serde aliases above; this
+    /// function always returns the canonical name regardless of how the
+    /// value was deserialized.
     pub const fn id(self) -> &'static str {
         match self {
-            Tier::FreeTrial => "free_trial",
-            Tier::Team => "team",
-            Tier::Pro => "pro",
-            Tier::Business => "business",
-            Tier::Enterprise => "enterprise",
+            Tier::Tier1 => "tier1",
+            Tier::Tier2 => "tier2",
+            Tier::Tier3 => "tier3",
+            Tier::Tier4 => "tier4",
+            Tier::Tier5 => "tier5",
         }
     }
 
-    /// All declared tier variants in display order. Kept in sync with the
-    /// canonical JSON via `validate_pricing_matches_enum()` at startup.
+    /// All declared tier variants in increasing-capacity order. Kept in
+    /// sync with the embedded JSON via `validate_pricing_matches_enum()`
+    /// at startup.
     pub const fn all() -> &'static [Tier] {
         &[
-            Tier::FreeTrial,
-            Tier::Team,
-            Tier::Pro,
-            Tier::Business,
-            Tier::Enterprise,
+            Tier::Tier1,
+            Tier::Tier2,
+            Tier::Tier3,
+            Tier::Tier4,
+            Tier::Tier5,
         ]
     }
 
@@ -250,7 +297,7 @@ impl TenantTierRecord {
     pub fn fail_safe(tenant_id: impl Into<String>) -> Self {
         Self {
             tenant_id: tenant_id.into(),
-            tier: Tier::FreeTrial,
+            tier: Tier::Tier1,
             scan_budget_gb_hard: None,
             ef_search_cap: None,
             freshness_sla_seconds: None,
@@ -457,7 +504,7 @@ mod tests {
     #[tokio::test]
     async fn fail_safe_is_free_trial() {
         let r = TenantTierRecord::fail_safe("unknown-tenant");
-        assert_eq!(r.tier, Tier::FreeTrial);
+        assert_eq!(r.tier, Tier::Tier1);
         assert_eq!(r.effective_scan_budget_gb(), 1.0);
         assert_eq!(r.effective_ef_search_cap(), 64);
         assert!(!r.feature_flags.quantized_route);
@@ -467,7 +514,7 @@ mod tests {
     async fn ttl_cache_serves_known_tenant() {
         let store = Arc::new(InMemoryTenantTierStore::with_rows(vec![TenantTierRecord {
             tenant_id: "tenant-acme".into(),
-            tier: Tier::Business,
+            tier: Tier::Tier4,
             scan_budget_gb_hard: Some(8.0),
             ef_search_cap: None,
             freshness_sla_seconds: None,
@@ -475,12 +522,12 @@ mod tests {
         }]));
         let cache = CachedTenantTierStore::new(store, Duration::from_secs(60));
         let record = cache.fetch("tenant-acme").await;
-        assert_eq!(record.tier, Tier::Business);
+        assert_eq!(record.tier, Tier::Tier4);
         assert_eq!(record.effective_scan_budget_gb(), 8.0);
         // Override only set the budget; ef_search defaults to Business tier.
         assert_eq!(
             record.effective_ef_search_cap(),
-            Tier::Business.default_ef_search_cap()
+            Tier::Tier4.default_ef_search_cap()
         );
     }
 
@@ -489,14 +536,14 @@ mod tests {
         let store = Arc::new(InMemoryTenantTierStore::empty());
         let cache = CachedTenantTierStore::new(store, Duration::from_secs(60));
         let record = cache.fetch("never-seen").await;
-        assert_eq!(record.tier, Tier::FreeTrial);
+        assert_eq!(record.tier, Tier::Tier1);
     }
 
     #[tokio::test]
     async fn budget_exceeded_emits_structured_decision() {
         let store = Arc::new(InMemoryTenantTierStore::with_rows(vec![TenantTierRecord {
             tenant_id: "t".into(),
-            tier: Tier::Team,
+            tier: Tier::Tier2,
             scan_budget_gb_hard: Some(1.0),
             ef_search_cap: Some(96),
             freshness_sla_seconds: None,
@@ -558,21 +605,25 @@ mod tests {
     #[test]
     fn prometheus_labels_are_bounded() {
         // Bounded-cardinality contract: every tier must produce a fixed label
-        // from the {free, team, pro, business, enterprise} set so per-second
-        // Prometheus counters never grow with tenant count.
+        // from a small enumerated set so per-second Prometheus counters never
+        // grow with tenant count. After the Phase B-4 rename the bundled
+        // baseline produces operator-neutral positional labels
+        // (`tier1`..`tier5`); operators who overlay a runtime tier-config
+        // with their own `prom_label` per tier override these values
+        // without changing the cardinality contract.
         let labels: Vec<_> = [
-            Tier::FreeTrial,
-            Tier::Team,
-            Tier::Pro,
-            Tier::Business,
-            Tier::Enterprise,
+            Tier::Tier1,
+            Tier::Tier2,
+            Tier::Tier3,
+            Tier::Tier4,
+            Tier::Tier5,
         ]
         .iter()
         .map(|t| t.prometheus_label())
         .collect();
         assert_eq!(
             labels,
-            vec!["free", "team", "pro", "business", "enterprise"]
+            vec!["tier1", "tier2", "tier3", "tier4", "tier5"]
         );
     }
 
@@ -584,7 +635,7 @@ mod tests {
         // registry.
         for raw in ["\"community\"", "\"starter\"", "\"standard\""] {
             let parsed: Tier = serde_json::from_str(raw).expect("deserialize legacy tier");
-            assert_eq!(parsed, Tier::Team, "expected {raw} → Team");
+            assert_eq!(parsed, Tier::Tier2, "expected {raw} → Team");
         }
     }
 
@@ -592,10 +643,10 @@ mod tests {
     fn legacy_enterprise_aliases_deserialize_to_canonical() {
         let pooled: Tier =
             serde_json::from_str("\"enterprise_pooled\"").expect("enterprise_pooled");
-        assert_eq!(pooled, Tier::Business);
+        assert_eq!(pooled, Tier::Tier4);
         let dedicated: Tier =
             serde_json::from_str("\"enterprise_dedicated\"").expect("enterprise_dedicated");
-        assert_eq!(dedicated, Tier::Enterprise);
+        assert_eq!(dedicated, Tier::Tier5);
     }
 
     #[test]
@@ -604,11 +655,11 @@ mod tests {
         // this an upgrade could leave a customer with less budget than they
         // had on the prior tier.
         let ladder = [
-            Tier::FreeTrial,
-            Tier::Team,
-            Tier::Pro,
-            Tier::Business,
-            Tier::Enterprise,
+            Tier::Tier1,
+            Tier::Tier2,
+            Tier::Tier3,
+            Tier::Tier4,
+            Tier::Tier5,
         ];
         for w in ladder.windows(2) {
             let (lo, hi) = (w[0], w[1]);

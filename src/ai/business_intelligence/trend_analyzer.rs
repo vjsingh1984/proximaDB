@@ -19,9 +19,12 @@ pub struct TrendAnalyzerConfig {
     pub enable_seasonal_analysis: bool,
 }
 
+/// Backwards-compat alias for [`BiTrendAnalysis`].
+pub type TrendAnalysis = BiTrendAnalysis;
+
 /// Trend analysis result
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrendAnalysis {
+pub struct BiTrendAnalysis {
     pub metric_name: String,
     pub direction: TrendDirection,
     pub change_percentage: f64,
@@ -50,7 +53,7 @@ impl TrendAnalyzer {
     pub async fn analyze_business_trends(
         &self,
         _metrics: &super::engine::BusinessMetrics,
-    ) -> Result<Vec<TrendAnalysis>> {
+    ) -> Result<Vec<BiTrendAnalysis>> {
         // Placeholder implementation
         Ok(vec![])
     }

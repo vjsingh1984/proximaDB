@@ -30,9 +30,12 @@ pub struct SQLValidatorConfig {
     pub allowed_sql_operations: Vec<String>,
 }
 
+/// Backwards-compat alias for [`SqlValidationResult`].
+pub type ValidationResult = SqlValidationResult;
+
 /// Result of SQL validation
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ValidationResult {
+pub struct SqlValidationResult {
     pub is_valid: bool,
     pub sanitized_sql: String,
     pub warnings: Vec<String>,
@@ -184,7 +187,7 @@ impl SQLValidator {
         &self,
         sql: &str,
         user_context: &UserContext,
-    ) -> Result<ValidationResult> {
+    ) -> Result<SqlValidationResult> {
         let warnings = Vec::new();
         let mut errors = Vec::new();
         let mut security_issues = Vec::new();
@@ -247,7 +250,7 @@ impl SQLValidator {
                 .iter()
                 .all(|issue| !matches!(issue.severity, SecuritySeverity::Critical));
 
-        Ok(ValidationResult {
+        Ok(SqlValidationResult {
             is_valid,
             sanitized_sql,
             warnings,

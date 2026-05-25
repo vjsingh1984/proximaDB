@@ -574,8 +574,7 @@ impl Catalog for GlueCatalog {
 
             // Invalidate cache
             self.cache
-                .invalidate_table_in_catalog(&self.name, identifier)
-                .await;
+                .invalidate_table_in_catalog(&self.name, identifier);
 
             info!("Deleted Glue table: {}.{}", db_name, identifier.name);
             return Ok(true);
@@ -715,8 +714,7 @@ impl Catalog for GlueCatalog {
 
         // Invalidate cache
         self.cache
-            .invalidate_table_in_catalog(&self.name, from)
-            .await;
+            .invalidate_table_in_catalog(&self.name, from);
 
         info!("Renamed Glue table: {} -> {}", from, to);
         Ok(())
@@ -790,8 +788,7 @@ impl Catalog for GlueCatalog {
 
         // Invalidate cache
         self.cache
-            .invalidate_table_in_catalog(&self.name, identifier)
-            .await;
+            .invalidate_table_in_catalog(&self.name, identifier);
 
         info!(
             "Evolved Glue table schema: {} (v{})",

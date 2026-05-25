@@ -653,8 +653,7 @@ impl Catalog for IcebergCatalog {
             }
 
             self.cache
-                .invalidate_table_in_catalog(&self.name, identifier)
-                .await;
+                .invalidate_table_in_catalog(&self.name, identifier);
             info!("Dropped Iceberg table: {} (purge={})", identifier, purge);
         }
 
@@ -757,8 +756,7 @@ impl Catalog for IcebergCatalog {
         let _ = fs::rename(&from_path, &to_path).await;
 
         self.cache
-            .invalidate_table_in_catalog(&self.name, from)
-            .await;
+            .invalidate_table_in_catalog(&self.name, from);
 
         info!("Renamed Iceberg table: {} -> {}", from, to);
         Ok(())
@@ -818,8 +816,7 @@ impl Catalog for IcebergCatalog {
         fs::write(&metadata_path, &data).await?;
 
         self.cache
-            .invalidate_table_in_catalog(&self.name, identifier)
-            .await;
+            .invalidate_table_in_catalog(&self.name, identifier);
 
         info!(
             "Evolved Iceberg table schema: {} (v{})",

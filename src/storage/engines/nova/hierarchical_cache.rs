@@ -61,7 +61,7 @@ pub struct BlockStats {
     pub num_vectors: u64,
 
     /// Block-level zone maps
-    pub zone_map: ZoneMap,
+    pub zone_map: NovaCacheZoneMap,
 
     /// Cost estimation for query planning
     pub search_cost_estimate: f32,
@@ -89,8 +89,11 @@ pub struct NovaCacheRowGroupStats {
     pub indexed_columns: Vec<String>,
 }
 
+/// Backwards-compat alias for [`NovaCacheZoneMap`].
+pub type ZoneMap = NovaCacheZoneMap;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ZoneMap {
+pub struct NovaCacheZoneMap {
     /// Per-dimension min/max values for pruning
     pub dimension_ranges: Vec<DimensionRange>,
 
@@ -142,7 +145,7 @@ pub struct NovaHierarchicalCache {
     rowgroup_ttl_sec: u64,
 
     /// Zone maps - always cached for fast pruning
-    zonemap_cache: Arc<DashMap<String, Arc<ZoneMap>>>,
+    zonemap_cache: Arc<DashMap<String, Arc<NovaCacheZoneMap>>>,
 
     /// Sidecar global statistics
     global_stats: Arc<RwLock<GlobalStatistics>>,
@@ -174,7 +177,7 @@ pub struct CollectionStatistics {
     pub total_size_bytes: u64,
     pub compression_ratio: f32,
     pub last_compaction: chrono::DateTime<chrono::Utc>,
-    pub hot_zones: Vec<ZoneMap>,
+    pub hot_zones: Vec<NovaCacheZoneMap>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -407,7 +410,7 @@ impl NovaHierarchicalCache {
         let zonemap_path = format!("{}/zonemaps.bin", collection_id);
         if self.filesystem.exists(&zonemap_path).await.unwrap_or(false) {
             let data = self.filesystem.read(&zonemap_path).await?;
-            let zonemaps: HashMap<String, ZoneMap> = bincode::deserialize(&data)?;
+            let zonemaps: HashMap<String, NovaCacheZoneMap> = bincode::deserialize(&data)?;
 
             for (key, zonemap) in zonemaps {
                 self.zonemap_cache.insert(key, Arc::new(zonemap));
@@ -439,7 +442,7 @@ impl NovaHierarchicalCache {
 
 #[derive(Debug, Clone)]
 pub struct OptimizationHints {
-    pub hot_zones: Vec<ZoneMap>,
+    pub hot_zones: Vec<NovaCacheZoneMap>,
     pub common_projections: Vec<Vec<String>>,
     pub estimated_selectivity: f32,
     pub suggested_parallelism: usize,

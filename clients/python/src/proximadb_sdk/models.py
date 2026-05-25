@@ -1487,5 +1487,61 @@ class HealthStatus(BaseModel):
         self.timestamp_ms = value * 1000
 
 
+class ProbeResponse(BaseModel):
+    """Kubernetes liveness/readiness probe response (OpenAPI ProbeResponse)."""
+
+    model_config = ConfigDict(extra="allow")
+    status: str
+
+
+class ColumnDefinition(BaseModel):
+    """Column definition for a collection schema (OpenAPI ColumnDefinition)."""
+
+    model_config = ConfigDict(extra="allow")
+    name: str
+    data_type: str
+    nullable: Optional[bool] = None
+    indexed: Optional[bool] = None
+    filterable: Optional[bool] = None
+    max_length: Optional[int] = None
+    precision: Optional[int] = None
+    scale: Optional[int] = None
+    vector_dimension: Optional[int] = None
+
+
+class SchemaDefinition(BaseModel):
+    """Schema definition (OpenAPI SchemaDefinition)."""
+
+    model_config = ConfigDict(extra="allow")
+    columns: List[ColumnDefinition]
+    enforcement: Optional[str] = None
+    allow_additional_fields: Optional[bool] = None
+
+
+class SchemaResponse(BaseModel):
+    """Response from GET /api/v2/collections/{id}/schema (OpenAPI SchemaResponse)."""
+
+    model_config = ConfigDict(extra="allow")
+    schema_id: str
+    schema_version: str
+    collection_id: str
+    schema_: SchemaDefinition = Field(alias="schema")
+    created_at: str
+    updated_at: Optional[str] = None
+    parent_schema_id: Optional[str] = None
+
+
+class UpdateSchemaResponse(BaseModel):
+    """Response from PUT /api/v2/collections/{id}/schema (OpenAPI UpdateSchemaResponse)."""
+
+    model_config = ConfigDict(extra="allow")
+    schema_id: str
+    schema_version: str
+    previous_schema_id: str
+    changes: List[Dict[str, Any]]
+    warnings: List[str]
+    updated_at: str
+
+
 # Simple alias
 Vector = VectorRecord

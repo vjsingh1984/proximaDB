@@ -159,9 +159,12 @@ pub enum BusinessCriticality {
     MissionCritical,
 }
 
+/// Backwards-compat alias for [`KnowledgeGraphUserContext`].
+pub type UserContext = KnowledgeGraphUserContext;
+
 /// User context for RBAC validation
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserContext {
+pub struct KnowledgeGraphUserContext {
     /// Unique user identifier
     pub user_id: String,
     
@@ -619,7 +622,7 @@ impl Default for DomainConfig {
     }
 }
 
-impl UserContext {
+impl KnowledgeGraphUserContext {
     /// Create system admin context for internal operations
     pub fn system_admin() -> Self {
         Self {
@@ -737,7 +740,7 @@ mod tests {
 
     #[test]
     fn test_user_context_permissions() {
-        let user = UserContext::system_admin();
+        let user = KnowledgeGraphUserContext::system_admin();
         assert!(user.has_permission(&Permission::SystemAdmin));
         assert!(user.can_access_domain("any_domain"));
     }

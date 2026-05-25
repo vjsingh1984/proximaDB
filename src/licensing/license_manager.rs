@@ -129,7 +129,7 @@ impl std::fmt::Display for LicenseTier {
             LicenseTier::Free { .. } => write!(f, "Free"),
             LicenseTier::Developer { .. } => write!(f, "Developer"),
             LicenseTier::Professional { .. } => write!(f, "Professional"),
-            LicenseTier::Enterprise { .. } => write!(f, "Enterprise"),
+            LicenseTier::Tier5 { .. } => write!(f, "Enterprise"),
             LicenseTier::CustomEnterprise { .. } => write!(f, "Custom Enterprise"),
         }
     }

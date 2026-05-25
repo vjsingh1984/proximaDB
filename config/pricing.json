@@ -1,240 +1,75 @@
 {
-  "schema_version": 1,
-  "last_updated": "2026-05-22",
-  "currency": "USD",
-  "default_tier": "free_trial",
+  "_comment_header": [
+    "Compile-time-embedded baseline tier configuration for the OSS",
+    "ProximaDB image. Loaded via include_str! into the binary so the",
+    "engine is self-contained for offline / air-gapped deployments.",
+    "",
+    "This file is intentionally domain-neutral. It carries operational",
+    "concerns only — tier ids, prometheus labels, soft caps. Commercial",
+    "concerns (currency, prices, billing primitives, marketing copy)",
+    "belong in operator-side overlay artifacts. See config/TIER_CONFIG.md",
+    "for the schema contract and config/tier-config.example.json for a",
+    "richer 3-tier example layout operators can copy.",
+    "",
+    "Operators (including AnvaiOps) overlay this file at Docker build",
+    "time (COPY <operator-pricing>.json /config/pricing.json) or at",
+    "container boot (entrypoint fetches from PROXIMADB_TIER_CONFIG_URL).",
+    "Overlay JSON may use any tier ids that map to a Tier variant via",
+    "the serde aliases declared in src/catalog/tenant_tier.rs.",
+    "",
+    "File still named pricing.json (not tier-config.json) during the",
+    "Phase B-4 migration window — Phase B-5 will rename + update the",
+    "include_str! path + the anvaiops commercial-image COPY destination",
+    "in lockstep."
+  ],
 
-  "unit_rates": {
-    "ksu_per_gb_month": 0.25,
-    "kru_per_tb_scanned": 0.02,
-    "kiu_per_gb": 0.75,
-    "keu": {
-      "openai_small_async_per_gb": 5.00,
-      "openai_small_sync_per_gb":  8.25,
-      "openai_large_async_per_gb": 26.25,
-      "openai_large_sync_per_gb":  52.50,
-      "bge_small_async_per_gb":    3.75,
-      "bge_small_sync_per_gb":     6.25,
-      "bge_large_async_per_gb":    19.75,
-      "bge_large_sync_per_gb":     39.50
-    },
-    "connector_per_month": 39
-  },
+  "schema_version": 1,
+  "default_tier": "tier1",
 
   "tiers": [
     {
-      "id": "free_trial",
-      "display_name": "Free Trial",
-      "platform_fee_usd": 0,
-      "trial_duration_days": 30,
-      "allowances": {
-        "storage_gb": 1,
-        "ingest_gb": 0.5,
-        "embedding_gb": 0.1,
-        "scan_gb": 10000,
-        "connectors": 1
-      },
+      "id": "tier1",
+      "prom_label": "tier1",
       "soft_caps": {
         "scan_budget_gb": 1.0,
         "ef_search_cap": 64,
         "freshness_sla_seconds": 900
-      },
-      "features": {
-        "sync_ingest": false,
-        "dr_addon_usd": null,
-        "support_level": "community",
-        "embed_route": "bge_small",
-        "deployment": "pooled"
-      },
-      "prom_label": "free",
-      "legacy_aliases": ["free"],
-      "display": {
-        "price_label": "$0",
-        "price_period": "/ 30 days",
-        "description": "Evaluate the workflow with capped usage and shared compute. No production SLA — built for fast proof-of-value before paid rollout.",
-        "cta_label": "Start trial",
-        "cta_style": "ghost",
-        "featured": false,
-        "additional_features": [
-          "Shared cluster — single region",
-          "Standard retrieval quality",
-          "Community docs + Slack forum",
-          "Expires after 30 days"
-        ]
       }
     },
     {
-      "id": "team",
-      "display_name": "Team",
-      "platform_fee_usd": 19,
-      "allowances": {
-        "storage_gb": 3,
-        "ingest_gb": 1.5,
-        "embedding_gb": 0.3,
-        "scan_gb": 30000,
-        "connectors": 2
-      },
+      "id": "tier2",
+      "prom_label": "tier2",
       "soft_caps": {
         "scan_budget_gb": 4.0,
         "ef_search_cap": 160,
         "freshness_sla_seconds": 300
-      },
-      "features": {
-        "sync_ingest": false,
-        "dr_addon_usd": null,
-        "support_level": "community",
-        "embed_route": "bge_small",
-        "deployment": "pooled"
-      },
-      "prom_label": "team",
-      "legacy_aliases": ["starter", "standard", "community"],
-      "display": {
-        "price_label": "$19+",
-        "price_period": "/ mo",
-        "description": "Self-serve on-ramp for solo engineers and small teams. Real connectors, real allowance, real workflow — at a try-it-yourself price.",
-        "cta_label": "Choose Team",
-        "cta_style": "ghost",
-        "featured": false,
-        "additional_features": [
-          "Async ingest only",
-          "Standard retrieval quality",
-          "Pooled cluster — single region",
-          "Self-serve docs + community forum"
-        ]
       }
     },
     {
-      "id": "pro",
-      "display_name": "Pro",
-      "platform_fee_usd": 199,
-      "allowances": {
-        "storage_gb": 30,
-        "ingest_gb": 15,
-        "embedding_gb": 3,
-        "scan_gb": 300000,
-        "connectors": 6
-      },
+      "id": "tier3",
+      "prom_label": "tier3",
       "soft_caps": {
         "scan_budget_gb": 15.0,
         "ef_search_cap": 256,
         "freshness_sla_seconds": 120
-      },
-      "features": {
-        "sync_ingest": true,
-        "dr_addon_usd": 49,
-        "support_level": "standard",
-        "embed_route": "bge_large",
-        "deployment": "pooled"
-      },
-      "prom_label": "pro",
-      "legacy_aliases": [],
-      "display": {
-        "price_label": "$199+",
-        "price_period": "/ mo",
-        "description": "Production-ready teams with multiple sources. Enhanced retrieval, sync ingest, dedicated Slack channel, optional DR.",
-        "cta_label": "Choose Pro",
-        "cta_style": "primary",
-        "featured": true,
-        "additional_features": [
-          "Async + sync ingest ($8.25/GB sync embedding overage)",
-          "Enhanced retrieval quality (multilingual)",
-          "Pooled cluster — single region",
-          "DR add-on available (+$49/mo)",
-          "Dedicated Slack support channel"
-        ]
       }
     },
     {
-      "id": "business",
-      "display_name": "Business",
-      "platform_fee_usd": 599,
-      "allowances": {
-        "storage_gb": 100,
-        "ingest_gb": 50,
-        "embedding_gb": 10,
-        "scan_gb": 1000000,
-        "connectors": 21
-      },
+      "id": "tier4",
+      "prom_label": "tier4",
       "soft_caps": {
         "scan_budget_gb": 50.0,
         "ef_search_cap": 384,
         "freshness_sla_seconds": 60
-      },
-      "features": {
-        "sync_ingest": true,
-        "dr_addon_usd": 99,
-        "support_level": "standard",
-        "embed_route": "bge_large",
-        "deployment": "pooled"
-      },
-      "prom_label": "business",
-      "legacy_aliases": ["enterprise_pooled"],
-      "display": {
-        "price_label": "$599+",
-        "price_period": "/ mo",
-        "description": "Production workflow at BU scale. All 21 connectors, real-time webhook ingestion, retrieval analytics, NBD response target.",
-        "cta_label": "Get started",
-        "cta_style": "ghost",
-        "featured": false,
-        "additional_features": [
-          "Async + sync ingest ($8.25/GB sync embedding overage)",
-          "All 21 connectors",
-          "Enhanced retrieval quality (multilingual)",
-          "Pooled cluster — single region",
-          "DR add-on available (+$99/mo)",
-          "Real-time webhook ingestion (Slack + Teams)",
-          "Slack bot (/anvai command) + Teams bot",
-          "MTTR + retrieval analytics",
-          "Dedicated Slack support channel",
-          "Next-business-day response target"
-        ]
       }
     },
     {
-      "id": "enterprise",
-      "display_name": "Enterprise",
-      "platform_fee_usd": 1500,
-      "allowances": {
-        "storage_gb": 250,
-        "ingest_gb": 125,
-        "embedding_gb": 25,
-        "scan_gb": 2500000,
-        "connectors": 21
-      },
+      "id": "tier5",
+      "prom_label": "tier5",
       "soft_caps": {
         "scan_budget_gb": 256.0,
         "ef_search_cap": 1024,
         "freshness_sla_seconds": 15
-      },
-      "features": {
-        "sync_ingest": true,
-        "dr_addon_usd": 0,
-        "support_level": "managed_success",
-        "embed_route": "bge_m3",
-        "deployment": "dedicated"
-      },
-      "prom_label": "enterprise",
-      "legacy_aliases": ["enterprise_dedicated"],
-      "display": {
-        "price_label": "$1,500+",
-        "price_period": "/ mo",
-        "description": "Dedicated capacity for higher-scale or regulated environments. Private VPC, SSO, Managed Success, custom SLA.",
-        "cta_label": "Contact us",
-        "cta_style": "ghost",
-        "featured": false,
-        "additional_features": [
-          "Async + sync ingest — sync SLA negotiable",
-          "Premium retrieval quality · bring-your-own-model available",
-          "All 21 connectors",
-          "Dedicated AKS / EKS cluster",
-          "Cross-region DR included by default",
-          "Private VPC / intranet deployment",
-          "SSO (Okta, Azure AD)",
-          "Audit logs + RBAC",
-          "Managed Success included",
-          "Monthly optimization + retrieval quality reviews",
-          "Custom SLA"
-        ]
       }
     }
   ]

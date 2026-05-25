@@ -30,21 +30,24 @@ pub struct VectorStoreConfig {
     /// Enable quantization for storage efficiency
     pub enable_quantization: bool,
     /// Default quantization configuration
-    pub default_quantization_config: VectorQuantizationConfig,
+    pub default_quantization_config: MultimodalVectorQuantizationConfig,
 }
+
+/// Backwards-compat alias for [`MultimodalVectorQuantizationConfig`].
+pub type VectorQuantizationConfig = MultimodalVectorQuantizationConfig;
 
 /// Vector quantization configuration
 ///
 /// Uses foundation QuantizationType and QuantizationLevel for consistency.
 #[derive(Debug, Clone, Copy)]
-pub struct VectorQuantizationConfig {
+pub struct MultimodalVectorQuantizationConfig {
     /// Quantization type
     pub quantization_type: QuantizationType,
     /// Quantization level (precision)
     pub quantization_level: QuantizationLevel,
 }
 
-impl VectorQuantizationConfig {
+impl MultimodalVectorQuantizationConfig {
     /// No quantization (full precision)
     pub fn none() -> Self {
         Self {
@@ -78,7 +81,7 @@ impl VectorQuantizationConfig {
     }
 }
 
-impl Default for VectorQuantizationConfig {
+impl Default for MultimodalVectorQuantizationConfig {
     fn default() -> Self {
         Self::int8()
     }
@@ -90,7 +93,7 @@ impl Default for VectorStoreConfig {
             dimension_threshold: 512,
             max_vectors_in_memory: 100_000,
             enable_quantization: true,
-            default_quantization_config: VectorQuantizationConfig::int8(),
+            default_quantization_config: MultimodalVectorQuantizationConfig::int8(),
         }
     }
 }

@@ -53,9 +53,12 @@ use crate::query::capability::{
 };
 use crate::query::federated::optimizer::PlanNode;
 
+/// Backwards-compat alias for [`QueryValidationResult`].
+pub type ValidationResult = QueryValidationResult;
+
 /// Validation result with detailed information
 #[derive(Debug, Clone)]
-pub struct ValidationResult {
+pub struct QueryValidationResult {
     /// Whether validation passed
     pub is_valid: bool,
     /// Missing capabilities (if any)
@@ -66,7 +69,7 @@ pub struct ValidationResult {
     pub engine_name: String,
 }
 
-impl ValidationResult {
+impl QueryValidationResult {
     /// Create a successful validation result
     pub fn success(engine_name: String) -> Self {
         Self {
@@ -131,14 +134,14 @@ impl PlanValidator {
     ///
     /// ## Returns
     ///
-    /// * `Ok(ValidationResult)` - Validation result with details
+    /// * `Ok(QueryValidationResult)` - Validation result with details
     /// * `Err(CapabilityCheckError)` - If engine capabilities cannot be determined
     #[instrument(skip(self, plan), fields(engine = %engine_name, plan_id = %plan.id))]
     pub fn validate_plan(
         &self,
         plan: &PlanNode,
         engine_name: &str,
-    ) -> Result<ValidationResult, CapabilityCheckError> {
+    ) -> Result<QueryValidationResult, CapabilityCheckError> {
         info!(
             plan_id = plan.id,
             node_type = ?plan.node_type,
@@ -184,7 +187,7 @@ impl PlanValidator {
             .collect();
 
         if missing.is_empty() {
-            let result = ValidationResult::success(engine_name.to_string());
+            let result = QueryValidationResult::success(engine_name.to_string());
             info!(
                 plan_id = plan.id,
                 engine = %engine_name,
@@ -208,7 +211,7 @@ impl PlanValidator {
                 "Plan validation failed - missing capabilities"
             );
 
-            Ok(ValidationResult::failure(
+            Ok(QueryValidationResult::failure(
                 engine_name.to_string(),
                 missing_names,
                 available_alternatives,
@@ -273,7 +276,7 @@ impl PlanValidator {
 
     /// Check if a plan is executable and return detailed error if not
     ///
-    /// This is a convenience method that converts ValidationResult
+    /// This is a convenience method that converts QueryValidationResult
     /// into a Result type for easier error handling.
     #[instrument(skip(self, plan), fields(engine = %engine_name))]
     pub fn ensure_executable(
@@ -545,7 +548,7 @@ mod tests {
 
     #[test]
     fn test_validation_result_success() {
-        let result = ValidationResult::success("SST".to_string());
+        let result = QueryValidationResult::success("SST".to_string());
 
         assert!(result.is_valid);
         assert!(result.missing_capabilities.is_empty());
@@ -555,7 +558,7 @@ mod tests {
 
     #[test]
     fn test_validation_result_failure() {
-        let result = ValidationResult::failure(
+        let result = QueryValidationResult::failure(
             "VIPER".to_string(),
             vec!["VectorSearch".to_string()],
             vec!["SST".to_string()],

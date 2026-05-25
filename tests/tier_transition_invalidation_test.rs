@@ -53,7 +53,7 @@ async fn upgrade_emits_event_and_invalidates_warm_cache() {
     // Stage 1: warm the planner cache for tenant-a on collection 'kb'
     // against the community tier.
     let cache = Arc::new(PlanCache::default());
-    let before = record(Tier::Team, None, None, None);
+    let before = record(Tier::Tier2, None, None, None);
     let stats = FieldStatistics::default();
     let policy = PredicateSelectivityPolicy::default();
     let preds = vec![predicate("tier", "community")];
@@ -75,7 +75,7 @@ async fn upgrade_emits_event_and_invalidates_warm_cache() {
     assert!(hit.cache_hit, "cache should be warm");
 
     // Stage 2: tier transitions to business.
-    let after = record(Tier::Business, None, None, None);
+    let after = record(Tier::Tier4, None, None, None);
     let event = detect_transition(&before, &after);
     assert_eq!(event.class, TransitionClass::Upgrade);
     // 2026-Q2 tier rename: Community → Team. See memory note
@@ -115,8 +115,8 @@ async fn upgrade_emits_event_and_invalidates_warm_cache() {
 #[tokio::test]
 async fn downgrade_emits_event_and_invalidates_too() {
     let cache = Arc::new(PlanCache::default());
-    let before = record(Tier::Enterprise, None, None, None);
-    let after = record(Tier::Business, None, None, None);
+    let before = record(Tier::Tier5, None, None, None);
+    let after = record(Tier::Tier4, None, None, None);
     let event = detect_transition(&before, &after);
     assert_eq!(event.class, TransitionClass::Downgrade);
 
@@ -154,8 +154,8 @@ async fn no_change_emits_event_but_invalidation_is_an_optional_step() {
     // produces a NoChange + the invalidator is independent — the
     // caller may run it anyway and the cache reports zero drops.
     let cache = Arc::new(PlanCache::default());
-    let before = record(Tier::Business, None, None, None);
-    let after = record(Tier::Business, None, None, None);
+    let before = record(Tier::Tier4, None, None, None);
+    let after = record(Tier::Tier4, None, None, None);
     let event = detect_transition(&before, &after);
     assert_eq!(event.class, TransitionClass::NoChange);
 
@@ -197,8 +197,8 @@ async fn cross_tenant_transition_does_not_flush_other_tenants() {
     let stats = FieldStatistics::default();
     let policy = PredicateSelectivityPolicy::default();
     let preds = vec![predicate("plan", "community")];
-    let tier_a = record(Tier::Team, None, None, None);
-    let mut tier_b = record(Tier::Team, None, None, None);
+    let tier_a = record(Tier::Tier2, None, None, None);
+    let mut tier_b = record(Tier::Tier2, None, None, None);
     tier_b.tenant_id = "tenant-b".into();
 
     // Warm cache for both tenants.
@@ -220,7 +220,7 @@ async fn cross_tenant_transition_does_not_flush_other_tenants() {
     }
 
     // Transition is for tenant-a only.
-    let after = record(Tier::Business, None, None, None);
+    let after = record(Tier::Tier4, None, None, None);
     let _event = detect_transition(&tier_a, &after);
 
     // Invalidate only tenant-a's entries.
@@ -254,8 +254,8 @@ async fn cross_tenant_transition_does_not_flush_other_tenants() {
 async fn freshness_sla_change_classified_correctly_in_event() {
     // 60s → 15s SLA is faster = upgrade direction per the LLD
     // semantics encoded in tier_transition.
-    let before = record(Tier::Business, None, None, Some(60));
-    let after = record(Tier::Business, None, None, Some(15));
+    let before = record(Tier::Tier4, None, None, Some(60));
+    let after = record(Tier::Tier4, None, None, Some(15));
     let event = detect_transition(&before, &after);
     assert_eq!(event.class, TransitionClass::Upgrade);
     assert_eq!(event.freshness_sla_seconds.direction, AxisDirection::Up);

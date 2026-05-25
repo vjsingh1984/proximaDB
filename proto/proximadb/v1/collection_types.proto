@@ -39,6 +39,27 @@ message CollectionConfig {
   // and writes the resulting vector. Records that still carry a populated vector
   // bypass embedding and are written as-is.
   optional EmbeddingConfig embedding_config = 25;
+
+  // Canonical embedding precision for this collection. Mirrors
+  // `CatalogTableSchema.canonical_embedding_precision`. When `FP16` (or any
+  // non-`FP32`), the drainer + sink coerce records to this precision before
+  // WAL append, compaction reconstitutes back to this precision, and the
+  // Arrow bridge emits a Float16Array column for native fp16 on-disk storage
+  // (~50% byte reduction vs fp32). When unset / `FP32`, the legacy fp32 path
+  // is used unchanged.
+  optional EmbeddingPrecision canonical_embedding_precision = 26;
+}
+
+// Canonical scalar type for a collection's embedding column. Mirrors
+// `proximadb_records::EmbeddingScalarType`. The on-disk Arrow column dtype +
+// per-cell `EmbeddingCell.precision` derive from this.
+enum EmbeddingPrecision {
+  EMBEDDING_PRECISION_UNSPECIFIED = 0; // → Fp32 (legacy default)
+  EMBEDDING_PRECISION_FP32 = 1;
+  EMBEDDING_PRECISION_FP16 = 2;
+  EMBEDDING_PRECISION_BF16 = 3;
+  EMBEDDING_PRECISION_INT8 = 4;
+  EMBEDDING_PRECISION_UINT8 = 5;
 }
 
 // Tier-aware embedding route. Resolved per-collection or per-tenant via the

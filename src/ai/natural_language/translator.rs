@@ -41,7 +41,7 @@ pub struct TranslationResult {
     pub sql: String,
     pub confidence: f32,
     pub explanation: String,
-    pub security_context: UserContext,
+    pub security_context: TranslatorUserContext,
     pub accessible_tables: Vec<String>,
     pub translation_metadata: TranslationMetadata,
 }
@@ -58,9 +58,12 @@ pub struct TranslationMetadata {
     pub translated_at: DateTime<Utc>,
 }
 
+/// Backwards-compat alias for [`TranslatorUserContext`].
+pub type UserContext = TranslatorUserContext;
+
 /// User context for translation (simplified version)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct UserContext {
+pub struct TranslatorUserContext {
     pub user_id: String,
     pub tenant_id: Option<String>,
     pub accessible_tables: Vec<String>,
@@ -137,7 +140,7 @@ impl NLQueryTranslator {
     pub async fn translate_to_sql(
         &self,
         nl_query: &str,
-        user_context: &UserContext,
+        user_context: &TranslatorUserContext,
     ) -> Result<TranslationResult, TranslationError> {
         let start_time = std::time::Instant::now();
 
@@ -235,7 +238,7 @@ impl NLQueryTranslator {
         &self,
         query: &str,
         schema_context: &str,
-        user_context: &UserContext,
+        user_context: &TranslatorUserContext,
     ) -> Result<String, TranslationError> {
         let template = PromptTemplate::SecureTranslation;
 
@@ -275,7 +278,7 @@ impl NLQueryTranslator {
     async fn query_llm_with_retry(
         &self,
         prompt: &str,
-        user_context: &UserContext,
+        user_context: &TranslatorUserContext,
     ) -> Result<LLMResponse, TranslationError> {
         let request = LLMRequest::new(prompt.to_string())
             .with_max_tokens(1000)
@@ -450,7 +453,7 @@ Your response should be a valid SQL query that safely retrieves the requested da
     /// Validate user permissions for translation
     fn validate_user_permissions(
         &self,
-        user_context: &UserContext,
+        user_context: &TranslatorUserContext,
     ) -> Result<(), TranslationError> {
         if user_context.user_id.is_empty() {
             return Err(TranslationError::SecurityValidationFailed {
@@ -544,7 +547,7 @@ Your response should be a valid SQL query that safely retrieves the requested da
     /// Get user accessible tables
     async fn get_user_accessible_tables(
         &self,
-        user_context: &UserContext,
+        user_context: &TranslatorUserContext,
     ) -> Result<Vec<String>, TranslationError> {
         // In a real implementation, this would query the RBAC system
         // For now, return the accessible tables from user context
@@ -659,7 +662,7 @@ mod tests {
             None
         }
 
-        fn validate_user_permissions(&self, user_context: &UserContext) -> anyhow::Result<()> {
+        fn validate_user_permissions(&self, user_context: &TranslatorUserContext) -> anyhow::Result<()> {
             if user_context.permissions.is_empty() {
                 return Err(anyhow::anyhow!("User has no permissions"));
             }
@@ -722,7 +725,7 @@ This query will return the top 10 customers by order count.
         let translator = TestTranslator;
 
         // Valid user context
-        let valid_user = UserContext {
+        let valid_user = TranslatorUserContext {
             user_id: "test_user".to_string(),
             tenant_id: Some("tenant_1".to_string()),
             accessible_tables: vec!["customers".to_string(), "orders".to_string()],
@@ -733,7 +736,7 @@ This query will return the top 10 customers by order count.
         assert!(translator.validate_user_permissions(&valid_user).is_ok());
 
         // Invalid user context - no permissions
-        let invalid_user = UserContext {
+        let invalid_user = TranslatorUserContext {
             user_id: "test_user".to_string(),
             tenant_id: Some("tenant_1".to_string()),
             accessible_tables: vec!["customers".to_string()],
@@ -744,7 +747,7 @@ This query will return the top 10 customers by order count.
         assert!(translator.validate_user_permissions(&invalid_user).is_err());
 
         // Invalid user context - no accessible tables
-        let no_tables_user = UserContext {
+        let no_tables_user = TranslatorUserContext {
             user_id: "test_user".to_string(),
             tenant_id: Some("tenant_1".to_string()),
             accessible_tables: vec![], // No accessible tables

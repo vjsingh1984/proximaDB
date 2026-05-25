@@ -644,8 +644,7 @@ impl Catalog for PolarisCatalog {
 
         // Invalidate cache
         self.cache
-            .invalidate_table_in_catalog(&self.name, identifier)
-            .await;
+            .invalidate_table_in_catalog(&self.name, identifier);
 
         info!("Deleted Polaris table: {} (purge={})", identifier, purge);
         Ok(true)
@@ -752,8 +751,7 @@ impl Catalog for PolarisCatalog {
 
         // Invalidate cache
         self.cache
-            .invalidate_table_in_catalog(&self.name, from)
-            .await;
+            .invalidate_table_in_catalog(&self.name, from);
 
         info!("Renamed Polaris table: {} -> {}", from, to);
         Ok(())
@@ -812,8 +810,7 @@ impl Catalog for PolarisCatalog {
 
         // Invalidate cache
         self.cache
-            .invalidate_table_in_catalog(&self.name, identifier)
-            .await;
+            .invalidate_table_in_catalog(&self.name, identifier);
 
         info!(
             "Evolved Polaris table schema: {} (v{})",
@@ -908,8 +905,7 @@ impl Catalog for PolarisCatalog {
 
         // Invalidate cache
         self.cache
-            .invalidate_table_in_catalog(&self.name, identifier)
-            .await;
+            .invalidate_table_in_catalog(&self.name, identifier);
 
         Ok(index)
     }
@@ -942,8 +938,7 @@ impl Catalog for PolarisCatalog {
 
         // Invalidate cache
         self.cache
-            .invalidate_table_in_catalog(&self.name, identifier)
-            .await;
+            .invalidate_table_in_catalog(&self.name, identifier);
 
         Ok(true)
     }

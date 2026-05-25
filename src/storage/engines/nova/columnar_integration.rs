@@ -35,7 +35,7 @@ pub struct NovaUnifiedEngine {
     hierarchical_stats: Arc<HierarchicalStatsManager>,
 
     /// Zone map manager for multi-dimensional pruning
-    zone_map_manager: Arc<ZoneMapManager>,
+    zone_map_manager: Arc<NovaColumnarZoneMapManager>,
 
     /// Streaming processor for large-scale operations
     streaming_processor: Arc<StreamingProcessor>,
@@ -54,7 +54,7 @@ pub struct NovaSpecificConfig {
     pub enable_hierarchical_stats: bool,
 
     /// Zone map configuration
-    pub zone_map_config: ZoneMapConfig,
+    pub zone_map_config: NovaColumnarZoneMapConfig,
 
     /// Streaming processing settings
     pub streaming_config: StreamingConfig,
@@ -68,7 +68,7 @@ pub struct NovaSpecificConfig {
 
 /// Zone map configuration for NOVA
 #[derive(Debug, Clone)]
-pub struct ZoneMapConfig {
+pub struct NovaColumnarZoneMapConfig {
     /// Enable zone maps
     pub enable_zone_maps: bool,
 
@@ -178,7 +178,7 @@ struct NovaCollectionMetadata {
     #[allow(dead_code)]
     hierarchical_stats: HierarchicalStatistics,
     #[allow(dead_code)]
-    zone_maps: Vec<ZoneMap>,
+    zone_maps: Vec<NovaColumnarZoneMap>,
 }
 
 /// Hierarchical statistics for NOVA optimization
@@ -248,9 +248,12 @@ pub struct GlobalStats {
     pub index_coverage: f32,
 }
 
+/// Backwards-compat alias for [`NovaColumnarZoneMap`].
+pub type ZoneMap = NovaColumnarZoneMap;
+
 /// Zone map for multi-dimensional pruning
 #[derive(Debug, Clone)]
-pub struct ZoneMap {
+pub struct NovaColumnarZoneMap {
     pub zone_id: usize,
     pub parent_zone_id: Option<usize>,
     pub depth: usize,
@@ -285,14 +288,14 @@ impl HierarchicalStatsManager {
 }
 
 /// Zone map manager
-pub struct ZoneMapManager {
+pub struct NovaColumnarZoneMapManager {
     #[allow(dead_code)]
-    config: ZoneMapConfig,
-    zone_cache: Arc<tokio::sync::RwLock<HashMap<String, Vec<ZoneMap>>>>,
+    config: NovaColumnarZoneMapConfig,
+    zone_cache: Arc<tokio::sync::RwLock<HashMap<String, Vec<NovaColumnarZoneMap>>>>,
 }
 
-impl ZoneMapManager {
-    pub fn new(config: ZoneMapConfig) -> Self {
+impl NovaColumnarZoneMapManager {
+    pub fn new(config: NovaColumnarZoneMapConfig) -> Self {
         Self {
             config,
             zone_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
@@ -388,7 +391,7 @@ impl NovaUnifiedEngine {
 
         // Initialize NOVA-specific components
         let hierarchical_stats = Arc::new(HierarchicalStatsManager::new(nova_config.clone()));
-        let zone_map_manager = Arc::new(ZoneMapManager::new(nova_config.zone_map_config.clone()));
+        let zone_map_manager = Arc::new(NovaColumnarZoneMapManager::new(nova_config.zone_map_config.clone()));
         let streaming_processor = Arc::new(StreamingProcessor::new(
             nova_config.streaming_config.clone(),
         ));
@@ -693,7 +696,7 @@ impl NovaUnifiedEngine {
             pruning_efficiency: 0.85,
         };
 
-        let zone_map_metrics = ZoneMapMetrics {
+        let zone_map_metrics = NovaColumnarZoneMapMetrics {
             zones_count: 0,
             nested_zones_count: 0,
             pruning_operations: 0,
@@ -1078,7 +1081,7 @@ pub struct NovaPerformanceMetrics {
         crate::storage::engines::core::formats::columnar::common::OperationMetrics,
     pub resource_metrics: crate::storage::engines::core::formats::columnar::common::ResourceMetrics,
     pub hierarchical_metrics: HierarchicalMetrics,
-    pub zone_map_metrics: ZoneMapMetrics,
+    pub zone_map_metrics: NovaColumnarZoneMapMetrics,
     pub streaming_metrics: StreamingMetrics,
 }
 
@@ -1093,7 +1096,7 @@ pub struct HierarchicalMetrics {
 
 /// Zone map metrics
 #[derive(Debug)]
-pub struct ZoneMapMetrics {
+pub struct NovaColumnarZoneMapMetrics {
     pub zones_count: usize,
     pub nested_zones_count: usize,
     pub pruning_operations: usize,
@@ -1132,7 +1135,7 @@ impl HierarchicalStatsManager {
     }
 }
 
-impl ZoneMapManager {
+impl NovaColumnarZoneMapManager {
     async fn rebuild_zones(
         &self,
         _collection_id: &str,
@@ -1145,7 +1148,7 @@ impl ZoneMapManager {
     async fn prune_zones(
         &self,
         _query_vector: &[f32],
-        zone_maps: &[ZoneMap],
+        zone_maps: &[NovaColumnarZoneMap],
         _candidate_super_blocks: &[usize],
     ) -> Result<Vec<usize>> {
         // Placeholder: return all zone IDs
@@ -1153,8 +1156,8 @@ impl ZoneMapManager {
     }
 
     #[allow(dead_code)]
-    async fn get_metrics(&self) -> ZoneMapMetrics {
-        ZoneMapMetrics {
+    async fn get_metrics(&self) -> NovaColumnarZoneMapMetrics {
+        NovaColumnarZoneMapMetrics {
             zones_count: 0,
             nested_zones_count: 0,
             pruning_operations: 0,
@@ -1217,7 +1220,7 @@ impl Default for NovaSpecificConfig {
     fn default() -> Self {
         Self {
             enable_hierarchical_stats: true,
-            zone_map_config: ZoneMapConfig::default(),
+            zone_map_config: NovaColumnarZoneMapConfig::default(),
             streaming_config: StreamingConfig::default(),
             caching_config: AdvancedCachingConfig::default(),
             progressive_search_config: NovaColumnarProgressiveSearchConfig::default(),
@@ -1225,7 +1228,7 @@ impl Default for NovaSpecificConfig {
     }
 }
 
-impl Default for ZoneMapConfig {
+impl Default for NovaColumnarZoneMapConfig {
     fn default() -> Self {
         Self {
             enable_zone_maps: true,
@@ -1294,7 +1297,7 @@ mod tests {
 
     #[test]
     fn test_zone_map_config() {
-        let config = ZoneMapConfig::default();
+        let config = NovaColumnarZoneMapConfig::default();
 
         assert_eq!(config.zone_size, 10000);
         assert!(config.enable_nested_zones);

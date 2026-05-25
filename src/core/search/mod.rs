@@ -12,6 +12,7 @@ pub mod multi_tier_deduplication;
 pub mod mvcc_resolution;
 pub mod progressive_quantization;
 pub mod progressive_search_pipeline;
+pub mod rank;
 pub mod queries;
 pub mod query_preprocessing;
 pub mod results;

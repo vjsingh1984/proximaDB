@@ -70,7 +70,7 @@ pub struct DataCompressionConfig {
     pub compress_metadata: bool,
 
     /// Vector quantization configuration
-    pub vector_quantization: VectorQuantizationConfig,
+    pub vector_quantization: BuilderVectorQuantizationConfig,
 
     /// Compression algorithm for metadata
     pub metadata_compression: CompressionLevel,
@@ -84,18 +84,21 @@ impl Default for DataCompressionConfig {
         Self {
             compress_vectors: false,
             compress_metadata: false,
-            vector_quantization: VectorQuantizationConfig::none(),
+            vector_quantization: BuilderVectorQuantizationConfig::none(),
             metadata_compression: CompressionLevel::None,
             compression_level: 6,
         }
     }
 }
 
+/// Backwards-compat alias for [`BuilderVectorQuantizationConfig`].
+pub type VectorQuantizationConfig = BuilderVectorQuantizationConfig;
+
 /// Vector quantization configuration
 ///
 /// Uses foundation QuantizationType and QuantizationLevel for consistency.
 #[derive(Debug, Clone)]
-pub struct VectorQuantizationConfig {
+pub struct BuilderVectorQuantizationConfig {
     /// Quantization type
     pub quantization_type: QuantizationType,
 
@@ -103,7 +106,7 @@ pub struct VectorQuantizationConfig {
     pub quantization_level: QuantizationLevel,
 }
 
-impl VectorQuantizationConfig {
+impl BuilderVectorQuantizationConfig {
     /// Create a new vector quantization config
     pub fn new(quantization_type: QuantizationType, quantization_level: QuantizationLevel) -> Self {
         Self {
@@ -153,7 +156,7 @@ impl VectorQuantizationConfig {
     }
 }
 
-impl Default for VectorQuantizationConfig {
+impl Default for BuilderVectorQuantizationConfig {
     fn default() -> Self {
         Self::none()
     }
@@ -248,7 +251,7 @@ impl Default for StorageSystemConfig {
                 compression: DataCompressionConfig {
                     compress_vectors: true,
                     compress_metadata: true,
-                    vector_quantization: VectorQuantizationConfig::product_quantization(),
+                    vector_quantization: BuilderVectorQuantizationConfig::product_quantization(),
                     metadata_compression: CompressionLevel::Fast,
                     compression_level: 3,
                 },
@@ -361,7 +364,7 @@ impl StorageSystemBuilder {
         self.config.data_storage.compression = DataCompressionConfig {
             compress_vectors: true,
             compress_metadata: true,
-            vector_quantization: VectorQuantizationConfig::product_quantization(),
+            vector_quantization: BuilderVectorQuantizationConfig::product_quantization(),
             metadata_compression: CompressionLevel::High,
             compression_level: 6,
         };
@@ -373,7 +376,7 @@ impl StorageSystemBuilder {
         self.config.data_storage.compression = DataCompressionConfig {
             compress_vectors: true,
             compress_metadata: true,
-            vector_quantization: VectorQuantizationConfig::product_quantization(),
+            vector_quantization: BuilderVectorQuantizationConfig::product_quantization(),
             metadata_compression: CompressionLevel::Fast,
             compression_level: 1,
         };
@@ -385,7 +388,7 @@ impl StorageSystemBuilder {
         self.config.data_storage.compression = DataCompressionConfig {
             compress_vectors: false,
             compress_metadata: false,
-            vector_quantization: VectorQuantizationConfig::none(),
+            vector_quantization: BuilderVectorQuantizationConfig::none(),
             metadata_compression: CompressionLevel::None,
             compression_level: 0,
         };
@@ -967,7 +970,7 @@ impl Default for DataStorageConfig {
             compression: DataCompressionConfig {
                 compress_vectors: false,
                 compress_metadata: false,
-                vector_quantization: VectorQuantizationConfig::none(),
+                vector_quantization: BuilderVectorQuantizationConfig::none(),
                 metadata_compression: CompressionLevel::None,
                 compression_level: 0,
             },

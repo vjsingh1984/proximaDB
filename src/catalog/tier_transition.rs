@@ -186,11 +186,11 @@ fn compare_tiers(before: Tier, after: Tier) -> AxisDirection {
 
 fn tier_rank(t: Tier) -> u8 {
     match t {
-        Tier::FreeTrial => 0,
-        Tier::Team => 1,
-        Tier::Pro => 2,
-        Tier::Business => 3,
-        Tier::Enterprise => 4,
+        Tier::Tier1 => 0,
+        Tier::Tier2 => 1,
+        Tier::Tier3 => 2,
+        Tier::Tier4 => 3,
+        Tier::Tier5 => 4,
     }
 }
 
@@ -249,8 +249,8 @@ mod tests {
 
     #[test]
     fn no_change_when_records_identical() {
-        let a = record(Tier::Business, None, None, None);
-        let b = record(Tier::Business, None, None, None);
+        let a = record(Tier::Tier4, None, None, None);
+        let b = record(Tier::Tier4, None, None, None);
         let ev = detect(&a, &b);
         assert_eq!(ev.class, TransitionClass::NoChange);
         assert!(ev.class.is_no_change());
@@ -258,18 +258,18 @@ mod tests {
 
     #[test]
     fn tier_up_is_upgrade() {
-        let a = record(Tier::Team, None, None, None);
-        let b = record(Tier::Business, None, None, None);
+        let a = record(Tier::Tier2, None, None, None);
+        let b = record(Tier::Tier4, None, None, None);
         let ev = detect(&a, &b);
         assert_eq!(ev.class, TransitionClass::Upgrade);
-        assert_eq!(ev.tier_before, "team");
-        assert_eq!(ev.tier_after, "business");
+        assert_eq!(ev.tier_before, "tier2");
+        assert_eq!(ev.tier_after, "tier4");
     }
 
     #[test]
     fn tier_down_is_downgrade() {
-        let a = record(Tier::Enterprise, None, None, None);
-        let b = record(Tier::FreeTrial, None, None, None);
+        let a = record(Tier::Tier5, None, None, None);
+        let b = record(Tier::Tier1, None, None, None);
         let ev = detect(&a, &b);
         assert_eq!(ev.class, TransitionClass::Downgrade);
     }
@@ -277,8 +277,8 @@ mod tests {
     #[test]
     fn same_tier_higher_scan_override_is_upgrade() {
         // No tier change, but the override doubled the scan budget.
-        let a = record(Tier::Business, Some(10.0), None, None);
-        let b = record(Tier::Business, Some(20.0), None, None);
+        let a = record(Tier::Tier4, Some(10.0), None, None);
+        let b = record(Tier::Tier4, Some(20.0), None, None);
         let ev = detect(&a, &b);
         assert_eq!(ev.class, TransitionClass::Upgrade);
         assert_eq!(ev.scan_budget_gb.direction, AxisDirection::Up);
@@ -286,8 +286,8 @@ mod tests {
 
     #[test]
     fn same_tier_lower_scan_override_is_downgrade() {
-        let a = record(Tier::Business, Some(20.0), None, None);
-        let b = record(Tier::Business, Some(10.0), None, None);
+        let a = record(Tier::Tier4, Some(20.0), None, None);
+        let b = record(Tier::Tier4, Some(10.0), None, None);
         let ev = detect(&a, &b);
         assert_eq!(ev.class, TransitionClass::Downgrade);
     }
@@ -295,8 +295,8 @@ mod tests {
     #[test]
     fn lateral_when_scan_up_and_ef_down() {
         // Scan budget doubled, ef cap halved → lateral.
-        let a = record(Tier::Business, Some(10.0), Some(256), None);
-        let b = record(Tier::Business, Some(20.0), Some(128), None);
+        let a = record(Tier::Tier4, Some(10.0), Some(256), None);
+        let b = record(Tier::Tier4, Some(20.0), Some(128), None);
         let ev = detect(&a, &b);
         assert_eq!(ev.class, TransitionClass::Lateral);
     }
@@ -305,8 +305,8 @@ mod tests {
     fn freshness_lower_value_classified_as_upgrade() {
         // 60s SLA → 15s SLA = faster = upgrade direction even though
         // the raw numeric direction is "down".
-        let a = record(Tier::Business, None, None, Some(60));
-        let b = record(Tier::Business, None, None, Some(15));
+        let a = record(Tier::Tier4, None, None, Some(60));
+        let b = record(Tier::Tier4, None, None, Some(15));
         let ev = detect(&a, &b);
         assert_eq!(ev.class, TransitionClass::Upgrade);
         assert_eq!(ev.freshness_sla_seconds.direction, AxisDirection::Up);
@@ -315,8 +315,8 @@ mod tests {
     #[test]
     fn freshness_higher_value_classified_as_downgrade() {
         // 15s → 300s = slower = downgrade direction.
-        let a = record(Tier::Business, None, None, Some(15));
-        let b = record(Tier::Business, None, None, Some(300));
+        let a = record(Tier::Tier4, None, None, Some(15));
+        let b = record(Tier::Tier4, None, None, Some(300));
         let ev = detect(&a, &b);
         assert_eq!(ev.class, TransitionClass::Downgrade);
     }
@@ -325,8 +325,8 @@ mod tests {
     fn tier_class_dominates_axis_mix() {
         // Tier moved up; one of the axes moved down — overall still
         // Upgrade because tier_dir wins.
-        let a = record(Tier::Team, Some(2.0), Some(128), None);
-        let b = record(Tier::Business, Some(1.5), None, None);
+        let a = record(Tier::Tier2, Some(2.0), Some(128), None);
+        let b = record(Tier::Tier4, Some(1.5), None, None);
         let ev = detect(&a, &b);
         assert_eq!(ev.class, TransitionClass::Upgrade);
     }
@@ -336,8 +336,8 @@ mod tests {
         // Tier moved down; raw scan-budget value went up because the
         // user removed an override that was tighter than the new tier
         // default. The class is still Downgrade because tier wins.
-        let a = record(Tier::Business, Some(1.0), None, None);
-        let b = record(Tier::Team, None, None, None);
+        let a = record(Tier::Tier4, Some(1.0), None, None);
+        let b = record(Tier::Tier2, None, None, None);
         let ev = detect(&a, &b);
         assert_eq!(ev.class, TransitionClass::Downgrade);
     }
@@ -362,8 +362,8 @@ mod tests {
 
     #[test]
     fn audit_json_carries_every_field() {
-        let a = record(Tier::Team, None, None, None);
-        let b = record(Tier::Business, None, None, None);
+        let a = record(Tier::Tier2, None, None, None);
+        let b = record(Tier::Tier4, None, None, None);
         let json = detect(&a, &b).to_audit_json();
         // Top-level field presence.
         assert!(json.get("tenant_id").is_some());
@@ -382,8 +382,8 @@ mod tests {
 
     #[test]
     fn event_round_trips_via_json() {
-        let a = record(Tier::FreeTrial, None, None, None);
-        let b = record(Tier::Team, Some(3.0), None, None);
+        let a = record(Tier::Tier1, None, None, None);
+        let b = record(Tier::Tier2, Some(3.0), None, None);
         let ev = detect(&a, &b);
         let s = serde_json::to_string(&ev).expect("serialize");
         let back: TierTransitionEvent = serde_json::from_str(&s).expect("deserialize");
@@ -392,12 +392,21 @@ mod tests {
 
     #[test]
     fn delta_carries_before_and_after_values() {
-        // Spot-check: a 2 → 16 GB upgrade keeps both values in the delta.
-        let a = record(Tier::Team, None, None, None); // default 2.0
-        let b = record(Tier::Business, None, None, None); // default 16.0
+        // Spot-check: a Tier2 → Tier4 upgrade keeps both default
+        // scan-budget values in the delta. Reads bundled defaults from
+        // `config/pricing.json` so the numbers track that file when
+        // tier soft caps are retuned operationally.
+        let a = record(Tier::Tier2, None, None, None);
+        let b = record(Tier::Tier4, None, None, None);
+        let expected_before = Tier::Tier2.default_scan_budget_gb();
+        let expected_after = Tier::Tier4.default_scan_budget_gb();
+        assert!(
+            expected_after > expected_before,
+            "test premise broken — Tier4 must have larger default scan budget than Tier2"
+        );
         let ev = detect(&a, &b);
-        assert_eq!(ev.scan_budget_gb.before, 2.0);
-        assert_eq!(ev.scan_budget_gb.after, 16.0);
+        assert_eq!(ev.scan_budget_gb.before, expected_before);
+        assert_eq!(ev.scan_budget_gb.after, expected_after);
         assert_eq!(ev.scan_budget_gb.direction, AxisDirection::Up);
     }
 
@@ -416,9 +425,9 @@ mod tests {
         // If the after snapshot has a different tenant_id (caller bug),
         // the event reflects the after value — caller is responsible for
         // pre-checking the IDs match.
-        let mut a = record(Tier::Team, None, None, None);
+        let mut a = record(Tier::Tier2, None, None, None);
         a.tenant_id = "tenant-a".into();
-        let mut b = record(Tier::Business, None, None, None);
+        let mut b = record(Tier::Tier4, None, None, None);
         b.tenant_id = "tenant-b".into();
         let ev = detect(&a, &b);
         assert_eq!(ev.tenant_id, "tenant-b");
@@ -426,8 +435,8 @@ mod tests {
 
     #[test]
     fn class_label_helper_returns_bounded_string() {
-        let a = record(Tier::Team, None, None, None);
-        let b = record(Tier::Business, None, None, None);
+        let a = record(Tier::Tier2, None, None, None);
+        let b = record(Tier::Tier4, None, None, None);
         let ev = detect(&a, &b);
         // The class enum exposes a bounded `label()` for observability;
         // callers use it directly rather than reading a struct field.

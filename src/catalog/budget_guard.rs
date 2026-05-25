@@ -142,22 +142,22 @@ mod tests {
 
     #[test]
     fn no_request_substitutes_tier_defaults() {
-        let r = record(Tier::Business, None, None);
+        let r = record(Tier::Tier4, None, None);
         let ok = enforce(&r, None, None).expect("should succeed");
         assert_eq!(
             ok.effective_scan_gb,
-            Tier::Business.default_scan_budget_gb()
+            Tier::Tier4.default_scan_budget_gb()
         );
         assert_eq!(
             ok.effective_ef_search,
-            Tier::Business.default_ef_search_cap()
+            Tier::Tier4.default_ef_search_cap()
         );
-        assert_eq!(ok.tier_label, "business");
+        assert_eq!(ok.tier_label, "tier4");
     }
 
     #[test]
     fn within_budget_passes() {
-        let r = record(Tier::Team, None, None);
+        let r = record(Tier::Tier2, None, None);
         let ok = enforce(&r, Some(1.0), Some(64)).expect("should succeed");
         assert_eq!(ok.effective_scan_gb, 1.0);
         assert_eq!(ok.effective_ef_search, 64);
@@ -165,34 +165,34 @@ mod tests {
 
     #[test]
     fn scan_exceeded_returns_structured_rejection() {
-        let r = record(Tier::Team, None, None);
+        let r = record(Tier::Tier2, None, None);
         let err = enforce(&r, Some(100.0), None).expect_err("should reject");
         assert_eq!(err.which, "scan_budget_gb");
-        assert_eq!(err.limit, Tier::Team.default_scan_budget_gb());
+        assert_eq!(err.limit, Tier::Tier2.default_scan_budget_gb());
         assert_eq!(err.requested, 100.0);
-        assert_eq!(err.tier_label, "team");
+        assert_eq!(err.tier_label, "tier2");
         assert_eq!(err.tenant_id, "tenant-a");
     }
 
     #[test]
     fn ef_search_exceeded_returns_structured_rejection() {
-        let r = record(Tier::Team, None, None);
+        let r = record(Tier::Tier2, None, None);
         let err = enforce(&r, None, Some(10_000)).expect_err("should reject");
         assert_eq!(err.which, "ef_search_cap");
-        assert_eq!(err.limit, f64::from(Tier::Team.default_ef_search_cap()));
+        assert_eq!(err.limit, f64::from(Tier::Tier2.default_ef_search_cap()));
         assert_eq!(err.requested, 10_000.0);
     }
 
     #[test]
     fn negative_scan_clamps_to_zero() {
-        let r = record(Tier::Team, None, None);
+        let r = record(Tier::Tier2, None, None);
         let ok = enforce(&r, Some(-1.0), None).expect("negative scan is clamped, not rejected");
         assert_eq!(ok.effective_scan_gb, 0.0);
     }
 
     #[test]
     fn nan_scan_is_rejected_explicitly() {
-        let r = record(Tier::Team, None, None);
+        let r = record(Tier::Tier2, None, None);
         let err = enforce(&r, Some(f64::NAN), None).expect_err("NaN must reject");
         assert_eq!(err.which, "scan_budget_gb");
         assert!(err.requested.is_nan());
@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn per_tenant_override_takes_precedence_over_default() {
         // Custom hard cap of 0.1 GB on a Team tenant.
-        let r = record(Tier::Team, Some(0.1), Some(96));
+        let r = record(Tier::Tier2, Some(0.1), Some(96));
         // 0.2 exceeds the per-tenant override even though it's well below
         // the tier default.
         let err = enforce(&r, Some(0.2), None).expect_err("override should reject");
@@ -213,13 +213,13 @@ mod tests {
 
     #[test]
     fn explain_json_shape_is_stable() {
-        let r = record(Tier::Enterprise, None, None);
+        let r = record(Tier::Tier5, None, None);
         let err = enforce(&r, Some(10_000.0), None).expect_err("reject");
         let json = err.to_explain_json();
         // Pin the exact shape the gateway responds with.
         assert_eq!(json["error"], "budget_exceeded");
         assert_eq!(json["which"], "scan_budget_gb");
-        assert_eq!(json["tier"], "enterprise");
+        assert_eq!(json["tier"], "tier5");
         assert_eq!(json["tenant_id"], "tenant-a");
         assert!(json.get("limit").is_some());
         assert!(json.get("requested").is_some());
@@ -231,18 +231,18 @@ mod tests {
         // The label must always be one of the five bounded values so
         // Prometheus cardinality stays safe.
         for tier in [
-            Tier::FreeTrial,
-            Tier::Team,
-            Tier::Pro,
-            Tier::Business,
-            Tier::Enterprise,
+            Tier::Tier1,
+            Tier::Tier2,
+            Tier::Tier3,
+            Tier::Tier4,
+            Tier::Tier5,
         ] {
             let r = record(tier, None, None);
             let ok = enforce(&r, None, None).expect("default succeeds");
             assert!(
                 matches!(
                     ok.tier_label,
-                    "free" | "team" | "pro" | "business" | "enterprise"
+                    "tier1" | "tier2" | "tier3" | "tier4" | "tier5"
                 ),
                 "label {} must be in the bounded set",
                 ok.tier_label
@@ -254,9 +254,9 @@ mod tests {
     fn at_exact_limit_passes() {
         // Requested == limit must succeed — strict less-than would be a
         // surprising customer-visible boundary.
-        let r = record(Tier::Team, None, None);
-        let scan_limit = Tier::Team.default_scan_budget_gb();
-        let ef_limit = Tier::Team.default_ef_search_cap();
+        let r = record(Tier::Tier2, None, None);
+        let scan_limit = Tier::Tier2.default_scan_budget_gb();
+        let ef_limit = Tier::Tier2.default_ef_search_cap();
         let ok = enforce(&r, Some(scan_limit), Some(ef_limit)).expect("exact limit passes");
         assert_eq!(ok.effective_scan_gb, scan_limit);
         assert_eq!(ok.effective_ef_search, ef_limit);
@@ -266,7 +266,7 @@ mod tests {
     fn rejection_carries_specific_tenant_id() {
         // The rejection must echo the actual tenant id so observability
         // can attribute it; a generic "<unknown>" would be a bug.
-        let mut r = record(Tier::Team, None, None);
+        let mut r = record(Tier::Tier2, None, None);
         r.tenant_id = "tenant-zzz".into();
         let err = enforce(&r, Some(100.0), None).expect_err("reject");
         assert_eq!(err.tenant_id, "tenant-zzz");

@@ -8,9 +8,12 @@ use std::collections::HashMap;
 
 use crate::proto::proximadb_v1::VectorRecord;
 
+/// Backwards-compat alias for [`HelixZoneMap`].
+pub type ZoneMap = HelixZoneMap;
+
 /// Zone map for a block of vectors
 #[derive(Debug, Clone)]
-pub struct ZoneMap {
+pub struct HelixZoneMap {
     /// Block identifier
     pub block_id: u32,
     /// Minimum values per dimension
@@ -40,7 +43,7 @@ pub struct DimensionStatistics {
     pub skewness: Vec<f32>,
 }
 
-impl ZoneMap {
+impl HelixZoneMap {
     /// Create zone map from a block of vectors
     pub fn from_vectors(block_id: u32, vectors: &[VectorRecord]) -> Result<Self> {
         if vectors.is_empty() {
@@ -190,9 +193,9 @@ impl ZoneMap {
 
 /// Zone map index for efficient pruning
 #[derive(Debug, Default)]
-pub struct ZoneMapIndex {
+pub struct HelixZoneMapIndex {
     /// Zone maps by block ID
-    pub maps: HashMap<u32, ZoneMap>,
+    pub maps: HashMap<u32, HelixZoneMap>,
     /// Global min/max across all blocks
     pub global_min: Vec<f32>,
     pub global_max: Vec<f32>,
@@ -200,9 +203,9 @@ pub struct ZoneMapIndex {
     pub total_vectors: usize,
 }
 
-impl ZoneMapIndex {
+impl HelixZoneMapIndex {
     /// Add a zone map to the index
-    pub fn add_zone_map(&mut self, zone_map: ZoneMap) {
+    pub fn add_zone_map(&mut self, zone_map: HelixZoneMap) {
         // Update global bounds
         if self.global_min.is_empty() {
             self.global_min = zone_map.dim_min.clone();
@@ -298,14 +301,14 @@ pub struct DimensionSummary {
 }
 
 /// Zone map builder for creating zone maps during flush/compaction
-pub struct ZoneMapBuilder {
+pub struct HelixZoneMapBuilder {
     block_size: usize,
     current_block: Vec<VectorRecord>,
     current_block_id: u32,
-    zone_maps: Vec<ZoneMap>,
+    zone_maps: Vec<HelixZoneMap>,
 }
 
-impl ZoneMapBuilder {
+impl HelixZoneMapBuilder {
     pub fn new(block_size: usize) -> Self {
         Self {
             block_size,
@@ -329,7 +332,7 @@ impl ZoneMapBuilder {
     /// Finalize current block and create zone map
     fn finalize_block(&mut self) -> Result<()> {
         if !self.current_block.is_empty() {
-            let zone_map = ZoneMap::from_vectors(self.current_block_id, &self.current_block)?;
+            let zone_map = HelixZoneMap::from_vectors(self.current_block_id, &self.current_block)?;
             self.zone_maps.push(zone_map);
             self.current_block.clear();
             self.current_block_id += 1;
@@ -338,11 +341,11 @@ impl ZoneMapBuilder {
     }
 
     /// Build final zone map index
-    pub fn build(mut self) -> Result<ZoneMapIndex> {
+    pub fn build(mut self) -> Result<HelixZoneMapIndex> {
         // Finalize any remaining vectors
         self.finalize_block()?;
 
-        let mut index = ZoneMapIndex::default();
+        let mut index = HelixZoneMapIndex::default();
         for zone_map in self.zone_maps {
             index.add_zone_map(zone_map);
         }
@@ -380,7 +383,7 @@ mod tests {
             },
         ];
 
-        let zone_map = ZoneMap::from_vectors(0, &vectors).unwrap();
+        let zone_map = HelixZoneMap::from_vectors(0, &vectors).unwrap();
 
         assert_eq!(zone_map.dim_min, vec![1.0, 2.0, 3.0]);
         assert_eq!(zone_map.dim_max, vec![4.0, 5.0, 6.0]);
@@ -389,7 +392,7 @@ mod tests {
 
     #[test]
     fn test_pruning_score() {
-        let zone_map = ZoneMap {
+        let zone_map = HelixZoneMap {
             block_id: 0,
             dim_min: vec![0.0, 0.0],
             dim_max: vec![10.0, 10.0],
@@ -410,7 +413,7 @@ mod tests {
 
     #[test]
     fn test_zone_map_builder() {
-        let mut builder = ZoneMapBuilder::new(2);
+        let mut builder = HelixZoneMapBuilder::new(2);
 
         for i in 0..5 {
             builder

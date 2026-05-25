@@ -455,8 +455,7 @@ impl Catalog for HiveCatalog {
 
         if removed {
             self.cache
-                .invalidate_table_in_catalog(&self.name, identifier)
-                .await;
+                .invalidate_table_in_catalog(&self.name, identifier);
             info!("Dropped Hive table: {}.{}", db_name, identifier.name);
         }
 
@@ -550,8 +549,7 @@ impl Catalog for HiveCatalog {
         tables.insert(to_key, table);
 
         self.cache
-            .invalidate_table_in_catalog(&self.name, from)
-            .await;
+            .invalidate_table_in_catalog(&self.name, from);
 
         info!("Renamed Hive table: {} -> {}", from, to);
         Ok(())
@@ -594,8 +592,7 @@ impl Catalog for HiveCatalog {
         drop(tables);
 
         self.cache
-            .invalidate_table_in_catalog(&self.name, identifier)
-            .await;
+            .invalidate_table_in_catalog(&self.name, identifier);
 
         info!(
             "Evolved Hive table schema: {} (v{})",

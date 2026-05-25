@@ -747,8 +747,7 @@ impl Catalog for DeltaCatalog {
             }
 
             self.cache
-                .invalidate_table_in_catalog(&self.name, identifier)
-                .await;
+                .invalidate_table_in_catalog(&self.name, identifier);
             self.save_catalog_metadata().await?;
 
             info!("Dropped Delta table: {} (purge={})", identifier, purge);
@@ -862,8 +861,7 @@ impl Catalog for DeltaCatalog {
         let _ = fs::rename(&from_path, &to_path).await;
 
         self.cache
-            .invalidate_table_in_catalog(&self.name, from)
-            .await;
+            .invalidate_table_in_catalog(&self.name, from);
         self.save_catalog_metadata().await?;
 
         info!("Renamed Delta table: {} -> {}", from, to);
@@ -957,8 +955,7 @@ impl Catalog for DeltaCatalog {
         self.write_delta_log(identifier, version, actions).await?;
 
         self.cache
-            .invalidate_table_in_catalog(&self.name, identifier)
-            .await;
+            .invalidate_table_in_catalog(&self.name, identifier);
         self.save_catalog_metadata().await?;
 
         info!(

@@ -190,7 +190,7 @@ pub fn recommend(
     if matches!(
         mix.concentration,
         ConcentrationClass::HighlyConcentrated | ConcentrationClass::Concentrated
-    ) && matches!(tenant.tier, Tier::FreeTrial | Tier::Team)
+    ) && matches!(tenant.tier, Tier::Tier1 | Tier::Tier2)
     {
         return upgrade(out, tenant.tier, reason::CONCENTRATED_HOT_WORKLOAD);
     }
@@ -235,21 +235,21 @@ fn upgrade(mut out: Recommendation, current: Tier, reason_label: &str) -> Recomm
 
 fn tier_above(t: Tier) -> Option<Tier> {
     match t {
-        Tier::FreeTrial => Some(Tier::Team),
-        Tier::Team => Some(Tier::Pro),
-        Tier::Pro => Some(Tier::Business),
-        Tier::Business => Some(Tier::Enterprise),
-        Tier::Enterprise => None,
+        Tier::Tier1 => Some(Tier::Tier2),
+        Tier::Tier2 => Some(Tier::Tier3),
+        Tier::Tier3 => Some(Tier::Tier4),
+        Tier::Tier4 => Some(Tier::Tier5),
+        Tier::Tier5 => None,
     }
 }
 
 fn tier_below(t: Tier) -> Option<Tier> {
     match t {
-        Tier::FreeTrial => None,
-        Tier::Team => Some(Tier::FreeTrial),
-        Tier::Pro => Some(Tier::Team),
-        Tier::Business => Some(Tier::Pro),
-        Tier::Enterprise => Some(Tier::Business),
+        Tier::Tier1 => None,
+        Tier::Tier2 => Some(Tier::Tier1),
+        Tier::Tier3 => Some(Tier::Tier2),
+        Tier::Tier4 => Some(Tier::Tier3),
+        Tier::Tier5 => Some(Tier::Tier4),
     }
 }
 
@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn below_min_samples_returns_insufficient_signal() {
-        let t = tenant(Tier::Team);
+        let t = tenant(Tier::Tier2);
         let m = mix(ConcentrationClass::HighlyConcentrated, Some("fp"), 10);
         let s = signals_with_count(10);
         let r = recommend(
@@ -326,7 +326,7 @@ mod tests {
 
     #[test]
     fn high_over_budget_rate_recommends_upgrade() {
-        let t = tenant(Tier::Team);
+        let t = tenant(Tier::Tier2);
         let m = mix(ConcentrationClass::Broad, Some("fp"), 1_000);
         let mut s = signals_with_count(1_000);
         s.over_budget_rate = 0.25; // well above 0.10 threshold
@@ -340,12 +340,12 @@ mod tests {
         );
         assert_eq!(r.kind, RecommendationKind::Upgrade);
         assert_eq!(r.reason, reason::HIGH_OVER_BUDGET_RATE);
-        assert_eq!(r.suggested_tier.as_deref(), Some("pro"));
+        assert_eq!(r.suggested_tier.as_deref(), Some("tier3"));
     }
 
     #[test]
     fn latency_stalls_recommend_upgrade() {
-        let t = tenant(Tier::Business);
+        let t = tenant(Tier::Tier4);
         let m = mix(ConcentrationClass::Diverse, Some("fp"), 5_000);
         let mut s = signals_with_count(5_000);
         s.latency_stall_rate = 0.30;
@@ -359,12 +359,12 @@ mod tests {
         );
         assert_eq!(r.kind, RecommendationKind::Upgrade);
         assert_eq!(r.reason, reason::LATENCY_STALLS);
-        assert_eq!(r.suggested_tier.as_deref(), Some("enterprise"));
+        assert_eq!(r.suggested_tier.as_deref(), Some("tier5"));
     }
 
     #[test]
     fn concentrated_workload_on_low_tier_recommends_upgrade() {
-        let t = tenant(Tier::FreeTrial);
+        let t = tenant(Tier::Tier1);
         let m = mix(ConcentrationClass::HighlyConcentrated, Some("fp"), 1_000);
         let s = signals_with_count(1_000);
         let r = recommend(
@@ -377,7 +377,7 @@ mod tests {
         );
         assert_eq!(r.kind, RecommendationKind::Upgrade);
         assert_eq!(r.reason, reason::CONCENTRATED_HOT_WORKLOAD);
-        assert_eq!(r.suggested_tier.as_deref(), Some("team"));
+        assert_eq!(r.suggested_tier.as_deref(), Some("tier2"));
     }
 
     #[test]
@@ -385,7 +385,7 @@ mod tests {
         // The concentrated-workload signal only fires on free/team
         // tiers — a business tenant with concentrated traffic is the
         // normal case, not a tier-recommendation trigger.
-        let t = tenant(Tier::Business);
+        let t = tenant(Tier::Tier4);
         let m = mix(ConcentrationClass::HighlyConcentrated, Some("fp"), 1_000);
         let s = signals_with_count(1_000);
         let r = recommend(
@@ -403,7 +403,7 @@ mod tests {
     #[test]
     fn enterprise_ceiling_collapses_upgrade_to_hold() {
         // High over-budget rate on enterprise — can't go higher.
-        let t = tenant(Tier::Enterprise);
+        let t = tenant(Tier::Tier5);
         let m = mix(ConcentrationClass::Broad, Some("fp"), 1_000);
         let mut s = signals_with_count(1_000);
         s.over_budget_rate = 0.50;
@@ -422,7 +422,7 @@ mod tests {
 
     #[test]
     fn high_cache_hit_low_pressure_recommends_downgrade() {
-        let t = tenant(Tier::Business);
+        let t = tenant(Tier::Tier4);
         let m = mix(ConcentrationClass::Diverse, Some("fp"), 1_000);
         let mut s = signals_with_count(1_000);
         s.cache_hit_rate = 0.95;
@@ -438,12 +438,12 @@ mod tests {
         );
         assert_eq!(r.kind, RecommendationKind::Downgrade);
         assert_eq!(r.reason, reason::UNDERUTILIZED);
-        assert_eq!(r.suggested_tier.as_deref(), Some("pro"));
+        assert_eq!(r.suggested_tier.as_deref(), Some("tier3"));
     }
 
     #[test]
     fn downgrade_blocked_at_free_tier() {
-        let t = tenant(Tier::FreeTrial);
+        let t = tenant(Tier::Tier1);
         let m = mix(ConcentrationClass::Diverse, Some("fp"), 1_000);
         let mut s = signals_with_count(1_000);
         s.cache_hit_rate = 0.95;
@@ -467,7 +467,7 @@ mod tests {
     fn high_cache_hit_with_some_budget_pressure_holds() {
         // Cache hit rate is high but over-budget is nonzero → not a
         // clean downgrade candidate.
-        let t = tenant(Tier::Business);
+        let t = tenant(Tier::Tier4);
         let m = mix(ConcentrationClass::Diverse, Some("fp"), 1_000);
         let mut s = signals_with_count(1_000);
         s.cache_hit_rate = 0.95;
@@ -485,7 +485,7 @@ mod tests {
 
     #[test]
     fn steady_state_is_default_hold() {
-        let t = tenant(Tier::Business);
+        let t = tenant(Tier::Tier4);
         let m = mix(ConcentrationClass::Diverse, Some("fp"), 1_000);
         let s = signals_with_count(1_000);
         let r = recommend(
@@ -504,7 +504,7 @@ mod tests {
     fn upgrade_signal_takes_precedence_over_downgrade() {
         // Both signals present — high cache hit rate AND high latency
         // stall. Upgrade wins (latency pain dominates over-provisioning).
-        let t = tenant(Tier::Team);
+        let t = tenant(Tier::Tier2);
         let m = mix(ConcentrationClass::Broad, Some("fp"), 1_000);
         let mut s = signals_with_count(1_000);
         s.cache_hit_rate = 0.95;
@@ -523,7 +523,7 @@ mod tests {
 
     #[test]
     fn dominant_fingerprint_propagates_to_recommendation() {
-        let t = tenant(Tier::Business);
+        let t = tenant(Tier::Tier4);
         let m = mix(ConcentrationClass::Diverse, Some("abc123"), 1_000);
         let s = signals_with_count(1_000);
         let r = recommend(
@@ -539,7 +539,7 @@ mod tests {
 
     #[test]
     fn missing_dominant_fingerprint_omitted_in_json() {
-        let t = tenant(Tier::Business);
+        let t = tenant(Tier::Tier4);
         let mut m = mix(ConcentrationClass::Broad, None, 1_000);
         m.dominant_shape = None;
         let s = signals_with_count(1_000);
@@ -557,7 +557,7 @@ mod tests {
 
     #[test]
     fn hold_omits_suggested_tier() {
-        let t = tenant(Tier::Business);
+        let t = tenant(Tier::Tier4);
         let m = mix(ConcentrationClass::Diverse, Some("fp"), 1_000);
         let s = signals_with_count(1_000);
         let r = recommend(
@@ -599,7 +599,7 @@ mod tests {
 
     #[test]
     fn recommendation_round_trips_via_json() {
-        let t = tenant(Tier::Team);
+        let t = tenant(Tier::Tier2);
         let m = mix(ConcentrationClass::HighlyConcentrated, Some("fp"), 1_000);
         let s = signals_with_count(1_000);
         let r = recommend(
@@ -619,7 +619,7 @@ mod tests {
     fn over_budget_threshold_exactly_at_boundary_triggers_upgrade() {
         // 0.10 is the upgrade threshold — at-boundary should fire
         // (>=, not >).
-        let t = tenant(Tier::Team);
+        let t = tenant(Tier::Tier2);
         let m = mix(ConcentrationClass::Diverse, Some("fp"), 1_000);
         let mut s = signals_with_count(1_000);
         s.over_budget_rate = 0.10;
@@ -638,7 +638,7 @@ mod tests {
     fn min_samples_at_exact_boundary_does_not_short_circuit() {
         // min_samples is "below" → strict less-than. Exactly at the
         // threshold proceeds to the real classifier.
-        let t = tenant(Tier::Business);
+        let t = tenant(Tier::Tier4);
         let m = mix(ConcentrationClass::Diverse, Some("fp"), 100);
         let s = signals_with_count(100);
         let r = recommend(
@@ -654,7 +654,7 @@ mod tests {
 
     #[test]
     fn current_tier_label_propagates() {
-        let t = tenant(Tier::Enterprise);
+        let t = tenant(Tier::Tier5);
         let m = mix(ConcentrationClass::Diverse, Some("fp"), 1_000);
         let s = signals_with_count(1_000);
         let r = recommend(
@@ -665,6 +665,6 @@ mod tests {
             },
             &cfg(),
         );
-        assert_eq!(r.current_tier, "enterprise");
+        assert_eq!(r.current_tier, "tier5");
     }
 }

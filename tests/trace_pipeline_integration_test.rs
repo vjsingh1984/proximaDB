@@ -100,7 +100,7 @@ fn full_pipeline_composes_for_a_single_trace() {
     // Stage 3: metering event.
     let metering = build_kru(&MeteringInputs {
         trace: &trace,
-        tier_label: Tier::FreeTrial.prometheus_label(),
+        tier_label: Tier::Tier1.prometheus_label(),
         corpus_gb: 1.0,
         total_vectors: 1_000_000,
         occurred_at: "2026-05-22T00:00:00Z".into(),

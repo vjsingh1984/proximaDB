@@ -63,9 +63,13 @@ from ..models import (
     MetadataDict,
     MetadataFilter,
     OperationMetrics,
+    ProbeResponse,
+    SchemaDefinition,
+    SchemaResponse,
     SearchQuery,
     SearchResult,
     ServerCapabilities,
+    UpdateSchemaResponse,
     VectorArray,
     VectorBatchRequest,
     VectorRecord,
@@ -494,14 +498,32 @@ class ProximaDBClient:
             timestamp_ms=timestamp_ms,
         )
 
+    def live(self) -> ProbeResponse:
+        """Kubernetes liveness probe — GET /health/live."""
+        response = self._make_request("GET", "/health/live")
+        return ProbeResponse.model_validate(response.json())
+
+    def ready(self) -> ProbeResponse:
+        """Kubernetes readiness probe — GET /health/ready."""
+        response = self._make_request("GET", "/health/ready")
+        return ProbeResponse.model_validate(response.json())
+
     def create_collection(
-        self, name: str, config: Optional[CollectionConfig] = None, **kwargs
+        self,
+        name: str,
+        config: Optional[CollectionConfig] = None,
+        *,
+        schema: Optional[Union[SchemaDefinition, Dict[str, Any]]] = None,
+        initial_capacity: Optional[int] = None,
+        **kwargs,
     ) -> Collection:
         """Create a new vector collection
 
         Args:
             name: Collection name
             config: Collection configuration
+            schema: Optional SchemaDefinition (OpenAPI CreateCollectionRequest.schema)
+            initial_capacity: Optional initial capacity hint
             **kwargs: Additional configuration parameters
 
         Returns:
@@ -791,7 +813,7 @@ class ProximaDBClient:
         if config.description:
             config_data["description"] = config.description
 
-        v2_request_data = {
+        v2_request_data: Dict[str, Any] = {
             "name": name,
             "dimension": config.dimension,
             "engine": getattr(config.storage_engine, "value", config.storage_engine),
@@ -800,6 +822,15 @@ class ProximaDBClient:
             ),
             "enable_proxima_record": True,
         }
+        if schema is not None:
+            if isinstance(schema, SchemaDefinition):
+                v2_request_data["schema"] = schema.model_dump(
+                    exclude_none=True, by_alias=True
+                )
+            else:
+                v2_request_data["schema"] = schema
+        if initial_capacity is not None:
+            v2_request_data["initial_capacity"] = initial_capacity
         response = self._make_request(
             "POST", "/api/v2/collections", json=v2_request_data
         )
@@ -1065,11 +1096,34 @@ class ProximaDBClient:
             updated_at=collection_data.get("updated_at"),
         )
 
-    def list_collections(self) -> List[Collection]:
-        """List all collections"""
-        # Use the updated GET endpoint
+    def list_collections(
+        self,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        include_stats: Optional[bool] = None,
+    ) -> List[Collection]:
+        """List collections.
+
+        Args:
+            limit: Page size (OpenAPI default 100).
+            offset: Page offset (OpenAPI default 0).
+            include_stats: Include CollectionStats in each entry.
+        """
+        params: Dict[str, Any] = {}
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
+        if include_stats is not None:
+            params["include_stats"] = "true" if include_stats else "false"
+
         logger.debug(f"Collection list request to GET /api/v2/collections")
-        response = self._make_request("GET", "/api/v2/collections")
+        request_kwargs: Dict[str, Any] = {}
+        if params:
+            request_kwargs["params"] = params
+        response = self._make_request(
+            "GET", "/api/v2/collections", **request_kwargs
+        )
         response_data = response.json()
 
         # Server returns:
@@ -1178,6 +1232,35 @@ class ProximaDBClient:
         )
         response = self._make_request("DELETE", f"/api/v2/collections/{collection_id}")
         return response.json().get("success", False)
+
+    def get_schema(self, collection_id: str) -> SchemaResponse:
+        """Get a collection's schema — GET /api/v2/collections/{id}/schema."""
+        response = self._make_request(
+            "GET", f"/api/v2/collections/{collection_id}/schema"
+        )
+        return SchemaResponse.model_validate(response.json())
+
+    def update_schema(
+        self,
+        collection_id: str,
+        schema: Union[SchemaDefinition, Dict[str, Any]],
+        *,
+        force: bool = False,
+    ) -> UpdateSchemaResponse:
+        """Update a collection's schema — PUT /api/v2/collections/{id}/schema.
+
+        The body conforms to OpenAPI UpdateSchemaRequest, which extends
+        SchemaDefinition with an optional `force` flag.
+        """
+        if isinstance(schema, SchemaDefinition):
+            body = schema.model_dump(exclude_none=True, by_alias=True)
+        else:
+            body = dict(schema)
+        body["force"] = bool(force)
+        response = self._make_request(
+            "PUT", f"/api/v2/collections/{collection_id}/schema", json=body
+        )
+        return UpdateSchemaResponse.model_validate(response.json())
 
     def get_collection_stats(self, collection_id: str) -> CollectionStats:
         """Get collection statistics"""

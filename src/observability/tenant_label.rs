@@ -58,21 +58,24 @@ impl TenantLabel {
 
     /// Safe label for high-cardinality counters (per-second scrape).
     /// Returns a bounded `&'static str` sourced from the loaded pricing
-    /// config. The legacy-alias rewrite (community/starter/standard → team,
-    /// enterprise_pooled → business, enterprise_dedicated → enterprise) keeps
-    /// historical TenantLabel JSON producing bounded metrics after
-    /// deserialization.
+    /// config via the canonical `Tier::prometheus_label()` route.
+    ///
+    /// Alias-aware: the stored `tier_label` is parsed through serde
+    /// (honoring every serde alias declared on the `Tier` enum — both
+    /// the current canonical names like `tier1`/`tier2`/... and every
+    /// historical alias like `free_trial`/`team`/`community`/`starter`/
+    /// `standard`/`pro`/`business`/`enterprise_pooled`/`enterprise`/
+    /// `enterprise_dedicated`). The deserialized `Tier` then yields its
+    /// canonical prometheus label from the bundled pricing config (or
+    /// the operator overlay, when an overlay is loaded).
+    ///
+    /// Returns `"unknown"` if the stored string doesn't deserialize to
+    /// any known `Tier`.
     pub fn high_cardinality_label(&self) -> &'static str {
-        let normalized = match self.tier_label.as_str() {
-            "community" | "starter" | "standard" => "team",
-            "enterprise_pooled" => "business",
-            "enterprise_dedicated" => "enterprise",
-            other => other,
-        };
-        bounded_tier_labels()
-            .iter()
-            .copied()
-            .find(|&label| label == normalized)
+        let v = serde_json::Value::String(self.tier_label.clone());
+        serde_json::from_value::<Tier>(v)
+            .ok()
+            .map(|t| t.prometheus_label())
             .unwrap_or("unknown")
     }
 
@@ -130,17 +133,17 @@ mod tests {
 
     #[test]
     fn from_record_carries_tenant_and_tier_label() {
-        let r = record("tenant-a", Tier::Business);
+        let r = record("tenant-a", Tier::Tier4);
         let label = TenantLabel::from_record(&r);
         assert_eq!(label.tenant_id, "tenant-a");
-        assert_eq!(label.tier_label, "business");
+        assert_eq!(label.tier_label, "tier4");
     }
 
     #[test]
     fn from_parts_constructs_without_record() {
-        let label = TenantLabel::from_parts("tenant-b", Tier::Enterprise);
+        let label = TenantLabel::from_parts("tenant-b", Tier::Tier5);
         assert_eq!(label.tenant_id, "tenant-b");
-        assert_eq!(label.tier_label, "enterprise");
+        assert_eq!(label.tier_label, "tier5");
     }
 
     #[test]
@@ -149,11 +152,11 @@ mod tests {
         // metric families with the bounded set at startup. This test
         // pins each tier's label.
         for (tier, expected) in [
-            (Tier::FreeTrial, "free"),
-            (Tier::Team, "team"),
-            (Tier::Pro, "pro"),
-            (Tier::Business, "business"),
-            (Tier::Enterprise, "enterprise"),
+            (Tier::Tier1, "tier1"),
+            (Tier::Tier2, "tier2"),
+            (Tier::Tier3, "tier3"),
+            (Tier::Tier4, "tier4"),
+            (Tier::Tier5, "tier5"),
         ] {
             let label = TenantLabel::from_parts("any", tier);
             assert_eq!(label.high_cardinality_label(), expected);
@@ -166,11 +169,11 @@ mod tests {
         // pre-rename `tier_label` values must still produce a bounded
         // metric label rather than collapsing to "unknown".
         for (raw, expected) in [
-            ("community", "team"),
-            ("starter", "team"),
-            ("standard", "team"),
-            ("enterprise_pooled", "business"),
-            ("enterprise_dedicated", "enterprise"),
+            ("community", "tier2"),
+            ("starter", "tier2"),
+            ("standard", "tier2"),
+            ("enterprise_pooled", "tier4"),
+            ("enterprise_dedicated", "tier5"),
         ] {
             let label = TenantLabel {
                 tenant_id: "any".into(),
@@ -194,7 +197,7 @@ mod tests {
 
     #[test]
     fn rollup_label_returns_raw_tenant_id() {
-        let label = TenantLabel::from_parts("tenant-xyz", Tier::Business);
+        let label = TenantLabel::from_parts("tenant-xyz", Tier::Tier4);
         assert_eq!(label.rollup_label(), "tenant-xyz");
     }
 
@@ -202,11 +205,11 @@ mod tests {
     fn bounded_tier_labels_contains_exactly_five() {
         let labels = bounded_tier_labels();
         assert_eq!(labels.len(), 5);
-        assert!(labels.contains(&"free"));
-        assert!(labels.contains(&"team"));
-        assert!(labels.contains(&"pro"));
-        assert!(labels.contains(&"business"));
-        assert!(labels.contains(&"enterprise"));
+        assert!(labels.contains(&"tier1"));
+        assert!(labels.contains(&"tier2"));
+        assert!(labels.contains(&"tier3"));
+        assert!(labels.contains(&"tier4"));
+        assert!(labels.contains(&"tier5"));
     }
 
     #[test]
@@ -220,11 +223,11 @@ mod tests {
 
     #[test]
     fn is_bounded_label_recognizes_each_tier() {
-        assert!(is_bounded_label("free"));
-        assert!(is_bounded_label("team"));
-        assert!(is_bounded_label("pro"));
-        assert!(is_bounded_label("business"));
-        assert!(is_bounded_label("enterprise"));
+        assert!(is_bounded_label("tier1"));
+        assert!(is_bounded_label("tier2"));
+        assert!(is_bounded_label("tier3"));
+        assert!(is_bounded_label("tier4"));
+        assert!(is_bounded_label("tier5"));
     }
 
     #[test]
@@ -237,15 +240,15 @@ mod tests {
 
     #[test]
     fn audit_json_carries_both_fields() {
-        let label = TenantLabel::from_parts("tenant-a", Tier::Business);
+        let label = TenantLabel::from_parts("tenant-a", Tier::Tier4);
         let json = label.to_audit_json();
         assert_eq!(json["tenant_id"], "tenant-a");
-        assert_eq!(json["tier"], "business");
+        assert_eq!(json["tier"], "tier4");
     }
 
     #[test]
     fn label_round_trips_via_json() {
-        let label = TenantLabel::from_parts("tenant-a", Tier::FreeTrial);
+        let label = TenantLabel::from_parts("tenant-a", Tier::Tier1);
         let s = serde_json::to_string(&label).unwrap();
         let back: TenantLabel = serde_json::from_str(&s).unwrap();
         assert_eq!(label, back);
@@ -256,8 +259,8 @@ mod tests {
         // The resolver is Hash + Eq so it can key a per-tenant counter
         // map directly (e.g. DashMap<TenantLabel, u64>).
         use std::collections::HashMap;
-        let a = TenantLabel::from_parts("t1", Tier::Business);
-        let b = TenantLabel::from_parts("t1", Tier::Business);
+        let a = TenantLabel::from_parts("t1", Tier::Tier4);
+        let b = TenantLabel::from_parts("t1", Tier::Tier4);
         let mut map: HashMap<TenantLabel, u32> = HashMap::new();
         *map.entry(a.clone()).or_insert(0) += 1;
         *map.entry(b).or_insert(0) += 1;
@@ -269,8 +272,8 @@ mod tests {
     #[test]
     fn distinct_tenants_produce_distinct_map_keys() {
         use std::collections::HashMap;
-        let a = TenantLabel::from_parts("t1", Tier::Business);
-        let b = TenantLabel::from_parts("t2", Tier::Business);
+        let a = TenantLabel::from_parts("t1", Tier::Tier4);
+        let b = TenantLabel::from_parts("t2", Tier::Tier4);
         let mut map: HashMap<TenantLabel, u32> = HashMap::new();
         map.insert(a, 1);
         map.insert(b, 2);

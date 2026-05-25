@@ -717,9 +717,9 @@ impl MetricsCollector {
     }
 
     /// Get metrics trend analysis
-    pub fn get_trend_analysis(&self, window_size: usize) -> TrendAnalysis {
+    pub fn get_trend_analysis(&self, window_size: usize) -> ZeroCopyTrendAnalysis {
         if self.historical_metrics.len() < 2 {
-            return TrendAnalysis::default();
+            return ZeroCopyTrendAnalysis::default();
         }
 
         let recent_window = std::cmp::min(window_size, self.historical_metrics.len());
@@ -748,7 +748,7 @@ impl MetricsCollector {
                 .collect(),
         );
 
-        TrendAnalysis {
+        ZeroCopyTrendAnalysis {
             hit_rate_trend,
             throughput_trend,
             cost_trend,
@@ -812,9 +812,12 @@ impl Default for MetricsCollector {
     }
 }
 
+/// Backwards-compat alias for [`ZeroCopyTrendAnalysis`].
+pub type TrendAnalysis = ZeroCopyTrendAnalysis;
+
 /// Trend analysis results
 #[derive(Debug, Clone, Default)]
-pub struct TrendAnalysis {
+pub struct ZeroCopyTrendAnalysis {
     #[allow(dead_code)]
     pub hit_rate_trend: TrendDirection,
     #[allow(dead_code)]

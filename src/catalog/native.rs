@@ -499,8 +499,7 @@ impl Catalog for NativeCatalog {
 
             // Invalidate catalog cache
             self.cache
-                .invalidate_table_in_catalog(&self.name, identifier)
-                .await;
+                .invalidate_table_in_catalog(&self.name, identifier);
 
             info!("Dropped table: {} (purge={})", identifier, purge);
         }
@@ -578,8 +577,7 @@ impl Catalog for NativeCatalog {
 
         // Invalidate catalog cache
         self.cache
-            .invalidate_table_in_catalog(&self.name, from)
-            .await;
+            .invalidate_table_in_catalog(&self.name, from);
 
         info!("Renamed table: {} -> {}", from, to);
         Ok(())
@@ -604,8 +602,7 @@ impl Catalog for NativeCatalog {
 
         // Invalidate cache
         self.cache
-            .invalidate_table_in_catalog(&self.name, identifier)
-            .await;
+            .invalidate_table_in_catalog(&self.name, identifier);
 
         info!(
             "Evolved schema for {}: v{} -> v{}",
@@ -679,8 +676,7 @@ impl Catalog for NativeCatalog {
 
         // Invalidate cache
         self.cache
-            .invalidate_table_in_catalog(&self.name, identifier)
-            .await;
+            .invalidate_table_in_catalog(&self.name, identifier);
 
         info!("Created index {} on {}", index.name, identifier);
         Ok(index)
@@ -698,8 +694,7 @@ impl Catalog for NativeCatalog {
 
             // Invalidate cache
             self.cache
-                .invalidate_table_in_catalog(&self.name, identifier)
-                .await;
+                .invalidate_table_in_catalog(&self.name, identifier);
 
             info!("Dropped index {} from {}", index_name, identifier);
             Ok(true)
@@ -787,8 +782,7 @@ impl Catalog for NativeCatalog {
 
         // Invalidate cache
         self.cache
-            .invalidate_table_in_catalog(&self.name, identifier)
-            .await;
+            .invalidate_table_in_catalog(&self.name, identifier);
 
         Ok(())
     }
@@ -818,8 +812,7 @@ impl Catalog for NativeCatalog {
 
         // Invalidate cache
         self.cache
-            .invalidate_table_in_catalog(&self.name, identifier)
-            .await;
+            .invalidate_table_in_catalog(&self.name, identifier);
 
         Ok(())
     }

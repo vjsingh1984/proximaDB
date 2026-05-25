@@ -540,8 +540,7 @@ impl Catalog for UnityCatalog {
 
         // Invalidate cache
         self.cache
-            .invalidate_table_in_catalog(&self.name, identifier)
-            .await;
+            .invalidate_table_in_catalog(&self.name, identifier);
 
         info!(
             "Deleted Unity table: {}.{}.{}",
@@ -682,8 +681,7 @@ impl Catalog for UnityCatalog {
 
         // Invalidate cache
         self.cache
-            .invalidate_table_in_catalog(&self.name, from)
-            .await;
+            .invalidate_table_in_catalog(&self.name, from);
 
         info!("Renamed Unity table: {} -> {}", from, to);
         Ok(())
@@ -744,8 +742,7 @@ impl Catalog for UnityCatalog {
 
         // Invalidate cache
         self.cache
-            .invalidate_table_in_catalog(&self.name, identifier)
-            .await;
+            .invalidate_table_in_catalog(&self.name, identifier);
 
         info!(
             "Evolved Unity table schema: {} (v{})",
