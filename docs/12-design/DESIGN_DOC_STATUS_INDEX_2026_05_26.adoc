@@ -270,7 +270,7 @@ Keep in `docs/_internal/roadmap/`: `README.adoc`, `STRATEGIC_ROADMAP.adoc`, `MAS
 
 Cross-tracker overlap to retire / cross-reference:
 
-* `docs/10-quality/PANIC_PRONE_CODE_AUDIT.md` and `docs/10-quality/TEST_INLINING_PROGRESS.md` — fold as TD-XXX rows in TECHNICAL_DEBT.adoc, then archive the standalone files.
+* ~`docs/10-quality/PANIC_PRONE_CODE_AUDIT.md` and `docs/10-quality/TEST_INLINING_PROGRESS.md` — fold as TD-XXX rows in TECHNICAL_DEBT.adoc, then archive the standalone files.~ — **Done 2026-05-26**. PANIC_PRONE remained tracked as the existing TD-007 row (Resolved); a new TD-069 row was added for the test-inlining work. Both companion docs archived to `docs/_archive/quality/2026-05/`.
 * `docs/_internal/roadmap/BEST_IN_CLASS_EXECUTION_TRACKER.adoc` (last update March 12) — verify against STRATEGIC_ROADMAP; if no new info, archive.
 * `docs/_internal/roadmap/MASTER_FEATURE_DASHBOARD.adoc` `:last-updated: March 31` — refresh to reference 2026-05 work or archive its phase-completion claims (most are "Complete" but several were marked "Production Ready" before the May design docs landed; review category-by-category).
 

@@ -1010,4 +1010,13 @@ physical layouts.
 | `QuasarGraphEngine` cold-tier storage (`src/graph/engines/quasar/`) writes hot-tier graph data via ORION and cold-tier data via a separate JSON/SST file path. Cold-tier writes bypass the canonical `RecordUpsert` WAL path entirely. `SUPPORTED_SURFACES.adoc` marks QUASAR as a demotion candidate pending an ADR and benchmark evidence.
 | 2-4 weeks
 | Option A: rewrite QUASAR cold tier to write through the canonical WAL + projection directives (ColumnarVariation or external-authority xCatalog table). Option B: retire QUASAR and replace with canonical-record-backed tiering policy governed by xCatalog freshness/retention. ADR required before implementation. Benchmark evidence of cold-tier benefit required for Option A.
+
+| TD-069
+| Standalone unit test files migrated to inline `#[cfg(test)]` blocks
+| All
+| MEDIUM
+| *Resolved*
+| 23 standalone unit test files in `tests/unit/` predated the inline-test convention and complicated build/discovery. Companion tracker `TEST_INLINING_PROGRESS.md` captured the migration work (now archived).
+| 2-3 weeks
+| *RESOLVED 2026-04-07*: 23 files / ~6,500 lines / 190 tests migrated from `tests/unit/` into inline `#[cfg(test)] mod tests` blocks alongside their source modules. 7702+ tests passing. Companion doc archived to `docs/_archive/quality/2026-05/TEST_INLINING_PROGRESS.md` 2026-05-26; see also memory entry `project-test-inline-progress`.
 |===
