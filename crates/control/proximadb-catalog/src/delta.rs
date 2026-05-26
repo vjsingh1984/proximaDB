@@ -403,13 +403,7 @@ impl DeltaCatalog {
             CatalogDataType::Uuid => "string".to_string(),
             CatalogDataType::Decimal => "decimal(38,18)".to_string(),
             CatalogDataType::Json => "string".to_string(),
-            CatalogDataType::Vector => {
-                let _dim = properties
-                    .get("dimension")
-                    .cloned()
-                    .ok_or_else(|| anyhow!("Vector dimension property not found"))?;
-                "array<float>".to_string()
-            }
+            CatalogDataType::Vector => "array<float>".to_string(),
             CatalogDataType::SparseVector => "map<integer,float>".to_string(),
             CatalogDataType::BinaryVector => "binary".to_string(),
         }
@@ -519,6 +513,7 @@ impl Catalog for DeltaCatalog {
             location: Some(location),
             created_at_ms: now,
             updated_at_ms: now,
+            ..CatalogNamespace::new(Vec::new())
         })
     }
 
@@ -568,6 +563,7 @@ impl Catalog for DeltaCatalog {
                 location: Some(ns.location.clone()),
                 created_at_ms: now,
                 updated_at_ms: now,
+                ..CatalogNamespace::new(Vec::new())
             })
             .collect();
 
@@ -595,6 +591,7 @@ impl Catalog for DeltaCatalog {
             location: Some(ns.location.clone()),
             created_at_ms: now,
             updated_at_ms: now,
+            ..CatalogNamespace::new(Vec::new())
         })
     }
 
@@ -1177,14 +1174,6 @@ impl Catalog for DeltaCatalog {
     ) -> Result<()> {
         warn!("Delta Lake: use OPTIMIZE ZORDER for sort order optimization");
         Ok(())
-    }
-
-    // ========================
-    // Cache Integration
-    // ========================
-
-    fn cache(&self) -> Option<Arc<CatalogCache>> {
-        Some(self.cache.clone())
     }
 
     // ========================

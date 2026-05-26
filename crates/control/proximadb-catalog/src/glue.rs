@@ -86,6 +86,8 @@ pub struct GlueCatalogConfig {
     pub catalog_id: String,
     /// Enable Lake Formation permissions
     pub use_lake_formation: bool,
+    /// Default Glue database name used for empty namespaces (default: "proximadb")
+    pub default_database: String,
 }
 
 /// AWS Glue catalog implementation
@@ -154,11 +156,12 @@ impl GlueCatalog {
         }
 
         CatalogColumn {
-            name: col.name().unwrap_or("").to_string(),
+            id: 0, // Glue doesn't expose stable column IDs
+            name: col.name().to_string(),
             data_type,
             nullable: true, // Glue doesn't track nullability well
             default_value: None,
-            comment: col.comment().unwrap_or("").to_string(),
+            comment: col.comment().map(str::to_string),
             properties,
         }
     }
@@ -173,7 +176,7 @@ impl GlueCatalog {
             "float" | "real" => CatalogDataType::Float32,
             "double" => CatalogDataType::Float64,
             "string" | "varchar" | "char" => CatalogDataType::String,
-            "binary" | "bytes" => CatalogDataType::Bytes,
+            "binary" | "bytes" => CatalogDataType::Binary,
             "date" => CatalogDataType::Date,
             "timestamp" => CatalogDataType::Timestamp,
             "decimal" => CatalogDataType::Decimal,
@@ -196,30 +199,29 @@ impl GlueCatalog {
             CatalogDataType::Float32 => "float".to_string(),
             CatalogDataType::Float64 => "double".to_string(),
             CatalogDataType::String => "string".to_string(),
-            CatalogDataType::Bytes => "binary".to_string(),
+            CatalogDataType::Binary => "binary".to_string(),
             CatalogDataType::Date => "date".to_string(),
             CatalogDataType::Timestamp => "timestamp".to_string(),
             CatalogDataType::TimestampTz => "timestamp".to_string(),
             CatalogDataType::Decimal => "decimal(38,18)".to_string(),
             CatalogDataType::Json => "string".to_string(), // Glue doesn't have native JSON
-            CatalogDataType::Vector | CatalogDataType::Embedding => {
+            CatalogDataType::Vector => {
                 // Store as array<float> with dimension in comment
-                let dim = properties
-                    .get("dimension")
-                    .unwrap_or(&"0".to_string())
-                    .clone();
+                let dim = properties.get("dimension").map(String::as_str).unwrap_or("0");
                 format!("array<float>({})", dim)
             }
             CatalogDataType::SparseVector => "map<int,float>".to_string(),
             CatalogDataType::BinaryVector => "binary".to_string(),
             CatalogDataType::Uuid => "string".to_string(),
+            // Remaining CatalogDataType variants Glue lacks first-class types for; fall back to string.
+            _ => "string".to_string(),
         }
     }
 
     /// Create vector column comment for Glue
     fn vector_column_comment(properties: &HashMap<String, String>) -> String {
-        let dim = properties.get("dimension").unwrap_or(&"0".to_string());
-        let metric = properties.get("metric").unwrap_or(&"cosine".to_string());
+        let dim = properties.get("dimension").map(String::as_str).unwrap_or("0");
+        let metric = properties.get("metric").map(String::as_str).unwrap_or("cosine");
         format!("vector:{}:metric={}", dim, metric)
     }
 
@@ -287,11 +289,11 @@ impl Catalog for GlueCatalog {
             .as_millis() as i64;
 
         Ok(CatalogNamespace {
-            name: db_name.clone(),
             levels: namespace.to_vec(),
             properties,
-            created_at: now,
-            updated_at: now,
+            created_at_ms: now,
+            updated_at_ms: now,
+            ..CatalogNamespace::new(Vec::new())
         })
     }
 
@@ -362,11 +364,11 @@ impl Catalog for GlueCatalog {
                     let levels: Vec<String> = name.split('_').map(String::from).collect();
 
                     CatalogNamespace {
-                        name: name.clone(),
                         levels,
                         properties: db.parameters().cloned().unwrap_or_default(),
-                        created_at: now,
-                        updated_at: now,
+                        created_at_ms: now,
+                        updated_at_ms: now,
+                        ..CatalogNamespace::new(Vec::new())
                     }
                 })
                 .collect();
@@ -428,11 +430,11 @@ impl Catalog for GlueCatalog {
                 .as_millis() as i64;
 
             return Ok(CatalogNamespace {
-                name: db_name.clone(),
                 levels: namespace.to_vec(),
                 properties: db.parameters().cloned().unwrap_or_default(),
-                created_at: now,
-                updated_at: now,
+                created_at_ms: now,
+                updated_at_ms: now,
+                ..CatalogNamespace::new(Vec::new())
             });
         }
 
@@ -514,12 +516,10 @@ impl Catalog for GlueCatalog {
             for col in &schema.columns {
                 let glue_type = Self::data_type_to_glue_type(&col.data_type, &col.properties);
 
-                let comment = if col.data_type == CatalogDataType::Vector
-                    || col.data_type == CatalogDataType::Embedding
-                {
+                let comment = if col.data_type == CatalogDataType::Vector {
                     Self::vector_column_comment(&col.properties)
                 } else {
-                    col.comment.clone()
+                    col.comment.clone().unwrap_or_default()
                 };
 
                 let glue_col = aws_sdk_glue::types::Column::builder()
@@ -763,12 +763,10 @@ impl Catalog for GlueCatalog {
             for col in &new_schema.columns {
                 let glue_type = Self::data_type_to_glue_type(&col.data_type, &col.properties);
 
-                let comment = if col.data_type == CatalogDataType::Vector
-                    || col.data_type == CatalogDataType::Embedding
-                {
+                let comment = if col.data_type == CatalogDataType::Vector {
                     Self::vector_column_comment(&col.properties)
                 } else {
-                    col.comment.clone()
+                    col.comment.clone().unwrap_or_default()
                 };
 
                 let glue_col = aws_sdk_glue::types::Column::builder()
@@ -911,14 +909,6 @@ impl Catalog for GlueCatalog {
     }
 
     // ========================
-    // Cache Integration
-    // ========================
-
-    fn cache(&self) -> Option<Arc<CatalogCache>> {
-        Some(self.cache.clone())
-    }
-
-    // ========================
     // Health & Connectivity
     // ========================
 
@@ -926,24 +916,26 @@ impl Catalog for GlueCatalog {
         let start = Instant::now();
 
         #[cfg(feature = "aws")]
-        if let Some(client) = &self.client {
-            match client
-                .get_databases()
-                .catalog_id(&self.config.catalog_id)
-                .max_results(1)
-                .send()
-                .await
-            {
-                Ok(_) => {
-                    let latency = start.elapsed().as_millis() as u64;
-                    return Ok(CatalogHealth::healthy(latency)
-                        .with_detail("catalog_id", &self.config.catalog_id)
-                        .with_detail("region", &self.config.region)
-                        .with_detail("catalog_type", "glue"));
+        {
+            if let Some(client) = &self.client {
+                match client
+                    .get_databases()
+                    .catalog_id(&self.config.catalog_id)
+                    .max_results(1)
+                    .send()
+                    .await
+                {
+                    Ok(_) => {
+                        let latency = start.elapsed().as_millis() as u64;
+                        Ok(CatalogHealth::healthy(latency)
+                            .with_detail("catalog_id", &self.config.catalog_id)
+                            .with_detail("region", &self.config.region)
+                            .with_detail("catalog_type", "glue"))
+                    }
+                    Err(e) => Ok(CatalogHealth::unhealthy(e.to_string())),
                 }
-                Err(e) => {
-                    return Ok(CatalogHealth::unhealthy(e.to_string()));
-                }
+            } else {
+                Ok(CatalogHealth::unhealthy("Glue client not initialized"))
             }
         }
 

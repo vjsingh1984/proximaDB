@@ -478,6 +478,7 @@ impl Catalog for PolarisCatalog {
             location: None,
             created_at_ms: now,
             updated_at_ms: now,
+            ..CatalogNamespace::new(Vec::new())
         })
     }
 
@@ -524,6 +525,7 @@ impl Catalog for PolarisCatalog {
                 location: None,
                 created_at_ms: now,
                 updated_at_ms: now,
+                ..CatalogNamespace::new(Vec::new())
             }));
 
             next_page_token = response.next_page_token;
@@ -566,6 +568,7 @@ impl Catalog for PolarisCatalog {
             location: None,
             created_at_ms: now,
             updated_at_ms: now,
+            ..CatalogNamespace::new(Vec::new())
         })
     }
 
@@ -1079,14 +1082,6 @@ impl Catalog for PolarisCatalog {
             .await?;
 
         Ok(())
-    }
-
-    // ========================
-    // Cache Integration
-    // ========================
-
-    fn cache(&self) -> Option<Arc<CatalogCache>> {
-        Some(self.cache.clone())
     }
 
     // ========================
