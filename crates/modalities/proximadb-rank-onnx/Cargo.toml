@@ -15,10 +15,12 @@ path = "src/lib.rs"
 
 [features]
 default = []
-# R-5b will gate the real ort-based ScorerSession here. R-5 itself
-# ships only the mock-driven primitives so the cache / batch / LRU
-# semantics can land without pulling in the ort dep.
-real-onnx = []
+# R-5b: real ort-backed ScorerSession (`OrtScorerSession`). Gated so the
+# default build stays light — the mock-driven session primitives from
+# R-5 are sufficient for unit-testing the cache / batch / LRU
+# semantics. Enable this in production deployments that need live
+# cross-encoder inference.
+real-onnx = ["dep:ort", "dep:ndarray"]
 
 [dependencies]
 proximadb-rank-core = { workspace = true }
@@ -30,6 +32,19 @@ serde_json.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 tracing.workspace = true
+
+# Real ONNX runtime — version + features pinned to match
+# crates/modalities/proximadb-embedding so both crates link against
+# the same ort native library at runtime (avoids dual-load of
+# onnxruntime which destabilises the EP registry).
+ort = { version = "2.0.0-rc.10", optional = true, default-features = false, features = [
+    "std",
+    "download-binaries",
+    "ndarray",
+    "tls-rustls",
+    "half",
+] }
+ndarray = { version = "0.17", optional = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }

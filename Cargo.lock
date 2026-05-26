@@ -6690,6 +6690,8 @@ version = "0.2.0"
 dependencies = [
  "async-trait",
  "dashmap",
+ "ndarray 0.17.2",
+ "ort",
  "proximadb-kernel",
  "proximadb-rank-core",
  "serde",
