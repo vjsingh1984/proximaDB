@@ -65,6 +65,7 @@ members = [
     "crates/query/proximadb-relational-algebra",
     "crates/query/proximadb-relational-reader",
     "crates/query/proximadb-relational-planner",
+    "crates/query/proximadb-relational-executor",
     "crates/contracts/quantization",
     "crates/query/proximadb-observability-query",
     "crates/query/proximadb-query",
@@ -111,6 +112,7 @@ proximadb-relational-types = { path = "crates/foundation/proximadb-relational-ty
 proximadb-relational-algebra = { path = "crates/query/proximadb-relational-algebra" }
 proximadb-relational-reader = { path = "crates/query/proximadb-relational-reader" }
 proximadb-relational-planner = { path = "crates/query/proximadb-relational-planner" }
+proximadb-relational-executor = { path = "crates/query/proximadb-relational-executor" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 dashmap = "6.1.0"
 parking_lot = "0.12"
