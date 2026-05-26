@@ -760,8 +760,8 @@ pub struct EmbeddedProximaDB {
     shared_services: crate::network::multi_server::SharedServices,
     /// Embedded catalog manager for pgwire-compatible schema DDL and metadata
     catalog_manager: std::sync::Arc<crate::catalog::CatalogManager>,
-    /// Collection service for collection management
-    collection_service: std::sync::Arc<crate::services::collection::manager::CollectionService>,
+    /// Collection port for collection management (Phase 9: port-typed; concrete still available via `self.shared_services.collection_service` when port surface insufficient — see Task #76 deferral notes)
+    collection_port: std::sync::Arc<dyn proximadb_runtime::CollectionPort>,
     /// Path where RL planner policy is persisted (None if RL disabled)
     rl_policy_path: Option<String>,
     /// Metrics collector for embedded mode observability
@@ -802,7 +802,7 @@ impl EmbeddedProximaDB {
         let storage_config = Self::to_storage_config(&config);
 
         // Initialize SharedServices using the runtime
-        let (shared_services, collection_service) =
+        let (shared_services, collection_port) =
             runtime.block_on(async { Self::init_services(storage_config).await })?;
 
         // Initialize RL planner if enabled
@@ -950,7 +950,7 @@ impl EmbeddedProximaDB {
             runtime,
             shared_services,
             catalog_manager,
-            collection_service,
+            collection_port,
             rl_policy_path,
             metrics_collector,
             checkpoint_manager,
@@ -1056,7 +1056,7 @@ impl EmbeddedProximaDB {
     ) -> Result<
         (
             crate::network::multi_server::SharedServices,
-            std::sync::Arc<crate::services::collection::manager::CollectionService>,
+            std::sync::Arc<dyn proximadb_runtime::CollectionPort>,
         ),
         Box<dyn std::error::Error + Send + Sync>,
     > {
@@ -1099,7 +1099,9 @@ impl EmbeddedProximaDB {
         .await;
         tracing::debug!("✅ Embedded: Global metadata provider set for WAL path resolution");
 
-        Ok((shared_services, collection_service))
+        let collection_port: std::sync::Arc<dyn proximadb_runtime::CollectionPort> =
+            collection_service;
+        Ok((shared_services, collection_port))
     }
 
     /// Initialize the global WAL manifest for proper WAL file cleanup
@@ -1437,6 +1439,7 @@ impl EmbeddedProximaDB {
 
         self.runtime.block_on(async {
             let response = self
+                .shared_services
                 .collection_service
                 .delete_collection(name)
                 .await
@@ -1917,8 +1920,8 @@ impl EmbeddedProximaDB {
     ) -> Result<Option<EmbeddedCollectionInfo>, Box<dyn std::error::Error + Send + Sync>> {
         self.runtime.block_on(async {
             let collection = self
-                .collection_service
-                .get_collection_with_tenant_context(name, None)
+                .collection_port
+                .get_collection(name, None)
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(std::io::Error::other(e.to_string()))
@@ -1942,7 +1945,7 @@ impl EmbeddedProximaDB {
         &self,
     ) -> Result<Vec<EmbeddedCollectionInfo>, Box<dyn std::error::Error + Send + Sync>> {
         self.runtime.block_on(async {
-            let collections = self.collection_service.list_collections().await.map_err(
+            let collections = self.collection_port.list_collections(None).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(std::io::Error::other(e.to_string()))
                 },
@@ -2026,8 +2029,8 @@ impl EmbeddedProximaDB {
                 tracing::info!("🔄 EMBEDDED: Flushing collection '{}'", collection_id);
 
                 // Get the collection's metadata to find its configured storage engine
-                let collection_metadata = self.collection_service
-                    .get_collection_with_tenant_context(collection_id, None)
+                let collection_metadata = self.collection_port
+                    .get_collection(collection_id, None)
                     .await;
 
                 // Resolve the canonical collection ID (UUID), storage path, engine, and dimension.
@@ -2549,7 +2552,7 @@ impl EmbeddedProximaDB {
     /// Get storage statistics
     pub fn stats(&self) -> Result<EmbeddedStorageStats, Box<dyn std::error::Error + Send + Sync>> {
         self.runtime.block_on(async {
-            let collections = self.collection_service.list_collections().await.ok();
+            let collections = self.collection_port.list_collections(None).await.ok();
             let total_collections = collections.as_ref().map_or(0, |c| c.len() as u64);
             let total_vectors: u64 = collections.map_or(0, |c| {
                 c.iter()
@@ -2779,7 +2782,7 @@ impl EmbeddedProximaDB {
                 };
 
             // Gather collection states
-            let collections = self.collection_service.list_collections().await.map_err(
+            let collections = self.collection_port.list_collections(None).await.map_err(
                 |e| -> Box<dyn std::error::Error + Send + Sync> {
                     Box::new(std::io::Error::other(e.to_string()))
                 },
@@ -4186,7 +4189,7 @@ impl EmbeddedProximaDB {
 
         let exists = self
             .runtime
-            .block_on(self.collection_service.collection(&table_id.name))
+            .block_on(self.collection_port.get_collection(&table_id.name, None))
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                 Box::new(std::io::Error::other(e.to_string()))
             })?
