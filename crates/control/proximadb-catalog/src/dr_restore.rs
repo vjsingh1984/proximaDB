@@ -65,8 +65,10 @@ pub struct ManifestEntryRef {
     pub global_lsn: u64,
     /// Collection this entry belongs to. Must match the policy.
     pub collection_id: String,
-    /// Identifier of the batch this entry committed.
-    pub batch_id: u64,
+    /// Identifier of the batch this entry committed. Matches the
+    /// base62-encoded `BatchId` the engine emits in
+    /// `GlobalManifestEntry::batch_id`; treated as opaque here.
+    pub batch_id: String,
     /// Storage object key the batch lives at. The destination
     /// presence check uses this verbatim.
     pub file_path: String,
@@ -76,8 +78,8 @@ pub struct ManifestEntryRef {
     pub storage_url: Option<String>,
     pub status: ManifestEntryStatus,
     /// Optional checkpoint identifier. Multiple entries may share
-    /// a checkpoint.
-    pub checkpoint_id: Option<String>,
+    /// a checkpoint. Matches `GlobalManifestEntry::checkpoint_id`.
+    pub checkpoint_id: Option<u64>,
     /// Source-side commit time (millis since epoch). RPO observation
     /// uses this; see contract §"RPO Observation".
     pub timestamp_ms: i64,
@@ -314,7 +316,7 @@ mod tests {
         ManifestEntryRef {
             global_lsn: lsn,
             collection_id: collection.into(),
-            batch_id: lsn,
+            batch_id: format!("batch_{lsn}"),
             file_path: format!("data/tnt_acme/ns_1/{collection}/segments/{lsn}.seg"),
             storage_url: None,
             status,
