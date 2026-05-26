@@ -1,0 +1,162 @@
+= Pre-release Foundational Items — Live Tracker
+:toc: left
+:toclevels: 2
+:icons: font
+:last-updated: 2026-05-26
+:audit-source: ../../12-design/DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc
+:plan-source: /Users/vijaysingh/.claude/plans/atomic-puzzling-meteor.md
+
+[.lead]
+**Live progress tracker for the 5-tier pre-release foundational work plan dated 2026-05-26. Add commit hash + verification note as each item lands.**
+
+== Context
+
+The 2026-05-26 design-doc audit
+(`docs/12-design/DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc`) made the
+design-doc landscape honest. This tracker covers the next layer of
+honesty work: dashboard ↔ code ↔ support-contract reconciliation and
+the small set of genuine multi-tenant safety / durability gaps.
+
+User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
+
+* T1.2 auth defaults: Option B — keep default off, add startup `warn!`. Defer Option A (forced-explicit) to v0.4.
+* T3.2 hybrid retrieval gRPC: wire real BM25+vector backend (parity with REST).
+* Tier 2 scope this session: write ADR-020 + land TD-065 (default-enable canonical-document-store). TD-066/067/068 stay open under the new ADR for follow-up sessions.
+* Execution order: T0 → T1 → T2 → T3 → T4 sequential.
+
+== Tier 0 — Dashboard honesty (zero-risk docs)
+
+[cols="3,1,3,2", options="header"]
+|===
+| Item | Status | Commit | Verification
+
+| T0.1 — Reconcile MASTER_FEATURE_DASHBOARD maturity rows with SUPPORTED_SURFACE; downgrade Documents/Graph/Hybrid/Observability/Unified-query/Time-series/Event-sourcing/Security from "Production Ready" to Beta; downgrade Distributed cluster from "Beta" to Experimental; add pgwire/SQL Beta row; add Caveat column citing controlling TD/ADR.
+| Done
+| (this session)
+| `git diff docs/_internal/roadmap/MASTER_FEATURE_DASHBOARD.adoc` shows the new table.
+
+| T0.2 — Create this tracker doc.
+| Done
+| (this session)
+| File exists at `docs/_internal/status/PRE_RELEASE_FOUNDATIONS_2026_05_26.adoc`.
+|===
+
+== Tier 1 — Multi-tenant safety hardening
+
+[cols="3,1,3,2", options="header"]
+|===
+| Item | Status | Commit | Verification
+
+| T1.1 — Implement `rls_record_filter` on NOVA + HELIX engines, mirroring SST's `trait_impl.rs:303` pattern. Use the generic `RlsRecordPredicate` from `src/storage/traits/query.rs:21`. Skip SWIFT + RAPTOR (`experimental-engines` feature, not production-multi-tenant targets).
+| Pending
+|
+| Multi-tenant integration test: tenant A queries against a collection populated under tenant B; engine returns zero records. Repeat for HELIX. Existing SST/VIPER baseline.
+
+| T1.2 — Add startup `warn!` log when production-mode server runs without auth (Option B). Keep `RestAuthConfig::default().enabled = false`. Touch the server-startup path that constructs `RestServerSecurityConfig` so the warning fires when `development_mode == false && auth.enabled == false`.
+| Pending
+|
+| Run server in non-development mode without auth config; inspect logs for the new warning. Run in `multi_tenant()` mode; warning should NOT fire (auth is enabled there).
+
+| T1.3 — Document the `auth_middleware_unified_port` dormant status. Add a comment block at `src/network/auth/middleware.rs:168` confirming this is the parallel-shortcut state (ADR-016 step 3 of 4), and that step 4 (consumer migrations) is intentionally demand-blocked.
+| Pending
+|
+| Comment exists; future readers don't think the middleware was forgotten.
+|===
+
+== Tier 2 — Canonical WAL fragmentation (durability story)
+
+[cols="3,1,3,2", options="header"]
+|===
+| Item | Status | Commit | Verification
+
+| T2.1 — Write ADR-020: Canonical WAL Authority Model. Cover the four open TDs (065/066/067/068) — for each, document the decision (default-enable, demote, key contract, rewire-vs-retire).
+| Pending
+|
+| `docs/12-design/adr/ADR-020-canonical-wal-authority.adoc` exists; cross-referenced from `DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc` ADR table.
+
+| T2.2 — Default-enable `canonical-document-store` feature (TD-065). Flip `Cargo.toml` `[features]` default set; preserve the opt-out flag for migration. Mark TD-065 Resolved in TECHNICAL_DEBT.adoc.
+| Pending
+|
+| Crash + restart with default features: document data recovers from canonical WAL (not from in-memory map). Existing tests in `tests/wal_*.rs` should pass.
+
+| T2.3 — Deferred to follow-up session per user decision: TD-066 ORION canonical Checkpoint emission. Captured here so it doesn't disappear from the active tracker.
+| Deferred
+| —
+| (Out of session scope.)
+|===
+
+== Tier 3 — Foundational ADR completion
+
+[cols="3,1,3,2", options="header"]
+|===
+| Item | Status | Commit | Verification
+
+| T3.1 — ADR-012 minimum-viable `merge_branch(source, target, conflict_policy)` for node + edge CRDT semantics. If embedding-merge case is intricate, document the deferral inline and ship node+edge for v0.3.
+| Pending
+|
+| Integration test: two graph branches with divergent nodes + edges; merge resolves per CRDT spec.
+
+| T3.2 — Wire real BM25 + vector backend through the gRPC hybrid_search route. Target `crates/platform/proximadb-api/src/grpc/v1/hybrid.rs` (the new home; the root-crate `hybrid_search_service.rs` is a deprecated shim). Mirror the REST `/api/v1/hybrid/search` behavior.
+| Pending
+|
+| Existing REST hybrid test ported to the gRPC client; returns same results within tolerance.
+
+| T3.3 — Audit `src/network/rest/v1/iceberg_rest_catalog.rs` per-endpoint completeness. Document gaps in ADR-007 `Status:` block if any handler is a stub; implement only if a customer-facing endpoint is missing.
+| Pending
+|
+| All Iceberg REST endpoints either return real data or have an explicit ADR-007 status note about their pending state.
+|===
+
+== Tier 4 — Production hardening polish
+
+[cols="3,1,3,2", options="header"]
+|===
+| Item | Status | Commit | Verification
+
+| T4.1 — Experimental engine startup guard. In the engine factory, when asked to create RAPTOR or SWIFT and the `experimental-engines` feature flag is absent, return a hard error at engine creation (not at first query). Add startup `warn!` if the flag IS compiled in for a production build.
+| Pending
+|
+| Attempt to create a RAPTOR collection without `experimental-engines`: factory returns error before any WAL write.
+
+| T4.2 — Proto compatibility CI gate. In CI, regenerate proto types and diff against committed types. Fail on non-additive changes (field removal, type change). Add `make proto-check` as the canonical local invocation.
+| Pending
+|
+| CI fails when a deliberate breaking proto change is pushed in a test branch; `make proto-check` passes on clean main.
+
+| T4.3 — Dimension / NaN / Inf validation hardening on hot paths (insert + query). Audit entry points; reject NaN/Inf in quantization pipeline; add regression tests.
+| Pending
+|
+| Insert with NaN-containing vector → 400. Insert with dimension-mismatched vector → 400. Existing `src/core/utils/validation.rs` is the home; ensure all hot paths call into it.
+|===
+
+== Tier 5 — Demand-blocked, intentionally deferred
+
+Captured here so they don't disappear from the planning surface. Don't implement until a real consumer surfaces.
+
+* **ADR-016 step 4** (PortUserContext consumer migrations) — needs a real cross-crate consumer with port-typed need.
+* **Task #72 cluster_port consumer wiring** — slot exists; no consumer yet.
+* **ADR-018 pgwire Phase 2/3** — multi-session work per ADR's own roadmap.
+* **TD-066 ORION canonical Checkpoint** — covered by ADR-020 but explicit work deferred to follow-up session.
+* **TD-067 projection keys facade-vs-OID** — scoped by ADR-020; not pre-release-critical.
+* **TD-068 QUASAR cold tier** — depends on ADR-020 + benchmark evidence; could go either way.
+
+== Estimated effort + ship target
+
+* Tier 0: 1-2 days (pure docs)  — completing this session
+* Tier 1: 3-5 days (RLS impl + auth-defaults warn + middleware comment)
+* Tier 2: 1-2 days (ADR-020 + TD-065 only; TD-066/067/068 deferred)
+* Tier 3: 1-2 weeks (ADR-012 minimum-merge + hybrid gRPC parity + Iceberg endpoint check)
+* Tier 4: 3-5 days (hardening polish)
+
+**Total realistic v0.3 GA path**: ~5-7 weeks. Tier 0 ships first because it's the customer-trust surface.
+
+== Cross-references
+
+* Plan source: `/Users/vijaysingh/.claude/plans/atomic-puzzling-meteor.md`
+* Design audit: `docs/12-design/DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc`
+* Consolidation plan: `docs/12-design/DOCUMENTATION_CONSOLIDATION_AND_ARCHIVE_PLAN_2026_05_22.adoc`
+* Support contract: `docs/SUPPORTED_SURFACE.adoc` + `docs/12-design/SUPPORTED_SURFACES.adoc`
+* Live debt: `docs/10-quality/TECHNICAL_DEBT.adoc`
+* Sibling status trackers:
+** `docs/_internal/status/PHASE9_REMAINING_2026_05_25.adoc`
+** `docs/_internal/status/MULTIMODAL_MULTIMODEL_STATE_2026_05_25.adoc`
