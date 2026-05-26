@@ -3,9 +3,21 @@
 :toclevels: 3
 
 Status: active consolidation plan +
-Date: 2026-05-22 +
+Date: 2026-05-22 (last audit 2026-05-26) +
 Scope: OSS repository documentation, SaaS/core boundary documentation, active design docs, and
 archive rules.
+
+[NOTE]
+====
+**2026-05-26 audit update**: see
+link:DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc[DESIGN_DOC_STATUS_INDEX_2026_05_26]
+for the bookkeeping snapshot of every file under `docs/12-design/` plus
+ADRs (21 top-level + 19 ADRs audited) with `Wired` / `Status` columns.
+Batches 1 and 2 (quick-start legacy + duplicate concept format) are
+**done**; Batches 3 (internal roadmap/status cleanup) and 4 (design
+index refresh) are **still pending** — explicit per-file list in the
+status index doc's `<<pending-consolidation-batches>>` section.
+====
 
 == Goals
 

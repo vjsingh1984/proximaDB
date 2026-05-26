@@ -5,6 +5,13 @@
 This directory holds current architectural decisions and active implementation blueprints.
 Historical phase reports, superseded visions, and one-off audits belong under `docs/_archive/`.
 
+[TIP]
+====
+**For a bookkeeping snapshot** (every doc here + every ADR, with status / wired-vs-not / consolidation cluster columns), see
+link:DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc[DESIGN_DOC_STATUS_INDEX_2026_05_26].
+Updated 2026-05-26.
+====
+
 == Canonical Architecture Path
 
 Read these in order for future-shaping architecture work:

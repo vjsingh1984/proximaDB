@@ -3,7 +3,8 @@
 :toclevels: 3
 :icons: font
 :source-highlighter: rouge
-:last-updated: March 31, 2026
+:last-updated: 2026-05-26
+:dashboard-header-refresh: 2026-05-26
 :verified: true
 
 [.lead]
@@ -12,6 +13,9 @@
 [TIP]
 ====
 For strategic context and phase alignment, see link:STRATEGIC_ROADMAP.adoc[Strategic Roadmap] which maps all features to Vision phases.
+
+For design-doc-to-code wiring snapshot (which ADRs are fully wired vs partial, which design docs have backing code), see
+link:../../12-design/DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc[Design Doc Status Index — 2026-05-26].
 ====
 
 [IMPORTANT]
@@ -20,6 +24,14 @@ Use link:../../SUPPORTED_SURFACE.adoc[Supported Surface Matrix] for the current 
 
 This dashboard remains useful as an implementation inventory, but several surfaces are still beta
 or experimental even when code exists. Treat the maturity summary below as the current truth layer.
+
+**2026-05-26 audit note**: header `:last-updated:` refreshed; per-row maturity claims (below) have NOT been re-verified row-by-row against current code. Many rows date to the March 2026 baseline. When picking up work that depends on a feature claim, cross-check against `DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc` and `docs/_internal/status/` for the latest reality.
+
+**Known per-row drift** (not yet folded into row updates):
+
+* Several ADRs that are now `PARTIAL` (ADR-007 Iceberg REST server, ADR-012 graph branch merge, ADR-018 pgwire/SQL parity Phase 2/3, ADR-019 relational executor) back rows currently marked "Production Ready" here.
+* Task #76 collection_port migration (8 consumers landed 2026-05-26) hasn't been folded into the affected service rows yet.
+* Task #69 / ADR-016 PortUserContext foundation (steps 1-3 landed 2026-05-26) is not yet a dashboard row.
 ====
 
 == Vision Phase Alignment

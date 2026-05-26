@@ -1,0 +1,326 @@
+= Design Doc Status Index — 2026-05-26 Bookkeeping Audit
+:toc: left
+:toclevels: 3
+:icons: font
+:last-updated: 2026-05-26
+
+[.lead]
+**Audit-time bookkeeping index for every doc under `docs/12-design/` plus tracker-shaped docs across other roots. No code changes — this doc is the single point of reference for "what's still load-bearing, what's wired, what should be archived" as of 2026-05-26.**
+
+[IMPORTANT]
+====
+This is the index. It points at canonical docs and dashboards. It does NOT replace them. When a row says **Wired**, that's a snapshot grep result, not a contract — verify against current code before acting.
+
+This audit complements (does not replace) `link:DOCUMENTATION_CONSOLIDATION_AND_ARCHIVE_PLAN_2026_05_22.adoc[DOCUMENTATION_CONSOLIDATION_AND_ARCHIVE_PLAN_2026_05_22]` which holds the canonical archive rules.
+====
+
+== How to read this index
+
+* **Status** values: Accepted (ADRs), Active (live design), Active-Memo (short-lived follow-up), Reference (convention/index), Pending (no code yet), Archived (moved to `docs/_archive/`).
+* **Wired** values:
+** **WIRED** — distinctive symbol from the doc has hits in workspace code outside docs/tests.
+** **PARTIAL** — some referenced symbols/paths exist, others don't (typically phase-gated work).
+** **NOT_WIRED** — no code traces; either pending implementation OR external/SaaS-only.
+** **N/A** — convention/index doc, no code expected.
+* **Cluster** — semantic grouping for consolidation review (see <<consolidation-clusters>>).
+
+== docs/12-design top-level (21 files)
+
+[cols="3,1,1,1,3", options="header"]
+|===
+| File | Status | Wired | Cluster | Notes
+
+| ARCHITECTURE_ATLAS_2026_05_22.adoc
+| Active
+| WIRED
+| Atlas
+| `xCatalog` (68 hits). OSS/SaaS navigation map. Paired with MODULE_COMPONENT_LLD.
+
+| COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc
+| Active
+| NOT_WIRED
+| Catalog
+| `DRPolicy` (0 hits). SaaS-pending; engine surface defined in ADR-017 but operator side lives in `AnvaiOps` private repo. Mark "Status: SaaS-pending — see ADR-017".
+
+| COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc
+| Active
+| WIRED
+| Relational
+| `ExecutionRoute` (16 hits). Refines MULTIMODAL_OVERHAUL routing decisions.
+
+| DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc
+| Active
+| WIRED
+| Anchor
+| `ProximaValue` (1232 hits). Top-level architecture anchor.
+
+| DESIGN_PATTERNS.adoc
+| Reference
+| N/A
+| Convention
+| Patterns catalog. Update on new patterns.
+
+| DOCUMENTATION_CONSOLIDATION_AND_ARCHIVE_PLAN_2026_05_22.adoc
+| Active
+| N/A
+| Meta
+| Canonical archive rules. Batches 1+2 done; 3+4 pending — see <<pending-consolidation-batches>>.
+
+| EMBEDDING_PRECISION_BRIDGE_BINCODE_MEMO_2026_05_23.adoc
+| Active-Memo
+| WIRED
+| Precision
+| `EmbeddingValues` (483 hits via series). INT-2.5 bincode bridge follow-up.
+
+| EMBEDDING_PRECISION_END_TO_END_2026_05_22.adoc
+| Active
+| WIRED
+| Precision
+| HLD for the precision series.
+
+| EMBEDDING_PRECISION_INT3_FOLLOWUP_MEMO_2026_05_23.adoc
+| Active-Memo
+| WIRED
+| Precision
+| INT-3 dispatch-gap follow-up.
+
+| EMBEDDING_PRECISION_INTEGRATION_PLAN_2026_05_23.adoc
+| Active
+| WIRED
+| Precision
+| 4-PR sequence plan.
+
+| EMBEDDING_PRECISION_LLD_2026_05_22.adoc
+| Active
+| WIRED
+| Precision
+| LLD for the precision series.
+
+| MODULE_COMPONENT_LLD_2026_05_22.adoc
+| Active
+| WIRED
+| Atlas
+| Per-module breakdown paired with ARCHITECTURE_ATLAS.
+
+| MULTIMODEL_TRAJECTORY_ALIGNMENT_2026_05_18.adoc
+| Active
+| NOT_WIRED
+| Multimodel
+| `StoreType` (0 hits as named symbol). Guideline doc subordinate to `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`. Candidate to fold into the parent spec's "Design Rationale" section.
+
+| NAMING_CONVENTIONS.adoc
+| Reference
+| N/A
+| Convention
+| Naming standards.
+
+| OPEN_FORMAT_CATALOG_2026_05_17.adoc
+| Active
+| PARTIAL
+| Catalog
+| `IcebergCatalog` (5 hits). Active design; light code coverage. ADR-007 lives downstream.
+
+| PAX_CODEC_LAYOUT_COMPRESSION_LLD_2026_05_20.adoc
+| Active
+| PARTIAL
+| Storage
+| `PaxSegmentWriter` (5 hits). LLD for PAX format. ADR-010 is the decision authority.
+
+| README.adoc
+| Reference
+| N/A
+| Meta
+| Design folder front door. Lists canonical reading order.
+
+| RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc
+| Active
+| WIRED
+| Relational
+| Stacked-durability mandate. Parent of the three 2026-05-19/20 relational refinements.
+
+| RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc
+| Active
+| WIRED
+| Relational
+| `SqlDmlRoute` (24 hits). pgwire DML active blueprint — tied to ADR-018 phases.
+
+| RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc
+| Active
+| WIRED
+| Relational
+| `PaxBlock` (34 hits). PAX/MVCC storage shape. Tied to ADR-010 + ADR-013.
+
+| SUPPORTED_SURFACES.adoc
+| Reference
+| N/A
+| Support
+| Support contract surface list.
+|===
+
+== docs/12-design/adr (19 ADRs)
+
+All ADRs are **Accepted**. Wiring breakdown:
+
+[cols="1,3,1,3,3", options="header"]
+|===
+| ADR | Title (short) | Wired | Governs (key path/symbol) | Notes
+
+| 001 | Capability Registry | WIRED | `src/query/capabilities/` → `CapabilityDescriptor` | Unified capability model.
+| 002 | Normalized Filter Contract | WIRED | `src/core/search/filter_contract.rs` → `NormalizedFilterExpr` | Active in hybrid search.
+| 003 | MultiModel Plan v1 | WIRED | `crates/query/proximadb-query/` → `MultiModelPlanV1` | Canonical logical plan.
+| 004 | Unified Explain Contract | WIRED | `src/query/explain_schema.rs` → `UnifiedExplainPlan` | Test suite in `test_explain_plan_consistency.rs`.
+| 005 | Document/Graph Extensions | WIRED | `proto/proximadb/v1/document.proto` | LookupStage/ComputedField/AggregationType.
+| 006 | Infrastructure/Platform | WIRED | Cargo, `src/cdc/`, experimental-engines feature | Test binary fix, CDC, engine lifecycle.
+| 007 | Iceberg REST Catalog | **PARTIAL** | `src/network/` Iceberg REST server stub | Server binding incomplete; PAX integration in storage-common is done.
+| 008 | OLTP Catalog Backends | WIRED | `crates/control/proximadb-catalog/` → `OltpCatalog` | 6 files active.
+| 009 | ProximaRecord Surfaces | WIRED | `ProximaRecord` (321 files) | Foundational stacked durability.
+| 010 | PAX Block Format | WIRED | `crates/storage/proximadb-storage-common/src/pax_block.rs` | 13 tests; wired to VIPER/NOVA.
+| 011 | Filtered ANN Routing | WIRED | `AnnFilteringPolicy` catalog entry | Selectivity-driven; FAVOR paper.
+| 012 | Graph Branch Merge | **PARTIAL** | `__proxima_branch_id` in `system_columns.rs` | Field exists; merge-conflict enforcement nascent.
+| 013 | Protocol Type Coercion | WIRED | `ProtocolTypeCoercionNote` in `proximadb-catalog` | Matrix complete; EXPLAIN annotated.
+| 014 | Vector Query 2-Shape | WIRED | `VectorOpsPort` + `VectorQueryService` | Intentional dual contract — NOT a convergence target.
+| 015 | Port Impl Location | WIRED | `impl XxxPort for <BareService>` across services | Migration mostly complete.
+| 016 | PortUserContext | WIRED | `crates/platform/proximadb-runtime/` → `PortUserContext` | Foundation steps 1-3 landed 2026-05-26 (`3bbf73db9`, `dc5761038`, `e19410838`). Step 4 deferred.
+| 017 | DR Engine Surface | WIRED | `proximadb-catalog::collection_dr_policy` + `DrPlacement` | OSS surface; SaaS-side in private repo.
+| 018 | pgwire/SQL Parity | **PARTIAL** | Phase 1 done; Phase 2 in flight; Phase 3 planned | ORDER BY single-col + IF EXISTS still pending.
+| 019 | Relational Query Architecture | **PARTIAL** | 5-layer algebra (L1 sqlparser → L5 PAX) | Architecture sketched; algebra-node executor incomplete.
+|===
+
+**ADR wiring summary**: 15 fully WIRED, 4 PARTIAL (007 / 012 / 018 / 019). No Proposed, Rejected, or Superseded ADRs.
+
+[[consolidation-clusters]]
+== Consolidation clusters
+
+Groupings where multiple docs share scope. The consolidation plan
+(`DOCUMENTATION_CONSOLIDATION_AND_ARCHIVE_PLAN_2026_05_22.adoc`) governs
+the archive process; this list scopes the work.
+
+=== Cluster: Precision (5 docs)
+
+EMBEDDING_PRECISION_* — END_TO_END (HLD) + LLD + INTEGRATION_PLAN + 2 follow-up memos.
+
+* **Canonical pair**: HLD + LLD.
+* **Action**: Once the INTEGRATION_PLAN's 4 PRs land, consider folding the 3 memos into the integration plan or archiving them with a manifest.
+* **Status**: all WIRED; no archival yet.
+
+=== Cluster: Relational (4 docs)
+
+RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14 (parent mandate) + 3 refinements (STORAGE_FORMAT, PGWIRE_DML, COMPETITIVE_OLTP_OLAP).
+
+* **Canonical**: keep parent + each refinement standalone. No supersession.
+* **Action**: add an explicit "Refined by" cross-reference at the bottom of the parent.
+
+=== Cluster: Atlas (2 docs)
+
+ARCHITECTURE_ATLAS + MODULE_COMPONENT_LLD. Both active, no overlap, keep paired.
+
+=== Cluster: Catalog (2 docs)
+
+OPEN_FORMAT_CATALOG (active design) + COLLECTION_DR_CRR_ENGINE_CONTRACT (SaaS-pending).
+
+* **Action**: add explicit "SaaS-pending" status banner to DR_CRR doc with a pointer to ADR-017.
+
+=== Cluster: Multimodel guideline (1 doc — orphan candidate)
+
+MULTIMODEL_TRAJECTORY_ALIGNMENT_2026_05_18.
+
+* **Action**: candidate to fold into `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` as a "Design Rationale" section; the spec is the canonical authority.
+
+[[pending-consolidation-batches]]
+== Pending consolidation batches
+
+Per `DOCUMENTATION_CONSOLIDATION_AND_ARCHIVE_PLAN_2026_05_22.adoc`:
+
+=== Batch 3 — internal roadmap/status cleanup (pending)
+
+Move from `docs/_internal/roadmap/` to `docs/_archive/roadmap/2026-05/`:
+
+* `*_COMPLETION_REPORT.adoc` (PHASE2, PHASE3, PHASE4, PROJECT — multiple files)
+* `*_SESSION_SUMMARY*` files
+* `FINAL_SESSION_SUMMARY_2026_03_31.adoc`
+* `COMPREHENSIVE_REEVALUATION_2026_03_29.adoc`, `ARCHITECTURAL_REVIEW_2026_03_21.adoc`, `ARCHITECTURAL_REVIEW_2026_03_26.adoc` — keep only the May 2026+ design docs as load-bearing; archive these earlier assessments with a manifest pointing at the design-doc that incorporated their findings.
+
+Keep in `docs/_internal/roadmap/`: `README.adoc`, `STRATEGIC_ROADMAP.adoc`, `MASTER_FEATURE_DASHBOARD.adoc`, `BEST_IN_CLASS_EXECUTION_TRACKER.adoc`, `CAPABILITY_MATRIX.toml`, the `in-progress/` / `future/` / `implementation/` / `completed/` subdir scaffolding.
+
+=== Batch 4 — design index refresh (pending)
+
+* Keep `docs/12-design/README.adoc` as the design front door.
+* Link this index doc into README's "current load-bearing docs" section.
+* Cross-link each ADR's `== Governs` block to a wired path + symbol (so wiring is queryable from the ADR itself, not just from this index).
+
+== Other doc roots (source-of-truth proposal)
+
+[cols="2,4", options="header"]
+|===
+| Topic | Canonical doc
+
+| Vision & North Star | `docs/00-product/VISION.adoc`
+| Roadmap (Phases 1-5) | `docs/_internal/roadmap/STRATEGIC_ROADMAP.adoc`
+| Multimodal Spec (Phase A-G) | `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`
+| Active Architecture Anchor | `docs/12-design/DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc`
+| Design Decisions | `docs/12-design/adr/` (ADR-001..019)
+| Technical Debt | `docs/10-quality/TECHNICAL_DEBT.adoc`
+| Multimodal/multimodel migration state | `docs/_internal/status/MULTIMODAL_MULTIMODEL_STATE_2026_05_25.adoc`
+| Phase 9 refactor state | `docs/_internal/status/PHASE9_REMAINING_2026_05_25.adoc`
+| Active implementation tickets | `docs/_internal/roadmap/implementation/active/` (no single doc)
+| Supported surfaces | `docs/12-design/SUPPORTED_SURFACES.adoc` + `docs/SUPPORTED_SURFACE.adoc`
+| Doc taxonomy / archive rules | `docs/12-design/DOCUMENTATION_CONSOLIDATION_AND_ARCHIVE_PLAN_2026_05_22.adoc`
+| Design-doc-to-code wiring snapshot | this doc (`DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc`)
+|===
+
+Cross-tracker overlap to retire / cross-reference:
+
+* `docs/10-quality/PANIC_PRONE_CODE_AUDIT.md` and `docs/10-quality/TEST_INLINING_PROGRESS.md` — fold as TD-XXX rows in TECHNICAL_DEBT.adoc, then archive the standalone files.
+* `docs/_internal/roadmap/BEST_IN_CLASS_EXECUTION_TRACKER.adoc` (last update March 12) — verify against STRATEGIC_ROADMAP; if no new info, archive.
+* `docs/_internal/roadmap/MASTER_FEATURE_DASHBOARD.adoc` `:last-updated: March 31` — refresh to reference 2026-05 work or archive its phase-completion claims (most are "Complete" but several were marked "Production Ready" before the May design docs landed; review category-by-category).
+
+== Deprecated / legacy code surfaces (cross-reference)
+
+The bookkeeping picture includes legacy/deprecated method markers in code that future doc reviews should keep aligned. NOT actionable from this audit — captured for traceability.
+
+=== Deprecated gRPC service shims (7 files)
+
+`src/network/grpc/{document,entity,hybrid_search,streaming,security,graph,observability}_service.rs` each carry the comment:
+
+> `// DEPRECATED: This file has been migrated to crates/platform/proximadb-api/src/grpc/v1/<name>.rs`
+
+These are compatibility shims slated for removal in v0.3.0 per their own headers. The migration target lives in `crates/platform/proximadb-api/src/grpc/v1/`.
+
+=== `#[deprecated]` attribute items (18 instances in workspace)
+
+Selected high-value ones (the rest are mechanical aliases):
+
+* `clients/rust/src/collection.rs:988` — `VectorRecord` (use `ProximaRecord`).
+* `crates/foundation/proximadb-quantization-types/src/lib.rs:291` — old `QuantizationConfig` shape.
+* `crates/foundation/proximadb-distance-types/src/lib.rs:273,305` — pre-`DistanceMetric` types.
+* `crates/foundation/proximadb-compression-types/src/lib.rs:244,281` — pre-`CompressionAlgorithm` types.
+* `src/lib.rs:391` — boxed-error `Result` alias.
+* `src/auth/federated_delegation_complete.rs:591` — auth-result temporary alias.
+* `src/security/mod.rs:47` — pre-`TypeValidationResult` alias.
+
+The above are tracked per-ADR / per-design-doc where applicable (ADR-009 governs the `VectorRecord → ProximaRecord` line; the foundation crates ADRs cover the quant/distance/compression renames).
+
+=== `legacy.rs` / `legacy_*` modules
+
+Standalone legacy file: `src/services/operations/vectors/legacy.rs` — interior of `VectorOperationsService`, hosts the pre-modular API surface that the consumer-migration chain (Task #76) just finished pulling through to ports. Eventual cleanup is captured in memory `project_consumer_migrations_2026_05_24.md` (port chain complete at 8 consumers).
+
+== Maintenance cadence
+
+This index should be refreshed whenever:
+
+* a new file lands in `docs/12-design/` (top-level or `adr/`),
+* an ADR's status changes from Accepted to Superseded (currently none),
+* a top-level design doc moves from PARTIAL → WIRED or vice versa,
+* a consolidation batch from `DOCUMENTATION_CONSOLIDATION_AND_ARCHIVE_PLAN_2026_05_22.adoc` is executed.
+
+Suggested refresh interval otherwise: every 4-6 weeks. The audit format is intentionally cheap to re-run (3 parallel grep-based passes, ~5 minutes of human time).
+
+== References
+
+* `docs/12-design/DOCUMENTATION_CONSOLIDATION_AND_ARCHIVE_PLAN_2026_05_22.adoc` — archive rules (canonical).
+* `docs/12-design/README.adoc` — design folder front door.
+* `docs/_internal/roadmap/STRATEGIC_ROADMAP.adoc` — phase sequencing.
+* `docs/_internal/roadmap/MASTER_FEATURE_DASHBOARD.adoc` — feature inventory (refresh pending).
+* `docs/10-quality/TECHNICAL_DEBT.adoc` — TD-XXX register (live).
+* `docs/_internal/status/PHASE9_REMAINING_2026_05_25.adoc` — Phase 9 status (live).
+* `docs/_internal/status/MULTIMODAL_MULTIMODEL_STATE_2026_05_25.adoc` — multimodal migration state (live).
