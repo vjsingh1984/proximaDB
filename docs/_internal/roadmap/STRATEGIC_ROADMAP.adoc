@@ -278,7 +278,7 @@ _Performance Credibility: Align the execution layer between storage and API with
 
 [IMPORTANT]
 ====
-Added March 21, 2026 based on architectural review (`ARCHITECTURAL_REVIEW_2026_03_21.adoc`).
+Added March 21, 2026 based on architectural review (archived at `docs/_archive/roadmap/2026-05/ARCHITECTURAL_REVIEW_2026_03_21.adoc`).
 The storage layer (ProximaCodec, Parquet integration, WAL) is production-grade.
 The gap is in the *query execution layer above storage* -- the layer that turns columnar storage into fast analytical queries and eliminates format conversion at model boundaries.
 ====
