@@ -26,7 +26,7 @@
 
 use lazy_static::lazy_static;
 use prometheus::{
-    CounterVec, Opts, register_counter_vec,
+    CounterVec, GaugeVec, Opts, register_counter_vec, register_gauge_vec,
 };
 use proximadb_catalog::collection_dr_policy::ObjectProvider;
 use proximadb_catalog::dr_reconciler::{
@@ -45,6 +45,17 @@ fn register_counter_vec_safe(name: &str, help: &str, labels: &[&str]) -> Counter
             error!("Failed to register {}: {}", name, reg_err);
             CounterVec::new(Opts::new(name, help), labels)
                 .unwrap_or_else(|_| unreachable!("valid counter descriptor"))
+        }
+    }
+}
+
+fn register_gauge_vec_safe(name: &str, help: &str, labels: &[&str]) -> GaugeVec {
+    match register_gauge_vec!(name, help, labels) {
+        Ok(metric) => metric,
+        Err(reg_err) => {
+            error!("Failed to register {}: {}", name, reg_err);
+            GaugeVec::new(Opts::new(name, help), labels)
+                .unwrap_or_else(|_| unreachable!("valid gauge descriptor"))
         }
     }
 }
@@ -83,6 +94,18 @@ lazy_static! {
         "proximadb_dr_reconciler_paused_total",
         "Total DR shard pause events by reason.",
         &["reason"]
+    );
+
+    /// Last observed provider lag in seconds, keyed on the matching
+    /// `{provider, region_pair}` label set per contract
+    /// §"Observability". The reconciler updates this gauge whenever
+    /// `fetch_state` returns a non-None `observed_lag_seconds`. Use
+    /// `histogram_quantile`/`max_over_time` on this family for SLO
+    /// alerts.
+    pub static ref DR_PROVIDER_LAG_SECONDS: GaugeVec = register_gauge_vec_safe(
+        "proximadb_dr_provider_lag_seconds",
+        "Last observed DR replication lag in seconds.",
+        &["provider", "region_pair"]
     );
 }
 
@@ -138,6 +161,12 @@ impl DrMetrics for PrometheusDrMetrics {
         DR_RECONCILER_PAUSED_TOTAL
             .with_label_values(&[shard_pause_reason_label(reason)])
             .inc();
+    }
+
+    fn observe_lag(&self, labels: &PolicyLabels, lag_seconds: u32) {
+        DR_PROVIDER_LAG_SECONDS
+            .with_label_values(&[provider_label(labels.provider), labels.region_pair_id.as_str()])
+            .set(lag_seconds as f64);
     }
 }
 
@@ -370,6 +399,30 @@ mod tests {
         m.observe_tick(&l, &TickOutcome::EscalatedAfterMaxAttempts);
         let after = error_count("aws_s3", "max_attempts_exceeded");
         assert!((after - before - 1.0).abs() < f64::EPSILON);
+    }
+
+    fn lag_gauge_value(provider: &str, region_pair: &str) -> f64 {
+        DR_PROVIDER_LAG_SECONDS
+            .with_label_values(&[provider, region_pair])
+            .get()
+    }
+
+    #[test]
+    fn observe_lag_sets_gauge_with_provider_and_region_pair_labels() {
+        let m = PrometheusDrMetrics::new();
+        let l = sample_labels();
+        m.observe_lag(&l, 73);
+        assert_eq!(
+            lag_gauge_value("aws_s3", "aws:us-east-1:us-west-2"),
+            73.0,
+        );
+        // Subsequent observations overwrite — this is a gauge, not
+        // a counter, so the "last observed value" semantics apply.
+        m.observe_lag(&l, 5);
+        assert_eq!(
+            lag_gauge_value("aws_s3", "aws:us-east-1:us-west-2"),
+            5.0,
+        );
     }
 
     #[test]
