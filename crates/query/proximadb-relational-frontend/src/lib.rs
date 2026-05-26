@@ -758,10 +758,14 @@ fn lower_projection_with_aggregates(
                     name: name.clone(),
                     agg,
                 });
+                // ColumnRef references the post-aggregate slot.
+                // Crucially, the ref's `name` matches the slot's
+                // declared name so name-based projection-pushdown
+                // rebinding (planner Phase 3 rule) works.
                 outputs.push(NamedExpr {
-                    name,
+                    name: name.clone(),
                     expr: Expr::column(ColumnRef {
-                        name: format!("__agg{}", slot),
+                        name,
                         ordinal: slot,
                         ty: result_ty,
                         nullable: true,
