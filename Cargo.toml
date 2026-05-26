@@ -461,7 +461,13 @@ tokio-postgres = "0.7"
 proximadb-sdk = { path = "clients/rust", default-features = false, features = ["client"] }
 
 [features]
-default = ["sql_frontend", "graph-first-sks", "unified-facade-routing"]
+# Default feature set as of 2026-05-26 (ADR-020 Tier 2.2 / TD-065 default-enable).
+# `canonical-document-store` flips on by default so the canonical WAL path is
+# the durable authority for documents. Operators on the legacy non-canonical
+# (in-memory-map-as-durable-source) path during one minor-release migration
+# window can opt OUT via `default-features = false` + explicit feature selection.
+# Plan: remove the feature flag entirely in v0.4 once the migration window closes.
+default = ["sql_frontend", "graph-first-sks", "unified-facade-routing", "canonical-document-store"]
 # Optional surfaces; keep off by default to minimize binary size and public API surface
 ai_endpoints = []
 sales_endpoints = []

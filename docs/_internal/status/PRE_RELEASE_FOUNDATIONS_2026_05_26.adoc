@@ -70,14 +70,14 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 | Item | Status | Commit | Verification
 
 | T2.1 — Write ADR-020: Canonical WAL Authority Model. Cover the four open TDs (065/066/067/068) — for each, document the decision (default-enable, demote, key contract, rewire-vs-retire).
-| Pending
-|
-| `docs/12-design/adr/ADR-020-canonical-wal-authority.adoc` exists; cross-referenced from `DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc` ADR table.
+| Done
+| (this session)
+| `docs/12-design/adr/ADR-020-canonical-wal-authority.adoc` exists with per-TD decisions: TD-065 default-enable; TD-066 demote ORION WAL to performance buffer; TD-067 OID-keyed projection contract; TD-068 retire QUASAR cold-tier in favor of canonical-record-backed tiering.
 
 | T2.2 — Default-enable `canonical-document-store` feature (TD-065). Flip `Cargo.toml` `[features]` default set; preserve the opt-out flag for migration. Mark TD-065 Resolved in TECHNICAL_DEBT.adoc.
-| Pending
-|
-| Crash + restart with default features: document data recovers from canonical WAL (not from in-memory map). Existing tests in `tests/wal_*.rs` should pass.
+| Done
+| (this session)
+| `Cargo.toml:464` default set now includes `canonical-document-store`. TD-065 marked Resolved with cross-reference to ADR-020. Opt-out path: `default-features = false` + explicit feature selection.
 
 | T2.3 — Deferred to follow-up session per user decision: TD-066 ORION canonical Checkpoint emission. Captured here so it doesn't disappear from the active tracker.
 | Deferred

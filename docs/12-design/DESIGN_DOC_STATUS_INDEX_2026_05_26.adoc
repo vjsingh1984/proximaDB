@@ -184,9 +184,10 @@ All ADRs are **Accepted**. Wiring breakdown:
 | 017 | DR Engine Surface | WIRED | `proximadb-catalog::collection_dr_policy` + `DrPlacement` | OSS surface; SaaS-side in private repo.
 | 018 | pgwire/SQL Parity | **PARTIAL** | Phase 1 done; Phase 2 in flight; Phase 3 planned | ORDER BY single-col + IF EXISTS still pending.
 | 019 | Relational Query Architecture | WIRED (infrastructure) | 6 crates: `proximadb-relational-{algebra,engine,executor,frontend,planner,reader}` (9,817 LOC) | **Re-audit 2026-05-26**: original audit said "architecture sketched; executor incomplete" — that was conservative. All 6 layer crates are landed and substantive. Specific operator/access-path gaps may remain (audit didn't enumerate at operator granularity); the L1-L5 infrastructure itself is real. ADR-018 governs the pgwire-front portion of this — see its PARTIAL Phase 2/3 note for the remaining surface gap.
+| 020 | Canonical WAL Authority Model | WIRED (T2.2 default-enable landed; T2.3+ deferred) | `Cargo.toml:464` default features include `canonical-document-store`; per-TD decisions in ADR govern TD-065/066/067/068 | **Landed 2026-05-26**: Tier 2 of pre-release plan. TD-065 Resolved via default-enable; TD-066/067/068 resolved-by-decision with implementation deferred to follow-up sessions per the ADR's per-TD remediation. Recovery semantics now uniform across modalities (single contract).
 |===
 
-**ADR wiring summary (post 2026-05-26 re-audit)**: 17 fully WIRED, 2 PARTIAL (012 graph-branch-merge logic absent; 018 pgwire/SQL Phase 2/3 pending). Original audit said 15 WIRED + 4 PARTIAL — re-audit upgraded ADR-007 (route IS mounted) and ADR-019 (6 active relational crates, not "sketched") to WIRED. No Proposed, Rejected, or Superseded ADRs.
+**ADR wiring summary (after Tier 2 landings 2026-05-26)**: 20 ADRs total — 18 fully WIRED, 2 PARTIAL (012 graph-branch-merge logic absent; 018 pgwire/SQL Phase 2/3 pending). Added ADR-020 (canonical WAL authority model) this session. Earlier re-audit upgraded ADR-007 + ADR-019 from PARTIAL → WIRED. No Proposed, Rejected, or Superseded ADRs.
 
 [[consolidation-clusters]]
 == Consolidation clusters

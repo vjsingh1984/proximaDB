@@ -979,10 +979,10 @@ physical layouts.
 | Document Service In-Memory Map As Temporary Durable Source
 | P5
 | HIGH
-| Open
-| `DocumentService.documents` (`RwLock<HashMap>`) and `DocumentService.collections` are written directly from ~20 call sites in `service.rs` (lines 257–1971). These in-memory writes are the primary durable authority for documents in the non-canonical-store path. Crash recovery depends on WAL replay into this map, but any race between the map write and WAL write is an inconsistency window. The canonical `UpsertCanonicalDocumentRecord` WAL variant exists but is opt-in (`canonical-document-store` feature flag).
+| *Resolved (default-enable; per-callsite cleanup deferred)*
+| `DocumentService.documents` (`RwLock<HashMap>`) was the primary durable source on the non-canonical-store path.
 | 4-6 weeks
-| Gate all `self.documents.write()` calls behind the canonical-store feature flag. Default-enable the canonical WAL path and make the in-memory map a projection cache, not a durable source. Coordinates with `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` Phase 2 remaining item: extract document WAL ownership fully into shared canonical record-store recovery.
+| *RESOLVED 2026-05-26 (default-enable layer)*: `canonical-document-store` feature is now in the default feature set in `Cargo.toml:464`. Default builds use the canonical WAL path; the in-memory map becomes a projection cache, not a durable source. ADR-020 (`docs/12-design/adr/ADR-020-canonical-wal-authority.adoc`) defines the recovery contract. Per-call-site cleanup (each `self.documents.write()` becomes pure cache-write after canonical WAL append) tracked as a follow-up under ADR-020; not strictly required since the feature gate already routes writes through canonical WAL in default builds. Opt-out flag preserved for one minor-release migration window (target: removed in v0.4).
 
 | TD-066
 | ORION WAL As Parallel Durable Graph Truth
