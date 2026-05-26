@@ -324,7 +324,7 @@ impl QueryOptimizer {
         &self,
         query_hash: u64,
         query_hilbert: Option<u64>,
-    ) -> QueryOptimizationHints {
+    ) -> HelixQueryOptimizationHints {
         let mut stats = self.query_stats.write().await;
         stats.total_queries += 1;
 
@@ -344,7 +344,7 @@ impl QueryOptimizer {
             .execute_prefetch(prefetch_files.clone())
             .await;
 
-        QueryOptimizationHints {
+        HelixQueryOptimizationHints {
             cached_result,
             prefetch_files,
             use_progressive_search: stats.avg_latency_ms > 50.0,
@@ -403,8 +403,11 @@ impl QueryOptimizer {
     }
 }
 
+/// Backwards-compat alias for [`HelixQueryOptimizationHints`].
+pub type QueryOptimizationHints = HelixQueryOptimizationHints;
+
 /// Query optimization hints
-pub struct QueryOptimizationHints {
+pub struct HelixQueryOptimizationHints {
     /// Cached result if available
     pub cached_result: Option<Vec<OptimizedSearchRecord>>,
     /// Files to prefetch

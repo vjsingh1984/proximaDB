@@ -95,9 +95,12 @@ pub enum Index {
     Flat,
 }
 
+/// Backwards-compat alias for [`AxisSerializedIndexMetadata`].
+pub type IndexMetadata = AxisSerializedIndexMetadata;
+
 /// Metadata for serialized index
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IndexMetadata {
+pub struct AxisSerializedIndexMetadata {
     /// Index type
     pub index_type: Index,
 
@@ -136,7 +139,7 @@ pub struct IndexHeader {
     pub version: u16,
 
     /// Metadata
-    pub metadata: IndexMetadata,
+    pub metadata: AxisSerializedIndexMetadata,
 }
 
 /// Checkpoint for incremental updates
@@ -152,7 +155,7 @@ pub struct IndexCheckpoint {
     pub index_data: Vec<u8>,
 
     /// Metadata
-    pub metadata: IndexMetadata,
+    pub metadata: AxisSerializedIndexMetadata,
 }
 
 /// Delta update for incremental changes
@@ -208,7 +211,7 @@ impl IndexSerializer {
         info!("Serializing HNSW index for collection {}", collection_id);
 
         // Create metadata
-        let metadata = IndexMetadata {
+        let metadata = AxisSerializedIndexMetadata {
             index_type: crate::index::axis::storage::serialization::Index::Hnsw,
             collection_id: collection_id.to_string(),
             num_vectors: index.len(),
@@ -251,7 +254,7 @@ impl IndexSerializer {
     pub fn deserialize_hnsw(
         data: &[u8],
         config: &AxisHnswConfig,
-    ) -> Result<(AxisHnswIndex, IndexMetadata)> {
+    ) -> Result<(AxisHnswIndex, AxisSerializedIndexMetadata)> {
         info!("Deserializing HNSW index");
 
         // Read header length
@@ -305,7 +308,7 @@ impl IndexSerializer {
     pub fn serialize_ivf(index: &UnifiedIvfIndex, collection_id: &str) -> Result<Vec<u8>> {
         info!("Serializing IVF index for collection {}", collection_id);
 
-        let metadata = IndexMetadata {
+        let metadata = AxisSerializedIndexMetadata {
             index_type: Index::Ivf,
             collection_id: collection_id.to_string(),
             num_vectors: index.len(),
@@ -348,7 +351,7 @@ impl IndexSerializer {
     pub fn deserialize_ivf(
         data: &[u8],
         config: &UnifiedIvfConfig,
-    ) -> Result<(UnifiedIvfIndex, IndexMetadata)> {
+    ) -> Result<(UnifiedIvfIndex, AxisSerializedIndexMetadata)> {
         info!("Deserializing IVF index");
 
         // Read header length
@@ -408,7 +411,7 @@ impl IndexSerializer {
 
         let timestamp = unix_now_secs();
 
-        let metadata = IndexMetadata {
+        let metadata = AxisSerializedIndexMetadata {
             index_type,
             collection_id: collection_id.to_string(),
             num_vectors: 0, // Will be updated by specific index
@@ -830,7 +833,7 @@ mod tests {
 
     #[test]
     fn test_metadata_serialization() {
-        let metadata = IndexMetadata {
+        let metadata = AxisSerializedIndexMetadata {
             index_type: crate::index::axis::storage::serialization::Index::Hnsw,
             collection_id: "test_collection".to_string(),
             num_vectors: 1000,
@@ -843,7 +846,7 @@ mod tests {
         };
 
         let serialized = bincode::serialize(&metadata).unwrap();
-        let deserialized: IndexMetadata = bincode::deserialize(&serialized).unwrap();
+        let deserialized: AxisSerializedIndexMetadata = bincode::deserialize(&serialized).unwrap();
 
         assert_eq!(metadata.index_type, deserialized.index_type);
         assert_eq!(metadata.collection_id, deserialized.collection_id);
@@ -859,7 +862,7 @@ mod tests {
             checkpoint_id: "test_checkpoint".to_string(),
             timestamp: 1234567890,
             index_data: vec![1, 2, 3, 4, 5],
-            metadata: IndexMetadata {
+            metadata: AxisSerializedIndexMetadata {
                 index_type: crate::index::axis::storage::serialization::Index::Hnsw,
                 collection_id: "test".to_string(),
                 num_vectors: 100,

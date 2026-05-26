@@ -30,7 +30,7 @@ pub struct RowBasedHeader {
     pub layout_metadata: LayoutMetadata,
 
     /// Index offsets and sizes
-    pub index_metadata: IndexMetadata,
+    pub index_metadata: BlockIndexMetadata,
 
     /// Compression and quantization
     pub compression_metadata: CompressionMetadata,
@@ -213,9 +213,12 @@ pub enum PaddingStrategy {
     CacheLineAlign,
 }
 
+/// Backwards-compat alias for [`BlockIndexMetadata`].
+pub type IndexMetadata = BlockIndexMetadata;
+
 /// Index metadata
 #[derive(Debug, Clone)]
-pub struct IndexMetadata {
+pub struct BlockIndexMetadata {
     /// ID index information
     pub id_index_offset: u64,
     pub id_index_size: u64,
@@ -496,7 +499,7 @@ impl RowBasedHeader {
             engine_metadata: EngineMetadata::new_sst(),
             collection_metadata: CollectionMetadata::new(collection_id, dimension),
             layout_metadata: LayoutMetadata::default(),
-            index_metadata: IndexMetadata::default(),
+            index_metadata: BlockIndexMetadata::default(),
             compression_metadata: CompressionMetadata::default(),
             version_info: VersionInfo::default(),
             checksum_config: ChecksumConfig::default(),
@@ -516,7 +519,7 @@ impl RowBasedHeader {
             engine_metadata: EngineMetadata::new_swift(),
             collection_metadata: CollectionMetadata::new(collection_id, dimension),
             layout_metadata: LayoutMetadata::default(),
-            index_metadata: IndexMetadata::default(),
+            index_metadata: BlockIndexMetadata::default(),
             compression_metadata: CompressionMetadata::default(),
             version_info: VersionInfo::default(),
             checksum_config: ChecksumConfig::default(),
@@ -641,7 +644,7 @@ impl Default for LayoutMetadata {
     }
 }
 
-impl Default for IndexMetadata {
+impl Default for BlockIndexMetadata {
     fn default() -> Self {
         Self {
             id_index_offset: 0,

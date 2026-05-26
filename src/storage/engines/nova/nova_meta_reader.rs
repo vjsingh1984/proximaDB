@@ -240,8 +240,12 @@ impl NovaMetaReader {
 ///
 /// Provides recommendations for query execution based on hierarchical
 /// statistics, including which row groups to read and which search strategy to use.
+///
+/// Backwards-compat alias for [`NovaMetaQueryOptimizationHints`].
+pub type QueryOptimizationHints = NovaMetaQueryOptimizationHints;
+
 #[derive(Debug, Clone)]
-pub struct QueryOptimizationHints {
+pub struct NovaMetaQueryOptimizationHints {
     /// Recommended row groups to read
     pub row_groups: Vec<usize>,
 
@@ -265,7 +269,7 @@ impl NovaMetaReader {
         metadata: &NovaMetadata,
         query_vector: &[f32],
         _top_k: usize,
-    ) -> QueryOptimizationHints {
+    ) -> NovaMetaQueryOptimizationHints {
         // Prune row groups
         let all_row_groups: Vec<usize> = (0..metadata.row_group_stats.len()).collect();
         let selected = self.prune_row_groups(metadata, query_vector, None);
@@ -285,7 +289,7 @@ impl NovaMetaReader {
         // Use streaming for large result sets or low pruning
         let use_streaming = selected.len() > 10 || pruning_ratio < 0.3;
 
-        QueryOptimizationHints {
+        NovaMetaQueryOptimizationHints {
             row_groups: selected,
             estimated_cost,
             pruning_ratio,

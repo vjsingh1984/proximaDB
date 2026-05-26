@@ -385,7 +385,7 @@ impl DeltaCatalog {
     /// Convert CatalogDataType to Spark SQL type
     fn data_type_to_spark_type(
         data_type: &CatalogDataType,
-        properties: &HashMap<String, String>,
+        _properties: &HashMap<String, String>,
     ) -> String {
         match data_type {
             CatalogDataType::Boolean => "boolean".to_string(),

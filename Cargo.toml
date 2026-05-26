@@ -612,7 +612,7 @@ embedded-all = ["python", "java", "nodejs", "c_ffi"]
 # GPU acceleration (removed - was placeholder code)
 
 # Enterprise catalog integrations (optional)
-unity-catalog = []      # Databricks Unity Catalog integration
+unity-catalog = ["proximadb-catalog/unity-catalog"]      # Databricks Unity Catalog integration
 polaris-catalog = ["proximadb-catalog/polaris-catalog"]    # Apache Polaris (Iceberg REST Catalog) integration
 delta-lake = ["proximadb-catalog/delta-lake"]         # Delta Lake table format support
 enterprise-catalogs = ["unity-catalog", "polaris-catalog", "delta-lake"]

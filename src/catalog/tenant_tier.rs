@@ -24,26 +24,44 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, warn};
 
-// ── Tier config (embedded baseline; runtime overlay loaded by entrypoint) ───
+// ── Tier config (compile-time baseline + runtime overlay) ───────────────────
 //
-// The compile-time-embedded `config/pricing.json` provides the baseline
-// numeric defaults so the server binary stays self-contained for offline /
-// air-gapped deployments. Runtime deployments overlay this via the entrypoint
-// script (`deploy/docker/entrypoint.sh`) which fetches from
-// `PROXIMADB_TIER_CONFIG_URL` and atomic-replaces the on-disk config before
-// the server starts. See `config/TIER_CONFIG.md` for the operator-neutral
-// schema; the embedded baseline currently uses the richer legacy schema
-// during the migration window (Phase B-4 will flip the embedded file to
-// the stripped tier-config.json shape).
+// Three resolution layers (first hit wins):
+//
+//   1. **Runtime overlay** at `PROXIMADB_TIER_CONFIG_PATH` (default
+//      `/config/tier-config.json`). Operators who want to ship per-deployment
+//      tier definitions (different caps per environment, AnvaiOps's
+//      commercial pricing baked into the AnvaiOps overlay image, etc.) write
+//      to this path either via Dockerfile `COPY` at image build time or via
+//      the entrypoint script's optional URL fetch at container boot. Phase
+//      B-5: this layer is now actually CONSUMED by the engine (prior to B-5
+//      the file was written but never read, making the overlay cosmetic).
+//
+//   2. **Legacy runtime overlay** at `/config/pricing.json`. Backward-
+//      compat for image overlays + entrypoint fetches that targeted the
+//      pre-B-5 path. Will be removed in a future major version once the
+//      ecosystem has migrated.
+//
+//   3. **Compile-time baseline** baked via `include_str!` from
+//      `config/tier-config.json`. Self-contained fallback so the server
+//      binary works for offline / air-gapped deployments and OSS adopters
+//      who haven't supplied an overlay.
 //
 // The numeric defaults (scan_budget_gb, ef_search_cap, freshness_sla_seconds,
-// prom_label) load from this JSON at first access. The `Tier` enum variants
-// themselves stay compile-time exhaustive — Rust enums cannot be built from
-// runtime data. The startup assertion `pricing_matches_enum()` panics if the
-// JSON tier set diverges from the enum variants, surfacing the drift at
-// process start rather than at the first soft-cap rejection.
+// prom_label) load from the chosen layer at first access. The `Tier` enum
+// variants themselves stay compile-time exhaustive — Rust enums cannot be
+// built from runtime data. The startup assertion `validate_pricing_matches_enum`
+// panics if the chosen layer's tier set diverges from the enum variants,
+// surfacing the drift at process start rather than at first soft-cap
+// rejection. Validation is alias-aware: overlay JSONs may use any tier id
+// that maps to a Tier variant via its serde aliases (so legacy ids like
+// `free_trial`/`team`/`pro`/`business`/`enterprise` continue to validate
+// against the post-B-4 `tier1`..`tier5` enum without a data migration).
 
-const PRICING_JSON_BYTES: &str = include_str!("../../config/pricing.json");
+const BAKED_TIER_CONFIG_BYTES: &str = include_str!("../../config/tier-config.json");
+const RUNTIME_TIER_CONFIG_ENV: &str = "PROXIMADB_TIER_CONFIG_PATH";
+const DEFAULT_RUNTIME_TIER_CONFIG_PATH: &str = "/config/tier-config.json";
+const LEGACY_RUNTIME_TIER_CONFIG_PATH: &str = "/config/pricing.json";
 
 static PRICING: OnceLock<PricingConfig> = OnceLock::new();
 
@@ -69,21 +87,87 @@ struct PricingSoftCaps {
     freshness_sla_seconds: u32,
 }
 
+/// Resolved tier-config source: where it came from + its raw JSON bytes.
+/// The `label` flows into log lines + panic messages so the source is
+/// always identifiable in failure modes.
+struct TierConfigSource {
+    label: String,
+    content: String,
+}
+
+/// Resolve the tier-config source per the three-layer precedence:
+/// runtime-overlay (env-configured or default) → legacy-overlay → baked.
+fn resolve_tier_config_source() -> TierConfigSource {
+    let runtime_path = std::env::var(RUNTIME_TIER_CONFIG_ENV)
+        .unwrap_or_else(|_| DEFAULT_RUNTIME_TIER_CONFIG_PATH.to_string());
+
+    // Layer 1: runtime overlay at the configured path.
+    if let Ok(content) = std::fs::read_to_string(&runtime_path) {
+        return TierConfigSource {
+            label: format!("runtime overlay {runtime_path}"),
+            content,
+        };
+    }
+
+    // Layer 2: legacy overlay (pre-B-5 path), only if the configured path
+    // is the new default. If operator explicitly set PROXIMADB_TIER_CONFIG_PATH
+    // to something else and it was missing, don't silently fall back to the
+    // legacy path — that would mask a config error.
+    if runtime_path == DEFAULT_RUNTIME_TIER_CONFIG_PATH {
+        if let Ok(content) = std::fs::read_to_string(LEGACY_RUNTIME_TIER_CONFIG_PATH) {
+            return TierConfigSource {
+                label: format!(
+                    "legacy runtime overlay {LEGACY_RUNTIME_TIER_CONFIG_PATH} \
+                     (deprecated; rename to {DEFAULT_RUNTIME_TIER_CONFIG_PATH})"
+                ),
+                content,
+            };
+        }
+    }
+
+    // Layer 3: compile-time baked baseline. Self-contained fallback for
+    // air-gapped / OSS-default deployments.
+    TierConfigSource {
+        label: "compile-time baked config/tier-config.json".to_string(),
+        content: BAKED_TIER_CONFIG_BYTES.to_string(),
+    }
+}
+
+/// Parse + validate a tier-config JSON body from a labeled source.
+/// Panics on parse failure, unsupported schema_version, or enum-mismatch —
+/// the engine refuses to start with a malformed tier config so the operator
+/// catches the problem at process start rather than at first soft-cap
+/// rejection.
+fn parse_and_validate(source: &TierConfigSource) -> PricingConfig {
+    let parsed: PricingConfig = serde_json::from_str(&source.content).unwrap_or_else(|e| {
+        panic!(
+            "tier config from {} is malformed — proximaDB cannot start: {e}",
+            source.label
+        )
+    });
+    assert_eq!(
+        parsed.schema_version, 1,
+        "tier config from {} has unsupported schema_version {}",
+        source.label, parsed.schema_version
+    );
+    validate_pricing_matches_enum(&parsed, &source.label);
+    parsed
+}
+
 fn pricing() -> &'static PricingConfig {
     PRICING.get_or_init(|| {
-        let parsed: PricingConfig = serde_json::from_str(PRICING_JSON_BYTES)
-            .expect("config/pricing.json is malformed — proximaDB cannot start");
-        assert_eq!(
-            parsed.schema_version, 1,
-            "config/pricing.json has unsupported schema_version {}",
-            parsed.schema_version
+        let source = resolve_tier_config_source();
+        let parsed = parse_and_validate(&source);
+        tracing::info!(
+            tier_config_source = %source.label,
+            tier_count = parsed.tiers.len(),
+            "loaded tier config"
         );
-        validate_pricing_matches_enum(&parsed);
         parsed
     })
 }
 
-fn validate_pricing_matches_enum(p: &PricingConfig) {
+fn validate_pricing_matches_enum(p: &PricingConfig, source_label: &str) {
     use std::collections::HashSet;
     // Phase B-4: validation is now alias-aware. Each JSON tier id is parsed
     // through serde (which honors the serde aliases on the Tier enum), and
@@ -97,7 +181,7 @@ fn validate_pricing_matches_enum(p: &PricingConfig) {
         let v = serde_json::Value::String(json_tier.id.clone());
         let tier: Tier = serde_json::from_value(v).unwrap_or_else(|_| {
             panic!(
-                "config/pricing.json has unknown tier id {:?}; \
+                "tier config from {source_label} has unknown tier id {:?}; \
                  expected one of {:?} or a recognized alias",
                 json_tier.id,
                 Tier::all().iter().map(|t| t.id()).collect::<Vec<_>>()
@@ -110,7 +194,7 @@ fn validate_pricing_matches_enum(p: &PricingConfig) {
         let missing: Vec<_> = all_variants.difference(&parsed).collect();
         let extra: Vec<_> = parsed.difference(&all_variants).collect();
         panic!(
-            "config/pricing.json doesn't cover all Tier variants. \
+            "tier config from {source_label} doesn't cover all Tier variants. \
              missing={missing:?}, extra={extra:?}"
         );
     }
@@ -126,7 +210,7 @@ fn pricing_row(tier: Tier) -> &'static PricingTier {
             let v = serde_json::Value::String(t.id.clone());
             serde_json::from_value::<Tier>(v).ok() == Some(tier)
         })
-        .unwrap_or_else(|| panic!("tier {tier:?} missing from config/pricing.json"))
+        .unwrap_or_else(|| panic!("tier {tier:?} missing from loaded tier config"))
 }
 
 /// Tier identifier — the baseline tier set shipped with ProximaDB.

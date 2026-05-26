@@ -1,4 +1,4 @@
-//! Filtered HybridQuery Builder (Issue #39, SB-09)
+//! Filtered SearchHybridQuery Builder (Issue #39, SB-09)
 //!
 //! This module implements a builder for constructing filtered hybrid queries
 //! that combine vector similarity search with metadata filtering using the
@@ -16,7 +16,7 @@
 //!                        │
 //!                        ▼
 //!     ┌─────────────────────────────────────────┐
-//!     │         HybridQuery                     │
+//!     │         SearchHybridQuery                     │
 //!     │  - Vector search parameters             │
 //!     │  - Filter contracts                     │
 //!     │  - Candidate set                        │
@@ -45,7 +45,7 @@ use tracing::{debug, info, trace};
 
 use crate::core::search::FilterExpression;
 use crate::core::search::filter_contract::{CandidateSet, FilterContract, MetadataLookup};
-use crate::index::axis::management::manager::HybridQuery as AxisHybridQuery;
+use crate::index::axis::management::manager::HybridQuery as AxisHybridQueryImport;
 
 /// Selectivity below which filter-first (PreFilter) is used. ADR-011: 5%.
 const DEFAULT_FILTER_FIRST_MAX_SELECTIVITY: f64 = 0.05;
@@ -162,9 +162,12 @@ impl HybridExecutionStrategy {
     }
 }
 
+/// Backwards-compat alias for [`SearchHybridQuery`].
+pub type HybridQuery = SearchHybridQuery;
+
 /// Hybrid query combining vector search with metadata filtering
 #[derive(Debug, Clone)]
-pub struct HybridQuery {
+pub struct SearchHybridQuery {
     /// Query vector for similarity search
     pub query_vector: Vec<f32>,
 
@@ -196,7 +199,7 @@ pub struct HybridQuery {
     pub max_candidate_size: Option<usize>,
 }
 
-impl HybridQuery {
+impl SearchHybridQuery {
     /// Create a new hybrid query builder
     pub fn builder() -> HybridQueryBuilder {
         HybridQueryBuilder::new()
@@ -515,7 +518,7 @@ impl HybridQueryBuilder {
     }
 
     /// Build the hybrid query
-    pub fn build(self) -> Result<HybridQuery> {
+    pub fn build(self) -> Result<SearchHybridQuery> {
         let query_vector = self
             .query_vector
             .ok_or_else(|| anyhow::anyhow!("Query vector is required"))?;
@@ -532,7 +535,7 @@ impl HybridQueryBuilder {
             HybridExecutionStrategy::Auto
         };
 
-        Ok(HybridQuery {
+        Ok(SearchHybridQuery {
             query_vector,
             top_k,
             filter: self.filter,
@@ -553,16 +556,16 @@ impl Default for HybridQueryBuilder {
     }
 }
 
-/// Convert HybridQuery to AXIS HybridQuery for compatibility
-impl From<HybridQuery> for AxisHybridQuery {
-    fn from(query: HybridQuery) -> Self {
+/// Convert SearchHybridQuery to AXIS SearchHybridQuery for compatibility
+impl From<SearchHybridQuery> for AxisHybridQueryImport {
+    fn from(query: SearchHybridQuery) -> Self {
         use crate::index::axis::management::manager::AnnFilteringMode;
         let ann_filtering_mode = match query.strategy {
             HybridExecutionStrategy::FilterFirst => AnnFilteringMode::PreFilter,
             HybridExecutionStrategy::Inline => AnnFilteringMode::Inline,
             _ => AnnFilteringMode::PostFilter,
         };
-        AxisHybridQuery {
+        AxisHybridQueryImport {
             collection_id: query.collection_id,
             vector_query: Some(
                 crate::index::axis::management::manager::VectorQuery::Dense {
@@ -644,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_hybrid_query_builder_basic() {
-        let query = HybridQuery::builder()
+        let query = SearchHybridQuery::builder()
             .query_vector(vec![0.1, 0.2, 0.3])
             .top_k(10)
             .collection_id("test_collection".to_string())
@@ -666,7 +669,7 @@ mod tests {
             value: serde_json::json!(1000),
         };
 
-        let query = HybridQuery::builder()
+        let query = SearchHybridQuery::builder()
             .query_vector(vec![0.1, 0.2, 0.3])
             .top_k(5)
             .collection_id("products".to_string())
@@ -680,7 +683,7 @@ mod tests {
 
     #[test]
     fn test_hybrid_query_builder_with_strategy() {
-        let query = HybridQuery::builder()
+        let query = SearchHybridQuery::builder()
             .query_vector(vec![0.1, 0.2, 0.3])
             .top_k(10)
             .collection_id("test".to_string())
@@ -699,7 +702,7 @@ mod tests {
             value: serde_json::json!("active"),
         };
 
-        let query = HybridQuery::builder()
+        let query = SearchHybridQuery::builder()
             .query_vector(vec![0.5; 384])
             .top_k(20)
             .collection_id("users".to_string())

@@ -618,7 +618,7 @@ impl AxisManager {
     }
 
     /// Query vectors using adaptive indexes
-    pub async fn query(&self, query: HybridQuery) -> Result<AxisManagerQueryResult> {
+    pub async fn query(&self, query: AxisHybridQuery) -> Result<AxisManagerQueryResult> {
         let start = std::time::Instant::now();
 
         // Execute query using current search_strategy
@@ -813,7 +813,7 @@ impl AxisManager {
     async fn query_hnsw(
         &self,
         collection_id: &str,
-        query: &HybridQuery,
+        query: &AxisHybridQuery,
     ) -> Result<Vec<ScoredResult>> {
         use crate::index::axis::index_factory::AxisVectorIndex;
 
@@ -849,7 +849,7 @@ impl AxisManager {
     async fn query_hnsw_with_predicate(
         &self,
         collection_id: &str,
-        query: &HybridQuery,
+        query: &AxisHybridQuery,
     ) -> Result<Vec<ScoredResult>> {
         use crate::core::search::{ComparisonOperator, FilterExpression};
         use crate::index::axis::management::filtered_search::make_id_predicate;
@@ -1055,7 +1055,7 @@ impl AxisManager {
     async fn query_ivf(
         &self,
         collection_id: &str,
-        query: &HybridQuery,
+        query: &AxisHybridQuery,
     ) -> Result<Vec<ScoredResult>> {
         let indexes = self.ivf_indexes.read().await;
         if let Some(index_lock) = indexes.get(collection_id) {
@@ -2050,9 +2050,12 @@ pub enum AnnFilteringMode {
     PostFilter,
 }
 
+/// Backwards-compat alias for [`AxisHybridQuery`].
+pub type HybridQuery = AxisHybridQuery;
+
 /// Hybrid query combining multiple search criteria
 #[derive(Debug, Clone, Default)]
-pub struct HybridQuery {
+pub struct AxisHybridQuery {
     /// Target collection for the query.
     pub collection_id: String,
     /// Optional vector similarity query component.
@@ -2166,7 +2169,7 @@ impl AxisManager {
     async fn execute_exact_filtered_query(
         &self,
         collection_id: &str,
-        query: &HybridQuery,
+        query: &AxisHybridQuery,
     ) -> Result<Vec<ScoredResult>> {
         let records = {
             let collection_vectors = self.collection_vectors.read().await;
@@ -2548,7 +2551,7 @@ impl AxisManager {
         self.enable_hmgi(collection_id, None, oid).await
     }
 
-    fn is_hmgi_routable_query(&self, query: &HybridQuery) -> bool {
+    fn is_hmgi_routable_query(&self, query: &AxisHybridQuery) -> bool {
         if !matches!(query.vector_query, Some(VectorQuery::Dense { .. }))
             || !query.id_filters.is_empty()
         {
@@ -2695,7 +2698,7 @@ impl AxisManager {
     pub async fn search_hmgi(
         &self,
         collection_id: &str,
-        query: &HybridQuery,
+        query: &AxisHybridQuery,
         _top_k: usize,
     ) -> Result<Vec<ScoredResult>> {
         if !self.is_hmgi_enabled(collection_id).await {

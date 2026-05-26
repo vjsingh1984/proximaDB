@@ -217,6 +217,58 @@ which the user is presumably about to fix in their next commit.
 | `SharedServices` holds 13 root-crate concrete services; each needs its own port trait first
 |===
 
+== Update 2026-05-25 (later same day)
+
+Commits landed since this audit was written:
+
+* `9be508661` — Task #72: `SharedServices.cluster_port: Option<Arc<dyn ClusterPort>>`
+  field + `with_cluster_port` builder. No consumer yet; slot is ready.
+* `056603b00` + `dca2289bf` — Task #70 pre-work: lifted `MultiServerConfig`
+  (847 lines) from `src/network/server_config.rs` →
+  `proximadb_runtime::bootstrap_config`. Fix-sweep caught one missed inline
+  `crate::core::config::ApiConfig` ref that became
+  `proximadb_config::ApiConfig` (foundation crate) instead.
+* `89bbe7ec3` — Task #76 collection + vector slice prep: parallel
+  `collection_port: Arc<dyn CollectionPort>` + `vector_ops_port: Arc<dyn VectorOpsPort>`
+  fields on SharedServices, populated via Arc::clone + trait-object coercion
+  from the concrete service fields.
+
+=== Design finding: port impl location (Task #76)
+
+The 5 SharedServices fields where the corresponding port trait already
+exists in `proximadb_runtime` split into TWO classes by where the
+`impl XxxPort` lives:
+
+[cols="3,3,3"]
+|===
+| Service | `impl XxxPort` location | Migration shape
+
+| `CollectionService`
+| Bare concrete service (`src/services/collection/manager.rs:3039`)
+| Mechanical parallel-field swap — done in `89bbe7ec3`.
+
+| `VectorOperationsService`
+| Bare concrete service (`src/services/operations/vectors/legacy.rs:4991`)
+| Mechanical parallel-field swap — done in `89bbe7ec3`.
+
+| `DocStorageService` (aka `DocumentService`)
+| gRPC wrapper `DocumentServiceImpl` (`src/network/grpc/document_service.rs:284`)
+| Decision: move impl to bare service (see ADR-015).
+
+| `ObservabilityService`
+| gRPC wrapper `ObservabilityServiceImpl:532`
+| Same decision.
+
+| `GraphService`
+| gRPC wrapper `GraphServiceImpl:1682`
+| Same decision.
+|===
+
+Decision is recorded in `docs/12-design/adr/ADR-015-port-impl-location.adoc`:
+the port impl belongs on the bare concrete service so SharedServices can
+hold `Arc<dyn XxxPort>` directly. The gRPC wrapper becomes a thin
+proto-conversion shim (which is its actual job).
+
 == Memory update proposal
 
 Update `memory/project_phase9_refactor_state.md` to record:

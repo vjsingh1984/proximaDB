@@ -22,12 +22,15 @@ pub struct FilterIndices {
     /// Total rows evaluated
     pub total_rows: usize,
     /// Engine-specific metadata for optimization decisions
-    pub metadata: IndexMetadata,
+    pub metadata: FilterIndexMetadata,
 }
+
+/// Backwards-compat alias for [`FilterIndexMetadata`].
+pub type IndexMetadata = FilterIndexMetadata;
 
 /// Metadata about the filter evaluation process for optimization decisions
 #[derive(Debug, Clone)]
-pub struct IndexMetadata {
+pub struct FilterIndexMetadata {
     /// Source identifier (block ID, file path, etc.)
     pub source_id: String,
     /// Selectivity ratio (0.0 = no matches, 1.0 = all match)
@@ -419,7 +422,7 @@ impl FilterIndexEvaluator for BaseFilterIndexEvaluator {
         Ok(FilterIndices {
             indices: qualifying_indices,
             total_rows,
-            metadata: IndexMetadata {
+            metadata: FilterIndexMetadata {
                 source_id,
                 selectivity,
                 filter_complexity: FilterComplexity::Simple, // Deferred: Analyze complexity

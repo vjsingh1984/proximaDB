@@ -23,6 +23,7 @@ oltp-catalog          = ["dep:sqlx"]
 aws                   = ["dep:aws-config", "dep:aws-sdk-glue"]
 delta-lake            = []
 polaris-catalog       = ["dep:reqwest", "dep:urlencoding"]
+unity-catalog         = ["dep:reqwest", "dep:urlencoding"]
 
 [dependencies]
 anyhow.workspace = true

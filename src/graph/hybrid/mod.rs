@@ -56,12 +56,12 @@
 //! ## Example Usage
 //!
 //! ```rust,ignore
-//! use proximadb::graph::hybrid::{HybridQueryEngine, HybridQuery, FusionStrategy};
+//! use proximadb::graph::hybrid::{HybridQueryEngine, GraphHybridQuery, FusionStrategy};
 //!
 //! let engine = HybridQueryEngine::new(graph_memory, vector_service);
 //!
 //! // Find documents similar to query_vector that are connected to "Alice" via KNOWS edges
-//! let query = HybridQuery {
+//! let query = GraphHybridQuery {
 //!     vector_component: Some(VectorQueryComponent {
 //!         query_vector: query_vector.clone(),
 //!         threshold: Some(0.7),
@@ -216,9 +216,12 @@ pub struct HybridOptimizations {
     pub early_termination: bool,
 }
 
+/// Backwards-compat alias for [`GraphHybridQuery`].
+pub type HybridQuery = GraphHybridQuery;
+
 /// Hybrid query specification
 #[derive(Debug, Clone)]
-pub struct HybridQuery {
+pub struct GraphHybridQuery {
     /// Vector component of the query
     pub vector_component: Option<VectorQueryComponent>,
     /// Graph component of the query
@@ -582,7 +585,7 @@ impl HybridQueryEngine {
     /// Execute a hybrid query
     pub async fn execute_hybrid_query(
         &self,
-        query: &HybridQuery,
+        query: &GraphHybridQuery,
         context: &QueryContext,
     ) -> QueryResult<HybridQueryResult> {
         let start_time = std::time::Instant::now();
@@ -669,7 +672,7 @@ impl HybridQueryEngine {
     /// Execute the vector component of the query
     async fn execute_vector_component(
         &self,
-        query: &HybridQuery,
+        query: &GraphHybridQuery,
         _context: &QueryContext,
     ) -> QueryResult<Vec<VectorCandidate>> {
         let mut candidates = Vec::new();
@@ -718,7 +721,7 @@ impl HybridQueryEngine {
     /// Execute the graph component of the query
     async fn execute_graph_component(
         &self,
-        query: &HybridQuery,
+        query: &GraphHybridQuery,
         _context: &QueryContext,
     ) -> QueryResult<Vec<GraphCandidate>> {
         let mut candidates = Vec::new();
@@ -1738,7 +1741,7 @@ impl HybridQueryEngine {
         max_hops: u32,
         similarity_threshold: f32,
     ) -> QueryResult<Vec<HybridNodeResult>> {
-        let query = HybridQuery {
+        let query = GraphHybridQuery {
             vector_component: Some(VectorQueryComponent {
                 query_vector: query_vector.to_vec(),
                 threshold: Some(similarity_threshold),

@@ -148,9 +148,12 @@ pub struct GlobalMetrics {
     pub last_error_timestamp: Option<i64>,
 }
 
+/// Backwards-compat alias for [`MetricsQueryOptimizationHints`].
+pub type QueryOptimizationHints = MetricsQueryOptimizationHints;
+
 /// Query optimization hints based on metrics
 #[derive(Debug, Clone, serde::Serialize)]
-pub struct QueryOptimizationHints {
+pub struct MetricsQueryOptimizationHints {
     pub collection_id: String,
     pub hints: Vec<OptimizationHint>,
     pub generated_at: i64,
@@ -1024,9 +1027,9 @@ mod tests {
         // Initialize hardware capabilities for testing
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
-        debug!("🧪 TEST: QueryOptimizationHints structure");
+        debug!("🧪 TEST: MetricsQueryOptimizationHints structure");
 
-        let hints = QueryOptimizationHints {
+        let hints = MetricsQueryOptimizationHints {
             collection_id: "hints_test_collection".to_string(),
             hints: vec![
                 OptimizationHint {
@@ -1092,23 +1095,23 @@ mod tests {
         let serialized = serde_json::to_string(&hints);
         assert!(
             serialized.is_ok(),
-            "QueryOptimizationHints serialization should succeed"
+            "MetricsQueryOptimizationHints serialization should succeed"
         );
 
-        // QueryOptimizationHints needs Deserialize trait - skipping deserialization test
-        // let deserialized: Result<QueryOptimizationHints, _> =
+        // MetricsQueryOptimizationHints needs Deserialize trait - skipping deserialization test
+        // let deserialized: Result<MetricsQueryOptimizationHints, _> =
         //     serde_json::from_str(&serialized.unwrap());
-        // QueryOptimizationHints needs Deserialize trait - skipping these tests
+        // MetricsQueryOptimizationHints needs Deserialize trait - skipping these tests
         // assert!(
         //     deserialized.is_ok(),
-        //     "QueryOptimizationHints deserialization should succeed"
+        //     "MetricsQueryOptimizationHints deserialization should succeed"
         // );
 
         // let deserialized_hints = deserialized.unwrap();
         // assert_eq!(deserialized_hints.collection_id, hints.collection_id);
         // assert_eq!(deserialized_hints.hints.len(), hints.hints.len());
 
-        info!("✅ QueryOptimizationHints structure test passed");
+        info!("✅ MetricsQueryOptimizationHints structure test passed");
     }
 
     #[test]

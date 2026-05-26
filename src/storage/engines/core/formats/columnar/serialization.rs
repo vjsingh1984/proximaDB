@@ -308,14 +308,17 @@ pub struct SerializationResult {
 pub struct SerializationMetadata {
     pub record_count: usize,
     pub dimension: usize,
-    pub quantization_stats: QuantizationStats,
+    pub quantization_stats: ColumnarQuantizationStats,
     pub compression_stats: ColumnarCompressionStats,
     pub performance_stats: ColumnarSerPerformanceStats,
 }
 
+/// Backwards-compat alias for [`ColumnarQuantizationStats`].
+pub type QuantizationStats = ColumnarQuantizationStats;
+
 /// Statistics about quantization quality
 #[derive(Debug, Clone)]
-pub struct QuantizationStats {
+pub struct ColumnarQuantizationStats {
     pub binary_hamming_accuracy: Option<f32>,
     pub int8_mse: Option<f32>,
     pub pq_mse: Option<f32>,
@@ -446,7 +449,7 @@ impl ColumnarSerializer {
                     None,
                     None,
                     None,
-                    QuantizationStats {
+                    ColumnarQuantizationStats {
                         binary_hamming_accuracy: None,
                         int8_mse: None,
                         pq_mse: None,
@@ -807,7 +810,7 @@ impl ColumnarSerializer {
         &self,
         original_vectors: &[&[f32]],
         quantized_data: &[StorageQuantizedData],
-    ) -> Result<QuantizationStats> {
+    ) -> Result<ColumnarQuantizationStats> {
         // Simplified statistics calculation
         let compression_ratio = if !quantized_data.is_empty() {
             let original_size = original_vectors.len() * self.config.dimension * 4; // FP32
@@ -829,7 +832,7 @@ impl ColumnarSerializer {
             1.0
         };
 
-        Ok(QuantizationStats {
+        Ok(ColumnarQuantizationStats {
             binary_hamming_accuracy: None, // Deferred: Calculate actual accuracy
             int8_mse: None,                // Deferred: Calculate MSE
             pq_mse: None,                  // Deferred: Calculate PQ MSE

@@ -348,6 +348,7 @@ impl Catalog for UnityCatalog {
             location: None,
             created_at_ms: schema.created_at.unwrap_or(0),
             updated_at_ms: schema.updated_at.unwrap_or(0),
+            ..CatalogNamespace::new(Vec::new())
         })
     }
 
@@ -406,6 +407,7 @@ impl Catalog for UnityCatalog {
                     location: None,
                     created_at_ms: s.created_at.unwrap_or(0),
                     updated_at_ms: s.updated_at.unwrap_or(0),
+                    ..CatalogNamespace::new(Vec::new())
                 }));
             }
 
@@ -448,6 +450,7 @@ impl Catalog for UnityCatalog {
             location: None,
             created_at_ms: schema.created_at.unwrap_or(0),
             updated_at_ms: schema.updated_at.unwrap_or(0),
+            ..CatalogNamespace::new(Vec::new())
         })
     }
 
@@ -842,14 +845,6 @@ impl Catalog for UnityCatalog {
     ) -> Result<()> {
         self.cache.put_statistics(&self.name, identifier, stats);
         Ok(())
-    }
-
-    // ========================
-    // Cache Integration
-    // ========================
-
-    fn cache(&self) -> Option<Arc<CatalogCache>> {
-        Some(self.cache.clone())
     }
 
     // ========================

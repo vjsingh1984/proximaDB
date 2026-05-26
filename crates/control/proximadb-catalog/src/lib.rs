@@ -39,6 +39,7 @@ pub mod polaris;
 pub mod relational;
 pub mod schema;
 pub mod system_columns;
+#[cfg(feature = "unity-catalog")]
 pub mod unity;
 
 /// Storage pool class for a namespace's bytes. The path resolver routes

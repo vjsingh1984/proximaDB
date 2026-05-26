@@ -29,7 +29,7 @@ pub struct QuantizedColumnMetadata {
     pub dimension: usize,
 
     /// Statistics
-    pub stats: QuantizationStats,
+    pub stats: NovaQuantizedColumnsQuantizationStats,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -53,8 +53,11 @@ pub struct PQColumnInfo {
     pub codebook_id: String,
 }
 
+/// Backwards-compat alias for [`NovaQuantizedColumnsQuantizationStats`].
+pub type QuantizationStats = NovaQuantizedColumnsQuantizationStats;
+
 #[derive(Debug, Clone, Default)]
-pub struct QuantizationStats {
+pub struct NovaQuantizedColumnsQuantizationStats {
     pub num_vectors: usize,
     pub compression_ratio: f32,
     pub avg_reconstruction_error: Option<f32>,

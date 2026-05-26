@@ -190,7 +190,7 @@ pub struct TTLCleanupService {
 
     /// Partition metadata tracking
     #[allow(dead_code)]
-    partition_metadata: Arc<RwLock<HashMap<PartitionId, PartitionMetadata>>>,
+    partition_metadata: Arc<RwLock<HashMap<PartitionId, ViperPartitionMetadata>>>,
 
     /// Background cleanup task handle
     #[allow(dead_code)]
@@ -365,7 +365,7 @@ pub struct DataPartitioner {
     // clustering_models: Arc<RwLock<HashMap<String, ClusteringModel>>>,
     /// Partition metadata
     #[allow(dead_code)]
-    partition_metadata: Arc<RwLock<HashMap<PartitionId, PartitionMetadata>>>,
+    partition_metadata: Arc<RwLock<HashMap<PartitionId, ViperPartitionMetadata>>>,
 
     /// Partitioning statistics
     #[allow(dead_code)]
@@ -419,9 +419,12 @@ pub enum ClusteringAlgorithm {
 //     pub trained_at: DateTime<Utc>,
 // }
 
+/// Backwards-compat alias for [`ViperPartitionMetadata`].
+pub type PartitionMetadata = ViperPartitionMetadata;
+
 /// Partition metadata
 #[derive(Debug, Clone)]
-pub struct PartitionMetadata {
+pub struct ViperPartitionMetadata {
     pub partition_id: PartitionId,
     pub collection_id: String,
     pub cluster_id: ClusterId,
@@ -706,7 +709,7 @@ pub struct PartitionedData {
     pub partition_id: PartitionId,
     pub cluster_id: ClusterId,
     pub records: Vec<VectorRecord>,
-    pub metadata: PartitionMetadata,
+    pub metadata: ViperPartitionMetadata,
 }
 
 /// Staging operation result

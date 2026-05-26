@@ -30,15 +30,18 @@ pub struct TimePartition {
     ohlc_bars: BTreeMap<String, BTreeMap<DateTime<Utc>, OHLCBar>>,
 
     /// Partition metadata
-    metadata: PartitionMetadata,
+    metadata: TstPartitionMetadata,
 
     /// In-memory flag
     in_memory: bool,
 }
 
+/// Backwards-compat alias for [`TstPartitionMetadata`].
+pub type PartitionMetadata = TstPartitionMetadata;
+
 /// Partition metadata
 #[derive(Debug, Clone, Default)]
-pub struct PartitionMetadata {
+pub struct TstPartitionMetadata {
     /// Number of records in partition
     pub record_count: usize,
 
@@ -63,7 +66,7 @@ impl TimePartition {
             collection_id,
             records: BTreeMap::new(),
             ohlc_bars: BTreeMap::new(),
-            metadata: PartitionMetadata::default(),
+            metadata: TstPartitionMetadata::default(),
             in_memory: true,
         })
     }
@@ -337,7 +340,7 @@ impl TimePartition {
     }
 
     /// Get partition metadata
-    pub fn metadata(&self) -> &PartitionMetadata {
+    pub fn metadata(&self) -> &TstPartitionMetadata {
         &self.metadata
     }
 
@@ -363,7 +366,7 @@ pub struct ColumnarPartition {
     pub columns: ColumnarData,
 
     /// Partition metadata
-    pub metadata: PartitionMetadata,
+    pub metadata: TstPartitionMetadata,
 }
 
 /// Columnar data storage
@@ -424,7 +427,7 @@ impl ColumnarPartition {
             key,
             collection_id,
             columns: ColumnarData::default(),
-            metadata: PartitionMetadata::default(),
+            metadata: TstPartitionMetadata::default(),
         }
     }
 

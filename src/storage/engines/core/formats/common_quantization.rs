@@ -365,7 +365,7 @@ pub struct UnifiedQuantizedFile {
     pub quantized_data: QuantizedVectorData,
 
     /// Quantization statistics and metrics
-    pub quantization_stats: QuantizationStats,
+    pub quantization_stats: CommonQuantizationStats,
 }
 
 /// Configuration for file-level quantization
@@ -601,9 +601,12 @@ pub enum EncodingParameters {
     },
 }
 
+/// Backwards-compat alias for [`CommonQuantizationStats`].
+pub type QuantizationStats = CommonQuantizationStats;
+
 /// File-level quantization statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuantizationStats {
+pub struct CommonQuantizationStats {
     /// Total time spent on quantization (ms)
     pub quantization_time_ms: u64,
 
@@ -655,7 +658,7 @@ impl UnifiedQuantizedFile {
             quantization_timestamp: chrono::Utc::now().timestamp(),
             quantization_config: config,
             quantized_data: QuantizedVectorData::empty(),
-            quantization_stats: QuantizationStats::default(),
+            quantization_stats: CommonQuantizationStats::default(),
         }
     }
 
@@ -753,7 +756,7 @@ impl QuantizedVectorData {
     }
 }
 
-impl Default for QuantizationStats {
+impl Default for CommonQuantizationStats {
     fn default() -> Self {
         Self {
             quantization_time_ms: 0,

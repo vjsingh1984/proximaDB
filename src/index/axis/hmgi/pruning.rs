@@ -25,9 +25,12 @@ use crate::cluster::shard::MetadataBounds;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
+/// Backwards-compat alias for [`HmgiPartitionMetadata`].
+pub type PartitionMetadata = HmgiPartitionMetadata;
+
 /// HMGI partition metadata - extends MetadataBounds with modality info
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PartitionMetadata {
+pub struct HmgiPartitionMetadata {
     /// Base metadata bounds
     pub bounds: MetadataBounds,
 
@@ -41,7 +44,7 @@ pub struct PartitionMetadata {
     pub last_updated: i64,
 }
 
-impl PartitionMetadata {
+impl HmgiPartitionMetadata {
     /// Create new empty partition metadata
     pub fn new() -> Self {
         Self {
@@ -80,7 +83,7 @@ impl PartitionMetadata {
     }
 }
 
-impl Default for PartitionMetadata {
+impl Default for HmgiPartitionMetadata {
     fn default() -> Self {
         Self::new()
     }
@@ -92,7 +95,7 @@ mod tests {
 
     #[test]
     fn test_pruning_by_modality() {
-        let mut metadata = PartitionMetadata::new();
+        let mut metadata = HmgiPartitionMetadata::new();
         metadata.add_modality("text".to_string());
         metadata.add_modality("image".to_string());
 
@@ -103,7 +106,7 @@ mod tests {
 
     #[test]
     fn test_bounds_tracking() {
-        let mut metadata = PartitionMetadata::new();
+        let mut metadata = HmgiPartitionMetadata::new();
 
         metadata.add_modality("text".to_string());
         metadata.add_modality("text".to_string());
@@ -117,11 +120,11 @@ mod tests {
 
     #[test]
     fn test_metadata_serialization() {
-        let mut metadata = PartitionMetadata::new();
+        let mut metadata = HmgiPartitionMetadata::new();
         metadata.add_modality("text".to_string());
 
         let json = serde_json::to_string(&metadata).unwrap();
-        let deserialized: PartitionMetadata = serde_json::from_str(&json).unwrap();
+        let deserialized: HmgiPartitionMetadata = serde_json::from_str(&json).unwrap();
 
         assert_eq!(metadata.modalities, deserialized.modalities);
         assert_eq!(metadata.modality_counts, deserialized.modality_counts);
