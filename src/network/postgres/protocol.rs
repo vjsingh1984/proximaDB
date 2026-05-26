@@ -903,6 +903,23 @@ impl PostgresProtocol {
 
         // Handle SELECT queries
         if upper.starts_with("SELECT") {
+            // S5c new-pipeline interception. When the env flag is
+            // set AND the SQL lowers cleanly against the in-memory
+            // relational engine's catalog, route through
+            // algebra → planner → executor instead of the legacy
+            // vector-collection path. Lowering failures fall
+            // through (e.g. `SELECT current_schema()` and other
+            // pg-specific queries the new frontend doesn't accept).
+            if let Some(result) =
+                super::relational_pipeline::try_run_select(query).await
+            {
+                return match result {
+                    Ok(pr) => self.emit_pipeline_result(pr).await,
+                    Err(msg) => {
+                        self.send_error("ERROR", "XX000", &msg).await
+                    }
+                };
+            }
             if let Some((column, value)) = Self::extract_simple_constant_select(query) {
                 return self.send_single_value_result(&column, &value).await;
             }
@@ -1177,6 +1194,70 @@ impl PostgresProtocol {
     async fn send_empty_result(&mut self) -> Result<()> {
         self.send_row_description(&[]).await?;
         self.send_command_complete("SELECT 0").await
+    }
+
+    /// Emit the result of a successful new-pipeline run
+    /// (S5c bridge). Builds a `RowDescription` from the
+    /// `RelationalSchema`, writes one `DataRow` per row in text
+    /// format, then `CommandComplete("SELECT n")`.
+    async fn emit_pipeline_result(
+        &mut self,
+        result: super::relational_pipeline::PipelineResult,
+    ) -> Result<()> {
+        // RowDescription.
+        let fields: Vec<crate::network::postgres::types::FieldDescription> = result
+            .schema
+            .columns
+            .iter()
+            .map(|c| {
+                let pg = super::relational_pipeline::pg_type_for(&c.ty);
+                crate::network::postgres::types::FieldDescription::new(&c.name, pg)
+            })
+            .collect();
+        self.send_row_description(&fields).await?;
+        // DataRows.
+        let n = result.rows.len();
+        for row in &result.rows {
+            let cells: Vec<Option<String>> = row
+                .iter()
+                .map(super::relational_pipeline::text_encode)
+                .collect();
+            self.send_data_row_nullable(&cells).await?;
+        }
+        // CommandComplete.
+        self.send_command_complete(&format!("SELECT {n}")).await
+    }
+
+    /// Send a DataRow that supports `NULL` (length = -1) cells.
+    /// `send_data_row` exists too but takes `&[&str]` — this
+    /// variant is needed by the new pipeline to round-trip
+    /// SQL NULLs correctly.
+    async fn send_data_row_nullable(
+        &mut self,
+        values: &[Option<String>],
+    ) -> Result<()> {
+        let mut payload_len: usize = 4 /* msg len */ + 2 /* field count */;
+        for v in values {
+            payload_len += 4;
+            if let Some(s) = v {
+                payload_len += s.len();
+            }
+        }
+        self.write_buffer.put_u8(b'D');
+        self.write_buffer.put_i32(payload_len as i32);
+        self.write_buffer.put_i16(values.len() as i16);
+        for v in values {
+            match v {
+                None => {
+                    self.write_buffer.put_i32(-1);
+                }
+                Some(s) => {
+                    self.write_buffer.put_i32(s.len() as i32);
+                    self.write_buffer.put_slice(s.as_bytes());
+                }
+            }
+        }
+        self.flush_write_buffer().await
     }
 
     async fn execute_explain(&mut self, query: &str) -> Result<()> {

@@ -211,6 +211,13 @@ proximadb-compression-types = { path = "crates/foundation/proximadb-compression-
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
+proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
+proximadb-relational-algebra = { path = "crates/query/proximadb-relational-algebra" }
+proximadb-relational-reader = { path = "crates/query/proximadb-relational-reader" }
+proximadb-relational-planner = { path = "crates/query/proximadb-relational-planner" }
+proximadb-relational-executor = { path = "crates/query/proximadb-relational-executor" }
+proximadb-relational-frontend = { path = "crates/query/proximadb-relational-frontend" }
+proximadb-relational-engine = { path = "crates/query/proximadb-relational-engine" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }

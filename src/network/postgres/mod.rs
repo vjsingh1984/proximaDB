@@ -9,6 +9,9 @@
 
 /// PostgreSQL Protocol v3.0 message parsing and encoding
 pub mod protocol;
+/// Bridge to the new relational pipeline (algebra → planner →
+/// executor → engine). Opt-in via PROXIMADB_NEW_RELATIONAL_PIPELINE.
+pub mod relational_pipeline;
 /// Session management for PostgreSQL client connections
 pub mod session;
 /// SQL-to-ProximaDB query translator (pgvector compatibility)
