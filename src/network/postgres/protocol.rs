@@ -1681,6 +1681,60 @@ impl PostgresProtocol {
         }
     }
 
+    /// Extract `ORDER BY <col> [ASC|DESC]` — single-column only.
+    /// Returns `(column_name, is_descending)`. Multi-column ORDER BY
+    /// and ORDER BY <expr> remain unsupported (Phase 2 work — needs
+    /// the relational planner).
+    ///
+    /// Returns `None` if no ORDER BY is present.
+    fn extract_select_order_by(query: &str) -> Option<(String, bool)> {
+        let upper = query.to_ascii_uppercase();
+        let pos = Self::find_keyword_outside_literals(&upper, " ORDER BY ")?;
+        let after = query[pos + " ORDER BY ".len()..].trim();
+        // Terminate at LIMIT / OFFSET / `;` / end.
+        let upper_after = after.to_ascii_uppercase();
+        let mut end = after.len();
+        for terminator in [" LIMIT ", " OFFSET "] {
+            if let Some(idx) =
+                Self::find_keyword_outside_literals(&upper_after, terminator)
+            {
+                if idx < end {
+                    end = idx;
+                }
+            }
+        }
+        let clause = after[..end].trim().trim_end_matches(';').trim();
+        if clause.is_empty() {
+            return None;
+        }
+        // Reject multi-column order-by — Phase 1 doesn't implement
+        // it; punting silently is the bug we're fixing.
+        if Self::find_keyword_outside_literals(clause, ",").is_some() {
+            return None;
+        }
+        // Split column name and optional direction.
+        let (col, desc) = if let Some(stripped) = clause
+            .to_ascii_uppercase()
+            .strip_suffix(" DESC")
+            .map(str::to_string)
+        {
+            (clause[..stripped.len()].trim().to_string(), true)
+        } else if let Some(stripped) = clause
+            .to_ascii_uppercase()
+            .strip_suffix(" ASC")
+            .map(str::to_string)
+        {
+            (clause[..stripped.len()].trim().to_string(), false)
+        } else {
+            (clause.to_string(), false)
+        };
+        let col = Self::clean_identifier(&col);
+        if col.is_empty() {
+            return None;
+        }
+        Some((col, desc))
+    }
+
     fn extract_select_where_clause(query: &str) -> Option<&str> {
         let upper = query.to_ascii_uppercase();
         let where_pos = upper.find(" WHERE ")?;
@@ -1903,11 +1957,16 @@ impl PostgresProtocol {
         };
 
         let limit = Self::extract_select_limit(query);
-        let result = dml_service
+        let order_by = Self::extract_select_order_by(query);
+        let mut result = dml_service
             .select_table_records_with_projection(
                 table_name,
                 &projection_column_names,
-                limit,
+                // Fetch all matching rows BEFORE LIMIT when we need
+                // to ORDER BY — sorting then truncating is the only
+                // correct semantics. With no ORDER BY the planner
+                // keeps the limit pushdown.
+                if order_by.is_some() { None } else { limit },
                 &predicates,
             )
             .await?;
@@ -1922,6 +1981,33 @@ impl PostgresProtocol {
             })
             .collect::<Vec<_>>();
         self.send_row_description(&fields).await?;
+
+        // Apply ORDER BY if present. Single-column only; sort by the
+        // string representation of the column's value, which is
+        // correct for TEXT/VARCHAR and ordering-preserving for
+        // canonical numeric/timestamp string forms produced by
+        // `proxima_value_to_pg_text`. The proper type-aware sort
+        // arrives with the relational planner in Phase 2.
+        if let Some((order_col, desc)) = order_by.as_ref() {
+            let col_idx = result
+                .selected_columns
+                .iter()
+                .position(|c| c.name.eq_ignore_ascii_case(order_col));
+            if let Some(idx) = col_idx {
+                result.rows.sort_by(|a, b| {
+                    let av = a.get(idx).map(proxima_value_to_pg_text).unwrap_or_default();
+                    let bv = b.get(idx).map(proxima_value_to_pg_text).unwrap_or_default();
+                    if *desc { bv.cmp(&av) } else { av.cmp(&bv) }
+                });
+            } else {
+                warn!(
+                    target: "proximadb::pgwire::order_by",
+                    column = %order_col,
+                    "ORDER BY column not found in projection; \
+                     leaving result rows unsorted"
+                );
+            }
+        }
 
         let mut rows_sent = 0usize;
         for row in result.rows {
