@@ -6803,6 +6803,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-relational-reader"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "parking_lot",
+ "proximadb-data-model",
+ "proximadb-relational-types",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "proximadb-relational-types"
 version = "0.2.0"
 dependencies = [

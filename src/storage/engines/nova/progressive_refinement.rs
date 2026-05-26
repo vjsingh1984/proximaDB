@@ -4,16 +4,19 @@
 use crate::proto::proximadb_v1::VectorRecord;
 use anyhow::Result;
 
+/// Backwards-compat alias for [`NovaProgressiveRefinementConfig`].
+pub type ProgressiveRefinementConfig = NovaProgressiveRefinementConfig;
+
 /// Progressive refinement configuration
 #[derive(Debug, Clone)]
-pub struct ProgressiveRefinementConfig {
+pub struct NovaProgressiveRefinementConfig {
     pub binary_candidates: usize,
     pub int8_candidates: usize,
     pub pq_candidates: usize,
     pub final_candidates: usize,
 }
 
-impl Default for ProgressiveRefinementConfig {
+impl Default for NovaProgressiveRefinementConfig {
     fn default() -> Self {
         Self {
             binary_candidates: 1000,
@@ -28,7 +31,7 @@ impl Default for ProgressiveRefinementConfig {
 pub async fn refine_progressively(
     _query: &[f32],
     _top_k: usize,
-    _config: ProgressiveRefinementConfig,
+    _config: NovaProgressiveRefinementConfig,
 ) -> Result<Vec<VectorRecord>> {
     // Implementation would perform multi-stage refinement
     Ok(Vec::new())

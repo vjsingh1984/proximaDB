@@ -549,9 +549,12 @@ pub struct Posting {
     pub positions: Vec<u32>,
 }
 
+/// Backwards-compat alias for [`FulltextPostingList`].
+pub type PostingList = FulltextPostingList;
+
 /// Posting list for a term
 #[derive(Debug, Clone, Default)]
-pub struct PostingList {
+pub struct FulltextPostingList {
     /// Document frequency (number of documents containing this term)
     pub doc_frequency: u32,
     /// Total occurrences across all documents
@@ -560,7 +563,7 @@ pub struct PostingList {
     pub postings: Vec<Posting>,
 }
 
-impl PostingList {
+impl FulltextPostingList {
     /// Create a new empty posting list
     pub fn new() -> Self {
         Self::default()
@@ -894,7 +897,7 @@ pub struct FullTextIndex {
     /// Tokenizer for processing text
     tokenizer: Tokenizer,
     /// Inverted index: term -> posting list
-    inverted_index: BTreeMap<String, PostingList>,
+    inverted_index: BTreeMap<String, FulltextPostingList>,
     /// Document metadata
     documents: HashMap<String, DocumentMetadata>,
     /// Text statistics

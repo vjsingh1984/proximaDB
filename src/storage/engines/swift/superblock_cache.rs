@@ -240,16 +240,19 @@ pub enum BloomFilter {
 #[derive(Debug, Clone)]
 pub struct ProgressiveSearchMetadata {
     pub search_pattern: String,
-    pub optimal_stages: Vec<ProgressiveStage>,
+    pub optimal_stages: Vec<SwiftSuperblockProgressiveStage>,
     pub stage_selectivity: Vec<f32>,
     pub total_estimated_cost: f32,
     pub accuracy_at_stage: Vec<f32>,
     pub early_termination_thresholds: Vec<u32>,
 }
 
+/// Backwards-compat alias for [`SwiftSuperblockProgressiveStage`].
+pub type ProgressiveStage = SwiftSuperblockProgressiveStage;
+
 /// Progressive search stage
 #[derive(Debug, Clone)]
-pub struct ProgressiveStage {
+pub struct SwiftSuperblockProgressiveStage {
     pub stage_name: String,
     pub quantization_level: String,
     pub expected_candidates: u32,

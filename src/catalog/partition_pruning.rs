@@ -85,9 +85,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::search::{ComparisonOperator, FilterExpression};
 
+/// Backwards-compat alias for [`PartitionPruningResult`].
+pub type PruningResult = PartitionPruningResult;
+
 /// Partition pruning result with statistics
 #[derive(Debug, Clone)]
-pub struct PruningResult {
+pub struct PartitionPruningResult {
     /// Partitions to scan (after pruning)
     pub partitions_to_scan: Vec<PartitionInfo>,
     /// Total partitions available
@@ -167,7 +170,7 @@ impl PartitionPruner {
         partitions: Vec<PartitionInfo>,
         partition_spec: &CatalogPartitionSpec,
         filter: &FilterExpression,
-    ) -> Result<PruningResult> {
+    ) -> Result<PartitionPruningResult> {
         let total_partitions = partitions.len();
 
         // Build partition map for efficient lookup
@@ -204,7 +207,7 @@ impl PartitionPruner {
             stats.total_bytes_saved += estimated_bytes_saved;
         }
 
-        Ok(PruningResult {
+        Ok(PartitionPruningResult {
             partitions_to_scan,
             total_partitions,
             partitions_pruned,
@@ -231,7 +234,7 @@ impl PartitionPruner {
         time_field: &str,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
-    ) -> Result<PruningResult> {
+    ) -> Result<PartitionPruningResult> {
         let total_partitions = partitions.len();
 
         let partitions_to_scan: Vec<PartitionInfo> = partitions
@@ -254,7 +257,7 @@ impl PartitionPruner {
             0.0
         };
 
-        Ok(PruningResult {
+        Ok(PartitionPruningResult {
             partitions_to_scan,
             total_partitions,
             partitions_pruned,
@@ -279,7 +282,7 @@ impl PartitionPruner {
         partitions: Vec<PartitionInfo>,
         field: &str,
         values: &HashSet<serde_json::Value>,
-    ) -> Result<PruningResult> {
+    ) -> Result<PartitionPruningResult> {
         let total_partitions = partitions.len();
 
         let partitions_to_scan: Vec<PartitionInfo> = partitions
@@ -300,7 +303,7 @@ impl PartitionPruner {
             0.0
         };
 
-        Ok(PruningResult {
+        Ok(PartitionPruningResult {
             partitions_to_scan,
             total_partitions,
             partitions_pruned,

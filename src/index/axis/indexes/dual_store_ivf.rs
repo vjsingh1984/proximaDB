@@ -421,9 +421,12 @@ impl CentroidStore {
     }
 }
 
+/// Backwards-compat alias for [`TieredPostingList`].
+pub type PostingList = TieredPostingList;
+
 /// Posting list that can be tiered
 #[derive(Debug, Clone)]
-pub struct PostingList {
+pub struct TieredPostingList {
     /// Identifier of the cluster this posting list belongs to.
     pub cluster_id: usize,
     /// Vector IDs assigned to this cluster.
@@ -610,7 +613,7 @@ pub struct UnifiedIvfIndex {
     centroids: CentroidStore,
 
     /// ELASTIC: Posting list store (tierable)
-    posting_lists: Arc<dyn AdaptiveStore<PartitionedKey<usize>, PostingList>>,
+    posting_lists: Arc<dyn AdaptiveStore<PartitionedKey<usize>, TieredPostingList>>,
 
     /// Vector storage (separate from posting lists for flexibility)
     // Zero-overhead vector storage per collection
@@ -1045,7 +1048,7 @@ impl UnifiedIvfIndex {
             }
         }
 
-        let posting_lists: Arc<dyn AdaptiveStore<PartitionedKey<usize>, PostingList>> =
+        let posting_lists: Arc<dyn AdaptiveStore<PartitionedKey<usize>, TieredPostingList>> =
             Arc::new(SimpleAdaptiveStore {
                 store: Arc::new(DashMap::new()),
             });
@@ -1132,7 +1135,7 @@ impl UnifiedIvfIndex {
         // Initialize empty posting lists for each cluster
         for cluster_id in 0..self.config.n_clusters {
             let key = PartitionedKey::new(self.collection_id.clone(), cluster_id);
-            let posting_list = PostingList {
+            let posting_list = TieredPostingList {
                 cluster_id,
                 vector_ids: Vec::new(),
                 vectors: Some(Vec::new()), // Start in memory
@@ -1169,7 +1172,7 @@ impl UnifiedIvfIndex {
         // Get or create posting list
         let mut posting_list = match self.posting_lists.get(&key).await {
             Some(list) => list,
-            None => PostingList {
+            None => TieredPostingList {
                 cluster_id,
                 vector_ids: Vec::new(),
                 vectors: Some(Vec::new()),

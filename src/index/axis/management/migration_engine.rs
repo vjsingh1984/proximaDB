@@ -79,9 +79,12 @@ impl std::fmt::Debug for IndexMigrationEngine {
     }
 }
 
+/// Backwards-compat alias for [`AxisIndexMigrationPlan`].
+pub type MigrationPlan = AxisIndexMigrationPlan;
+
 /// Migration plan for transitioning between index strategies
 #[derive(Debug, Clone)]
-pub struct MigrationPlan {
+pub struct AxisIndexMigrationPlan {
     /// Unique identifier for this migration.
     pub migration_id: proximadb_kernel::uuid::Uuid,
     /// Collection being migrated.
@@ -584,7 +587,7 @@ impl IndexMigrationEngine {
         collection_id: &str,
         from: IndexSelectionStrategy,
         to: IndexSelectionStrategy,
-    ) -> Result<MigrationPlan> {
+    ) -> Result<AxisIndexMigrationPlan> {
         let migration_id = proximadb_kernel::uuid::Uuid::new_v4();
         let mut steps = Vec::new();
         let rollback_points = Vec::new();
@@ -708,7 +711,7 @@ impl IndexMigrationEngine {
         // Calculate total estimated duration
         let estimated_duration = steps.iter().map(|s| s.estimated_duration).sum();
 
-        Ok(MigrationPlan {
+        Ok(AxisIndexMigrationPlan {
             migration_id,
             collection_id: collection_id.to_string(),
             from_strategy: from.clone(),

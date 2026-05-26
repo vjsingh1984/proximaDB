@@ -815,7 +815,7 @@ pub enum IOSchedulingStrategy {
 #[derive(Debug, Clone)]
 pub struct ProgressiveSearchParams {
     /// Progressive stages
-    pub stages: Vec<ProgressiveStage>,
+    pub stages: Vec<SearchModeProgressiveStage>,
 
     /// Stage transition criteria
     pub transition_criteria: StageTransitionCriteria,
@@ -827,9 +827,12 @@ pub struct ProgressiveSearchParams {
     pub result_refinement: ProgressiveRefinement,
 }
 
+/// Backwards-compat alias for [`SearchModeProgressiveStage`].
+pub type ProgressiveStage = SearchModeProgressiveStage;
+
 /// Progressive search stage
 #[derive(Debug, Clone)]
-pub struct ProgressiveStage {
+pub struct SearchModeProgressiveStage {
     /// Stage name
     pub name: String,
 

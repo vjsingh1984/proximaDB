@@ -26,7 +26,7 @@
 //! ## Usage
 //!
 //! ```rust,ignore
-//! use proximadb::storage::schema::pruning_strategies::{VectorPruner, PruningResult};
+//! use proximadb::storage::schema::pruning_strategies::{VectorPruner, SchemaPruningResult};
 //!
 //! let pruner: Arc<dyn VectorPruner> = Arc::new(CentroidTree::build(&centroids, 8));
 //! let result = pruner.prune_by_vector(&query, max_distance);
@@ -45,9 +45,12 @@ use super::header_cache::{ColumnBounds, ScalarPredicate, SpatialRange};
 // Pruning Result Types
 // ============================================================================
 
+/// Backwards-compat alias for [`SchemaPruningResult`].
+pub type PruningResult = SchemaPruningResult;
+
 /// Result of a pruning operation, indicating which rowgroups may contain matches.
 #[derive(Debug, Clone)]
-pub struct PruningResult {
+pub struct SchemaPruningResult {
     /// Indices of rowgroups that may contain matching data.
     /// Empty means no rowgroups match (can skip entire file).
     pub included_indices: Vec<usize>,
@@ -59,7 +62,7 @@ pub struct PruningResult {
     pub stats: PruningStats,
 }
 
-impl PruningResult {
+impl SchemaPruningResult {
     /// Create a result where all rowgroups are included (no pruning possible).
     pub fn include_all(total: usize) -> Self {
         Self {
@@ -122,7 +125,7 @@ impl PruningResult {
     }
 
     /// Intersect with another pruning result (AND semantics).
-    pub fn intersect(&self, other: &PruningResult) -> PruningResult {
+    pub fn intersect(&self, other: &SchemaPruningResult) -> SchemaPruningResult {
         let start = std::time::Instant::now();
 
         let self_set: HashSet<usize> = self.included_indices.iter().copied().collect();
@@ -137,7 +140,7 @@ impl PruningResult {
             0.0
         };
 
-        PruningResult {
+        SchemaPruningResult {
             included_indices: intersection,
             total_rowgroups: total,
             stats: PruningStats {
@@ -227,9 +230,9 @@ pub trait VectorPruner: Send + Sync {
     /// * `max_distance` - Maximum L2 distance threshold
     ///
     /// # Returns
-    /// PruningResult with indices of rowgroups that may contain vectors
+    /// SchemaPruningResult with indices of rowgroups that may contain vectors
     /// within max_distance of query.
-    fn prune_by_vector(&self, query: &[f32], max_distance: f32) -> PruningResult;
+    fn prune_by_vector(&self, query: &[f32], max_distance: f32) -> SchemaPruningResult;
 
     /// Prune using quantized distance approximation for speed.
     ///
@@ -241,8 +244,8 @@ pub trait VectorPruner: Send + Sync {
     /// * `max_distance` - Maximum L2 distance threshold
     ///
     /// # Returns
-    /// PruningResult with conservative (superset) of matching rowgroups.
-    fn prune_quantized(&self, query: &[f32], max_distance: f32) -> PruningResult {
+    /// SchemaPruningResult with conservative (superset) of matching rowgroups.
+    fn prune_quantized(&self, query: &[f32], max_distance: f32) -> SchemaPruningResult {
         // Default: fall back to exact pruning
         self.prune_by_vector(query, max_distance)
     }
@@ -266,13 +269,13 @@ pub trait ScalarPruner: Send + Sync {
     /// * `predicate` - Scalar predicate (Eq, Lt, Gt, Between, etc.)
     ///
     /// # Returns
-    /// PruningResult with indices of rowgroups that may contain matching data.
-    fn prune_by_predicate(&self, column: &str, predicate: &ScalarPredicate) -> PruningResult;
+    /// SchemaPruningResult with indices of rowgroups that may contain matching data.
+    fn prune_by_predicate(&self, column: &str, predicate: &ScalarPredicate) -> SchemaPruningResult;
 
     /// Prune by multiple predicates (AND semantics).
-    fn prune_by_predicates(&self, predicates: &[(&str, ScalarPredicate)]) -> PruningResult {
+    fn prune_by_predicates(&self, predicates: &[(&str, ScalarPredicate)]) -> SchemaPruningResult {
         if predicates.is_empty() {
-            return PruningResult::include_all(self.num_rowgroups());
+            return SchemaPruningResult::include_all(self.num_rowgroups());
         }
 
         let mut result = self.prune_by_predicate(predicates[0].0, &predicates[0].1);
@@ -306,8 +309,8 @@ pub trait SpatialPruner: Send + Sync {
     /// * `range` - Query spatial range in engine-specific encoding
     ///
     /// # Returns
-    /// PruningResult with indices of rowgroups whose spatial range overlaps query.
-    fn prune_by_spatial_range(&self, range: &SpatialRange) -> PruningResult;
+    /// SchemaPruningResult with indices of rowgroups whose spatial range overlaps query.
+    fn prune_by_spatial_range(&self, range: &SpatialRange) -> SchemaPruningResult;
 
     /// Get spatial range type used by this pruner.
     fn spatial_type(&self) -> SpatialRangeType;
@@ -419,8 +422,8 @@ impl CompositePruner {
         predicates: Option<&[(&str, ScalarPredicate)]>,
         spatial_range: Option<&SpatialRange>,
         _id_filter: Option<&[&str]>,
-    ) -> PruningResult {
-        let mut result = PruningResult::include_all(self.total_rowgroups);
+    ) -> SchemaPruningResult {
+        let mut result = SchemaPruningResult::include_all(self.total_rowgroups);
 
         // Apply vector pruning first (typically most selective for vector search)
         if let (Some(pruner), Some((query, max_dist))) = (&self.vector_pruner, query_vector) {
@@ -479,8 +482,8 @@ impl NullVectorPruner {
 }
 
 impl VectorPruner for NullVectorPruner {
-    fn prune_by_vector(&self, _query: &[f32], _max_distance: f32) -> PruningResult {
-        PruningResult::include_all(self.total)
+    fn prune_by_vector(&self, _query: &[f32], _max_distance: f32) -> SchemaPruningResult {
+        SchemaPruningResult::include_all(self.total)
     }
 
     fn dimension(&self) -> usize {
@@ -505,8 +508,8 @@ impl NullScalarPruner {
 }
 
 impl ScalarPruner for NullScalarPruner {
-    fn prune_by_predicate(&self, _column: &str, _predicate: &ScalarPredicate) -> PruningResult {
-        PruningResult::include_all(self.total)
+    fn prune_by_predicate(&self, _column: &str, _predicate: &ScalarPredicate) -> SchemaPruningResult {
+        SchemaPruningResult::include_all(self.total)
     }
 
     fn num_rowgroups(&self) -> usize {
@@ -545,7 +548,7 @@ mod tests {
 
     #[test]
     fn test_pruning_result_include_all() {
-        let result = PruningResult::include_all(10);
+        let result = SchemaPruningResult::include_all(10);
         assert_eq!(result.included_indices.len(), 10);
         assert_eq!(result.total_rowgroups, 10);
         assert_eq!(result.pruned_count(), 0);
@@ -554,7 +557,7 @@ mod tests {
 
     #[test]
     fn test_pruning_result_include_none() {
-        let result = PruningResult::include_none(10, "test", 100);
+        let result = SchemaPruningResult::include_none(10, "test", 100);
         assert!(result.included_indices.is_empty());
         assert_eq!(result.total_rowgroups, 10);
         assert_eq!(result.pruned_count(), 10);
@@ -564,7 +567,7 @@ mod tests {
 
     #[test]
     fn test_pruning_result_with_indices() {
-        let result = PruningResult::with_indices(vec![1, 3, 5], 10, "test", 100);
+        let result = SchemaPruningResult::with_indices(vec![1, 3, 5], 10, "test", 100);
         assert_eq!(result.included_indices.len(), 3);
         assert_eq!(result.pruned_count(), 7);
         assert!((result.stats.pruning_ratio - 0.7).abs() < 0.01);
@@ -572,8 +575,8 @@ mod tests {
 
     #[test]
     fn test_pruning_result_intersect() {
-        let result1 = PruningResult::with_indices(vec![0, 1, 2, 3, 4], 10, "a", 100);
-        let result2 = PruningResult::with_indices(vec![2, 3, 4, 5, 6], 10, "b", 100);
+        let result1 = SchemaPruningResult::with_indices(vec![0, 1, 2, 3, 4], 10, "a", 100);
+        let result2 = SchemaPruningResult::with_indices(vec![2, 3, 4, 5, 6], 10, "b", 100);
 
         let intersected = result1.intersect(&result2);
         assert_eq!(intersected.included_indices.len(), 3); // 2, 3, 4

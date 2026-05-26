@@ -67,9 +67,12 @@ pub enum RefinementStrategy {
     },
 }
 
+/// Backwards-compat alias for [`UniversalProgressiveRefinementConfig`].
+pub type ProgressiveRefinementConfig = UniversalProgressiveRefinementConfig;
+
 /// Configuration for progressive refinement
 #[derive(Debug, Clone)]
-pub struct ProgressiveRefinementConfig {
+pub struct UniversalProgressiveRefinementConfig {
     /// Refinement strategy
     pub search_strategy: RefinementStrategy,
 
@@ -173,7 +176,7 @@ pub struct ProgressiveRefinementStats {
     pub average_memory_usage_mb: f32,
 }
 
-impl Default for ProgressiveRefinementConfig {
+impl Default for UniversalProgressiveRefinementConfig {
     fn default() -> Self {
         let mut candidates_per_stage = HashMap::new();
         candidates_per_stage.insert(RefinementStage::Binary, 1000);
@@ -222,7 +225,7 @@ impl ProgressiveRefinementPipeline {
         query_vector: &[f32],
         candidates: &[CandidateVector],
         distance_metric: &DistanceMetric,
-        config: &ProgressiveRefinementConfig,
+        config: &UniversalProgressiveRefinementConfig,
         max_results: usize,
     ) -> AdapterResult<ProgressiveRefinementResult> {
         let total_start_time = std::time::Instant::now();
@@ -371,7 +374,7 @@ impl ProgressiveRefinementPipeline {
         stage: RefinementStage,
         distance_metric: &DistanceMetric,
         target_count: usize,
-        _config: &ProgressiveRefinementConfig,
+        _config: &UniversalProgressiveRefinementConfig,
     ) -> AdapterResult<StageResult> {
         match stage {
             RefinementStage::Binary => {

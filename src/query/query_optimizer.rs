@@ -1395,7 +1395,7 @@ pub enum SearchExecutionMethod {
     /// Multi-stage progressive refinement search
     Progressive {
         /// Ordered stages from coarse to fine
-        stages: Vec<ProgressiveStage>,
+        stages: Vec<QueryOptimizerProgressiveStage>,
     },
     /// Search using only quantized representations
     QuantizedOnly {
@@ -1427,9 +1427,12 @@ pub enum FilterExecutionMethod {
     },
 }
 
+/// Backwards-compat alias for [`QueryOptimizerProgressiveStage`].
+pub type ProgressiveStage = QueryOptimizerProgressiveStage;
+
 /// Progressive search stages
 #[derive(Debug, Clone)]
-pub struct ProgressiveStage {
+pub struct QueryOptimizerProgressiveStage {
     /// Search algorithm used in this stage
     pub algorithm: SearchAlgorithm,
     /// Number of candidates to retain from this stage
@@ -2121,15 +2124,15 @@ impl UnifiedQueryOptimizer {
             // Medium dataset - progressive search
             SearchExecutionMethod::Progressive {
                 stages: vec![
-                    ProgressiveStage {
+                    QueryOptimizerProgressiveStage {
                         algorithm: SearchAlgorithm::BinaryFilter,
                         candidates: query_analysis.top_k * 100,
                     },
-                    ProgressiveStage {
+                    QueryOptimizerProgressiveStage {
                         algorithm: SearchAlgorithm::QuantizedSearch,
                         candidates: query_analysis.top_k * 10,
                     },
-                    ProgressiveStage {
+                    QueryOptimizerProgressiveStage {
                         algorithm: SearchAlgorithm::ExactSearch,
                         candidates: query_analysis.top_k,
                     },

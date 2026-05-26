@@ -46,7 +46,7 @@ pub struct UniversalAdapterConfig {
     pub hardware_acceleration: HardwareAccelerationConfig,
 
     /// Progressive refinement configuration
-    pub progressive_refinement: ProgressiveRefinementConfig,
+    pub progressive_refinement: UniversalConfigProgressiveRefinementConfig,
 
     /// Cache configuration
     pub cache_config: UniversalCacheConfig,
@@ -55,9 +55,12 @@ pub struct UniversalAdapterConfig {
     pub storage_engines: Vec<StorageEngineConfig>,
 }
 
+/// Backwards-compat alias for [`UniversalConfigProgressiveRefinementConfig`].
+pub type ProgressiveRefinementConfig = UniversalConfigProgressiveRefinementConfig;
+
 /// Progressive refinement configuration
 #[derive(Debug, Clone)]
-pub struct ProgressiveRefinementConfig {
+pub struct UniversalConfigProgressiveRefinementConfig {
     /// Refinement strategy
 
     /// Number of candidates to keep at each stage
@@ -79,7 +82,7 @@ pub struct ProgressiveRefinementConfig {
     pub min_improvement_threshold: f32,
 }
 
-impl Default for ProgressiveRefinementConfig {
+impl Default for UniversalConfigProgressiveRefinementConfig {
     fn default() -> Self {
         let mut candidates_per_stage = HashMap::new();
         candidates_per_stage.insert(RefinementStage::Binary, 1000);

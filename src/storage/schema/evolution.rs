@@ -119,9 +119,12 @@ pub enum TypeCompatibility {
     Incompatible,
 }
 
+/// Backwards-compat alias for [`SchemaEvolutionMigrationPlan`].
+pub type MigrationPlan = SchemaEvolutionMigrationPlan;
+
 /// Migration plan for schema evolution.
 #[derive(Debug)]
-pub struct MigrationPlan {
+pub struct SchemaEvolutionMigrationPlan {
     /// Source schema version
     pub from_version: u32,
     /// Target schema version
@@ -218,7 +221,7 @@ pub trait SchemaEvolution: Send + Sync {
         &self,
         from_schema: &ProximaSchema,
         to_schema: &ProximaSchema,
-    ) -> Result<MigrationPlan>;
+    ) -> Result<SchemaEvolutionMigrationPlan>;
 }
 
 /// Default implementation of schema evolution.
@@ -482,7 +485,7 @@ impl SchemaEvolution for DefaultSchemaEvolution {
         &self,
         from_schema: &ProximaSchema,
         to_schema: &ProximaSchema,
-    ) -> Result<MigrationPlan> {
+    ) -> Result<SchemaEvolutionMigrationPlan> {
         let mut steps = Vec::new();
         let mut is_online = true;
 
@@ -518,7 +521,7 @@ impl SchemaEvolution for DefaultSchemaEvolution {
             }
         }
 
-        Ok(MigrationPlan {
+        Ok(SchemaEvolutionMigrationPlan {
             from_version: from_schema.version,
             to_version: to_schema.version,
             steps,
