@@ -32,6 +32,7 @@ members = [
     "crates/foundation/proximadb-proto",
     "crates/foundation/proximadb-quantization-types",
     "crates/foundation/proximadb-records",
+    "crates/foundation/proximadb-relational-types",
     "crates/control/proximadb-catalog",
     "crates/horizontal/proximadb-codec",
     "crates/horizontal/proximadb-compression",
@@ -103,6 +104,7 @@ proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
+proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 dashmap = "6.1.0"
 parking_lot = "0.12"
