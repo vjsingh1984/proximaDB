@@ -283,3 +283,107 @@ Update `memory/project_phase9_refactor_state.md` to record:
 . **Baseline:** the `cdbe28516` rename is incomplete; the `rpc/mod.rs`
   re-export needs `RpcLogEntry` substituted for `LogEntry` before any
   Phase 9 work can verify against the branch.
+
+== Update 2026-05-26 (next session)
+
+=== Task #76 — collection_port consumer migration: 8 of 8 (chain stopped)
+
+The parallel-field shortcut landed in `89bbe7ec3` (see audit above)
+exposed `Arc<dyn CollectionPort>` alongside the concrete
+`Arc<CollectionService>` on SharedServices.  This session migrated
+consumers that genuinely cross a port boundary (cross-crate /
+trait-object dispatch) off the concrete field onto the port-typed
+field.  Chain stopped after the port-typed-need cases — remaining
+intra-crate concrete users were left alone (port adds overhead with no
+payoff for them).
+
+Landed:
+
+[cols="1,3,3"]
+|===
+| Order | Consumer | Commit
+
+| 1 | `query::semantic_analysis::Analyzer` | `5cdd60fda`
+| 2 | `query::facade::strategies::vector::VectorSearchStrategy` | `04e680419`
+| 3 | `core::search::search_interface::IntegratedSearchOptimizer` | `3ccf5b248`
+| 4 | `query::federated::FederatedQueryContext` + `FederatedExecutor` | `41be694cf`
+| 5 | `embedded::ProximaDb` | `45d828b9b`
+| 6 | `VectorOperationsService` (legacy.rs) | `b1f4789ae`
+| 7 | `network::multi_protocol_handler::UnifiedQueryHandler` | `c30f00d86`
+| 8 | `network::postgres::PostgresProtocol` + `PostgresServer` | `609028500`
+|===
+
+Deliberately not migrated (intra-crate concrete users; port adds no
+value):
+
+* `api_handlers::UnifiedHandlers.collection_service` (public field used
+  as a service registry by REST + Arrow handlers — they call concrete
+  methods directly without cross-crate dispatch)
+* `network::arrow_ipc::service` (9 refs via `request_handlers.collection_service`)
+* `network::rest::health` (2 refs)
+* `storage::engines::viper::engine`, `index::axis::management::manager`,
+  `query::sql_frontend::lowering` (storage/index/SQL internals)
+* `tests/rust/test_unified_search_benchmarks.rs`,
+  `tests/integration/storage/metadata_backend_test.rs` (test fixtures)
+
+=== Task #69 / ADR-016 — PortUserContext foundation (steps 1-3 landed)
+
+ADR text: `docs/12-design/adr/ADR-016-port-user-context.adoc`.
+
+[cols="1,3,4"]
+|===
+| Step | Commit | What
+
+| 1 | `3bbf73db9`
+| `PortUserContext` + `PortAuthCredential` types in `proximadb_runtime`;
+  `SecurityPort::authenticate` trait method with default body returning
+  "not implemented" so existing impls compile unchanged.
+
+| 2 | `dc5761038`
+| `SecurityServiceImpl` gains `Option<Arc<UnifiedAuthService>>` field
+  + `with_auth_service` builder + lossy-projection `authenticate` impl;
+  file-private `project_unified_to_port_context` helper.
+
+| 3 | `e19410838`
+| Parallel `auth_middleware_unified_port` taking
+  `State<Arc<dyn SecurityPort>>`; mirror `map_header_to_port_credential`.
+|===
+
+Design decisions worth remembering (not in the ADR text):
+
+* `PortAuthCredential` covers only `Jwt(String)` + `ApiKey(String)`.
+  SSO and mTLS remain on the typed root-crate path until a port-need
+  is articulated.
+* Impl on `SecurityServiceImpl` (existing gRPC wrapper) not
+  `SecurityCoordinator` (per ADR-015's "bare service" recommendation).
+  Moving the entire `impl SecurityPort` to `SecurityCoordinator` is a
+  separate refactor.
+* `auth_middleware_unified_port` deliberately omits `DataPlaneCapability`
+  handling — the capability extraction needs `UnifiedUserContext`-typed
+  info that the projection loses.
+
+Pending step 4 (per-consumer `UnifiedUserContext → PortUserContext`
+migrations): not started; ADR-016 estimates ~10-15 small commits.
+Pick up only when a specific consumer has port-need.
+
+Production composition: `SecurityServiceImpl::with_auth_service`
+builder exists but is NOT called by the production constructors
+(`SharedServices` etc. still use `SecurityServiceImpl::with_default_config()`
+which sets `auth_service: None`).  Wire when the first step-4 consumer
+needs authenticate — `src/network/multi_server.rs:429` + `:851` are the
+relevant sites.
+
+=== Net Phase 9 state after this session
+
+* Task #76: chain effectively complete (8 of the port-typed-need
+  consumers migrated; remaining sites intentionally left as concrete).
+* Task #69: foundation done; step 4 deferred.
+* Task #72: `cluster_port` slot landed in earlier session; no consumer yet.
+* Task #70: pre-work (`MultiServerConfig` lift) landed in earlier session;
+  was waiting on #76 + #69 — both now in a better state but neither is
+  the bottleneck for the full bootstrap move.
+
+The two remaining "no consumer yet" slots (Task #72 cluster_port +
+Task #69 step 4) are blocked by lack of articulated demand, not by
+missing infrastructure.  Don't fabricate consumers; wait for real
+port-typed-need to surface.
