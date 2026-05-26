@@ -224,6 +224,21 @@ Located in `proximadb_catalog::dr_restore`:
 * `DrRestoreReadinessChecker` async trait — the operator-callable
   surface.
 
+Reference checker plus its three pluggable concerns:
+
+* `ManifestSource` async trait — `entries_for_collection(collection_id)`.
+* `DestinationPresenceCheck` async trait — given candidate object
+  keys, returns the subset not present at the destination.
+* `KmsAccessibilityCheck` async trait — `is_accessible(policy)`.
+* `EngineRestoreReadinessChecker<M, D, K>` generic struct wiring
+  the three traits through `assemble_readiness`. Constructors
+  `new` (system clock) and `with_clock` (test-injectable).
+
+Public testing surface (`dr_restore::testing`):
+
+* `StaticManifestSource`, `StaticDestinationPresence`,
+  `StaticKmsCheck` — seeded reference impls for integration tests.
+
 == Root-Crate Bridges
 
 The root crate (`proximadb`) hosts the bridges that pull in deps the
@@ -292,8 +307,24 @@ points each one slots into.
 | AnvaiOps billing layer
 
 | Failover runbook automation
-| `DrRestoreReadinessChecker` (calls into engine)
+| `DrRestoreReadinessChecker` trait + the
+  `EngineRestoreReadinessChecker` reference impl
 | AnvaiOps operations
+
+| Manifest source bridge for the restore checker
+| `ManifestSource` trait — wraps `GlobalManifestService` in the
+  root crate via the existing `dr_bridge` helpers
+| Root crate / AnvaiOps
+
+| Destination-presence probe for the restore checker
+| `DestinationPresenceCheck` trait — typically dispatches to HEAD
+  requests or to a `DrProviderAdapter::fetch_state` derivative
+| AnvaiOps
+
+| KMS-accessibility probe for the restore checker
+| `KmsAccessibilityCheck` trait — typically a `Decrypt` against a
+  canary blob in the destination region
+| AnvaiOps
 
 | Grafana dashboards / PagerDuty wiring
 | Scrape `/metrics/prometheus` for `proximadb_dr_*`
@@ -380,7 +411,8 @@ For provenance, the engine surface ships with these test counts
 | `DrPathBuilder` | 11
 | `PrometheusDrMetrics` bridge | 10
 | `dr_bridge` manifest converter | 9
-| *Total dedicated DR tests* | *179*
+| `EngineRestoreReadinessChecker` (subset of `dr_restore`) | 10
+| *Total dedicated DR tests* | *189*
 |===
 
 Future contract refactors can use this inventory as a baseline.
