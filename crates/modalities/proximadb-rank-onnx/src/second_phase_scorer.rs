@@ -195,7 +195,7 @@ mod tests {
             })
         }));
         let s = make_scorer(mock.clone(), extractor);
-        match s.rescore(vec![hit(1, 1.0, &QueryContext::default())]) {
+        match s.rescore(vec![hit(1, 1.0)], &QueryContext::default()) {
             Err(RankError::ModelInference { reason, .. }) => {
                 assert!(reason.contains("synthetic failure"));
             }

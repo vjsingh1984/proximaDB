@@ -20,7 +20,7 @@
 //! a Noop impl + a closure impl so the pipeline can be exercised
 //! against synthetic data.
 
-use proximadb_rank_core::{DocHandle, RankResult};
+use proximadb_rank_core::{DocHandle, QueryContext, RankResult};
 
 use crate::tokenized_scorer_session::TokenizedBatch;
 
@@ -31,7 +31,14 @@ use crate::tokenized_scorer_session::TokenizedBatch;
 /// `docs[i]`. Implementations that need a different shape (e.g.
 /// summary-features extraction that ignores docs) belong elsewhere.
 pub trait TokenizedDocFeatureExtractor: Send + Sync {
-    fn extract_batch(&self, docs: &[DocHandle]) -> RankResult<TokenizedBatch>;
+    /// `qctx` carries per-request state — specifically `query_text`
+    /// for the BertPair extractor (R-5b.1.3). Extractors that don't
+    /// need the query (e.g. Noop fixtures) ignore it.
+    fn extract_batch(
+        &self,
+        docs: &[DocHandle],
+        qctx: &QueryContext,
+    ) -> RankResult<TokenizedBatch>;
 }
 
 /// Test/null fixture — emits a `TokenizedBatch` with one zero-row per
@@ -48,7 +55,11 @@ impl Default for NoopTokenizedDocFeatureExtractor {
 }
 
 impl TokenizedDocFeatureExtractor for NoopTokenizedDocFeatureExtractor {
-    fn extract_batch(&self, docs: &[DocHandle]) -> RankResult<TokenizedBatch> {
+    fn extract_batch(
+        &self,
+        docs: &[DocHandle],
+        _qctx: &QueryContext,
+    ) -> RankResult<TokenizedBatch> {
         let n = docs.len();
         Ok(TokenizedBatch::new(
             (0..n).map(|_| vec![0i64; self.seq_len]).collect(),
@@ -61,7 +72,8 @@ impl TokenizedDocFeatureExtractor for NoopTokenizedDocFeatureExtractor {
 /// hands it back per-doc via a user-supplied callback that builds the
 /// batch. Useful for exercising the second-phase pipeline against
 /// canned token sequences.
-type ExtractFn = Box<dyn Fn(&[DocHandle]) -> RankResult<TokenizedBatch> + Send + Sync>;
+type ExtractFn =
+    Box<dyn Fn(&[DocHandle], &QueryContext) -> RankResult<TokenizedBatch> + Send + Sync>;
 
 pub struct FnTokenizedDocFeatureExtractor {
     f: ExtractFn,
@@ -70,15 +82,22 @@ pub struct FnTokenizedDocFeatureExtractor {
 impl FnTokenizedDocFeatureExtractor {
     pub fn new<F>(f: F) -> Self
     where
-        F: Fn(&[DocHandle]) -> RankResult<TokenizedBatch> + Send + Sync + 'static,
+        F: Fn(&[DocHandle], &QueryContext) -> RankResult<TokenizedBatch>
+            + Send
+            + Sync
+            + 'static,
     {
         Self { f: Box::new(f) }
     }
 }
 
 impl TokenizedDocFeatureExtractor for FnTokenizedDocFeatureExtractor {
-    fn extract_batch(&self, docs: &[DocHandle]) -> RankResult<TokenizedBatch> {
-        (self.f)(docs)
+    fn extract_batch(
+        &self,
+        docs: &[DocHandle],
+        qctx: &QueryContext,
+    ) -> RankResult<TokenizedBatch> {
+        (self.f)(docs, qctx)
     }
 }
 
@@ -90,7 +109,7 @@ mod tests {
     fn noop_extractor_returns_one_zero_row_per_doc() {
         let e = NoopTokenizedDocFeatureExtractor::default();
         let b = e
-            .extract_batch(&[DocHandle(1), DocHandle(2), DocHandle(3)])
+            .extract_batch(&[DocHandle(1), DocHandle(2), DocHandle(3)], &QueryContext::default())
             .unwrap();
         assert_eq!(b.batch_size(), 3);
         assert_eq!(b.seq_len(), 1);
@@ -106,7 +125,7 @@ mod tests {
     #[test]
     fn noop_extractor_honors_configured_seq_len() {
         let e = NoopTokenizedDocFeatureExtractor { seq_len: 8 };
-        let b = e.extract_batch(&[DocHandle(42)]).unwrap();
+        let b = e.extract_batch(&[DocHandle(42)], &QueryContext::default()).unwrap();
         assert_eq!(b.seq_len(), 8);
         assert_eq!(b.input_ids[0].len(), 8);
     }
@@ -114,7 +133,7 @@ mod tests {
     #[test]
     fn noop_extractor_handles_empty_doc_list() {
         let e = NoopTokenizedDocFeatureExtractor::default();
-        let b = e.extract_batch(&[]).unwrap();
+        let b = e.extract_batch(&[], &QueryContext::default()).unwrap();
         assert_eq!(b.batch_size(), 0);
         assert!(b.validate_rectangular().is_ok());
     }
@@ -123,14 +142,14 @@ mod tests {
     fn fn_extractor_dispatches_to_closure() {
         // Closure that builds a deterministic batch from doc ids —
         // input_ids[i] = [doc.0 as i64; 2], attention_mask all 1s.
-        let e = FnTokenizedDocFeatureExtractor::new(|docs| {
+        let e = FnTokenizedDocFeatureExtractor::new(|docs, _qctx| {
             Ok(TokenizedBatch::new(
                 docs.iter().map(|d| vec![d.0 as i64; 2]).collect(),
                 docs.iter().map(|_| vec![1i64; 2]).collect(),
             ))
         });
         let b = e
-            .extract_batch(&[DocHandle(10), DocHandle(20)])
+            .extract_batch(&[DocHandle(10), DocHandle(20)], &QueryContext::default())
             .unwrap();
         assert_eq!(b.batch_size(), 2);
         assert_eq!(b.input_ids[0], vec![10, 10]);

@@ -249,6 +249,13 @@ pub async fn handle_rank_search(
         } else {
             Some(req.query_vector.clone())
         },
+        // R-5b.1.3: seed `query_text` from the request so the
+        // tokenized cross-encoder extractor reads it per-request via
+        // the QueryContext rather than from interior mutability.
+        query_text: req
+            .query_text
+            .as_deref()
+            .map(std::sync::Arc::<str>::from),
         ..Default::default()
     };
 
@@ -414,7 +421,7 @@ fn run_phases_blocking(
     drop(arena);
 
     match second_phase_scorer {
-        Some(scorer) => pipeline.run_second_phase(first_outcome, scorer),
+        Some(scorer) => pipeline.run_second_phase(first_outcome, scorer, qctx),
         None => Ok(first_outcome),
     }
 }

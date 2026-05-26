@@ -543,8 +543,10 @@ impl Compaction {
             .cloned()
             .unwrap_or_else(crate::core::config::CompactionConfig::default);
 
-        // Use unified compaction task builder with configuration
-        let task_info = SstCompactionTaskBuilder::check_and_build_compaction_task(
+        // Use unified compaction task builder with configuration.
+        // (Was `SstCompactionTaskBuilder` before the
+        // disambiguate-rename pass; companion call-site fix-up.)
+        let task_info = CompactionTaskBuilder::check_and_build_compaction_task(
             collection_id,
             &collection_path,
             "sst",

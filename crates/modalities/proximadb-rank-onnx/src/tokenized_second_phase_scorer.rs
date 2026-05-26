@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use proximadb_kernel::PhaseId;
-use proximadb_rank_core::{DocHandle, RankResult, ScoredHit, SecondPhaseScorer};
+use proximadb_rank_core::{DocHandle, QueryContext, RankResult, ScoredHit, SecondPhaseScorer};
 
 use crate::tokenized_batched_scorer::{
     OnnxTokenizedBatchedScorer, TokenizedBatchInput, TokenizedBatchedScorer,
@@ -49,12 +49,20 @@ impl OnnxTokenizedSecondPhaseScorer {
 }
 
 impl SecondPhaseScorer for OnnxTokenizedSecondPhaseScorer {
-    fn rescore(&self, hits: Vec<ScoredHit>) -> RankResult<Vec<ScoredHit>> {
+    fn rescore(
+        &self,
+        hits: Vec<ScoredHit>,
+        qctx: &QueryContext,
+    ) -> RankResult<Vec<ScoredHit>> {
         if hits.is_empty() {
             return Ok(Vec::new());
         }
         let docs: Vec<DocHandle> = hits.iter().map(|h| h.doc).collect();
-        let batch = self.extractor.extract_batch(&docs)?;
+        // R-5b.1.3: qctx flows into the extractor so the BertPair
+        // extractor (and any future query-aware extractor) reads
+        // query_text directly from per-request state rather than via
+        // shared interior mutability.
+        let batch = self.extractor.extract_batch(&docs, qctx)?;
         let input = TokenizedBatchInput::new(docs.clone(), batch);
         let out = self.inner.score_batch(input)?;
 
@@ -158,7 +166,7 @@ mod tests {
                 b.input_ids.iter().map(|r| r[0] as f32).collect()
             }));
         let extractor: Arc<dyn TokenizedDocFeatureExtractor> =
-            Arc::new(FnTokenizedDocFeatureExtractor::new(|docs| {
+            Arc::new(FnTokenizedDocFeatureExtractor::new(|docs, _qctx| {
                 Ok(TokenizedBatch::new(
                     docs.iter().map(|d| vec![d.0 as i64]).collect(),
                     docs.iter().map(|_| vec![1i64]).collect(),
@@ -216,7 +224,7 @@ mod tests {
         let mock_session = Arc::new(MockTokenizedScorerSession::zeros(descriptor("r", 32)));
         let session: Arc<dyn TokenizedScorerSession> = mock_session.clone();
         let extractor: Arc<dyn TokenizedDocFeatureExtractor> =
-            Arc::new(FnTokenizedDocFeatureExtractor::new(|_| {
+            Arc::new(FnTokenizedDocFeatureExtractor::new(|_, _| {
                 Err(RankError::ModelInference {
                     model_id: "extractor".into(),
                     reason: "doc text missing".into(),

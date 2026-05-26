@@ -13,24 +13,21 @@
 //! cross-encoder reranking rebuild with `--features bert-tokenizer`
 //! (typically also `real-onnx`).
 //!
-//! Per-request query plumbing:
-//! v1 stores the query text in an `Arc<RwLock<Arc<str>>>` interior
-//! field with an `update_query_text` setter. The request handler
-//! updates it before driving the second-phase scorer. This works
-//! correctly for single-request-at-a-time deployments but races on
-//! concurrent requests sharing the same extractor instance. The
-//! proper fix (widen `SecondPhaseScorer::rescore` to take a
-//! `QueryContext`) is **R-5b.1.3** — explicitly deferred so this slice
-//! ships smaller. Deployments that need concurrent reranking should
-//! either (a) instantiate a fresh extractor per request, or (b)
-//! serialize requests at the rank route until R-5b.1.3 lands.
+//! Per-request query plumbing (R-5b.1.3):
+//! Query text flows in via the `QueryContext` parameter on
+//! [`TokenizedDocFeatureExtractor::extract_batch`]. The extractor is
+//! stateless — one shared `Arc<…>` instance handles concurrent
+//! requests, each carrying its own `qctx.query_text`. The earlier
+//! `Arc<RwLock<Arc<str>>>` interior-mutability hack from R-5b.1.2 is
+//! gone; the one-rerank-at-a-time deployment caveat it carried is
+//! resolved.
 //!
 //! Spec: roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md §4.4.
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use proximadb_rank_core::{DocHandle, RankError, RankResult};
+use proximadb_rank_core::{DocHandle, QueryContext, RankError, RankResult};
 
 use crate::tokenized_doc_feature_extractor::TokenizedDocFeatureExtractor;
 use crate::tokenized_scorer_session::TokenizedBatch;
@@ -117,8 +114,6 @@ impl DocTextSource for HashMapDocTextSource {
 /// - `tokenizer`: shared `Arc<tokenizers::Tokenizer>` (same instance
 ///   embedding crate uses; one tokenizer file per deployment).
 /// - `doc_text_source`: resolves doc text by handle.
-/// - `query_text`: initial query text. Update via `update_query_text`
-///   per request.
 /// - `max_seq_len`: hard cap on tokenized sequence length. Padding +
 ///   truncation happen at this boundary so the resulting batch is
 ///   rectangular (a hard requirement for the ONNX session — the
@@ -126,67 +121,51 @@ impl DocTextSource for HashMapDocTextSource {
 /// - `emit_token_type_ids`: when true, produce `token_type_ids`
 ///   (segment ids) — required by BERT-base/MiniLM-L-12-v2 style
 ///   models; some MiniLM-derived models don't take them.
+///
+/// The extractor is stateless across requests — one shared instance
+/// serves concurrent reranks. Per-request query text flows in via
+/// `extract_batch`'s `QueryContext` argument (R-5b.1.3).
 pub struct BertPairTokenizingDocFeatureExtractor {
     tokenizer: Arc<tokenizers::Tokenizer>,
     doc_text_source: Arc<dyn DocTextSource>,
-    query_text: Arc<RwLock<Arc<str>>>,
     max_seq_len: usize,
     emit_token_type_ids: bool,
 }
 
 impl BertPairTokenizingDocFeatureExtractor {
-    /// Construct with an initial query text. Update per request via
-    /// `update_query_text`.
     pub fn new(
         tokenizer: Arc<tokenizers::Tokenizer>,
         doc_text_source: Arc<dyn DocTextSource>,
-        query_text: impl Into<Arc<str>>,
         max_seq_len: usize,
         emit_token_type_ids: bool,
     ) -> Self {
         Self {
             tokenizer,
             doc_text_source,
-            query_text: Arc::new(RwLock::new(query_text.into())),
             max_seq_len: max_seq_len.max(1),
             emit_token_type_ids,
         }
     }
-
-    /// Replace the query text used on the next `extract_batch` call.
-    /// Concurrent callers race — the v1 deployment contract is one
-    /// rerank at a time per extractor. R-5b.1.3 makes this safe.
-    pub fn update_query_text(&self, query_text: impl Into<Arc<str>>) -> RankResult<()> {
-        let mut guard = self
-            .query_text
-            .write()
-            .map_err(|e| RankError::ModelInference {
-                model_id: "bert_pair_extractor".into(),
-                reason: format!("query_text RwLock poisoned: {e}"),
-            })?;
-        *guard = query_text.into();
-        Ok(())
-    }
-
-    /// Read the current query text. Exposed for tests + debug logging.
-    pub fn query_text(&self) -> RankResult<Arc<str>> {
-        Ok(self
-            .query_text
-            .read()
-            .map_err(|e| RankError::ModelInference {
-                model_id: "bert_pair_extractor".into(),
-                reason: format!("query_text RwLock poisoned: {e}"),
-            })?
-            .clone())
-    }
 }
 
 impl TokenizedDocFeatureExtractor for BertPairTokenizingDocFeatureExtractor {
-    fn extract_batch(&self, docs: &[DocHandle]) -> RankResult<TokenizedBatch> {
+    fn extract_batch(
+        &self,
+        docs: &[DocHandle],
+        qctx: &QueryContext,
+    ) -> RankResult<TokenizedBatch> {
         if docs.is_empty() {
             return Ok(TokenizedBatch::default());
         }
-        let query: Arc<str> = self.query_text()?;
+        // R-5b.1.3: query text comes from the per-request QueryContext.
+        // None → empty string; the model still scores the doc against
+        // an empty query (the score reflects that mismatch). Callers
+        // that want to short-circuit on missing query_text should
+        // check qctx upstream.
+        let query: Arc<str> = qctx
+            .query_text
+            .clone()
+            .unwrap_or_else(|| Arc::<str>::from(""));
         // Resolve doc text for each handle. Missing docs (None) become
         // the empty string — the model still scores them, the score
         // just reflects an empty document.
@@ -292,6 +271,16 @@ mod tests {
         vocab.insert("[CLS]".to_string(), 1);
         vocab.insert("[SEP]".to_string(), 2);
         vocab.insert("[PAD]".to_string(), 3);
+        // Seed real vocab entries so the per-request-qctx test can
+        // verify that different queries tokenize differently. Without
+        // these, every test-input word maps to [UNK] and queries are
+        // indistinguishable on the wire.
+        for (i, w) in ["alpha", "beta", "gamma", "delta", "doc"]
+            .iter()
+            .enumerate()
+        {
+            vocab.insert((*w).to_string(), 10 + i as u32);
+        }
         let model = WordLevel::builder()
             .unk_token("[UNK]".to_string())
             .vocab(vocab)
@@ -308,19 +297,25 @@ mod tests {
         ))
     }
 
+    /// Convenience: build (extractor, qctx) so tests stay readable
+    /// despite query text now living on the per-request context.
     fn extractor_with(
         query: &str,
         max_seq_len: usize,
         emit_token_type_ids: bool,
         doc_texts: &[(u32, &str)],
-    ) -> BertPairTokenizingDocFeatureExtractor {
-        BertPairTokenizingDocFeatureExtractor::new(
+    ) -> (BertPairTokenizingDocFeatureExtractor, QueryContext) {
+        let e = BertPairTokenizingDocFeatureExtractor::new(
             synthetic_tokenizer(),
             doc_text_source(doc_texts),
-            query.to_string(),
             max_seq_len,
             emit_token_type_ids,
-        )
+        );
+        let qctx = QueryContext {
+            query_text: Some(Arc::<str>::from(query)),
+            ..QueryContext::default()
+        };
+        (e, qctx)
     }
 
     // ---------------- HashMapDocTextSource ----------------
@@ -382,21 +377,21 @@ mod tests {
 
     #[test]
     fn extractor_empty_docs_returns_empty_batch_without_tokenizer_call() {
-        let e = extractor_with("query", 16, false, &[(1, "doc one")]);
-        let b = e.extract_batch(&[]).unwrap();
+        let (e, qctx) = extractor_with("query", 16, false, &[(1, "doc one")]);
+        let b = e.extract_batch(&[], &qctx).unwrap();
         assert_eq!(b.batch_size(), 0);
         assert_eq!(b.seq_len(), 0);
     }
 
     #[test]
     fn extractor_produces_rectangular_batch_at_max_seq_len() {
-        let e = extractor_with("alpha beta", 6, false, &[
+        let (e, qctx) = extractor_with("alpha beta", 6, false, &[
             (1, "doc one"),
             (2, "doc two"),
             (3, "doc three with extra tokens to truncate"),
         ]);
         let b = e
-            .extract_batch(&[DocHandle(1), DocHandle(2), DocHandle(3)])
+            .extract_batch(&[DocHandle(1), DocHandle(2), DocHandle(3)], &qctx)
             .unwrap();
         assert_eq!(b.batch_size(), 3);
         for row in &b.input_ids {
@@ -410,8 +405,8 @@ mod tests {
 
     #[test]
     fn extractor_emits_token_type_ids_when_configured() {
-        let e = extractor_with("query", 8, true, &[(1, "doc")]);
-        let b = e.extract_batch(&[DocHandle(1)]).unwrap();
+        let (e, qctx) = extractor_with("query", 8, true, &[(1, "doc")]);
+        let b = e.extract_batch(&[DocHandle(1)], &qctx).unwrap();
         assert!(b.token_type_ids.is_some());
         let tti = b.token_type_ids.unwrap();
         assert_eq!(tti.len(), 1);
@@ -420,55 +415,80 @@ mod tests {
 
     #[test]
     fn extractor_omits_token_type_ids_by_default() {
-        let e = extractor_with("query", 8, false, &[(1, "doc")]);
-        let b = e.extract_batch(&[DocHandle(1)]).unwrap();
+        let (e, qctx) = extractor_with("query", 8, false, &[(1, "doc")]);
+        let b = e.extract_batch(&[DocHandle(1)], &qctx).unwrap();
         assert!(b.token_type_ids.is_none());
     }
 
     #[test]
     fn extractor_handles_missing_doc_text_as_empty_string() {
-        // DocHandle(99) has no text in the source — should be treated
-        // as the empty string and still produce a row in the batch
-        // (the model scores it; the score reflects an empty document).
-        let e = extractor_with("query", 8, false, &[(1, "the real doc")]);
+        let (e, qctx) = extractor_with("query", 8, false, &[(1, "the real doc")]);
         let b = e
-            .extract_batch(&[DocHandle(1), DocHandle(99)])
+            .extract_batch(&[DocHandle(1), DocHandle(99)], &qctx)
             .unwrap();
         assert_eq!(b.batch_size(), 2);
-        // Both rows have full max_seq_len width.
         assert_eq!(b.input_ids[1].len(), 8);
     }
 
     #[test]
-    fn extractor_uses_current_query_text() {
-        let e = extractor_with("initial", 8, false, &[(1, "doc")]);
-        assert_eq!(e.query_text().unwrap().as_ref(), "initial");
-        e.update_query_text("updated").unwrap();
-        assert_eq!(e.query_text().unwrap().as_ref(), "updated");
-        // Sanity: extracting after update doesn't error.
-        let _ = e.extract_batch(&[DocHandle(1)]).unwrap();
+    fn extractor_uses_per_request_query_text_from_qctx() {
+        // R-5b.1.3: query text now flows from QueryContext, not from
+        // extractor state. Two different qctx values yield two
+        // different tokenizations even though the extractor instance
+        // is the same — confirms the per-request plumbing.
+        let (e, _) = extractor_with("ignored-construction-arg", 8, false, &[(1, "doc")]);
+        let qctx_a = QueryContext {
+            query_text: Some(Arc::<str>::from("alpha")),
+            ..QueryContext::default()
+        };
+        let qctx_b = QueryContext {
+            query_text: Some(Arc::<str>::from("beta gamma delta")),
+            ..QueryContext::default()
+        };
+        let a = e.extract_batch(&[DocHandle(1)], &qctx_a).unwrap();
+        let b = e.extract_batch(&[DocHandle(1)], &qctx_b).unwrap();
+        // Same doc, same vocab → identical token ids when the query
+        // also matches; here the queries differ so at least one
+        // input_id position must differ between batches.
+        assert_eq!(a.input_ids[0].len(), 8);
+        assert_eq!(b.input_ids[0].len(), 8);
+        assert_ne!(
+            a.input_ids[0], b.input_ids[0],
+            "different query_text must produce different tokens"
+        );
+    }
+
+    #[test]
+    fn extractor_treats_missing_query_text_as_empty_string() {
+        // qctx.query_text == None → extractor uses "" rather than
+        // erroring. The model still scores against an empty query;
+        // the score reflects the mismatch.
+        let (e, _) = extractor_with("ignored", 8, false, &[(1, "doc")]);
+        let qctx = QueryContext::default(); // query_text is None
+        let b = e.extract_batch(&[DocHandle(1)], &qctx).unwrap();
+        assert_eq!(b.batch_size(), 1);
+        assert_eq!(b.input_ids[0].len(), 8);
     }
 
     #[test]
     fn extractor_pads_to_at_least_seq_len_one() {
-        // Defensive: passing max_seq_len = 0 at construction clamps to 1
-        // so the resulting batch is never zero-width (zero-width
-        // tensors confuse downstream ort inference).
+        // Defensive: passing max_seq_len = 0 at construction clamps to 1.
         let e = BertPairTokenizingDocFeatureExtractor::new(
             synthetic_tokenizer(),
             doc_text_source(&[(1, "doc")]),
-            "query".to_string(),
             0,
             false,
         );
-        let b = e.extract_batch(&[DocHandle(1)]).unwrap();
+        let qctx = QueryContext {
+            query_text: Some(Arc::<str>::from("query")),
+            ..QueryContext::default()
+        };
+        let b = e.extract_batch(&[DocHandle(1)], &qctx).unwrap();
         assert!(b.seq_len() >= 1);
     }
 
     #[test]
     fn extractor_doc_text_lookup_errors_propagate() {
-        // A doc_text_source that always errors must short-circuit the
-        // extract_batch call rather than silently dropping rows.
         struct BrokenSource;
         impl DocTextSource for BrokenSource {
             fn doc_text(&self, _: DocHandle) -> RankResult<Option<String>> {
@@ -481,11 +501,14 @@ mod tests {
         let e = BertPairTokenizingDocFeatureExtractor::new(
             synthetic_tokenizer(),
             Arc::new(BrokenSource),
-            "query".to_string(),
             4,
             false,
         );
-        match e.extract_batch(&[DocHandle(1)]) {
+        let qctx = QueryContext {
+            query_text: Some(Arc::<str>::from("query")),
+            ..QueryContext::default()
+        };
+        match e.extract_batch(&[DocHandle(1)], &qctx) {
             Err(RankError::ModelInference { reason, .. }) => {
                 assert!(reason.contains("attribute store unavailable"));
             }
@@ -495,12 +518,9 @@ mod tests {
 
     #[test]
     fn extractor_is_dyn_compatible_as_doc_feature_extractor() {
-        // Compile-time check: the production type must satisfy the
-        // public trait surface so the second-phase scorer can hold it
-        // as `Arc<dyn TokenizedDocFeatureExtractor>`.
-        let e = extractor_with("q", 4, false, &[(1, "doc")]);
+        let (e, qctx) = extractor_with("q", 4, false, &[(1, "doc")]);
         let dyn_e: Arc<dyn TokenizedDocFeatureExtractor> = Arc::new(e);
-        let b = dyn_e.extract_batch(&[DocHandle(1)]).unwrap();
+        let b = dyn_e.extract_batch(&[DocHandle(1)], &qctx).unwrap();
         assert_eq!(b.batch_size(), 1);
     }
 }
