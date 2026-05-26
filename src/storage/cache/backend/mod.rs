@@ -148,37 +148,14 @@ pub trait StorageBackend: Send + Sync + Debug {
     fn tier(&self) -> CacheTier;
 }
 
-/// Errors that can occur in storage backends
+/// Re-export the canonical storage error from `proximadb_storage_common`.
 ///
-/// Represents the various error conditions that can occur when
-/// interacting with cache storage backends.
-#[derive(Debug, Clone)]
-pub enum StorageError {
-    /// I/O error (disk failures, network issues, etc.)
-    IoError(String),
-    /// Serialization/deserialization error
-    SerializationError(String),
-    /// Storage capacity exceeded
-    CapacityExceeded,
-    /// Network error (for remote backends)
-    NetworkError(String),
-    /// Other unspecified error
-    Other(String),
-}
-
-impl std::fmt::Display for StorageError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            StorageError::IoError(msg) => write!(f, "IO error: {}", msg),
-            StorageError::SerializationError(msg) => write!(f, "Serialization error: {}", msg),
-            StorageError::CapacityExceeded => write!(f, "Storage capacity exceeded"),
-            StorageError::NetworkError(msg) => write!(f, "Network error: {}", msg),
-            StorageError::Other(msg) => write!(f, "Storage error: {}", msg),
-        }
-    }
-}
-
-impl std::error::Error for StorageError {}
+/// Previously this module defined its own `StorageError` enum, but that was
+/// a third copy alongside the canonical pair (kernel + storage_common).
+/// The cache backend tier is a `proximadb_storage_common` consumer; callers
+/// match on `err.kind == StorageErrorKind::CapacityExceeded` and construct
+/// via the existing constructors (`capacity_exceeded`, `io`, etc.).
+pub use proximadb_storage_common::{StorageError, StorageErrorKind};
 
 /// Configuration for tiered storage
 #[derive(Debug, Clone)]

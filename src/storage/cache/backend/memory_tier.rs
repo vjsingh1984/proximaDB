@@ -129,7 +129,10 @@ where
 
         // Check capacity
         if current_size + estimated_size > self.max_size_bytes {
-            return Err(StorageError::CapacityExceeded);
+            return Err(StorageError::capacity_exceeded(
+                (current_size + estimated_size) as u64,
+                self.max_size_bytes as u64,
+            ));
         }
 
         // If replacing an existing entry, adjust size

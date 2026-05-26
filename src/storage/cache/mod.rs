@@ -485,10 +485,11 @@ mod backend_tests {
 
         // Verify the error is capacity exceeded
         if let Err(e) = result {
-            match e {
-                crate::storage::cache::backend::StorageError::CapacityExceeded => {}
-                _ => panic!("Expected CapacityExceeded error"),
-            }
+            assert_eq!(
+                e.kind,
+                crate::storage::cache::backend::StorageErrorKind::CapacityExceeded,
+                "Expected CapacityExceeded error, got: {e:?}",
+            );
         }
     }
 
