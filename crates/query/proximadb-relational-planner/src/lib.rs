@@ -1212,19 +1212,17 @@ fn push_projections_inner(
                 ),
                 None => output_schema,
             };
-            // The Scan's own pushed-down predicate references
-            // the (pre-narrowing) full-table ordinals. Rebind it
-            // against the narrowed schema so the adapter and
-            // executor evaluate against the right slots.
-            let new_predicate = match predicate {
-                Some(p) => Some(rebind_columns(p, &projected_schema)?),
-                None => None,
-            };
+            // The Scan's own pushed-down predicate is part of
+            // the reader's contract — it's evaluated against the
+            // FULL row before projection, so its column ordinals
+            // must continue to reference the full-table schema
+            // (NOT the narrowed one). Operators ABOVE the Scan
+            // see the narrowed schema and are rebound separately.
             Ok(PhysicalPlan::Scan {
                 table,
                 output_schema: projected_schema,
                 projection: new_projection,
-                predicate: new_predicate,
+                predicate,
                 limit,
                 access,
             })
@@ -1957,17 +1955,17 @@ mod tests {
                         // age must also be projected because the
                         // pushed-down predicate references it.
                         assert!(p.contains(&"age".to_string()));
-                        // Rebind: the predicate's `age` column
-                        // now uses the narrowed schema's ordinal.
-                        let age_idx = output_schema
-                            .columns
-                            .iter()
-                            .position(|c| c.name == "age")
-                            .unwrap();
+                        // The Scan's predicate lives inside the
+                        // reader contract — it's evaluated against
+                        // the FULL row before projection, so its
+                        // ordinals stay pointing at the full-table
+                        // schema (age = ordinal 2). The rebind
+                        // pass intentionally leaves it untouched.
                         match predicate.as_ref().unwrap() {
                             Expr::BinaryOp { left, .. } => match left.as_ref() {
                                 Expr::Column(c) => {
-                                    assert_eq!(c.ordinal, age_idx);
+                                    assert_eq!(c.name, "age");
+                                    assert_eq!(c.ordinal, 2); // full-schema ordinal
                                 }
                                 other => panic!(
                                     "expected Column on left, got {other:?}"
@@ -1975,7 +1973,8 @@ mod tests {
                             },
                             other => panic!("expected BinaryOp, got {other:?}"),
                         }
-                        // And the Project's `id` ordinal lines up.
+                        // The Project's `id` ordinal IS rebound
+                        // against the narrowed scan output_schema.
                         let id_idx = output_schema
                             .columns
                             .iter()
