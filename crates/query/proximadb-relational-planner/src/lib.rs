@@ -297,25 +297,18 @@ impl<R: CapabilityResolver> Planner<R> {
 
     /// Run the full planning pipeline: logical rewrites → lower
     /// → physical rewrites. Validates the input plan first.
-    ///
-    /// NOTE: projection pushdown is **not** currently part of the
-    /// default pipeline — see [`push_projections`]. The rule
-    /// narrows the Scan's output schema but doesn't yet rebind
-    /// upstream column ordinals (which still reference the
-    /// pre-narrowing schema), so enabling it breaks `Project`s
-    /// over a pushed-down `Scan`. Phase 3 will add the rebind
-    /// pass and re-enable. Callers who want the optimisation
-    /// can call [`push_projections`] manually on the result.
     pub fn plan(&self, logical: LogicalNode) -> Result<PhysicalPlan, PlanError> {
         logical.validate()?;
         // 1. Logical rewrites.
         let logical = rewrite_logical(logical);
         // 2. Lower to physical.
         let physical = lower_to_physical(logical);
-        // 3. Physical rewrites (predicate pushdown + PK lookup
-        //    rewrite). Projection pushdown is intentionally
-        //    omitted; see doc above.
+        // 3. Physical rewrites: predicate pushdown (with the
+        //    PK-lookup rewrite as a sub-case), then projection
+        //    pushdown (which narrows each Scan's output and
+        //    rebinds upstream column ordinals).
         let physical = push_predicates(physical, &self.resolver);
+        let physical = push_projections(physical)?;
         Ok(physical)
     }
 }
@@ -948,18 +941,20 @@ fn expression_references_columns(expr: &Expr) -> bool {
     }
 }
 
-/// Projection pushdown — narrow the columns each Scan reads to
-/// only those referenced upstream. Pass collects required column
-/// names by walking upstream operators bottom-up.
-pub fn push_projections(plan: PhysicalPlan) -> PhysicalPlan {
-    // The simplest correct projection pushdown collects "required
-    // columns" at each operator using a top-down pass: the root
-    // requires whatever it emits; intermediate operators require
-    // their referenced columns; the Scan ends up with the union.
-    //
-    // For MVP we keep it as a recursive rewrite that pushes a
-    // "required column names" set from the caller into each
-    // subtree.
+/// Projection pushdown — narrow each Scan to only the columns
+/// referenced upstream, then walk back up the tree rebinding
+/// every `Expr::Column` ordinal against the narrowed schema so
+/// runtime evaluators don't index into the wrong slot.
+///
+/// Bottom-up name collection (top-down pass) figures out which
+/// columns each Scan must emit; the recursion then narrows the
+/// Scan and threads each operator's expressions through
+/// [`rebind_columns`] against its (possibly narrowed) input
+/// schema. Join subtrees are skipped: rebinding across a
+/// two-input combined schema needs name disambiguation that the
+/// current `ColumnRef` shape doesn't carry. Phase 3 follow-up
+/// will lift that restriction.
+pub fn push_projections(plan: PhysicalPlan) -> Result<PhysicalPlan, PlanError> {
     let required: Vec<String> = plan
         .output_schema()
         .columns
@@ -969,7 +964,174 @@ pub fn push_projections(plan: PhysicalPlan) -> PhysicalPlan {
     push_projections_inner(plan, &required)
 }
 
-fn push_projections_inner(plan: PhysicalPlan, required: &[String]) -> PhysicalPlan {
+/// Walk an expression and rebind every `Expr::Column.ordinal`
+/// against `schema` by looking up the column name. Used by the
+/// projection-pushdown rebind pass: when a Scan is narrowed, its
+/// rows have different ordinal positions, so the parent
+/// operator's expressions need their ordinals reshuffled.
+fn rebind_columns(expr: Expr, schema: &RelationalSchema) -> Result<Expr, PlanError> {
+    match expr {
+        Expr::Column(c) => {
+            let (idx, info) = schema.column_by_name(&c.name).ok_or_else(|| {
+                PlanError::Internal(format!(
+                    "rebind_columns: column `{}` not in narrowed schema",
+                    c.name
+                ))
+            })?;
+            Ok(Expr::Column(ColumnRef {
+                name: c.name,
+                ordinal: idx,
+                ty: info.ty.clone(),
+                nullable: info.nullable,
+            }))
+        }
+        Expr::Literal { .. } => Ok(expr),
+        Expr::Cast { expr, ty } => Ok(Expr::Cast {
+            expr: Box::new(rebind_columns(*expr, schema)?),
+            ty,
+        }),
+        Expr::UnaryOp { op, expr } => Ok(Expr::UnaryOp {
+            op,
+            expr: Box::new(rebind_columns(*expr, schema)?),
+        }),
+        Expr::BinaryOp { op, left, right } => Ok(Expr::BinaryOp {
+            op,
+            left: Box::new(rebind_columns(*left, schema)?),
+            right: Box::new(rebind_columns(*right, schema)?),
+        }),
+        Expr::IsNull { expr, not } => Ok(Expr::IsNull {
+            expr: Box::new(rebind_columns(*expr, schema)?),
+            not,
+        }),
+        Expr::Between {
+            expr,
+            low,
+            high,
+            not,
+        } => Ok(Expr::Between {
+            expr: Box::new(rebind_columns(*expr, schema)?),
+            low: Box::new(rebind_columns(*low, schema)?),
+            high: Box::new(rebind_columns(*high, schema)?),
+            not,
+        }),
+        Expr::In { expr, list, not } => Ok(Expr::In {
+            expr: Box::new(rebind_columns(*expr, schema)?),
+            list: list
+                .into_iter()
+                .map(|e| rebind_columns(e, schema))
+                .collect::<Result<_, _>>()?,
+            not,
+        }),
+        Expr::Like {
+            expr,
+            pattern,
+            not,
+            case_insensitive,
+        } => Ok(Expr::Like {
+            expr: Box::new(rebind_columns(*expr, schema)?),
+            pattern: Box::new(rebind_columns(*pattern, schema)?),
+            not,
+            case_insensitive,
+        }),
+        Expr::Case {
+            branches,
+            otherwise,
+        } => Ok(Expr::Case {
+            branches: branches
+                .into_iter()
+                .map(|(c, t)| -> Result<_, PlanError> {
+                    Ok((rebind_columns(c, schema)?, rebind_columns(t, schema)?))
+                })
+                .collect::<Result<_, _>>()?,
+            otherwise: match otherwise {
+                Some(o) => Some(Box::new(rebind_columns(*o, schema)?)),
+                None => None,
+            },
+        }),
+        Expr::Coalesce(args) => Ok(Expr::Coalesce(
+            args.into_iter()
+                .map(|e| rebind_columns(e, schema))
+                .collect::<Result<_, _>>()?,
+        )),
+        Expr::NullIf { left, right } => Ok(Expr::NullIf {
+            left: Box::new(rebind_columns(*left, schema)?),
+            right: Box::new(rebind_columns(*right, schema)?),
+        }),
+        Expr::FuncCall {
+            name,
+            args,
+            return_ty,
+        } => Ok(Expr::FuncCall {
+            name,
+            args: args
+                .into_iter()
+                .map(|e| rebind_columns(e, schema))
+                .collect::<Result<_, _>>()?,
+            return_ty,
+        }),
+    }
+}
+
+/// Same as [`rebind_columns`] but for an [`AggregateExpr`]'s
+/// argument expressions (which reference the Aggregate node's
+/// INPUT schema, not the output schema). Mirrors the shape of
+/// [`aggregate_input_exprs`].
+fn rebind_aggregate(
+    agg: AggregateExpr,
+    schema: &RelationalSchema,
+) -> Result<AggregateExpr, PlanError> {
+    Ok(match agg {
+        AggregateExpr::Count { arg, distinct } => AggregateExpr::Count {
+            arg: match arg {
+                Some(e) => Some(rebind_columns(e, schema)?),
+                None => None,
+            },
+            distinct,
+        },
+        AggregateExpr::Sum { arg, distinct } => AggregateExpr::Sum {
+            arg: rebind_columns(arg, schema)?,
+            distinct,
+        },
+        AggregateExpr::Avg { arg, distinct } => AggregateExpr::Avg {
+            arg: rebind_columns(arg, schema)?,
+            distinct,
+        },
+        AggregateExpr::Min { arg } => AggregateExpr::Min {
+            arg: rebind_columns(arg, schema)?,
+        },
+        AggregateExpr::Max { arg } => AggregateExpr::Max {
+            arg: rebind_columns(arg, schema)?,
+        },
+        AggregateExpr::StringAgg {
+            arg,
+            separator,
+            distinct,
+        } => AggregateExpr::StringAgg {
+            arg: rebind_columns(arg, schema)?,
+            separator,
+            distinct,
+        },
+        AggregateExpr::Custom {
+            name,
+            args,
+            distinct,
+            return_ty,
+        } => AggregateExpr::Custom {
+            name,
+            args: args
+                .into_iter()
+                .map(|e| rebind_columns(e, schema))
+                .collect::<Result<_, _>>()?,
+            distinct,
+            return_ty,
+        },
+    })
+}
+
+fn push_projections_inner(
+    plan: PhysicalPlan,
+    required: &[String],
+) -> Result<PhysicalPlan, PlanError> {
     match plan {
         PhysicalPlan::Scan {
             table,
@@ -979,6 +1141,21 @@ fn push_projections_inner(plan: PhysicalPlan, required: &[String]) -> PhysicalPl
             limit,
             access,
         } => {
+            // PK-lookup scans return the full table row; the
+            // executor doesn't yet apply a post-lookup projection,
+            // so skip narrowing on this path. (Phase 3 will
+            // honour projection through lookup_pk by trimming the
+            // returned row in ScanExec.)
+            if matches!(access, ScanAccess::PkLookup { .. }) {
+                return Ok(PhysicalPlan::Scan {
+                    table,
+                    output_schema,
+                    projection,
+                    predicate,
+                    limit,
+                    access,
+                });
+            }
             // If the scan already has an explicit projection,
             // honour it. Otherwise propagate the upstream
             // requirement when it's a strict subset of the
@@ -1035,32 +1212,31 @@ fn push_projections_inner(plan: PhysicalPlan, required: &[String]) -> PhysicalPl
                 ),
                 None => output_schema,
             };
-            PhysicalPlan::Scan {
+            Ok(PhysicalPlan::Scan {
                 table,
                 output_schema: projected_schema,
                 projection: new_projection,
                 predicate,
                 limit,
                 access,
-            }
+            })
         }
         PhysicalPlan::Filter { input, predicate } => {
-            // Filter requires its predicate's columns plus
-            // everything the caller requires.
             let mut needed: Vec<String> = required.to_vec();
             for c in collect_column_refs(&predicate) {
                 if !needed.contains(&c) {
                     needed.push(c);
                 }
             }
-            PhysicalPlan::Filter {
-                input: Box::new(push_projections_inner(*input, &needed)),
-                predicate,
-            }
+            let new_input = push_projections_inner(*input, &needed)?;
+            let schema = new_input.output_schema();
+            let new_predicate = rebind_columns(predicate, &schema)?;
+            Ok(PhysicalPlan::Filter {
+                input: Box::new(new_input),
+                predicate: new_predicate,
+            })
         }
         PhysicalPlan::Project { input, outputs } => {
-            // Project requires every column referenced by any
-            // output expression.
             let mut needed: Vec<String> = Vec::new();
             for out in &outputs {
                 for c in collect_column_refs(&out.expr) {
@@ -1069,10 +1245,21 @@ fn push_projections_inner(plan: PhysicalPlan, required: &[String]) -> PhysicalPl
                     }
                 }
             }
-            PhysicalPlan::Project {
-                input: Box::new(push_projections_inner(*input, &needed)),
-                outputs,
-            }
+            let new_input = push_projections_inner(*input, &needed)?;
+            let schema = new_input.output_schema();
+            let new_outputs: Vec<NamedExpr> = outputs
+                .into_iter()
+                .map(|o| -> Result<_, PlanError> {
+                    Ok(NamedExpr {
+                        name: o.name,
+                        expr: rebind_columns(o.expr, &schema)?,
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            Ok(PhysicalPlan::Project {
+                input: Box::new(new_input),
+                outputs: new_outputs,
+            })
         }
         PhysicalPlan::Sort {
             input,
@@ -1087,25 +1274,37 @@ fn push_projections_inner(plan: PhysicalPlan, required: &[String]) -> PhysicalPl
                     }
                 }
             }
-            PhysicalPlan::Sort {
-                input: Box::new(push_projections_inner(*input, &needed)),
-                keys,
+            let new_input = push_projections_inner(*input, &needed)?;
+            let schema = new_input.output_schema();
+            let new_keys: Vec<SortKey> = keys
+                .into_iter()
+                .map(|k| -> Result<_, PlanError> {
+                    Ok(SortKey {
+                        expr: rebind_columns(k.expr, &schema)?,
+                        descending: k.descending,
+                        nulls_first: k.nulls_first,
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            Ok(PhysicalPlan::Sort {
+                input: Box::new(new_input),
+                keys: new_keys,
                 strategy,
-            }
+            })
         }
         PhysicalPlan::Limit {
             input,
             limit,
             offset,
-        } => PhysicalPlan::Limit {
-            input: Box::new(push_projections_inner(*input, required)),
+        } => Ok(PhysicalPlan::Limit {
+            input: Box::new(push_projections_inner(*input, required)?),
             limit,
             offset,
-        },
-        PhysicalPlan::Distinct { input, strategy } => PhysicalPlan::Distinct {
-            input: Box::new(push_projections_inner(*input, required)),
+        }),
+        PhysicalPlan::Distinct { input, strategy } => Ok(PhysicalPlan::Distinct {
+            input: Box::new(push_projections_inner(*input, required)?),
             strategy,
-        },
+        }),
         PhysicalPlan::Aggregate {
             input,
             group_by,
@@ -1130,20 +1329,38 @@ fn push_projections_inner(plan: PhysicalPlan, required: &[String]) -> PhysicalPl
                     }
                 }
             }
-            if let Some(h) = &having {
-                for c in collect_column_refs(h) {
-                    if !needed.contains(&c) {
-                        needed.push(c);
-                    }
-                }
-            }
-            PhysicalPlan::Aggregate {
-                input: Box::new(push_projections_inner(*input, &needed)),
-                group_by,
-                aggregates,
+            // HAVING references the POST-aggregate schema, not the
+            // input schema, so don't add its columns to `needed`.
+            let new_input = push_projections_inner(*input, &needed)?;
+            let input_schema = new_input.output_schema();
+            let new_group_by: Vec<NamedExpr> = group_by
+                .into_iter()
+                .map(|g| -> Result<_, PlanError> {
+                    Ok(NamedExpr {
+                        name: g.name,
+                        expr: rebind_columns(g.expr, &input_schema)?,
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            let new_aggregates: Vec<NamedAggregate> = aggregates
+                .into_iter()
+                .map(|a| -> Result<_, PlanError> {
+                    Ok(NamedAggregate {
+                        name: a.name,
+                        agg: rebind_aggregate(a.agg, &input_schema)?,
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            // HAVING runs against the post-aggregate schema —
+            // don't rebind against input_schema. Phase 3 will
+            // build a proper post-aggregate scope for HAVING.
+            Ok(PhysicalPlan::Aggregate {
+                input: Box::new(new_input),
+                group_by: new_group_by,
+                aggregates: new_aggregates,
                 having,
                 strategy,
-            }
+            })
         }
         PhysicalPlan::Join {
             left,
@@ -1152,30 +1369,42 @@ fn push_projections_inner(plan: PhysicalPlan, required: &[String]) -> PhysicalPl
             on,
             strategy,
         } => {
-            let mut needed: Vec<String> = required.to_vec();
-            if let Some(o) = &on {
-                for c in collect_column_refs(o) {
-                    if !needed.contains(&c) {
-                        needed.push(c);
-                    }
-                }
-            }
-            PhysicalPlan::Join {
-                left: Box::new(push_projections_inner(*left, &needed)),
-                right: Box::new(push_projections_inner(*right, &needed)),
+            // Skip projection pushdown across joins: rebinding
+            // across a combined left+right schema needs name
+            // disambiguation that ColumnRef doesn't yet carry.
+            // Recurse with each side's full schema so no
+            // narrowing happens, and pass `on` through unchanged.
+            let left_full: Vec<String> = left
+                .output_schema()
+                .columns
+                .iter()
+                .map(|c| c.name.clone())
+                .collect();
+            let right_full: Vec<String> = right
+                .output_schema()
+                .columns
+                .iter()
+                .map(|c| c.name.clone())
+                .collect();
+            Ok(PhysicalPlan::Join {
+                left: Box::new(push_projections_inner(*left, &left_full)?),
+                right: Box::new(push_projections_inner(*right, &right_full)?),
                 kind,
                 on,
                 strategy,
-            }
+            })
         }
-        PhysicalPlan::Union { inputs, all } => PhysicalPlan::Union {
-            inputs: inputs
+        PhysicalPlan::Union { inputs, all } => {
+            let new_inputs: Vec<PhysicalPlan> = inputs
                 .into_iter()
                 .map(|i| push_projections_inner(i, required))
-                .collect(),
-            all,
-        },
-        leaf @ PhysicalPlan::Values { .. } => leaf,
+                .collect::<Result<_, _>>()?;
+            Ok(PhysicalPlan::Union {
+                inputs: new_inputs,
+                all,
+            })
+        }
+        leaf @ PhysicalPlan::Values { .. } => Ok(leaf),
     }
 }
 
@@ -1647,14 +1876,31 @@ mod tests {
             input: Box::new(lower_to_physical(users_scan())),
             outputs: vec![NamedExpr::new("id", Expr::column(id))],
         };
-        let result = push_projections(physical);
+        let result = push_projections(physical).unwrap();
         match result {
-            PhysicalPlan::Project { input, .. } => match *input {
-                PhysicalPlan::Scan { projection, .. } => {
-                    assert_eq!(projection, Some(vec!["id".to_string()]));
+            PhysicalPlan::Project { input, outputs } => {
+                // After rebind, the Project's column ref points
+                // at ordinal 0 (id is the only column in the
+                // narrowed scan).
+                match &outputs[0].expr {
+                    Expr::Column(c) => {
+                        assert_eq!(c.name, "id");
+                        assert_eq!(c.ordinal, 0);
+                    }
+                    other => panic!("expected Column, got {other:?}"),
                 }
-                other => panic!("expected Scan inside Project, got {other:?}"),
-            },
+                match *input {
+                    PhysicalPlan::Scan {
+                        projection,
+                        output_schema,
+                        ..
+                    } => {
+                        assert_eq!(projection, Some(vec!["id".to_string()]));
+                        assert_eq!(output_schema.columns[0].name, "id");
+                    }
+                    other => panic!("expected Scan inside Project, got {other:?}"),
+                }
+            }
             other => panic!("expected Project, got {other:?}"),
         }
     }
@@ -1679,18 +1925,59 @@ mod tests {
             input: Box::new(scan),
             outputs: vec![NamedExpr::new("id", Expr::column(id))],
         };
-        let result = push_projections(physical);
+        let result = push_projections(physical).unwrap();
         match result {
-            PhysicalPlan::Project { input, .. } => match *input {
-                PhysicalPlan::Scan { projection, .. } => {
-                    let p = projection.unwrap();
-                    assert!(p.contains(&"id".to_string()));
-                    // age must also be projected because the
-                    // pushed-down predicate references it.
-                    assert!(p.contains(&"age".to_string()));
+            PhysicalPlan::Project { input, outputs } => {
+                // The Project's `id` ref should now point at the
+                // narrowed schema's index of `id` (0 if id is
+                // first; could be 1 if predicate column comes
+                // first — depends on order).
+                let col = match &outputs[0].expr {
+                    Expr::Column(c) => c,
+                    other => panic!("expected Column, got {other:?}"),
+                };
+                assert_eq!(col.name, "id");
+                match *input {
+                    PhysicalPlan::Scan {
+                        projection,
+                        predicate,
+                        output_schema,
+                        ..
+                    } => {
+                        let p = projection.unwrap();
+                        assert!(p.contains(&"id".to_string()));
+                        // age must also be projected because the
+                        // pushed-down predicate references it.
+                        assert!(p.contains(&"age".to_string()));
+                        // Rebind: the predicate's `age` column
+                        // now uses the narrowed schema's ordinal.
+                        let age_idx = output_schema
+                            .columns
+                            .iter()
+                            .position(|c| c.name == "age")
+                            .unwrap();
+                        match predicate.as_ref().unwrap() {
+                            Expr::BinaryOp { left, .. } => match left.as_ref() {
+                                Expr::Column(c) => {
+                                    assert_eq!(c.ordinal, age_idx);
+                                }
+                                other => panic!(
+                                    "expected Column on left, got {other:?}"
+                                ),
+                            },
+                            other => panic!("expected BinaryOp, got {other:?}"),
+                        }
+                        // And the Project's `id` ordinal lines up.
+                        let id_idx = output_schema
+                            .columns
+                            .iter()
+                            .position(|c| c.name == "id")
+                            .unwrap();
+                        assert_eq!(col.ordinal, id_idx);
+                    }
+                    other => panic!("expected Scan, got {other:?}"),
                 }
-                other => panic!("expected Scan, got {other:?}"),
-            },
+            }
             _ => panic!(),
         }
     }
