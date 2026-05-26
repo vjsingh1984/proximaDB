@@ -488,8 +488,8 @@ pub struct VectorOperationsService {
     /// AXIS index manager for index lookups
     axis_index_manager: Arc<crate::index::AxisManager>,
 
-    /// Collection service for metadata and configuration
-    collection_service: Arc<crate::services::collection::manager::CollectionService>,
+    /// Collection port for metadata and configuration (Phase 9 / Task #76)
+    collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     /// Optional global cache orchestrator for richer cache stats/prefetch
     orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
 
@@ -523,14 +523,14 @@ impl VectorOperationsService {
         storage_engine: Arc<SstEngine>,
         wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
         axis_index_manager: Arc<crate::index::AxisManager>,
-        collection_service: Arc<crate::services::collection::manager::CollectionService>,
+        collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
         ctx: &crate::core::context::SharedContext,
     ) -> Self {
         let mut svc = Self::new(
             storage_engine,
             wal_manager,
             axis_index_manager,
-            collection_service,
+            collection_port,
         );
         svc.orchestrator = ctx.orchestrator.clone();
         // Tenant integration from shared context
@@ -577,8 +577,8 @@ impl VectorOperationsService {
         })?;
 
         let collection = self
-            .collection_service
-            .get_collection_with_tenant_context(collection_id, Some(tenant_ctx))
+            .collection_port
+            .get_collection(collection_id, Some(&tenant_ctx.tenant_id))
             .await?;
 
         if collection.is_none() {
@@ -931,7 +931,7 @@ impl VectorOperationsService {
         // is the equivalent for the direct insert path, using the
         // collection metadata that this service already has access to.
         if let Ok(Some(collection)) =
-            self.collection_service.collection(&collection_id).await
+            self.collection_port.get_collection(&collection_id, None).await
         {
             if let Some(cfg) = collection.config.as_ref() {
                 if let Some(precision_value) = cfg.canonical_embedding_precision {
@@ -1107,7 +1107,7 @@ impl VectorOperationsService {
         storage_engine: Arc<SstEngine>,
         wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
         axis_index_manager: Arc<crate::index::AxisManager>,
-        collection_service: Arc<crate::services::collection::manager::CollectionService>,
+        collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     ) -> Self {
         info!(
             "🚀 Initializing VectorOperationsService with CONSOLIDATED optimizer and two-stage search"
@@ -1130,7 +1130,7 @@ impl VectorOperationsService {
             collection_cache: Arc::new(dashmap::DashMap::new()),
             query_cache,
             axis_index_manager,
-            collection_service,
+            collection_port,
             orchestrator: None,
 
             // NEW: Multi-tenant integration (initially None, set via builder methods)
@@ -2927,8 +2927,8 @@ impl VectorOperationsService {
         } else {
             // Load from collection service
             let collection = self
-                .collection_service
-                .collection(collection_id)
+                .collection_port
+                .get_collection(collection_id, None)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Collection {} not found", collection_id))?;
 
@@ -4420,7 +4420,7 @@ mod index_first_search_tests {
             sst_engine,
             wal_manager,
             axis_manager,
-            collection_service,
+            collection_service as Arc<dyn proximadb_runtime::CollectionPort>,
         ));
 
         Ok((service, temp_dir))

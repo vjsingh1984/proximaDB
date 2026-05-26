@@ -370,7 +370,7 @@ impl SharedServices {
                 sst_engine,
                 wal_manager,
                 axis_manager.clone(),
-                collection_service.clone(),
+                collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
             )
             .with_orchestrator(Some(orchestrator.clone())),
         );

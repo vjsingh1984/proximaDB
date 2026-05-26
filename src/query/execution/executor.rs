@@ -2340,7 +2340,7 @@ mod executor_tests {
             storage_engine,
             wal_manager,
             axis_manager,
-            collection_service,
+            collection_service as Arc<dyn proximadb_runtime::CollectionPort>,
         ));
 
         // Create graph service
@@ -2472,7 +2472,7 @@ mod executor_tests {
             storage_engine,
             wal_manager,
             axis_manager,
-            collection_service,
+            collection_service as Arc<dyn proximadb_runtime::CollectionPort>,
         ));
 
         // Create graph service

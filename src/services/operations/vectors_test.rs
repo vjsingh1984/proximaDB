@@ -136,8 +136,12 @@ mod tests {
             .unwrap(),
         );
 
-        let service =
-            VectorOperationsService::new(sst_engine, wal_manager, axis_manager, collection_service);
+        let service = VectorOperationsService::new(
+            sst_engine,
+            wal_manager,
+            axis_manager,
+            collection_service as std::sync::Arc<dyn proximadb_runtime::CollectionPort>,
+        );
 
         (service, temp_dir)
     }
