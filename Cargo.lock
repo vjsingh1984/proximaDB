@@ -6793,6 +6793,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-relational-algebra"
+version = "0.2.0"
+dependencies = [
+ "proximadb-data-model",
+ "proximadb-relational-types",
+ "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "proximadb-relational-types"
 version = "0.2.0"
 dependencies = [

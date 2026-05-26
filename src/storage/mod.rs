@@ -180,13 +180,11 @@
 //! - `StorageError::OutOfSpace` - Disk space exhausted
 //! - `StorageError::Configuration` - Invalid configuration
 
-pub mod builder;
 pub mod error;
 pub mod scan_strategy;
 pub mod trait_components;
 pub mod traits;
 pub mod types;
-pub mod validation;
 
 // Common reusable components
 pub mod common;
@@ -258,9 +256,7 @@ pub mod schema;
 // StorageEngine now uses DashMap for lsm_trees and mmap_readers
 
 // Main exports from organized structure
-pub use builder::{StorageSystem, StorageSystemBuilder, StorageSystemConfig};
 pub use types::StorageEngineType;
-pub use validation::ConfigValidator;
 
 // Strategy pattern exports
 pub use traits::{
