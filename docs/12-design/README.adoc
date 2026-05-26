@@ -66,6 +66,10 @@ Accepted ADRs live under `adr/`.
 * `adr/ADR-011-filtered-ann-routing-modes.adoc` — Selectivity-based Pre/Inline/PostFilter ANN routing.
 * `adr/ADR-012-graph-branch-merge-semantics.adoc` — CRDT-based graph branch merge policies.
 * `adr/ADR-013-protocol-type-coercion-matrix.adoc` — Lossless and lossy type conversions per protocol.
+* `adr/ADR-014-vector-query-2-shape.adoc` — Vector query two-shape boundary.
+* `adr/ADR-015-port-impl-location.adoc` — Port impl location (bare service vs gRPC wrapper).
+* `adr/ADR-016-port-user-context.adoc` — PortUserContext as the SecurityPort boundary type.
+* `adr/ADR-017-dr-engine-surface.adoc` — Public DR engine surface and OSS/operator boundary.
 
 == Archived From This Directory
 
