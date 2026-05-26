@@ -1018,6 +1018,14 @@ fn values_equal(l: &ProximaValue, r: &ProximaValue) -> Result<bool, ExprError> {
         (ULID(a), ULID(b)) => a == b,
         (Decimal(a), Decimal(b)) => a == b,
         _ => {
+            // Mixed numeric types: widen both sides to f64 and
+            // compare. SQL standard: integer-vs-floating-point
+            // and integer-vs-integer comparisons must succeed.
+            // (Precision loss for very large i64 values is the
+            // documented Phase 3 follow-up.)
+            if let (Some(lf), Some(rf)) = (try_to_f64(l), try_to_f64(r)) {
+                return Ok(lf == rf);
+            }
             return Err(ExprError::OperatorNotDefined {
                 op: "=".into(),
                 left: proxima_value_type(l).unwrap_or(ProximaType::Boolean),
@@ -1054,6 +1062,13 @@ fn compare_ord(
         (Timestamp(a, ua), Timestamp(b, ub)) if ua == ub => a.cmp(b),
         (TimestampTz(a, ua), TimestampTz(b, ub)) if ua == ub => a.cmp(b),
         _ => {
+            // Mixed numeric types: widen to f64 and compare.
+            // Mirrors `values_equal`'s widening path.
+            if let (Some(lf), Some(rf)) = (try_to_f64(l), try_to_f64(r)) {
+                return Ok(lf
+                    .partial_cmp(&rf)
+                    .unwrap_or(std::cmp::Ordering::Equal));
+            }
             return Err(ExprError::OperatorNotDefined {
                 op: "compare".into(),
                 left: proxima_value_type(l).unwrap_or(ProximaType::Boolean),
@@ -1061,6 +1076,27 @@ fn compare_ord(
             });
         }
     })
+}
+
+/// Best-effort widening of any numeric ProximaValue to `f64`. Used
+/// to support SQL's implicit cross-type numeric comparisons
+/// (e.g. `int_col > 25` where `25` parses as Int64 and the column
+/// is Int32). Returns `None` for non-numeric values.
+fn try_to_f64(v: &ProximaValue) -> Option<f64> {
+    use ProximaValue as V;
+    match v {
+        V::Int8(x) => Some(*x as f64),
+        V::Int16(x) => Some(*x as f64),
+        V::Int32(x) => Some(*x as f64),
+        V::Int64(x) => Some(*x as f64),
+        V::UInt8(x) => Some(*x as f64),
+        V::UInt16(x) => Some(*x as f64),
+        V::UInt32(x) => Some(*x as f64),
+        V::UInt64(x) => Some(*x as f64),
+        V::Float16(x) | V::Float32(x) => Some(*x as f64),
+        V::Float64(x) => Some(*x),
+        _ => None,
+    }
 }
 
 fn value_as_str(v: &ProximaValue) -> Result<String, ExprError> {

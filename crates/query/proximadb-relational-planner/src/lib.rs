@@ -297,15 +297,25 @@ impl<R: CapabilityResolver> Planner<R> {
 
     /// Run the full planning pipeline: logical rewrites → lower
     /// → physical rewrites. Validates the input plan first.
+    ///
+    /// NOTE: projection pushdown is **not** currently part of the
+    /// default pipeline — see [`push_projections`]. The rule
+    /// narrows the Scan's output schema but doesn't yet rebind
+    /// upstream column ordinals (which still reference the
+    /// pre-narrowing schema), so enabling it breaks `Project`s
+    /// over a pushed-down `Scan`. Phase 3 will add the rebind
+    /// pass and re-enable. Callers who want the optimisation
+    /// can call [`push_projections`] manually on the result.
     pub fn plan(&self, logical: LogicalNode) -> Result<PhysicalPlan, PlanError> {
         logical.validate()?;
         // 1. Logical rewrites.
         let logical = rewrite_logical(logical);
         // 2. Lower to physical.
         let physical = lower_to_physical(logical);
-        // 3. Physical rewrites.
+        // 3. Physical rewrites (predicate pushdown + PK lookup
+        //    rewrite). Projection pushdown is intentionally
+        //    omitted; see doc above.
         let physical = push_predicates(physical, &self.resolver);
-        let physical = push_projections(physical);
         Ok(physical)
     }
 }
