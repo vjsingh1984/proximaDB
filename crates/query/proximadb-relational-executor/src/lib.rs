@@ -313,7 +313,36 @@ impl ExecNode for ScanExec {
                     return Ok(None);
                 }
                 self.pk_emitted = true;
-                Ok(self.pk_row.clone())
+                // `lookup_pk` returns the FULL row (the reader is
+                // not "opened" on this path, so it has no chance to
+                // apply projection internally). Narrow here if the
+                // plan declares one.
+                let row = match self.pk_row.take() {
+                    None => return Ok(None),
+                    Some(r) => r,
+                };
+                let projected = match &self.projection {
+                    None => row,
+                    Some(names) => {
+                        // Reader's schema() returns the full table
+                        // schema when not opened — exactly what we
+                        // need to resolve projection ordinals.
+                        let full = self.reader.schema();
+                        let mut out = Vec::with_capacity(names.len());
+                        for name in names {
+                            let (idx, _) =
+                                full.column_by_name(name).ok_or_else(|| {
+                                    ExecError::Internal(format!(
+                                        "projection column `{}` not in reader schema",
+                                        name
+                                    ))
+                                })?;
+                            out.push(row[idx].clone());
+                        }
+                        out
+                    }
+                };
+                Ok(Some(projected))
             }
         }
     }
@@ -2306,6 +2335,37 @@ mod tests {
         exec.open().await.unwrap();
         let rows = collect(&mut *exec).await.unwrap();
         assert_eq!(rows.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn scan_pk_lookup_applies_projection() {
+        // PkLookup with projection=["name"] must emit a single-column
+        // row containing just the name, not the full (id, name, age)
+        // row that lookup_pk returns. The narrowed output_schema mirrors
+        // what the planner would produce after pushdown.
+        let narrowed = RelationalSchema::new(vec![ColumnInfo::new(
+            "name",
+            ProximaType::String,
+            true,
+        )]);
+        let plan = PhysicalPlan::Scan {
+            table: TableId::new("users"),
+            output_schema: narrowed,
+            projection: Some(vec!["name".into()]),
+            predicate: None,
+            limit: None,
+            access: ScanAccess::PkLookup {
+                key: vec![Expr::literal(ProximaValue::Int64(2))],
+            },
+        };
+        let f = factory_with_users();
+        let ctx = ExecutionContext::default();
+        let mut exec = build_executor(plan, &f, &ctx).unwrap();
+        exec.open().await.unwrap();
+        let rows = collect(&mut *exec).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].len(), 1, "row should be narrowed to one column");
+        assert_eq!(rows[0][0], ProximaValue::String("bob".into()));
     }
 
     // ----- Values ------------------------------------------------------
