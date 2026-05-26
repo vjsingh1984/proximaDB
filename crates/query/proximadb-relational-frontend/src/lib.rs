@@ -709,44 +709,18 @@ fn lower_value(v: &SqlValue) -> Result<ProximaValue, FrontendError> {
 }
 
 // =========================================================================
-// Aggregate extraction
-// =========================================================================
-
-/// Walk an expression bottom-up, replacing each aggregate call
-/// with a [`Expr::Column`] reference pointing into the aggregate
-/// slot it will occupy in the post-aggregate schema. Returns the
-/// rewritten expression plus the list of extracted aggregates.
-fn extract_aggregates(
-    expr: &Expr,
-    base_ordinal: usize,
-    _scope: &Scope,
-) -> Result<(Expr, Vec<NamedAggregate>), FrontendError> {
-    // The current Expr type doesn't carry aggregate placeholders
-    // — we materialise aggregates at SQL lowering time before
-    // they reach the algebra Expr. For MVP we therefore detect
-    // aggregates from the projection-item level (caller
-    // already invoked us only on the rewritten algebra-Expr
-    // body) and… since lower_expr fails when it sees a
-    // Function node, we never end up with an aggregate inside
-    // the algebra Expr. The aggregate path is handled by
-    // [`lower_projection_with_aggregates`] below.
-    let _ = base_ordinal;
-    Ok((expr.clone(), Vec::new()))
-}
-
-// =========================================================================
-// Projection with aggregates (alternative path)
+// Projection with aggregates
 // =========================================================================
 //
-// To avoid carrying aggregate placeholders in `Expr`, we lower the
-// projection in a single pass that recognises aggregate function
-// calls at the *projection level* (i.e. as the top-level node of
-// a SelectItem), produces a NamedAggregate, and substitutes the
+// To avoid carrying aggregate placeholders in `Expr` (which would
+// create a cycle with the algebra crate), we lower the projection
+// in a single pass that recognises aggregate function calls at
+// the *projection level* (i.e. as the top-level node of a
+// SelectItem), produces a NamedAggregate, and substitutes the
 // projection's Expr with a column reference into the aggregate
 // slot. This is the SQL standard's pattern for simple aggregate
 // projections (`SELECT col, COUNT(*), SUM(x) FROM …`). Complex
 // nested cases (aggregates inside arithmetic) are Phase 3.
-#[allow(dead_code)]
 fn lower_projection_with_aggregates(
     items: &[SelectItem],
     scope: &Scope,
@@ -804,6 +778,43 @@ fn lower_projection_with_aggregates(
         }
     }
     Ok((outputs, aggregates))
+}
+
+/// Build a [`Scope`] representing the columns visible AFTER an
+/// Aggregate node: group_by columns first (in declared order),
+/// followed by aggregate-result slots. Used to lower HAVING
+/// expressions over the post-aggregate schema.
+fn post_aggregate_scope(
+    group_by: &[NamedExpr],
+    aggregates: &[NamedAggregate],
+) -> Scope {
+    let mut columns = Vec::with_capacity(group_by.len() + aggregates.len());
+    let mut ordinal = 0;
+    for g in group_by {
+        columns.push(ScopeColumn {
+            table: String::new(),
+            column: ColumnInfo {
+                name: g.name.clone(),
+                ty: g.expr.result_type(),
+                nullable: true,
+            },
+            ordinal,
+        });
+        ordinal += 1;
+    }
+    for a in aggregates {
+        columns.push(ScopeColumn {
+            table: String::new(),
+            column: ColumnInfo {
+                name: a.name.clone(),
+                ty: a.agg.result_type(),
+                nullable: !matches!(a.agg, AggregateExpr::Count { .. }),
+            },
+            ordinal,
+        });
+        ordinal += 1;
+    }
+    Scope { columns }
 }
 
 fn lower_aggregate_call(
@@ -1212,11 +1223,38 @@ mod tests {
                         ..
                     } => {
                         assert!(group_by.is_empty());
-                        assert_eq!(aggregates.len(), 0); // empty until lower_projection_with_aggregates is wired
+                        assert_eq!(aggregates.len(), 1);
+                        assert!(matches!(
+                            aggregates[0].agg,
+                            AggregateExpr::Count {
+                                arg: None,
+                                distinct: false
+                            }
+                        ));
                     }
                     other => panic!("expected Aggregate, got {other:?}"),
                 }
             }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn select_sum_with_group_by() {
+        let plan = lower("SELECT age, SUM(id) FROM users GROUP BY age");
+        match plan {
+            LogicalNode::Project { input, .. } => match *input {
+                LogicalNode::Aggregate {
+                    group_by,
+                    aggregates,
+                    ..
+                } => {
+                    assert_eq!(group_by.len(), 1);
+                    assert_eq!(aggregates.len(), 1);
+                    assert!(matches!(aggregates[0].agg, AggregateExpr::Sum { .. }));
+                }
+                other => panic!("expected Aggregate, got {other:?}"),
+            },
             _ => panic!(),
         }
     }
@@ -1261,7 +1299,11 @@ mod tests {
 
     #[test]
     fn select_order_by_limit_offset() {
-        let plan = lower("SELECT id FROM users ORDER BY age DESC LIMIT 10 OFFSET 5");
+        // NB: MVP limit — ORDER BY resolves against the
+        // post-projection schema, so the sort key must appear in
+        // the projection list. ORDER BY on non-projected columns
+        // is a Phase 3 enhancement.
+        let plan = lower("SELECT id FROM users ORDER BY id DESC LIMIT 10 OFFSET 5");
         match plan {
             LogicalNode::Limit { limit, offset, .. } => {
                 assert_eq!(limit, Some(10));
