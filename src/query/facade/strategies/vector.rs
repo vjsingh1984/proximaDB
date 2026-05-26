@@ -42,7 +42,8 @@ use crate::query::facade::{
     ExecutionMetrics, QueryContent, QueryContext, QueryRequest, QueryResult, QueryResultData,
     QueryStrategy, QueryType,
 };
-use crate::services::{CollectionService, VectorOps};
+use crate::services::VectorOps;
+use proximadb_runtime::CollectionPort;
 
 /// Vector Search Strategy - Real implementation wrapping VectorOps
 ///
@@ -53,18 +54,19 @@ use crate::services::{CollectionService, VectorOps};
 pub struct VectorSearchStrategy {
     /// Vector operations service for search execution
     vector_ops: Arc<VectorOps>,
-    /// Collection service for metadata lookup
-    collection_service: Arc<CollectionService>,
+    /// Collection port for metadata lookup (Task #76 migration: was
+    /// `Arc<CollectionService>`, now port-typed view from SharedServices).
+    collection_port: Arc<dyn CollectionPort>,
     /// Strategy priority (higher = preferred)
     priority: i32,
 }
 
 impl VectorSearchStrategy {
     /// Create a new VectorSearchStrategy
-    pub fn new(vector_ops: Arc<VectorOps>, collection_service: Arc<CollectionService>) -> Self {
+    pub fn new(vector_ops: Arc<VectorOps>, collection_port: Arc<dyn CollectionPort>) -> Self {
         Self {
             vector_ops,
-            collection_service,
+            collection_port,
             priority: 100, // High priority for vector searches
         }
     }
@@ -224,8 +226,8 @@ impl QueryStrategy for VectorSearchStrategy {
 
         // Verify collection exists
         let _collection = self
-            .collection_service
-            .collection(collection_id)
+            .collection_port
+            .get_collection(collection_id, None)
             .await?
             .ok_or_else(|| anyhow!("Collection '{}' not found", collection_id))?;
 

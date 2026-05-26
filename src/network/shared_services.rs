@@ -709,11 +709,16 @@ impl SharedServices {
         // ==================================================================================
         debug!("🔧 SharedServices::new - Creating UnifiedQueryFacade with real strategies...");
 
-        // Create VectorSearchStrategy wrapping VectorOperationsService
+        // Create VectorSearchStrategy wrapping VectorOperationsService.
+        // Task #76 consumer migration: VectorSearchStrategy now takes
+        // Arc<dyn CollectionPort> instead of Arc<CollectionService>.
+        // Coerce the existing concrete service to the port trait object
+        // (the same SharedServices collection_port field uses the same
+        // coercion at the field-init site below).
         let vector_strategy: Arc<dyn crate::query::facade::QueryStrategy> =
             Arc::new(VectorSearchStrategy::new(
                 vector_operations_service.clone(),
-                collection_service.clone(),
+                collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
             ));
 
         // Create GraphStrategy wrapping the extracted graph query contract
