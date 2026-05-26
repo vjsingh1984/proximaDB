@@ -165,6 +165,23 @@ pub async fn auth_middleware_unified<B>(
 /// info that's lost in the port projection.  Step 4 either extends
 /// the port surface for capability extraction or leaves callers needing
 /// capability on the legacy middleware.
+///
+/// # Wiring status (2026-05-26 audit, Tier 1.3 of pre-release plan)
+///
+/// **This middleware is NOT wired into any production route as of
+/// 2026-05-26.** It exists as the parallel-shortcut foundation for
+/// ADR-016 step 4 (per-consumer `UnifiedUserContext → PortUserContext`
+/// migrations). Step 4 is intentionally demand-blocked: don't wire
+/// this middleware in until a real cross-crate consumer (typically a
+/// `proximadb-api` gRPC handler that needs port-typed auth context)
+/// surfaces. See `docs/12-design/adr/ADR-016-port-user-context.adoc`
+/// for the migration plan and
+/// `docs/_internal/status/PRE_RELEASE_FOUNDATIONS_2026_05_26.adoc`
+/// for the deferral rationale.
+///
+/// Existing routes use `auth_middleware_unified` (just above) which
+/// stores the rich `UnifiedUserContext` directly. That path is the
+/// production surface for v0.3.
 pub async fn auth_middleware_unified_port<B>(
     State(security_port): State<Arc<dyn proximadb_runtime::SecurityPort>>,
     mut request: Request<B>,

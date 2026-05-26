@@ -375,6 +375,28 @@ impl RestServer {
         catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
         queue_client: Option<Arc<proximadb_queue::QueueClient>>,
     ) -> Self {
+        // Tier 1.2 (pre-release foundational plan 2026-05-26):
+        // Warn loudly if a production-mode server is being constructed with
+        // authentication disabled.  `RestServerSecurityConfig::default()` and
+        // `production_with_origins` / `production_with_tls` builders all
+        // delegate to `RestAuthConfig::default()` which has `enabled: false`
+        // for backward compatibility — explicit `multi_tenant()` setups turn
+        // auth on.  Single-tenant production deployments that forget to wire
+        // auth would otherwise silently accept unauthenticated requests; the
+        // warning makes the foot-gun visible at server start.
+        if !security_config.development_mode && !security_config.auth.enabled {
+            tracing::warn!(
+                target: "proximadb::security",
+                bind_addr = %bind_addr,
+                "REST server starting in production mode with auth.enabled=false. \
+                 All requests will be accepted without authentication. If this is \
+                 intentional (single-tenant trusted-network deployment), suppress \
+                 by switching to development_mode or by explicitly enabling auth via \
+                 RestServerSecurityConfig::multi_tenant() / auth.enabled=true. \
+                 See PRE_RELEASE_FOUNDATIONS_2026_05_26.adoc T1.2 for context."
+            );
+        }
+
         let mut base_state = AppState::new(
             request_handlers,
             graph_execution_service,
