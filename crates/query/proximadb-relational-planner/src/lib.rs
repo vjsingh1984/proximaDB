@@ -1212,11 +1212,19 @@ fn push_projections_inner(
                 ),
                 None => output_schema,
             };
+            // The Scan's own pushed-down predicate references
+            // the (pre-narrowing) full-table ordinals. Rebind it
+            // against the narrowed schema so the adapter and
+            // executor evaluate against the right slots.
+            let new_predicate = match predicate {
+                Some(p) => Some(rebind_columns(p, &projected_schema)?),
+                None => None,
+            };
             Ok(PhysicalPlan::Scan {
                 table,
                 output_schema: projected_schema,
                 projection: new_projection,
-                predicate,
+                predicate: new_predicate,
                 limit,
                 access,
             })
