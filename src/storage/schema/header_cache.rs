@@ -39,6 +39,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::RwLock;
+use proximadb_runtime_common::cache::CacheStats;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, trace};
 
@@ -759,20 +760,21 @@ impl ProximaHeaderCache {
     /// Get cache statistics.
     pub fn stats(&self) -> HeaderCacheStats {
         let cache = self.cache.read();
+        let hits = *self.hits.read();
+        let misses = *self.misses.read();
+        let inner = CacheStats {
+            hits,
+            misses,
+            gets: hits + misses,
+            size: cache.len(),
+            ..CacheStats::default()
+        };
         HeaderCacheStats {
-            entries: cache.len(),
+            // Canonical CacheStats::hit_ratio() returns 0–100 (percent); divide for ratio.
+            hit_ratio: inner.hit_ratio() / 100.0,
+            inner,
             size_bytes: *self.current_size_bytes.read(),
             max_size_bytes: self.max_size_bytes,
-            hits: *self.hits.read(),
-            misses: *self.misses.read(),
-            hit_ratio: {
-                let total = *self.hits.read() + *self.misses.read();
-                if total > 0 {
-                    *self.hits.read() as f64 / total as f64
-                } else {
-                    0.0
-                }
-            },
         }
     }
 
@@ -793,20 +795,38 @@ impl Default for ProximaHeaderCache {
 }
 
 /// Cache statistics.
-#[derive(Debug, Clone)]
+///
+/// Embeds the canonical `proximadb_runtime_common::cache::CacheStats` for
+/// hits/misses/size counters. Engine-specific fields kept on the wrapper
+/// track byte-granularity capacity that the canonical (entry-count
+/// model) doesn't represent.
+#[derive(Debug, Clone, Default)]
 pub struct HeaderCacheStats {
-    /// Number of cached entries
-    pub entries: usize,
-    /// Current cache size in bytes
+    /// Canonical cache counters (hits, misses, evictions, gets, puts, size, ...).
+    pub inner: CacheStats,
+    /// Current cache size in bytes (byte-granularity; canonical tracks entries).
     pub size_bytes: usize,
-    /// Maximum cache size in bytes
+    /// Maximum cache size in bytes (byte-granularity capacity).
     pub max_size_bytes: usize,
-    /// Cache hits
-    pub hits: u64,
-    /// Cache misses
-    pub misses: u64,
-    /// Hit ratio (0.0 - 1.0)
+    /// Hit ratio (0.0 - 1.0). Derived in `stats()` from `inner.hit_ratio()`.
     pub hit_ratio: f64,
+}
+
+impl HeaderCacheStats {
+    /// Number of cached entries (delegates to canonical `inner.size`).
+    pub fn entries(&self) -> usize {
+        self.inner.size
+    }
+
+    /// Number of cache hits (delegates to canonical `inner.hits`).
+    pub fn hits(&self) -> u64 {
+        self.inner.hits
+    }
+
+    /// Number of cache misses (delegates to canonical `inner.misses`).
+    pub fn misses(&self) -> u64 {
+        self.inner.misses
+    }
 }
 
 impl std::fmt::Display for HeaderCacheStats {
@@ -814,12 +834,12 @@ impl std::fmt::Display for HeaderCacheStats {
         write!(
             f,
             "HeaderCache: {} entries, {:.1}MB/{:.1}MB, {:.1}% hit rate ({} hits, {} misses)",
-            self.entries,
+            self.inner.size,
             self.size_bytes as f64 / 1_048_576.0,
             self.max_size_bytes as f64 / 1_048_576.0,
             self.hit_ratio * 100.0,
-            self.hits,
-            self.misses
+            self.inner.hits,
+            self.inner.misses
         )
     }
 }
