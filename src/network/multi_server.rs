@@ -416,9 +416,9 @@ impl MultiServer {
                     services.request_handlers.clone(),
                     services.query_adapter(),
                 ));
-            let doc_port: Arc<dyn proximadb_runtime::DocumentPort> = Arc::new(
-                crate::network::grpc::DocumentServiceImpl::new(doc_storage_service),
-            );
+            // ADR-015 step 2: bare DocumentService impls DocumentPort directly;
+            // the gRPC DocumentServiceImpl wrapper is no longer in the port chain.
+            let doc_port: Arc<dyn proximadb_runtime::DocumentPort> = doc_storage_service.clone();
             let obs_port: Arc<dyn proximadb_runtime::ObservabilityPort> = Arc::new(
                 crate::network::grpc::ObservabilityServiceImpl::new(obs_service),
             );
@@ -775,9 +775,8 @@ impl MultiServer {
                     services.request_handlers.clone(),
                     services.query_adapter(),
                 ));
-            let doc_port: Arc<dyn proximadb_runtime::DocumentPort> = Arc::new(
-                crate::network::grpc::DocumentServiceImpl::new(doc_storage_service.clone()),
-            );
+            // ADR-015 step 2 (DocumentPort).
+            let doc_port: Arc<dyn proximadb_runtime::DocumentPort> = doc_storage_service.clone();
             let obs_port: Arc<dyn proximadb_runtime::ObservabilityPort> = Arc::new(
                 crate::network::grpc::ObservabilityServiceImpl::new(obs_service.clone()),
             );
@@ -841,9 +840,8 @@ impl MultiServer {
                     services.request_handlers.clone(),
                     services.query_adapter(),
                 ));
-            let grpc_doc_port: Arc<dyn proximadb_runtime::DocumentPort> = Arc::new(
-                crate::network::grpc::DocumentServiceImpl::new(doc_storage_service.clone()),
-            );
+            // ADR-015 step 2 (DocumentPort).
+            let grpc_doc_port: Arc<dyn proximadb_runtime::DocumentPort> = doc_storage_service.clone();
             let grpc_obs_port: Arc<dyn proximadb_runtime::ObservabilityPort> = Arc::new(
                 crate::network::grpc::ObservabilityServiceImpl::new(obs_service.clone()),
             );
