@@ -822,6 +822,14 @@ class ProximaDBClient:
             ),
             "enable_proxima_record": True,
         }
+        precision = getattr(config, "canonical_embedding_precision", None)
+        if precision is not None:
+            # EmbeddingPrecision is a str-Enum; send the canonical lower-case
+            # string (server normalises aliases via the same dispatch the
+            # pgwire / Arrow Flight surfaces use).
+            v2_request_data["canonical_embedding_precision"] = getattr(
+                precision, "value", precision
+            )
         if schema is not None:
             if isinstance(schema, SchemaDefinition):
                 v2_request_data["schema"] = schema.model_dump(

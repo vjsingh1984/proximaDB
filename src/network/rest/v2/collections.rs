@@ -92,6 +92,14 @@ pub struct CreateCollectionV2Request {
     pub distance_metric: Option<String>,
     /// Initial capacity hint for pre-allocation
     pub initial_capacity: Option<u64>,
+    /// Canonical embedding precision for stored vectors
+    ///
+    /// Options: "fp32" (default), "fp16", "bf16", "int8", "uint8".
+    /// Accepts the same string forms as the gRPC / Arrow Flight surfaces
+    /// (e.g. "half", "float16", "EMBEDDING_PRECISION_FP16"). The DDL
+    /// service applies the same normalisation, so SDKs and pgwire
+    /// converge on the same enum discriminant.
+    pub canonical_embedding_precision: Option<String>,
 }
 
 /// Schema definition for a collection
@@ -367,11 +375,34 @@ pub async fn create_collection_v2(
         _ => Some(0),                   // DistanceMetric::Cosine (default)
     };
 
+    // Map canonical_embedding_precision label to the proto discriminant
+    // (matches the dispatch the DDL service / Arrow Flight DoAction use, so
+    // every protocol resolves the same string to the same enum value).
+    let canonical_embedding_precision = request
+        .canonical_embedding_precision
+        .as_deref()
+        .and_then(|raw| {
+            use crate::proto::proximadb_v1::EmbeddingPrecision;
+            let key = raw.trim().to_ascii_lowercase();
+            let stripped = key.strip_prefix("embedding_precision_").unwrap_or(&key);
+            match stripped {
+                "unspecified" => Some(EmbeddingPrecision::Unspecified),
+                "fp32" | "f32" | "float32" => Some(EmbeddingPrecision::Fp32),
+                "fp16" | "f16" | "half" | "float16" => Some(EmbeddingPrecision::Fp16),
+                "bf16" | "bfloat16" => Some(EmbeddingPrecision::Bf16),
+                "int8" | "i8" | "int8_scalar" => Some(EmbeddingPrecision::Int8),
+                "uint8" | "u8" | "uint8_scalar" => Some(EmbeddingPrecision::Uint8),
+                _ => None,
+            }
+        })
+        .map(|p| p as i32);
+
     let collection_config = CollectionConfig {
         name: request.name.clone(),
         dimension: request.dimension,
         storage_engine: Some(storage_engine_value),
         distance_metric: distance_metric_value,
+        canonical_embedding_precision,
         ..Default::default()
     };
 
