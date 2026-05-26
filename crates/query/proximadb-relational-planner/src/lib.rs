@@ -1141,21 +1141,11 @@ fn push_projections_inner(
             limit,
             access,
         } => {
-            // PK-lookup scans return the full table row; the
-            // executor doesn't yet apply a post-lookup projection,
-            // so skip narrowing on this path. (Phase 3 will
-            // honour projection through lookup_pk by trimming the
-            // returned row in ScanExec.)
-            if matches!(access, ScanAccess::PkLookup { .. }) {
-                return Ok(PhysicalPlan::Scan {
-                    table,
-                    output_schema,
-                    projection,
-                    predicate,
-                    limit,
-                    access,
-                });
-            }
+            // PK-lookup scans now honour projection: ScanExec
+            // narrows the row returned by `lookup_pk` against
+            // `self.projection` using the reader's full schema, so
+            // we fall through to the same name-based pushdown that
+            // FullScan uses.
             // If the scan already has an explicit projection,
             // honour it. Otherwise propagate the upstream
             // requirement when it's a strict subset of the
@@ -2077,6 +2067,72 @@ mod tests {
                 other => panic!("expected PkLookup, got {other:?}"),
             },
             _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn push_projection_narrows_pk_lookup_scan() {
+        // SELECT name FROM users WHERE id = 42 — now that ScanExec
+        // applies projection on the PkLookup path, projection
+        // pushdown must narrow the scan AND rebind the Project's
+        // column ref ordinal against the narrowed schema.
+        let id = users_schema().resolve_column("id").unwrap();
+        let name = users_schema().resolve_column("name").unwrap();
+        let pred = Expr::bin(
+            BinaryOp::Eq,
+            Expr::column(id),
+            Expr::literal(ProximaValue::Int64(42)),
+        );
+        let logical = LogicalNode::Project {
+            input: Box::new(LogicalNode::Filter {
+                input: Box::new(users_scan()),
+                predicate: pred,
+            }),
+            outputs: vec![NamedExpr::new("name", Expr::column(name))],
+        };
+        let planner = Planner::new(cap_full(vec![0]));
+        let physical = planner.plan(logical).unwrap();
+        match physical {
+            PhysicalPlan::Project { input, outputs } => {
+                // The Project's `name` column ref must be rebound
+                // to ordinal 0 because the underlying scan now emits
+                // a single column (the narrowed schema).
+                assert_eq!(outputs.len(), 1);
+                match &outputs[0].expr {
+                    Expr::Column(c) => {
+                        assert_eq!(c.name, "name");
+                        assert_eq!(
+                            c.ordinal, 0,
+                            "Project's column ref must be rebound \
+                             against the narrowed scan schema"
+                        );
+                    }
+                    other => panic!("expected column ref, got {other:?}"),
+                }
+                match *input {
+                    PhysicalPlan::Scan {
+                        access: ScanAccess::PkLookup { key },
+                        projection,
+                        output_schema,
+                        ..
+                    } => {
+                        assert_eq!(key.len(), 1);
+                        assert_eq!(
+                            projection,
+                            Some(vec!["name".to_string()]),
+                            "PkLookup scan must declare projection=[name]"
+                        );
+                        assert_eq!(
+                            output_schema.len(),
+                            1,
+                            "scan output schema must be narrowed to 1 column"
+                        );
+                        assert_eq!(output_schema.columns[0].name, "name");
+                    }
+                    other => panic!("expected PkLookup scan, got {other:?}"),
+                }
+            }
+            other => panic!("expected Project, got {other:?}"),
         }
     }
 }
