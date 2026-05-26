@@ -119,9 +119,10 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 | Both already implemented in `src/storage/engines/factory.rs`: lines 181-208 emit `anyhow::bail!` for Swift/Raptor when feature is absent; lines 505/518 emit `tracing::warn!` when the feature IS compiled in. Verified by `tests/engine_safety_test.rs` (4 passing tests: SWIFT and RAPTOR blocked without feature; SST/VIPER/HELIX/NOVA always available).
 
 | T4.2 — Proto compatibility CI gate. In CI, regenerate proto types and diff against committed types. Fail on non-additive changes (field removal, type change). Add `make proto-check` as the canonical local invocation.
-| Pending
-|
-| CI fails when a deliberate breaking proto change is pushed in a test branch; `make proto-check` passes on clean main.
+| Partial (Python side already in place; Rust-side TBD)
+| (audit 2026-05-26)
+| **Python side**: `clients/python/tests/unit/test_grpc_proto_drift.py` exists with a ratcheting baseline (`grpc_drift_baseline.json`) that fails on new drift AND on resolved-but-not-baselined drift. `test_openapi_contract.py` covers OpenAPI contract drift. **Rust side**: no `buf breaking` config, no `proto-check` make target. The standard tool is `buf breaking` against a reference image; alternative is to regenerate via `--features compile_protobuf` and diff `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs`. Recording as deferred — adding `buf` tooling is its own CI infrastructure change, not a code change.
+|===
 
 | T4.3 — Dimension / NaN / Inf validation hardening on hot paths (insert + query). Audit entry points; reject NaN/Inf in quantization pipeline; add regression tests.
 | Audited; opened TD-070 for follow-up
