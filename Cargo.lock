@@ -6805,6 +6805,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-relational-engine"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "parking_lot",
+ "proximadb-data-model",
+ "proximadb-relational-algebra",
+ "proximadb-relational-executor",
+ "proximadb-relational-frontend",
+ "proximadb-relational-planner",
+ "proximadb-relational-reader",
+ "proximadb-relational-types",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "proximadb-relational-executor"
 version = "0.2.0"
 dependencies = [

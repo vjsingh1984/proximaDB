@@ -66,7 +66,7 @@ impl std::fmt::Debug for AxisPerformanceMonitor {
 #[derive(Debug)]
 struct MetricsCollector {
     /// Current metrics per collection
-    collection_metrics: Arc<RwLock<HashMap<String, CollectionMetrics>>>,
+    collection_metrics: Arc<RwLock<HashMap<String, AxisMonitorCollectionMetrics>>>,
 
     /// System-wide metrics
     system_metrics: Arc<RwLock<SystemMetrics>>,
@@ -118,9 +118,12 @@ struct HealthChecker {
     check_interval: Duration,
 }
 
+/// Backwards-compat alias for [`AxisMonitorCollectionMetrics`].
+pub type CollectionMetrics = AxisMonitorCollectionMetrics;
+
 /// Collection-specific metrics
 #[derive(Debug, Clone)]
-pub struct CollectionMetrics {
+pub struct AxisMonitorCollectionMetrics {
     /// Collection identifier.
     pub collection_id: String,
     /// Query latency percentile metrics in milliseconds.
@@ -418,7 +421,7 @@ pub enum MonitoringEvent {
         /// Collection whose metrics were updated.
         collection_id: String,
         /// Updated metrics snapshot.
-        metrics: CollectionMetrics,
+        metrics: AxisMonitorCollectionMetrics,
     },
     /// A new alert has been triggered.
     AxisMonitorAlertTriggered {
@@ -474,7 +477,7 @@ impl AxisPerformanceMonitor {
     pub async fn record_metrics(
         &self,
         collection_id: &str,
-        metrics: CollectionMetrics,
+        metrics: AxisMonitorCollectionMetrics,
     ) -> Result<()> {
         // Update current metrics
         self.metrics_collector
@@ -503,7 +506,7 @@ impl AxisPerformanceMonitor {
     }
 
     /// Get current metrics for a collection
-    pub async fn get_metrics(&self, collection_id: &str) -> Option<CollectionMetrics> {
+    pub async fn get_metrics(&self, collection_id: &str) -> Option<AxisMonitorCollectionMetrics> {
         self.metrics_collector.get_metrics(collection_id).await
     }
 
@@ -587,7 +590,7 @@ impl MetricsCollector {
     }
 
     /// Update metrics for a collection
-    async fn update_metrics(&self, collection_id: &str, metrics: CollectionMetrics) {
+    async fn update_metrics(&self, collection_id: &str, metrics: AxisMonitorCollectionMetrics) {
         let mut collection_metrics = self.collection_metrics.write().await;
         collection_metrics.insert(collection_id.to_string(), metrics.clone());
         drop(collection_metrics);
@@ -608,7 +611,7 @@ impl MetricsCollector {
     }
 
     /// Get metrics for a collection
-    async fn get_metrics(&self, collection_id: &str) -> Option<CollectionMetrics> {
+    async fn get_metrics(&self, collection_id: &str) -> Option<AxisMonitorCollectionMetrics> {
         let collection_metrics = self.collection_metrics.read().await;
         collection_metrics.get(collection_id).cloned()
     }
@@ -650,7 +653,7 @@ impl AlertManager {
     }
 
     /// Check thresholds and trigger alerts if needed
-    async fn check_thresholds(&self, collection_id: &str, metrics: &CollectionMetrics) {
+    async fn check_thresholds(&self, collection_id: &str, metrics: &AxisMonitorCollectionMetrics) {
         let mut alerts_to_trigger = Vec::new();
 
         // Check latency threshold
@@ -869,7 +872,7 @@ impl PerformanceTracker {
     }
 
     /// Update performance trends
-    async fn update_trends(&self, _collection_id: &str, _metrics: &CollectionMetrics) {
+    async fn update_trends(&self, _collection_id: &str, _metrics: &AxisMonitorCollectionMetrics) {
         // Deferred: Implement trend analysis
     }
 }

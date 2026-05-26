@@ -161,7 +161,7 @@ pub struct NovaHierarchicalCache {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalStatistics {
     /// Collection-level statistics
-    pub collection_stats: HashMap<String, CollectionStatistics>,
+    pub collection_stats: HashMap<String, NovaCacheCollectionStatistics>,
 
     /// Cross-collection correlations
     pub correlations: HashMap<(String, String), f32>,
@@ -170,8 +170,11 @@ pub struct GlobalStatistics {
     pub query_patterns: QueryPatterns,
 }
 
+/// Backwards-compat alias for [`NovaCacheCollectionStatistics`].
+pub type CollectionStatistics = NovaCacheCollectionStatistics;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CollectionStatistics {
+pub struct NovaCacheCollectionStatistics {
     pub total_vectors: u64,
     pub avg_vector_size: usize,
     pub total_size_bytes: u64,
@@ -355,7 +358,7 @@ impl NovaHierarchicalCache {
     }
 
     /// Update global statistics sidecar
-    pub async fn update_global_stats(&self, collection_id: &str, stats: CollectionStatistics) {
+    pub async fn update_global_stats(&self, collection_id: &str, stats: NovaCacheCollectionStatistics) {
         let mut global = self.global_stats.write().await;
         global
             .collection_stats

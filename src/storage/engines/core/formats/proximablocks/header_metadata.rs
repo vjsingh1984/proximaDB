@@ -93,7 +93,7 @@ pub struct CollectionMetadata {
     pub distance_metric: DistanceMetric,
     pub schema_version: u32,
     pub filterable_columns: Vec<HeaderFilterableColumn>,
-    pub collection_statistics: CollectionStatistics,
+    pub collection_statistics: BlockCollectionStatistics,
 }
 
 /// Backwards-compat alias for [`HeaderFilterableColumn`].
@@ -137,9 +137,12 @@ pub struct SizeDistribution {
     pub p99: f64,
 }
 
+/// Backwards-compat alias for [`BlockCollectionStatistics`].
+pub type CollectionStatistics = BlockCollectionStatistics;
+
 /// Collection-level statistics
 #[derive(Debug, Clone)]
-pub struct CollectionStatistics {
+pub struct BlockCollectionStatistics {
     pub total_records: u64,
     pub total_size_bytes: u64,
     pub average_vector_size: f64,
@@ -617,7 +620,7 @@ impl CollectionMetadata {
             distance_metric: DistanceMetric::Cosine,
             schema_version: 1,
             filterable_columns: Vec::new(),
-            collection_statistics: CollectionStatistics::default(),
+            collection_statistics: BlockCollectionStatistics::default(),
         }
     }
 }
@@ -746,7 +749,7 @@ impl Default for ChecksumConfig {
     }
 }
 
-impl Default for CollectionStatistics {
+impl Default for BlockCollectionStatistics {
     fn default() -> Self {
         Self {
             total_records: 0,

@@ -329,7 +329,7 @@ impl EnhancedRBACManager {
         Ok(AccessValidationResult {
             granted: access_granted,
             user_context: user_context.clone(),
-            collection_context: CollectionContext {
+            collection_context: RbacCollectionContext {
                 tenant_id: tenant_id.to_string(),
                 collection_id: collection_id.to_string(),
                 operation,
@@ -442,13 +442,16 @@ pub enum CollectionOperation {
 pub struct AccessValidationResult {
     pub granted: bool,
     pub user_context: UserContext,
-    pub collection_context: CollectionContext,
+    pub collection_context: RbacCollectionContext,
     pub validation_metadata: ValidationMetadata,
 }
 
+/// Backwards-compat alias for [`RbacCollectionContext`].
+pub type CollectionContext = RbacCollectionContext;
+
 /// Collection context for operations
 #[derive(Debug, Clone)]
-pub struct CollectionContext {
+pub struct RbacCollectionContext {
     pub tenant_id: String,
     pub collection_id: String,
     pub operation: CollectionOperation,

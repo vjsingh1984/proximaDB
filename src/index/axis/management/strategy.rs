@@ -61,9 +61,12 @@ impl Default for AxisStrategyOptimizationConfig {
     }
 }
 
+/// Backwards-compat alias for [`AxisStrategyCollectionStatistics`].
+pub type CollectionStatistics = AxisStrategyCollectionStatistics;
+
 /// Collection statistics for strategy selection
 #[derive(Debug, Clone)]
-pub struct CollectionStatistics {
+pub struct AxisStrategyCollectionStatistics {
     /// Total number of vectors in the collection
     pub total_vectors: usize,
     /// Dimensionality of each vector
@@ -99,9 +102,9 @@ pub struct QueryPatterns {
 #[derive(Debug, Clone)]
 pub struct IndexStrategyBuilder {
     #[cfg(test)]
-    pub collection_stats: CollectionStatistics,
+    pub collection_stats: AxisStrategyCollectionStatistics,
     #[cfg(not(test))]
-    collection_stats: CollectionStatistics,
+    collection_stats: AxisStrategyCollectionStatistics,
     #[cfg(test)]
     pub query_patterns: QueryPatterns,
     #[cfg(not(test))]
@@ -111,7 +114,7 @@ pub struct IndexStrategyBuilder {
 
 impl IndexStrategyBuilder {
     /// Create a new strategy builder from collection statistics and observed query patterns
-    pub fn new(collection_stats: CollectionStatistics, query_patterns: QueryPatterns) -> Self {
+    pub fn new(collection_stats: AxisStrategyCollectionStatistics, query_patterns: QueryPatterns) -> Self {
         Self {
             collection_stats,
             query_patterns,
@@ -358,7 +361,7 @@ mod tests {
     /// Test struct for collection statistics
     #[derive(Debug, Clone)]
     #[allow(dead_code)]
-    struct CollectionStatistics {
+    struct AxisStrategyCollectionStatistics {
         total_vectors: u64,
         vector_dimension: usize,
         avg_vector_sparsity: f32,
@@ -383,12 +386,12 @@ mod tests {
     #[derive(Debug)]
     #[allow(dead_code)]
     struct IndexStrategyBuilder {
-        stats: CollectionStatistics,
+        stats: AxisStrategyCollectionStatistics,
         patterns: QueryPatterns,
     }
 
     impl IndexStrategyBuilder {
-        fn new(stats: CollectionStatistics, patterns: QueryPatterns) -> Self {
+        fn new(stats: AxisStrategyCollectionStatistics, patterns: QueryPatterns) -> Self {
             Self { stats, patterns }
         }
 
@@ -439,7 +442,7 @@ mod tests {
 
     #[test]
     fn test_strategy_builder_small_collection() {
-        let stats = CollectionStatistics {
+        let stats = AxisStrategyCollectionStatistics {
             total_vectors: 9_999,
             vector_dimension: 128,
             avg_vector_sparsity: 0.1,
@@ -480,7 +483,7 @@ mod tests {
     fn test_strategy_builder_prefers_ivf_once_collection_exits_bruteforce_range() {
         // 10_000 vectors is at the HNSW/IVF boundary (n < 10_000 → HNSW; n >= 10_000 → IVF).
         // Use the real super:: types so the builder's match arms are exercised.
-        let stats = super::CollectionStatistics {
+        let stats = super::AxisStrategyCollectionStatistics {
             total_vectors: 10_000,
             vector_dimension: 128,
             avg_vector_sparsity: 0.1,

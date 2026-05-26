@@ -50,24 +50,36 @@ impl PhaseBudget {
 /// `match_features` and by the Arrow Flight `rank_features_export` action that
 /// streams LTR training data). Wrapped in `Arc<[…]>` so cloning a `ScoredHit`
 /// during merge/sort/topk doesn't duplicate the allocation. R-7c.5.
+///
+/// `summary`: per-doc summary-feature snapshot. Same shape and contract as
+/// `features` but populated from `spec.summary_features` rather than
+/// `spec.match_features`. The two are symmetric on the input side
+/// (both lower into RankProgram executors at materialization time and
+/// are captured during `run_first_phase`); they're kept separate
+/// because the wire DTOs separate them (REST `match_features` vs
+/// `summary_features`; the Arrow Flight export will eventually expose
+/// them as distinct column groups). R-7c.5b.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScoredHit {
     pub doc: DocHandle,
     pub score: f32,
     pub phase: PhaseId,
     pub features: Option<Arc<[(Arc<str>, f32)]>>,
+    pub summary: Option<Arc<[(Arc<str>, f32)]>>,
 }
 
 impl ScoredHit {
     /// Convenience constructor for the no-features path — preserves the
     /// pre-R-7c.5 call sites that don't (and shouldn't) think about
-    /// match_features. Defaults `features` to `None`.
+    /// match_features or summary_features. Defaults both `features`
+    /// and `summary` to `None`.
     pub fn bare(doc: DocHandle, score: f32, phase: PhaseId) -> Self {
         Self {
             doc,
             score,
             phase,
             features: None,
+            summary: None,
         }
     }
 }
@@ -215,6 +227,41 @@ pub struct RankPipeline {
     /// `features` arc. Default `Arc::from([])` preserves NFR-9 (zero cost
     /// when unused). R-7c.5.
     pub match_features: Arc<[(Arc<str>, crate::types::ExecutorIdx)]>,
+    /// Resolved summary_features — same shape as `match_features` but
+    /// driven by `spec.summary_features`. Captured per-doc into
+    /// `ScoredHit.summary` so callers can distinguish "match" (driving
+    /// the model) from "summary" (only for the response payload) when
+    /// shaping the wire DTOs. R-7c.5b.
+    pub summary_features: Arc<[(Arc<str>, crate::types::ExecutorIdx)]>,
+}
+
+/// Shared helper: pull each declared `(name, executor_idx)` value off
+/// the first-phase program for one doc. Used by `run_first_phase` to
+/// capture both `match_features` and `summary_features` snapshots
+/// using identical mechanics (R-7c.5 / R-7c.5b).
+///
+/// `last_output(idx)` is a memoized read when the executor sits in the
+/// score's DAG (the common case for both match_features and
+/// summary_features that share sub-expressions with the score). When
+/// the executor is independent of the score, `force_executor` runs it
+/// once and memoizes the result for the current doc.
+fn capture_feature_snapshot(
+    mapping: &Arc<[(Arc<str>, crate::types::ExecutorIdx)]>,
+    doc: DocHandle,
+    program: &mut RankProgram,
+    ctx: &mut ScoreCtx<'_>,
+) -> Option<Arc<[(Arc<str>, f32)]>> {
+    if mapping.is_empty() {
+        return None;
+    }
+    let mut buf: Vec<(Arc<str>, f32)> = Vec::with_capacity(mapping.len());
+    for (name, idx) in mapping.iter() {
+        let value = program
+            .last_output(*idx)
+            .unwrap_or_else(|| program.force_executor(*idx, doc, ctx));
+        buf.push((name.clone(), value));
+    }
+    Some(Arc::<[(Arc<str>, f32)]>::from(buf))
 }
 
 impl RankPipeline {
@@ -228,6 +275,7 @@ impl RankPipeline {
             heap_size,
             rerank_count: heap_size,
             match_features: Arc::from([]),
+            summary_features: Arc::from([]),
         }
     }
 
@@ -252,25 +300,28 @@ impl RankPipeline {
             // The hot-path `last_output(idx)` is a flag + indexed read —
             // no work happens when match_features is empty, so the
             // existing zero-features fast path stays unchanged.
-            let features = if self.match_features.is_empty() {
-                None
-            } else {
-                let mut buf: Vec<(Arc<str>, f32)> =
-                    Vec::with_capacity(self.match_features.len());
-                for (name, idx) in self.match_features.iter() {
-                    let value = self
-                        .first
-                        .last_output(*idx)
-                        .unwrap_or_else(|| self.first.force_executor(*idx, doc, ctx));
-                    buf.push((name.clone(), value));
-                }
-                Some(Arc::<[(Arc<str>, f32)]>::from(buf))
-            };
+            let features = capture_feature_snapshot(
+                &self.match_features,
+                doc,
+                &mut self.first,
+                ctx,
+            );
+            // R-7c.5b: same walk for summary_features. Independent of
+            // match_features — a profile may declare one, both, or
+            // neither. Both Arcs default to None when the corresponding
+            // mapping is empty (NFR-9: zero cost when unused).
+            let summary = capture_feature_snapshot(
+                &self.summary_features,
+                doc,
+                &mut self.first,
+                ctx,
+            );
             hits.push(ScoredHit {
                 doc,
                 score,
                 phase: PhaseId::FIRST,
                 features,
+                summary,
             });
             if let Some(b_us) = budget_us {
                 let elapsed = t0.elapsed().as_micros() as u64;
@@ -824,6 +875,7 @@ mod tests {
             score: 2.0,
             phase: PhaseId::FIRST,
             features: Some(inp_features.clone()),
+            summary: None,
         }];
         let passthrough = PassthroughSecondPhaseScorer.rescore(hits.clone(), &QueryContext::default()).unwrap();
         assert!(passthrough[0].features.as_ref().is_some());

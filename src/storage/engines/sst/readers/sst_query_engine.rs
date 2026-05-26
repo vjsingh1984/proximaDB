@@ -165,7 +165,7 @@ pub struct BlockCache {
     #[allow(dead_code)]
     cache: Arc<
         tokio::sync::RwLock<
-            proximadb_runtime_common::cache::LruCache<BlockCacheKey, Arc<ProximaDataBlock>>,
+            proximadb_runtime_common::cache::LruCache<SstQueryBlockCacheKey, Arc<ProximaDataBlock>>,
         >,
     >,
     #[allow(dead_code)]
@@ -267,9 +267,12 @@ pub struct ReaderConfig {
     pub read_ahead_blocks: usize,
 }
 
+/// Backwards-compat alias for [`SstQueryBlockCacheKey`].
+pub type BlockCacheKey = SstQueryBlockCacheKey;
+
 /// Block cache key
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub struct BlockCacheKey {
+pub struct SstQueryBlockCacheKey {
     pub file_path: String,
     pub block_id: u32,
     pub block_index: usize,
@@ -346,8 +349,11 @@ impl<T> BlockIterator<T> {
     }
 }
 
+/// Backwards-compat alias for [`SstQueryCollectionContext`].
+pub type CollectionContext = SstQueryCollectionContext;
+
 /// Collection context for search
-pub struct CollectionContext {
+pub struct SstQueryCollectionContext {
     pub file_path: String,
     pub sstable_files: Vec<String>,
     pub total_vectors: usize,
@@ -1376,7 +1382,7 @@ impl UnifiedSstableReader {
         );
 
         // Create search context
-        let context = CollectionContext {
+        let context = SstQueryCollectionContext {
             file_path: file_path.to_string(),
             sstable_files: vec![file_path.to_string()],
             total_vectors: 0,
@@ -1499,7 +1505,7 @@ impl UnifiedSstableReader {
         );
 
         // Create search context (reuse existing logic)
-        let context = CollectionContext {
+        let context = SstQueryCollectionContext {
             file_path: file_path.to_string(),
             sstable_files: vec![file_path.to_string()],
             total_vectors: 0,
@@ -1628,7 +1634,7 @@ impl UnifiedSstableReader {
         );
 
         // Create search context
-        let context = CollectionContext {
+        let context = SstQueryCollectionContext {
             file_path: file_path.to_string(),
             sstable_files: vec![file_path.to_string()],
             total_vectors: 0,
@@ -1793,7 +1799,7 @@ impl UnifiedSstableReader {
         );
 
         // Create search context
-        let context = CollectionContext {
+        let context = SstQueryCollectionContext {
             file_path: file_path.to_string(),
             sstable_files: vec![file_path.to_string()],
             total_vectors: 0,
@@ -2153,7 +2159,7 @@ impl UnifiedSstableReader {
     pub async fn read_with_selective_cache_strategy(
         &self,
         params: &SearchParams,
-        collection_context: &CollectionContext,
+        collection_context: &SstQueryCollectionContext,
         bandwidth_optimizer: Option<
             Arc<crate::storage::engines::core::io::zero_copy::BandwidthOptimizer>,
         >,
@@ -2246,7 +2252,7 @@ impl UnifiedSstableReader {
         }
 
         // Create minimal context for compaction
-        let context = CollectionContext {
+        let context = SstQueryCollectionContext {
             file_path: String::new(),
             sstable_files: sstable_files.to_vec(),
             total_vectors: 0,
@@ -2297,7 +2303,7 @@ impl UnifiedSstableReader {
     pub async fn search_vectors(
         &self,
         params: &SearchParams,
-        collection_context: &CollectionContext,
+        collection_context: &SstQueryCollectionContext,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         debug!(
             "🔍 SSTABLE READER: Starting cache-first search with {} files, k={}",
@@ -2392,7 +2398,7 @@ impl UnifiedSstableReader {
         &'a self,
         strategy: &'a SstableReadingStrategy,
         params: &'a SearchParams,
-        context: &'a CollectionContext,
+        context: &'a SstQueryCollectionContext,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<Vec<ProximaDataBlock>>> + Send + 'a>,
     > {
@@ -2478,7 +2484,7 @@ impl UnifiedSstableReader {
     /// 🚀 NEW: Selective cache strategy - optimized for normal queries with range reads and cache lookup
     async fn selective_cache_strategy(
         &self,
-        context: &CollectionContext,
+        context: &SstQueryCollectionContext,
         use_range_reads: bool,
         enable_bloom_filters: bool,
         enable_cache_lookup: bool,
@@ -2557,7 +2563,7 @@ impl UnifiedSstableReader {
     /// 🚀 NEW: Compaction full read strategy - optimized for bulk operations with minimal overhead
     async fn compaction_full_read_strategy(
         &self,
-        context: &CollectionContext,
+        context: &SstQueryCollectionContext,
         skip_bloom_filters: bool,
         skip_indexes: bool,
         bypass_write_cache: bool,
@@ -2671,7 +2677,7 @@ impl UnifiedSstableReader {
         // For now, use the modular full scan strategy with optimizations
         // In a full implementation, this would use selective range reads
         self.full_scan_strategy_modular(
-            &CollectionContext {
+            &SstQueryCollectionContext {
                 file_path: file_path.to_string(),
                 sstable_files: vec![file_path.to_string()],
                 total_vectors: 0,
@@ -2799,7 +2805,7 @@ impl UnifiedSstableReader {
     /// Full scan strategy implementation with disk cache optimization
     async fn full_scan_strategy(
         &self,
-        context: &CollectionContext,
+        context: &SstQueryCollectionContext,
         use_block_cache: bool,
     ) -> Result<Vec<ProximaDataBlock>> {
         trace!(
@@ -2903,7 +2909,7 @@ impl UnifiedSstableReader {
     /// Parallel full scan across multiple SSTable files
     async fn parallel_full_scan(
         &self,
-        context: &CollectionContext,
+        context: &SstQueryCollectionContext,
         use_block_cache: bool,
     ) -> Result<Vec<ProximaDataBlock>> {
         use std::sync::Arc;
@@ -2981,7 +2987,7 @@ impl UnifiedSstableReader {
     // Placeholder implementations for other strategies
     async fn index_range_scan_strategy(
         &self,
-        context: &CollectionContext,
+        context: &SstQueryCollectionContext,
         start_block: usize,
         end_block: usize,
         use_bloom: bool,
@@ -3017,7 +3023,7 @@ impl UnifiedSstableReader {
 
     async fn metadata_filtered_strategy(
         &self,
-        context: &CollectionContext,
+        context: &SstQueryCollectionContext,
         params: &SearchParams,
         blocks: &[usize],
         skip_bloom: bool,
@@ -3209,7 +3215,7 @@ impl UnifiedSstableReader {
             for block_idx in selected_blocks {
                 debug!("    📄 Loading block {} from file {}", block_idx, file_path);
                 // Create a temporary context for this specific file
-                let file_context = CollectionContext {
+                let file_context = SstQueryCollectionContext {
                     file_path: file_path.clone(),
                     sstable_files: vec![file_path.clone()],
                     total_vectors: context.total_vectors,
@@ -3263,10 +3269,10 @@ impl UnifiedSstableReader {
     /// Load a specific block with caching
     async fn load_block_with_cache(
         &self,
-        context: &CollectionContext,
+        context: &SstQueryCollectionContext,
         block_idx: usize,
     ) -> Result<Option<ProximaDataBlock>> {
-        let _cache_key = BlockCacheKey {
+        let _cache_key = SstQueryBlockCacheKey {
             file_path: context.file_path.clone(),
             block_id: block_idx as u32,
             block_index: block_idx,
@@ -3301,7 +3307,7 @@ impl UnifiedSstableReader {
     /// Load a block from disk with cloud-optimized range requests
     async fn load_block_from_disk(
         &self,
-        context: &CollectionContext,
+        context: &SstQueryCollectionContext,
         block_idx: usize,
     ) -> Result<Option<ProximaDataBlock>> {
         // Extract scheme from file path for proper filesystem selection
@@ -4066,7 +4072,7 @@ impl UnifiedSstableReader {
 
     async fn load_specific_blocks(
         &self,
-        context: &CollectionContext,
+        context: &SstQueryCollectionContext,
         blocks: &[usize],
     ) -> Result<Vec<ProximaDataBlock>> {
         let mut loaded_blocks = Vec::new();
@@ -4354,7 +4360,7 @@ impl UnifiedSstableReader {
     ) -> Result<Vec<ProximaDataBlock>> {
         // Helper method for when we have an index
         let mut blocks = Vec::new();
-        let context = CollectionContext {
+        let context = SstQueryCollectionContext {
             file_path: path.to_string(),
             sstable_files: vec![path.to_string()],
             total_vectors: 0,
@@ -4383,7 +4389,7 @@ impl UnifiedSstableReader {
     /// - Sequential I/O for optimal disk performance
     async fn compaction_optimized_strategy(
         &self,
-        context: &CollectionContext,
+        context: &SstQueryCollectionContext,
         skip_bloom_filters: bool,
         skip_indexes: bool,
         bypass_cache: bool,
@@ -4876,7 +4882,7 @@ impl UnifiedSstableReader {
     /// Full scan using modular block reader with selective block loading
     async fn full_scan_strategy_modular(
         &self,
-        context: &CollectionContext,
+        context: &SstQueryCollectionContext,
         _use_cache: bool,
     ) -> Result<Vec<ProximaDataBlock>> {
         debug!(
@@ -4942,7 +4948,7 @@ impl UnifiedSstableReader {
     /// Filtered scan using modular approach with predicate pushdown
     async fn filtered_scan_strategy_modular(
         &self,
-        context: &CollectionContext,
+        context: &SstQueryCollectionContext,
         filter: &FilterExpression,
     ) -> Result<Vec<ProximaDataBlock>> {
         debug!(
@@ -4989,7 +4995,7 @@ impl UnifiedSstableReader {
     /// Direct compaction strategy using SstDirectReader for zero-copy operations
     async fn compaction_direct_strategy_modular(
         &self,
-        context: &CollectionContext,
+        context: &SstQueryCollectionContext,
     ) -> Result<Vec<ProximaDataBlock>> {
         info!(
             "🚀 Direct compaction modular search_strategy - zero-copy SST operations for {} files",
@@ -5024,7 +5030,7 @@ impl UnifiedSstableReader {
     /// Also applies zone map pruning when metadata filters are present
     async fn search_optimized_strategy_modular(
         &self,
-        context: &CollectionContext,
+        context: &SstQueryCollectionContext,
         search_params: &SearchParams,
     ) -> Result<Vec<ProximaDataBlock>> {
         let mut relevant_blocks = Vec::new();
@@ -5331,7 +5337,7 @@ impl ReadingStrategySelector {
     pub fn select_strategy(
         &self,
         params: &SearchParams,
-        context: &CollectionContext,
+        context: &SstQueryCollectionContext,
     ) -> Result<SstableReadingStrategy> {
         // Strategy selection logic based on:
         // 1. Presence of metadata filters
@@ -5363,7 +5369,7 @@ impl ReadingStrategySelector {
     /// This bypasses normal query optimizations in favor of bulk I/O efficiency
     pub fn select_compaction_strategy(
         &self,
-        _context: &CollectionContext,
+        _context: &SstQueryCollectionContext,
     ) -> SstableReadingStrategy {
         SstableReadingStrategy::CompactionFullRead {
             skip_bloom_filters: true,        // No point lookups in compaction
@@ -5386,7 +5392,7 @@ impl ReadingStrategySelector {
         );
 
         // Create minimal context for compaction
-        let _context = CollectionContext {
+        let _context = SstQueryCollectionContext {
             file_path: String::new(),
             sstable_files: sstable_files.to_vec(),
             total_vectors: 0,

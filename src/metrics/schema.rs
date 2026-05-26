@@ -33,9 +33,12 @@ pub enum AlertLevel {
     Critical,
 }
 
+/// Backwards-compat alias for [`SchemaCollectionMetrics`].
+pub type CollectionMetrics = SchemaCollectionMetrics;
+
 /// Comprehensive metrics for a single collection
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct CollectionMetrics {
+pub struct SchemaCollectionMetrics {
     // === Basic Statistics ===
     pub collection_id: String,
     pub vector_count: i64,
@@ -203,7 +206,7 @@ pub struct ImprovementEstimate {
     pub storage_reduction_percent: Option<f32>,
 }
 
-impl CollectionMetrics {
+impl SchemaCollectionMetrics {
     /// Calculate sparsity ratio from vector data
     pub fn calculate_sparsity(&mut self, zero_count: i64, total_dimensions: i64) {
         if total_dimensions > 0 {
@@ -402,9 +405,9 @@ mod tests {
         // Initialize hardware capabilities for testing
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
-        debug!("🧪 TEST: CollectionMetrics creation and default values");
+        debug!("🧪 TEST: SchemaCollectionMetrics creation and default values");
 
-        let metrics = CollectionMetrics::default();
+        let metrics = SchemaCollectionMetrics::default();
 
         // Verify default values
         assert!(metrics.collection_id.is_empty());
@@ -418,7 +421,7 @@ mod tests {
         assert!(metrics.available_indexes.is_empty());
         assert_eq!(metrics.cache_hit_ratio, 0.0);
 
-        info!("✅ CollectionMetrics defaults test passed");
+        info!("✅ SchemaCollectionMetrics defaults test passed");
     }
 
     #[test]
@@ -426,9 +429,9 @@ mod tests {
         // Initialize hardware capabilities for testing
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
-        debug!("🧪 TEST: CollectionMetrics full initialization");
+        debug!("🧪 TEST: SchemaCollectionMetrics full initialization");
 
-        let mut metrics = CollectionMetrics {
+        let mut metrics = SchemaCollectionMetrics {
             collection_id: "test_collection_schema".to_string(),
             vector_count: 50000,
             dimension: 768,
@@ -606,7 +609,7 @@ mod tests {
             panic!("Expected IVF index to be in Building state");
         }
 
-        info!("✅ CollectionMetrics full initialization test passed");
+        info!("✅ SchemaCollectionMetrics full initialization test passed");
     }
 
     #[test]
@@ -656,7 +659,7 @@ mod tests {
 
         debug!("🧪 TEST: Sparsity ratio calculation");
 
-        let mut metrics = CollectionMetrics::default();
+        let mut metrics = SchemaCollectionMetrics::default();
 
         // Test case 1: 30% sparsity
         metrics.calculate_sparsity(3000, 10000);
@@ -688,7 +691,7 @@ mod tests {
 
         debug!("🧪 TEST: Latency percentiles calculation");
 
-        let mut metrics = CollectionMetrics::default();
+        let mut metrics = SchemaCollectionMetrics::default();
 
         // Test with a set of latencies
         let latencies = vec![
@@ -746,7 +749,7 @@ mod tests {
             max_memory_mb: 512,
         };
 
-        let mut metrics = CollectionMetrics {
+        let mut metrics = SchemaCollectionMetrics {
             collection_id: "optimization_test".to_string(),
             parquet_file_count: 25,          // Exceeds parallel_scan_threshold
             sparsity_ratio: 0.5,             // Exceeds sparsity_threshold
@@ -866,7 +869,7 @@ mod tests {
         debug!("🧪 TEST: Metrics serialization and deserialization");
 
         // Create comprehensive collection metrics
-        let original_metrics = CollectionMetrics {
+        let original_metrics = SchemaCollectionMetrics {
             collection_id: "serialization_test".to_string(),
             vector_count: 100000,
             dimension: 384,
@@ -893,7 +896,7 @@ mod tests {
         assert!(json_string.contains("\"avg_search_latency_us\":1500.25"));
 
         // Deserialize from JSON
-        let deserialized_result: Result<CollectionMetrics, _> = serde_json::from_str(&json_string);
+        let deserialized_result: Result<SchemaCollectionMetrics, _> = serde_json::from_str(&json_string);
         assert!(
             deserialized_result.is_ok(),
             "Deserialization should succeed"
@@ -931,7 +934,7 @@ mod tests {
             deserialized_metrics.cache_hit_ratio,
             original_metrics.cache_hit_ratio
         );
-        // created_at field removed from CollectionMetrics
+        // created_at field removed from SchemaCollectionMetrics
         assert_eq!(deserialized_metrics.updated_at, original_metrics.updated_at);
 
         // Test GlobalMetrics serialization

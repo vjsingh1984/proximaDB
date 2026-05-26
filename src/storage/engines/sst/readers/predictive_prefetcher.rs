@@ -17,9 +17,12 @@ use tokio::sync::RwLock;
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
 // Define types locally to avoid circular dependencies
+/// Backwards-compat alias for [`PrefetcherBlockCacheKey`].
+pub type BlockCacheKey = PrefetcherBlockCacheKey;
+
 /// Cache key for block caching
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct BlockCacheKey {
+pub struct PrefetcherBlockCacheKey {
     pub file_path: String,
     pub block_id: u32,
     pub block_index: usize,
@@ -32,7 +35,7 @@ pub struct PredictivePrefetcher {
     /// Prefetch queue
     prefetch_queue: Arc<RwLock<PrefetchQueue>>,
     /// Prefetch cache (separate from main block cache)
-    prefetch_cache: Arc<DashMap<BlockCacheKey, Arc<ProximaDataBlock>>>,
+    prefetch_cache: Arc<DashMap<PrefetcherBlockCacheKey, Arc<ProximaDataBlock>>>,
     /// Configuration
     config: PrefetchConfig,
     /// Metrics
@@ -104,7 +107,7 @@ pub struct TemporalPattern {
 /// Access record for pattern learning
 #[derive(Debug, Clone)]
 pub struct AccessRecord {
-    pub key: BlockCacheKey,
+    pub key: PrefetcherBlockCacheKey,
     pub timestamp: Instant,
     pub access_type: AccessType,
     pub hit: bool,
@@ -121,7 +124,7 @@ pub enum AccessType {
 /// Prefetch queue entry
 #[derive(Debug, Clone)]
 pub struct PrefetchEntry {
-    pub key: BlockCacheKey,
+    pub key: PrefetcherBlockCacheKey,
     pub priority: f64,
     pub predicted_time: Instant,
     pub pattern_type: PatternType,
@@ -141,7 +144,7 @@ pub struct PrefetchQueue {
     /// Priority queue of blocks to prefetch
     queue: Vec<PrefetchEntry>,
     /// Active prefetch tasks
-    active_tasks: HashMap<BlockCacheKey, tokio::task::JoinHandle<Result<()>>>,
+    active_tasks: HashMap<PrefetcherBlockCacheKey, tokio::task::JoinHandle<Result<()>>>,
 }
 
 /// Prefetch metrics
@@ -167,7 +170,7 @@ impl PredictivePrefetcher {
     }
 
     /// Record an access and update patterns
-    pub async fn record_access(&self, key: &BlockCacheKey, hit: bool) -> Result<()> {
+    pub async fn record_access(&self, key: &PrefetcherBlockCacheKey, hit: bool) -> Result<()> {
         let record = AccessRecord {
             key: key.clone(),
             timestamp: Instant::now(),
@@ -186,7 +189,7 @@ impl PredictivePrefetcher {
     }
 
     /// Get prefetched block if available
-    pub async fn get_prefetched(&self, key: &BlockCacheKey) -> Option<Arc<ProximaDataBlock>> {
+    pub async fn get_prefetched(&self, key: &PrefetcherBlockCacheKey) -> Option<Arc<ProximaDataBlock>> {
         if let Some((_, block)) = self.prefetch_cache.remove(key) {
             self.metrics.prefetch_hits.fetch_add(1, Ordering::Relaxed);
             Some(block)
@@ -197,7 +200,7 @@ impl PredictivePrefetcher {
     }
 
     /// Predict next blocks and schedule prefetching
-    async fn predict_and_prefetch(&self, current_key: &BlockCacheKey) -> Result<()> {
+    async fn predict_and_prefetch(&self, current_key: &PrefetcherBlockCacheKey) -> Result<()> {
         let predictions = self.predict_next_blocks(current_key).await?;
 
         let mut queue = self.prefetch_queue.write().await;
@@ -225,8 +228,8 @@ impl PredictivePrefetcher {
     /// Predict next blocks based on patterns
     async fn predict_next_blocks(
         &self,
-        current_key: &BlockCacheKey,
-    ) -> Result<Vec<(BlockCacheKey, f64, PatternType)>> {
+        current_key: &PrefetcherBlockCacheKey,
+    ) -> Result<Vec<(PrefetcherBlockCacheKey, f64, PatternType)>> {
         let mut predictions = Vec::new();
 
         // Sequential pattern prediction
@@ -240,7 +243,7 @@ impl PredictivePrefetcher {
             for i in 1..=self.config.prefetch_window {
                 let next_block_id =
                     (current_key.block_id as i32 + seq_pattern.stride * i as i32) as u32;
-                let next_key = BlockCacheKey {
+                let next_key = PrefetcherBlockCacheKey {
                     file_path: current_key.file_path.clone(),
                     block_id: next_block_id,
                     block_index: current_key.block_index + i,
@@ -266,7 +269,7 @@ impl PredictivePrefetcher {
             for (block_id, count) in hot_blocks.iter().take(self.config.prefetch_window) {
                 let confidence = **count as f64 / rand_pattern.total_accesses as f64;
                 if confidence > 0.1 {
-                    let key = BlockCacheKey {
+                    let key = PrefetcherBlockCacheKey {
                         file_path: current_key.file_path.clone(),
                         block_id: **block_id,
                         block_index: 0, // Will be determined during fetch
@@ -289,8 +292,8 @@ impl PredictivePrefetcher {
     /// ML-based block prediction (simplified)
     async fn ml_predict_blocks(
         &self,
-        current_key: &BlockCacheKey,
-    ) -> Result<Vec<(BlockCacheKey, f64, PatternType)>> {
+        current_key: &PrefetcherBlockCacheKey,
+    ) -> Result<Vec<(PrefetcherBlockCacheKey, f64, PatternType)>> {
         // Simplified ML prediction using access history
         let history = self.access_patterns.access_history.read().await;
 
@@ -316,7 +319,7 @@ impl PredictivePrefetcher {
             let predictions: Vec<_> = pattern_scores
                 .into_iter()
                 .map(|(block_id, score)| {
-                    let key = BlockCacheKey {
+                    let key = PrefetcherBlockCacheKey {
                         file_path: current_key.file_path.clone(),
                         block_id,
                         block_index: 0,
@@ -357,7 +360,7 @@ impl PredictivePrefetcher {
     }
 
     /// Prefetch a single block
-    async fn prefetch_block(&self, key: &BlockCacheKey) -> Result<()> {
+    async fn prefetch_block(&self, key: &PrefetcherBlockCacheKey) -> Result<()> {
         let _start = Instant::now();
 
         // Check if block is already cached
@@ -381,8 +384,8 @@ impl PredictivePrefetcher {
     }
 
     /// Detect access type
-    async fn detect_access_type(&self, key: &BlockCacheKey) -> AccessType {
-        // Convert BlockCacheKey to String for map lookup
+    async fn detect_access_type(&self, key: &PrefetcherBlockCacheKey) -> AccessType {
+        // Convert PrefetcherBlockCacheKey to String for map lookup
         let key_str = format!("{}:{}:{}", key.file_path, key.block_id, key.block_index);
         if let Some(pattern) = self.access_patterns.sequential_patterns.get(&key_str)
             && pattern.access_count > 3
@@ -589,11 +592,11 @@ impl PrefetchQueue {
         self.queue.pop()
     }
 
-    fn is_active(&self, key: &BlockCacheKey) -> bool {
+    fn is_active(&self, key: &PrefetcherBlockCacheKey) -> bool {
         self.active_tasks.contains_key(key)
     }
 
-    fn mark_active(&mut self, key: BlockCacheKey, handle: tokio::task::JoinHandle<Result<()>>) {
+    fn mark_active(&mut self, key: PrefetcherBlockCacheKey, handle: tokio::task::JoinHandle<Result<()>>) {
         self.active_tasks.insert(key, handle);
     }
 }
@@ -638,7 +641,7 @@ mod tests {
 
         // Record sequential access pattern (without actual prefetching)
         for i in 0..10 {
-            let key = BlockCacheKey {
+            let key = PrefetcherBlockCacheKey {
                 file_path: "test.sstable".to_string(),
                 block_id: i,
                 block_index: i as usize,
@@ -683,7 +686,7 @@ mod tests {
         let hot_blocks = vec![5, 10, 15];
         for _ in 0..20 {
             for &block_id in &hot_blocks {
-                let key = BlockCacheKey {
+                let key = PrefetcherBlockCacheKey {
                     file_path: "random.sstable".to_string(),
                     block_id,
                     block_index: block_id as usize,
@@ -726,7 +729,7 @@ mod tests {
 
         // Build sequential pattern (without actual prefetching)
         for i in 0..5 {
-            let key = BlockCacheKey {
+            let key = PrefetcherBlockCacheKey {
                 file_path: "predict.sstable".to_string(),
                 block_id: i * 2, // Stride of 2
                 block_index: i as usize,
@@ -747,7 +750,7 @@ mod tests {
         }
 
         // Predict next blocks
-        let current_key = BlockCacheKey {
+        let current_key = PrefetcherBlockCacheKey {
             file_path: "predict.sstable".to_string(),
             block_id: 8,
             block_index: 4,

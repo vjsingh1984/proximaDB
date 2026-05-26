@@ -76,9 +76,12 @@ pub struct SchemaMapping {
     pub filterable_columns: Vec<String>,
 }
 
+/// Backwards-compat alias for [`ColumnarQueryCollectionContext`].
+pub type CollectionContext = ColumnarQueryCollectionContext;
+
 /// Collection context for queries
 #[derive(Debug, Clone)]
-pub struct CollectionContext {
+pub struct ColumnarQueryCollectionContext {
     pub collection_id: String,
     pub dimension: usize,
     pub distance_metric: String,
@@ -402,8 +405,8 @@ impl UnifiedParquetReader {
     }
 
     /// Get collection context - returns metadata about the collection
-    pub async fn get_collection_context(&self) -> CollectionContext {
-        CollectionContext {
+    pub async fn get_collection_context(&self) -> ColumnarQueryCollectionContext {
+        ColumnarQueryCollectionContext {
             dimension: self.dimension,
             collection_id: String::new(),
             distance_metric: "cosine".to_string(),
@@ -416,7 +419,7 @@ impl UnifiedParquetReader {
     pub async fn search_vectors(
         &self,
         search_plan: &SearchPlan,
-        _collection_context: &CollectionContext,
+        _collection_context: &ColumnarQueryCollectionContext,
     ) -> Result<SearchResponse> {
         let start_time = std::time::Instant::now();
 

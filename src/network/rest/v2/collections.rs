@@ -108,7 +108,7 @@ pub struct CreateCollectionV2Request {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct SchemaDefinition {
     /// Column definitions
-    pub columns: Vec<ColumnDefinition>,
+    pub columns: Vec<RestColumnDefinition>,
     /// Schema enforcement mode
     ///
     /// - "strict": All columns must match schema exactly
@@ -122,9 +122,12 @@ pub struct SchemaDefinition {
     pub allow_additional_fields: Option<bool>,
 }
 
+/// Backwards-compat alias for [`RestColumnDefinition`].
+pub type ColumnDefinition = RestColumnDefinition;
+
 /// Column definition for schema
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct ColumnDefinition {
+pub struct RestColumnDefinition {
     /// Column name
     pub name: String,
     /// Data type
@@ -829,7 +832,7 @@ mod tests {
     #[test]
     fn test_schema_definition_serialization() {
         let schema = SchemaDefinition {
-            columns: vec![ColumnDefinition {
+            columns: vec![RestColumnDefinition {
                 name: "title".to_string(),
                 data_type: "text".to_string(),
                 nullable: Some(false),
@@ -859,7 +862,7 @@ mod tests {
             "scale": 2
         }"#;
 
-        let column: ColumnDefinition = serde_json::from_str(json).unwrap();
+        let column: RestColumnDefinition = serde_json::from_str(json).unwrap();
         assert_eq!(column.precision, Some(10));
         assert_eq!(column.scale, Some(2));
     }

@@ -30,7 +30,7 @@ pub enum DdlStatement {
         /// Name of the table to create.
         table_name: String,
         /// Column definitions for the new table.
-        columns: Vec<ColumnDefinition>,
+        columns: Vec<DdlColumnDefinition>,
         /// Table-level relational constraints.
         constraints: Vec<TableConstraint>,
         /// When `true`, silently succeeds if the table already exists.
@@ -109,9 +109,12 @@ pub enum DdlStatement {
     },
 }
 
+/// Backwards-compat alias for [`DdlColumnDefinition`].
+pub type ColumnDefinition = DdlColumnDefinition;
+
 /// Column definition for CREATE TABLE
 #[derive(Debug, Clone)]
-pub struct ColumnDefinition {
+pub struct DdlColumnDefinition {
     /// Column name.
     pub name: String,
     /// SQL data type of the column.
@@ -196,7 +199,7 @@ pub enum SqlDataType {
 #[derive(Debug, Clone)]
 pub enum AlterTableChange {
     /// ADD COLUMN column_def
-    AddColumn(ColumnDefinition),
+    AddColumn(DdlColumnDefinition),
     /// DROP COLUMN column_name
     DropColumn(String),
     /// RENAME COLUMN old_name TO new_name
@@ -472,7 +475,7 @@ impl DdlService {
     async fn create_table(
         &self,
         table_name: &str,
-        columns: Vec<ColumnDefinition>,
+        columns: Vec<DdlColumnDefinition>,
         constraints: Vec<TableConstraint>,
         if_not_exists: bool,
         properties: HashMap<String, String>,
@@ -801,7 +804,7 @@ impl DdlService {
 
         // Build schema with standard vector collection columns
         let columns = vec![
-            ColumnDefinition {
+            DdlColumnDefinition {
                 name: "id".to_string(),
                 data_type: SqlDataType::Varchar {
                     max_length: Some(255),
@@ -811,7 +814,7 @@ impl DdlService {
                 comment: Some("Vector record ID".to_string()),
                 primary_key: true,
             },
-            ColumnDefinition {
+            DdlColumnDefinition {
                 name: "vector".to_string(),
                 data_type: SqlDataType::Vector { dimension },
                 nullable: false,
@@ -819,7 +822,7 @@ impl DdlService {
                 comment: Some("Vector embedding".to_string()),
                 primary_key: false,
             },
-            ColumnDefinition {
+            DdlColumnDefinition {
                 name: "metadata".to_string(),
                 data_type: SqlDataType::Json,
                 nullable: true,
@@ -827,7 +830,7 @@ impl DdlService {
                 comment: Some("JSON metadata".to_string()),
                 primary_key: false,
             },
-            ColumnDefinition {
+            DdlColumnDefinition {
                 name: "timestamp".to_string(),
                 data_type: SqlDataType::Timestamp,
                 nullable: true,
@@ -865,7 +868,7 @@ impl DdlService {
     fn build_catalog_schema(
         &self,
         table_name: &str,
-        columns: Vec<ColumnDefinition>,
+        columns: Vec<DdlColumnDefinition>,
         constraints: Vec<TableConstraint>,
         properties: HashMap<String, String>,
     ) -> Result<CatalogTableSchema> {
@@ -1736,7 +1739,7 @@ mod tests {
 
     #[test]
     fn test_column_definition() {
-        let col = ColumnDefinition {
+        let col = DdlColumnDefinition {
             name: "id".to_string(),
             data_type: SqlDataType::BigInt,
             nullable: false,
@@ -2088,7 +2091,7 @@ mod tests {
                     .unwrap()
                     .as_nanos()
             ),
-            columns: vec![ColumnDefinition {
+            columns: vec![DdlColumnDefinition {
                 name: "id".to_string(),
                 data_type: SqlDataType::BigInt,
                 nullable: false,
@@ -2208,7 +2211,7 @@ mod tests {
                     .unwrap()
                     .as_nanos()
             ),
-            columns: vec![ColumnDefinition {
+            columns: vec![DdlColumnDefinition {
                 name: "id".to_string(),
                 data_type: SqlDataType::BigInt,
                 nullable: false,

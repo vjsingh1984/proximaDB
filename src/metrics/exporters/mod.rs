@@ -26,7 +26,7 @@ pub trait MetricsExporter: Send + Sync {
 pub struct MetricsExportSnapshot {
     pub timestamp: i64,
     pub system: SystemMetrics,
-    pub collections: HashMap<String, CollectionMetrics>,
+    pub collections: HashMap<String, ExporterCollectionMetrics>,
     pub cache: ExporterCacheMetrics,
     pub compression: CompressionMetrics,
     pub custom: HashMap<String, f64>,
@@ -100,9 +100,12 @@ pub struct IndexMetrics {
     pub search_operations_per_second: f64,
 }
 
+/// Backwards-compat alias for [`ExporterCollectionMetrics`].
+pub type CollectionMetrics = ExporterCollectionMetrics;
+
 /// Per-collection metrics
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct CollectionMetrics {
+pub struct ExporterCollectionMetrics {
     pub vector_count: u64,
     pub index_size_bytes: u64,
     pub search_qps: f64,

@@ -14,9 +14,12 @@ use tracing::{debug, info};
 use crate::storage::cache::orchestrator::{CacheStatsProvider, UsageStats};
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
+/// Backwards-compat alias for [`DecompressionBlockCacheKey`].
+pub type BlockCacheKey = DecompressionBlockCacheKey;
+
 /// Cache key for decompressed blocks
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct BlockCacheKey {
+pub struct DecompressionBlockCacheKey {
     /// SSTable file path
     pub file_path: String,
     /// Block ID within the file
@@ -43,7 +46,7 @@ pub struct CachedBlock {
 /// Decompression cache for SSTable blocks with automatic invalidation
 pub struct DecompressionCache {
     /// LRU cache for decompressed blocks
-    block_cache: Arc<RwLock<LruCache<BlockCacheKey, CachedBlock>>>,
+    block_cache: Arc<RwLock<LruCache<DecompressionBlockCacheKey, CachedBlock>>>,
     /// Maximum cache size in bytes
     max_size_bytes: usize,
     /// Current cache size in bytes
@@ -52,7 +55,7 @@ pub struct DecompressionCache {
     stats: Arc<RwLock<DecompressionCacheStats>>,
     /// Compression-specific sub-caches for better locality
     compression_caches:
-        Arc<RwLock<HashMap<proximadb_compression::CompressionAlgorithm, Vec<BlockCacheKey>>>>,
+        Arc<RwLock<HashMap<proximadb_compression::CompressionAlgorithm, Vec<DecompressionBlockCacheKey>>>>,
     /// File modification timestamps for invalidation
     file_timestamps: Arc<dashmap::DashMap<String, i64>>,
     /// Configuration from TOML
@@ -154,7 +157,7 @@ impl DecompressionCache {
                 let mut size = current_size.write().await;
 
                 // Get current file timestamps (would check actual files in production)
-                let keys_to_remove: Vec<BlockCacheKey> = cache
+                let keys_to_remove: Vec<DecompressionBlockCacheKey> = cache
                     .iter()
                     .filter_map(|(key, cached_block)| {
                         // Check if file has been modified
@@ -200,7 +203,7 @@ impl DecompressionCache {
         let mut current_size = self.current_size_bytes.write().await;
         let mut stats = self.stats.write().await;
 
-        let keys_to_remove: Vec<BlockCacheKey> = cache
+        let keys_to_remove: Vec<DecompressionBlockCacheKey> = cache
             .iter()
             .filter_map(|(key, _)| {
                 if key.file_path == file_path {
@@ -239,7 +242,7 @@ impl DecompressionCache {
         let mut cache = self.block_cache.write().await;
         let mut current_size = self.current_size_bytes.write().await;
 
-        let keys_to_remove: Vec<BlockCacheKey> = cache
+        let keys_to_remove: Vec<DecompressionBlockCacheKey> = cache
             .iter()
             .filter_map(|(key, _)| {
                 if key.file_path.contains(collection_id) {
@@ -267,7 +270,7 @@ impl DecompressionCache {
     }
 
     /// Get a decompressed block from cache
-    pub async fn get(&self, key: &BlockCacheKey) -> Option<ProximaDataBlock> {
+    pub async fn get(&self, key: &DecompressionBlockCacheKey) -> Option<ProximaDataBlock> {
         let mut cache = self.block_cache.write().await;
         let mut stats = self.stats.write().await;
 
@@ -303,7 +306,7 @@ impl DecompressionCache {
     /// Put a decompressed block into cache
     pub async fn put(
         &self,
-        key: BlockCacheKey,
+        key: DecompressionBlockCacheKey,
         data: ProximaDataBlock,
         compression_algorithm: Option<proximadb_compression::CompressionAlgorithm>,
     ) -> Result<()> {
@@ -489,7 +492,7 @@ impl DecompressionCache {
         );
 
         for (block_id, data, algo) in blocks {
-            let key = BlockCacheKey {
+            let key = DecompressionBlockCacheKey {
                 file_path: file_path.to_string(),
                 block_id,
                 block_offset: 0, // Will be set properly in actual usage
@@ -505,7 +508,7 @@ impl DecompressionCache {
     pub async fn get_blocks_by_algorithm(
         &self,
         algorithm: proximadb_compression::CompressionAlgorithm,
-    ) -> Vec<BlockCacheKey> {
+    ) -> Vec<DecompressionBlockCacheKey> {
         let comp_caches = self.compression_caches.read().await;
         comp_caches.get(&algorithm).cloned().unwrap_or_default()
     }
@@ -623,7 +626,7 @@ mod tests {
 
         let cache = DecompressionCache::from_config(test_cache_config(10)); // 10MB cache
 
-        let key = BlockCacheKey {
+        let key = DecompressionBlockCacheKey {
             file_path: "test.sstable".to_string(),
             block_id: 1,
             block_offset: 0,
@@ -664,7 +667,7 @@ mod tests {
 
         // Fill cache with blocks - create fewer but larger blocks to ensure we exceed cache size
         for i in 0..20 {
-            let key = BlockCacheKey {
+            let key = DecompressionBlockCacheKey {
                 file_path: "test.sstable".to_string(),
                 block_id: i,
                 block_offset: 0,
