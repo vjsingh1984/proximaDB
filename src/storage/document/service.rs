@@ -2233,6 +2233,195 @@ fn create_field_eq_filter(
     }
 }
 
+// =============================================================================
+// DOCUMENTPORT IMPL — ADR-015 (port impl lives on bare concrete service)
+// =============================================================================
+//
+// Bare-service implementation of `proximadb_runtime::DocumentPort`. Each
+// method takes the proto request shape directly, performs the same proto-
+// conversion + bare-service-call logic that was previously in
+// `impl DocumentService for DocumentServiceImpl` (the gRPC tonic wrapper),
+// and returns the proto response wrapped in `anyhow::Result`.
+//
+// This impl coexists with the existing `impl DocumentPort for DocumentServiceImpl`
+// at `src/network/grpc/document_service.rs:284` during the migration window.
+// Subsequent commits will remove the wrapper's port impl + shrink the tonic
+// `impl DocumentService for DocumentServiceImpl` methods to one-liners that
+// delegate to this port impl. See ADR-015 for the full rationale.
+
+#[async_trait::async_trait]
+impl proximadb_runtime::DocumentPort for DocumentService {
+    async fn create_collection(
+        &self,
+        request: crate::proto::proximadb_v1::CreateDocumentCollectionRequest,
+    ) -> Result<crate::proto::proximadb_v1::CreateDocumentCollectionResponse> {
+        let config = request
+            .config
+            .ok_or_else(|| anyhow!("Missing config"))?;
+        let name = config.name.clone();
+        let id = self
+            .create_collection(&name, config)
+            .await
+            .map_err(|e| anyhow!("Failed to create collection: {}", e))?;
+        Ok(crate::proto::proximadb_v1::CreateDocumentCollectionResponse {
+            collection_id: id,
+            success: true,
+        })
+    }
+
+    async fn list_collections(
+        &self,
+        _request: crate::proto::proximadb_v1::ListDocumentCollectionsRequest,
+    ) -> Result<crate::proto::proximadb_v1::ListDocumentCollectionsResponse> {
+        let collections = self
+            .list_collections()
+            .await
+            .map_err(|e| anyhow!("Failed to list collections: {}", e))?;
+        let infos: Vec<crate::proto::proximadb_v1::DocumentCollectionInfo> = collections
+            .iter()
+            .map(|c| crate::proto::proximadb_v1::DocumentCollectionInfo {
+                name: c.name.clone(),
+                document_count: c.document_count,
+                storage_size_bytes: c.storage_size_bytes,
+                indexes: c.indexes.clone(),
+            })
+            .collect();
+        Ok(crate::proto::proximadb_v1::ListDocumentCollectionsResponse { collections: infos })
+    }
+
+    async fn delete_collection(
+        &self,
+        request: crate::proto::proximadb_v1::DeleteDocumentCollectionRequest,
+    ) -> Result<crate::proto::proximadb_v1::DeleteDocumentCollectionResponse> {
+        self.delete_collection(&request.collection)
+            .await
+            .map_err(|e| anyhow!("Failed to delete collection: {}", e))?;
+        Ok(crate::proto::proximadb_v1::DeleteDocumentCollectionResponse { success: true })
+    }
+
+    async fn insert_document(
+        &self,
+        request: crate::proto::proximadb_v1::InsertDocumentRequest,
+    ) -> Result<crate::proto::proximadb_v1::InsertDocumentResponse> {
+        let document = request
+            .document
+            .ok_or_else(|| anyhow!("Missing document"))?;
+        let id = request.id.as_deref();
+        let record = self
+            .insert_document(&request.collection, id, document)
+            .await
+            .map_err(|e| anyhow!("Failed to insert document: {}", e))?;
+        Ok(crate::proto::proximadb_v1::InsertDocumentResponse {
+            id: record.id,
+            version: record.version,
+        })
+    }
+
+    async fn get_document(
+        &self,
+        request: crate::proto::proximadb_v1::GetDocumentRequest,
+    ) -> Result<crate::proto::proximadb_v1::GetDocumentResponse> {
+        let projection = if request.projection.is_empty() {
+            None
+        } else {
+            Some(request.projection)
+        };
+        match self
+            .get_document(&request.collection, &request.id, projection)
+            .await
+            .map_err(|e| anyhow!("Failed to get document: {}", e))?
+        {
+            Some(record) => Ok(crate::proto::proximadb_v1::GetDocumentResponse {
+                document: Some(record.document),
+                version: record.version,
+                found: true,
+            }),
+            None => Ok(crate::proto::proximadb_v1::GetDocumentResponse {
+                document: None,
+                version: 0,
+                found: false,
+            }),
+        }
+    }
+
+    async fn update_document(
+        &self,
+        request: crate::proto::proximadb_v1::UpdateDocumentRequest,
+    ) -> Result<crate::proto::proximadb_v1::UpdateDocumentResponse> {
+        let record = self
+            .update_document(
+                &request.collection,
+                &request.id,
+                request.updates,
+                request.expected_version,
+            )
+            .await
+            .map_err(|e| anyhow!("Failed to update document: {}", e))?;
+        Ok(crate::proto::proximadb_v1::UpdateDocumentResponse {
+            new_version: record.version,
+            success: true,
+        })
+    }
+
+    async fn delete_document(
+        &self,
+        request: crate::proto::proximadb_v1::DeleteDocumentRequest,
+    ) -> Result<crate::proto::proximadb_v1::DeleteDocumentResponse> {
+        let deleted = self
+            .delete_document(&request.collection, &request.id)
+            .await
+            .map_err(|e| anyhow!("Failed to delete document: {}", e))?;
+        Ok(crate::proto::proximadb_v1::DeleteDocumentResponse { deleted })
+    }
+
+    async fn query_documents(
+        &self,
+        request: crate::proto::proximadb_v1::QueryDocumentsRequest,
+    ) -> Result<crate::proto::proximadb_v1::QueryDocumentsResponse> {
+        let params = DocumentQueryParams {
+            filter: request.filter,
+            projection: request.projection,
+            sort: request.sort,
+            limit: request.limit,
+            offset: request.offset,
+            include_count: request.include_count,
+        };
+        let result = self
+            .query_documents(&request.collection, params)
+            .await
+            .map_err(|e| anyhow!("Failed to query documents: {}", e))?;
+        let documents: Vec<crate::proto::proximadb_v1::DocumentResult> = result
+            .documents
+            .into_iter()
+            .map(|d| crate::proto::proximadb_v1::DocumentResult {
+                id: d.id,
+                document: Some(d.document),
+                version: d.version,
+                score: None,
+            })
+            .collect();
+        Ok(crate::proto::proximadb_v1::QueryDocumentsResponse {
+            documents,
+            total_count: result.total_count,
+            query_time_ms: result.query_time_ms,
+        })
+    }
+
+    async fn aggregate_documents(
+        &self,
+        request: crate::proto::proximadb_v1::AggregateDocumentsRequest,
+    ) -> Result<crate::proto::proximadb_v1::AggregateDocumentsResponse> {
+        let result = self
+            .aggregate_documents(&request.collection, request.filter, request.pipeline)
+            .await
+            .map_err(|e| anyhow!("Failed to aggregate documents: {}", e))?;
+        Ok(crate::proto::proximadb_v1::AggregateDocumentsResponse {
+            results: result.results,
+            query_time_ms: result.query_time_ms,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
