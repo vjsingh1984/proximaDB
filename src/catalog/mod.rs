@@ -95,6 +95,12 @@ pub use tier_recommendation::{
 pub mod corpus_version;
 pub use corpus_version::CorpusVersionRegistry;
 
+/// File-backed CorpusVersionStore — first concrete durable backend
+/// for single-node deployments. Other backends (catalog row, KV)
+/// can implement the trait independently.
+pub mod corpus_version_fs_store;
+pub use corpus_version_fs_store::FileSystemCorpusVersionStore;
+
 // Feature-gated implementations
 #[cfg(feature = "delta-lake")]
 pub mod delta;
