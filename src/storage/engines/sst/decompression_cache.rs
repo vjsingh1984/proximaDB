@@ -5,7 +5,7 @@
 //! policy with configurable size limits.
 
 use anyhow::Result;
-use proximadb_runtime_common::cache::LruCache;
+use proximadb_runtime_common::cache::{CacheStats, LruCache};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -64,19 +64,22 @@ pub struct DecompressionCache {
     invalidation_task: Option<tokio::task::JoinHandle<()>>,
 }
 
-/// Cache statistics
+/// Cache statistics.
+///
+/// Embeds the canonical `proximadb_runtime_common::cache::CacheStats` for
+/// the universal hit/miss/eviction/size counters. Adds engine-specific
+/// fields for decompression-tier accounting: bytes/time saved, and
+/// peak size tracking (not modeled by the canonical struct).
+///
+/// Public field access on `hits`/`misses`/`evictions` is via `stats.inner.<field>`.
 #[derive(Debug, Default, Clone)]
 pub struct DecompressionCacheStats {
-    /// Total cache hits
-    pub hits: u64,
-    /// Total cache misses
-    pub misses: u64,
+    /// Canonical cache counters (hits, misses, evictions, expirations, size, capacity, ...).
+    pub inner: CacheStats,
     /// Total bytes saved from decompression
     pub bytes_saved: u64,
     /// Total decompression time saved (microseconds)
     pub time_saved_us: u64,
-    /// Number of evictions
-    pub evictions: u64,
     /// Peak cache size in bytes
     pub peak_size_bytes: usize,
 }
@@ -225,7 +228,7 @@ impl DecompressionCache {
         }
 
         *current_size -= freed_bytes;
-        stats.evictions += invalidated;
+        stats.inner.evictions += invalidated;
 
         if invalidated > 0 {
             info!(
@@ -274,10 +277,11 @@ impl DecompressionCache {
         let mut cache = self.block_cache.write().await;
         let mut stats = self.stats.write().await;
 
+        stats.inner.gets += 1;
         if let Some(cached_block) = cache.get_mut(key) {
             // Update access count
             cached_block.access_count += 1;
-            stats.hits += 1;
+            stats.inner.hits += 1;
 
             // Estimate decompression time saved based on compression algorithm
             let time_saved = Self::estimate_decompression_time(
@@ -297,7 +301,7 @@ impl DecompressionCache {
 
             Some(cached_block.data.clone())
         } else {
-            stats.misses += 1;
+            stats.inner.misses += 1;
             debug!("❌ Cache miss for block {}:{}", key.file_path, key.block_id);
             None
         }
@@ -396,7 +400,7 @@ impl DecompressionCache {
             }
         }
 
-        stats.evictions += evicted_count;
+        stats.inner.evictions += evicted_count;
 
         if freed_bytes > 0 {
             info!(
@@ -464,15 +468,10 @@ impl DecompressionCache {
         *self.current_size_bytes.read().await
     }
 
-    /// Get cache hit rate
+    /// Get cache hit rate (0.0–1.0).
     pub async fn get_hit_rate(&self) -> f64 {
-        let stats = self.stats.read().await;
-        let total = stats.hits + stats.misses;
-        if total == 0 {
-            0.0
-        } else {
-            stats.hits as f64 / total as f64
-        }
+        // Canonical CacheStats::hit_ratio() returns 0–100 (percent); divide for ratio.
+        self.stats.read().await.inner.hit_ratio() / 100.0
     }
 
     /// Prefetch blocks for a file (warming the cache)
@@ -530,15 +529,11 @@ impl CacheStatsProvider for DecompressionCacheStatsProvider {
         // Attempt to get an instantaneous snapshot using the Tokio runtime
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             let stats = handle.block_on(self.cache.get_stats());
-            let total = stats.hits + stats.misses;
-            let hit_rate = if total == 0 {
-                0.0
-            } else {
-                stats.hits as f64 / total as f64
-            };
+            // Canonical CacheStats::hit_ratio() returns 0–100 (percent); divide for ratio.
+            let hit_rate = stats.inner.hit_ratio() / 100.0;
             // Approximate avg entry size using bytes_saved per hit when available
-            let avg_entry_size = if stats.hits > 0 {
-                (stats.bytes_saved / stats.hits) as usize
+            let avg_entry_size = if stats.inner.hits > 0 {
+                (stats.bytes_saved / stats.inner.hits) as usize
             } else {
                 64 * 1024
             };
@@ -654,8 +649,8 @@ mod tests {
 
         // Check stats
         let stats = cache.get_stats().await;
-        assert_eq!(stats.hits, 1);
-        assert_eq!(stats.misses, 1);
+        assert_eq!(stats.inner.hits, 1);
+        assert_eq!(stats.inner.misses, 1);
     }
 
     #[tokio::test]
@@ -712,11 +707,11 @@ mod tests {
         // Check that evictions happened
         let stats = cache.get_stats().await;
         assert!(
-            stats.evictions > 0,
+            stats.inner.evictions > 0,
             "Expected evictions but got none. Cache stats: hits={}, misses={}, evictions={}, peak_size={}",
-            stats.hits,
-            stats.misses,
-            stats.evictions,
+            stats.inner.hits,
+            stats.inner.misses,
+            stats.inner.evictions,
             stats.peak_size_bytes
         );
 
