@@ -1020,6 +1020,15 @@ physical layouts.
 | 2-3 weeks
 | *RESOLVED 2026-04-07*: 23 files / ~6,500 lines / 190 tests migrated from `tests/unit/` into inline `#[cfg(test)] mod tests` blocks alongside their source modules. 7702+ tests passing. Companion doc archived to `docs/_archive/quality/2026-05/TEST_INLINING_PROGRESS.md` 2026-05-26; see also memory entry `project-test-inline-progress`.
 
+| TD-071
+| Distributed Query Response Metrics Not Plumbed From Coordinator
+| P3
+| LOW
+| Open
+| `src/network/rest/v1/multimodal_query.rs:1488` reports `nodes_involved` and `cache_hits` as hardcoded `0` (was `1` and `0` until 2026-05-26 — changed to `0` so the values are clearly "unwired" rather than misleading). The `DistributedCoordinator` exposes `pub cache_hits: u64` at `src/query/distributed/coordinator.rs:104`; the execution plan has `node_count` data but it's not surfaced through `result.metrics`. Result: customers reading the response metrics can't tell how many cluster nodes participated or how many cache hits served the query.
+| 1 week
+| Plumb `cache_hits` from `coordinator.stats()` (or equivalent accessor) to the `metrics_info` returned by `adapter.distributed_query()`. Plumb `nodes_involved` from the execution plan's node-count field. The fields exist; the wiring between distributed coordinator → QueryFacadeAdapter → REST handler is the missing piece. Tracked alongside [[T3.2 Slice X]] gRPC parity work.
+
 | TD-070
 | Insert/Query Hot Path Skips Dimension + NaN/Inf Validation
 | P3

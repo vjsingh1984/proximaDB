@@ -306,15 +306,26 @@ pub async fn search_entities(
         ));
     }
 
-    // Handle text query by converting to embedding
-    let query_vector = if let Some(_text) = request.query_text {
-        // Deferred: Implement text-to-embedding conversion
-        // This would use an embedding service
-        warn!("Text query not yet implemented, using vector query");
-        request.query_vector
-    } else {
-        request.query_vector
-    };
+    // 2026-05-26: text_query field used to silently fall back to query_vector
+    // when set; that misled callers into thinking text-to-embedding was happening.
+    // The honest contract for v0.3 is: this endpoint accepts pre-computed vectors
+    // only. Reject text_query with 400 until an embedding service is wired in.
+    if request.query_text.is_some() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "text_query embedding not configured".to_string(),
+                details: Some(
+                    "This server has no text-to-embedding service wired into the entity search path. \
+                     Submit `query_vector` directly (precomputed embedding), or use a future build \
+                     where LLMIntegrationEngine is wired. The previous silent fallback to \
+                     `query_vector` was misleading and has been removed."
+                        .to_string(),
+                ),
+            }),
+        ));
+    }
+    let query_vector = request.query_vector;
 
     // Convert filters from JSON Value to MetadataFilter if present
     let metadata_filter = match request.filters {
@@ -331,16 +342,13 @@ pub async fn search_entities(
         None => None,
     };
 
-    // Perform search
+    // Perform search. (Note: the entity_store trait has no `temporal_filter`
+    // parameter — earlier code had a stale `// Deferred: temporal_filter`
+    // comment here that suggested the API silently dropped a temporal filter.
+    // It did not; the field was never accepted on the REST surface.)
     match state
         .store
-        .search_entities(
-            &collection_id,
-            query_vector,
-            metadata_filter,
-            // temporal_filter, // Deferred: Add when available
-            top_k,
-        )
+        .search_entities(&collection_id, query_vector, metadata_filter, top_k)
         .await
     {
         Ok(results) => {

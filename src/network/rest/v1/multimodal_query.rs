@@ -1485,14 +1485,21 @@ async fn execute_distributed_via_adapter(
         records_returned,
         execution_plan: DistributedPlanResponse {
             strategy: request.strategy,
-            nodes_involved: 1, // Deferred: Extract from actual execution plan
+            // FIXME(TD-071): nodes_involved is not yet plumbed from the
+            // distributed coordinator's execution plan. Reporting 0 instead
+            // of 1 so customers can tell the field is unwired (a "1" would
+            // be indistinguishable from a real single-node execution).
+            nodes_involved: 0,
             execution_time_ms: elapsed_ms,
         },
         metrics: DistributedMetricsResponse {
             total_time_ms: elapsed_ms,
             planning_time_ms: metrics_info.planning_time_ms as f64,
             execution_time_ms: metrics_info.execution_time_ms as f64,
-            cache_hits: 0, // Deferred: Extract from distributed coordinator stats
+            // FIXME(TD-071): cache_hits is not yet plumbed from the
+            // distributed coordinator's stats (`coordinator.rs:104` exposes
+            // `pub cache_hits: u64`). Reporting 0 here is the pre-wire value.
+            cache_hits: 0,
         },
     };
 

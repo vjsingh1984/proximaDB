@@ -287,7 +287,12 @@ impl From<RestTraversalRequest> for crate::proto::proximadb_v1::TraversalRequest
         };
 
         crate::proto::proximadb_v1::TraversalRequest {
-            graph_id: "default".to_string(), // Deferred: Extract from REST API path
+            // The proto field is unused downstream — `traverse_with_overrides`
+            // takes `graph_id: &str` as an explicit first arg (passed from the
+            // REST Path<String> extractor). Leaving empty rather than "default"
+            // to prevent the hardcode from looking like a fallback that
+            // actually shapes behavior.
+            graph_id: String::new(),
             start_node_id: rest.start_node_id,
             max_depth: rest.max_depth,
             edge_types: rest.edge_types,

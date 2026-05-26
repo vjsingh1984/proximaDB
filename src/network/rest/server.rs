@@ -350,6 +350,7 @@ impl RestServer {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -374,6 +375,7 @@ impl RestServer {
         ports: Option<RestServerPorts>,
         catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
         queue_client: Option<Arc<proximadb_queue::QueueClient>>,
+        fulltext_indexes: Option<crate::network::rest::v1::handlers::FullTextIndexMap>,
     ) -> Self {
         // Tier 1.2 (pre-release foundational plan 2026-05-26):
         // Warn loudly if a production-mode server is being constructed with
@@ -410,6 +412,13 @@ impl RestServer {
         }
         if let Some(qc) = queue_client {
             base_state = base_state.with_queue_client(qc);
+        }
+        // T3.2 Slice 1b: share `fulltext_indexes` with `SharedServices` so REST
+        // hybrid search and gRPC hybrid search read+write the same in-process
+        // map. Without this, REST has its own empty map and gRPC's BM25
+        // component returns 0 results.
+        if let Some(indexes) = fulltext_indexes.clone() {
+            base_state = base_state.with_fulltext_indexes(indexes);
         }
         let state = if let Some(p) = ports {
             let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);
@@ -634,6 +643,7 @@ impl RestServer {
         segment_registry: Option<Arc<crate::catalog::SegmentRegistry>>,
         catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
         queue_client: Option<Arc<proximadb_queue::QueueClient>>,
+        fulltext_indexes: Option<crate::network::rest::v1::handlers::FullTextIndexMap>,
     ) -> Router {
         let mut base_state = AppState::new(
             request_handlers,
@@ -651,6 +661,13 @@ impl RestServer {
         }
         if let Some(qc) = queue_client {
             base_state = base_state.with_queue_client(qc);
+        }
+        // T3.2 Slice 1b: share `fulltext_indexes` with `SharedServices` so REST
+        // hybrid search and gRPC hybrid search read+write the same in-process
+        // map. Without this, REST has its own empty map and gRPC's BM25
+        // component returns 0 results.
+        if let Some(indexes) = fulltext_indexes.clone() {
+            base_state = base_state.with_fulltext_indexes(indexes);
         }
         let state = if let Some(p) = ports {
             let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);

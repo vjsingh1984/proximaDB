@@ -598,6 +598,11 @@ impl MultiServer {
             // queue_client value is itself an Option<Arc<...>> so cloning is
             // cheap and preserves the same handle for the spawned task.
             let queue_client_for_rest = self.queue_client.clone();
+            // T3.2 Slice 1b: same pattern — share the full-text index map with
+            // gRPC's hybrid_search wiring (`HybridFullTextIndexMap` is an
+            // `Arc<RwLock<...>>` so the clone is cheap and the spawned task
+            // gets the same shared handle).
+            let fulltext_indexes_for_rest = self.shared_services.fulltext_indexes.clone();
             let rest_handle = tokio::spawn(async move {
                 use crate::network::rest::server::{RestServer, RestServerSecurityConfig};
 
@@ -627,6 +632,7 @@ impl MultiServer {
                     rest_ports_opt,
                     Some(catalog_manager),
                     queue_client_for_rest,
+                    Some(fulltext_indexes_for_rest),
                 )
                 .start()
                 .await
@@ -815,6 +821,7 @@ impl MultiServer {
                 Some(services.segment_registry.clone()),
                 Some(services.catalog_manager.clone()),
                 self.queue_client.clone(),
+                Some(services.fulltext_indexes.clone()),
             );
 
             info!(
