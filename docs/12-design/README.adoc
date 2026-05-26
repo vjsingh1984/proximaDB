@@ -71,6 +71,7 @@ Accepted ADRs live under `adr/`.
 * `adr/ADR-016-port-user-context.adoc` — PortUserContext as the SecurityPort boundary type.
 * `adr/ADR-017-dr-engine-surface.adoc` — Public DR engine surface and OSS/operator boundary.
 * `adr/ADR-018-pgwire-sql-parity-roadmap.adoc` — pgwire/SQL parity roadmap: MVP → SQLite-parity → Postgres-parity (~3 months total).
+* `adr/ADR-019-relational-query-architecture.adoc` — five-layer relational query architecture (algebra, executor, transaction, storage) refining Phase 2.
 
 == Archived From This Directory
 
