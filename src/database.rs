@@ -341,6 +341,52 @@ impl ProximaDB {
             None
         };
 
+        // Plan-cache corpus_version durability. When
+        // PROXIMADB_CORPUS_VERSION_PATH is set, construct a
+        // FileSystemCorpusVersionStore at that path, attach it to
+        // the global registry, and hydrate from disk before the
+        // request handlers begin serving traffic. Unset means
+        // in-memory only — restart resets all versions to 1 (which
+        // is correct for single-node deployments that prefer the
+        // simpler operational story).
+        //
+        // The init must happen before any code path touches
+        // CorpusVersionRegistry::global(); this is the earliest spot
+        // in the bootstrap where everything else is wired but
+        // requests haven't yet been served.
+        if let Ok(path) = std::env::var("PROXIMADB_CORPUS_VERSION_PATH") {
+            if !path.is_empty() {
+                let store = std::sync::Arc::new(
+                    crate::catalog::FileSystemCorpusVersionStore::new(path.clone()),
+                );
+                let inited = crate::catalog::CorpusVersionRegistry::init_global_with_store(
+                    store.clone(),
+                );
+                if inited {
+                    let loaded = crate::catalog::CorpusVersionRegistry::global()
+                        .hydrate_from_store()
+                        .await;
+                    tracing::info!(
+                        path = %path,
+                        rows = loaded,
+                        "✅ corpus_version durability wired (FileSystemCorpusVersionStore)"
+                    );
+                } else {
+                    tracing::warn!(
+                        path = %path,
+                        "corpus_version global already initialized before \
+                         PROXIMADB_CORPUS_VERSION_PATH wiring; bumps will not \
+                         persist for this process"
+                    );
+                }
+            }
+        } else {
+            tracing::info!(
+                "PROXIMADB_CORPUS_VERSION_PATH unset; corpus_version registry \
+                 is in-memory only (restart resets all versions)"
+            );
+        }
+
         let multi_server = network::MultiServer::new_with_queue_client(
             multi_config,
             shared_services,
