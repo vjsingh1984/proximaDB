@@ -127,9 +127,9 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 | Added `filter_wal_by_branch_lsn(entries, branch_id, lsn_range) -> Vec<&CanonicalWalEntry>` to `crates/storage/proximadb-storage-common/src/wal_entry.rs`. Pure function; 8 tests covering empty input, LSN-range edges, branch-id matching, None-branch exclusion, RecordDelete/Checkpoint/CdcBarrier exclusion, combined LSN+branch filtering. Caller materializes input (e.g. via `recover_from_canonical_wal`). RecordDelete handled separately by the orchestrator in Slice 4+.
 
 | T3.1 Slice 4 — Merge-base discovery (catalog `BranchMetadata` or walk-back)
-| Pending
-|
-|
+| Done (pure walk-back)
+| (this commit)
+| Added `find_merge_base_lsn(entries, branch_a, branch_b) -> Option<u64>` to `crates/storage/proximadb-storage-common/src/wal_entry.rs`. Definition: `min(first_lsn(a), first_lsn(b)) - 1`. Assumes both branches share a common ancestor; asymmetric forks (branch_b forked from branch_a) are Slice 5+ scope. 8 tests covering empty input, missing branches, both-present, different first-LSNs, saturating_sub edges, non-upsert exclusion, simultaneous fork.
 
 | T3.1 Slice 5 — `GraphBranchMerger` orchestrator
 | Pending

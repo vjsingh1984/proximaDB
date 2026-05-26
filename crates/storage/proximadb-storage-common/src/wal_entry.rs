@@ -453,6 +453,61 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// Merge-base discovery (T3.1 Slice 4 — 2026-05-26)
+// ---------------------------------------------------------------------------
+
+/// Find the LSN at which two branches diverged from their common ancestor.
+///
+/// The merge base is defined as
+/// `min(first_lsn(branch_a), first_lsn(branch_b)) - 1` — the LSN
+/// immediately before either branch's first `RecordUpsert` with the
+/// given `branch_id`. The orchestrator (ADR-012 §3 step 1, T3.1 Slice 5)
+/// passes this LSN to [`filter_wal_by_branch_lsn`] and then to
+/// `walk_diff` (in `src/graph/merge.rs`) to scope the diff window.
+///
+/// **Assumption (T3.1 Slice 4):** both branches share a common ancestor
+/// — they were forked from the same parent (typically "main") and have
+/// mutated independently since. Asymmetric forks (branch_b forked from
+/// branch_a, not from the parent) are out of scope for this slice; the
+/// orchestrator (Slice 5+) is responsible for resolving ancestry and
+/// passing the correct branch pair.
+///
+/// Returns `None` if either branch has no `RecordUpsert` entries in the
+/// log (i.e. that branch is empty — there is nothing to merge).
+///
+/// Walks the input slice twice in the worst case (once per branch);
+/// `O(n)` over `entries`. Acceptable for v0.2; future slices can switch
+/// to a single-pass implementation if profiles show a hot path.
+pub fn find_merge_base_lsn(
+    entries: &[CanonicalWalEntry],
+    branch_a: &str,
+    branch_b: &str,
+) -> Option<u64> {
+    let first_a = first_lsn_for_branch(entries, branch_a)?;
+    let first_b = first_lsn_for_branch(entries, branch_b)?;
+    Some(first_a.min(first_b).saturating_sub(1))
+}
+
+/// Helper: smallest sequence number among `RecordUpsert` entries
+/// belonging to `branch_id`. Returns `None` if no such entries exist.
+fn first_lsn_for_branch(
+    entries: &[CanonicalWalEntry],
+    branch_id: &str,
+) -> Option<u64> {
+    entries
+        .iter()
+        .filter_map(|entry| match &entry.operation {
+            CanonicalOperation::RecordUpsert { record, .. }
+                if record.branch_id.as_deref() == Some(branch_id) =>
+            {
+                Some(entry.sequence_number)
+            }
+            _ => None,
+        })
+        .min()
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1064,5 +1119,101 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].sequence_number, 3);
         assert_eq!(out[1].sequence_number, 4);
+    }
+
+    // ── T3.1 Slice 4 — find_merge_base_lsn tests ───────────────────────────
+
+    #[test]
+    fn find_merge_base_returns_none_for_empty_input() {
+        assert_eq!(find_merge_base_lsn(&[], "a", "b"), None);
+    }
+
+    #[test]
+    fn find_merge_base_returns_none_when_branch_a_missing() {
+        let entries = vec![branch_upsert(3, "x", Some("b"))];
+        assert_eq!(find_merge_base_lsn(&entries, "a", "b"), None);
+    }
+
+    #[test]
+    fn find_merge_base_returns_none_when_branch_b_missing() {
+        let entries = vec![branch_upsert(3, "x", Some("a"))];
+        assert_eq!(find_merge_base_lsn(&entries, "a", "b"), None);
+    }
+
+    #[test]
+    fn find_merge_base_returns_first_lsn_minus_one_when_both_present() {
+        let entries = vec![
+            branch_upsert(5, "x", Some("a")),
+            branch_upsert(7, "y", Some("b")),
+        ];
+        // min(5, 7) - 1 = 4
+        assert_eq!(find_merge_base_lsn(&entries, "a", "b"), Some(4));
+    }
+
+    #[test]
+    fn find_merge_base_picks_min_when_branches_first_at_different_lsns() {
+        let entries = vec![
+            branch_upsert(10, "x", Some("a")),
+            branch_upsert(3, "y", Some("b")),
+            branch_upsert(12, "z", Some("a")),
+            branch_upsert(8, "w", Some("b")),
+        ];
+        // first_lsn("a") = 10, first_lsn("b") = 3 → min = 3 → merge_base = 2.
+        assert_eq!(find_merge_base_lsn(&entries, "a", "b"), Some(2));
+    }
+
+    #[test]
+    fn find_merge_base_returns_zero_when_earliest_first_lsn_is_one() {
+        let entries = vec![
+            branch_upsert(1, "x", Some("a")),
+            branch_upsert(5, "y", Some("b")),
+        ];
+        // min(1, 5) - 1 = 0 via saturating_sub.
+        assert_eq!(find_merge_base_lsn(&entries, "a", "b"), Some(0));
+    }
+
+    #[test]
+    fn find_merge_base_returns_zero_when_earliest_first_lsn_is_zero() {
+        let entries = vec![
+            branch_upsert(0, "x", Some("a")),
+            branch_upsert(5, "y", Some("b")),
+        ];
+        // saturating_sub(1) on 0 = 0.
+        assert_eq!(find_merge_base_lsn(&entries, "a", "b"), Some(0));
+    }
+
+    #[test]
+    fn find_merge_base_ignores_non_upsert_entries() {
+        // Only RecordUpsert carries branch_id. Checkpoint, RecordDelete,
+        // CdcBarrier — even at lower LSNs — must not be considered.
+        let cdc = CanonicalWalEntry::new(
+            1,
+            CanonicalOperation::CdcBarrier {
+                barrier_sequence: 0,
+                events: vec![],
+            },
+            None,
+        );
+        let entries = vec![
+            cdc,
+            checkpoint_entry(2, vec!["col".into()]),
+            delete_entry(3, "victim", vec![]),
+            branch_upsert(5, "x", Some("a")),
+            branch_upsert(7, "y", Some("b")),
+        ];
+        // Only LSNs 5 and 7 count. min(5, 7) - 1 = 4.
+        assert_eq!(find_merge_base_lsn(&entries, "a", "b"), Some(4));
+    }
+
+    #[test]
+    fn find_merge_base_works_when_branches_first_at_same_lsn() {
+        // Forked simultaneously at LSN 5 — both branches' first record
+        // is at the same sequence number.
+        let entries = vec![
+            branch_upsert(5, "x", Some("a")),
+            branch_upsert(5, "y", Some("b")),
+        ];
+        // min(5, 5) - 1 = 4.
+        assert_eq!(find_merge_base_lsn(&entries, "a", "b"), Some(4));
     }
 }
