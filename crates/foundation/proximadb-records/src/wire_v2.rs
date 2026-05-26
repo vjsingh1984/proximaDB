@@ -121,6 +121,13 @@ pub struct ProximaRecordV2 {
     // === Token sequence + labels ===
     pub sequence: Option<TokenSequence>,
     pub labels: LabelSet,
+
+    // === Branch identity (ADR-012, T3.1 Slice 2 — 2026-05-26) ===
+    /// Branch identifier this record belongs to. Carried on the V2 wire so
+    /// the future WAL filter (T3.1 Slice 3) can scope by branch. The
+    /// runtime `ProximaRecord.branch_id` is `#[serde(skip)]` so only the
+    /// V2 path persists it; V1 frames continue to load with `None`.
+    pub branch_id: Option<String>,
 }
 
 impl From<&ProximaRecord> for ProximaRecordV2 {
@@ -149,6 +156,7 @@ impl From<&ProximaRecord> for ProximaRecordV2 {
             embeddings: r.embeddings.iter().map(EmbeddingCellV2::from).collect(),
             sequence: r.sequence.clone(),
             labels: r.labels.clone(),
+            branch_id: r.branch_id.clone(),
         }
     }
 }
@@ -183,6 +191,7 @@ impl From<ProximaRecordV2> for ProximaRecord {
             embeddings: r.embeddings.into_iter().map(EmbeddingCell::from).collect(),
             sequence: r.sequence,
             labels: r.labels,
+            branch_id: r.branch_id,
         }
     }
 }
@@ -316,5 +325,56 @@ mod tests {
             recovered[1].embeddings[0].values,
             EmbeddingValues::Fp16(_)
         ));
+    }
+
+    // ── T3.1 Slice 2 — branch_id roundtrip tests ───────────────────────────
+
+    #[test]
+    fn branch_id_round_trips_through_v2_wire() {
+        let original = ProximaRecord {
+            oid: "node-1".to_string(),
+            branch_id: Some("feature-x".to_string()),
+            ..ProximaRecord::default()
+        };
+        let v2 = ProximaRecordV2::from(&original);
+        let bytes = bincode::serialize(&v2).expect("serialize v2");
+        let decoded: ProximaRecordV2 =
+            bincode::deserialize(&bytes).expect("deserialize v2");
+        let recovered: ProximaRecord = decoded.into();
+        assert_eq!(recovered.branch_id.as_deref(), Some("feature-x"));
+    }
+
+    #[test]
+    fn branch_id_is_dropped_by_v1_bincode_path_serde_skip() {
+        // ProximaRecord uses #[serde(skip, default)] on branch_id so any
+        // direct bincode of ProximaRecord (V1 wire path) drops the field.
+        // This guarantees old V1 frames continue to deserialize correctly
+        // (as branch_id = None) and that we don't accidentally start
+        // writing branch_id onto the V1 wire mid-rollout.
+        let original = ProximaRecord {
+            oid: "node-2".to_string(),
+            branch_id: Some("dev".to_string()),
+            ..ProximaRecord::default()
+        };
+        let bytes = bincode::serialize(&original).expect("serialize v1");
+        let recovered: ProximaRecord =
+            bincode::deserialize(&bytes).expect("deserialize v1");
+        assert_eq!(recovered.branch_id, None);
+    }
+
+    #[test]
+    fn branch_id_none_default_for_v2_wire() {
+        // Records without a branch_id should serialize with `branch_id = None`
+        // and roundtrip cleanly.
+        let original = ProximaRecord {
+            oid: "node-3".to_string(),
+            ..ProximaRecord::default()
+        };
+        let v2 = ProximaRecordV2::from(&original);
+        let bytes = bincode::serialize(&v2).expect("serialize v2");
+        let decoded: ProximaRecordV2 =
+            bincode::deserialize(&bytes).expect("deserialize v2");
+        let recovered: ProximaRecord = decoded.into();
+        assert_eq!(recovered.branch_id, None);
     }
 }

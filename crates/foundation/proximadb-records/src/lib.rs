@@ -836,6 +836,17 @@ pub struct ProximaRecord {
 
     // === Searchable labels ===
     pub labels: LabelSet,
+
+    // === Branch identity (ADR-012 graph branch merge) ===
+    /// Branch identifier this record belongs to. `None` = main / default branch.
+    ///
+    /// **Wire visibility (T3.1 Slice 2, 2026-05-26)**: the runtime field is
+    /// `#[serde(skip, default)]` so the legacy V1 bincode WAL format and the
+    /// JSON / proto bridges stay byte-compatible. The V2 wire format
+    /// (`ProximaRecordV2` in `wire_v2.rs`) DOES carry this field — that's
+    /// the path the WAL filter (T3.1 Slice 3) will read.
+    #[serde(skip, default)]
+    pub branch_id: Option<String>,
 }
 
 impl Default for ProximaRecord {
@@ -870,6 +881,7 @@ impl Default for ProximaRecord {
             embeddings: Vec::new(),
             sequence: None,
             labels: LabelSet::new(),
+            branch_id: None,
         }
     }
 }
