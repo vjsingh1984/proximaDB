@@ -22,7 +22,6 @@
 //!
 //! Spec: roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md §4.9.2.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use proximadb_kernel::{PhaseId, ScoreComponent as KernelScoreComponent, ScoreVector};

@@ -84,6 +84,11 @@ pub struct ProximaFlightService {
     request_handlers: Arc<UnifiedHandlers>,
     security_coordinator: Option<Arc<SecurityCoordinator>>,
     catalog_manager: Option<Arc<CatalogManager>>,
+    /// R-7c.4b: when present, the `rank_features_export` Flight action
+    /// drives the multi-phase ranking pipeline through this singleton.
+    /// Absent means the action returns `Unimplemented` (deployments that
+    /// didn't opt into the ranking framework don't pay for it).
+    rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
     _codec: ArrowProtoCodec,
     file_export_handler: ArrowFileExportHandler,
 }
@@ -107,9 +112,22 @@ impl ProximaFlightService {
             request_handlers,
             security_coordinator: None,
             catalog_manager: None,
+            rank_services: None,
             _codec: ArrowProtoCodec,
             file_export_handler: ArrowFileExportHandler::new(storage_locations),
         }
+    }
+
+    /// R-7c.4b: attach the shared RankServices singleton so the
+    /// `rank_features_export` action can drive the rank pipeline. Same
+    /// `Arc<RankServices>` the REST and gRPC paths hold — single source
+    /// of truth across all three protocols.
+    pub fn with_rank_services(
+        mut self,
+        rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+    ) -> Self {
+        self.rank_services = rank_services;
+        self
     }
 
     /// Attach the shared security coordinator used by other network surfaces.
@@ -2027,8 +2045,47 @@ impl FlightService for ProximaFlightService {
                 }))))
             }
 
+            // R-7c.4b: stream the rank pipeline's per-doc match_features
+            // as Arrow IPC for offline LTR. See module
+            // `network::arrow_ipc::rank_features_export` for the wire
+            // contract and column schema.
+            "rank_features_export" => {
+                let services = self.rank_services.clone().ok_or_else(|| {
+                    TonicStatus::unimplemented(
+                        "rank_features_export: server started without RankServices injection",
+                    )
+                })?;
+                let ipc_bytes = super::rank_features_export::export_rank_features_to_arrow_ipc(
+                    &services,
+                    &action.body,
+                )
+                .await
+                .map_err(|e| {
+                    use proximadb_rank_core::RankError;
+                    match e {
+                        RankError::ProfileNotFound(name) => TonicStatus::not_found(format!(
+                            "rank_features_export: rank profile not found: {name}"
+                        )),
+                        RankError::InvalidProfile(msg) => {
+                            TonicStatus::invalid_argument(format!(
+                                "rank_features_export: {msg}"
+                            ))
+                        }
+                        other => TonicStatus::internal(format!(
+                            "rank_features_export: {other}"
+                        )),
+                    }
+                })?;
+                let result = arrow_flight::Result {
+                    body: ipc_bytes.into(),
+                };
+                Ok(TonicResponse::new(Box::pin(stream::once(async move {
+                    Ok(result)
+                }))))
+            }
+
             _ => Err(TonicStatus::unimplemented(format!(
-                "Unknown action: {}. Supported actions: create_collection, delete_collection, get_collection, list_collections, insert_vectors, delete_vectors, get_vectors, flush_collection, compact_collection, flush_and_compact, list_arrow_files, health_check",
+                "Unknown action: {}. Supported actions: create_collection, delete_collection, get_collection, list_collections, insert_vectors, delete_vectors, get_vectors, flush_collection, compact_collection, flush_and_compact, list_arrow_files, rank_features_export, health_check",
                 action.r#type
             ))),
         }
@@ -2099,6 +2156,11 @@ impl FlightService for ProximaFlightService {
             ActionType {
                 r#type: "list_arrow_files".to_string(),
                 description: "List available .arrow and .parquet files in a collection for export. Body: {collection_id}".to_string(),
+            },
+            // Ranking framework (R-7c.4b)
+            ActionType {
+                r#type: "rank_features_export".to_string(),
+                description: "Stream the multi-phase ranking pipeline's per-doc match_features as Arrow IPC for offline LTR training. Body: JSON RankSearchRequest (collection, query_vector, query_text?, k, rank_profile?, rank_overrides?). Response: single Arrow IPC stream with schema [id Utf8, rank UInt32, score Float32, phase UInt8, <feature_N> Float64 nullable per profile.match_features].".to_string(),
             },
             // Health check
             ActionType {

@@ -22,15 +22,18 @@ use crate::storage::persistence::filesystem::{FileStorageTier, FilesystemFactory
 use proximadb_compression::{CompressionAlgorithm, StandardCompression};
 use proximadb_runtime_common::pool::VectorMemoryPool;
 
+/// Backwards-compat alias for [`GlobalMemoryPoolConfig`].
+pub type MemoryPoolConfig = GlobalMemoryPoolConfig;
+
 /// Global memory pool configuration
-pub struct MemoryPoolConfig {
+pub struct GlobalMemoryPoolConfig {
     /// Memory pool size in MB (default: 10% of available memory)
     pub pool_size_mb: Option<usize>,
     /// Whether to use smart defaults based on system memory
     pub use_smart_defaults: bool,
 }
 
-impl Default for MemoryPoolConfig {
+impl Default for GlobalMemoryPoolConfig {
     fn default() -> Self {
         Self {
             pool_size_mb: None,
@@ -40,18 +43,18 @@ impl Default for MemoryPoolConfig {
 }
 
 /// Global configuration for the shared memory pool
-static MEMORY_POOL_CONFIG: Lazy<MemoryPoolConfig> = Lazy::new(|| {
+static MEMORY_POOL_CONFIG: Lazy<GlobalMemoryPoolConfig> = Lazy::new(|| {
     // Try to read from environment or config
     if let Ok(size_str) = std::env::var("PROXIMADB_MEMORY_POOL_SIZE_MB")
         && let Ok(size) = size_str.parse::<usize>()
     {
         tracing::info!("Using memory pool size from environment: {}MB", size);
-        return MemoryPoolConfig {
+        return GlobalMemoryPoolConfig {
             pool_size_mb: Some(size),
             use_smart_defaults: false,
         };
     }
-    MemoryPoolConfig::default()
+    GlobalMemoryPoolConfig::default()
 });
 
 /// Calculate smart default pool size based on available system memory

@@ -394,7 +394,7 @@ mod tests {
     fn delta_carries_before_and_after_values() {
         // Spot-check: a Tier2 → Tier4 upgrade keeps both default
         // scan-budget values in the delta. Reads bundled defaults from
-        // `config/pricing.json` so the numbers track that file when
+        // `config/tier-config.json` so the numbers track that file when
         // tier soft caps are retuned operationally.
         let a = record(Tier::Tier2, None, None, None);
         let b = record(Tier::Tier4, None, None, None);

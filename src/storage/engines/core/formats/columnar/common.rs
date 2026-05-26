@@ -99,7 +99,7 @@ pub struct CompressionLevels {
 #[derive(Debug, Clone, Default)]
 pub struct SerializationOptimizationConfig {
     /// Memory pool configuration
-    pub memory_pools: MemoryPoolConfig,
+    pub memory_pools: ColumnarMemoryPoolConfig,
 
     /// SIMD optimization settings
     pub simd_settings: SIMDOptimizationSettings,
@@ -111,9 +111,12 @@ pub struct SerializationOptimizationConfig {
     pub zero_copy_optimization: ZeroCopyConfig,
 }
 
+/// Backwards-compat alias for [`ColumnarMemoryPoolConfig`].
+pub type MemoryPoolConfig = ColumnarMemoryPoolConfig;
+
 /// Memory pool configuration
 #[derive(Debug, Clone)]
-pub struct MemoryPoolConfig {
+pub struct ColumnarMemoryPoolConfig {
     /// Enable memory pooling
     pub enable_pooling: bool,
 
@@ -423,7 +426,7 @@ pub struct CommonColumnarOperations {
     metadata_cache: Arc<RwLock<MetadataCache>>,
 
     /// Performance monitor
-    performance_monitor: Arc<PerformanceMonitor>,
+    performance_monitor: Arc<ColumnarPerformanceMonitor>,
 }
 
 /// Metadata cache for columnar files
@@ -451,9 +454,12 @@ struct CachedFileMetadata {
     access_count: usize,
 }
 
+/// Backwards-compat alias for [`ColumnarPerformanceMonitor`].
+pub type PerformanceMonitor = ColumnarPerformanceMonitor;
+
 /// Performance monitoring and metrics collection
 #[derive(Debug)]
-pub struct PerformanceMonitor {
+pub struct ColumnarPerformanceMonitor {
     /// Operation metrics
     operation_metrics: Arc<RwLock<ColumnarCommonOperationMetrics>>,
 
@@ -564,7 +570,7 @@ impl CommonColumnarOperations {
 
         // Initialize performance monitor
         let performance_monitor =
-            Arc::new(PerformanceMonitor::new(config.monitoring_config.clone()));
+            Arc::new(ColumnarPerformanceMonitor::new(config.monitoring_config.clone()));
 
         info!("Common columnar operations initialized successfully");
 
@@ -875,7 +881,7 @@ impl CommonColumnarOperations {
     }
 }
 
-impl PerformanceMonitor {
+impl ColumnarPerformanceMonitor {
     fn new(config: ColumnarMonitoringConfig) -> Self {
         Self {
             operation_metrics: Arc::new(RwLock::new(ColumnarCommonOperationMetrics::default())),
@@ -1019,7 +1025,7 @@ impl Default for CompressionLevels {
     }
 }
 
-impl Default for MemoryPoolConfig {
+impl Default for ColumnarMemoryPoolConfig {
     fn default() -> Self {
         Self {
             enable_pooling: true,

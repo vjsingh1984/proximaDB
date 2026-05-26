@@ -273,7 +273,14 @@ pub use spatial_clustering::{
     AdaCurve, IncrementalPCA, ZOrderEncoder, cluster_blocks_pca, cluster_blocks_pca_adacurves,
     cluster_blocks_pca_zorder,
 };
-pub use utilities::{MemoryEstimator, PathResolver, PerformanceProfiler, RowBasedUtilities};
+pub use utilities::{
+    BlockUtilsPerformanceProfiler, MemoryEstimator, PathResolver, RowBasedUtilities,
+};
+// Backwards-compat alias for the pre-rename name. The linter rename to
+// `BlockUtilsPerformanceProfiler` happened in utilities.rs but the
+// `pub use` here wasn't updated in lockstep; alias keeps downstream
+// `crate::storage::...::PerformanceProfiler` paths compiling.
+pub use utilities::BlockUtilsPerformanceProfiler as PerformanceProfiler;
 
 // NEW: Export shared SST reader components
 pub use sst_io_layer::{

@@ -81,12 +81,15 @@ pub struct SstableIndex {
     pub entries: Vec<SstIndexEntry>,
     pub total_blocks: usize,
     pub total_vectors: usize,
-    pub metadata_stats: HashMap<String, MetadataStats>,
+    pub metadata_stats: HashMap<String, IndexNodeCacheMetadataStats>,
 }
+
+/// Backwards-compat alias for [`IndexNodeCacheMetadataStats`].
+pub type MetadataStats = IndexNodeCacheMetadataStats;
 
 /// Metadata statistics for predicate pushdown
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct MetadataStats {
+pub struct IndexNodeCacheMetadataStats {
     pub min_value: serde_json::Value,
     pub max_value: serde_json::Value,
     pub null_count: usize,

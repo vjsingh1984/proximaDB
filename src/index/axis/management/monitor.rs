@@ -21,12 +21,15 @@ use crate::index::axis::{AlertThresholds, AxisConfig, MonitoringConfig};
 
 // Type aliases for compatibility
 /// Type alias for backward compatibility.
-pub type AxisMonitor = PerformanceMonitor;
+pub type AxisMonitor = AxisPerformanceMonitor;
 /// Type alias for backward compatibility.
 pub type MonitoringMetrics = SystemMetrics;
 
+/// Backwards-compat alias for [`AxisPerformanceMonitor`].
+pub type PerformanceMonitor = AxisPerformanceMonitor;
+
 /// Performance monitor for AXIS with real-time alerting
-pub struct PerformanceMonitor {
+pub struct AxisPerformanceMonitor {
     /// Configuration
     #[allow(dead_code)]
     config: MonitoringConfig,
@@ -51,9 +54,9 @@ pub struct PerformanceMonitor {
     event_broadcaster: broadcast::Sender<MonitoringEvent>,
 }
 
-impl std::fmt::Debug for PerformanceMonitor {
+impl std::fmt::Debug for AxisPerformanceMonitor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PerformanceMonitor")
+        f.debug_struct("AxisPerformanceMonitor")
             .field("config", &self.config)
             .finish()
     }
@@ -447,7 +450,7 @@ pub enum MonitoringEvent {
     },
 }
 
-impl PerformanceMonitor {
+impl AxisPerformanceMonitor {
     /// Create new performance monitor
     pub async fn new(config: AxisConfig) -> Result<Self> {
         let (event_tx, _) = broadcast::channel(1000);

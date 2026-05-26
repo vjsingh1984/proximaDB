@@ -341,7 +341,7 @@ pub struct AxisConfig {
     pub monitoring_enabled: bool,
 
     /// Performance thresholds
-    pub performance_thresholds: PerformanceThresholds,
+    pub performance_thresholds: AxisPerformanceThresholds,
 
     /// Strategy configuration
     pub strategy_config: StrategyConfig,
@@ -353,9 +353,12 @@ pub struct AxisConfig {
     pub monitoring_config: AxisMonitoringConfig,
 }
 
+/// Backwards-compat alias for [`AxisPerformanceThresholds`].
+pub type PerformanceThresholds = AxisPerformanceThresholds;
+
 /// Performance thresholds for monitoring
 #[derive(Debug, Clone)]
-pub struct PerformanceThresholds {
+pub struct AxisPerformanceThresholds {
     /// Maximum acceptable query latency in milliseconds.
     pub max_latency_ms: u64,
     /// Minimum acceptable recall rate (0.0 to 1.0).
@@ -415,7 +418,7 @@ impl Default for AxisConfig {
             },
             enable_auto_migration: true,
             monitoring_enabled: true,
-            performance_thresholds: PerformanceThresholds {
+            performance_thresholds: AxisPerformanceThresholds {
                 max_latency_ms: 100,
                 min_recall: 0.9,
                 max_memory_usage: 0.8,

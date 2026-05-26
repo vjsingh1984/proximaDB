@@ -432,12 +432,12 @@ impl MemoryEstimator {
 }
 
 /// Performance profiler for operations
-pub struct PerformanceProfiler {
+pub struct BlockUtilsPerformanceProfiler {
     start_time: std::time::Instant,
     checkpoints: Vec<PerformanceCheckpoint>,
 }
 
-impl PerformanceProfiler {
+impl BlockUtilsPerformanceProfiler {
     pub fn new() -> Self {
         Self {
             start_time: std::time::Instant::now(),
@@ -454,11 +454,11 @@ impl PerformanceProfiler {
         });
     }
 
-    pub fn finish(self) -> PerformanceProfile {
+    pub fn finish(self) -> BlockUtilsPerformanceProfile {
         let total_time = self.start_time.elapsed();
         let peak_memory = self.checkpoints.iter().map(|cp| cp.memory_usage).max();
 
-        PerformanceProfile {
+        BlockUtilsPerformanceProfile {
             total_time_ms: total_time.as_millis() as u64,
             checkpoints: self.checkpoints,
             peak_memory_bytes: peak_memory.unwrap_or(0),
@@ -471,7 +471,7 @@ impl PerformanceProfiler {
     }
 }
 
-impl Default for PerformanceProfiler {
+impl Default for BlockUtilsPerformanceProfiler {
     fn default() -> Self {
         Self::new()
     }
@@ -593,8 +593,11 @@ pub struct PerformanceCheckpoint {
     pub memory_usage: usize,
 }
 
+/// Backwards-compat alias for [`BlockUtilsPerformanceProfile`].
+pub type PerformanceProfile = BlockUtilsPerformanceProfile;
+
 #[derive(Debug, Clone)]
-pub struct PerformanceProfile {
+pub struct BlockUtilsPerformanceProfile {
     pub total_time_ms: u64,
     pub checkpoints: Vec<PerformanceCheckpoint>,
     pub peak_memory_bytes: usize,
@@ -812,7 +815,7 @@ mod tests {
 
     #[test]
     fn test_performance_profiler() {
-        let mut profiler = PerformanceProfiler::new();
+        let mut profiler = BlockUtilsPerformanceProfiler::new();
 
         profiler.checkpoint("start".to_string());
         std::thread::sleep(std::time::Duration::from_millis(1));

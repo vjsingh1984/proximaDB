@@ -43,7 +43,7 @@ pub struct DetectedEnvironment {
     /// Compliance and security policies that must be enforced
     pub security_constraints: SecurityConstraints,
     /// Performance characteristics and optimal ProximaDB tuning parameters
-    pub performance_characteristics: PerformanceProfile,
+    pub performance_characteristics: DiscoveryPerformanceProfile,
     /// Recommended deployment strategy and scaling configuration
     pub recommended_deployment: DeploymentRecommendation,
     /// UTC timestamp when this environment snapshot was captured
@@ -185,9 +185,12 @@ pub struct EncryptionRequirements {
     pub encryption_algorithm: Option<String>,
 }
 
+/// Backwards-compat alias for [`DiscoveryPerformanceProfile`].
+pub type PerformanceProfile = DiscoveryPerformanceProfile;
+
 /// Performance profile of target environment
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PerformanceProfile {
+pub struct DiscoveryPerformanceProfile {
     /// Estimated maximum query throughput in queries per second
     pub estimated_qps_capacity: u32,
     /// Storage subsystem IOPS capability
@@ -801,7 +804,7 @@ impl EnvironmentDetector {
         platform_type: &PlatformType,
         resources: &ResourceAvailability,
         security: &SecurityConstraints,
-        _performance: &PerformanceProfile,
+        _performance: &DiscoveryPerformanceProfile,
     ) -> Result<DeploymentRecommendation> {
         // Determine deployment strategy based on resources and requirements
         let deployment_strategy = if resources.cpu_cores >= 16 && resources.memory_gb >= 32 {
@@ -918,9 +921,9 @@ impl EnvironmentDetector {
     async fn profile_performance_characteristics(
         &self,
         resource_availability: &ResourceAvailability,
-    ) -> Result<PerformanceProfile> {
+    ) -> Result<DiscoveryPerformanceProfile> {
         debug!("⚡ Profiling performance characteristics...");
-        Ok(PerformanceProfile {
+        Ok(DiscoveryPerformanceProfile {
             estimated_qps_capacity: resource_availability.cpu_cores * 250,
             storage_iops: if self.detect_high_iops_storage().await? {
                 10000

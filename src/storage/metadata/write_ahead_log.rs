@@ -166,7 +166,7 @@ pub struct MetadataWriteAheadLog {
     cache_timestamps: Arc<tokio::sync::RwLock<HashMap<String, DateTime<Utc>>>>,
 
     /// Statistics
-    stats: Arc<tokio::sync::RwLock<MetadataStats>>,
+    stats: Arc<tokio::sync::RwLock<WalMetadataStats>>,
 }
 
 impl std::fmt::Debug for MetadataWriteAheadLog {
@@ -180,8 +180,11 @@ impl std::fmt::Debug for MetadataWriteAheadLog {
     }
 }
 
+/// Backwards-compat alias for [`WalMetadataStats`].
+pub type MetadataStats = WalMetadataStats;
+
 #[derive(Debug, Default, Clone)]
-pub struct MetadataStats {
+pub struct WalMetadataStats {
     /// Total number of collections
     pub total_collections: u64,
     /// Cache hit count
@@ -218,7 +221,7 @@ impl MetadataWriteAheadLog {
             config,
             metadata_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             cache_timestamps: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
-            stats: Arc::new(tokio::sync::RwLock::new(MetadataStats::default())),
+            stats: Arc::new(tokio::sync::RwLock::new(WalMetadataStats::default())),
         };
 
         // Initialize by recovering any existing metadata from write buffer
@@ -624,13 +627,13 @@ impl MetadataWriteAheadLog {
     }
 
     /// Get metadata statistics
-    pub async fn get_stats(&self) -> Result<MetadataStats> {
+    pub async fn get_stats(&self) -> Result<WalMetadataStats> {
         let stats = self.stats.read().await;
         Ok(stats.clone())
     }
 
     /// Get metadata statistics (alias for get_stats)
-    pub async fn stats(&self) -> Result<MetadataStats> {
+    pub async fn stats(&self) -> Result<WalMetadataStats> {
         self.get_stats().await
     }
 

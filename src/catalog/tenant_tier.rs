@@ -296,8 +296,8 @@ impl Tier {
     }
 
     /// Default scan budget (GB). Loaded from the embedded baseline
-    /// `config/pricing.json` at first access. Operators who overlay a runtime
-    /// tier-config replace these defaults at process start (see
+    /// `config/tier-config.json` at first access. Operators who overlay a
+    /// runtime tier-config replace these defaults at process start (see
     /// `config/TIER_CONFIG.md`); drift between operator gateway + engine is
     /// avoided because the engine sources its values from the same overlay
     /// the operator publishes.
@@ -316,8 +316,8 @@ impl Tier {
     }
 
     /// Bounded Prometheus label — cardinality-safe. The label set is loaded
-    /// from the embedded baseline `config/pricing.json`; operators who add a
-    /// tier via the runtime overlay (see `config/TIER_CONFIG.md`) widen the
+    /// from the embedded baseline `config/tier-config.json`; operators who
+    /// add a tier via the runtime overlay (see `config/TIER_CONFIG.md`) widen the
     /// metric label set automatically without a recompile.
     pub fn prometheus_label(self) -> &'static str {
         pricing_row(self).prom_label.as_str()
@@ -662,7 +662,7 @@ mod tests {
         // First access of `pricing()` deserializes the embedded JSON, asserts
         // schema_version == 1, and runs `validate_pricing_matches_enum`. If
         // any of those checks fail we panic here — surfaces a malformed or
-        // drifted `config/pricing.json` at test time rather than first
+        // drifted `config/tier-config.json` at test time rather than first
         // production request.
         let cfg = pricing();
         assert_eq!(cfg.schema_version, 1);

@@ -150,7 +150,7 @@ pub struct AdaptationCriteria {
     pub data_characteristics: DataCharacteristics,
 
     /// Performance thresholds
-    pub performance_thresholds: PerformanceThresholds,
+    pub performance_thresholds: CompressionPerformanceThresholds,
 
     /// Resource constraints
     pub resource_constraints: ResourceConstraints,
@@ -256,9 +256,12 @@ pub enum DataHint {
     Unknown,
 }
 
+/// Backwards-compat alias for [`CompressionPerformanceThresholds`].
+pub type PerformanceThresholds = CompressionPerformanceThresholds;
+
 /// Performance thresholds
 #[derive(Debug, Clone)]
-pub struct PerformanceThresholds {
+pub struct CompressionPerformanceThresholds {
     /// Maximum compression latency (ms)
     pub max_compression_latency_ms: f64,
 
@@ -1651,7 +1654,7 @@ impl Default for AdaptiveCompressionSettings {
                     },
                     data_type_hints: vec![DataHint::Vector, DataHint::Metadata, DataHint::Index],
                 },
-                performance_thresholds: PerformanceThresholds {
+                performance_thresholds: CompressionPerformanceThresholds {
                     max_compression_latency_ms: 100.0,
                     max_decompression_latency_ms: 50.0,
                     min_throughput_mbps: 100.0,

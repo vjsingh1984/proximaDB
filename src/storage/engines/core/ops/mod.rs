@@ -186,7 +186,7 @@ pub use performance_optimization::{
 //     ConcurrencyStrategy, BatchProcessingMode,
 // };
 // pub use utilities_common::{
-//     UniversalUtilities, MemoryEstimator, PerformanceProfiler,
+//     UniversalUtilities, MemoryEstimator, CoreOpsPerformanceProfiler,
 //     FilenameGenerator, PathResolver,
 // };
 
@@ -543,7 +543,7 @@ pub trait UniversalEngineCapabilities {
     fn supports_feature(&self, feature: &str) -> bool;
 
     /// Get performance characteristics
-    fn get_performance_profile(&self) -> PerformanceProfile;
+    fn get_performance_profile(&self) -> CoreOpsPerformanceProfile;
 
     // Deferred: Restore when ResourceRequirements is available
     // fn get_resource_requirements(&self) -> ResourceRequirements;
@@ -583,9 +583,12 @@ pub struct EngineCapabilities {
     pub supports_metrics_export: bool,
 }
 
+/// Backwards-compat alias for [`CoreOpsPerformanceProfile`].
+pub type PerformanceProfile = CoreOpsPerformanceProfile;
+
 /// Performance profile for an engine
 #[derive(Debug, Clone)]
-pub struct PerformanceProfile {
+pub struct CoreOpsPerformanceProfile {
     /// Throughput characteristics
     pub read_throughput_ops_per_sec: f64,
     pub write_throughput_ops_per_sec: f64,

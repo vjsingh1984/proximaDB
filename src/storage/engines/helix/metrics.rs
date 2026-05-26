@@ -346,21 +346,27 @@ impl HelixMetrics {
     }
 }
 
+/// Backwards-compat alias for [`HelixPerformanceMonitor`].
+pub type PerformanceMonitor = HelixPerformanceMonitor;
+
 /// Performance monitor for tracking optimization opportunities
-pub struct PerformanceMonitor {
+pub struct HelixPerformanceMonitor {
     metrics: Arc<HelixMetrics>,
-    thresholds: PerformanceThresholds,
+    thresholds: HelixPerformanceThresholds,
 }
 
+/// Backwards-compat alias for [`HelixPerformanceThresholds`].
+pub type PerformanceThresholds = HelixPerformanceThresholds;
+
 #[derive(Debug, Clone)]
-pub struct PerformanceThresholds {
+pub struct HelixPerformanceThresholds {
     pub max_pruning_ratio: f32,
     pub min_clustering_quality: f32,
     pub max_pca_drift: f32,
     pub max_query_latency_ms: u64,
 }
 
-impl Default for PerformanceThresholds {
+impl Default for HelixPerformanceThresholds {
     fn default() -> Self {
         Self {
             max_pruning_ratio: 0.8,      // Alert if pruning > 80%
@@ -371,11 +377,11 @@ impl Default for PerformanceThresholds {
     }
 }
 
-impl PerformanceMonitor {
+impl HelixPerformanceMonitor {
     pub fn new(metrics: Arc<HelixMetrics>) -> Self {
         Self {
             metrics,
-            thresholds: PerformanceThresholds::default(),
+            thresholds: HelixPerformanceThresholds::default(),
         }
     }
 

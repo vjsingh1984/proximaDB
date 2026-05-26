@@ -862,7 +862,7 @@ impl BPlusTreeIndex {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SstableIndex {
     pub entries: Vec<IndexEntry>,
-    pub metadata_stats: HashMap<String, MetadataStats>,
+    pub metadata_stats: HashMap<String, SstMetadataStats>,
     pub vector_count: usize,
     pub min_key: String,
     pub max_key: String,
@@ -871,9 +871,12 @@ pub struct SstableIndex {
     pub bplus_tree: Option<BPlusTreeIndex>,
 }
 
+/// Backwards-compat alias for [`SstMetadataStats`].
+pub type MetadataStats = SstMetadataStats;
+
 /// Metadata statistics for predicate pushdown
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct MetadataStats {
+pub struct SstMetadataStats {
     pub min_value: serde_json::Value,
     pub max_value: serde_json::Value,
     pub null_count: usize,

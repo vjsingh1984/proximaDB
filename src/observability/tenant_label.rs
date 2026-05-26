@@ -17,7 +17,7 @@
 // signaling that it must only land on metrics scraped at >=1m.
 //
 // Bounded set: free, team, pro, business, enterprise — derived at startup
-// from `config/pricing.json` via `Tier::prometheus_label()`. Operators
+// from `config/tier-config.json` via `Tier::prometheus_label()`. Operators
 // adding tiers via the runtime overlay (see `config/TIER_CONFIG.md`)
 // automatically widen this bounded set on the next process restart.
 
@@ -100,7 +100,7 @@ impl TenantLabel {
 static BOUNDED_LABELS_CACHE: OnceLock<Vec<&'static str>> = OnceLock::new();
 
 /// Bounded tier-label set, derived at startup from `Tier::prometheus_label()`
-/// (which itself loads from `config/pricing.json`). This is the single source
+/// (which itself loads from `config/tier-config.json`). This is the single source
 /// of truth callers should hit when registering Prometheus metric families
 /// or asserting cardinality safety.
 pub fn bounded_tier_labels() -> &'static [&'static str] {
