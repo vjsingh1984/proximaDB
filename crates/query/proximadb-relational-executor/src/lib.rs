@@ -36,8 +36,7 @@ use proximadb_relational_reader::{
     ReadSnapshot, ReaderError, RelationalReader, ScanContext,
 };
 use proximadb_relational_types::{
-    BinaryOp, Expr, ExprError, FunctionRegistry, NoFunctions, RelationalRow,
-    RelationalSchema,
+    BinaryOp, Expr, ExprError, NoFunctions, RelationalRow, RelationalSchema,
 };
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -1679,22 +1678,22 @@ impl Accumulator {
         }
     }
 
-    fn finalize(self) -> ProximaValue {
+    fn finalize(&self) -> ProximaValue {
         match self {
-            Accumulator::Count { n, .. } => ProximaValue::Int64(n),
+            Accumulator::Count { n, .. } => ProximaValue::Int64(*n),
             Accumulator::Sum { running, .. } => match running {
-                Some(f) => ProximaValue::Float64(f),
+                Some(f) => ProximaValue::Float64(*f),
                 None => ProximaValue::Null,
             },
             Accumulator::Avg { running_sum, n, .. } => {
-                if n == 0 {
+                if *n == 0 {
                     ProximaValue::Null
                 } else {
-                    ProximaValue::Float64(running_sum / n as f64)
+                    ProximaValue::Float64(*running_sum / *n as f64)
                 }
             }
             Accumulator::Min { current } | Accumulator::Max { current } => {
-                current.unwrap_or(ProximaValue::Null)
+                current.clone().unwrap_or(ProximaValue::Null)
             }
         }
     }
@@ -1974,7 +1973,7 @@ mod tests {
             outputs: vec![NamedExpr::new(
                 "double_id",
                 Expr::bin(
-                    BinaryOp::Multiply,
+                    BinaryOp::Mul,
                     Expr::column(id),
                     Expr::literal(ProximaValue::Int64(2)),
                 ),
