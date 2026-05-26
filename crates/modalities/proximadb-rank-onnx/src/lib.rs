@@ -31,6 +31,16 @@ pub mod second_phase_scorer;
 /// cross-encoders that take int64 token tensors instead of float
 /// feature tensors.
 pub mod tokenized_scorer_session;
+/// R-5b.1.1 — tokenized batched scorer (chunks a `TokenizedBatch` by
+/// `descriptor.max_batch_size` against a `TokenizedScorerSession`).
+pub mod tokenized_batched_scorer;
+/// R-5b.1.1 — tokenized doc feature extractor (batch-oriented
+/// counterpart to `DocFeatureExtractor`).
+pub mod tokenized_doc_feature_extractor;
+/// R-5b.1.1 — tokenized second-phase scorer adapter — drives
+/// `OnnxTokenizedBatchedScorer` + `TokenizedDocFeatureExtractor` to
+/// satisfy `SecondPhaseScorer` for BERT cross-encoder reranking.
+pub mod tokenized_second_phase_scorer;
 
 #[cfg(feature = "real-onnx")]
 pub mod ort_scorer_session;
@@ -50,6 +60,14 @@ pub use second_phase_scorer::OnnxSecondPhaseScorer;
 pub use tokenized_scorer_session::{
     MockTokenizedScorerSession, TokenizedBatch, TokenizedScorerSession,
 };
+pub use tokenized_batched_scorer::{
+    OnnxTokenizedBatchedScorer, TokenizedBatchInput, TokenizedBatchedScorer,
+};
+pub use tokenized_doc_feature_extractor::{
+    FnTokenizedDocFeatureExtractor, NoopTokenizedDocFeatureExtractor,
+    TokenizedDocFeatureExtractor,
+};
+pub use tokenized_second_phase_scorer::OnnxTokenizedSecondPhaseScorer;
 
 #[cfg(feature = "real-onnx")]
 pub use ort_scorer_session::OrtScorerSession;
