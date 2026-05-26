@@ -396,7 +396,15 @@ class ProximaDBClient:
 
         adapter_kwargs = {"config": self.config}
         if protocol == "grpc":
-            grpc_target = base_url.replace("http://", "").replace("https://", "")
+            # grpcio's insecure_channel expects bare host:port, not a URL.
+            # Strip http(s):// and the grpc(s):// pseudo-schemes the SDK
+            # accepts as input convenience.
+            grpc_target = (
+                base_url.replace("http://", "")
+                .replace("https://", "")
+                .replace("grpc://", "")
+                .replace("grpcs://", "")
+            )
             adapter_kwargs["server_address"] = grpc_target
         elif protocol == "embedded":
             adapter_kwargs.update(self._embedded_options)

@@ -145,16 +145,40 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         storage_engine = ProtoConverter.storage_engine_to_int(
             config.storage_engine if config else kwargs.get("storage_engine")
         )
+        # Map EmbeddingPrecision (str-Enum) → proto int discriminant.
+        # Mirrors proto: Unspecified=0, Fp32=1, Fp16=2, Bf16=3, Int8=4, Uint8=5.
+        precision_int: Optional[int] = None
+        precision_raw = (
+            config.canonical_embedding_precision
+            if config is not None
+            else kwargs.get("canonical_embedding_precision")
+        )
+        if precision_raw is not None:
+            precision_label = getattr(precision_raw, "value", precision_raw)
+            precision_int = {
+                "fp32": 1,
+                "fp16": 2,
+                "bf16": 3,
+                "int8": 4,
+                "uint8": 5,
+            }.get(str(precision_label).lower())
 
         result = self._client.create_collection(
             name=name,
             dimension=dimension,
             distance_metric=distance_metric,
             storage_engine=storage_engine,
+            canonical_embedding_precision=precision_int,
             **{
                 k: v
                 for k, v in kwargs.items()
-                if k not in ["dimension", "distance_metric", "storage_engine"]
+                if k
+                not in [
+                    "dimension",
+                    "distance_metric",
+                    "storage_engine",
+                    "canonical_embedding_precision",
+                ]
             },
         )
 

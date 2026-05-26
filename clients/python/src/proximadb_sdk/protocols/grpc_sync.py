@@ -694,6 +694,7 @@ class ProximaDBSyncGrpcClient:
         filterable_columns: List[Any] = None,
         index_configs: List[Any] = None,
         quantization_config: Any = None,
+        canonical_embedding_precision: Optional[int] = None,
     ) -> Any:
         """Create collection with unified interface
 
@@ -761,6 +762,8 @@ class ProximaDBSyncGrpcClient:
             if quantization_config:
                 # Field name in proto is `quantization`
                 config.quantization.CopyFrom(quantization_config)
+            if canonical_embedding_precision is not None:
+                config.canonical_embedding_precision = canonical_embedding_precision
 
             # Use CollectionService.CreateCollection method from v1 API
             # CreateCollection expects CollectionConfig directly, not wrapped in a request
