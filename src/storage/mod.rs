@@ -233,7 +233,6 @@ pub mod transaction;
 
 // Semantic Knowledge Store (SKS) modules
 pub mod entity_store;
-pub mod provenance;
 pub mod relations;
 
 // Key-value storage interface
