@@ -813,6 +813,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn end_to_end_pk_lookup_with_projection() {
+        // SELECT name FROM users WHERE id = 2
+        // Exercises the full pipeline: frontend lowers SQL, planner
+        // rewrites `id = lit` into ScanAccess::PkLookup and pushes
+        // projection through the PkLookup, executor narrows the row
+        // returned by `lookup_pk`. Final result must be a single-row,
+        // single-column ("bob") output.
+        let engine = InMemoryRelationalEngine::new();
+        engine
+            .create_table("users", users_schema(), vec![0])
+            .unwrap();
+        engine
+            .insert_rows(
+                "users",
+                vec![
+                    user_row(1, "alice", 30),
+                    user_row(2, "bob", 25),
+                    user_row(3, "carol", 40),
+                ],
+            )
+            .unwrap();
+        struct EngineCatalog(Arc<InMemoryRelationalEngine>);
+        impl proximadb_relational_frontend::CatalogLookup for EngineCatalog {
+            fn lookup_table(&self, name: &str) -> Option<RelationalSchema> {
+                self.0.schema_of(name)
+            }
+        }
+        let catalog = EngineCatalog(engine.clone());
+        let logical = proximadb_relational_frontend::lower_sql(
+            "SELECT name FROM users WHERE id = 2",
+            &catalog,
+        )
+        .unwrap();
+        let planner = Planner::new(StaticCapabilities {
+            caps: RC::full(),
+            pk_columns: vec![0],
+        });
+        let physical = planner.plan(logical).unwrap();
+        let factory = EngineReaderFactory::new(engine.clone());
+        let mut exec =
+            build_executor(physical, &factory, &ExecutionContext::default())
+                .unwrap();
+        exec.open().await.unwrap();
+        let rows = collect(&mut *exec).await.unwrap();
+        assert_eq!(rows.len(), 1, "PK lookup must return exactly one row");
+        assert_eq!(rows[0].len(), 1, "row must be narrowed to one column");
+        assert_eq!(rows[0][0], ProximaValue::String("bob".into()));
+    }
+
+    #[tokio::test]
     async fn end_to_end_count_star() {
         let engine = InMemoryRelationalEngine::new();
         engine
