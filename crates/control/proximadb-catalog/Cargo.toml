@@ -37,4 +37,4 @@ tokio = { workspace = true, features = ["sync", "fs", "io-util", "time", "macros
 tracing.workspace = true
 
 [dev-dependencies]
-tokio = { version = "1.37", features = ["full"] }
+tokio = { version = "1.37", features = ["full", "test-util"] }
