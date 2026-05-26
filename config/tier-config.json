@@ -12,7 +12,7 @@
     "richer 3-tier example layout operators can copy.",
     "",
     "Operators (including AnvaiOps) overlay this file at Docker build",
-    "time (COPY <operator-pricing>.json /config/pricing.json) or at",
+    "time (COPY <operator-tier-config>.json /config/tier-config.json) or at",
     "container boot (entrypoint fetches from PROXIMADB_TIER_CONFIG_URL).",
     "Overlay JSON may use any tier ids that map to a Tier variant via",
     "the serde aliases declared in src/catalog/tenant_tier.rs.",

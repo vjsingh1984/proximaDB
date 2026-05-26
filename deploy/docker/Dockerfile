@@ -99,13 +99,13 @@ VOLUME ["/data/proximadb"]
 # Working directory
 WORKDIR /data/proximadb
 
-# Entrypoint: fetches latest pricing from CF R2 (published by the
-# anvaiops repo's publish-pricing-r2.yml workflow) at boot, then
-# execs the server. Replaces the prior hand-synced
-# scripts/sync_pricing_to_proximadb.sh flow. Fallback: if the fetch
-# fails (offline, R2 outage, env override), the baked-in
-# /config/pricing.json wins — pod never crashes on network blips.
-# See deploy/docker/entrypoint.sh for the full fetch + fallback logic.
+# Entrypoint: optionally fetches a runtime tier-config overlay from
+# PROXIMADB_TIER_CONFIG_URL at boot, then execs the server. Fallback:
+# if the fetch fails (offline, network error, no URL configured), the
+# baked-in /config/tier-config.json wins — pod never crashes on
+# network blips. See deploy/docker/entrypoint.sh for the full fetch +
+# fallback logic; engine reads /config/tier-config.json at startup
+# (Phase B-5; src/catalog/tenant_tier.rs::resolve_tier_config_source).
 COPY deploy/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

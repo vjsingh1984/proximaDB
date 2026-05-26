@@ -17,9 +17,12 @@
 #
 # Backward compatibility: the legacy ANVAIOPS_PRICING_URL +
 # /config/pricing.json variables are still honored if the new
-# PROXIMADB_TIER_CONFIG_* variables are unset. This keeps existing
-# AnvaiOps deployments working during the migration window. The
-# legacy code path is scheduled for removal in the next major version.
+# PROXIMADB_TIER_CONFIG_* variables are unset. The engine itself also
+# falls back to reading /config/pricing.json at startup if
+# /config/tier-config.json is absent (see src/catalog/tenant_tier.rs
+# resolve_tier_config_source). This keeps existing AnvaiOps deployments
+# working during the migration window. The legacy code path is
+# scheduled for removal in the next major version.
 
 set -eu
 

@@ -32,7 +32,7 @@ if [[ ! -f "${FINGERPRINT}" ]]; then
     exit 1
 fi
 
-EXPECTED=$(cat "${FINGERPRINT}" | tr -d '[:space:]' | awk '{print $1}')
+EXPECTED=$(awk '{print $1}' "${FINGERPRINT}")
 ACTUAL=$(shasum -a 256 "${CONFIG}" | awk '{print $1}')
 
 if [[ "${EXPECTED}" != "${ACTUAL}" ]]; then

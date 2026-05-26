@@ -118,14 +118,27 @@ A simple validation script ships in `scripts/validate_tier_config.py`
 (when present). CI in operator repos should validate their
 `tier-config.json` against this schema before publishing.
 
-## Migration from the legacy `pricing.json` format
+## Migration from the legacy `pricing.json` path
 
-Older builds of ProximaDB read `/config/pricing.json` with a richer
-schema (currency, dollar rates, marketing display fields). That file
-remains supported for backward compatibility during the migration
-window. New deployments should use `tier-config.json`; the next major
-ProximaDB release will drop the `pricing.json` reader.
+Older builds of ProximaDB embedded `config/pricing.json` (and read
+runtime overlays at `/config/pricing.json`). Phase B-5 renamed the
+embedded file to `config/tier-config.json` and made the engine read
+runtime overlays at `/config/tier-config.json` first, with
+`/config/pricing.json` as a deprecated fallback.
 
-To migrate, strip your `pricing.json` to the fields documented above
-and rename. The `scripts/strip_pricing_to_tier_config.py` helper
-(when present) does this mechanically.
+To migrate an existing operator overlay:
+
+1. Rename your overlay file: `/config/pricing.json` →
+   `/config/tier-config.json` (or set
+   `PROXIMADB_TIER_CONFIG_PATH=/config/pricing.json` to keep the old
+   path explicitly).
+2. Strip any commercial fields (currency, dollar rates, marketing
+   `display` blocks) that aren't part of this schema — the engine
+   ignores them but they're noise in the OSS surface.
+3. Operator overlays may use legacy tier ids (`free_trial`, `team`,
+   `pro`, `business`, `enterprise`) — these deserialize to the
+   canonical `tier1`..`tier5` enum variants via serde aliases without
+   a data migration.
+
+The deprecated `/config/pricing.json` fallback path stays for the
+next major version then gets removed.
