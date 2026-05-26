@@ -1390,6 +1390,108 @@ where
     }
 }
 
+// ---------------------------------------------------------------------------
+// Async runner (P3c5) — interval-driven loop + shutdown
+// ---------------------------------------------------------------------------
+
+/// Runner config. Mirrors the contract's
+/// `[dr.reconciler] poll_interval_seconds` setting; defaults to 60s
+/// per §"Scheduling And Backpressure".
+#[derive(Debug, Clone, Copy)]
+pub struct RunnerConfig {
+    pub poll_interval: std::time::Duration,
+}
+
+impl Default for RunnerConfig {
+    fn default() -> Self {
+        Self {
+            poll_interval: std::time::Duration::from_secs(60),
+        }
+    }
+}
+
+/// Stats returned by the runner on shutdown — useful for shutdown
+/// diagnostics and integration assertions.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RunnerStats {
+    /// Number of `shard.tick()` calls that returned successfully.
+    pub successful_ticks: u64,
+    /// Number of `shard.tick()` calls that returned an error. The
+    /// loop logs and continues after each.
+    pub failed_ticks: u64,
+}
+
+/// Long-running wrapper around [`DrReconcilerShard::tick`]. Calls
+/// `tick()` on a `tokio::time::interval` cadence; exits cleanly when
+/// the watch receiver flips to `true`.
+///
+/// Errors from `tick()` are tracing-logged and counted but do not
+/// terminate the loop — a transient store failure should not bring
+/// the reconciler down.
+///
+/// Usage:
+/// ```ignore
+/// let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+/// let runner = DrReconcilerRunner::new(shard, RunnerConfig::default());
+/// let handle = tokio::spawn(runner.run(shutdown_rx));
+/// // ... later ...
+/// shutdown_tx.send(true).unwrap();
+/// let stats = handle.await.unwrap();
+/// ```
+pub struct DrReconcilerRunner<S, A> {
+    shard: Arc<DrReconcilerShard<S, A>>,
+    config: RunnerConfig,
+}
+
+impl<S, A> DrReconcilerRunner<S, A>
+where
+    S: DrPolicyStore + 'static,
+    A: DrProviderAdapter + 'static,
+{
+    pub fn new(shard: Arc<DrReconcilerShard<S, A>>, config: RunnerConfig) -> Self {
+        Self { shard, config }
+    }
+
+    /// Drive the loop until `shutdown_rx` flips to `true`. Returns
+    /// the tick counters at exit. The first tick fires immediately
+    /// (tokio::time::interval's MissedTickBehavior defaults to Burst,
+    /// which we override to Delay so a slow tick doesn't compound
+    /// into a tick storm).
+    pub async fn run(
+        self,
+        mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    ) -> RunnerStats {
+        let mut interval = tokio::time::interval(self.config.poll_interval);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut stats = RunnerStats::default();
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    match self.shard.tick().await {
+                        Ok(_) => stats.successful_ticks += 1,
+                        Err(e) => {
+                            stats.failed_ticks += 1;
+                            tracing::warn!(
+                                target: "proximadb::dr::reconciler",
+                                error = ?e,
+                                "DR reconciler tick failed; continuing"
+                            );
+                        }
+                    }
+                }
+                changed = shutdown_rx.changed() => {
+                    // Channel closed or value changed; either way,
+                    // exit cleanly. If changed errored (sender
+                    // dropped), treat it as shutdown.
+                    if changed.is_err() || *shutdown_rx.borrow() {
+                        return stats;
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3209,5 +3311,151 @@ mod tests {
         );
         // No shard pauses occurred (no QuotaExceeded errors).
         assert!(metrics.pauses().is_empty());
+    }
+
+    // --- Async runner -------------------------------------------------
+
+    /// Helper: build a shard whose store starts with no pending
+    /// policies. The runner exercises pure cadence and shutdown
+    /// semantics; the per-policy gates already have coverage in
+    /// the dedicated tick tests.
+    fn make_runner_shard(
+    ) -> (Arc<MockDrPolicyStore>, Arc<DrReconcilerShard<MockDrPolicyStore, MockDrProviderAdapter>>) {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let clock = Arc::new(AtomicI64::new(0));
+        let shard = Arc::new(make_shard(
+            store.clone(),
+            adapter,
+            BackoffPolicy::default(),
+            clock,
+            0.5,
+        ));
+        (store, shard)
+    }
+
+    #[test]
+    fn runner_config_default_matches_contract_60s() {
+        let c = RunnerConfig::default();
+        assert_eq!(c.poll_interval, std::time::Duration::from_secs(60));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn runner_ticks_at_configured_cadence_and_exits_on_shutdown() {
+        let (store, shard) = make_runner_shard();
+        // Seed one policy so each tick has work to record (verifies
+        // the loop actually calls shard.tick).
+        let p = base_policy();
+        store.seed_pending(vec![p]);
+
+        let cfg = RunnerConfig {
+            poll_interval: std::time::Duration::from_millis(100),
+        };
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let runner = DrReconcilerRunner::new(shard.clone(), cfg);
+        let handle = tokio::spawn(runner.run(shutdown_rx));
+
+        // Let three intervals elapse: 0ms (first tick fires
+        // immediately), then 100ms and 200ms.
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        shutdown_tx.send(true).unwrap();
+        let stats = handle.await.unwrap();
+        // Expect 3 successful ticks: at 0, 100, 200ms.
+        assert!(
+            stats.successful_ticks >= 3,
+            "expected ≥3 ticks, got {}",
+            stats.successful_ticks
+        );
+        assert_eq!(stats.failed_ticks, 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn runner_exits_immediately_on_initial_shutdown_signal() {
+        // If the shutdown signal flips before any interval tick
+        // fires, the runner should still exit (within ~one tick
+        // window) without waiting forever.
+        let (_store, shard) = make_runner_shard();
+        let cfg = RunnerConfig {
+            poll_interval: std::time::Duration::from_secs(60),
+        };
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let runner = DrReconcilerRunner::new(shard, cfg);
+        let handle = tokio::spawn(runner.run(shutdown_rx));
+
+        // Yield to let the loop reach select!.
+        tokio::task::yield_now().await;
+        // Now signal shutdown.
+        shutdown_tx.send(true).unwrap();
+        // First tick of an interval fires at construction time
+        // (immediately). Advance microscopically so the runner
+        // reaches its select! and observes the shutdown.
+        tokio::time::advance(std::time::Duration::from_millis(1)).await;
+        let stats = handle.await.unwrap();
+        // The immediate-first-tick property means we may get 1 tick
+        // before shutdown wins the select; anything more would
+        // indicate the shutdown wasn't observed.
+        assert!(
+            stats.successful_ticks <= 1,
+            "expected ≤1 tick, got {}",
+            stats.successful_ticks
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn runner_continues_loop_after_tick_failure() {
+        // The store returns an error from pending_reconcile on the
+        // first call; subsequent calls succeed. The runner must log
+        // and continue, not exit on the failure.
+        let (store, shard) = make_runner_shard();
+        store.inject_error.lock().replace(DrApiError::StoreUnavailable(
+            "test injected".into(),
+        ));
+        let cfg = RunnerConfig {
+            poll_interval: std::time::Duration::from_millis(50),
+        };
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let runner = DrReconcilerRunner::new(shard, cfg);
+        let handle = tokio::spawn(runner.run(shutdown_rx));
+
+        // Let several intervals pass — first will fail, rest succeed
+        // (the error injection is one-shot per MockDrPolicyStore
+        // semantics).
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        shutdown_tx.send(true).unwrap();
+        let stats = handle.await.unwrap();
+        assert_eq!(stats.failed_ticks, 1, "exactly one error injected");
+        assert!(
+            stats.successful_ticks >= 2,
+            "loop continued after the error: {} ticks",
+            stats.successful_ticks
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn runner_handles_sender_drop_as_shutdown() {
+        // Dropping the watch sender should terminate the loop
+        // (tokio::sync::watch::Receiver::changed returns Err once
+        // all senders are dropped).
+        let (_store, shard) = make_runner_shard();
+        let cfg = RunnerConfig {
+            poll_interval: std::time::Duration::from_secs(60),
+        };
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let runner = DrReconcilerRunner::new(shard, cfg);
+        let handle = tokio::spawn(runner.run(shutdown_rx));
+
+        tokio::task::yield_now().await;
+        drop(shutdown_tx);
+        // Tiny advance so the runner's select! has a chance to wake.
+        tokio::time::advance(std::time::Duration::from_millis(1)).await;
+        let stats = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            handle,
+        )
+        .await
+        .expect("runner exited within timeout")
+        .unwrap();
+        // At most one immediate tick before shutdown won the select.
+        assert!(stats.successful_ticks <= 1);
     }
 }
