@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use proximadb_kernel::PhaseId;
-use proximadb_rank_core::{DocHandle, RankResult, ScoredHit, SecondPhaseScorer};
+use proximadb_rank_core::{DocHandle, QueryContext, RankResult, ScoredHit, SecondPhaseScorer};
 
 use crate::batched_scorer::{BatchInput, BatchedScorer, OnnxBatchedScorer};
 use crate::doc_feature_extractor::DocFeatureExtractor;
@@ -37,7 +37,16 @@ impl OnnxSecondPhaseScorer {
 }
 
 impl SecondPhaseScorer for OnnxSecondPhaseScorer {
-    fn rescore(&self, hits: Vec<ScoredHit>) -> RankResult<Vec<ScoredHit>> {
+    fn rescore(
+        &self,
+        hits: Vec<ScoredHit>,
+        _qctx: &QueryContext,
+    ) -> RankResult<Vec<ScoredHit>> {
+        // The float-input pipeline pays no attention to qctx — the
+        // pre-encoded feature rows already incorporate query state
+        // upstream of this rescore. The tokenized twin
+        // (`OnnxTokenizedSecondPhaseScorer`) DOES use qctx to drive
+        // its tokenizer extractor.
         if hits.is_empty() {
             return Ok(Vec::new());
         }
@@ -122,7 +131,7 @@ mod tests {
     fn rescore_empty_input_short_circuits() {
         let mock = Arc::new(MockScorerSession::zeros(descriptor("m", 32)));
         let s = make_scorer(mock.clone(), Arc::new(NoopDocFeatureExtractor));
-        let out = s.rescore(Vec::new()).unwrap();
+        let out = s.rescore(Vec::new(), &QueryContext::default()).unwrap();
         assert!(out.is_empty());
         assert_eq!(
             mock.call_count(),
@@ -135,7 +144,7 @@ mod tests {
     fn rescore_tags_phase_id_second() {
         let mock = Arc::new(MockScorerSession::constant(descriptor("m", 32), 0.5));
         let s = make_scorer(mock, Arc::new(NoopDocFeatureExtractor));
-        let out = s.rescore(vec![hit(1, 1.0), hit(2, 2.0)]).unwrap();
+        let out = s.rescore(vec![hit(1, 1.0), hit(2, 2.0)], &QueryContext::default()).unwrap();
         for h in &out {
             assert_eq!(h.phase, PhaseId::SECOND);
         }
@@ -153,7 +162,7 @@ mod tests {
         let s = make_scorer(mock.clone(), extractor);
 
         let out = s
-            .rescore(vec![hit(7, 0.9), hit(3, 0.8), hit(42, 0.7)])
+            .rescore(vec![hit(7, 0.9), hit(3, 0.8), hit(42, 0.7)], &QueryContext::default())
             .unwrap();
         assert_eq!(out.len(), 3);
         assert_eq!(out[0].doc, DocHandle(7));
@@ -170,7 +179,7 @@ mod tests {
         let mock = Arc::new(MockScorerSession::zeros(descriptor("m", 32)));
         let s = make_scorer(mock.clone(), Arc::new(NoopDocFeatureExtractor));
         let hits: Vec<ScoredHit> = (0..100).map(|i| hit(i, 1.0)).collect();
-        let out = s.rescore(hits).unwrap();
+        let out = s.rescore(hits, &QueryContext::default()).unwrap();
         assert_eq!(out.len(), 100);
         assert_eq!(mock.call_count(), 4);
     }
@@ -186,7 +195,7 @@ mod tests {
             })
         }));
         let s = make_scorer(mock.clone(), extractor);
-        match s.rescore(vec![hit(1, 1.0)]) {
+        match s.rescore(vec![hit(1, 1.0, &QueryContext::default())]) {
             Err(RankError::ModelInference { reason, .. }) => {
                 assert!(reason.contains("synthetic failure"));
             }

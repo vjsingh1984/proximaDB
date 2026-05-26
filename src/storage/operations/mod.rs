@@ -285,7 +285,7 @@ impl UnifiedOperationCoordinator {
     }
 
     /// Schedule minor compaction with optimization
-    pub async fn schedule_minor_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
+    pub async fn schedule_minor_compaction(&self, collection_id: &str) -> Result<OpsCompactionResult> {
         info!(
             "Scheduling minor compaction for collection: {}",
             collection_id
@@ -342,7 +342,7 @@ impl UnifiedOperationCoordinator {
     }
 
     /// Schedule major compaction across levels
-    pub async fn schedule_major_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
+    pub async fn schedule_major_compaction(&self, collection_id: &str) -> Result<OpsCompactionResult> {
         info!(
             "Scheduling major compaction for collection: {}",
             collection_id
@@ -555,9 +555,12 @@ pub struct OpsFlushResult {
     pub should_trigger_compaction: bool,
 }
 
+/// Backwards-compat alias for [`OpsCompactionResult`].
+pub type CompactionResult = OpsCompactionResult;
+
 /// Compaction operation result
 #[derive(Debug, Clone)]
-pub struct CompactionResult {
+pub struct OpsCompactionResult {
     pub collection_id: String,
     pub files_compacted: Vec<String>,
     pub files_created: Vec<String>,

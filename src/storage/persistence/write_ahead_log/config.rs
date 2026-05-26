@@ -41,9 +41,12 @@ impl Default for WalEncryptionConfig {
     }
 }
 
+/// Backwards-compat alias for [`WalCompressionConfig`].
+pub type CompressionConfig = WalCompressionConfig;
+
 /// Compression configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompressionConfig {
+pub struct WalCompressionConfig {
     /// Algorithm to use
     pub algorithm: crate::core::CompressionAlgorithm,
 
@@ -57,7 +60,7 @@ pub struct CompressionConfig {
     pub min_compress_size: usize,
 }
 
-impl Default for CompressionConfig {
+impl Default for WalCompressionConfig {
     fn default() -> Self {
         Self {
             algorithm: CompressionAlgorithm::default(),
@@ -306,7 +309,7 @@ pub struct WALConfig {
     pub global_manifest_url: Option<String>,
 
     /// Compression settings
-    pub compression: CompressionConfig,
+    pub compression: WalCompressionConfig,
 
     /// Encryption settings (TD-016)
     pub encryption: WalEncryptionConfig,
@@ -348,7 +351,7 @@ impl Default for WALConfig {
             strategy_type: WriteBufferStrategyType::default(), // Bincode for maximum vector ingestion performance
             memtable: MemTableConfig::default(), // ART for metadata filtering efficiency
             multi_disk: MultiDiskConfig::default(), // LoadBalanced for bulk insert optimization
-            compression: CompressionConfig::default(), // Snappy for balanced performance
+            compression: WalCompressionConfig::default(), // Snappy for balanced performance
             encryption: WalEncryptionConfig::default(), // Encryption disabled by default (TD-016)
             performance: WalPerformanceConfig::default(), // Optimized for large vectors and bulk processing
             enable_mvcc: true, // Enable for consistency and document versioning
@@ -375,7 +378,7 @@ pub struct CollectionWalConfig {
     pub disk_segment_size: Option<usize>,
 
     /// Override compression settings
-    pub compression: Option<CompressionConfig>,
+    pub compression: Option<WalCompressionConfig>,
 
     /// Override TTL settings
     pub default_ttl_days: Option<u32>,
@@ -550,7 +553,7 @@ impl WALConfig {
 #[derive(Debug, Clone)]
 pub struct CollectionEffectiveConfig {
     pub disk_segment_size: usize,
-    pub compression: CompressionConfig,
+    pub compression: WalCompressionConfig,
     pub default_ttl_days: Option<u32>,
     /// Size-based flush threshold (bytes) - derived from memory_flush_size_bytes
     pub memory_flush_size_bytes: usize,
@@ -836,7 +839,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_compression_config_default() {
-        let config = CompressionConfig::default();
+        let config = WalCompressionConfig::default();
 
         // CompressionAlgorithm::default() returns None (no compression by default)
         assert!(matches!(config.algorithm, CompressionAlgorithm::None));
@@ -893,7 +896,7 @@ mod tests {
                 mvcc_versions_retained: 5,
                 enable_concurrency: true,
             },
-            compression: CompressionConfig {
+            compression: WalCompressionConfig {
                 algorithm: CompressionAlgorithm::Zstd,
                 compress_memory: true,
                 compress_disk: true,
@@ -973,7 +976,7 @@ mod tests {
                 mvcc_versions_retained: 3,
                 enable_concurrency: true,
             },
-            compression: CompressionConfig::default(),
+            compression: WalCompressionConfig::default(),
             encryption: WalEncryptionConfig::default(),
             performance: WalPerformanceConfig::default(),
             enable_mvcc: true,
@@ -1331,7 +1334,7 @@ mod tests {
 
     #[test]
     fn test_compression_config_defaults() {
-        let config = CompressionConfig::default();
+        let config = WalCompressionConfig::default();
 
         assert_eq!(config.algorithm, CompressionAlgorithm::default());
         assert!(!config.compress_memory); // Memory should be uncompressed for fast access
@@ -1339,7 +1342,7 @@ mod tests {
         assert_eq!(config.min_compress_size, 1024);
 
         // Test custom compression configuration
-        let custom_config = CompressionConfig {
+        let custom_config = WalCompressionConfig {
             algorithm: CompressionAlgorithm::Lz4,
             compress_memory: true,
             compress_disk: false,
@@ -1347,7 +1350,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&custom_config).unwrap();
-        let deserialized: CompressionConfig = serde_json::from_str(&json).unwrap();
+        let deserialized: WalCompressionConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(custom_config.compress_memory, deserialized.compress_memory);
         assert_eq!(
             custom_config.min_compress_size,

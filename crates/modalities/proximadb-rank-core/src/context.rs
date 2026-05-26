@@ -22,6 +22,12 @@ pub struct QueryContext {
     /// Primary query vector for `closeness(...)` / `cosine(...)` features.
     /// `None` when the query is keyword-only.
     pub query_vector: Option<Vec<f32>>,
+    /// Free-form query text — used by BM25 features and by the
+    /// `BertPairTokenizingDocFeatureExtractor` (R-5b.1.3) to build
+    /// (query, doc) pairs for cross-encoder rescoring. `None` for
+    /// vector-only queries. `Arc<str>` because the same string is
+    /// cloned cheaply into per-doc tokenization rows.
+    pub query_text: Option<std::sync::Arc<str>>,
     /// Free-form tag bag for v1; will be replaced with typed query params
     /// in R-2 when retrieval candidates wire in.
     pub tags: Vec<(String, String)>,

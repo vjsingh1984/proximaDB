@@ -45,7 +45,7 @@ use crate::storage::common::*;
 
 /// Temporary compatibility structure for level-based compaction task
 #[derive(Debug, Clone)]
-pub struct LevelBasedCompactionTask {
+pub struct LevelBasedSstCompactionTask {
     pub level: u32,
     pub input_files: Vec<String>,
     pub target_level: u32,
@@ -60,9 +60,12 @@ use tokio::sync::{Mutex, Notify, OnceCell, RwLock};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 
+/// Backwards-compat alias for [`SstCompactionTask`].
+pub type CompactionTask = SstCompactionTask;
+
 /// Compaction task to be processed by background workers
 #[derive(Debug, Clone)]
-pub struct CompactionTask {
+pub struct SstCompactionTask {
     pub level: u8,
     pub input_files: Vec<PathBuf>,
     pub output_file: PathBuf,
@@ -130,12 +133,12 @@ pub struct EnhancedSstCompactionStats {
 /// Manages background compaction of SST files
 pub struct Compaction {
     config: SstConfig,
-    task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
+    task_queue: Arc<Mutex<VecDeque<SstCompactionTask>>>,
     task_notify: Arc<Notify>,
     worker_handles: Vec<JoinHandle<()>>,
     shutdown_signal: Arc<AtomicBool>,
     stats: Arc<RwLock<SstCompactionStats>>,
-    active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
+    active_compactions: Arc<RwLock<HashMap<String, SstCompactionTask>>>,
     #[allow(dead_code)]
     atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     unified_reader: Arc<UnifiedSstableReader>,
@@ -148,7 +151,7 @@ pub struct Compaction {
     /// handle becomes available (the storage engine constructs Compaction
     /// before SharedServices does, so the resolver can't be injected at
     /// construction time). When initialized, `check_compaction_needed`
-    /// populates the produced `CompactionTask.precision_hint` from
+    /// populates the produced `SstCompactionTask.precision_hint` from
     /// `resolver.resolve(table_id)` so the writer reconstitution sites
     /// coerce records to the collection's canonical precision before
     /// flushing. When unset, `precision_hint` stays `None` (records keep
@@ -293,7 +296,7 @@ impl Compaction {
         })
     }
 
-    /// Attach a `CanonicalPrecisionResolver` so produced `CompactionTask`s
+    /// Attach a `CanonicalPrecisionResolver` so produced `SstCompactionTask`s
     /// carry `precision_hint = Some(target)` for fp16 / non-fp32 collections.
     /// Without this, all tasks ship with `precision_hint: None` and
     /// compaction writes records at whatever precision the VectorRecord
@@ -475,7 +478,7 @@ impl Compaction {
     }
 
     /// Schedule a compaction task
-    pub async fn schedule_compaction(&self, task: CompactionTask) -> Result<()> {
+    pub async fn schedule_compaction(&self, task: SstCompactionTask) -> Result<()> {
         debug!(
             "Scheduling compaction for level {} with {} input files",
             task.level,
@@ -524,7 +527,7 @@ impl Compaction {
         &self,
         collection_id: &str,
         collection_dir: &Path,
-    ) -> Result<Option<CompactionTask>> {
+    ) -> Result<Option<SstCompactionTask>> {
         debug!(
             "🔍 SST COMPACTION: Delegating to unified framework for collection: {}",
             collection_id
@@ -541,7 +544,7 @@ impl Compaction {
             .unwrap_or_else(crate::core::config::CompactionConfig::default);
 
         // Use unified compaction task builder with configuration
-        let task_info = CompactionTaskBuilder::check_and_build_compaction_task(
+        let task_info = SstCompactionTaskBuilder::check_and_build_compaction_task(
             collection_id,
             &collection_path,
             "sst",
@@ -552,7 +555,7 @@ impl Compaction {
         .await
         .map_err(|e| crate::core::StorageError::SstEngine(e.to_string()))?;
 
-        let unified_task = task_info.map(|info| LevelBasedCompactionTask {
+        let unified_task = task_info.map(|info| LevelBasedSstCompactionTask {
             level: info.source_level,
             input_files: info.input_files,
             target_level: info.target_level,
@@ -565,7 +568,7 @@ impl Compaction {
                 collection_id, task.level
             );
 
-            // Convert unified task to SST CompactionTask
+            // Convert unified task to SST SstCompactionTask
             let input_files: Vec<PathBuf> =
                 task.input_files.into_iter().map(PathBuf::from).collect();
 
@@ -599,7 +602,7 @@ impl Compaction {
                 }
             };
 
-            return Ok(Some(CompactionTask {
+            return Ok(Some(SstCompactionTask {
                 level: task.level as u8,
                 input_files,
                 output_file,
@@ -625,11 +628,11 @@ impl Compaction {
     /// Worker loop for processing compaction tasks
     async fn worker_loop(
         worker_id: usize,
-        task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
+        task_queue: Arc<Mutex<VecDeque<SstCompactionTask>>>,
         task_notify: Arc<Notify>,
         shutdown_signal: Arc<AtomicBool>,
         stats: Arc<RwLock<SstCompactionStats>>,
-        active_compactions: Arc<RwLock<HashMap<String, CompactionTask>>>,
+        active_compactions: Arc<RwLock<HashMap<String, SstCompactionTask>>>,
         config: SstConfig,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     ) {
@@ -738,7 +741,7 @@ impl Compaction {
     /// Perform the actual compaction operation
     async fn perform_compaction(
         &self,
-        task: &CompactionTask,
+        task: &SstCompactionTask,
         _config: &SstConfig,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
     ) -> Result<SstCompactionStats> {
@@ -752,7 +755,7 @@ impl Compaction {
     /// OPTIMIZATION: Single path for all compaction, reuses existing reader/writer infrastructure
     pub async fn perform_compaction_enhanced(
         &self,
-        task: &CompactionTask,
+        task: &SstCompactionTask,
         _config: &SstConfig,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
         compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,
@@ -807,7 +810,7 @@ impl Compaction {
     /// OPTIMIZATION: Single streaming path, no dual conversions, fastest performance
     async fn perform_unified_vectorrecord_compaction(
         &self,
-        task: &CompactionTask,
+        task: &SstCompactionTask,
         _config: &SstConfig,
         atomic_coordinator: Option<Arc<TransactionCoordinator>>,
         compression_config: Option<crate::proto::proximadb_v1::CompressionConfig>,

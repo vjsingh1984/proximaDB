@@ -326,14 +326,17 @@ pub struct ColumnarSchemaBuilder {
 #[derive(Debug, Clone)]
 struct CachedSchema {
     schema: Arc<Schema>,
-    compression_metadata: CompressionMetadata,
+    compression_metadata: ColumnarSchemaCompressionMetadata,
     timestamp: std::time::Instant,
     ttl: std::time::Duration,
 }
 
+/// Backwards-compat alias for [`ColumnarSchemaCompressionMetadata`].
+pub type CompressionMetadata = ColumnarSchemaCompressionMetadata;
+
 /// Compression metadata for schema
 #[derive(Debug, Clone)]
-pub struct CompressionMetadata {
+pub struct ColumnarSchemaCompressionMetadata {
     /// Compression settings per column
     pub column_compression: HashMap<String, CompressionAlgorithm>,
 
@@ -393,7 +396,7 @@ impl ColumnarSchemaBuilder {
         &self,
         collection_id: &str,
         config: &ColumnarSchemaConfig,
-    ) -> Result<(Arc<Schema>, CompressionMetadata)> {
+    ) -> Result<(Arc<Schema>, ColumnarSchemaCompressionMetadata)> {
         // Generate cache key based on configuration
         let cache_key = self.generate_cache_key(collection_id, config);
 
@@ -429,7 +432,7 @@ impl ColumnarSchemaBuilder {
     fn build_schema_internal(
         &self,
         config: &ColumnarSchemaConfig,
-    ) -> Result<(Arc<Schema>, CompressionMetadata)> {
+    ) -> Result<(Arc<Schema>, ColumnarSchemaCompressionMetadata)> {
         let mut fields = Vec::new();
         let mut column_compression = HashMap::new();
         let mut compression_ratios = HashMap::new();
@@ -478,7 +481,7 @@ impl ColumnarSchemaBuilder {
         )?;
 
         let schema = Arc::new(Schema::new(fields));
-        let compression_metadata = CompressionMetadata {
+        let compression_metadata = ColumnarSchemaCompressionMetadata {
             column_compression,
             compression_ratios,
             writer_properties: WriterPropertiesConfig::default(),
@@ -773,7 +776,7 @@ impl ColumnarSchemaBuilder {
         &self,
         cache_key: String,
         schema: Arc<Schema>,
-        compression_metadata: CompressionMetadata,
+        compression_metadata: ColumnarSchemaCompressionMetadata,
     ) {
         let cached = CachedSchema {
             schema,
@@ -991,7 +994,7 @@ pub async fn create_schema_from_collection(
     dimension: usize,
     quantization: Option<&QuantizationConfig>,
     filterable_columns: &[ColumnarFilterableSpec],
-) -> Result<(Arc<Schema>, CompressionMetadata)> {
+) -> Result<(Arc<Schema>, ColumnarSchemaCompressionMetadata)> {
     let builder = ColumnarSchemaBuilder::new();
 
     let config = ColumnarSchemaConfig {

@@ -7,7 +7,7 @@
 //!
 //! See `roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md` §4.1.7.
 
-use crate::context::ScoreCtx;
+use crate::context::{QueryContext, ScoreCtx};
 use crate::error::RankResult;
 use crate::program::RankProgram;
 use crate::types::DocHandle;
@@ -117,7 +117,18 @@ pub trait SecondPhaseScorer: Send + Sync {
     /// the input length and contain the same set of `DocHandle`s
     /// (rescorers re-rank, they don't filter — that's the global
     /// phase's job).
-    fn rescore(&self, hits: Vec<ScoredHit>) -> RankResult<Vec<ScoredHit>>;
+    ///
+    /// `qctx` carries per-request state — query text, query vector,
+    /// tenant, logical now. Cross-encoder rescorers (R-5b.1.3) read
+    /// `qctx.query_text` to build (query, doc) pairs for
+    /// tokenization. Scorers that don't need any context (the
+    /// pre-encoded-feature float path, the simple rescorer fixtures)
+    /// ignore it.
+    fn rescore(
+        &self,
+        hits: Vec<ScoredHit>,
+        qctx: &QueryContext,
+    ) -> RankResult<Vec<ScoredHit>>;
 }
 
 /// Pass-through second-phase scorer — returns hits unchanged but tagged
@@ -126,7 +137,11 @@ pub trait SecondPhaseScorer: Send + Sync {
 pub struct PassthroughSecondPhaseScorer;
 
 impl SecondPhaseScorer for PassthroughSecondPhaseScorer {
-    fn rescore(&self, hits: Vec<ScoredHit>) -> RankResult<Vec<ScoredHit>> {
+    fn rescore(
+        &self,
+        hits: Vec<ScoredHit>,
+        _qctx: &QueryContext,
+    ) -> RankResult<Vec<ScoredHit>> {
         Ok(hits
             .into_iter()
             .map(|h| ScoredHit {
@@ -145,7 +160,11 @@ pub struct ConstantMultiplierSecondPhaseScorer {
 }
 
 impl SecondPhaseScorer for ConstantMultiplierSecondPhaseScorer {
-    fn rescore(&self, hits: Vec<ScoredHit>) -> RankResult<Vec<ScoredHit>> {
+    fn rescore(
+        &self,
+        hits: Vec<ScoredHit>,
+        _qctx: &QueryContext,
+    ) -> RankResult<Vec<ScoredHit>> {
         Ok(hits
             .into_iter()
             .map(|h| ScoredHit {
@@ -303,6 +322,7 @@ impl RankPipeline {
         &self,
         first_outcome: PhaseOutcome,
         scorer: &dyn SecondPhaseScorer,
+        qctx: &QueryContext,
     ) -> RankResult<PhaseOutcome> {
         // No second phase configured → pass-through. `PhaseId::FIRST`
         // tags on the inputs are preserved so the caller can tell
@@ -320,7 +340,7 @@ impl RankPipeline {
         let to_rescore: Vec<ScoredHit> = iter.by_ref().take(take).collect();
         let tail: Vec<ScoredHit> = iter.collect();
 
-        let rescored = scorer.rescore(to_rescore)?;
+        let rescored = scorer.rescore(to_rescore, qctx)?;
 
         // Defensive: scorers must preserve hit count + identity. If
         // length drifts, surface a clear error rather than producing
@@ -550,7 +570,7 @@ mod tests {
             ScoredHit::bare(DocHandle(1), 1.0, PhaseId::FIRST),
             ScoredHit::bare(DocHandle(2), 2.0, PhaseId::FIRST),
         ];
-        let out = s.rescore(hits).unwrap();
+        let out = s.rescore(hits, &QueryContext::default()).unwrap();
         assert_eq!(out.len(), 2);
         for h in &out {
             assert_eq!(h.phase, PhaseId::SECOND);
@@ -564,7 +584,7 @@ mod tests {
     fn constant_multiplier_second_phase_scorer_scales_scores() {
         let s = ConstantMultiplierSecondPhaseScorer { factor: 3.0 };
         let hits = vec![ScoredHit::bare(DocHandle(1), 2.5, PhaseId::FIRST)];
-        let out = s.rescore(hits).unwrap();
+        let out = s.rescore(hits, &QueryContext::default()).unwrap();
         assert_eq!(out[0].score, 7.5);
         assert_eq!(out[0].phase, PhaseId::SECOND);
     }
@@ -584,7 +604,7 @@ mod tests {
         );
         let inp = outcome(&[(1, 1.0), (2, 2.0), (3, 3.0)], false);
         let out = pipe
-            .run_second_phase(inp.clone(), &PassthroughSecondPhaseScorer)
+            .run_second_phase(inp.clone(), &PassthroughSecondPhaseScorer, &QueryContext::default())
             .unwrap();
         assert_eq!(out.hits.len(), 3);
         // PhaseId remains FIRST because the scorer never ran.
@@ -603,7 +623,7 @@ mod tests {
         let pipe = pipeline_with_second_phase(10, 3);
         let inp = outcome(&[(5, 5.0), (4, 4.0), (3, 3.0), (2, 2.0), (1, 1.0)], false);
         let scorer = ConstantMultiplierSecondPhaseScorer { factor: 0.1 };
-        let out = pipe.run_second_phase(inp, &scorer).unwrap();
+        let out = pipe.run_second_phase(inp, &scorer, &QueryContext::default()).unwrap();
         assert_eq!(out.hits.len(), 5);
         assert_eq!(out.hits[0].doc, DocHandle(2));
         assert_eq!(out.hits[0].score, 2.0);
@@ -631,7 +651,7 @@ mod tests {
         let pipe = pipeline_with_second_phase(10, 100);
         let inp = outcome(&[(1, 1.0), (2, 2.0), (3, 3.0)], false);
         let out = pipe
-            .run_second_phase(inp, &PassthroughSecondPhaseScorer)
+            .run_second_phase(inp, &PassthroughSecondPhaseScorer, &QueryContext::default())
             .unwrap();
         // Every hit got the SECOND tag.
         for h in &out.hits {
@@ -644,7 +664,7 @@ mod tests {
         let pipe = pipeline_with_second_phase(10, 3);
         let inp = outcome(&[(1, 1.0)], true);
         let out = pipe
-            .run_second_phase(inp, &PassthroughSecondPhaseScorer)
+            .run_second_phase(inp, &PassthroughSecondPhaseScorer, &QueryContext::default())
             .unwrap();
         assert!(out.truncated);
     }
@@ -658,7 +678,7 @@ mod tests {
             elapsed_us: 1234,
         };
         let out = pipe
-            .run_second_phase(inp, &PassthroughSecondPhaseScorer)
+            .run_second_phase(inp, &PassthroughSecondPhaseScorer, &QueryContext::default())
             .unwrap();
         // Carries first-phase elapsed forward AND adds second-phase time.
         assert!(out.elapsed_us >= 1234);
@@ -669,14 +689,18 @@ mod tests {
         // A buggy scorer that returns fewer hits than input → ModelInference.
         struct DropsFirst;
         impl SecondPhaseScorer for DropsFirst {
-            fn rescore(&self, mut hits: Vec<ScoredHit>) -> RankResult<Vec<ScoredHit>> {
+            fn rescore(
+                &self,
+                mut hits: Vec<ScoredHit>,
+                _qctx: &QueryContext,
+            ) -> RankResult<Vec<ScoredHit>> {
                 hits.pop();
                 Ok(hits)
             }
         }
         let pipe = pipeline_with_second_phase(10, 3);
         let inp = outcome(&[(1, 1.0), (2, 2.0), (3, 3.0)], false);
-        match pipe.run_second_phase(inp, &DropsFirst) {
+        match pipe.run_second_phase(inp, &DropsFirst, &QueryContext::default()) {
             Err(crate::error::RankError::ModelInference { reason, .. }) => {
                 assert!(reason.contains("returned 2 hits, expected 3"));
             }
@@ -689,7 +713,7 @@ mod tests {
         let pipe = pipeline_with_second_phase(10, 3);
         let inp = outcome(&[], false);
         let out = pipe
-            .run_second_phase(inp, &PassthroughSecondPhaseScorer)
+            .run_second_phase(inp, &PassthroughSecondPhaseScorer, &QueryContext::default())
             .unwrap();
         assert!(out.hits.is_empty());
     }
@@ -801,14 +825,14 @@ mod tests {
             phase: PhaseId::FIRST,
             features: Some(inp_features.clone()),
         }];
-        let passthrough = PassthroughSecondPhaseScorer.rescore(hits.clone()).unwrap();
+        let passthrough = PassthroughSecondPhaseScorer.rescore(hits.clone(), &QueryContext::default()).unwrap();
         assert!(passthrough[0].features.as_ref().is_some());
         assert!(Arc::ptr_eq(
             passthrough[0].features.as_ref().unwrap(),
             &inp_features
         ));
         let multiplier = ConstantMultiplierSecondPhaseScorer { factor: 3.0 }
-            .rescore(hits)
+            .rescore(hits, &QueryContext::default())
             .unwrap();
         assert_eq!(multiplier[0].score, 6.0);
         assert!(Arc::ptr_eq(

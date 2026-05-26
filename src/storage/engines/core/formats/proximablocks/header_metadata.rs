@@ -33,7 +33,7 @@ pub struct RowBasedHeader {
     pub index_metadata: BlockIndexMetadata,
 
     /// Compression and quantization
-    pub compression_metadata: CompressionMetadata,
+    pub compression_metadata: BlockCompressionMetadata,
 
     /// Version and compatibility
     pub version_info: VersionInfo,
@@ -308,9 +308,12 @@ pub struct PQQuantizationMeta {
     pub centroid_norms: Vec<f32>,
 }
 
+/// Backwards-compat alias for [`BlockCompressionMetadata`].
+pub type CompressionMetadata = BlockCompressionMetadata;
+
 /// Compression metadata
 #[derive(Debug, Clone)]
-pub struct CompressionMetadata {
+pub struct BlockCompressionMetadata {
     /// Global compression settings
     pub compression_enabled: bool,
     pub compression_algorithm: CompressionAlgorithm,
@@ -500,7 +503,7 @@ impl RowBasedHeader {
             collection_metadata: CollectionMetadata::new(collection_id, dimension),
             layout_metadata: LayoutMetadata::default(),
             index_metadata: BlockIndexMetadata::default(),
-            compression_metadata: CompressionMetadata::default(),
+            compression_metadata: BlockCompressionMetadata::default(),
             version_info: VersionInfo::default(),
             checksum_config: ChecksumConfig::default(),
             extensions: HashMap::new(),
@@ -520,7 +523,7 @@ impl RowBasedHeader {
             collection_metadata: CollectionMetadata::new(collection_id, dimension),
             layout_metadata: LayoutMetadata::default(),
             index_metadata: BlockIndexMetadata::default(),
-            compression_metadata: CompressionMetadata::default(),
+            compression_metadata: BlockCompressionMetadata::default(),
             version_info: VersionInfo::default(),
             checksum_config: ChecksumConfig::default(),
             extensions: HashMap::new(),
@@ -690,7 +693,7 @@ impl Default for BlockQuantizationMetadata {
     }
 }
 
-impl Default for CompressionMetadata {
+impl Default for BlockCompressionMetadata {
     fn default() -> Self {
         Self {
             compression_enabled: true,

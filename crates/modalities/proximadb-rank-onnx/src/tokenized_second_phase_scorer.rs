@@ -126,7 +126,7 @@ mod tests {
         let extractor: Arc<dyn TokenizedDocFeatureExtractor> =
             Arc::new(NoopTokenizedDocFeatureExtractor::default());
         let scorer = make_scorer(session, extractor);
-        let out = scorer.rescore(Vec::new()).unwrap();
+        let out = scorer.rescore(Vec::new(), &QueryContext::default()).unwrap();
         assert!(out.is_empty());
     }
 
@@ -139,7 +139,7 @@ mod tests {
         let scorer = make_scorer(session, extractor);
 
         let inputs = vec![hit(1, 1.0), hit(2, 2.0), hit(3, 3.0)];
-        let out = scorer.rescore(inputs).unwrap();
+        let out = scorer.rescore(inputs, &QueryContext::default()).unwrap();
         assert_eq!(out.len(), 3);
         for h in &out {
             assert_eq!(h.phase, PhaseId::SECOND);
@@ -167,7 +167,7 @@ mod tests {
         let scorer = make_scorer(session, extractor);
 
         let inputs = vec![hit(10, 0.0), hit(20, 0.0), hit(30, 0.0), hit(40, 0.0)];
-        let out = scorer.rescore(inputs).unwrap();
+        let out = scorer.rescore(inputs, &QueryContext::default()).unwrap();
         assert_eq!(out.len(), 4);
         assert_eq!(out[0].doc, DocHandle(10));
         assert_eq!(out[1].doc, DocHandle(20));
@@ -200,7 +200,7 @@ mod tests {
             phase: PhaseId::FIRST,
             features: Some(features.clone()),
         }];
-        let out = scorer.rescore(inputs).unwrap();
+        let out = scorer.rescore(inputs, &QueryContext::default()).unwrap();
         assert_eq!(out[0].phase, PhaseId::SECOND);
         assert!((out[0].score - 0.5).abs() < 1e-5);
         assert!(Arc::ptr_eq(out[0].features.as_ref().unwrap(), &features));
@@ -225,7 +225,7 @@ mod tests {
         let scorer = make_scorer(session, extractor);
 
         let inputs = vec![hit(1, 1.0)];
-        match scorer.rescore(inputs) {
+        match scorer.rescore(inputs, &QueryContext::default()) {
             Err(RankError::ModelInference { reason, .. }) => {
                 assert!(reason.contains("doc text missing"));
             }
@@ -247,7 +247,7 @@ mod tests {
         let scorer = make_scorer(session, extractor);
 
         let inputs: Vec<ScoredHit> = (1..=10).map(|i| hit(i, 0.0)).collect();
-        let out = scorer.rescore(inputs).unwrap();
+        let out = scorer.rescore(inputs, &QueryContext::default()).unwrap();
         assert_eq!(out.len(), 10);
         assert_eq!(mock_session.call_count(), 3); // 4 + 4 + 2
         assert_eq!(mock_session.rows_seen(), 10);

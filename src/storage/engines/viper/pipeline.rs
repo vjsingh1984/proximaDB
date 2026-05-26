@@ -420,7 +420,7 @@ pub struct CompactionEngine {
     config: ViperPipelineCompactionConfig,
 
     /// Task queue for compaction operations
-    task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
+    task_queue: Arc<Mutex<VecDeque<ViperPipelineCompactionTask>>>,
     task_notify: Arc<Notify>,
 
     /// Active compaction operations
@@ -443,9 +443,12 @@ pub struct CompactionEngine {
     filesystem: Arc<FilesystemFactory>,
 }
 
+/// Backwards-compat alias for [`ViperPipelineCompactionTask`].
+pub type CompactionTask = ViperPipelineCompactionTask;
+
 /// Compaction task
 #[derive(Debug, Clone)]
-pub struct CompactionTask {
+pub struct ViperPipelineCompactionTask {
     pub task_id: String,
     pub collection_id: String,
     pub compaction_type: CompactionType,
@@ -2423,7 +2426,7 @@ impl CompactionEngine {
         let needs_compaction = self.evaluate_compaction_need(collection_id).await?;
 
         if needs_compaction {
-            let task = CompactionTask {
+            let task = ViperPipelineCompactionTask {
                 task_id: proximadb_kernel::uuid::Uuid::new_v4().to_string(),
                 collection_id: collection_id.to_string(),
                 compaction_type: CompactionType::FileMerging {
@@ -2500,7 +2503,7 @@ impl CompactionEngine {
 
     async fn worker_loop(
         worker_id: usize,
-        task_queue: Arc<Mutex<VecDeque<CompactionTask>>>,
+        task_queue: Arc<Mutex<VecDeque<ViperPipelineCompactionTask>>>,
         task_notify: Arc<Notify>,
         active_compactions: Arc<RwLock<HashMap<String, CompactionOperation>>>,
         stats: Arc<RwLock<ViperPipelineCompactionStats>>,
@@ -2534,7 +2537,7 @@ impl CompactionEngine {
     }
 
     async fn execute_compaction_task(
-        task: CompactionTask,
+        task: ViperPipelineCompactionTask,
         active_compactions: Arc<RwLock<HashMap<String, CompactionOperation>>>,
         stats: Arc<RwLock<ViperPipelineCompactionStats>>,
     ) {
@@ -2606,7 +2609,7 @@ impl CompactionEngine {
 
     /// Execute compaction based on the specific type
     pub async fn execute_compaction_by_type(
-        task: &CompactionTask,
+        task: &ViperPipelineCompactionTask,
     ) -> Result<CompactionExecutionResult> {
         let execution_start = Instant::now();
 
@@ -2704,7 +2707,7 @@ impl CompactionEngine {
 
     /// Execute file merging compaction
     async fn execute_file_merging(
-        _task: &CompactionTask,
+        _task: &ViperPipelineCompactionTask,
         target_file_size_mb: usize,
         max_files_per_merge: usize,
     ) -> Result<CompactionExecutionResult> {
@@ -2732,7 +2735,7 @@ impl CompactionEngine {
 
     /// Execute reclustering compaction
     async fn execute_reclustering(
-        _task: &CompactionTask,
+        _task: &ViperPipelineCompactionTask,
         new_cluster_count: usize,
         // quality_threshold removed -  f32,
     ) -> Result<CompactionExecutionResult> {
@@ -2757,7 +2760,7 @@ impl CompactionEngine {
 
     /// Execute feature reorganization compaction
     async fn execute_feature_reorganization(
-        task: &CompactionTask,
+        task: &ViperPipelineCompactionTask,
         important_features: &[usize],
         reorganization_strategy: &ReorganizationStrategy,
     ) -> Result<CompactionExecutionResult> {
@@ -2796,7 +2799,7 @@ impl CompactionEngine {
 
     /// Execute compression optimization compaction
     async fn execute_compression_optimization(
-        _task: &CompactionTask,
+        _task: &ViperPipelineCompactionTask,
         target_algorithm: &ViperCompressionConfig,
         // quality_threshold removed -  f32,
     ) -> Result<CompactionExecutionResult> {
@@ -2838,7 +2841,7 @@ impl CompactionEngine {
 
     /// 🎯 Execute sorted rewrite compaction - THE MAIN IMPLEMENTATION
     async fn execute_sorted_rewrite(
-        task: &CompactionTask,
+        task: &ViperPipelineCompactionTask,
         sorting_strategy: &SortingStrategy,
         reorganization_strategy: &ReorganizationStrategy,
         target_compression_ratio: f32,
@@ -2919,7 +2922,7 @@ impl CompactionEngine {
 
     /// Execute hybrid compaction combining multiple strategies
     async fn execute_hybrid_compaction(
-        task: &CompactionTask,
+        task: &ViperPipelineCompactionTask,
         primary_strategy: &CompactionType,
         secondary_strategy: &CompactionType,
         coordination_mode: &CompactionCoordinationMode,
@@ -2929,14 +2932,14 @@ impl CompactionEngine {
         match coordination_mode {
             CompactionCoordinationMode::Sequential => {
                 // Execute primary then secondary
-                let primary_task = CompactionTask {
+                let primary_task = ViperPipelineCompactionTask {
                     compaction_type: (*primary_strategy).clone(),
                     ..task.clone()
                 };
                 let primary_result =
                     Box::pin(Self::execute_compaction_by_type(&primary_task)).await?;
 
-                let secondary_task = CompactionTask {
+                let secondary_task = ViperPipelineCompactionTask {
                     compaction_type: (*secondary_strategy).clone(),
                     ..task.clone()
                 };
@@ -2960,11 +2963,11 @@ impl CompactionEngine {
 
             CompactionCoordinationMode::Parallel => {
                 // Execute both strategies in parallel using tokio::join!
-                let primary_task = CompactionTask {
+                let primary_task = ViperPipelineCompactionTask {
                     compaction_type: (*primary_strategy).clone(),
                     ..task.clone()
                 };
-                let secondary_task = CompactionTask {
+                let secondary_task = ViperPipelineCompactionTask {
                     compaction_type: (*secondary_strategy).clone(),
                     ..task.clone()
                 };
@@ -2998,7 +3001,7 @@ impl CompactionEngine {
 
             CompactionCoordinationMode::Conditional { trigger_threshold } => {
                 // Execute primary, then conditionally execute secondary
-                let primary_task = CompactionTask {
+                let primary_task = ViperPipelineCompactionTask {
                     compaction_type: (*primary_strategy).clone(),
                     ..task.clone()
                 };
@@ -3012,7 +3015,7 @@ impl CompactionEngine {
                         trigger_threshold * 100.0
                     );
 
-                    let secondary_task = CompactionTask {
+                    let secondary_task = ViperPipelineCompactionTask {
                         compaction_type: (*secondary_strategy).clone(),
                         ..task.clone()
                     };
@@ -3503,7 +3506,7 @@ impl CompactionEngine {
 
     // Placeholder implementations for other reorganization strategies
     async fn reorganize_by_feature_importance(
-        _task: &CompactionTask,
+        _task: &ViperPipelineCompactionTask,
         _features: &[usize],
     ) -> Result<CompactionExecutionResult> {
         Ok(CompactionExecutionResult {
@@ -3517,7 +3520,7 @@ impl CompactionEngine {
     }
 
     async fn reorganize_by_access_pattern(
-        _task: &CompactionTask,
+        _task: &ViperPipelineCompactionTask,
     ) -> Result<CompactionExecutionResult> {
         Ok(CompactionExecutionResult {
             entries_processed: 1200,
@@ -3530,7 +3533,7 @@ impl CompactionEngine {
     }
 
     async fn reorganize_by_compression_ratio(
-        _task: &CompactionTask,
+        _task: &ViperPipelineCompactionTask,
     ) -> Result<CompactionExecutionResult> {
         Ok(CompactionExecutionResult {
             entries_processed: 800,
@@ -3543,7 +3546,7 @@ impl CompactionEngine {
     }
 
     async fn reorganize_by_metadata_priority(
-        _task: &CompactionTask,
+        _task: &ViperPipelineCompactionTask,
         _fields: &[String],
     ) -> Result<CompactionExecutionResult> {
         Ok(CompactionExecutionResult {
@@ -3557,7 +3560,7 @@ impl CompactionEngine {
     }
 
     async fn reorganize_by_similarity_clusters(
-        _task: &CompactionTask,
+        _task: &ViperPipelineCompactionTask,
         _cluster_count: usize,
     ) -> Result<CompactionExecutionResult> {
         Ok(CompactionExecutionResult {
@@ -3571,7 +3574,7 @@ impl CompactionEngine {
     }
 
     async fn reorganize_by_temporal_pattern(
-        _task: &CompactionTask,
+        _task: &ViperPipelineCompactionTask,
         _window_hours: u32,
     ) -> Result<CompactionExecutionResult> {
         Ok(CompactionExecutionResult {
@@ -3585,7 +3588,7 @@ impl CompactionEngine {
     }
 
     async fn reorganize_multi_stage(
-        _task: &CompactionTask,
+        _task: &ViperPipelineCompactionTask,
         _stages: &[ReorganizationStrategy],
     ) -> Result<CompactionExecutionResult> {
         Ok(CompactionExecutionResult {

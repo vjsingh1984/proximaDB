@@ -296,14 +296,14 @@ impl CompressionMetricsTracker {
     }
 
     /// Generate compression recommendations based on metrics
-    pub fn get_recommendations(&self, collection_id: &str) -> Vec<CompressionRecommendation> {
+    pub fn get_recommendations(&self, collection_id: &str) -> Vec<MetricsCompressionRecommendation> {
         let mut recommendations = Vec::new();
 
         if let Some(metrics) = self.get_metrics(collection_id) {
             // SST recommendations
             if metrics.engine_type == "sst" {
                 if metrics.sst_avg_compression_ratio < 1.2 {
-                    recommendations.push(CompressionRecommendation {
+                    recommendations.push(MetricsCompressionRecommendation {
                         recommendation_type: RecommendationType::IncreaseCompressionLevel,
                         description: format!(
                             "Current compression ratio {:.2} is low. Consider increasing ZSTD level from {} to {}",
@@ -317,7 +317,7 @@ impl CompressionMetricsTracker {
                 }
 
                 if metrics.avg_compression_time_ms > 100.0 {
-                    recommendations.push(CompressionRecommendation {
+                    recommendations.push(MetricsCompressionRecommendation {
                         recommendation_type: RecommendationType::DecreaseCompressionLevel,
                         description: format!(
                             "Compression taking {:.1}ms on average. Consider reducing ZSTD level to {}",
@@ -335,7 +335,7 @@ impl CompressionMetricsTracker {
                 if metrics.viper_quantized_type.is_none()
                     && metrics.total_uncompressed_bytes > 100_000_000
                 {
-                    recommendations.push(CompressionRecommendation {
+                    recommendations.push(MetricsCompressionRecommendation {
                         recommendation_type: RecommendationType::EnableQuantization,
                         description: format!(
                             "Collection has {:.1}GB of FP32 data. Enable PQ8 quantization for faster search",
@@ -350,7 +350,7 @@ impl CompressionMetricsTracker {
                     && q_type == "pq8"
                     && metrics.viper_quantization_reduction < 90.0
                 {
-                    recommendations.push(CompressionRecommendation {
+                    recommendations.push(MetricsCompressionRecommendation {
                             recommendation_type: RecommendationType::OptimizeQuantization,
                             description: "PQ8 achieving only {:.1}% reduction. Consider PQ4 or adjusting normalization".to_string(),
                             expected_benefit: "Additional 2x compression possible".to_string(),
@@ -452,9 +452,12 @@ impl CompressionMetricsTracker {
     }
 }
 
+/// Backwards-compat alias for [`MetricsCompressionRecommendation`].
+pub type CompressionRecommendation = MetricsCompressionRecommendation;
+
 /// Compression recommendation
 #[derive(Debug, Clone)]
-pub struct CompressionRecommendation {
+pub struct MetricsCompressionRecommendation {
     pub recommendation_type: RecommendationType,
     pub description: String,
     pub expected_benefit: String,

@@ -82,8 +82,11 @@ impl Default for StorageFlushResult {
 /// This allows distinguishing between:
 /// - Uninitialized: u64::MAX (default)
 /// - Successful operation with zero results: 0
+/// Backwards-compat alias for [`StorageCompactionResult`].
+pub type CompactionResult = StorageCompactionResult;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompactionResult {
+pub struct StorageCompactionResult {
     /// Operation completed successfully
     pub success: bool,
 
@@ -118,7 +121,7 @@ pub struct CompactionResult {
     pub engine_metrics: HashMap<String, serde_json::Value>,
 }
 
-impl Default for CompactionResult {
+impl Default for StorageCompactionResult {
     fn default() -> Self {
         Self {
             success: false,
@@ -235,7 +238,7 @@ mod tests {
 
     #[test]
     fn test_compaction_result_default() {
-        let result = CompactionResult::default();
+        let result = StorageCompactionResult::default();
         assert!(!result.success);
         assert!(result.collections_affected.is_empty());
     }

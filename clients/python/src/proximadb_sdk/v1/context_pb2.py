@@ -9,7 +9,6 @@ from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import runtime_version as _runtime_version
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
-
 _runtime_version.ValidateProtobufRuntimeVersion(
     _runtime_version.Domain.PUBLIC,
     6,
@@ -24,6 +23,7 @@ _sym_db = _symbol_database.Default()
 
 
 from proximadb_sdk.v1 import entity_pb2 as proximadb_dot_v1_dot_entity__pb2
+
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1aproximadb/v1/context.proto\x12\x0cproximadb.v1\x1a\x19proximadb/v1/entity.proto\"C\n\x17\x41ssembleDocumentRequest\x12\x15\n\rcollection_id\x18\x01 \x01(\t\x12\x11\n\tsource_id\x18\x02 \x01(\t\"\\\n\x0f\x44ocumentSegment\x12\x0c\n\x04text\x18\x01 \x01(\t\x12,\n\nprovenance\x18\x02 \x01(\x0b\x32\x18.proximadb.v1.Provenance\x12\r\n\x05order\x18\x03 \x01(\r\"^\n\x18\x41ssembleDocumentResponse\x12\x11\n\tsource_id\x18\x01 \x01(\t\x12/\n\x08segments\x18\x02 \x03(\x0b\x32\x1d.proximadb.v1.DocumentSegment\"S\n\x16\x41ssembleContextRequest\x12\x15\n\rcollection_id\x18\x01 \x01(\t\x12\x12\n\nentity_ids\x18\x02 \x03(\t\x12\x0e\n\x06radius\x18\x03 \x01(\r\"[\n\x0e\x43ontextSegment\x12\x0c\n\x04text\x18\x01 \x01(\t\x12,\n\nprovenance\x18\x02 \x01(\x0b\x32\x18.proximadb.v1.Provenance\x12\r\n\x05score\x18\x03 \x01(\x02\"I\n\x17\x41ssembleContextResponse\x12.\n\x08segments\x18\x01 \x03(\x0b\x32\x1c.proximadb.v1.ContextSegment2\xd3\x01\n\x0e\x43ontextService\x12\x61\n\x10\x41ssembleDocument\x12%.proximadb.v1.AssembleDocumentRequest\x1a&.proximadb.v1.AssembleDocumentResponse\x12^\n\x0f\x41ssembleContext\x12$.proximadb.v1.AssembleContextRequest\x1a%.proximadb.v1.AssembleContextResponseB,Z*github.com/proximadb/proto/go/proximadb/v1b\x06proto3')
 

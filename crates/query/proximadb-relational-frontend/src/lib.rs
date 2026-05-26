@@ -281,12 +281,11 @@ fn lower_select(
     let has_having = select.having.is_some();
     let needs_aggregate = has_group_by || has_aggregate_in_projection || has_having;
 
-    // 4) Lower projection (we need it before Aggregate so we can
-    //    extract the aggregate calls AND emit the final Project).
-    let projection_items = lower_projection_items(&select.projection, &scope)?;
-
     if needs_aggregate {
-        // 4a) Build the Aggregate node:
+        // 4a) Group-by expressions become NamedExprs (their
+        //     pre-aggregate ordinals are their position in the
+        //     group_by Vec; the post-aggregate scope places them
+        //     first, followed by aggregate slots).
         let group_by: Vec<NamedExpr> = group_keys
             .iter()
             .map(|g| -> Result<NamedExpr, FrontendError> {
@@ -298,27 +297,27 @@ fn lower_select(
                 })
             })
             .collect::<Result<_, _>>()?;
-        let mut aggregates: Vec<NamedAggregate> = Vec::new();
-        // Pull aggregates OUT of the projection; substitute
-        // references to their slot in the post-aggregate schema.
-        let mut post_agg_outputs: Vec<NamedExpr> = Vec::with_capacity(projection_items.len());
-        for item in &projection_items {
-            let (rewritten, mut new_aggs) =
-                extract_aggregates(&item.expr, group_by.len() + aggregates.len(), &scope)?;
-            aggregates.extend(new_aggs.drain(..));
-            post_agg_outputs.push(NamedExpr {
-                name: item.name.clone(),
-                expr: rewritten,
-            });
-        }
-        // Build the HAVING (if any) over the post-aggregate
-        // schema.
+        // 4b) Project + aggregate extraction.
+        let (post_agg_outputs, aggregates) = lower_projection_with_aggregates(
+            &select.projection,
+            &scope,
+            group_by.len(),
+        )?;
+        // 4c) HAVING — for MVP we only support HAVING
+        //     expressions that reference group_by columns. Bare
+        //     aggregates inside HAVING are Phase 3 (would need a
+        //     unified aggregate-extraction pass over both
+        //     projection AND HAVING).
         let having = match &select.having {
+            Some(expr) if expr_contains_aggregate(expr) => {
+                return Err(FrontendError::Unsupported(
+                    "HAVING with aggregate calls (use a sub-select for now)".into(),
+                ));
+            }
             Some(expr) => {
-                let (rewritten, mut new_aggs) =
-                    extract_aggregates(&lower_expr(expr, &scope)?, group_by.len() + aggregates.len(), &scope)?;
-                aggregates.extend(new_aggs.drain(..));
-                Some(rewritten)
+                let post_agg_scope =
+                    post_aggregate_scope(&group_by, &aggregates);
+                Some(lower_expr(expr, &post_agg_scope)?)
             }
             None => None,
         };
@@ -328,13 +327,12 @@ fn lower_select(
             aggregates,
             having,
         };
-        // 4b) Project onto the post-aggregate outputs.
         plan = LogicalNode::Project {
             input: Box::new(plan),
             outputs: post_agg_outputs,
         };
     } else {
-        // No aggregation — just project.
+        let projection_items = lower_projection_items(&select.projection, &scope)?;
         plan = LogicalNode::Project {
             input: Box::new(plan),
             outputs: projection_items,
@@ -420,7 +418,7 @@ fn lower_table_with_joins(
             JoinOperator::LeftOuter(_) => JoinKind::Left,
             JoinOperator::RightOuter(_) => JoinKind::Right,
             JoinOperator::FullOuter(_) => JoinKind::Full,
-            JoinOperator::CrossJoin => JoinKind::Cross,
+            JoinOperator::CrossJoin(_) => JoinKind::Cross,
             other => {
                 return Err(FrontendError::Unsupported(format!(
                     "join operator {:?}",
@@ -445,7 +443,7 @@ fn lower_table_with_joins(
                 }
                 JoinConstraint::None => None,
             },
-            JoinOperator::CrossJoin => None,
+            JoinOperator::CrossJoin(_) => None,
             _ => None,
         };
         plan = LogicalNode::Join {
@@ -576,7 +574,10 @@ fn lower_expr(expr: &SqlExpr, scope: &Scope) -> Result<Expr, FrontendError> {
         }
         SqlExpr::UnaryOp { op, expr } => {
             let inner = lower_expr(expr, scope)?;
-            Ok(Expr::unary(lower_unary_op(op)?, inner))
+            match lower_unary_op(op)? {
+                Some(uop) => Ok(Expr::unary(uop, inner)),
+                None => Ok(inner), // unary +
+            }
         }
         SqlExpr::IsNull(e) => Ok(Expr::IsNull {
             expr: Box::new(lower_expr(e, scope)?),
@@ -631,7 +632,9 @@ fn lower_expr(expr: &SqlExpr, scope: &Scope) -> Result<Expr, FrontendError> {
             not: *negated,
             case_insensitive: true,
         }),
-        SqlExpr::Function(_) => Err(FrontendError::Internal_aggregate_in_value_position()),
+        SqlExpr::Function(_) => Err(FrontendError::Unsupported(
+            "aggregate function in non-aggregate position".into(),
+        )),
         SqlExpr::Subquery(_) | SqlExpr::Exists { .. } | SqlExpr::InSubquery { .. } => {
             Err(FrontendError::Unsupported("subqueries".into()))
         }
@@ -667,11 +670,14 @@ fn lower_binary_op(op: &BinaryOperator) -> Result<BinaryOp, FrontendError> {
     })
 }
 
-fn lower_unary_op(op: &UnaryOperator) -> Result<UnaryOp, FrontendError> {
+/// Lower a unary operator. SQL `+` is a no-op (returns
+/// `Ok(None)`); callers strip it. Unsupported operators return
+/// the matching error.
+fn lower_unary_op(op: &UnaryOperator) -> Result<Option<UnaryOp>, FrontendError> {
     Ok(match op {
-        UnaryOperator::Not => UnaryOp::Not,
-        UnaryOperator::Minus => UnaryOp::Neg,
-        UnaryOperator::Plus => UnaryOp::Pos,
+        UnaryOperator::Not => Some(UnaryOp::Not),
+        UnaryOperator::Minus => Some(UnaryOp::Neg),
+        UnaryOperator::Plus => None, // identity
         other => {
             return Err(FrontendError::Unsupported(format!(
                 "unary op {:?}",
@@ -1128,19 +1134,6 @@ impl Scope {
     }
 }
 
-// =========================================================================
-// Internal sentinel for "aggregate in value position"
-// =========================================================================
-//
-// `lower_expr` rejects bare aggregate calls — the projection
-// layer is responsible for extracting them first.
-impl FrontendError {
-    fn Internal_aggregate_in_value_position() -> Self {
-        FrontendError::Unsupported(
-            "aggregate function in non-aggregate position".into(),
-        )
-    }
-}
 
 // =========================================================================
 // Tests

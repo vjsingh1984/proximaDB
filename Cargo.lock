@@ -6744,6 +6744,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tokenizers",
  "tokio",
  "tracing",
 ]
@@ -6800,6 +6801,33 @@ dependencies = [
  "proximadb-data-model",
  "proximadb-relational-types",
  "serde",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "proximadb-relational-executor"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "proximadb-data-model",
+ "proximadb-relational-algebra",
+ "proximadb-relational-planner",
+ "proximadb-relational-reader",
+ "proximadb-relational-types",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
+name = "proximadb-relational-frontend"
+version = "0.2.0"
+dependencies = [
+ "proximadb-data-model",
+ "proximadb-relational-algebra",
+ "proximadb-relational-types",
+ "serde",
+ "sqlparser",
  "thiserror 1.0.69",
 ]
 

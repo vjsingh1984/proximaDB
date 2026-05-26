@@ -258,7 +258,7 @@ impl ColumnarUtilities {
     pub async fn recommend_compression(
         &self,
         file_metadata: &[ColumnarFileMetadata],
-    ) -> Result<CompressionRecommendation> {
+    ) -> Result<ColumnarUtilsCompressionRecommendation> {
         info!("Analyzing compression for {} files", file_metadata.len());
 
         let mut total_uncompressed = 0;
@@ -320,7 +320,7 @@ impl ColumnarUtilities {
             ));
         }
 
-        Ok(CompressionRecommendation {
+        Ok(ColumnarUtilsCompressionRecommendation {
             overall_compression_ratio: overall_ratio,
             total_uncompressed_bytes: total_uncompressed,
             total_compressed_bytes: total_compressed,
@@ -524,9 +524,12 @@ pub struct QueryPatternAnalysis {
     pub avg_row_groups_per_query: f64,
 }
 
+/// Backwards-compat alias for [`ColumnarUtilsCompressionRecommendation`].
+pub type CompressionRecommendation = ColumnarUtilsCompressionRecommendation;
+
 /// Compression recommendation
 #[derive(Debug)]
-pub struct CompressionRecommendation {
+pub struct ColumnarUtilsCompressionRecommendation {
     pub overall_compression_ratio: f64,
     pub total_uncompressed_bytes: u64,
     pub total_compressed_bytes: u64,

@@ -71,7 +71,7 @@ pub struct ViperUtilitiesConfig {
     pub partitioning_config: PartitioningConfig,
 
     /// Compression configuration
-    pub compression_config: CompressionConfig,
+    pub compression_config: ViperUtilsCompressionConfig,
 
     /// Enable background services
     pub enable_background_services: bool,
@@ -456,7 +456,7 @@ pub type ClusterId = String;
 pub struct CompressionOptimizer {
     /// Compression configuration
     #[allow(dead_code)]
-    config: CompressionConfig,
+    config: ViperUtilsCompressionConfig,
 
     /// Compression models per collection
     #[allow(dead_code)]
@@ -471,9 +471,12 @@ pub struct CompressionOptimizer {
     algorithm_cache: Arc<RwLock<HashMap<String, AlgorithmPerformance>>>,
 }
 
+/// Backwards-compat alias for [`ViperUtilsCompressionConfig`].
+pub type CompressionConfig = ViperUtilsCompressionConfig;
+
 /// Compression configuration
 #[derive(Debug, Clone)]
-pub struct CompressionConfig {
+pub struct ViperUtilsCompressionConfig {
     /// Enable adaptive compression
     pub enable_adaptive_compression: bool,
 
@@ -648,7 +651,7 @@ impl ViperUtilities {
     pub async fn optimize_compression(
         &self,
         collection_id: &str,
-    ) -> Result<CompressionRecommendation> {
+    ) -> Result<ViperUtilsCompressionRecommendation> {
         self.compression_optimizer
             .optimize_for_collection(collection_id)
             .await
@@ -694,9 +697,12 @@ pub struct PerformanceRecommendation {
     pub expected_improvement: f32,
 }
 
+/// Backwards-compat alias for [`ViperUtilsCompressionRecommendation`].
+pub type CompressionRecommendation = ViperUtilsCompressionRecommendation;
+
 /// Compression recommendation
 #[derive(Debug)]
-pub struct CompressionRecommendation {
+pub struct ViperUtilsCompressionRecommendation {
     pub recommended_algorithm: CompressionAlgorithm,
     pub recommended_level: u8,
     pub expected_ratio: f32,
@@ -840,7 +846,7 @@ impl DataPartitioner {
 }
 
 impl CompressionOptimizer {
-    async fn new(_config: CompressionConfig) -> Result<Self> {
+    async fn new(_config: ViperUtilsCompressionConfig) -> Result<Self> {
         Ok(Self {
             config: _config,
             compression_models: Arc::new(RwLock::new(HashMap::new())),
@@ -856,8 +862,8 @@ impl CompressionOptimizer {
     async fn optimize_for_collection(
         &self,
         _collection_id: &str,
-    ) -> Result<CompressionRecommendation> {
-        Ok(CompressionRecommendation {
+    ) -> Result<ViperUtilsCompressionRecommendation> {
+        Ok(ViperUtilsCompressionRecommendation {
             recommended_algorithm: CompressionAlgorithm::Zstd,
             recommended_level: 3,
             expected_ratio: 0.7,
@@ -950,7 +956,7 @@ impl Default for ViperUtilitiesConfig {
             ttl_config: TTLConfig::default(),
             staging_config: StagingConfig::default(),
             partitioning_config: PartitioningConfig::default(),
-            compression_config: CompressionConfig::default(),
+            compression_config: ViperUtilsCompressionConfig::default(),
             enable_background_services: true,
         }
     }
@@ -1008,7 +1014,7 @@ impl Default for PartitioningConfig {
     }
 }
 
-impl Default for CompressionConfig {
+impl Default for ViperUtilsCompressionConfig {
     fn default() -> Self {
         Self {
             enable_adaptive_compression: true,
