@@ -253,6 +253,18 @@ impl ProximaDB {
                         anyhow::anyhow!("Failed to parse postgres bind address: {}", e)
                     })?;
         }
+        // Propagate `[api].arrow_flight_port` to the Arrow IPC listener. The
+        // builder hardcodes 5680, so without this override test fixtures
+        // can't pin the Flight listener to a free port. Production configs
+        // already default arrow_flight_port to 5680, so this is a no-op for
+        // operators who don't override.
+        multi_config.arrow_ipc_config.port = config.api.arrow_flight_port;
+        multi_config.arrow_ipc_config.bind_address =
+            format!("{}:{}", config.server.bind_address, config.api.arrow_flight_port)
+                .parse()
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to parse arrow flight bind address: {}", e)
+                })?;
         tracing::debug!("✅ ProximaDB::new - Multi-server config created successfully");
 
         // Initialize security coordinator if configured
