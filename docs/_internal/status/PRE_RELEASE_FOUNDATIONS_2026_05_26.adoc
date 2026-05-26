@@ -102,9 +102,9 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 | Existing REST hybrid test ported to the gRPC client; returns same results within tolerance.
 
 | T3.3 — Audit `src/network/rest/v1/iceberg_rest_catalog.rs` per-endpoint completeness. Document gaps in ADR-007 `Status:` block if any handler is a stub; implement only if a customer-facing endpoint is missing.
-| Pending
-|
-| All Iceberg REST endpoints either return real data or have an explicit ADR-007 status note about their pending state.
+| Done
+| (this session)
+| Audit complete: all standard Iceberg REST endpoints implemented. Single 501 (`/oauth/tokens`) is intentional opt-in (header-auth alternative). One internal `panic!` on type-coercion is defense-in-depth candidate, not a route handler. ADR-007 gained a `== Wiring (2026-05-26 audit)` section recording the finding.
 |===
 
 == Tier 4 — Production hardening polish
@@ -114,9 +114,9 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 | Item | Status | Commit | Verification
 
 | T4.1 — Experimental engine startup guard. In the engine factory, when asked to create RAPTOR or SWIFT and the `experimental-engines` feature flag is absent, return a hard error at engine creation (not at first query). Add startup `warn!` if the flag IS compiled in for a production build.
-| Pending
-|
-| Attempt to create a RAPTOR collection without `experimental-engines`: factory returns error before any WAL write.
+| Done (already in place)
+| (verified this session)
+| Both already implemented in `src/storage/engines/factory.rs`: lines 181-208 emit `anyhow::bail!` for Swift/Raptor when feature is absent; lines 505/518 emit `tracing::warn!` when the feature IS compiled in. Verified by `tests/engine_safety_test.rs` (4 passing tests: SWIFT and RAPTOR blocked without feature; SST/VIPER/HELIX/NOVA always available).
 
 | T4.2 — Proto compatibility CI gate. In CI, regenerate proto types and diff against committed types. Fail on non-additive changes (field removal, type change). Add `make proto-check` as the canonical local invocation.
 | Pending
@@ -124,9 +124,10 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 | CI fails when a deliberate breaking proto change is pushed in a test branch; `make proto-check` passes on clean main.
 
 | T4.3 — Dimension / NaN / Inf validation hardening on hot paths (insert + query). Audit entry points; reject NaN/Inf in quantization pipeline; add regression tests.
-| Pending
-|
-| Insert with NaN-containing vector → 400. Insert with dimension-mismatched vector → 400. Existing `src/core/utils/validation.rs` is the home; ensure all hot paths call into it.
+| Audited; opened TD-070 for follow-up
+| (this session)
+| Audit finding: `validate_vector` (NaN/Inf + dim) exists in runtime-common but the high-level `validate_insert_request` / `validate_search_request` wrappers have zero callers. Insert hot path validates tenant + precision-schema only; engine-layer bridge does dim-rejection but only after several layers. Opened TD-070 (`docs/10-quality/TECHNICAL_DEBT.adoc`) capturing the gap + remediation. Not implemented this session because it needs catalog-dim lookup at insert time — proper wiring is its own ~1-2 week effort tracked under TD-070.
+|===
 |===
 
 == Tier 5 — Demand-blocked, intentionally deferred

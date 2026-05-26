@@ -1019,4 +1019,13 @@ physical layouts.
 | 23 standalone unit test files in `tests/unit/` predated the inline-test convention and complicated build/discovery. Companion tracker `TEST_INLINING_PROGRESS.md` captured the migration work (now archived).
 | 2-3 weeks
 | *RESOLVED 2026-04-07*: 23 files / ~6,500 lines / 190 tests migrated from `tests/unit/` into inline `#[cfg(test)] mod tests` blocks alongside their source modules. 7702+ tests passing. Companion doc archived to `docs/_archive/quality/2026-05/TEST_INLINING_PROGRESS.md` 2026-05-26; see also memory entry `project-test-inline-progress`.
+
+| TD-070
+| Insert/Query Hot Path Skips Dimension + NaN/Inf Validation
+| P3
+| MEDIUM
+| Open
+| `validate_insert_request` (`src/core/utils/validation.rs:479`) and `validate_search_request` (`:507`) aggregate dimension + NaN/Inf checks via `validate_vector`, but workspace-wide grep finds zero callers. The active insert hot path (`VectorOperationsService::insert_batch_with_tenant_context` in `src/services/operations/vectors/legacy.rs:1421`) validates tenant + precision-schema only. Engine-layer bridge `src/storage/schema/proxima_record_bridge.rs:1298` does reject wrong-dim records but only after the request has traveled through several layers. NaN/Inf in query vectors are not rejected before reaching SIMD distance computation, which can produce undefined results.
+| 1-2 weeks
+| Add explicit `validate_records_pre_wal` call in `insert_batch_with_tenant_context` that (a) looks up collection's expected dimension from catalog, (b) calls `validate_vector(&record.embedding, Some(expected_dim))` for each record. Mirror on the query path. Tests: insert with NaN vector → 400; insert with wrong-dim → 400 before WAL write; query with Inf vector → 400. T4.3 audit recorded this gap on 2026-05-26.
 |===

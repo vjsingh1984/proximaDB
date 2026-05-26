@@ -1,12 +1,22 @@
 = ADR-007: Iceberg REST Catalog Server in xCatalog
 :status: Accepted
 :date: 2026-05-17
+:wiring-verified: 2026-05-26
 :deciders: ProximaDB Architecture
 :supersedes: none
 
 == Status
 
-Accepted
+Accepted — Wired
+
+== Wiring (2026-05-26 audit Tier 3.3)
+
+* Route mounted: `src/network/rest/v1/handlers.rs:1032` → `create_iceberg_rest_router().with_state(iceberg_state)` at `/iceberg/v1`.
+* Router definition: `src/network/rest/v1/iceberg_rest_catalog.rs:107`.
+* Service backend: `src/catalog/iceberg_rest_service.rs`.
+* All standard Iceberg REST endpoints implemented: GET `/config`, GET+POST `/namespaces`, namespace CRUD, table CRUD, `/register`, `/views`.
+* One intentional 501: POST `/oauth/tokens` (line 207) returns NOT_IMPLEMENTED. OAuth2 token exchange is an opt-in feature — header-based auth and no-auth alternatives are documented in the response body. Not a coverage gap.
+* `panic!` at `iceberg_rest_service.rs:1114` is an internal type-coercion assertion (`_ => panic!("expected list type for Vector")`), not a route handler. Defense-in-depth improvement candidate but not customer-facing.
 
 == Context
 
