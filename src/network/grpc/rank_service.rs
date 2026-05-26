@@ -536,6 +536,70 @@ mod tests {
         assert_eq!(resp.hits.len(), 12);
     }
 
+    // ---------------- R-7c.5: match_features on the gRPC wire ----------------
+
+    fn rank_services_with_match_features_profile(
+        name: &str,
+        match_features: Vec<&str>,
+        candidates: Arc<dyn CandidateProvider>,
+    ) -> Arc<RankServices> {
+        let factory = factory_with_docid();
+        let registry = ProfileRegistry::new();
+        let mut spec = RankProfileSpec::new(name);
+        spec.first_phase = Some(PhaseSpec {
+            expression: "docid()".into(),
+            heap_size: Some(50),
+            rerank_count: None,
+            batch_size: None,
+        });
+        spec.match_features = match_features.into_iter().map(String::from).collect();
+        spec.version = 1;
+        let compiled = CompiledRankProfile::compile(spec, factory.clone()).unwrap();
+        registry.install(compiled);
+        Arc::new(RankServices {
+            profile_registry: Arc::new(registry),
+            blueprint_factory: factory,
+            candidate_provider: candidates,
+            second_phase_scorers: dashmap::DashMap::new(),
+        })
+    }
+
+    #[tokio::test]
+    async fn grpc_handler_round_trips_match_features_through_prost() {
+        // End-to-end: profile with match_features → handler → encode
+        // proto response → decode → assert match_features survived the
+        // wire encoding (HashMap<string, double> in the proto schema).
+        use prost::Message;
+        let candidates: Arc<dyn CandidateProvider> =
+            Arc::new(FixedCandidates(vec![DocHandle(3), DocHandle(8)]));
+        let services = rank_services_with_match_features_profile(
+            "mf",
+            vec!["docid()"],
+            candidates,
+        );
+        let handler = RankServiceImpl::new(services);
+        let req = tonic::Request::new(proto_ranking::RankSearchRequest {
+            collection: "docs".into(),
+            query_vector: vec![],
+            query_text: None,
+            k: 2,
+            rank_profile: Some("mf".into()),
+            rank_overrides: None,
+        });
+        let resp = handler.rank_search(req).await.unwrap().into_inner();
+        let back = proto_ranking::RankSearchResponse::decode(resp.encode_to_vec().as_slice())
+            .unwrap();
+        assert_eq!(back.hits.len(), 2);
+        for h in &back.hits {
+            assert_eq!(h.match_features.len(), 1);
+            assert!(h.match_features.contains_key("docid()"));
+        }
+        // Per-doc value verified end-to-end through the prost wire.
+        // Top hit: doc 8.
+        assert_eq!(back.hits[0].id, "8");
+        assert!((back.hits[0].match_features["docid()"] - 8.0).abs() < 1e-5);
+    }
+
     #[tokio::test]
     async fn grpc_handler_with_mock_range_candidate_provider_wires_up() {
         // Smoke test: RankServices::new + MockRangeCandidateProvider +

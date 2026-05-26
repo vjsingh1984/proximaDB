@@ -126,6 +126,25 @@ impl RankProgram {
         self.executors.len()
     }
 
+    /// Force a non-score executor for the current doc and return its value.
+    ///
+    /// Pipeline-level match_features capture (R-7c.5) uses this: after the
+    /// score executor runs, the pipeline walks the resolved
+    /// `(name, idx)` list and pulls each declared feature. Most callers
+    /// don't need this — only the value-capture path that exists to feed
+    /// `ScoredHit.features` / Arrow-Flight LTR export does.
+    ///
+    /// Semantics: same memoization as `FeatureLookup::force` — calling
+    /// twice for the same `(doc, idx)` runs once.
+    pub fn force_executor(
+        &mut self,
+        idx: ExecutorIdx,
+        doc: DocHandle,
+        ctx: &mut ScoreCtx<'_>,
+    ) -> f32 {
+        <Self as FeatureLookup>::force(self, idx, doc, ctx)
+    }
+
     /// Test-only accessor for the memoized output of a specific executor.
     /// Returns `None` if the executor hasn't been forced for the current doc.
     #[doc(hidden)]

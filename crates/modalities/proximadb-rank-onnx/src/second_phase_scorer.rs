@@ -67,6 +67,10 @@ impl SecondPhaseScorer for OnnxSecondPhaseScorer {
                 // validates row counts, so this is belt-and-suspenders.
                 score: score_by_doc.get(&h.doc).copied().unwrap_or(0.0),
                 phase: PhaseId::SECOND,
+                // R-7c.5: preserve first-phase match_features through
+                // the rescore. Rescoring changes the score but match
+                // features are first-phase artifacts.
+                features: h.features,
             })
             .collect())
     }
@@ -111,11 +115,7 @@ mod tests {
     }
 
     fn hit(doc: u32, score: f32) -> ScoredHit {
-        ScoredHit {
-            doc: DocHandle(doc),
-            score,
-            phase: PhaseId::FIRST,
-        }
+        ScoredHit::bare(DocHandle(doc), score, PhaseId::FIRST)
     }
 
     #[test]

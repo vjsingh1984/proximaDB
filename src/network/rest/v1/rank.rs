@@ -347,11 +347,24 @@ pub async fn handle_rank_search(
         .into_iter()
         .map(|h| {
             let sv = ScoreVector::from_primary(h.score, h.phase);
+            // R-7c.5: lift the per-doc match_features Arc into the wire
+            // `HashMap<String, f64>`. Stays empty when the active profile
+            // didn't declare any (the common case), preserving the
+            // existing zero-allocation path.
+            let match_features = h
+                .features
+                .as_ref()
+                .map(|arr| {
+                    arr.iter()
+                        .map(|(name, value)| (name.to_string(), *value as f64))
+                        .collect::<HashMap<String, f64>>()
+                })
+                .unwrap_or_default();
             ScoredHitDto {
                 id: render_id(h.doc),
                 score: h.score,
                 score_vector: Some(ScoreVectorDto::from(&sv)),
-                match_features: HashMap::new(),
+                match_features,
                 summary_features: HashMap::new(),
             }
         })
@@ -882,6 +895,105 @@ mod tests {
         reg.install(compiled);
     }
 
+    // ---------------- R-7c.5: match_features capture in REST DTO ----------------
+
+    fn install_profile_with_match_features(
+        reg: &ProfileRegistry,
+        factory: Arc<BlueprintFactory>,
+        name: &str,
+        match_features: Vec<&str>,
+    ) {
+        let mut spec = RankProfileSpec::new(name);
+        spec.first_phase = Some(PhaseSpec {
+            expression: "docid()".into(),
+            heap_size: Some(50),
+            rerank_count: None,
+            batch_size: None,
+        });
+        spec.match_features = match_features.into_iter().map(String::from).collect();
+        spec.version = 1;
+        let compiled = CompiledRankProfile::compile(spec, factory).unwrap();
+        reg.install(compiled);
+    }
+
+    #[tokio::test]
+    async fn handler_populates_match_features_when_profile_declares_them() {
+        // Profile declares 2 distinct match_features expressions. Each
+        // hit's wire `match_features` map carries both, keyed by the
+        // expression string (Vespa-style — declared expression IS the
+        // name). Two declarations of the same expression would collapse
+        // to one wire key because HashMap dedupes by key — production
+        // profiles should use unique expressions for distinct columns.
+        let registry = ProfileRegistry::new();
+        let factory = factory_with_docid();
+        install_profile_with_match_features(
+            &registry,
+            factory.clone(),
+            "with_mf",
+            // Two different built-in expressions, both pure-function so
+            // they resolve without per-doc attribute data.
+            vec!["docid()", "1.0"],
+        );
+
+        let candidates = FixedCandidates(vec![DocHandle(5), DocHandle(2)]);
+        let req = RankSearchRequest {
+            collection: "docs".into(),
+            query_vector: vec![],
+            query_text: None,
+            k: 2,
+            rank_profile: Some("with_mf".into()),
+            rank_overrides: None,
+        };
+        let resp = handle_rank_search(req, &registry, &candidates, factory, None)
+            .await
+            .unwrap();
+        assert_eq!(resp.hits.len(), 2);
+        for h in &resp.hits {
+            assert_eq!(
+                h.match_features.len(),
+                2,
+                "each hit must carry both declared match_features"
+            );
+            assert!(h.match_features.contains_key("docid()"));
+            assert!(h.match_features.contains_key("1.0"));
+        }
+        // Per-doc value: docid() returns doc id as f32 → doc 5 → 5.0,
+        // doc 2 → 2.0. Constant "1.0" is the same on every doc.
+        assert_eq!(resp.hits[0].id, "5");
+        assert!((resp.hits[0].match_features["docid()"] - 5.0).abs() < 1e-5);
+        assert!((resp.hits[0].match_features["1.0"] - 1.0).abs() < 1e-5);
+        assert!((resp.hits[1].match_features["docid()"] - 2.0).abs() < 1e-5);
+        assert!((resp.hits[1].match_features["1.0"] - 1.0).abs() < 1e-5);
+    }
+
+    #[tokio::test]
+    async fn handler_with_no_match_features_emits_empty_map() {
+        // NFR-9 fast path: profile without match_features → hits carry
+        // an empty `match_features` map (not None — wire shape is HashMap
+        // which serializes to `{}` or is skipped via skip_serializing_if).
+        let registry = ProfileRegistry::new();
+        let factory = factory_with_docid();
+        install_profile(&registry, factory.clone(), "no_mf");
+
+        let candidates = FixedCandidates(vec![DocHandle(1)]);
+        let req = RankSearchRequest {
+            collection: "docs".into(),
+            query_vector: vec![],
+            query_text: None,
+            k: 1,
+            rank_profile: Some("no_mf".into()),
+            rank_overrides: None,
+        };
+        let resp = handle_rank_search(req, &registry, &candidates, factory, None)
+            .await
+            .unwrap();
+        assert_eq!(resp.hits.len(), 1);
+        assert!(
+            resp.hits[0].match_features.is_empty(),
+            "profile without match_features must emit empty wire map"
+        );
+    }
+
     #[tokio::test]
     async fn handler_with_no_profile_returns_retrieval_only() {
         let registry = ProfileRegistry::new();
@@ -1210,11 +1322,11 @@ mod tests {
         // passthrough (preserves scores).
         let s = services.second_phase_scorer("p").unwrap();
         let out = s
-            .rescore(vec![ScoredHit {
-                doc: DocHandle(1),
-                score: 5.0,
-                phase: proximadb_kernel::PhaseId::FIRST,
-            }])
+            .rescore(vec![ScoredHit::bare(
+                DocHandle(1),
+                5.0,
+                proximadb_kernel::PhaseId::FIRST,
+            )])
             .unwrap();
         assert_eq!(out[0].score, 10.0);
     }

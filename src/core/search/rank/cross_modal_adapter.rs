@@ -102,10 +102,8 @@ impl GlobalScorer for CrossModalGlobalScorer {
             .records
             .into_iter()
             .filter_map(|r| {
-                by_id.get(&r.id).map(|doc| ScoredHit {
-                    doc: *doc,
-                    score: r.score.unwrap_or(0.0) as f32,
-                    phase: PhaseId::GLOBAL,
+                by_id.get(&r.id).map(|doc| {
+                    ScoredHit::bare(*doc, r.score.unwrap_or(0.0) as f32, PhaseId::GLOBAL)
                 })
             })
             .collect();
@@ -139,11 +137,7 @@ mod tests {
         scores
             .iter()
             .enumerate()
-            .map(|(i, s)| ScoredHit {
-                doc: DocHandle(i as u32 + 1),
-                score: *s,
-                phase: PhaseId::FIRST,
-            })
+            .map(|(i, s)| ScoredHit::bare(DocHandle(i as u32 + 1), *s, PhaseId::FIRST))
             .collect()
     }
 

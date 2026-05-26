@@ -43,11 +43,33 @@ impl PhaseBudget {
 }
 
 /// One scored hit after phase execution.
+///
+/// `features`: per-doc match-feature snapshot. `None` when the active profile
+/// doesn't declare `match_features` (the common case); `Some` when the profile
+/// asked for per-feature values to be returned to the caller (used by REST/gRPC
+/// `match_features` and by the Arrow Flight `rank_features_export` action that
+/// streams LTR training data). Wrapped in `Arc<[…]>` so cloning a `ScoredHit`
+/// during merge/sort/topk doesn't duplicate the allocation. R-7c.5.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScoredHit {
     pub doc: DocHandle,
     pub score: f32,
     pub phase: PhaseId,
+    pub features: Option<Arc<[(Arc<str>, f32)]>>,
+}
+
+impl ScoredHit {
+    /// Convenience constructor for the no-features path — preserves the
+    /// pre-R-7c.5 call sites that don't (and shouldn't) think about
+    /// match_features. Defaults `features` to `None`.
+    pub fn bare(doc: DocHandle, score: f32, phase: PhaseId) -> Self {
+        Self {
+            doc,
+            score,
+            phase,
+            features: None,
+        }
+    }
 }
 
 /// Result of running a phase — top-K by score plus whether the budget
@@ -167,6 +189,13 @@ pub struct RankPipeline {
     pub budget: PhaseBudget,
     pub heap_size: usize,
     pub rerank_count: usize,
+    /// Resolved match_features — pairs of (declared name, executor index).
+    /// Populated by the profile compiler when `spec.match_features` is
+    /// non-empty. `run_first_phase` walks this after computing each doc's
+    /// score and pulls the executor's `last_output(idx)` into the hit's
+    /// `features` arc. Default `Arc::from([])` preserves NFR-9 (zero cost
+    /// when unused). R-7c.5.
+    pub match_features: Arc<[(Arc<str>, crate::types::ExecutorIdx)]>,
 }
 
 impl RankPipeline {
@@ -179,6 +208,7 @@ impl RankPipeline {
             budget: PhaseBudget::default(),
             heap_size,
             rerank_count: heap_size,
+            match_features: Arc::from([]),
         }
     }
 
@@ -198,10 +228,30 @@ impl RankPipeline {
 
         for &doc in candidates {
             let score = self.first.rank(doc, ctx);
+            // R-7c.5: walk the resolved match_features and pull each
+            // executor's memoized value for this doc into a small Arc.
+            // The hot-path `last_output(idx)` is a flag + indexed read —
+            // no work happens when match_features is empty, so the
+            // existing zero-features fast path stays unchanged.
+            let features = if self.match_features.is_empty() {
+                None
+            } else {
+                let mut buf: Vec<(Arc<str>, f32)> =
+                    Vec::with_capacity(self.match_features.len());
+                for (name, idx) in self.match_features.iter() {
+                    let value = self
+                        .first
+                        .last_output(*idx)
+                        .unwrap_or_else(|| self.first.force_executor(*idx, doc, ctx));
+                    buf.push((name.clone(), value));
+                }
+                Some(Arc::<[(Arc<str>, f32)]>::from(buf))
+            };
             hits.push(ScoredHit {
                 doc,
                 score,
                 phase: PhaseId::FIRST,
+                features,
             });
             if let Some(b_us) = budget_us {
                 let elapsed = t0.elapsed().as_micros() as u64;
@@ -448,21 +498,9 @@ mod tests {
     async fn identity_global_scorer_sorts_and_truncates() {
         let scorer = IdentityGlobalScorer;
         let hits = vec![
-            ScoredHit {
-                doc: DocHandle(1),
-                score: 0.2,
-                phase: PhaseId::FIRST,
-            },
-            ScoredHit {
-                doc: DocHandle(2),
-                score: 0.8,
-                phase: PhaseId::FIRST,
-            },
-            ScoredHit {
-                doc: DocHandle(3),
-                score: 0.5,
-                phase: PhaseId::FIRST,
-            },
+            ScoredHit::bare(DocHandle(1), 0.2, PhaseId::FIRST),
+            ScoredHit::bare(DocHandle(2), 0.8, PhaseId::FIRST),
+            ScoredHit::bare(DocHandle(3), 0.5, PhaseId::FIRST),
         ];
         let out = scorer.score(hits, 2).await.unwrap();
         assert_eq!(out.len(), 2);
@@ -498,11 +536,7 @@ mod tests {
         PhaseOutcome {
             hits: scores
                 .iter()
-                .map(|(doc, s)| ScoredHit {
-                    doc: DocHandle(*doc),
-                    score: *s,
-                    phase: PhaseId::FIRST,
-                })
+                .map(|(doc, s)| ScoredHit::bare(DocHandle(*doc), *s, PhaseId::FIRST))
                 .collect(),
             truncated,
             elapsed_us: 0,
@@ -513,16 +547,8 @@ mod tests {
     fn passthrough_second_phase_scorer_tags_phase_id() {
         let s = PassthroughSecondPhaseScorer;
         let hits = vec![
-            ScoredHit {
-                doc: DocHandle(1),
-                score: 1.0,
-                phase: PhaseId::FIRST,
-            },
-            ScoredHit {
-                doc: DocHandle(2),
-                score: 2.0,
-                phase: PhaseId::FIRST,
-            },
+            ScoredHit::bare(DocHandle(1), 1.0, PhaseId::FIRST),
+            ScoredHit::bare(DocHandle(2), 2.0, PhaseId::FIRST),
         ];
         let out = s.rescore(hits).unwrap();
         assert_eq!(out.len(), 2);
@@ -537,11 +563,7 @@ mod tests {
     #[test]
     fn constant_multiplier_second_phase_scorer_scales_scores() {
         let s = ConstantMultiplierSecondPhaseScorer { factor: 3.0 };
-        let hits = vec![ScoredHit {
-            doc: DocHandle(1),
-            score: 2.5,
-            phase: PhaseId::FIRST,
-        }];
+        let hits = vec![ScoredHit::bare(DocHandle(1), 2.5, PhaseId::FIRST)];
         let out = s.rescore(hits).unwrap();
         assert_eq!(out[0].score, 7.5);
         assert_eq!(out[0].phase, PhaseId::SECOND);
@@ -631,11 +653,7 @@ mod tests {
     fn run_second_phase_accumulates_elapsed_us() {
         let pipe = pipeline_with_second_phase(10, 3);
         let inp = PhaseOutcome {
-            hits: vec![ScoredHit {
-                doc: DocHandle(1),
-                score: 1.0,
-                phase: PhaseId::FIRST,
-            }],
+            hits: vec![ScoredHit::bare(DocHandle(1), 1.0, PhaseId::FIRST)],
             truncated: false,
             elapsed_us: 1234,
         };
@@ -674,5 +692,128 @@ mod tests {
             .run_second_phase(inp, &PassthroughSecondPhaseScorer)
             .unwrap();
         assert!(out.hits.is_empty());
+    }
+
+    // ---------------- R-7c.5: match_features capture ----------------
+
+    /// Executor that returns a constant value — stands in for a
+    /// match_features executor in the per-feature capture tests.
+    struct ConstantExecutor(f32);
+    impl FeatureExecutor for ConstantExecutor {
+        fn execute(
+            &mut self,
+            _doc: DocHandle,
+            _lookup: &mut dyn FeatureLookup,
+            _ctx: &mut ScoreCtx<'_>,
+        ) -> f32 {
+            self.0
+        }
+    }
+
+    fn pipeline_with_match_features(
+        features: Vec<(&'static str, f32)>,
+    ) -> RankPipeline {
+        use crate::types::ExecutorIdx;
+        let mut b = RankProgram::builder();
+        let score_idx = b.add(Box::new(DocIdExecutor));
+        b.set_score(score_idx);
+        let mut resolved: Vec<(Arc<str>, ExecutorIdx)> = Vec::new();
+        for (name, value) in features {
+            let idx = b.add(Box::new(ConstantExecutor(value)));
+            resolved.push((Arc::from(name), idx));
+        }
+        let prog = b.build().unwrap();
+        let mut pipe = RankPipeline::first_phase_only("test".into(), prog, 10);
+        pipe.match_features = Arc::from(resolved);
+        pipe
+    }
+
+    #[test]
+    fn run_first_phase_with_no_match_features_emits_none_features() {
+        // NFR-9 fast path: profiles that don't declare match_features
+        // pay nothing — `features` stays `None`.
+        let prog = build_program_from(Box::new(DocIdExecutor));
+        let mut pipe = RankPipeline::first_phase_only("no_features".into(), prog, 5);
+        let q = QueryContext::default();
+        let arena = FeatureArena::new();
+        let (a, c, m, met) = (
+            NoopAttributeAccess,
+            NoopCandidateData,
+            NoopModelCache,
+            NoopMetricsSink,
+        );
+        let mut ctx = make_ctx(&q, &arena, &a, &c, &m, &met);
+        let out = pipe
+            .run_first_phase(&[DocHandle(1), DocHandle(2)], &mut ctx)
+            .unwrap();
+        assert_eq!(out.hits.len(), 2);
+        for h in &out.hits {
+            assert!(
+                h.features.is_none(),
+                "match_features empty pipeline must emit features=None to preserve NFR-9"
+            );
+        }
+    }
+
+    #[test]
+    fn run_first_phase_with_match_features_captures_per_doc_values() {
+        let mut pipe = pipeline_with_match_features(vec![
+            ("bm25(title)", 12.5),
+            ("closeness(embedding)", 0.91),
+        ]);
+        let q = QueryContext::default();
+        let arena = FeatureArena::new();
+        let (a, c, m, met) = (
+            NoopAttributeAccess,
+            NoopCandidateData,
+            NoopModelCache,
+            NoopMetricsSink,
+        );
+        let mut ctx = make_ctx(&q, &arena, &a, &c, &m, &met);
+        let out = pipe
+            .run_first_phase(&[DocHandle(7), DocHandle(3)], &mut ctx)
+            .unwrap();
+        assert_eq!(out.hits.len(), 2);
+        for h in &out.hits {
+            let f = h.features.as_ref().expect("features must be populated");
+            assert_eq!(f.len(), 2);
+            // Order must match the declaration order in match_features.
+            assert_eq!(f[0].0.as_ref(), "bm25(title)");
+            assert!((f[0].1 - 12.5).abs() < 1e-5);
+            assert_eq!(f[1].0.as_ref(), "closeness(embedding)");
+            assert!((f[1].1 - 0.91).abs() < 1e-5);
+        }
+        // Hits are sorted by score (doc id from DocIdExecutor) → 7 first.
+        assert_eq!(out.hits[0].doc, DocHandle(7));
+        // Pipeline didn't touch match_features Arc — it was set externally.
+        let _ = &pipe.match_features;
+    }
+
+    #[test]
+    fn second_phase_scorers_preserve_first_phase_features() {
+        // Passthrough + multiplier hand back the same `features` arc —
+        // rescoring changes the score, not the captured features.
+        let inp_features: Arc<[(Arc<str>, f32)]> =
+            Arc::from(vec![(Arc::<str>::from("f1"), 0.5_f32)]);
+        let hits = vec![ScoredHit {
+            doc: DocHandle(1),
+            score: 2.0,
+            phase: PhaseId::FIRST,
+            features: Some(inp_features.clone()),
+        }];
+        let passthrough = PassthroughSecondPhaseScorer.rescore(hits.clone()).unwrap();
+        assert!(passthrough[0].features.as_ref().is_some());
+        assert!(Arc::ptr_eq(
+            passthrough[0].features.as_ref().unwrap(),
+            &inp_features
+        ));
+        let multiplier = ConstantMultiplierSecondPhaseScorer { factor: 3.0 }
+            .rescore(hits)
+            .unwrap();
+        assert_eq!(multiplier[0].score, 6.0);
+        assert!(Arc::ptr_eq(
+            multiplier[0].features.as_ref().unwrap(),
+            &inp_features
+        ));
     }
 }

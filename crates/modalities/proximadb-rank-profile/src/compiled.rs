@@ -4,7 +4,8 @@
 use crate::spec::RankProfileSpec;
 use crate::validator::validate;
 use proximadb_rank_core::{
-    BlueprintFactory, PhaseBudget, QueryContext, RankError, RankPipeline, RankProgram, RankResult,
+    BlueprintFactory, ExecutorIdx, PhaseBudget, QueryContext, RankError, RankPipeline,
+    RankProgram, RankResult,
 };
 use proximadb_rank_expr::ExprBlueprint;
 use std::sync::Arc;
@@ -45,7 +46,15 @@ impl CompiledRankProfile {
                 self.spec.name
             ))
         })?;
-        let first = single_executor_program(bp.compile_str(&first_spec.expression, qctx)?)?;
+        // R-7c.5: the first-phase program now hosts the score executor
+        // *and* the match_features executors. Score node is added first
+        // so `score_idx` is stable; match_features get the next N indices.
+        let (first, match_features) = build_first_program_with_match_features(
+            &bp,
+            &first_spec.expression,
+            &self.spec.match_features,
+            qctx,
+        )?;
 
         let second = match &self.spec.second_phase {
             Some(p) => Some(single_executor_program(bp.compile_str(&p.expression, qctx)?)?),
@@ -77,8 +86,32 @@ impl CompiledRankProfile {
             },
             heap_size,
             rerank_count,
+            match_features,
         })
     }
+}
+
+/// Compile the first-phase score expression plus any declared
+/// `match_features` into a single `RankProgram`. The score executor is at
+/// `score_idx`; match-feature executors take the following slots. Returns
+/// the program and the `(name, executor_idx)` mapping the pipeline walks
+/// per doc to populate `ScoredHit.features`. R-7c.5.
+fn build_first_program_with_match_features(
+    bp: &ExprBlueprint,
+    score_expr: &str,
+    match_features: &[String],
+    qctx: &QueryContext,
+) -> RankResult<(RankProgram, Arc<[(Arc<str>, ExecutorIdx)]>)> {
+    let mut b = RankProgram::builder();
+    let score_idx = b.add(bp.compile_str(score_expr, qctx)?);
+    b.set_score(score_idx);
+
+    let mut resolved: Vec<(Arc<str>, ExecutorIdx)> = Vec::with_capacity(match_features.len());
+    for expr in match_features {
+        let idx = b.add(bp.compile_str(expr, qctx)?);
+        resolved.push((Arc::<str>::from(expr.as_str()), idx));
+    }
+    Ok((b.build()?, Arc::<[(Arc<str>, ExecutorIdx)]>::from(resolved)))
 }
 
 fn single_executor_program(
@@ -176,6 +209,58 @@ mod tests {
         let pipe = compiled.materialize(&qctx).unwrap();
         assert_eq!(pipe.budget.first_max_us, Some(12345));
         assert_eq!(pipe.heap_size, 10);
+    }
+
+    #[test]
+    fn materialize_lowers_match_features_into_pipeline_mapping() {
+        // R-7c.5: spec.match_features expressions must compile as
+        // additional executors in the same first-phase RankProgram, with
+        // the (name, ExecutorIdx) mapping surfacing on RankPipeline.
+        let f = factory();
+        let mut spec = RankProfileSpec::new("with_matchf");
+        spec.first_phase = Some(PhaseSpec {
+            expression: "1.0".into(),
+            heap_size: Some(10),
+            rerank_count: None,
+            batch_size: None,
+        });
+        // Two declared match_features expressions — both must lower.
+        spec.match_features = vec!["1.0".into(), "2.0".into()];
+        let compiled = CompiledRankProfile::compile(spec, f).unwrap();
+        let qctx = QueryContext::default();
+        let pipe = compiled.materialize(&qctx).unwrap();
+        assert_eq!(
+            pipe.match_features.len(),
+            2,
+            "match_features mapping must include both declared expressions"
+        );
+        assert_eq!(pipe.match_features[0].0.as_ref(), "1.0");
+        assert_eq!(pipe.match_features[1].0.as_ref(), "2.0");
+        // Score node is at idx 0 → the two match_features executors take
+        // 1 and 2.
+        assert_eq!(pipe.match_features[0].1.0, 1);
+        assert_eq!(pipe.match_features[1].1.0, 2);
+        // The RankProgram now has 3 executors total (score + 2 features).
+        assert_eq!(pipe.first.num_executors(), 3);
+    }
+
+    #[test]
+    fn materialize_with_no_match_features_emits_empty_mapping() {
+        let f = factory();
+        let mut spec = RankProfileSpec::new("no_matchf");
+        spec.first_phase = Some(PhaseSpec {
+            expression: "1.0".into(),
+            heap_size: Some(10),
+            rerank_count: None,
+            batch_size: None,
+        });
+        let compiled = CompiledRankProfile::compile(spec, f).unwrap();
+        let qctx = QueryContext::default();
+        let pipe = compiled.materialize(&qctx).unwrap();
+        assert!(
+            pipe.match_features.is_empty(),
+            "profiles without match_features must produce an empty mapping (NFR-9)"
+        );
     }
 
     #[test]
