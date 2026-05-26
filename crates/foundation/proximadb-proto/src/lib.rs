@@ -20,6 +20,13 @@ pub mod proximadb_v1 {
     ));
 }
 
+/// Hand-written ranking-pipeline wire types (R-7c.4a).
+///
+/// Source of truth lives in `proto/proximadb/v1/ranking.proto`; this
+/// module ships the prost-derived Rust mirrors until the next proto
+/// regeneration pass folds them into `src/proto/`.
+pub mod ranking;
+
 /// Compatibility alias used by the generated streaming protobuf code.
 pub mod v1 {
     pub use super::proximadb_v1::*;
