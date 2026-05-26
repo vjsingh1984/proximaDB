@@ -4,6 +4,14 @@
 :sectnums:
 
 Status: Active engine contract +
+Wiring: SaaS-pending — engine surface is captured here and in
+`adr/ADR-017-dr-engine-surface.adoc`; operator-side implementation lives
+in the private AnvaiOps repo. As of 2026-05-26 the distinctive
+engine-side symbol `DRPolicy` has 0 hits in this workspace's `*.rs`
+sources; the catalog-side hook (`xcatalog_collection_dr_policies`) and
+the `CollectionDrPolicy` + `DrPlacement` types are wired per ADR-017.
+See `docs/12-design/DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc` for the
+audit row. +
 Date: 2026-05-23 +
 Scope: Engine-side contract for collection-level disaster recovery and
 cross-region object replication. Defines the catalog metadata, physical path

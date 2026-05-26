@@ -1424,6 +1424,22 @@ A relational edge projection keyed for graph traversal, usually by `(graph_id, s
 CSR::
 Compressed Sparse Row. A compact adjacency-list projection using offset and target arrays. It is excellent for read-heavy traversal and graph algorithms, but it is expensive to mutate directly and should be rebuildable from canonical edge records.
 
+== Refined By
+
+This mandate is the parent contract; three follow-up design docs refine
+specific layers. They do not supersede this doc — each cites this
+mandate as authority and adds layer-specific implementation detail.
+
+* `RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc` —
+  PAX / MVCC / open-format storage shape and pgwire interoperability
+  direction.
+* `RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc` —
+  pgwire DML, legacy `VectorOps` routing, table-record execution, and
+  compute-engine routing.
+* `COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc` —
+  OLTP / OLAP / HTAP / MPP route map and the xCatalog/planner knobs
+  required to implement the routing decisions.
+
 == Related References
 
 * `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`
