@@ -1435,4 +1435,58 @@ mod tests {
             .expect("Failed to send test request");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
+
+    /// ADR-016 / Task #69 step 3: lock in the port-credential header
+    /// parsing rules so future step-4 migrations can rely on the
+    /// contract.  Mirrors the existing `map_header_to_auth_data`
+    /// semantics from the legacy middleware (Bearer, API-Key, Api-Key,
+    /// raw-as-ApiKey fallback).
+    mod port_credential_parsing {
+        use super::super::map_header_to_port_credential;
+        use proximadb_runtime::PortAuthCredential;
+
+        fn assert_jwt(header: &str, expected: &str) {
+            match map_header_to_port_credential(header).expect("ok") {
+                PortAuthCredential::Jwt(t) => assert_eq!(t, expected),
+                PortAuthCredential::ApiKey(k) => panic!("expected Jwt, got ApiKey({})", k),
+            }
+        }
+
+        fn assert_api_key(header: &str, expected: &str) {
+            match map_header_to_port_credential(header).expect("ok") {
+                PortAuthCredential::ApiKey(k) => assert_eq!(k, expected),
+                PortAuthCredential::Jwt(t) => panic!("expected ApiKey, got Jwt({})", t),
+            }
+        }
+
+        #[test]
+        fn bearer_prefix_emits_jwt() {
+            assert_jwt("Bearer abc.def.ghi", "abc.def.ghi");
+        }
+
+        #[test]
+        fn api_key_caps_prefix_emits_api_key() {
+            assert_api_key("API-Key secret123", "secret123");
+        }
+
+        #[test]
+        fn api_key_titlecase_prefix_emits_api_key() {
+            // Same semantics as the legacy `map_header_to_auth_data`.
+            assert_api_key("Api-Key secret123", "secret123");
+        }
+
+        #[test]
+        fn raw_value_falls_back_to_api_key() {
+            // Mirrors the legacy "treat raw value as API key" rule.
+            assert_api_key("rawkey-no-prefix", "rawkey-no-prefix");
+        }
+
+        #[test]
+        fn empty_string_is_api_key_with_empty_value() {
+            // The legacy parser also accepts "" as ApiKey("") — keeping
+            // the contract identical so the parallel port middleware
+            // doesn't diverge from the legacy one on edge cases.
+            assert_api_key("", "");
+        }
+    }
 }
