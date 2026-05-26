@@ -210,7 +210,7 @@ impl BloomFilterBuilder {
     }
 
     /// Get statistics about bloom filters
-    pub fn get_stats(&self) -> BloomFilterStats {
+    pub fn get_stats(&self) -> ParquetBloomFilterStats {
         let total_filters = self.bloom_filters.len();
 
         // Use core bloom filter's stats
@@ -225,7 +225,7 @@ impl BloomFilterBuilder {
             })
             .sum();
 
-        BloomFilterStats {
+        ParquetBloomFilterStats {
             total_filters,
             total_memory_bytes: total_memory,
             false_positive_probability: self.config.fpp,
@@ -240,16 +240,19 @@ impl BloomFilterBuilder {
     }
 }
 
+/// Backwards-compat alias for [`ParquetBloomFilterStats`].
+pub type BloomFilterStats = ParquetBloomFilterStats;
+
 /// Statistics about bloom filters
 #[derive(Debug, Clone)]
-pub struct BloomFilterStats {
+pub struct ParquetBloomFilterStats {
     pub total_filters: usize,
     pub total_memory_bytes: usize,
     pub false_positive_probability: f64,
     pub estimated_ndv: u64,
 }
 
-impl BloomFilterStats {
+impl ParquetBloomFilterStats {
     /// Get human-readable summary
     pub fn summary(&self) -> String {
         format!(

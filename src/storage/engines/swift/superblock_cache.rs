@@ -31,7 +31,7 @@ pub struct SwiftSuperBlockCache {
     datablock_ttl_sec: u64,
 
     /// Bloom filter cache for instant filtering
-    bloom_filter_cache: Arc<DashMap<String, Arc<BloomFilterMetadata>>>,
+    bloom_filter_cache: Arc<DashMap<String, Arc<SwiftBloomFilterMetadata>>>,
 
     /// Progressive search cache
     #[allow(dead_code)]
@@ -214,9 +214,12 @@ pub struct DataBlockAccessStats {
     pub tree_navigation_efficiency: f32,
 }
 
+/// Backwards-compat alias for [`SwiftBloomFilterMetadata`].
+pub type BloomFilterMetadata = SwiftBloomFilterMetadata;
+
 /// Bloom filter metadata for instant filtering
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct BloomFilterMetadata {
+pub struct SwiftBloomFilterMetadata {
     pub filter_id: String,
     pub superblock_id: u32,
     pub filter_type: BloomFilter,
@@ -411,7 +414,7 @@ impl SwiftSuperBlockCache {
         let bloom_path = format!("{}/bloom_filters_metadata.bin", collection_id);
         if self.filesystem.exists(&bloom_path).await.unwrap_or(false) {
             let data = self.filesystem.read(&bloom_path).await?;
-            let filters: HashMap<String, BloomFilterMetadata> = bincode::deserialize(&data)?;
+            let filters: HashMap<String, SwiftBloomFilterMetadata> = bincode::deserialize(&data)?;
 
             for (key, filter) in filters {
                 self.bloom_filter_cache.insert(key, Arc::new(filter));

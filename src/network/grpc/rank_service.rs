@@ -563,6 +563,71 @@ mod tests {
         })
     }
 
+    fn rank_services_with_summary_features_profile(
+        name: &str,
+        summary_features: Vec<&str>,
+        candidates: Arc<dyn CandidateProvider>,
+    ) -> Arc<RankServices> {
+        let factory = factory_with_docid();
+        let registry = ProfileRegistry::new();
+        let mut spec = RankProfileSpec::new(name);
+        spec.first_phase = Some(PhaseSpec {
+            expression: "docid()".into(),
+            heap_size: Some(50),
+            rerank_count: None,
+            batch_size: None,
+        });
+        spec.summary_features = summary_features.into_iter().map(String::from).collect();
+        spec.version = 1;
+        let compiled = CompiledRankProfile::compile(spec, factory.clone()).unwrap();
+        registry.install(compiled);
+        Arc::new(RankServices {
+            profile_registry: Arc::new(registry),
+            blueprint_factory: factory,
+            candidate_provider: candidates,
+            second_phase_scorers: dashmap::DashMap::new(),
+        })
+    }
+
+    #[tokio::test]
+    async fn grpc_handler_round_trips_summary_features_through_prost() {
+        // R-7c.5b: profile with summary_features → handler → encode
+        // proto response → decode → assert summary_features survived
+        // the prost `map<string, double>` wire encoding, distinct from
+        // match_features.
+        use prost::Message;
+        let candidates: Arc<dyn CandidateProvider> =
+            Arc::new(FixedCandidates(vec![DocHandle(5), DocHandle(9)]));
+        let services = rank_services_with_summary_features_profile(
+            "sf",
+            vec!["docid()"],
+            candidates,
+        );
+        let handler = RankServiceImpl::new(services);
+        let req = tonic::Request::new(proto_ranking::RankSearchRequest {
+            collection: "docs".into(),
+            query_vector: vec![],
+            query_text: None,
+            k: 2,
+            rank_profile: Some("sf".into()),
+            rank_overrides: None,
+        });
+        let resp = handler.rank_search(req).await.unwrap().into_inner();
+        let back =
+            proto_ranking::RankSearchResponse::decode(resp.encode_to_vec().as_slice()).unwrap();
+        assert_eq!(back.hits.len(), 2);
+        for h in &back.hits {
+            // match_features map stays empty (profile didn't declare any).
+            assert!(h.match_features.is_empty());
+            // summary_features map carries the declared expression.
+            assert_eq!(h.summary_features.len(), 1);
+            assert!(h.summary_features.contains_key("docid()"));
+        }
+        // Top hit is doc 9 (docid scorer).
+        assert_eq!(back.hits[0].id, "9");
+        assert!((back.hits[0].summary_features["docid()"] - 9.0).abs() < 1e-5);
+    }
+
     #[tokio::test]
     async fn grpc_handler_round_trips_match_features_through_prost() {
         // End-to-end: profile with match_features → handler → encode

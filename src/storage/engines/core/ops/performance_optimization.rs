@@ -208,12 +208,15 @@ pub struct UniversalPerformanceOptimizer {
     compression_provider: StandardCompression,
 
     /// Access pattern tracking for optimization
-    access_patterns: Arc<RwLock<HashMap<String, AccessStats>>>,
+    access_patterns: Arc<RwLock<HashMap<String, PerfOptAccessStats>>>,
 }
+
+/// Backwards-compat alias for [`PerfOptAccessStats`].
+pub type AccessStats = PerfOptAccessStats;
 
 /// Access statistics for optimization decisions
 #[derive(Debug, Clone)]
-pub struct AccessStats {
+pub struct PerfOptAccessStats {
     pub access_count: u64,
     pub last_access: chrono::DateTime<chrono::Utc>,
     pub total_bytes_read: u64,
@@ -719,7 +722,7 @@ impl UniversalPerformanceOptimizer {
         let mut patterns = self.access_patterns.write().await;
         let entry = patterns
             .entry(key.to_string())
-            .or_insert_with(|| AccessStats {
+            .or_insert_with(|| PerfOptAccessStats {
                 access_count: 0,
                 last_access: chrono::Utc::now(),
                 total_bytes_read: 0,

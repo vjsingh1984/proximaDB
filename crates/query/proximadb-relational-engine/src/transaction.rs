@@ -26,7 +26,7 @@
 //! [`TxReaderFactory`] that satisfies the executor's
 //! [`ReaderFactory`] contract. Drop the factory before commit.
 
-use crate::{EngineError, InMemoryRelationalEngine};
+use crate::{EngineError, InMemoryRelationalEngine, RelationalWriter};
 use async_trait::async_trait;
 use parking_lot::RwLock;
 use proximadb_data_model::ProximaValue;

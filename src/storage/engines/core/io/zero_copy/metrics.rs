@@ -21,7 +21,7 @@ pub struct SystemPerformanceMetrics {
     /// Cost analysis metrics
     pub cost_analysis: CostAnalysisMetrics,
     /// Access pattern metrics
-    pub access_patterns: AccessPatternMetrics,
+    pub access_patterns: ZeroCopyAccessPatternMetrics,
     /// Resource utilization metrics
     pub resource_utilization: ResourceUtilizationMetrics,
 }
@@ -126,9 +126,12 @@ pub struct CostAnalysisMetrics {
     pub break_even_operations: u64,
 }
 
+/// Backwards-compat alias for [`ZeroCopyAccessPatternMetrics`].
+pub type AccessPatternMetrics = ZeroCopyAccessPatternMetrics;
+
 /// Access pattern analysis metrics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AccessPatternMetrics {
+pub struct ZeroCopyAccessPatternMetrics {
     /// Total files tracked
     pub files_tracked: u64,
     /// Total collections tracked
@@ -558,7 +561,7 @@ impl MetricsCollector {
                 roi_percentage: 250.0, // Placeholder
                 break_even_operations: 1000,
             },
-            access_patterns: AccessPatternMetrics {
+            access_patterns: ZeroCopyAccessPatternMetrics {
                 files_tracked: 500, // Placeholder
                 collections_tracked: 10,
                 hot_files_count: 50,

@@ -46,15 +46,20 @@ impl CompiledRankProfile {
                 self.spec.name
             ))
         })?;
-        // R-7c.5: the first-phase program now hosts the score executor
-        // *and* the match_features executors. Score node is added first
-        // so `score_idx` is stable; match_features get the next N indices.
-        let (first, match_features) = build_first_program_with_match_features(
-            &bp,
-            &first_spec.expression,
-            &self.spec.match_features,
-            qctx,
-        )?;
+        // R-7c.5 + R-7c.5b: the first-phase program now hosts the
+        // score executor, the match_features executors, AND the
+        // summary_features executors — all sharing the same program
+        // so memoization across overlapping sub-expressions works
+        // (a match_feature that names the same bm25(...) the score
+        // uses runs once per doc, not twice).
+        let (first, match_features, summary_features) =
+            build_first_program_with_features(
+                &bp,
+                &first_spec.expression,
+                &self.spec.match_features,
+                &self.spec.summary_features,
+                qctx,
+            )?;
 
         let second = match &self.spec.second_phase {
             Some(p) => Some(single_executor_program(bp.compile_str(&p.expression, qctx)?)?),
@@ -87,31 +92,51 @@ impl CompiledRankProfile {
             heap_size,
             rerank_count,
             match_features,
+            summary_features,
         })
     }
 }
 
 /// Compile the first-phase score expression plus any declared
-/// `match_features` into a single `RankProgram`. The score executor is at
-/// `score_idx`; match-feature executors take the following slots. Returns
-/// the program and the `(name, executor_idx)` mapping the pipeline walks
-/// per doc to populate `ScoredHit.features`. R-7c.5.
-fn build_first_program_with_match_features(
+/// `match_features` and `summary_features` into a single `RankProgram`.
+/// The score executor is at `score_idx`; match-feature executors take
+/// the next M slots; summary-feature executors take the M+1.. slots.
+/// Returns the program along with the two resolved
+/// `(name, executor_idx)` mappings the pipeline walks per doc to
+/// populate `ScoredHit.features` (R-7c.5) and `ScoredHit.summary`
+/// (R-7c.5b).
+fn build_first_program_with_features(
     bp: &ExprBlueprint,
     score_expr: &str,
     match_features: &[String],
+    summary_features: &[String],
     qctx: &QueryContext,
-) -> RankResult<(RankProgram, Arc<[(Arc<str>, ExecutorIdx)]>)> {
+) -> RankResult<(
+    RankProgram,
+    Arc<[(Arc<str>, ExecutorIdx)]>,
+    Arc<[(Arc<str>, ExecutorIdx)]>,
+)> {
     let mut b = RankProgram::builder();
     let score_idx = b.add(bp.compile_str(score_expr, qctx)?);
     b.set_score(score_idx);
 
-    let mut resolved: Vec<(Arc<str>, ExecutorIdx)> = Vec::with_capacity(match_features.len());
+    let mut resolved_match: Vec<(Arc<str>, ExecutorIdx)> =
+        Vec::with_capacity(match_features.len());
     for expr in match_features {
         let idx = b.add(bp.compile_str(expr, qctx)?);
-        resolved.push((Arc::<str>::from(expr.as_str()), idx));
+        resolved_match.push((Arc::<str>::from(expr.as_str()), idx));
     }
-    Ok((b.build()?, Arc::<[(Arc<str>, ExecutorIdx)]>::from(resolved)))
+    let mut resolved_summary: Vec<(Arc<str>, ExecutorIdx)> =
+        Vec::with_capacity(summary_features.len());
+    for expr in summary_features {
+        let idx = b.add(bp.compile_str(expr, qctx)?);
+        resolved_summary.push((Arc::<str>::from(expr.as_str()), idx));
+    }
+    Ok((
+        b.build()?,
+        Arc::<[(Arc<str>, ExecutorIdx)]>::from(resolved_match),
+        Arc::<[(Arc<str>, ExecutorIdx)]>::from(resolved_summary),
+    ))
 }
 
 fn single_executor_program(
@@ -242,6 +267,84 @@ mod tests {
         assert_eq!(pipe.match_features[1].1.0, 2);
         // The RankProgram now has 3 executors total (score + 2 features).
         assert_eq!(pipe.first.num_executors(), 3);
+    }
+
+    #[test]
+    fn materialize_lowers_summary_features_into_pipeline_mapping() {
+        // R-7c.5b: spec.summary_features expressions lower into
+        // additional executors in the same first-phase RankProgram.
+        // The (name, ExecutorIdx) mapping surfaces on
+        // RankPipeline.summary_features, parallel to
+        // RankPipeline.match_features (R-7c.5).
+        let f = factory();
+        let mut spec = RankProfileSpec::new("with_sumf");
+        spec.first_phase = Some(PhaseSpec {
+            expression: "1.0".into(),
+            heap_size: Some(10),
+            rerank_count: None,
+            batch_size: None,
+        });
+        spec.summary_features = vec!["1.0".into(), "2.0".into(), "3.0".into()];
+        let compiled = CompiledRankProfile::compile(spec, f).unwrap();
+        let qctx = QueryContext::default();
+        let pipe = compiled.materialize(&qctx).unwrap();
+        assert_eq!(pipe.summary_features.len(), 3);
+        assert_eq!(pipe.summary_features[0].0.as_ref(), "1.0");
+        assert_eq!(pipe.summary_features[1].0.as_ref(), "2.0");
+        assert_eq!(pipe.summary_features[2].0.as_ref(), "3.0");
+        // Score node is idx 0; no match_features → summary_features
+        // take 1, 2, 3.
+        assert_eq!(pipe.summary_features[0].1.0, 1);
+        assert_eq!(pipe.summary_features[1].1.0, 2);
+        assert_eq!(pipe.summary_features[2].1.0, 3);
+        // RankProgram = score + 3 summary executors = 4 total.
+        assert_eq!(pipe.first.num_executors(), 4);
+        // match_features mapping stays empty.
+        assert!(pipe.match_features.is_empty());
+    }
+
+    #[test]
+    fn materialize_lowers_match_then_summary_features_in_separate_groups() {
+        // Both groups declared. match_features take the executor
+        // slots right after the score (idx 1..M+1); summary_features
+        // take the slots after that (idx M+1..M+S+1). This stable
+        // layout is what the pipeline relies on per `last_output(idx)`.
+        let f = factory();
+        let mut spec = RankProfileSpec::new("both");
+        spec.first_phase = Some(PhaseSpec {
+            expression: "1.0".into(),
+            heap_size: Some(10),
+            rerank_count: None,
+            batch_size: None,
+        });
+        spec.match_features = vec!["1.0".into(), "2.0".into()];
+        spec.summary_features = vec!["3.0".into()];
+        let compiled = CompiledRankProfile::compile(spec, f).unwrap();
+        let qctx = QueryContext::default();
+        let pipe = compiled.materialize(&qctx).unwrap();
+        assert_eq!(pipe.match_features.len(), 2);
+        assert_eq!(pipe.summary_features.len(), 1);
+        // match_features at 1, 2; summary at 3 (after the two match).
+        assert_eq!(pipe.match_features[0].1.0, 1);
+        assert_eq!(pipe.match_features[1].1.0, 2);
+        assert_eq!(pipe.summary_features[0].1.0, 3);
+        assert_eq!(pipe.first.num_executors(), 4);
+    }
+
+    #[test]
+    fn materialize_with_no_summary_features_emits_empty_mapping() {
+        let f = factory();
+        let mut spec = RankProfileSpec::new("no_sumf");
+        spec.first_phase = Some(PhaseSpec {
+            expression: "1.0".into(),
+            heap_size: Some(10),
+            rerank_count: None,
+            batch_size: None,
+        });
+        let compiled = CompiledRankProfile::compile(spec, f).unwrap();
+        let qctx = QueryContext::default();
+        let pipe = compiled.materialize(&qctx).unwrap();
+        assert!(pipe.summary_features.is_empty());
     }
 
     #[test]

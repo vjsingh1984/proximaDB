@@ -24,9 +24,12 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::RwLock;
 
+/// Backwards-compat alias for [`TieringAccessEvent`].
+pub type AccessEvent = TieringAccessEvent;
+
 /// An access event for tracking
 #[derive(Debug, Clone)]
-pub struct AccessEvent {
+pub struct TieringAccessEvent {
     /// Item ID
     pub item_id: String,
     /// Collection name
@@ -190,7 +193,7 @@ impl AccessTracker {
     }
 
     /// Record an access event
-    pub async fn record(&self, event: AccessEvent) {
+    pub async fn record(&self, event: TieringAccessEvent) {
         let key = (event.collection.clone(), event.item_id.clone());
 
         let mut patterns = self.patterns.write().await;
@@ -348,7 +351,7 @@ mod tests {
     async fn test_tracker_record_and_get() {
         let tracker = AccessTracker::new(AccessTrackerConfig::default());
 
-        let event = AccessEvent {
+        let event = TieringAccessEvent {
             item_id: "item1".to_string(),
             collection: "test".to_string(),
             timestamp: Instant::now(),
@@ -371,7 +374,7 @@ mod tests {
         for i in 0..5 {
             for _ in 0..i + 1 {
                 tracker
-                    .record(AccessEvent {
+                    .record(TieringAccessEvent {
                         item_id: format!("item{}", i),
                         collection: "test".to_string(),
                         timestamp: Instant::now(),
@@ -393,7 +396,7 @@ mod tests {
         let tracker = AccessTracker::new(AccessTrackerConfig::default());
 
         tracker
-            .record(AccessEvent {
+            .record(TieringAccessEvent {
                 item_id: "item1".to_string(),
                 collection: "test".to_string(),
                 timestamp: Instant::now(),

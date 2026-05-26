@@ -102,9 +102,12 @@ impl Ord for OptimizedRange {
     }
 }
 
+/// Backwards-compat alias for [`BandwidthAccessPrediction`].
+pub type AccessPrediction = BandwidthAccessPrediction;
+
 /// Access prediction for future file access
 #[derive(Debug, Clone)]
-pub struct AccessPrediction {
+pub struct BandwidthAccessPrediction {
     /// Probability of accessing this file again (0.0 - 1.0)
     pub future_access_probability: f32,
     /// Predicted time until next access
@@ -566,7 +569,7 @@ impl BandwidthOptimizer {
         _file_path: &str,
         file_size: u64,
         query_context: &QueryContext,
-        access_prediction: &AccessPrediction,
+        access_prediction: &BandwidthAccessPrediction,
         request_priority: RequestPriority,
     ) -> f32 {
         let _ = (_file_path, access_prediction); // Used in scoring logic below
@@ -734,11 +737,11 @@ impl AccessPatternPredictor {
             .push(event);
     }
 
-    fn predict_access(&self, file_path: &str, _query_context: &QueryContext) -> AccessPrediction {
+    fn predict_access(&self, file_path: &str, _query_context: &QueryContext) -> BandwidthAccessPrediction {
         let history = self.file_access_history.get(file_path);
 
         match history {
-            None => AccessPrediction {
+            None => BandwidthAccessPrediction {
                 future_access_probability: 0.1, // Low default for unknown files
                 predicted_next_access: None,
                 confidence: 0.2,
@@ -746,7 +749,7 @@ impl AccessPatternPredictor {
             },
             Some(events) => {
                 if events.len() < self.config.min_accesses_for_prediction as usize {
-                    return AccessPrediction {
+                    return BandwidthAccessPrediction {
                         future_access_probability: 0.3,
                         predicted_next_access: None,
                         confidence: 0.4,
@@ -770,7 +773,7 @@ impl AccessPatternPredictor {
                     0.1 // Very cold file
                 };
 
-                AccessPrediction {
+                BandwidthAccessPrediction {
                     future_access_probability: probability,
                     predicted_next_access: Some(Duration::from_secs(300)), // 5 minutes default
                     confidence: self.config.confidence_threshold,

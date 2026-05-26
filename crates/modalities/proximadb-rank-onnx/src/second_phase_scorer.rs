@@ -76,10 +76,13 @@ impl SecondPhaseScorer for OnnxSecondPhaseScorer {
                 // validates row counts, so this is belt-and-suspenders.
                 score: score_by_doc.get(&h.doc).copied().unwrap_or(0.0),
                 phase: PhaseId::SECOND,
-                // R-7c.5: preserve first-phase match_features through
-                // the rescore. Rescoring changes the score but match
-                // features are first-phase artifacts.
+                // R-7c.5 + R-7c.5b: preserve first-phase
+                // match_features AND summary_features through the
+                // rescore. Both are first-phase artifacts; the
+                // rescorer changes the score and the phase tag, not
+                // the captured snapshots.
                 features: h.features,
+                summary: h.summary,
             })
             .collect())
     }

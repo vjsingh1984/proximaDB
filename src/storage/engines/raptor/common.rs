@@ -537,7 +537,7 @@ pub struct RaptorFileMetadata {
     pub schema: SchemaDescriptor,
 
     // Bloom filter metadata (for per-rowgroup bloom filters)
-    pub bloom_filter_metadata: Option<BloomFilterMetadata>,
+    pub bloom_filter_metadata: Option<RaptorBloomFilterMetadata>,
 
     // Compression
     pub compression_codec: String,
@@ -597,8 +597,11 @@ pub struct FieldDescriptor {
     pub default_value: Option<MetadataValue>,
 }
 
+/// Backwards-compat alias for [`RaptorBloomFilterMetadata`].
+pub type BloomFilterMetadata = RaptorBloomFilterMetadata;
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct BloomFilterMetadata {
+pub struct RaptorBloomFilterMetadata {
     pub num_bits: usize,
     pub num_hashes: usize,
     pub num_entries: u32, // Number of entries in the bloom filter
@@ -891,8 +894,8 @@ impl RowGroupBloomFilter {
     }
 
     /// Get statistics for this bloom filter
-    pub fn stats(&self) -> BloomFilterStats {
-        BloomFilterStats {
+    pub fn stats(&self) -> RaptorBloomFilterStats {
+        RaptorBloomFilterStats {
             num_ids: self.num_ids,
             size_bytes: self.memory_usage(),
             size_bits: self.size_bits,
@@ -902,9 +905,12 @@ impl RowGroupBloomFilter {
     }
 }
 
+/// Backwards-compat alias for [`RaptorBloomFilterStats`].
+pub type BloomFilterStats = RaptorBloomFilterStats;
+
 /// Statistics for bloom filter performance tracking
 #[derive(Debug, Clone)]
-pub struct BloomFilterStats {
+pub struct RaptorBloomFilterStats {
     pub num_ids: usize,
     pub size_bytes: usize,
     pub size_bits: usize,

@@ -77,9 +77,11 @@ impl SecondPhaseScorer for OnnxTokenizedSecondPhaseScorer {
                 doc: h.doc,
                 score: score_by_doc.get(&h.doc).copied().unwrap_or(0.0),
                 phase: PhaseId::SECOND,
-                // R-7c.5: preserve first-phase match_features through
-                // the rescore — same contract as the float-input twin.
+                // R-7c.5 + R-7c.5b: preserve first-phase match_features
+                // AND summary_features through the rescore — same
+                // contract as the float-input twin.
                 features: h.features,
+                summary: h.summary,
             })
             .collect())
     }

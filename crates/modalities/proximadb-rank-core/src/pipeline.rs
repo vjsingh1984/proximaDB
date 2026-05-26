@@ -864,6 +864,147 @@ mod tests {
         let _ = &pipe.match_features;
     }
 
+    // ---------------- R-7c.5b: summary_features capture ----------------
+
+    fn pipeline_with_match_and_summary_features(
+        match_specs: Vec<(&'static str, f32)>,
+        summary_specs: Vec<(&'static str, f32)>,
+    ) -> RankPipeline {
+        use crate::types::ExecutorIdx;
+        let mut b = RankProgram::builder();
+        let score_idx = b.add(Box::new(DocIdExecutor));
+        b.set_score(score_idx);
+        let mut match_map: Vec<(Arc<str>, ExecutorIdx)> = Vec::new();
+        for (name, value) in match_specs {
+            let idx = b.add(Box::new(ConstantExecutor(value)));
+            match_map.push((Arc::from(name), idx));
+        }
+        let mut summary_map: Vec<(Arc<str>, ExecutorIdx)> = Vec::new();
+        for (name, value) in summary_specs {
+            let idx = b.add(Box::new(ConstantExecutor(value)));
+            summary_map.push((Arc::from(name), idx));
+        }
+        let prog = b.build().unwrap();
+        let mut pipe = RankPipeline::first_phase_only("test".into(), prog, 10);
+        pipe.match_features = Arc::from(match_map);
+        pipe.summary_features = Arc::from(summary_map);
+        pipe
+    }
+
+    #[test]
+    fn run_first_phase_with_no_summary_features_emits_none_summary() {
+        // Symmetric with the match_features fast path: empty
+        // summary_features mapping → `summary` stays `None`.
+        let prog = build_program_from(Box::new(DocIdExecutor));
+        let mut pipe = RankPipeline::first_phase_only("no_summary".into(), prog, 5);
+        let q = QueryContext::default();
+        let arena = FeatureArena::new();
+        let (a, c, m, met) = (
+            NoopAttributeAccess,
+            NoopCandidateData,
+            NoopModelCache,
+            NoopMetricsSink,
+        );
+        let mut ctx = make_ctx(&q, &arena, &a, &c, &m, &met);
+        let out = pipe
+            .run_first_phase(&[DocHandle(1), DocHandle(2)], &mut ctx)
+            .unwrap();
+        for h in &out.hits {
+            assert!(h.summary.is_none(), "empty mapping must keep summary=None");
+        }
+    }
+
+    #[test]
+    fn run_first_phase_captures_summary_features_independent_of_match() {
+        // Profile declares ONLY summary_features (no match_features).
+        // Each hit must have summary=Some(...) and features=None.
+        let mut pipe = pipeline_with_match_and_summary_features(
+            vec![],
+            vec![("snippet_score", 0.42), ("freshness_decay", 0.9)],
+        );
+        let q = QueryContext::default();
+        let arena = FeatureArena::new();
+        let (a, c, m, met) = (
+            NoopAttributeAccess,
+            NoopCandidateData,
+            NoopModelCache,
+            NoopMetricsSink,
+        );
+        let mut ctx = make_ctx(&q, &arena, &a, &c, &m, &met);
+        let out = pipe
+            .run_first_phase(&[DocHandle(5), DocHandle(9)], &mut ctx)
+            .unwrap();
+        assert_eq!(out.hits.len(), 2);
+        for h in &out.hits {
+            assert!(h.features.is_none(), "no match_features → features=None");
+            let s = h.summary.as_ref().expect("summary must be populated");
+            assert_eq!(s.len(), 2);
+            assert_eq!(s[0].0.as_ref(), "snippet_score");
+            assert!((s[0].1 - 0.42).abs() < 1e-5);
+            assert_eq!(s[1].0.as_ref(), "freshness_decay");
+            assert!((s[1].1 - 0.9).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn run_first_phase_captures_both_match_and_summary_features() {
+        // Both declared — both populated. The two are independent
+        // Arcs; a profile that wants both pays for both, neither
+        // shares storage with the other.
+        let mut pipe = pipeline_with_match_and_summary_features(
+            vec![("bm25_title", 5.5)],
+            vec![("snippet", 0.1)],
+        );
+        let q = QueryContext::default();
+        let arena = FeatureArena::new();
+        let (a, c, m, met) = (
+            NoopAttributeAccess,
+            NoopCandidateData,
+            NoopModelCache,
+            NoopMetricsSink,
+        );
+        let mut ctx = make_ctx(&q, &arena, &a, &c, &m, &met);
+        let out = pipe
+            .run_first_phase(&[DocHandle(3)], &mut ctx)
+            .unwrap();
+        let h = &out.hits[0];
+        let f = h.features.as_ref().unwrap();
+        let s = h.summary.as_ref().unwrap();
+        assert_eq!(f[0].0.as_ref(), "bm25_title");
+        assert!((f[0].1 - 5.5).abs() < 1e-5);
+        assert_eq!(s[0].0.as_ref(), "snippet");
+        assert!((s[0].1 - 0.1).abs() < 1e-5);
+    }
+
+    #[test]
+    fn second_phase_scorers_preserve_first_phase_summary() {
+        // Passthrough + multiplier must hand back the same `summary`
+        // arc — same R-7c.5 contract but for summary_features.
+        let inp_summary: Arc<[(Arc<str>, f32)]> =
+            Arc::from(vec![(Arc::<str>::from("s1"), 0.3_f32)]);
+        let hits = vec![ScoredHit {
+            doc: DocHandle(1),
+            score: 2.0,
+            phase: PhaseId::FIRST,
+            features: None,
+            summary: Some(inp_summary.clone()),
+        }];
+        let passthrough = PassthroughSecondPhaseScorer
+            .rescore(hits.clone(), &QueryContext::default())
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            passthrough[0].summary.as_ref().unwrap(),
+            &inp_summary
+        ));
+        let multiplier = ConstantMultiplierSecondPhaseScorer { factor: 3.0 }
+            .rescore(hits, &QueryContext::default())
+            .unwrap();
+        assert!(Arc::ptr_eq(
+            multiplier[0].summary.as_ref().unwrap(),
+            &inp_summary
+        ));
+    }
+
     #[test]
     fn second_phase_scorers_preserve_first_phase_features() {
         // Passthrough + multiplier hand back the same `features` arc —

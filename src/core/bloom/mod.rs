@@ -626,9 +626,12 @@ mod tests {
 // Additional types and aliases for storage engine compatibility
 // ============================================================================
 
+/// Backwards-compat alias for [`CoreBloomFilterStats`].
+pub type BloomFilterStats = CoreBloomFilterStats;
+
 /// Stats for bloom filter usage
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct BloomFilterStats {
+pub struct CoreBloomFilterStats {
     /// Number of primary keys inserted into bloom filters
     pub key_count: u64,
     /// Number of metadata columns with bloom filters
@@ -652,7 +655,7 @@ pub struct SstableBloomFilter {
     /// Metadata filter data  
     pub metadata_filter_data: Vec<u8>,
     /// Statistics
-    pub stats: BloomFilterStats,
+    pub stats: CoreBloomFilterStats,
     /// Memory usage tracking
     memory_usage: Option<usize>,
 }
@@ -663,7 +666,7 @@ impl SstableBloomFilter {
         key_filter_config: CoreBloomFilterConfig,
         key_filter_data: Vec<u8>,
         metadata_filter_data: Vec<u8>,
-        stats: BloomFilterStats,
+        stats: CoreBloomFilterStats,
     ) -> Self {
         let memory_usage =
             std::mem::size_of::<Self>() + key_filter_data.len() + metadata_filter_data.len();
@@ -869,7 +872,7 @@ impl SstableBloomFilter {
         cursor.read_exact(&mut metadata_filter_data)?;
 
         // Create the structures
-        let stats = BloomFilterStats {
+        let stats = CoreBloomFilterStats {
             key_count,
             metadata_columns,
             total_keys,
@@ -999,7 +1002,7 @@ impl From<SerializedSstableBloomFilter> for SstableBloomFilter {
             },
             key_filter_data: serialized.key_filter_data,
             metadata_filter_data: serialized.metadata_filter_data,
-            stats: BloomFilterStats {
+            stats: CoreBloomFilterStats {
                 key_count: serialized.key_count,
                 metadata_columns: serialized.metadata_columns,
                 total_keys: serialized.total_keys,

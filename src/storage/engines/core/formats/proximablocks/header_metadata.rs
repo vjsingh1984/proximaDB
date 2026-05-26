@@ -231,7 +231,7 @@ pub struct BlockIndexMetadata {
     /// Bloom filter information
     pub bloom_filter_offset: u64,
     pub bloom_filter_size: u64,
-    pub bloom_filter_config: BloomFilterMetadata,
+    pub bloom_filter_config: BlockBloomFilterMetadata,
 
     /// Quantization index information
     pub quantization_index_offset: u64,
@@ -253,9 +253,12 @@ pub enum Index {
     Hybrid,
 }
 
+/// Backwards-compat alias for [`BlockBloomFilterMetadata`].
+pub type BloomFilterMetadata = BlockBloomFilterMetadata;
+
 /// Bloom filter metadata
 #[derive(Debug, Clone)]
-pub struct BloomFilterMetadata {
+pub struct BlockBloomFilterMetadata {
     pub filter_type: BloomFilter,
     pub false_positive_rate: f64,
     #[allow(dead_code)]
@@ -659,7 +662,7 @@ impl Default for BlockIndexMetadata {
             id_index_compression: Some(CompressionAlgorithm::Lz4),
             bloom_filter_offset: 0,
             bloom_filter_size: 0,
-            bloom_filter_config: BloomFilterMetadata::default(),
+            bloom_filter_config: BlockBloomFilterMetadata::default(),
             quantization_index_offset: 0,
             quantization_index_size: 0,
             quantization_metadata: BlockQuantizationMetadata::default(),
@@ -670,7 +673,7 @@ impl Default for BlockIndexMetadata {
     }
 }
 
-impl Default for BloomFilterMetadata {
+impl Default for BlockBloomFilterMetadata {
     fn default() -> Self {
         Self {
             filter_type: BloomFilter::Standard,

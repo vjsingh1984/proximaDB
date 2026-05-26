@@ -35,7 +35,7 @@ pub struct AccessPatternCache {
     /// Maximum number of items to track
     max_size: usize,
     /// Cache statistics
-    stats: Arc<RwLock<AccessStats>>,
+    stats: Arc<RwLock<QuasarCacheAccessStats>>,
 }
 
 /// Access information for a single item
@@ -53,9 +53,12 @@ pub struct AccessInfo {
     pub recent_accesses: VecDeque<Instant>,
 }
 
+/// Backwards-compat alias for [`QuasarCacheAccessStats`].
+pub type AccessStats = QuasarCacheAccessStats;
+
 /// Statistics for access pattern tracking
 #[derive(Debug, Default, Clone)]
-pub struct AccessStats {
+pub struct QuasarCacheAccessStats {
     pub total_accesses: u64,
     pub unique_items_tracked: u64,
     pub cache_evictions: u64,
@@ -71,7 +74,7 @@ impl AccessPatternCache {
             access_data: Arc::new(RwLock::new(HashMap::new())),
             lru_order: Arc::new(RwLock::new(VecDeque::new())),
             max_size,
-            stats: Arc::new(RwLock::new(AccessStats::default())),
+            stats: Arc::new(RwLock::new(QuasarCacheAccessStats::default())),
         }
     }
 
@@ -225,7 +228,7 @@ impl AccessPatternCache {
     /// Update average access frequency statistic
     async fn update_average_access_frequency(
         &self,
-        stats: &mut AccessStats,
+        stats: &mut QuasarCacheAccessStats,
         access_data: &HashMap<String, AccessInfo>,
     ) {
         if access_data.is_empty() {
@@ -250,7 +253,7 @@ impl AccessPatternCache {
     }
 
     /// Get access pattern statistics
-    pub async fn get_stats(&self) -> AccessStats {
+    pub async fn get_stats(&self) -> QuasarCacheAccessStats {
         let stats = self.stats.read().await;
         stats.clone()
     }

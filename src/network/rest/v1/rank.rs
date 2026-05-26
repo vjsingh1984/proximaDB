@@ -354,25 +354,19 @@ pub async fn handle_rank_search(
         .into_iter()
         .map(|h| {
             let sv = ScoreVector::from_primary(h.score, h.phase);
-            // R-7c.5: lift the per-doc match_features Arc into the wire
-            // `HashMap<String, f64>`. Stays empty when the active profile
-            // didn't declare any (the common case), preserving the
-            // existing zero-allocation path.
-            let match_features = h
-                .features
-                .as_ref()
-                .map(|arr| {
-                    arr.iter()
-                        .map(|(name, value)| (name.to_string(), *value as f64))
-                        .collect::<HashMap<String, f64>>()
-                })
-                .unwrap_or_default();
+            // R-7c.5 + R-7c.5b: lift both per-doc Arc snapshots into the
+            // wire `HashMap<String, f64>` maps. Both stay empty when
+            // the active profile didn't declare the corresponding
+            // category (the common case), preserving the existing
+            // zero-allocation path.
+            let match_features = arc_features_to_wire_map(h.features.as_ref());
+            let summary_features = arc_features_to_wire_map(h.summary.as_ref());
             ScoredHitDto {
                 id: render_id(h.doc),
                 score: h.score,
                 score_vector: Some(ScoreVectorDto::from(&sv)),
                 match_features,
-                summary_features: HashMap::new(),
+                summary_features,
             }
         })
         .collect();
@@ -701,6 +695,24 @@ pub async fn rank_search_dispatch(
     })
 }
 
+/// Lift an optional `Arc<[(Arc<str>, f32)]>` feature snapshot into the
+/// wire-form `HashMap<String, f64>`. Used for both `match_features`
+/// (R-7c.5) and `summary_features` (R-7c.5b) on each `ScoredHitDto`.
+/// Empty Arc → empty map (the wire DTO's `skip_serializing_if` then
+/// omits the field from JSON; the proto wire encodes a zero-length
+/// map field which costs one tag byte).
+fn arc_features_to_wire_map(
+    snapshot: Option<&std::sync::Arc<[(std::sync::Arc<str>, f32)]>>,
+) -> HashMap<String, f64> {
+    snapshot
+        .map(|arr| {
+            arr.iter()
+                .map(|(name, value)| (name.to_string(), *value as f64))
+                .collect::<HashMap<String, f64>>()
+        })
+        .unwrap_or_default()
+}
+
 fn default_rerank_config() -> RerankConfig {
     use proximadb_query::reranking::{MissingScorePolicy, ModelWeightConfig};
     RerankConfig {
@@ -971,6 +983,104 @@ mod tests {
         assert!((resp.hits[0].match_features["1.0"] - 1.0).abs() < 1e-5);
         assert!((resp.hits[1].match_features["docid()"] - 2.0).abs() < 1e-5);
         assert!((resp.hits[1].match_features["1.0"] - 1.0).abs() < 1e-5);
+    }
+
+    fn install_profile_with_summary_features(
+        reg: &ProfileRegistry,
+        factory: Arc<BlueprintFactory>,
+        name: &str,
+        summary_features: Vec<&str>,
+    ) {
+        let mut spec = RankProfileSpec::new(name);
+        spec.first_phase = Some(PhaseSpec {
+            expression: "docid()".into(),
+            heap_size: Some(50),
+            rerank_count: None,
+            batch_size: None,
+        });
+        spec.summary_features = summary_features.into_iter().map(String::from).collect();
+        spec.version = 1;
+        let compiled = CompiledRankProfile::compile(spec, factory).unwrap();
+        reg.install(compiled);
+    }
+
+    #[tokio::test]
+    async fn handler_populates_summary_features_when_profile_declares_them() {
+        // R-7c.5b: profile declares summary_features; the per-doc values
+        // surface on the wire under ScoredHitDto.summary_features
+        // (distinct from match_features even though the lowering
+        // machinery is shared).
+        let registry = ProfileRegistry::new();
+        let factory = factory_with_docid();
+        install_profile_with_summary_features(
+            &registry,
+            factory.clone(),
+            "with_sf",
+            vec!["docid()", "1.0"],
+        );
+        let candidates = FixedCandidates(vec![DocHandle(7), DocHandle(4)]);
+        let req = RankSearchRequest {
+            collection: "docs".into(),
+            query_vector: vec![],
+            query_text: None,
+            k: 2,
+            rank_profile: Some("with_sf".into()),
+            rank_overrides: None,
+        };
+        let resp = handle_rank_search(req, &registry, &candidates, factory, None)
+            .await
+            .unwrap();
+        assert_eq!(resp.hits.len(), 2);
+        for h in &resp.hits {
+            assert!(h.match_features.is_empty(), "no match_features declared");
+            assert_eq!(h.summary_features.len(), 2);
+            assert!(h.summary_features.contains_key("docid()"));
+            assert!(h.summary_features.contains_key("1.0"));
+        }
+        assert_eq!(resp.hits[0].id, "7");
+        assert!((resp.hits[0].summary_features["docid()"] - 7.0).abs() < 1e-5);
+        assert!((resp.hits[1].summary_features["docid()"] - 4.0).abs() < 1e-5);
+    }
+
+    #[tokio::test]
+    async fn handler_populates_both_match_and_summary_features_independently() {
+        // Both declared on the same profile → both wire maps populated,
+        // each keyed by its own expression. The lowering machinery is
+        // shared but the wire shape (and downstream semantics — Vespa
+        // separates match from summary deliberately) keeps them
+        // distinct.
+        let registry = ProfileRegistry::new();
+        let factory = factory_with_docid();
+        let mut spec = RankProfileSpec::new("both");
+        spec.first_phase = Some(PhaseSpec {
+            expression: "docid()".into(),
+            heap_size: Some(50),
+            rerank_count: None,
+            batch_size: None,
+        });
+        spec.match_features = vec!["docid()".into()];
+        spec.summary_features = vec!["1.0".into()];
+        spec.version = 1;
+        let compiled = CompiledRankProfile::compile(spec, factory.clone()).unwrap();
+        registry.install(compiled);
+
+        let candidates = FixedCandidates(vec![DocHandle(11)]);
+        let req = RankSearchRequest {
+            collection: "docs".into(),
+            query_vector: vec![],
+            query_text: None,
+            k: 1,
+            rank_profile: Some("both".into()),
+            rank_overrides: None,
+        };
+        let resp = handle_rank_search(req, &registry, &candidates, factory, None)
+            .await
+            .unwrap();
+        let h = &resp.hits[0];
+        assert_eq!(h.match_features.len(), 1);
+        assert!((h.match_features["docid()"] - 11.0).abs() < 1e-5);
+        assert_eq!(h.summary_features.len(), 1);
+        assert!((h.summary_features["1.0"] - 1.0).abs() < 1e-5);
     }
 
     #[tokio::test]

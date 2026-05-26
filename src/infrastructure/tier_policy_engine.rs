@@ -81,9 +81,12 @@ impl WorkloadMetrics {
     }
 }
 
+/// Backwards-compat alias for [`TierPolicyAccessPatternMetrics`].
+pub type AccessPatternMetrics = TierPolicyAccessPatternMetrics;
+
 /// Access pattern metrics for tier management
 #[derive(Debug, Clone)]
-pub struct AccessPatternMetrics {
+pub struct TierPolicyAccessPatternMetrics {
     /// Hot data access rate
     pub hot_access_rate: f64,
     /// Warm data access rate  
@@ -1001,7 +1004,7 @@ pub struct CollectionTierMetrics {
     /// Bytes stored per infrastructure tier
     pub tier_distribution: HashMap<InfrastructureTier, usize>,
     /// Access pattern statistics for this collection
-    pub access_patterns: AccessPatternMetrics,
+    pub access_patterns: TierPolicyAccessPatternMetrics,
     /// Cost metrics for this collection
     pub cost_metrics: CostMetrics,
 }
