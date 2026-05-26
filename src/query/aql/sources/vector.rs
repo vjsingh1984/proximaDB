@@ -127,8 +127,10 @@ impl AqlSource for VectorAqlSource {
             )
             .await
             .map_err(|e| {
-                proximadb_kernel::error::ProximaDBError::Storage(
-                    proximadb_kernel::error::StorageError::SstEngine(e.to_string()),
+                // Not an SST engine error — wraps a downstream vector
+                // service failure. Map to the query subsystem error.
+                proximadb_kernel::error::ProximaDBError::Query(
+                    proximadb_kernel::error::QueryError::VectorSearch(e.to_string()),
                 )
             })?;
 
