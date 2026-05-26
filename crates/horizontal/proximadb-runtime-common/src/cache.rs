@@ -105,7 +105,7 @@ pub struct CacheEntry<V> {
 }
 
 /// Cache statistics for monitoring and debugging
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CacheStats {
     /// Total number of get operations
     pub gets: u64,

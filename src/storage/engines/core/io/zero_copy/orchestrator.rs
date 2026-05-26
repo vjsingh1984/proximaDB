@@ -29,7 +29,7 @@ pub struct OptimizedIOResult {
     /// Estimated performance savings
     pub estimated_savings: IOSavings,
     /// Detailed execution plan
-    pub execution_plan: ExecutionPlan,
+    pub execution_plan: ZeroCopyExecutionPlan,
     /// Human-readable rationale
     pub rationale: String,
     /// Confidence in the optimization (0.0-1.0)
@@ -82,9 +82,12 @@ pub struct IOSavings {
     pub io_operations_saved: u32,
 }
 
+/// Backwards-compat alias for [`ZeroCopyExecutionPlan`].
+pub type ExecutionPlan = ZeroCopyExecutionPlan;
+
 /// Detailed execution plan for the chosen strategy
 #[derive(Debug, Clone)]
-pub struct ExecutionPlan {
+pub struct ZeroCopyExecutionPlan {
     /// Ordered list of operations to execute
     pub operations: Vec<ExecutionOperation>,
     /// Estimated total execution time
@@ -92,7 +95,7 @@ pub struct ExecutionPlan {
     /// Resource requirements
     pub resource_requirements: ZeroCopyResourceRequirements,
     /// Fallback plans in case of failure
-    pub fallback_plans: Vec<ExecutionPlan>,
+    pub fallback_plans: Vec<ZeroCopyExecutionPlan>,
 }
 
 /// Individual execution operation
@@ -154,7 +157,7 @@ pub struct BatchOptimizationResult {
     /// Total estimated savings
     pub total_savings: IOSavings,
     /// Batch execution plan
-    pub batch_execution_plan: ExecutionPlan,
+    pub batch_execution_plan: ZeroCopyExecutionPlan,
 }
 
 /// Cross-file optimization opportunities
@@ -322,7 +325,7 @@ impl ZeroCopyIOSystem {
                     reason: "File filtered out by metadata analysis".to_string(),
                 },
                 estimated_savings: savings,
-                execution_plan: ExecutionPlan {
+                execution_plan: ZeroCopyExecutionPlan {
                     operations: vec![],
                     estimated_duration: Duration::from_millis(1),
                     resource_requirements: ZeroCopyResourceRequirements::default(),
@@ -617,7 +620,7 @@ impl ZeroCopyIOSystem {
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = Result<(IOStrategy, ExecutionPlan, IOSavings), ProximaDBError>,
+                    Output = Result<(IOStrategy, ZeroCopyExecutionPlan, IOSavings), ProximaDBError>,
                 > + Send
                 + 'a,
         >,
@@ -626,7 +629,7 @@ impl ZeroCopyIOSystem {
             match strategy {
                 DownloadStrategy::SkipFile { reason } => {
                     let io_strategy = IOStrategy::SkipFile { reason };
-                    let plan = ExecutionPlan {
+                    let plan = ZeroCopyExecutionPlan {
                         operations: vec![],
                         estimated_duration: Duration::from_millis(1),
                         resource_requirements: ZeroCopyResourceRequirements::default(),
@@ -670,7 +673,7 @@ impl ZeroCopyIOSystem {
                         });
                     }
 
-                    let plan = ExecutionPlan {
+                    let plan = ZeroCopyExecutionPlan {
                         operations,
                         estimated_duration: Duration::from_millis(150),
                         resource_requirements: ZeroCopyResourceRequirements {
@@ -720,7 +723,7 @@ impl ZeroCopyIOSystem {
                         dependencies: vec![],
                     }];
 
-                    let plan = ExecutionPlan {
+                    let plan = ZeroCopyExecutionPlan {
                         operations,
                         estimated_duration: Duration::from_millis(ranges.len() as u64 * 25),
                         resource_requirements: ZeroCopyResourceRequirements {
@@ -822,10 +825,10 @@ impl ZeroCopyIOSystem {
         &self,
         _individual_results: &[OptimizedIOResult],
         _cross_file_optimizations: &[CrossFileOptimization],
-    ) -> Result<ExecutionPlan, ProximaDBError> {
+    ) -> Result<ZeroCopyExecutionPlan, ProximaDBError> {
         // This would implement batch execution planning
         let _ = (_individual_results, _cross_file_optimizations); // Suppress unused warnings
-        Ok(ExecutionPlan {
+        Ok(ZeroCopyExecutionPlan {
             operations: vec![],
             estimated_duration: Duration::from_millis(100),
             resource_requirements: ZeroCopyResourceRequirements::default(),

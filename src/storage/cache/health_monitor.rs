@@ -318,7 +318,7 @@ impl CacheMonitoringDashboard {
     }
 
     /// Get current dashboard state
-    pub async fn get_dashboard_state(&self) -> DashboardState {
+    pub async fn get_dashboard_state(&self) -> CacheHealthDashboardState {
         let history = self.history.read().await;
         let alerts = self.alert_manager.active_alerts.read().await;
         // Convert from CacheMetrics to CacheMetricsSnapshot
@@ -390,7 +390,7 @@ impl CacheMonitoringDashboard {
             last_updated: SystemTime::now(),
         };
 
-        DashboardState {
+        CacheHealthDashboardState {
             current_metrics: metrics.clone(),
             active_alerts: alerts.clone(),
             recent_history: history
@@ -483,8 +483,12 @@ impl CacheMonitoringDashboard {
 /// Dashboard state for API responses
 ///
 /// Aggregates current metrics, alerts, and historical data for dashboard display.
+///
+/// Backwards-compat alias for [`CacheHealthDashboardState`].
+pub type DashboardState = CacheHealthDashboardState;
+
 #[derive(Debug, Clone)]
-pub struct DashboardState {
+pub struct CacheHealthDashboardState {
     /// Current cache metrics snapshot
     pub current_metrics: CacheMetricsSnapshot,
     /// Currently active alerts

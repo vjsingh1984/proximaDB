@@ -175,9 +175,12 @@ pub enum ConstraintType {
 // DDL/DML Execution Result
 // ============================================================================
 
+/// Backwards-compat alias for [`DdlDmlExecutionResult`].
+pub type ExecutionResult = DdlDmlExecutionResult;
+
 /// Result of DDL/DML execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutionResult {
+pub struct DdlDmlExecutionResult {
     /// Number of rows affected (for DML)
     pub rows_affected: u64,
     /// Status message
@@ -188,7 +191,7 @@ pub struct ExecutionResult {
     pub warnings: Vec<String>,
 }
 
-impl ExecutionResult {
+impl DdlDmlExecutionResult {
     pub fn ok(message: impl Into<String>) -> Self {
         Self {
             rows_affected: 0,
@@ -241,7 +244,7 @@ impl DdlDmlExecutor {
     }
 
     /// Execute a DDL statement
-    pub async fn execute_ddl(&self, statement: DdlStatement) -> Result<ExecutionResult> {
+    pub async fn execute_ddl(&self, statement: DdlStatement) -> Result<DdlDmlExecutionResult> {
         let start = std::time::Instant::now();
 
         let result = match statement {
@@ -250,18 +253,18 @@ impl DdlDmlExecutor {
                 if_not_exists,
             } => {
                 if if_not_exists && self.table_ops.table_exists(&table.name).await? {
-                    ExecutionResult::ok(format!("Table '{}' already exists", table.name))
+                    DdlDmlExecutionResult::ok(format!("Table '{}' already exists", table.name))
                 } else {
                     self.table_ops.create_table(&table).await?;
                     info!("Created table: {}", table.name);
-                    ExecutionResult::ok(format!("CREATE TABLE {}", table.name))
+                    DdlDmlExecutionResult::ok(format!("CREATE TABLE {}", table.name))
                 }
             }
 
             DdlStatement::DropTable { name, if_exists } => {
                 self.table_ops.drop_table(&name, if_exists).await?;
                 info!("Dropped table: {}", name);
-                ExecutionResult::ok(format!("DROP TABLE {}", name))
+                DdlDmlExecutionResult::ok(format!("DROP TABLE {}", name))
             }
 
             DdlStatement::AlterTable { name, alterations } => {
@@ -269,7 +272,7 @@ impl DdlDmlExecutor {
                     .alter_table(&name, alterations.clone())
                     .await?;
                 info!("Altered table: {} ({} changes)", name, alterations.len());
-                ExecutionResult::ok(format!("ALTER TABLE {}", name))
+                DdlDmlExecutionResult::ok(format!("ALTER TABLE {}", name))
             }
 
             DdlStatement::CreateIndex {
@@ -277,18 +280,18 @@ impl DdlDmlExecutor {
                 if_not_exists,
             } => {
                 if if_not_exists && self.index_ops.index_exists(&index.name).await? {
-                    ExecutionResult::ok(format!("Index '{}' already exists", index.name))
+                    DdlDmlExecutionResult::ok(format!("Index '{}' already exists", index.name))
                 } else {
                     self.index_ops.create_index(&index).await?;
                     info!("Created index: {} on {}", index.name, index.table);
-                    ExecutionResult::ok(format!("CREATE INDEX {}", index.name))
+                    DdlDmlExecutionResult::ok(format!("CREATE INDEX {}", index.name))
                 }
             }
 
             DdlStatement::DropIndex { name, if_exists } => {
                 self.index_ops.drop_index(&name, if_exists).await?;
                 info!("Dropped index: {}", name);
-                ExecutionResult::ok(format!("DROP INDEX {}", name))
+                DdlDmlExecutionResult::ok(format!("DROP INDEX {}", name))
             }
         };
 
@@ -298,7 +301,7 @@ impl DdlDmlExecutor {
     }
 
     /// Execute a DML statement
-    pub async fn execute_dml(&self, statement: DmlStatement) -> Result<ExecutionResult> {
+    pub async fn execute_dml(&self, statement: DmlStatement) -> Result<DdlDmlExecutionResult> {
         let start = std::time::Instant::now();
 
         let result = match statement {
@@ -309,7 +312,7 @@ impl DdlDmlExecutor {
             } => {
                 let rows = self.dml_ops.insert(&table, &columns, values).await?;
                 debug!("Inserted {} rows into {}", rows, table);
-                ExecutionResult::rows(rows, format!("INSERT {} rows", rows))
+                DdlDmlExecutionResult::rows(rows, format!("INSERT {} rows", rows))
             }
 
             DmlStatement::Update {
@@ -319,7 +322,7 @@ impl DdlDmlExecutor {
             } => {
                 let rows = self.dml_ops.update(&table, updates, where_clause).await?;
                 debug!("Updated {} rows in {}", rows, table);
-                ExecutionResult::rows(rows, format!("UPDATE {} rows", rows))
+                DdlDmlExecutionResult::rows(rows, format!("UPDATE {} rows", rows))
             }
 
             DmlStatement::Delete {
@@ -328,7 +331,7 @@ impl DdlDmlExecutor {
             } => {
                 let rows = self.dml_ops.delete(&table, where_clause).await?;
                 debug!("Deleted {} rows from {}", rows, table);
-                ExecutionResult::rows(rows, format!("DELETE {} rows", rows))
+                DdlDmlExecutionResult::rows(rows, format!("DELETE {} rows", rows))
             }
         };
 

@@ -509,8 +509,11 @@ impl ProviderMetrics {
     }
 }
 
+/// Backwards-compat alias for [`ComputeExecutionResult`].
+pub type ExecutionResult = ComputeExecutionResult;
+
 /// Result of execution including data and optional metrics
-pub struct ExecutionResult {
+pub struct ComputeExecutionResult {
     /// Stream of result batches
     pub data: RecordBatchStream,
 
@@ -518,9 +521,9 @@ pub struct ExecutionResult {
     pub metrics: Option<ProviderMetrics>,
 }
 
-impl std::fmt::Debug for ExecutionResult {
+impl std::fmt::Debug for ComputeExecutionResult {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ExecutionResult")
+        f.debug_struct("ComputeExecutionResult")
             .field("data", &"<RecordBatchStream>")
             .field("metrics", &self.metrics)
             .finish()
@@ -567,7 +570,7 @@ impl std::fmt::Debug for ExecutionResult {
 ///         &self,
 ///         plan: &ComputePlan,
 ///         ctx: &ExecutionContext
-///     ) -> Result<ExecutionResult> {
+///     ) -> Result<ComputeExecutionResult> {
 ///         // Execute the plan...
 ///     }
 ///
@@ -604,7 +607,7 @@ pub trait ComputeProvider: Send + Sync + Debug {
     ///
     /// # Returns
     /// Stream of Arrow RecordBatches containing the results
-    async fn execute(&self, plan: &ComputePlan, ctx: &ExecutionContext) -> Result<ExecutionResult>;
+    async fn execute(&self, plan: &ComputePlan, ctx: &ExecutionContext) -> Result<ComputeExecutionResult>;
 
     /// Check if this provider can execute the given plan
     ///

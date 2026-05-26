@@ -25,13 +25,16 @@ use self::filter::FilterEvaluator;
 use super::indexes::IndexManager;
 use super::{DocumentQueryParams, DocumentRecord};
 
+/// Backwards-compat alias for [`DocumentQueryExecutor`].
+pub type QueryExecutor = DocumentQueryExecutor;
+
 /// Query executor for document queries
-pub struct QueryExecutor {
+pub struct DocumentQueryExecutor {
     /// Filter evaluator
     filter_evaluator: FilterEvaluator,
 }
 
-impl QueryExecutor {
+impl DocumentQueryExecutor {
     /// Create a new query executor
     pub fn new() -> Self {
         Self {
@@ -419,7 +422,7 @@ impl QueryExecutor {
     }
 }
 
-impl Default for QueryExecutor {
+impl Default for DocumentQueryExecutor {
     fn default() -> Self {
         Self::new()
     }
@@ -435,14 +438,14 @@ mod tests {
 
     #[test]
     fn test_query_executor_new() {
-        let _executor = QueryExecutor::new();
+        let _executor = DocumentQueryExecutor::new();
         // Basic instantiation test
         assert!(true);
     }
 
     #[tokio::test]
     async fn test_execute_filters_and_sorts_in_memory_documents() {
-        let executor = QueryExecutor::new();
+        let executor = DocumentQueryExecutor::new();
         let index_manager = IndexManager::new();
 
         let documents = vec![

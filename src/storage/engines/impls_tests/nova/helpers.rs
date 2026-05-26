@@ -521,18 +521,22 @@ impl Default for NovaTestPerformanceMetrics {
 // Execution Plan Helpers
 // ============================================================================
 
+/// Backwards-compat alias for [`NovaTestExecutionPlan`].
+#[allow(dead_code)]
+pub type ExecutionPlan = NovaTestExecutionPlan;
+
 /// Execution plan for progressive search
 /// Source: progressive_search.rs
 #[allow(dead_code, missing_docs)]
 #[derive(Debug, Clone)]
-pub struct ExecutionPlan {
+pub struct NovaTestExecutionPlan {
     pub quantization_level: String,
     pub row_groups_to_scan: Vec<u32>,
     pub estimated_cost: f32,
     pub estimated_recall: f32,
 }
 
-impl ExecutionPlan {
+impl NovaTestExecutionPlan {
     /// Create a new execution plan
     #[allow(dead_code)]
     pub fn new(quantization_level: String, row_groups: Vec<u32>, cost: f32, recall: f32) -> Self {
@@ -694,7 +698,7 @@ mod tests {
 
     #[test]
     fn test_execution_plan() {
-        let plan = ExecutionPlan::new("binary".to_string(), vec![0, 1, 2], 10.0, 0.95);
+        let plan = NovaTestExecutionPlan::new("binary".to_string(), vec![0, 1, 2], 10.0, 0.95);
 
         assert_eq!(plan.quantization_level, "binary");
         assert_eq!(plan.row_groups_to_scan.len(), 3);

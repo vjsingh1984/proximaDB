@@ -45,9 +45,12 @@ use crate::storage::traits::{
     ObservabilityStorageOperations, StorageQueryContext,
 };
 
+/// Backwards-compat alias for [`FederatedExecutionResult`].
+pub type ExecutionResult = FederatedExecutionResult;
+
 /// Execution result containing Arrow record batches
 #[derive(Debug, Clone)]
-pub struct ExecutionResult {
+pub struct FederatedExecutionResult {
     /// Result batches
     pub batches: Vec<RecordBatch>,
     /// Result schema
@@ -56,7 +59,7 @@ pub struct ExecutionResult {
     pub stats: FederatedExecutionStats,
 }
 
-impl ExecutionResult {
+impl FederatedExecutionResult {
     /// Create an empty result
     pub fn empty() -> Self {
         let schema = Arc::new(Schema::empty());
@@ -306,7 +309,7 @@ impl FederatedExecutor {
     }
 
     /// Execute a query plan
-    pub async fn execute(&self, plan: FederatedQueryPlan) -> Result<ExecutionResult> {
+    pub async fn execute(&self, plan: FederatedQueryPlan) -> Result<FederatedExecutionResult> {
         let start = std::time::Instant::now();
 
         let result = self.execute_node(&plan.root, true).await?;
@@ -315,7 +318,7 @@ impl FederatedExecutor {
         stats.execution_time_us = start.elapsed().as_micros() as u64;
         stats.models_queried = plan.metadata.involved_models;
 
-        Ok(ExecutionResult {
+        Ok(FederatedExecutionResult {
             batches: result.batches,
             schema: result.schema,
             stats,
@@ -327,7 +330,7 @@ impl FederatedExecutor {
         &'a self,
         node: &'a PlanNode,
         is_root: bool,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ExecutionResult>> + Send + 'a>>
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<FederatedExecutionResult>> + Send + 'a>>
     {
         Box::pin(async move {
             let result = match &node.node_type {
@@ -430,7 +433,7 @@ impl FederatedExecutor {
         target: &str,
         model_type: &ModelType,
         predicates: &[super::optimizer::Predicate],
-    ) -> Result<ExecutionResult> {
+    ) -> Result<FederatedExecutionResult> {
         match model_type {
             ModelType::Document => {
                 // Convert optimizer predicates to a DocumentFilter
@@ -499,13 +502,13 @@ impl FederatedExecutor {
                     .await?;
 
                 if documents.is_empty() {
-                    return Ok(ExecutionResult::empty_with_schema(
+                    return Ok(FederatedExecutionResult::empty_with_schema(
                         Self::document_query_schema(&[], None),
                     ));
                 }
 
                 let batch = Self::build_document_record_batch(&documents, None)?;
-                Ok(ExecutionResult::from_batch(batch))
+                Ok(FederatedExecutionResult::from_batch(batch))
             }
 
             ModelType::Graph => {
@@ -516,13 +519,13 @@ impl FederatedExecutor {
 
                 let nodes = graph_store.fetch_all_nodes().await?;
                 if nodes.is_empty() {
-                    return Ok(ExecutionResult::empty_with_schema(
+                    return Ok(FederatedExecutionResult::empty_with_schema(
                         Self::graph_query_schema(&[], None),
                     ));
                 }
 
                 let batch = Self::build_graph_node_batch(&nodes, None)?;
-                Ok(ExecutionResult::from_batch(batch))
+                Ok(FederatedExecutionResult::from_batch(batch))
             }
 
             ModelType::Vector => Err(anyhow!(
@@ -545,7 +548,7 @@ impl FederatedExecutor {
         collection: &str,
         query_vector_source: &VectorSource,
         top_k: usize,
-    ) -> Result<ExecutionResult> {
+    ) -> Result<FederatedExecutionResult> {
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
             Field::new("score", DataType::Float32, false),
@@ -595,7 +598,7 @@ impl FederatedExecutor {
                 .unwrap_or_default();
 
             if records.is_empty() {
-                return Ok(ExecutionResult::empty_with_schema(schema));
+                return Ok(FederatedExecutionResult::empty_with_schema(schema));
             }
 
             let ids: Vec<String> = records.iter().map(|r| r.id.clone()).collect();
@@ -612,7 +615,7 @@ impl FederatedExecutor {
                 ],
             )?;
 
-            return Ok(ExecutionResult::from_batch(batch));
+            return Ok(FederatedExecutionResult::from_batch(batch));
         }
 
         let vector_store = self
@@ -674,7 +677,7 @@ impl FederatedExecutor {
         let results = engine.search_vectors_unified(&query_context).await?;
 
         if results.is_empty() {
-            return Ok(ExecutionResult::empty_with_schema(schema));
+            return Ok(FederatedExecutionResult::empty_with_schema(schema));
         }
 
         let ids: Vec<String> = results.iter().map(|r| r.id.clone()).collect();
@@ -691,7 +694,7 @@ impl FederatedExecutor {
             ],
         )?;
 
-        Ok(ExecutionResult::from_batch(batch))
+        Ok(FederatedExecutionResult::from_batch(batch))
     }
 
     /// Execute graph traversal
@@ -700,7 +703,7 @@ impl FederatedExecutor {
         cypher: &str,
         start_nodes: Option<&Vec<String>>,
         source_alias: Option<&str>,
-    ) -> Result<ExecutionResult> {
+    ) -> Result<FederatedExecutionResult> {
         let graph_store = self
             .storage
             .get_graph_store()
@@ -725,20 +728,20 @@ impl FederatedExecutor {
                         .collect::<Result<Vec<_>>>()?;
 
                     if nodes.is_empty() {
-                        return Ok(ExecutionResult::empty_with_schema(
+                        return Ok(FederatedExecutionResult::empty_with_schema(
                             Self::graph_query_schema(&[], source_alias),
                         ));
                     }
 
                     let batch = Self::build_graph_node_batch(&nodes, source_alias)?;
-                    return Ok(ExecutionResult::from_batch(batch));
+                    return Ok(FederatedExecutionResult::from_batch(batch));
                 }
 
                 let batch = Self::build_projected_graph_result_batch(
                     &executed.rows,
                     &graph_query.output_columns,
                 )?;
-                return Ok(ExecutionResult::from_batch(batch));
+                return Ok(FederatedExecutionResult::from_batch(batch));
             }
         }
 
@@ -771,14 +774,14 @@ impl FederatedExecutor {
         };
 
         if nodes.is_empty() {
-            return Ok(ExecutionResult::empty_with_schema(
+            return Ok(FederatedExecutionResult::empty_with_schema(
                 Self::graph_query_schema(&[], source_alias),
             ));
         }
 
         let batch = Self::build_graph_node_batch(&nodes, source_alias)?;
 
-        Ok(ExecutionResult::from_batch(batch))
+        Ok(FederatedExecutionResult::from_batch(batch))
     }
     fn build_projected_graph_result_batch(
         rows: &[JsonValue],
@@ -922,7 +925,7 @@ impl FederatedExecutor {
         collection: &str,
         filter: Option<&String>,
         source_alias: Option<&str>,
-    ) -> Result<ExecutionResult> {
+    ) -> Result<FederatedExecutionResult> {
         let doc_store = self
             .storage
             .get_document_store()
@@ -938,14 +941,14 @@ impl FederatedExecutor {
             .await?;
 
         if documents.is_empty() {
-            return Ok(ExecutionResult::empty_with_schema(
+            return Ok(FederatedExecutionResult::empty_with_schema(
                 Self::document_query_schema(&[], source_alias),
             ));
         }
 
         let batch = Self::build_document_record_batch(&documents, source_alias)?;
 
-        Ok(ExecutionResult::from_batch(batch))
+        Ok(FederatedExecutionResult::from_batch(batch))
     }
 
     fn parse_document_query_filter(filter: &str) -> Result<Option<DocumentFilter>> {
@@ -1534,7 +1537,7 @@ impl FederatedExecutor {
         &self,
         namespace: &str,
         query_type: &ObservabilityQueryType,
-    ) -> Result<ExecutionResult> {
+    ) -> Result<FederatedExecutionResult> {
         let schema = match query_type {
             ObservabilityQueryType::Logs => Arc::new(Schema::new(vec![
                 Field::new("timestamp", DataType::Int64, false),
@@ -1570,7 +1573,7 @@ impl FederatedExecutor {
                     .query_logs(namespace, hour_ago_ns, now_ns, None, 1000)
                     .await?;
                 if result.logs.is_empty() {
-                    return Ok(ExecutionResult::empty_with_schema(schema));
+                    return Ok(FederatedExecutionResult::empty_with_schema(schema));
                 }
 
                 use crate::proto::proximadb_v1::Severity;
@@ -1601,7 +1604,7 @@ impl FederatedExecutor {
                     ],
                 )?;
 
-                Ok(ExecutionResult::from_batch(batch))
+                Ok(FederatedExecutionResult::from_batch(batch))
             }
             ObservabilityQueryType::Metrics => {
                 use crate::proto::proximadb_v1::MetricAggregation;
@@ -1633,7 +1636,7 @@ impl FederatedExecutor {
                 }
 
                 if timestamps.is_empty() {
-                    return Ok(ExecutionResult::empty_with_schema(schema));
+                    return Ok(FederatedExecutionResult::empty_with_schema(schema));
                 }
 
                 let batch = RecordBatch::try_new(
@@ -1645,7 +1648,7 @@ impl FederatedExecutor {
                     ],
                 )?;
 
-                Ok(ExecutionResult::from_batch(batch))
+                Ok(FederatedExecutionResult::from_batch(batch))
             }
             ObservabilityQueryType::Traces => {
                 let traces = obs_store
@@ -1653,7 +1656,7 @@ impl FederatedExecutor {
                     .await?;
 
                 if traces.is_empty() {
-                    return Ok(ExecutionResult::empty_with_schema(schema));
+                    return Ok(FederatedExecutionResult::empty_with_schema(schema));
                 }
 
                 let trace_ids: Vec<String> = traces.iter().map(|t| t.trace_id.clone()).collect();
@@ -1674,7 +1677,7 @@ impl FederatedExecutor {
                     ],
                 )?;
 
-                Ok(ExecutionResult::from_batch(batch))
+                Ok(FederatedExecutionResult::from_batch(batch))
             }
         }
     }
@@ -2267,7 +2270,7 @@ impl FederatedExecutor {
             .collect()
     }
 
-    fn merge_batches(&self, result: &ExecutionResult) -> Result<RecordBatch> {
+    fn merge_batches(&self, result: &FederatedExecutionResult) -> Result<RecordBatch> {
         if result.batches.is_empty() {
             return Ok(RecordBatch::new_empty(result.schema.clone()));
         }
@@ -3581,7 +3584,7 @@ impl FederatedExecutor {
         right: &PlanNode,
         join_keys: &[(String, String)],
         join_type: &JoinType,
-    ) -> Result<ExecutionResult> {
+    ) -> Result<FederatedExecutionResult> {
         let left_result = self.execute_node(left, false).await?;
         let right_result = self.execute_node(right, false).await?;
 
@@ -3602,7 +3605,7 @@ impl FederatedExecutor {
             }
 
             if left_indices.is_empty() {
-                return Ok(ExecutionResult::empty_with_schema(joined_schema));
+                return Ok(FederatedExecutionResult::empty_with_schema(joined_schema));
             }
 
             let left_take = Self::build_take_indices(&left_indices);
@@ -3619,7 +3622,7 @@ impl FederatedExecutor {
             }
 
             let batch = RecordBatch::try_new(joined_schema.clone(), columns)?;
-            return Ok(ExecutionResult::from_batch(batch));
+            return Ok(FederatedExecutionResult::from_batch(batch));
         }
 
         if join_keys.is_empty() {
@@ -3710,7 +3713,7 @@ impl FederatedExecutor {
         }
 
         if left_indices.is_empty() && right_indices.is_empty() {
-            return Ok(ExecutionResult::empty_with_schema(joined_schema));
+            return Ok(FederatedExecutionResult::empty_with_schema(joined_schema));
         }
 
         let left_take = Self::build_take_indices(&left_indices);
@@ -3737,7 +3740,7 @@ impl FederatedExecutor {
             RecordBatch::try_new(joined_schema.clone(), columns)?
         };
 
-        Ok(ExecutionResult::from_batch(batch))
+        Ok(FederatedExecutionResult::from_batch(batch))
     }
 
     /// Execute nested loop join (for LATERAL)
@@ -3746,7 +3749,7 @@ impl FederatedExecutor {
         outer: &PlanNode,
         inner: &PlanNode,
         correlation: &[String],
-    ) -> Result<ExecutionResult> {
+    ) -> Result<FederatedExecutionResult> {
         let outer_result = self.execute_node(outer, false).await?;
         let outer_batch = self.merge_batches(&outer_result)?;
         let inner_schema = self.plan_output_schema(inner)?;
@@ -3754,7 +3757,7 @@ impl FederatedExecutor {
             self.build_join_schema(outer_batch.schema().as_ref(), inner_schema.as_ref());
 
         if outer_batch.num_rows() == 0 {
-            return Ok(ExecutionResult::empty_with_schema(joined_schema));
+            return Ok(FederatedExecutionResult::empty_with_schema(joined_schema));
         }
 
         let mut batches = Vec::new();
@@ -3791,10 +3794,10 @@ impl FederatedExecutor {
         }
 
         if batches.is_empty() {
-            return Ok(ExecutionResult::empty_with_schema(joined_schema));
+            return Ok(FederatedExecutionResult::empty_with_schema(joined_schema));
         }
 
-        Ok(ExecutionResult {
+        Ok(FederatedExecutionResult {
             batches,
             schema: joined_schema,
             stats: FederatedExecutionStats {
@@ -3810,7 +3813,7 @@ impl FederatedExecutor {
         left: &PlanNode,
         right: &PlanNode,
         _index_lookup: &str,
-    ) -> Result<ExecutionResult> {
+    ) -> Result<FederatedExecutionResult> {
         // Similar to hash join but uses index
         self.execute_hash_join(left, right, &[], &JoinType::Inner)
             .await
@@ -3821,12 +3824,12 @@ impl FederatedExecutor {
         &self,
         input: &PlanNode,
         predicate: &super::optimizer::Predicate,
-    ) -> Result<ExecutionResult> {
+    ) -> Result<FederatedExecutionResult> {
         let result = self.execute_node(input, false).await?;
         let batch = self.merge_batches(&result)?;
 
         if batch.num_rows() == 0 {
-            return Ok(ExecutionResult::empty_with_schema(batch.schema()));
+            return Ok(FederatedExecutionResult::empty_with_schema(batch.schema()));
         }
 
         let matched_indices = (0..batch.num_rows())
@@ -3840,7 +3843,7 @@ impl FederatedExecutor {
             .collect::<Result<Vec<_>>>()?;
 
         if matched_indices.is_empty() {
-            return Ok(ExecutionResult::empty_with_schema(batch.schema()));
+            return Ok(FederatedExecutionResult::empty_with_schema(batch.schema()));
         }
 
         let take_indices = Self::build_take_indices(&matched_indices);
@@ -3851,7 +3854,7 @@ impl FederatedExecutor {
             .collect::<arrow::error::Result<Vec<_>>>()?;
 
         let filtered = RecordBatch::try_new(batch.schema(), columns)?;
-        Ok(ExecutionResult::from_batch(filtered))
+        Ok(FederatedExecutionResult::from_batch(filtered))
     }
 
     /// Execute projection
@@ -3860,7 +3863,7 @@ impl FederatedExecutor {
         input: &PlanNode,
         columns: &[String],
         output_columns: &[String],
-    ) -> Result<ExecutionResult> {
+    ) -> Result<FederatedExecutionResult> {
         let result = self.execute_node(input, false).await?;
         if columns.iter().any(|column| column == "*") {
             return Ok(result);
@@ -3896,7 +3899,7 @@ impl FederatedExecutor {
         let schema = Arc::new(Schema::new(projected_fields));
 
         if batch.num_rows() == 0 {
-            return Ok(ExecutionResult::empty_with_schema(schema));
+            return Ok(FederatedExecutionResult::empty_with_schema(schema));
         }
 
         let projected_columns = projected_indices
@@ -3904,15 +3907,15 @@ impl FederatedExecutor {
             .map(|index| batch.column(*index).clone())
             .collect::<Vec<_>>();
         let projected = RecordBatch::try_new(schema, projected_columns)?;
-        Ok(ExecutionResult::from_batch(projected))
+        Ok(FederatedExecutionResult::from_batch(projected))
     }
 
     fn project_result_to_output_columns(
         &self,
-        result: ExecutionResult,
+        result: FederatedExecutionResult,
         output_columns: &[String],
         allow_native_vector_passthrough: bool,
-    ) -> Result<ExecutionResult> {
+    ) -> Result<FederatedExecutionResult> {
         if output_columns.is_empty() || output_columns.iter().any(|column| column == "*") {
             return Ok(result);
         }
@@ -3976,7 +3979,7 @@ impl FederatedExecutor {
         let schema = Arc::new(Schema::new(projected_fields));
 
         if batch.num_rows() == 0 {
-            return Ok(ExecutionResult {
+            return Ok(FederatedExecutionResult {
                 batches: vec![],
                 schema,
                 stats: result.stats,
@@ -3988,7 +3991,7 @@ impl FederatedExecutor {
             .map(|index| batch.column(*index).clone())
             .collect::<Vec<_>>();
         let projected = RecordBatch::try_new(schema.clone(), projected_columns)?;
-        Ok(ExecutionResult {
+        Ok(FederatedExecutionResult {
             batches: vec![projected],
             schema,
             stats: result.stats,
@@ -3996,12 +3999,12 @@ impl FederatedExecutor {
     }
 
     /// Execute DISTINCT on the current result schema.
-    async fn execute_distinct(&self, input: &PlanNode) -> Result<ExecutionResult> {
+    async fn execute_distinct(&self, input: &PlanNode) -> Result<FederatedExecutionResult> {
         let result = self.execute_node(input, false).await?;
         let batch = self.merge_batches(&result)?;
 
         if batch.num_rows() <= 1 {
-            return Ok(ExecutionResult::from_batch(batch));
+            return Ok(FederatedExecutionResult::from_batch(batch));
         }
 
         let mut seen = HashSet::new();
@@ -4022,7 +4025,7 @@ impl FederatedExecutor {
             .collect::<arrow::error::Result<Vec<_>>>()?;
 
         let distinct = RecordBatch::try_new(batch.schema(), columns)?;
-        Ok(ExecutionResult::from_batch(distinct))
+        Ok(FederatedExecutionResult::from_batch(distinct))
     }
 
     /// Execute sort
@@ -4030,7 +4033,7 @@ impl FederatedExecutor {
         &self,
         input: &PlanNode,
         order_by: &[super::optimizer::OrderByClause],
-    ) -> Result<ExecutionResult> {
+    ) -> Result<FederatedExecutionResult> {
         let result = self.execute_node(input, false).await?;
         if order_by.is_empty() {
             return Ok(result);
@@ -4038,7 +4041,7 @@ impl FederatedExecutor {
 
         let batch = self.merge_batches(&result)?;
         if batch.num_rows() <= 1 {
-            return Ok(ExecutionResult::from_batch(batch));
+            return Ok(FederatedExecutionResult::from_batch(batch));
         }
 
         for clause in order_by {
@@ -4088,7 +4091,7 @@ impl FederatedExecutor {
             .collect::<arrow::error::Result<Vec<_>>>()?;
 
         let sorted = RecordBatch::try_new(batch.schema(), columns)?;
-        Ok(ExecutionResult::from_batch(sorted))
+        Ok(FederatedExecutionResult::from_batch(sorted))
     }
 
     /// Execute limit
@@ -4097,7 +4100,7 @@ impl FederatedExecutor {
         input: &PlanNode,
         limit: usize,
         offset: usize,
-    ) -> Result<ExecutionResult> {
+    ) -> Result<FederatedExecutionResult> {
         let result = self.execute_node(input, false).await?;
 
         // Apply limit/offset to batches
@@ -4126,7 +4129,7 @@ impl FederatedExecutor {
             }
         }
 
-        Ok(ExecutionResult {
+        Ok(FederatedExecutionResult {
             batches: output_batches,
             schema: result.schema,
             stats: FederatedExecutionStats {
@@ -4142,7 +4145,7 @@ impl FederatedExecutor {
         input: &PlanNode,
         group_by: &[String],
         aggregates: &[super::optimizer::AggregateExpr],
-    ) -> Result<ExecutionResult> {
+    ) -> Result<FederatedExecutionResult> {
         let result = self.execute_node(input, false).await?;
         let batch = self.merge_batches(&result)?;
 
@@ -4186,7 +4189,7 @@ impl FederatedExecutor {
             ));
 
             if batch.num_rows() == 0 {
-                return Ok(ExecutionResult::empty_with_schema(schema));
+                return Ok(FederatedExecutionResult::empty_with_schema(schema));
             }
 
             let mut group_lookup: HashMap<Vec<String>, usize> = HashMap::new();
@@ -4224,7 +4227,7 @@ impl FederatedExecutor {
             }
 
             let aggregated = RecordBatch::try_new(schema.clone(), columns)?;
-            return Ok(ExecutionResult {
+            return Ok(FederatedExecutionResult {
                 batches: vec![aggregated],
                 schema,
                 stats: FederatedExecutionStats {
@@ -4249,7 +4252,7 @@ impl FederatedExecutor {
         let schema = Arc::new(Schema::new(fields));
 
         if aggregates.is_empty() {
-            return Ok(ExecutionResult::empty_with_schema(schema));
+            return Ok(FederatedExecutionResult::empty_with_schema(schema));
         }
 
         let columns = aggregate_values
@@ -4258,7 +4261,7 @@ impl FederatedExecutor {
             .collect::<Vec<_>>();
         let aggregated = RecordBatch::try_new(schema.clone(), columns)?;
 
-        Ok(ExecutionResult {
+        Ok(FederatedExecutionResult {
             batches: vec![aggregated],
             schema,
             stats: FederatedExecutionStats {
@@ -4269,7 +4272,7 @@ impl FederatedExecutor {
     }
 
     /// Execute union
-    async fn execute_union(&self, inputs: &[PlanNode], _all: bool) -> Result<ExecutionResult> {
+    async fn execute_union(&self, inputs: &[PlanNode], _all: bool) -> Result<FederatedExecutionResult> {
         let mut all_batches = Vec::new();
         let mut schema = None;
 
@@ -4281,7 +4284,7 @@ impl FederatedExecutor {
             all_batches.extend(result.batches);
         }
 
-        Ok(ExecutionResult {
+        Ok(FederatedExecutionResult {
             batches: all_batches,
             schema: schema.unwrap_or_else(|| Arc::new(Schema::empty())),
             stats: FederatedExecutionStats::default(),

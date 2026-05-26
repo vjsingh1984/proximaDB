@@ -97,12 +97,15 @@ impl GraphQueryExecutorBackend for GraphOperationsServiceAdapter {
     }
 }
 
+/// Backwards-compat alias for [`GraphQueryExecutor`].
+pub type QueryExecutor = GraphQueryExecutor;
+
 /// Compatibility wrapper preserving the historical root executor API.
-pub struct QueryExecutor {
+pub struct GraphQueryExecutor {
     inner: InnerQueryExecutor,
 }
 
-impl QueryExecutor {
+impl GraphQueryExecutor {
     pub fn new(graph_service: Arc<GraphOperationsService>) -> Self {
         let backend = Arc::new(GraphOperationsServiceAdapter::new(graph_service));
         Self {

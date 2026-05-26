@@ -94,15 +94,18 @@ impl Default for VectorPool {
     }
 }
 
+/// Backwards-compat alias for [`MultiModalQueryExecutor`].
+pub type QueryExecutor = MultiModalQueryExecutor;
+
 /// High-performance query executor with multi-modal support
-pub struct QueryExecutor {
+pub struct MultiModalQueryExecutor {
     vector_service: Option<Arc<VectorOperationsService>>, // Optional for tests
     graph_service: Arc<dyn GraphExecutionService>,
     #[allow(dead_code)]
     memory_pool: VectorPool,
 }
 
-impl QueryExecutor {
+impl MultiModalQueryExecutor {
     /// Create new query executor with memory pool optimization
     pub fn new(
         vector_service: Option<Arc<VectorOperationsService>>,
@@ -1667,20 +1670,20 @@ mod executor_tests {
             .collect();
 
         // offset 2, limit 3 => rows [2,3,4]
-        super::QueryExecutor::apply_limit_offset(&mut rows, Some(2), Some(3));
+        super::MultiModalQueryExecutor::apply_limit_offset(&mut rows, Some(2), Some(3));
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].fields.get("id").and_then(|v| v.as_str()), Some("2"));
         assert_eq!(rows[2].fields.get("id").and_then(|v| v.as_str()), Some("4"));
 
         // offset beyond length => empty
         let mut rows2 = rows.clone();
-        super::QueryExecutor::apply_limit_offset(&mut rows2, Some(100), Some(1));
+        super::MultiModalQueryExecutor::apply_limit_offset(&mut rows2, Some(100), Some(1));
         assert_eq!(rows2.len(), 0);
     }
 
     #[test]
     fn test_join_rows_with_qualified_keys() {
-        let exec = QueryExecutor::new_for_tests(Arc::new(GraphOperationsService::new()));
+        let exec = MultiModalQueryExecutor::new_for_tests(Arc::new(GraphOperationsService::new()));
 
         // left: a.id
         let mut lfields = std::collections::HashMap::new();
@@ -1743,7 +1746,7 @@ mod executor_tests {
 
     #[test]
     fn test_join_rows_composite_keys_and_left_join() {
-        let exec = QueryExecutor::new_for_tests(Arc::new(GraphOperationsService::new()));
+        let exec = MultiModalQueryExecutor::new_for_tests(Arc::new(GraphOperationsService::new()));
         // left rows: (id, type)
         let mut l1 = std::collections::HashMap::new();
         l1.insert(
@@ -2104,7 +2107,7 @@ mod executor_tests {
         }];
 
         // Derive function is independent from services
-        let derived = QueryExecutor::derive_vector_rows_from_graph_seeds(&graph_rows);
+        let derived = MultiModalQueryExecutor::derive_vector_rows_from_graph_seeds(&graph_rows);
         assert_eq!(derived.len(), 1);
         // Since we don't have actual embedding data in the mock store,
         // embedding_dim won't be present - only the id field
@@ -2220,7 +2223,7 @@ mod executor_tests {
             None,
         );
 
-        let executor = QueryExecutor::new_for_tests(graph_service);
+        let executor = MultiModalQueryExecutor::new_for_tests(graph_service);
 
         let result = executor
             .execute_hybrid_plan(plan)
@@ -2246,7 +2249,7 @@ mod executor_tests {
         );
     }
 
-    async fn create_test_executor() -> QueryExecutor {
+    async fn create_test_executor() -> MultiModalQueryExecutor {
         use crate::index::AxisManager;
         use crate::services::collection::manager::CollectionService;
         use crate::services::operations::vectors::VectorOperationsService;
@@ -2349,10 +2352,10 @@ mod executor_tests {
         // Keep temp_dir alive by leaking it (tests are short-lived)
         std::mem::forget(temp_dir);
 
-        QueryExecutor::new(Some(vector_service), graph_service)
+        MultiModalQueryExecutor::new(Some(vector_service), graph_service)
     }
 
-    async fn create_test_executor_with_collection() -> QueryExecutor {
+    async fn create_test_executor_with_collection() -> MultiModalQueryExecutor {
         use crate::index::AxisManager;
         use crate::services::collection::manager::CollectionService;
         use crate::services::operations::vectors::VectorOperationsService;
@@ -2481,7 +2484,7 @@ mod executor_tests {
         // Keep temp_dir alive by leaking it (tests are short-lived)
         std::mem::forget(temp_dir);
 
-        QueryExecutor::new(Some(vector_service), graph_service)
+        MultiModalQueryExecutor::new(Some(vector_service), graph_service)
     }
 
     #[test]

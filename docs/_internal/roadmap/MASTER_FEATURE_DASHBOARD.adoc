@@ -51,65 +51,89 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 
 == 🎯 Current Maturity Summary
 
-[cols="2,1,3", options="header"]
+[IMPORTANT]
+====
+**2026-05-26 honesty refresh** — this table was reconciled against `docs/SUPPORTED_SURFACE.adoc` (the support contract) on 2026-05-26. Several rows previously claimed "Production Ready" while the support contract said Beta or Experimental; those were downgraded to match. The `Caveat` column cites the controlling TD-XXX / ADR-NNN for each non-trivial classification. Don't re-promote a row to Production Ready without (a) re-checking SUPPORTED_SURFACE and (b) closing or downgrading the cited caveats.
+====
+
+[cols="2,1,3,2", options="header"]
 |===
-| Category | Maturity | Notes
+| Category | Maturity | Notes | Caveat / controlling tracker
 
 | Core vector path
 | **Production Ready**
-| Strongest current surface: vector CRUD/search/get plus filtering and single-node APIs. Cost-based query optimization implemented.
+| Vector CRUD / search / get on the canonical REST v2 and gRPC `proximadb.v2.ProximaRecordService` flows. Cost-based query optimization in place.
+| Matches SUPPORTED_SURFACE "Supported" classification. REST/gRPC v1 are compatibility adapters only.
 
 | Documents
-| **Production Ready**
-| CRUD/query/aggregation complete. Path-filter depth and deep storage/index features fully implemented.
+| **Beta**
+| CRUD / query / aggregation work, but the in-memory `RwLock<HashMap>` is still the primary durable source; canonical-document-store WAL path is opt-in behind a feature flag.
+| TD-065 (open). Tier-2 work (ADR-020 + default-enable canonical store) addresses this — see PRE_RELEASE_FOUNDATIONS tracker.
 
 | Graph
-| **Production Ready**
-| ORION operations fully functional. Declarative graph query and PULSAR/QUASAR engines complete.
+| **Beta**
+| ORION node/edge CRUD, traversal, neighbors, shortest-path, adjacency projections all usable. Declarative graph query on the canonical gRPC path is still incomplete; branch-merge logic absent.
+| ADR-012 PARTIAL (no `merge_branch` logic); TD-066 (open — ORION engine WAL parallel to canonical). PULSAR/QUASAR remain Experimental per SUPPORTED_SURFACE.
 
 | Observability
-| **Production Ready**
-| Ingestion/query primitives complete. Operator-grade alerting and all protocol mappings fully implemented with Prometheus + Grafana.
+| **Beta**
+| Logs/metrics/traces ingestion + query work; PromQL execution, full-text log search wired. Alerting, deeper operator workflow, and some gRPC mappings remain incomplete.
+| SUPPORTED_SURFACE "Beta". Canonical observability replay into shared record storage is not yet the default.
 
-| Unified query
-| **Production Ready**
-| Function-backed multimodel queries strong. Generic relational and distributed paths complete with federated engine.
+| Unified query (federated SQL)
+| **Beta**
+| `VECTOR_SEARCH` / `GRAPH_QUERY` / `DOCUMENT_QUERY` / `LOGS` / `METRICS` function-backed sources work through the federated engine with cache + morsel-driven parallelism.
+| Generic relational scans and remote distributed execution are incomplete. SUPPORTED_SURFACE "Beta".
 
 | Hybrid retrieval
-| **Production Ready**
-| tantivy BM25 + RRF/weighted fusion implemented. API at `/api/v1/hybrid/search`. Full backend integration (TD-008 resolved).
+| **Beta**
+| BM25 + RRF/weighted fusion functional on REST `/api/v1/hybrid/search`. gRPC parity in progress.
+| TD-008 resolved on REST. gRPC route currently routes to a mock backend pending Tier-3 wire-through. SUPPORTED_SURFACE "Beta".
 
 | Time-series (TST)
-| **Production Ready**
-| Engine complete (TD-009 resolved). ASOF joins, downsampling, OHLC implemented. Production-validated.
+| **Beta**
+| TST engine complete: ASOF joins, downsampling, OHLC.
+| SUPPORTED_SURFACE "Beta" — product packaging, API parity, and at-scale production validation still in progress. TD-009 resolved on the engine itself.
 
 | Event sourcing
-| **Production Ready**
-| Engine complete (TD-010 resolved). Append-only WAL, temporal queries, MiFID II audit trail. Production-validated.
+| **Beta**
+| Engine complete: append-only WAL, temporal queries, MiFID II audit trail.
+| Grouped under SUPPORTED_SURFACE "Time-series and event foundations: Beta". TD-010 resolved on the engine; packaging/at-scale validation still in progress.
 
-| Query execution layer
+| Query execution layer (cost-based)
 | **Production Ready**
 | Vectorized executor wired into primary query path (TD-041 resolved). Cost-based optimization with adaptive model.
+| pgwire SQL surface is the SEPARATE row below — that one's Beta. This row covers the vectorized executor only.
 
-| Security
-| **Production Ready**
-| Runtime auth, mTLS, admin/status APIs complete. RBAC, encryption at rest and in transit, network policies implemented.
-
-| Distributed cluster
+| pgwire / SQL parity
 | **Beta**
-| Consensus and routing foundations improved. RPC transport and remote execution functional. Production-ready for single-region deployment.
+| Phase 1 of ADR-018 complete (basic DML, DROP TABLE IF EXISTS, vector-distance syntax). Phase 2 (SQLite parity) in flight; Phase 3 (Postgres parity) planned.
+| ADR-018 PARTIAL — see ADR for the explicit Phase 1/2/3 contract.
+
+| Security runtime
+| **Beta**
+| JWT, API key, SSO hooks, mTLS identity, CRL-backed revocation reload/freshness checks present.
+| SUPPORTED_SURFACE "Beta". Security admin/status APIs and stronger online revocation policy incomplete. RLS engine-layer enforcement only wired in SST + VIPER (NOVA / HELIX wiring is Tier-1 work). Multiple sub-features still marked ❌ in the feature-index section below.
+
+| Distributed cluster execution
+| **Experimental**
+| Raft internals, shard planning, routing foundations exist (5,491 LOC across `src/cluster/`). Feature-gated behind the `cluster` flag.
+| SUPPORTED_SURFACE "Experimental" — RPC transport and remote execution contain placeholder/partial implementations. Single-region deployment usable with operator validation; not a like-for-like distributed-DB replacement.
 
 | Cloud Infrastructure
 | **Production Ready**
 | Terraform modules (3 environments), Kubernetes deployment (Helm), CI/CD pipeline, monitoring stack (Prometheus + Grafana + Alertmanager).
+| Deploy/operate surface, not a database capability surface — keep Production Ready.
 
 | Compliance
 | **Beta**
 | SOC 2 compliance plan complete (25 controls, 7-month roadmap). Policy templates and implementation checklist available.
+| Beta = roadmap + scaffolding. Control implementation rolls out across v0.3+ minor releases.
 
 | Go-to-Market
 | **Production Ready**
-| Pricing strategy (4 tiers), conference presence (8 conferences), DevRel team chartered (3 FTE), documentation complete.
+| Pricing strategy (4 tiers), conference presence, DevRel team chartered, documentation complete.
+| Marketing/operations surface — not a code claim.
 |===
 
 [NOTE]

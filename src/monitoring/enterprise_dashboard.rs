@@ -35,12 +35,15 @@ pub struct EnterpriseDashboard {
     /// Active alerts
     active_alerts: Arc<RwLock<HashMap<String, ActiveAlert>>>,
     /// Dashboard state
-    dashboard_state: Arc<RwLock<DashboardState>>,
+    dashboard_state: Arc<RwLock<EnterpriseDashboardState>>,
 }
+
+/// Backwards-compat alias for [`EnterpriseDashboardState`].
+pub type DashboardState = EnterpriseDashboardState;
 
 /// Real-time dashboard state
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DashboardState {
+pub struct EnterpriseDashboardState {
     pub system_health: SystemHealthStatus,
     pub query_performance: QueryPerformanceMetrics,
     pub storage_status: StorageHealthStatus,
@@ -203,7 +206,7 @@ impl EnterpriseDashboard {
     }
 
     /// Get current dashboard state
-    pub async fn get_dashboard_state(&self) -> Result<DashboardState> {
+    pub async fn get_dashboard_state(&self) -> Result<EnterpriseDashboardState> {
         let state = self.dashboard_state.read().await
             .map_err(|e| anyhow::anyhow!("Failed to read dashboard state: {}", e))?;
         Ok(state.clone())
@@ -347,7 +350,7 @@ impl EnterpriseDashboard {
     }
 
     /// Check for alert conditions
-    async fn check_alerts(&self, state: &DashboardState) -> Result<()> {
+    async fn check_alerts(&self, state: &EnterpriseDashboardState) -> Result<()> {
         let mut new_alerts = Vec::new();
 
         // CPU usage alert
@@ -435,8 +438,8 @@ impl EnterpriseDashboard {
     }
 
     /// Initial dashboard state
-    fn initial_dashboard_state() -> DashboardState {
-        DashboardState {
+    fn initial_dashboard_state() -> EnterpriseDashboardState {
+        EnterpriseDashboardState {
             system_health: SystemHealthStatus {
                 overall_health: HealthLevel::Unknown,
                 cpu_usage_percent: 0.0,
@@ -616,7 +619,7 @@ mod tests {
         
         // Should be able to serialize and deserialize
         let json = serde_json::to_string(&state).unwrap();
-        let deserialized: DashboardState = serde_json::from_str(&json).unwrap();
+        let deserialized: EnterpriseDashboardState = serde_json::from_str(&json).unwrap();
         
         assert_eq!(state.system_health.overall_health, deserialized.system_health.overall_health);
     }

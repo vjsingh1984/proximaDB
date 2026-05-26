@@ -388,8 +388,8 @@ impl StreamingSearchEngine {
         characteristics: &QueryCharacteristics,
         superblocks: &[SuperBlock],
         enhanced_stats: &[EnhancedRowGroupStats],
-    ) -> Result<ExecutionPlan> {
-        let mut plan = ExecutionPlan::new();
+    ) -> Result<NovaStreamingExecutionPlan> {
+        let mut plan = NovaStreamingExecutionPlan::new();
 
         // Determine optimization strategy based on query characteristics
         plan.optimization_strategy = match characteristics.estimated_selectivity {
@@ -426,7 +426,7 @@ impl StreamingSearchEngine {
         &self,
         query_vector: &[f32],
         superblocks: &[SuperBlock],
-        execution_plan: &ExecutionPlan,
+        execution_plan: &NovaStreamingExecutionPlan,
     ) -> Result<(Vec<SuperBlock>, ZoneMapMetrics)> {
         let mut pruned_superblocks = Vec::new();
         let mut intersection_tests = 0;
@@ -674,9 +674,12 @@ impl StreamingSearchEngine {
     }
 }
 
+/// Backwards-compat alias for [`NovaStreamingExecutionPlan`].
+pub type ExecutionPlan = NovaStreamingExecutionPlan;
+
 /// Execution plan for streaming search
 #[derive(Debug)]
-pub struct ExecutionPlan {
+pub struct NovaStreamingExecutionPlan {
     pub optimization_strategy: OptimizationStrategy,
     pub memory_budget_per_stage: usize,
     pub parallelism_level: usize,
@@ -684,13 +687,13 @@ pub struct ExecutionPlan {
     pub row_group_order: Vec<u32>,
 }
 
-impl Default for ExecutionPlan {
+impl Default for NovaStreamingExecutionPlan {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ExecutionPlan {
+impl NovaStreamingExecutionPlan {
     pub fn new() -> Self {
         Self {
             optimization_strategy: OptimizationStrategy::Hierarchical,
@@ -852,7 +855,7 @@ mod tests {
 
     #[test]
     fn test_execution_plan() {
-        let plan = ExecutionPlan::new();
+        let plan = NovaStreamingExecutionPlan::new();
         assert_eq!(plan.parallelism_level, 4);
         assert_eq!(plan.memory_budget_per_stage, 64 * 1024 * 1024);
         assert!(plan.selected_superblocks.is_empty());
