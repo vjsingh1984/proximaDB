@@ -4,20 +4,20 @@ use crate::query::ast::{
     BinaryOp, Expr, Literal, ProjectionItem, Query, Select, TableRef, UnaryOp,
 };
 use crate::query::semantic_analysis::scope::{Column, DataType, Scope, Symbol};
-use crate::services::collection::manager::CollectionService;
 use anyhow::{Result, anyhow};
+use proximadb_runtime::CollectionPort;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// The semantic analyzer.
 pub struct Analyzer {
-    collection_service: Arc<CollectionService>,
+    collection_port: Arc<dyn CollectionPort>,
 }
 
 impl Analyzer {
     /// Creates a new analyzer.
-    pub fn new(collection_service: Arc<CollectionService>) -> Self {
-        Self { collection_service }
+    pub fn new(collection_port: Arc<dyn CollectionPort>) -> Self {
+        Self { collection_port }
     }
 
     /// Analyzes a query.
@@ -101,7 +101,7 @@ impl Analyzer {
 
     async fn analyze_table_ref(&self, table_ref: &TableRef, scope: &mut Scope) -> Result<()> {
         if let Some(table_name) = &table_ref.name {
-            let collection = self.collection_service.collection(table_name).await?;
+            let collection = self.collection_port.get_collection(table_name, None).await?;
             if let Some(collection) = collection {
                 let mut columns = HashMap::new();
 
@@ -844,7 +844,7 @@ mod tests {
             .await
             .expect("Failed to create app_users collection");
 
-        Analyzer::new(collection_service)
+        Analyzer::new(collection_service as Arc<dyn CollectionPort>)
     }
 
     #[tokio::test]
