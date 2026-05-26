@@ -803,18 +803,38 @@ where
         &self,
         policy: &CollectionDrPolicy,
     ) -> Result<ReconcileOutcome, DrApiError> {
+        self.reconcile_one_with_observation(policy)
+            .await
+            .map(|(o, _)| o)
+    }
+
+    /// Same as [`reconcile_one`] but also returns the
+    /// [`ProviderObservedState`] the adapter produced this tick (or
+    /// `None` if the fetch failed). The shard layer uses this to
+    /// surface observed lag to the metric sink without paying for a
+    /// second `fetch_state` round-trip.
+    pub async fn reconcile_one_with_observation(
+        &self,
+        policy: &CollectionDrPolicy,
+    ) -> Result<(ReconcileOutcome, Option<ProviderObservedState>), DrApiError> {
         // 1. Fetch observed state. A transient adapter failure here
         //    returns AdapterTransient — caller decides retry cadence.
         let observed = match self.adapter.fetch_state(policy).await {
             Ok(o) => o,
-            Err(e) => return self.handle_adapter_error(policy, e, "fetch_state").await,
+            Err(e) => {
+                let outcome = self
+                    .handle_adapter_error(policy, e, "fetch_state")
+                    .await?;
+                return Ok((outcome, None));
+            }
         };
 
         // 2. Decide.
         let decision = reconcile_step(policy, &observed);
 
         // 3. Dispatch.
-        self.dispatch(policy, decision).await
+        let outcome = self.dispatch(policy, decision).await?;
+        Ok((outcome, Some(observed)))
     }
 
     async fn dispatch(
@@ -1079,6 +1099,15 @@ pub trait DrMetrics: Send + Sync {
     fn observe_shard_paused(&self, reason: ShardPauseReason) {
         let _ = reason;
     }
+
+    /// Record an observed provider lag in seconds. Called for every
+    /// policy whose `ProviderObservedState::observed_lag_seconds` is
+    /// `Some` after a successful `fetch_state`. Implementations set
+    /// the `proximadb_dr_provider_lag_seconds` gauge keyed on
+    /// `{provider, region_pair}` per contract §"Observability".
+    fn observe_lag(&self, labels: &PolicyLabels, lag_seconds: u32) {
+        let _ = (labels, lag_seconds);
+    }
 }
 
 /// Default no-op sink. Use in tests that don't care about metrics
@@ -1308,8 +1337,18 @@ where
                 }
             }
 
-            // Dispatch.
-            let outcome = self.driver.reconcile_one(&policy).await?;
+            // Dispatch. The richer entry point also returns the
+            // observation so we can surface lag without a second
+            // fetch_state round-trip.
+            let (outcome, observation) = self
+                .driver
+                .reconcile_one_with_observation(&policy)
+                .await?;
+            if let Some(lag) =
+                observation.as_ref().and_then(|o| o.observed_lag_seconds)
+            {
+                self.metrics.observe_lag(&labels, lag);
+            }
             // Record the shard pause event exactly once on the
             // transition, not on subsequent ticks during the pause.
             let was_paused_before = self.pause.lock().paused.is_some();
@@ -1590,12 +1629,14 @@ pub mod testing {
     }
 
     /// Recording `DrMetrics` for tests. Captures every
-    /// `observe_tick` and `observe_shard_paused` call so tests can
-    /// assert that the reconciler hit the metric layer correctly.
+    /// `observe_tick`, `observe_shard_paused`, and `observe_lag`
+    /// call so tests can assert that the reconciler hit the metric
+    /// layer correctly.
     #[derive(Default)]
     pub struct RecordingDrMetrics {
         ticks: Mutex<Vec<(PolicyLabels, TickOutcome)>>,
         pauses: Mutex<Vec<ShardPauseReason>>,
+        lags: Mutex<Vec<(PolicyLabels, u32)>>,
     }
 
     impl RecordingDrMetrics {
@@ -1612,6 +1653,10 @@ pub mod testing {
         pub fn pauses(&self) -> Vec<ShardPauseReason> {
             self.pauses.lock().clone()
         }
+        /// Snapshot of every lag observation.
+        pub fn lags(&self) -> Vec<(PolicyLabels, u32)> {
+            self.lags.lock().clone()
+        }
     }
 
     impl DrMetrics for RecordingDrMetrics {
@@ -1620,6 +1665,9 @@ pub mod testing {
         }
         fn observe_shard_paused(&self, reason: ShardPauseReason) {
             self.pauses.lock().push(reason);
+        }
+        fn observe_lag(&self, labels: &PolicyLabels, lag_seconds: u32) {
+            self.lags.lock().push((labels.clone(), lag_seconds));
         }
     }
 }
@@ -3507,5 +3555,116 @@ mod tests {
         .unwrap();
         // At most one immediate tick before shutdown won the select.
         assert!(stats.successful_ticks <= 1);
+    }
+
+    // --- observe_lag --------------------------------------------------
+
+    #[tokio::test]
+    async fn shard_records_observed_lag_when_present() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.provider_binding = Some(ProviderReplicationBinding {
+            provider_policy_id: None,
+            provider_rule_id: "dr-drp_1-v1".into(),
+            provider_role_arn: None,
+            provider_kms_key_id: None,
+        });
+        // Seed an observation that reports 42s of lag.
+        let mut obs = healthy_observed(&p);
+        obs.observed_lag_seconds = Some(42);
+        adapter.seed_observed(&p.policy_id, obs);
+        store.seed_pending(vec![p.clone()]);
+        let clock = Arc::new(AtomicI64::new(0));
+        let metrics = RecordingDrMetrics::new();
+        let shard = make_shard(
+            store.clone(),
+            adapter,
+            BackoffPolicy::default(),
+            clock,
+            0.5,
+        )
+        .with_metrics(metrics.clone());
+
+        let _ = shard.tick().await.unwrap();
+        let lags = metrics.lags();
+        assert_eq!(lags.len(), 1, "exactly one lag observation");
+        assert_eq!(lags[0].1, 42, "lag value passed through");
+        assert_eq!(lags[0].0.tenant_id, "tnt_acme");
+        assert_eq!(lags[0].0.provider, ObjectProvider::AwsS3);
+    }
+
+    #[tokio::test]
+    async fn shard_skips_lag_when_observation_has_none() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.provider_binding = Some(ProviderReplicationBinding {
+            provider_policy_id: None,
+            provider_rule_id: "dr-drp_1-v1".into(),
+            provider_role_arn: None,
+            provider_kms_key_id: None,
+        });
+        let mut obs = healthy_observed(&p);
+        obs.observed_lag_seconds = None;
+        adapter.seed_observed(&p.policy_id, obs);
+        store.seed_pending(vec![p.clone()]);
+        let clock = Arc::new(AtomicI64::new(0));
+        let metrics = RecordingDrMetrics::new();
+        let shard = make_shard(
+            store.clone(),
+            adapter,
+            BackoffPolicy::default(),
+            clock,
+            0.5,
+        )
+        .with_metrics(metrics.clone());
+
+        let _ = shard.tick().await.unwrap();
+        assert!(metrics.lags().is_empty(), "no lag observation");
+    }
+
+    #[tokio::test]
+    async fn driver_with_observation_returns_state_alongside_outcome() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        let mut p = base_policy();
+        p.provider_binding = Some(ProviderReplicationBinding {
+            provider_policy_id: None,
+            provider_rule_id: "dr-drp_1-v1".into(),
+            provider_role_arn: None,
+            provider_kms_key_id: None,
+        });
+        let mut obs = healthy_observed(&p);
+        obs.observed_lag_seconds = Some(7);
+        adapter.seed_observed(&p.policy_id, obs);
+        let driver = make_driver(store.clone(), adapter);
+
+        let (outcome, observation) = driver
+            .reconcile_one_with_observation(&p)
+            .await
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            ReconcileOutcome::Idle(IdleReason::HealthyActive)
+        ));
+        let observation = observation.expect("fetch_state succeeded");
+        assert_eq!(observation.observed_lag_seconds, Some(7));
+    }
+
+    #[tokio::test]
+    async fn driver_with_observation_returns_none_on_fetch_failure() {
+        let store = MockDrPolicyStore::new(1);
+        let adapter = Arc::new(MockDrProviderAdapter::new());
+        adapter.inject_error(ProviderError::Transient("blip".into()));
+        let driver = make_driver(store.clone(), adapter);
+
+        let p = base_policy();
+        let (outcome, observation) = driver
+            .reconcile_one_with_observation(&p)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, ReconcileOutcome::AdapterTransient(_)));
+        assert!(observation.is_none(), "no observation when fetch failed");
     }
 }
