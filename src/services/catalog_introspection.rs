@@ -45,25 +45,58 @@ impl CatalogIntrospectionService {
             || normalized.contains(" from xcatalog.columns")
             || normalized.contains(" from xcatalog.indexes")
             || normalized.contains(" from xcatalog.table_routing")
+            || normalized.contains(" from xcatalog.namespaces")
             || normalized.contains(" from information_schema.tables")
             || normalized.contains(" from information_schema.columns")
             || normalized.contains(" from information_schema.table_routing")
+            || normalized.contains(" from information_schema.schemata")
             || normalized.contains("proximadb_catalog.props_promotion_candidates")
             || (normalized.contains("pg_catalog.pg_class")
                 && normalized.contains("pg_catalog.pg_namespace"))
             || (normalized.contains("pg_catalog.pg_attribute")
                 && normalized.contains("pg_catalog.pg_class"))
             || normalized.contains("pg_catalog.pg_index")
+            // Bare `FROM pg_class` (no qualifier) — common shape from
+            // psql `\dt` and lightweight ORM connection probes.
+            || normalized.contains(" from pg_class")
     }
 
     pub async fn execute_select(&self, sql: &str) -> Result<Option<CatalogIntrospectionResult>> {
         let normalized = normalize_sql(sql);
         let table_filter = extract_string_filter(sql, "table_name");
 
-        if normalized.contains(" from xcatalog.tables")
-            || normalized.contains(" from information_schema.tables")
-        {
+        // `information_schema.tables` returns the SQL-standard
+        // 4-column shape `(table_catalog, table_schema, table_name,
+        // table_type)`. Admin tools and ORMs probe for this exact
+        // shape; returning ProximaDB-extended columns (as
+        // `xcatalog.tables` does) breaks them. Keep the two views
+        // distinct so each carries its own contract.
+        if normalized.contains(" from information_schema.tables") {
+            return Ok(Some(
+                self.information_schema_tables(table_filter.as_deref())
+                    .await?,
+            ));
+        }
+        if normalized.contains(" from xcatalog.tables") {
             return Ok(Some(self.tables(table_filter.as_deref()).await?));
+        }
+        if normalized.contains(" from xcatalog.namespaces")
+            || normalized.contains(" from information_schema.schemata")
+        {
+            return Ok(Some(self.namespaces().await?));
+        }
+        // Bare `FROM pg_class` (without joins) — return the
+        // SQLAlchemy/psql-compatible shape used elsewhere for
+        // pg_class + pg_namespace queries. The shape covers `relname`,
+        // `relkind`, and the columns most lightweight probes ask
+        // for; extending it is Phase 2's `pg_catalog` work.
+        if normalized.contains(" from pg_class")
+            && !normalized.contains("pg_attribute")
+            && !normalized.contains("pg_namespace")
+        {
+            return Ok(Some(
+                self.sqlalchemy_table_names(None).await?,
+            ));
         }
         if normalized.contains(" from xcatalog.columns")
             || normalized.contains(" from information_schema.columns")
@@ -128,6 +161,110 @@ impl CatalogIntrospectionService {
         }
 
         Ok(None)
+    }
+
+    /// `information_schema.tables` with the SQL-standard 4-column
+    /// shape `(table_catalog, table_schema, table_name, table_type)`.
+    /// Distinct from `xcatalog.tables` which carries ProximaDB-
+    /// specific extras (schema_kind, storage_engine, layout, etc.).
+    async fn information_schema_tables(
+        &self,
+        table_filter: Option<&str>,
+    ) -> Result<CatalogIntrospectionResult> {
+        let mut rows = Vec::new();
+        for (catalog_name, table_id, _schema) in self.cataloged_tables().await? {
+            if !matches_filter(&table_id.name, table_filter) {
+                continue;
+            }
+            rows.push(vec![
+                catalog_name,
+                namespace_name(&table_id),
+                table_id.name,
+                // Per ANSI: BASE TABLE | VIEW | LOCAL TEMPORARY |
+                // GLOBAL TEMPORARY. We always return BASE TABLE
+                // until views land.
+                "BASE TABLE".to_string(),
+            ]);
+        }
+        rows.sort();
+        Ok(CatalogIntrospectionResult {
+            columns: vec![
+                "table_catalog".to_string(),
+                "table_schema".to_string(),
+                "table_name".to_string(),
+                "table_type".to_string(),
+            ],
+            column_types: vec![
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+            ],
+            rows,
+        })
+    }
+
+    /// `xcatalog.namespaces` (and `information_schema.schemata`) —
+    /// the set of registered namespaces. Carries the engine
+    /// authority fields added in P0.5 (namespace_id, tenant_id,
+    /// region_home, storage_pool_class) so operator tools can
+    /// inspect them via SQL.
+    ///
+    /// Iteration pattern mirrors `cataloged_tables`: walk every
+    /// catalog registered on `CatalogManager`, then every namespace
+    /// each catalog returns from `list_namespaces`.
+    async fn namespaces(&self) -> Result<CatalogIntrospectionResult> {
+        let mut rows = Vec::new();
+        for catalog_name in self.catalog_manager.list_catalogs().await {
+            let catalog = match self
+                .catalog_manager
+                .get_catalog(&catalog_name)
+                .await
+            {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let listed = match catalog.list_namespaces(None).await {
+                Ok(ns) => ns,
+                Err(_) => continue,
+            };
+            for ns in listed {
+                rows.push(vec![
+                    catalog_name.clone(),
+                    ns.levels.join("."),
+                    ns.namespace_id.clone().unwrap_or_default(),
+                    ns.tenant_id.clone().unwrap_or_default(),
+                    ns.region_home.clone().unwrap_or_default(),
+                    format!("{:?}", ns.storage_pool_class).to_lowercase(),
+                    ns.owner.clone().unwrap_or_default(),
+                    ns.location.clone().unwrap_or_default(),
+                ]);
+            }
+        }
+        rows.sort();
+        Ok(CatalogIntrospectionResult {
+            columns: vec![
+                "catalog_name".to_string(),
+                "namespace_name".to_string(),
+                "namespace_id".to_string(),
+                "tenant_id".to_string(),
+                "region_home".to_string(),
+                "storage_pool_class".to_string(),
+                "owner".to_string(),
+                "location".to_string(),
+            ],
+            column_types: vec![
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+                "text".to_string(),
+            ],
+            rows,
+        })
     }
 
     async fn tables(&self, table_filter: Option<&str>) -> Result<CatalogIntrospectionResult> {
