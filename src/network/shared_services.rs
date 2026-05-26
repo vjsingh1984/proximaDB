@@ -99,6 +99,13 @@ pub struct SharedServices {
     /// Port-typed view of `vector_operations_service` for Phase 9.10 / Task #76
     /// consumer migration. Same pattern as `collection_port` above.
     pub vector_ops_port: Arc<dyn proximadb_runtime::VectorOpsPort>,
+    /// Port-typed view of `document_service` for Phase 9.10 / Task #76
+    /// consumer migration. Same pattern as `collection_port` above.
+    ///
+    /// Powered by `impl DocumentPort for DocumentService` directly on the
+    /// bare service (ADR-015). The gRPC `DocumentServiceImpl` wrapper is
+    /// no longer in the port chain.
+    pub document_port: Arc<dyn proximadb_runtime::DocumentPort>,
 }
 
 impl SharedServices {
@@ -875,7 +882,7 @@ impl SharedServices {
                 graph_service,
                 graph_query_service,
                 graph_execution_service,
-                document_service,
+                document_service: document_service.clone(),
                 observability_service,
                 request_handlers,
                 metrics_collector,
@@ -895,6 +902,12 @@ impl SharedServices {
                 // VectorOperationsService instance held by `vector_operations_service`.
                 vector_ops_port: vector_operations_service.clone()
                     as Arc<dyn proximadb_runtime::VectorOpsPort>,
+                // Task #76 document slice (ADR-015 step 4): port-typed view
+                // of the same DocumentService instance held by
+                // `document_service`. Powered by the bare-service DocumentPort
+                // impl in src/storage/document/service.rs (ADR-015 step 1).
+                document_port: document_service.clone()
+                    as Arc<dyn proximadb_runtime::DocumentPort>,
             },
             collection_service,
         ))
