@@ -448,7 +448,7 @@ cluster = []
 rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
 
 # Cloud storage features (optional to avoid linking issues during testing)
-aws = ["dep:aws-config", "dep:aws-sdk-s3"]
+aws = ["dep:aws-config", "dep:aws-sdk-s3", "proximadb-catalog/aws"]
 azure = ["dep:azure_storage", "dep:azure_storage_blobs"]
 gcp = ["dep:google-cloud-storage"]
 
