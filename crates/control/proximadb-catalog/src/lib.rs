@@ -31,6 +31,8 @@ pub mod glue;
 pub mod hive;
 pub mod native;
 pub mod oltp;
+#[cfg(feature = "polaris-catalog")]
+pub mod polaris;
 pub mod relational;
 pub mod schema;
 pub mod system_columns;
