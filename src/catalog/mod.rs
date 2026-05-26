@@ -387,7 +387,7 @@ impl CatalogManager {
         warehouse: &str,
         credential: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use crate::proto::proximadb_v1::PolarisCatalogConfig;
+        use polaris::PolarisCatalogConfig;
 
         let config = PolarisCatalogConfig {
             uri: uri.to_string(),

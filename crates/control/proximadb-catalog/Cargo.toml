@@ -21,6 +21,7 @@ oltp-catalog-sqlite   = ["oltp-catalog", "sqlx/sqlite"]
 oltp-catalog          = ["dep:sqlx"]
 # Cloud catalog backends (mirror the root crate's feature gates)
 aws                   = []
+polaris-catalog       = []
 
 [dependencies]
 anyhow.workspace = true
