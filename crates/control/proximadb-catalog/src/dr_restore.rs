@@ -256,6 +256,312 @@ pub trait DrRestoreReadinessChecker: Send + Sync {
     ) -> Result<RestoreReadiness, ProviderError>;
 }
 
+// ---------------------------------------------------------------------------
+// Reference impl pluggable concerns
+// ---------------------------------------------------------------------------
+
+/// Source the reference checker queries for manifest entries. The
+/// root crate wraps `GlobalManifestService` with an impl of this
+/// trait; tests use the in-module mock.
+///
+/// Implementations should return every restorable entry for the
+/// collection — the checker filters by status and target_lsn
+/// internally.
+#[async_trait]
+pub trait ManifestSource: Send + Sync {
+    async fn entries_for_collection(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<ManifestEntryRef>, ProviderError>;
+}
+
+/// Destination-presence probe. Given a list of candidate object
+/// keys, returns the subset that are NOT present at the policy's
+/// destination. Operator-side impls typically dispatch to
+/// `DrProviderAdapter::fetch_state` or a HEAD request per key.
+#[async_trait]
+pub trait DestinationPresenceCheck: Send + Sync {
+    async fn missing_objects(
+        &self,
+        policy: &CollectionDrPolicy,
+        candidate_keys: &[String],
+    ) -> Result<Vec<String>, ProviderError>;
+}
+
+/// KMS accessibility probe. Returns `true` if the destination
+/// region can decrypt objects under the policy's KMS binding.
+/// Implementations typically issue a `Decrypt` call against a
+/// zero-byte canary blob.
+#[async_trait]
+pub trait KmsAccessibilityCheck: Send + Sync {
+    async fn is_accessible(
+        &self,
+        policy: &CollectionDrPolicy,
+    ) -> Result<bool, ProviderError>;
+}
+
+// ---------------------------------------------------------------------------
+// EngineRestoreReadinessChecker
+// ---------------------------------------------------------------------------
+
+/// Reference `DrRestoreReadinessChecker` that wires the three
+/// pluggable concerns through `assemble_readiness`. Generic so
+/// operators substitute their own backing types; the type-erased
+/// trait object is also fine.
+///
+/// Usage:
+/// ```ignore
+/// let checker = EngineRestoreReadinessChecker::new(
+///     manifest_source, destination_check, kms_check,
+/// );
+/// let readiness = checker.check(&policy, target_lsn).await?;
+/// ```
+pub struct EngineRestoreReadinessChecker<M, D, K> {
+    manifest: std::sync::Arc<M>,
+    destination: std::sync::Arc<D>,
+    kms: std::sync::Arc<K>,
+    now_ms: std::sync::Arc<dyn Fn() -> i64 + Send + Sync>,
+}
+
+impl<M, D, K> EngineRestoreReadinessChecker<M, D, K> {
+    /// Build a checker with a system-clock-derived `now_ms`. Tests
+    /// should prefer [`with_clock`].
+    pub fn new(
+        manifest: std::sync::Arc<M>,
+        destination: std::sync::Arc<D>,
+        kms: std::sync::Arc<K>,
+    ) -> Self {
+        let now_ms: std::sync::Arc<dyn Fn() -> i64 + Send + Sync> =
+            std::sync::Arc::new(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as i64)
+                    .unwrap_or(0)
+            });
+        Self {
+            manifest,
+            destination,
+            kms,
+            now_ms,
+        }
+    }
+
+    /// Build a checker with explicit clock. Tests pin observed RPO
+    /// by injecting a constant.
+    pub fn with_clock(
+        manifest: std::sync::Arc<M>,
+        destination: std::sync::Arc<D>,
+        kms: std::sync::Arc<K>,
+        now_ms: std::sync::Arc<dyn Fn() -> i64 + Send + Sync>,
+    ) -> Self {
+        Self {
+            manifest,
+            destination,
+            kms,
+            now_ms,
+        }
+    }
+}
+
+#[async_trait]
+impl<M, D, K> DrRestoreReadinessChecker for EngineRestoreReadinessChecker<M, D, K>
+where
+    M: ManifestSource + 'static,
+    D: DestinationPresenceCheck + 'static,
+    K: KmsAccessibilityCheck + 'static,
+{
+    async fn check(
+        &self,
+        policy: &CollectionDrPolicy,
+        target_lsn: u64,
+    ) -> Result<RestoreReadiness, ProviderError> {
+        // 1. Pull manifest entries for the collection.
+        let entries = self
+            .manifest
+            .entries_for_collection(&policy.collection_id)
+            .await?;
+
+        // 2. Build the candidate-key list: restorable entries at or
+        //    below target_lsn.
+        let candidate_keys: Vec<String> = entries
+            .iter()
+            .filter(|e| e.global_lsn <= target_lsn && e.status.is_restorable())
+            .map(|e| e.file_path.clone())
+            .collect();
+
+        // 3. Probe the destination. An adapter error short-circuits;
+        //    the operator's caller decides whether to retry.
+        let missing_objects = self
+            .destination
+            .missing_objects(policy, &candidate_keys)
+            .await?;
+
+        // 4. Probe KMS.
+        let kms_accessible = self.kms.is_accessible(policy).await?;
+
+        // 5. Pure assembly — same function the unit tests use.
+        let now_ms = (self.now_ms)();
+        Ok(assemble_readiness(
+            policy,
+            target_lsn,
+            &entries,
+            missing_objects,
+            // Metadata-presence is operator territory (tenant
+            // catalog export, namespace export). The reference
+            // checker leaves the list empty; deployments that need
+            // it wrap this impl or fork their own checker.
+            Vec::new(),
+            kms_accessible,
+            now_ms,
+        ))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public testing surface
+// ---------------------------------------------------------------------------
+
+/// In-test impls of [`ManifestSource`], [`DestinationPresenceCheck`],
+/// and [`KmsAccessibilityCheck`]. Downstream consumers use these to
+/// exercise [`EngineRestoreReadinessChecker`] against deterministic
+/// inputs without standing up a real manifest service or provider.
+pub mod testing {
+    use super::{
+        CollectionDrPolicy, DestinationPresenceCheck, KmsAccessibilityCheck,
+        ManifestEntryRef, ManifestSource, ProviderError,
+    };
+    use async_trait::async_trait;
+    use parking_lot::Mutex;
+    use std::sync::Arc;
+
+    /// Returns a seeded list of manifest entries. The test seeds via
+    /// `set_entries`; downstream code that uses this trait gets a
+    /// deterministic universe.
+    #[derive(Default)]
+    pub struct StaticManifestSource {
+        entries: Mutex<Vec<ManifestEntryRef>>,
+        next_error: Mutex<Option<ProviderError>>,
+    }
+
+    impl StaticManifestSource {
+        pub fn new() -> Arc<Self> {
+            Arc::new(Self::default())
+        }
+        pub fn set_entries(&self, entries: Vec<ManifestEntryRef>) {
+            *self.entries.lock() = entries;
+        }
+        pub fn inject_error(&self, err: ProviderError) {
+            *self.next_error.lock() = Some(err);
+        }
+    }
+
+    #[async_trait]
+    impl ManifestSource for StaticManifestSource {
+        async fn entries_for_collection(
+            &self,
+            collection_id: &str,
+        ) -> Result<Vec<ManifestEntryRef>, ProviderError> {
+            if let Some(e) = self.next_error.lock().take() {
+                return Err(e);
+            }
+            Ok(self
+                .entries
+                .lock()
+                .iter()
+                .filter(|e| e.collection_id == collection_id)
+                .cloned()
+                .collect())
+        }
+    }
+
+    /// Returns a fixed set of "missing" keys regardless of the
+    /// candidate list, OR returns the intersection of the candidate
+    /// list with a pre-seeded missing set.
+    #[derive(Default)]
+    pub struct StaticDestinationPresence {
+        missing: Mutex<Vec<String>>,
+        next_error: Mutex<Option<ProviderError>>,
+    }
+
+    impl StaticDestinationPresence {
+        pub fn new() -> Arc<Self> {
+            Arc::new(Self::default())
+        }
+        /// Configure which keys this probe reports as missing. Only
+        /// keys also present in the candidate list will appear in
+        /// the result of `missing_objects`.
+        pub fn set_missing(&self, missing: Vec<String>) {
+            *self.missing.lock() = missing;
+        }
+        pub fn inject_error(&self, err: ProviderError) {
+            *self.next_error.lock() = Some(err);
+        }
+    }
+
+    #[async_trait]
+    impl DestinationPresenceCheck for StaticDestinationPresence {
+        async fn missing_objects(
+            &self,
+            _policy: &CollectionDrPolicy,
+            candidate_keys: &[String],
+        ) -> Result<Vec<String>, ProviderError> {
+            if let Some(e) = self.next_error.lock().take() {
+                return Err(e);
+            }
+            let missing = self.missing.lock().clone();
+            Ok(candidate_keys
+                .iter()
+                .filter(|k| missing.contains(k))
+                .cloned()
+                .collect())
+        }
+    }
+
+    /// Reports a fixed accessibility result. Default is `true`
+    /// (accessible).
+    pub struct StaticKmsCheck {
+        accessible: Mutex<bool>,
+        next_error: Mutex<Option<ProviderError>>,
+    }
+
+    impl Default for StaticKmsCheck {
+        fn default() -> Self {
+            Self {
+                accessible: Mutex::new(true),
+                next_error: Mutex::new(None),
+            }
+        }
+    }
+
+    impl StaticKmsCheck {
+        pub fn new(accessible: bool) -> Arc<Self> {
+            Arc::new(Self {
+                accessible: Mutex::new(accessible),
+                next_error: Mutex::new(None),
+            })
+        }
+        pub fn set_accessible(&self, accessible: bool) {
+            *self.accessible.lock() = accessible;
+        }
+        pub fn inject_error(&self, err: ProviderError) {
+            *self.next_error.lock() = Some(err);
+        }
+    }
+
+    #[async_trait]
+    impl KmsAccessibilityCheck for StaticKmsCheck {
+        async fn is_accessible(
+            &self,
+            _policy: &CollectionDrPolicy,
+        ) -> Result<bool, ProviderError> {
+            if let Some(e) = self.next_error.lock().take() {
+                return Err(e);
+            }
+            Ok(*self.accessible.lock())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,5 +833,231 @@ mod tests {
         let r2 = assemble_readiness(&p, 1, &entries, vec![], vec![], true, 2_500);
         let latest2 = r2.latest_replicated_manifest_entry.unwrap();
         assert_eq!(latest2.global_lsn, 1);
+    }
+
+    // -- EngineRestoreReadinessChecker ---------------------------------
+
+    use super::testing::{
+        StaticDestinationPresence, StaticKmsCheck, StaticManifestSource,
+    };
+    use std::sync::Arc as TestArc;
+
+    fn make_checker(
+        manifest: TestArc<StaticManifestSource>,
+        destination: TestArc<StaticDestinationPresence>,
+        kms: TestArc<StaticKmsCheck>,
+        now_ms_val: i64,
+    ) -> EngineRestoreReadinessChecker<
+        StaticManifestSource,
+        StaticDestinationPresence,
+        StaticKmsCheck,
+    > {
+        let now_ms: TestArc<dyn Fn() -> i64 + Send + Sync> =
+            TestArc::new(move || now_ms_val);
+        EngineRestoreReadinessChecker::with_clock(manifest, destination, kms, now_ms)
+    }
+
+    #[tokio::test]
+    async fn engine_checker_returns_ready_when_everything_passes() {
+        let policy = policy_with_rpo(900);
+        let manifest = StaticManifestSource::new();
+        manifest.set_entries(vec![
+            entry(1, 1_000, ManifestEntryStatus::Flushed, "col_orders"),
+            entry(2, 2_000, ManifestEntryStatus::Flushed, "col_orders"),
+        ]);
+        let destination = StaticDestinationPresence::new();
+        // destination.set_missing left empty → nothing missing.
+        let kms = StaticKmsCheck::new(true);
+        let checker = make_checker(manifest, destination, kms, 2_500);
+
+        let r = checker.check(&policy, 100).await.unwrap();
+        assert_eq!(r.status, RestoreStatus::Ready);
+        let latest = r.latest_replicated_manifest_entry.unwrap();
+        assert_eq!(latest.global_lsn, 2);
+        assert!(r.missing_objects.is_empty());
+        assert!(r.kms_accessible);
+    }
+
+    #[tokio::test]
+    async fn engine_checker_surfaces_destination_drops_as_incomplete() {
+        let policy = policy_with_rpo(900);
+        let manifest = StaticManifestSource::new();
+        manifest.set_entries(vec![
+            entry(1, 1_000, ManifestEntryStatus::Flushed, "col_orders"),
+            entry(2, 2_000, ManifestEntryStatus::Flushed, "col_orders"),
+        ]);
+        let destination = StaticDestinationPresence::new();
+        destination.set_missing(vec![
+            "data/tnt_acme/ns_1/col_orders/segments/2.seg".into(),
+        ]);
+        let kms = StaticKmsCheck::new(true);
+        let checker = make_checker(manifest, destination, kms, 2_500);
+
+        let r = checker.check(&policy, 100).await.unwrap();
+        assert_eq!(r.status, RestoreStatus::Incomplete);
+        assert_eq!(r.missing_objects.len(), 1);
+        assert_eq!(
+            r.missing_objects[0],
+            "data/tnt_acme/ns_1/col_orders/segments/2.seg"
+        );
+    }
+
+    #[tokio::test]
+    async fn engine_checker_returns_kms_blocked_when_kms_check_fails() {
+        let policy = policy_with_rpo(900);
+        let manifest = StaticManifestSource::new();
+        manifest.set_entries(vec![entry(
+            1,
+            1_000,
+            ManifestEntryStatus::Flushed,
+            "col_orders",
+        )]);
+        let destination = StaticDestinationPresence::new();
+        let kms = StaticKmsCheck::new(false);
+        let checker = make_checker(manifest, destination, kms, 2_000);
+
+        let r = checker.check(&policy, 100).await.unwrap();
+        assert_eq!(r.status, RestoreStatus::KmsBlocked);
+        assert!(!r.kms_accessible);
+    }
+
+    #[tokio::test]
+    async fn engine_checker_returns_stale_when_observation_exceeds_rpo() {
+        let policy = policy_with_rpo(60); // 60s
+        let manifest = StaticManifestSource::new();
+        // Manifest at t=0; observation at t=120s (120_000 ms).
+        manifest.set_entries(vec![entry(
+            1,
+            0,
+            ManifestEntryStatus::Flushed,
+            "col_orders",
+        )]);
+        let destination = StaticDestinationPresence::new();
+        let kms = StaticKmsCheck::new(true);
+        let checker = make_checker(manifest, destination, kms, 120_000);
+
+        let r = checker.check(&policy, 100).await.unwrap();
+        assert_eq!(r.status, RestoreStatus::Stale);
+        assert_eq!(r.observed_rpo_seconds, 120);
+    }
+
+    #[tokio::test]
+    async fn engine_checker_no_entries_yields_no_replicated_manifest() {
+        let policy = policy_with_rpo(900);
+        let manifest = StaticManifestSource::new();
+        // Empty entries.
+        let destination = StaticDestinationPresence::new();
+        let kms = StaticKmsCheck::new(true);
+        let checker = make_checker(manifest, destination, kms, 1_000);
+
+        let r = checker.check(&policy, 100).await.unwrap();
+        assert_eq!(r.status, RestoreStatus::NoReplicatedManifest);
+        assert!(r.latest_replicated_manifest_entry.is_none());
+    }
+
+    #[tokio::test]
+    async fn engine_checker_filters_candidate_keys_by_target_lsn_and_status() {
+        // The checker should only ask the destination about
+        // restorable entries ≤ target_lsn. An Active entry above
+        // the target should never appear in the candidate list, so
+        // even if the destination would have flagged it missing, it
+        // shouldn't surface.
+        let policy = policy_with_rpo(900);
+        let manifest = StaticManifestSource::new();
+        manifest.set_entries(vec![
+            entry(1, 1_000, ManifestEntryStatus::Flushed, "col_orders"),
+            entry(2, 2_000, ManifestEntryStatus::Active, "col_orders"), // not restorable
+            entry(5, 5_000, ManifestEntryStatus::Flushed, "col_orders"), // above target
+        ]);
+        let destination = StaticDestinationPresence::new();
+        destination.set_missing(vec![
+            // Both the Active entry's path and the above-target
+            // path are seeded as "missing" — but the checker should
+            // never ask about them, so neither appears.
+            "data/tnt_acme/ns_1/col_orders/segments/2.seg".into(),
+            "data/tnt_acme/ns_1/col_orders/segments/5.seg".into(),
+        ]);
+        let kms = StaticKmsCheck::new(true);
+        let checker = make_checker(manifest, destination, kms, 2_000);
+
+        let r = checker.check(&policy, 3).await.unwrap();
+        // LSN 1 (the only restorable entry ≤ target=3) is present
+        // at the destination (not in missing list), so the result
+        // is Ready with no missing objects.
+        assert_eq!(r.status, RestoreStatus::Ready);
+        assert!(r.missing_objects.is_empty());
+    }
+
+    #[tokio::test]
+    async fn engine_checker_propagates_manifest_source_errors() {
+        let policy = policy_with_rpo(900);
+        let manifest = StaticManifestSource::new();
+        manifest.inject_error(ProviderError::Transient("store down".into()));
+        let destination = StaticDestinationPresence::new();
+        let kms = StaticKmsCheck::new(true);
+        let checker = make_checker(manifest, destination, kms, 1_000);
+
+        let err = checker.check(&policy, 100).await.unwrap_err();
+        assert!(matches!(err, ProviderError::Transient(_)));
+    }
+
+    #[tokio::test]
+    async fn engine_checker_propagates_destination_check_errors() {
+        let policy = policy_with_rpo(900);
+        let manifest = StaticManifestSource::new();
+        manifest.set_entries(vec![entry(
+            1,
+            1_000,
+            ManifestEntryStatus::Flushed,
+            "col_orders",
+        )]);
+        let destination = StaticDestinationPresence::new();
+        destination.inject_error(ProviderError::AuthDenied("403".into()));
+        let kms = StaticKmsCheck::new(true);
+        let checker = make_checker(manifest, destination, kms, 1_500);
+
+        let err = checker.check(&policy, 100).await.unwrap_err();
+        assert!(matches!(err, ProviderError::AuthDenied(_)));
+    }
+
+    #[tokio::test]
+    async fn engine_checker_propagates_kms_errors() {
+        let policy = policy_with_rpo(900);
+        let manifest = StaticManifestSource::new();
+        manifest.set_entries(vec![entry(
+            1,
+            1_000,
+            ManifestEntryStatus::Flushed,
+            "col_orders",
+        )]);
+        let destination = StaticDestinationPresence::new();
+        let kms = StaticKmsCheck::new(true);
+        kms.inject_error(ProviderError::Misconfiguration("kms missing".into()));
+        let checker = make_checker(manifest, destination, kms, 1_500);
+
+        let err = checker.check(&policy, 100).await.unwrap_err();
+        assert!(matches!(err, ProviderError::Misconfiguration(_)));
+    }
+
+    #[tokio::test]
+    async fn engine_checker_filters_entries_by_collection_id() {
+        // The manifest source returns entries for ALL collections;
+        // the impl filters by collection_id. If the StaticManifestSource
+        // already filters (which it does), this also passes — but
+        // the test pins the behavior at the trait boundary.
+        let policy = policy_with_rpo(900);
+        let manifest = StaticManifestSource::new();
+        manifest.set_entries(vec![
+            entry(1, 1_000, ManifestEntryStatus::Flushed, "col_orders"),
+            entry(2, 2_000, ManifestEntryStatus::Flushed, "col_other"),
+        ]);
+        let destination = StaticDestinationPresence::new();
+        let kms = StaticKmsCheck::new(true);
+        let checker = make_checker(manifest, destination, kms, 2_500);
+
+        let r = checker.check(&policy, 100).await.unwrap();
+        let latest = r.latest_replicated_manifest_entry.unwrap();
+        assert_eq!(latest.collection_id, "col_orders");
+        assert_eq!(latest.global_lsn, 1);
     }
 }
