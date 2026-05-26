@@ -29,7 +29,7 @@ use crate::catalog::CatalogManager;
 use crate::graph::GraphService;
 use crate::observability::ObservabilityService;
 use crate::services::VectorOperationsService;
-use crate::services::{CollectionService, TableWalAppender};
+use crate::services::TableWalAppender;
 use crate::storage::document::DocumentService;
 use proximadb_records::RecordStorage;
 
@@ -63,8 +63,8 @@ pub struct PostgresServer {
     bind_address: SocketAddr,
     /// Session manager
     session_manager: Arc<SessionManager>,
-    /// Collection service reference
-    collection_service: Arc<CollectionService>,
+    /// Collection port reference (Phase 9 / Task #76)
+    collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     /// Vector operations service for search
     vector_ops: Arc<VectorOperationsService>,
     /// Shared xCatalog manager for SQL DDL/DML and metadata introspection
@@ -85,7 +85,7 @@ impl PostgresServer {
     /// Create a new PostgreSQL server
     pub fn new(
         bind_address: SocketAddr,
-        collection_service: Arc<CollectionService>,
+        collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
         vector_ops: Arc<VectorOperationsService>,
         catalog_manager: Arc<CatalogManager>,
         document_service: Option<Arc<DocumentService>>,
@@ -95,7 +95,7 @@ impl PostgresServer {
         Self {
             bind_address,
             session_manager: Arc::new(SessionManager::new()),
-            collection_service,
+            collection_port,
             vector_ops,
             catalog_manager,
             document_service,
@@ -137,7 +137,7 @@ impl PostgresServer {
                 Ok((stream, addr)) => {
                     info!("New PostgreSQL connection from {}", addr);
                     let session_manager = self.session_manager.clone();
-                    let collection_service = self.collection_service.clone();
+                    let collection_port = self.collection_port.clone();
                     let vector_ops = self.vector_ops.clone();
                     let catalog_manager = self.catalog_manager.clone();
                     let document_service = self.document_service.clone();
@@ -150,7 +150,7 @@ impl PostgresServer {
                             stream,
                             addr,
                             session_manager,
-                            collection_service,
+                            collection_port,
                             vector_ops,
                             catalog_manager,
                             document_service,
@@ -185,7 +185,7 @@ impl PostgresServer {
         stream: TcpStream,
         addr: SocketAddr,
         session_manager: Arc<SessionManager>,
-        collection_service: Arc<CollectionService>,
+        collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
         vector_ops: Arc<VectorOperationsService>,
         catalog_manager: Arc<CatalogManager>,
         document_service: Option<Arc<DocumentService>>,
@@ -201,7 +201,7 @@ impl PostgresServer {
         let protocol = PostgresProtocol::new(
             stream,
             session,
-            collection_service,
+            collection_port,
             vector_ops,
             document_service,
             graph_service,

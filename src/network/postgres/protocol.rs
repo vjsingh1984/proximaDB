@@ -29,7 +29,6 @@ use crate::observability::ObservabilityService;
 use crate::query::multimodal_router::{self, DataModel};
 use crate::query::sql_frontend::SqlFrontendParser;
 use crate::query::table_write_plan::WriteIntentOverrides;
-use crate::services::CollectionService;
 use crate::services::VectorOperationsService;
 use crate::services::dml::{
     RelationalSelectPredicateCondition as SelectPredicateCondition,
@@ -48,7 +47,7 @@ pub struct PostgresProtocol {
     /// Session state
     session: Arc<RwLock<Session>>,
     /// Collection service
-    collection_service: Arc<CollectionService>,
+    collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     /// Vector operations service for search
     vector_ops: Arc<VectorOperationsService>,
     /// Query translator
@@ -263,7 +262,7 @@ impl PostgresProtocol {
     pub fn new(
         stream: TcpStream,
         session: Session,
-        collection_service: Arc<CollectionService>,
+        collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
         vector_ops: Arc<VectorOperationsService>,
         document_service: Option<Arc<DocumentService>>,
         graph_service: Option<Arc<GraphService>>,
@@ -272,7 +271,7 @@ impl PostgresProtocol {
         Self {
             stream,
             session: Arc::new(RwLock::new(session)),
-            collection_service,
+            collection_port,
             vector_ops,
             translator: QueryTranslator::new(),
             read_buffer: BytesMut::with_capacity(8192),
@@ -292,7 +291,7 @@ impl PostgresProtocol {
     pub fn with_catalog_services(
         stream: TcpStream,
         session: Session,
-        collection_service: Arc<CollectionService>,
+        collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
         vector_ops: Arc<VectorOperationsService>,
         catalog_manager: Arc<CatalogManager>,
     ) -> Self {
@@ -302,7 +301,7 @@ impl PostgresProtocol {
         Self {
             stream,
             session: Arc::new(RwLock::new(session)),
-            collection_service,
+            collection_port,
             vector_ops,
             translator: QueryTranslator::new(),
             read_buffer: BytesMut::with_capacity(8192),
@@ -327,7 +326,7 @@ impl PostgresProtocol {
     pub fn with_direct_catalog_services(
         stream: TcpStream,
         session: Session,
-        collection_service: Arc<CollectionService>,
+        collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
         vector_ops: Arc<VectorOperationsService>,
         catalog_manager: Arc<CatalogManager>,
         record_storage: Arc<dyn RecordStorage>,
@@ -344,7 +343,7 @@ impl PostgresProtocol {
         Self {
             stream,
             session: Arc::new(RwLock::new(session)),
-            collection_service,
+            collection_port,
             vector_ops,
             translator: QueryTranslator::new(),
             read_buffer: BytesMut::with_capacity(8192),
@@ -1109,37 +1108,26 @@ impl PostgresProtocol {
             ..Default::default()
         };
 
-        match self.collection_service.create_collection(&config).await {
-            Ok(resp) if resp.success => {
+        match self.collection_port.create_collection(config, None).await {
+            Ok(_) => {
                 debug!(
                     "Created relational backing collection '{}' via PostgreSQL",
                     table_name
                 );
                 Ok(())
             }
-            Ok(resp) => {
-                let err_code = resp.error_code.as_deref().unwrap_or("");
-                if err_code.to_ascii_lowercase().contains("already exists") {
+            Err(e) => {
+                let msg = e.to_string();
+                let lower = msg.to_ascii_lowercase();
+                if lower.contains("already exists") || msg.contains("COLLECTION_EXISTS") {
                     Ok(())
                 } else {
                     warn!(
-                        "Backing collection create returned success=false for '{}': {}",
-                        table_name, err_code
-                    );
-                    Err(anyhow::anyhow!(
                         "Failed to create relational backing collection '{}': {}",
-                        table_name,
-                        err_code
-                    ))
+                        table_name, msg
+                    );
+                    Err(e)
                 }
-            }
-            Err(e) if e.to_string().contains("already exists") => Ok(()),
-            Err(e) => {
-                warn!(
-                    "Failed to create relational backing collection '{}': {}",
-                    table_name, e
-                );
-                Err(e)
             }
         }
     }
@@ -1856,7 +1844,7 @@ impl PostgresProtocol {
         _query: &str,
     ) -> Result<()> {
         // Check if collection exists
-        match self.collection_service.collection(collection_name).await {
+        match self.collection_port.get_collection(collection_name, None).await {
             Ok(Some(collection)) => {
                 // Return collection info
                 let fields = vec![
@@ -2574,7 +2562,7 @@ impl PostgresProtocol {
             ..Default::default()
         };
 
-        match self.collection_service.create_collection(&config).await {
+        match self.collection_port.create_collection(config, None).await {
             Ok(_) => {
                 info!("Created vector collection '{}' via PostgreSQL", table_name);
                 self.send_command_complete("CREATE TABLE").await
@@ -2640,8 +2628,8 @@ impl PostgresProtocol {
         };
 
         match self
-            .collection_service
-            .create_collection(&vector_config)
+            .collection_port
+            .create_collection(vector_config, None)
             .await
         {
             Ok(_) => {
@@ -2953,7 +2941,7 @@ impl PostgresProtocol {
 
         debug!("Dropping collection '{}'", table_name);
 
-        match self.collection_service.delete_collection(&table_name).await {
+        match self.collection_port.delete_collection(&table_name, None).await {
             Ok(_) => {
                 info!("Dropped collection '{}' via PostgreSQL", table_name);
                 self.send_command_complete("DROP TABLE").await

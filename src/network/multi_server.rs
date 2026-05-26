@@ -660,7 +660,7 @@ impl MultiServer {
                 use crate::network::postgres::PostgresServer;
                 let mut server = PostgresServer::new(
                     pg_bind_addr,
-                    collection_service,
+                    collection_service as std::sync::Arc<dyn proximadb_runtime::CollectionPort>,
                     vector_ops,
                     catalog_manager,
                     document_service,
@@ -988,7 +988,8 @@ impl MultiServer {
 
                 let mut server = PostgresServer::new(
                     pg_bind_addr,
-                    services.collection_service.clone(),
+                    services.collection_service.clone()
+                        as std::sync::Arc<dyn proximadb_runtime::CollectionPort>,
                     services.vector_operations_service.clone(),
                     services.catalog_manager.clone(),
                     Some(services.document_service.clone()),
