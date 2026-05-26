@@ -50,6 +50,14 @@ pub mod ort_scorer_session;
 /// stays light.
 pub mod ort_tokenized_scorer_session;
 
+#[cfg(feature = "bert-tokenizer")]
+/// R-5b.1.2 — production `TokenizedDocFeatureExtractor` that pulls
+/// (query_text, doc_text) pairs and produces a TokenizedBatch via
+/// `tokenizers::Tokenizer::encode_batch`. Gated behind
+/// `bert-tokenizer` so the default build stays under 60s without
+/// the (heavy) tokenizers + onig deps.
+pub mod bert_pair_tokenizing_extractor;
+
 pub use batched_scorer::{BatchInput, BatchOutput, BatchedScorer, OnnxBatchedScorer};
 pub use descriptor::{DType, ModelDescriptor, ModelFramework, ModelKey, TensorIoSpec};
 pub use doc_feature_extractor::{DocFeatureExtractor, FnDocFeatureExtractor, NoopDocFeatureExtractor};
@@ -73,3 +81,8 @@ pub use tokenized_second_phase_scorer::OnnxTokenizedSecondPhaseScorer;
 pub use ort_scorer_session::OrtScorerSession;
 #[cfg(feature = "real-onnx")]
 pub use ort_tokenized_scorer_session::OrtTokenizedScorerSession;
+
+#[cfg(feature = "bert-tokenizer")]
+pub use bert_pair_tokenizing_extractor::{
+    BertPairTokenizingDocFeatureExtractor, DocTextSource, HashMapDocTextSource,
+};
