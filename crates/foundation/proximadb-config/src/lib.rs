@@ -102,6 +102,16 @@ pub struct ApiConfig {
     /// Maximum connections for unified server.
     #[serde(default = "default_max_connections")]
     pub max_connections: usize,
+
+    /// Optional override for the PostgreSQL wire-protocol port.
+    /// When `None`, the server keeps the
+    /// `PostgresServerConfig` default (5433). Lets test fixtures
+    /// allocate a free port and run pgwire tests in parallel without
+    /// colliding with a real Postgres on 5432 / a sibling test on 5433.
+    /// Production deployments typically leave this `None` and set the
+    /// port via the `[api]` TOML or the standard env-var precedence.
+    #[serde(default)]
+    pub pg_port: Option<u16>,
 }
 
 fn default_unified_port() -> u16 {
@@ -145,6 +155,7 @@ impl Default for ApiConfig {
             enable_arrow_flight: true,
             http2_max_concurrent_streams: 1000,
             max_connections: 10000,
+            pg_port: None,
         }
     }
 }

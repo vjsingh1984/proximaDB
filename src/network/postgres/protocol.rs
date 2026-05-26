@@ -720,13 +720,35 @@ impl PostgresProtocol {
             if let Some(ddl_service) = self.ddl_service.clone() {
                 let parser = SqlFrontendParser::new();
                 match parser.parse_ddl(query) {
-                    Ok(Some(statement)) => match ddl_service.execute(statement).await {
+                    Ok(Some(statement)) => {
+                        // Capture the canonical_embedding_precision
+                        // WITH-option from the DDL statement BEFORE
+                        // moving it into ddl_service.execute, so the
+                        // matching backing-collection write below
+                        // sees the same precision the DDL row gets.
+                        // Without this, REST GET reads the backing
+                        // collection and sees fp32 even though the
+                        // relational schema row got the operator's
+                        // chosen precision.
+                        let backing_precision: Option<String> = match &statement {
+                            crate::services::DdlStatement::CreateTable {
+                                properties,
+                                ..
+                            } => properties
+                                .get("canonical_embedding_precision")
+                                .cloned(),
+                            _ => None,
+                        };
+                        match ddl_service.execute(statement).await {
                         Ok(result) => {
                             if upper.starts_with("CREATE TABLE")
                                 && let Some(table_name) = self.extract_create_table_name(query)
                             {
-                                self.ensure_relational_backing_collection(&table_name)
-                                    .await?;
+                                self.ensure_relational_backing_collection(
+                                    &table_name,
+                                    backing_precision.as_deref(),
+                                )
+                                .await?;
                             }
                             let tag = if upper.starts_with("CREATE TABLE") {
                                 "CREATE TABLE"
@@ -750,7 +772,8 @@ impl PostgresProtocol {
                                 .send_error("ERROR", "42P01", &format!("DDL failed: {}", e))
                                 .await;
                         }
-                    },
+                    }
+                    }
                     Ok(None) => {}
                     Err(e) => {
                         let legacy_create_table = upper.starts_with("CREATE TABLE")
@@ -822,27 +845,74 @@ impl PostgresProtocol {
         (!table_name.is_empty()).then_some(table_name.to_lowercase())
     }
 
-    async fn ensure_relational_backing_collection(&self, table_name: &str) -> Result<()> {
-        use crate::proto::proximadb_v1::{CollectionConfig, StorageEngine};
+    async fn ensure_relational_backing_collection(
+        &self,
+        table_name: &str,
+        canonical_embedding_precision_label: Option<&str>,
+    ) -> Result<()> {
+        use crate::proto::proximadb_v1::{
+            CollectionConfig, EmbeddingPrecision, StorageEngine,
+        };
 
+        // Map the SQL WITH-option label to the proto discriminant via the
+        // same dispatch the REST `apply_proto_enum_workarounds` and the
+        // DDL service's build_catalog_schema use. Unknown labels (or
+        // None) leave the field unset → server defaults to Fp32 (no
+        // behavior change for existing CREATE TABLE statements).
+        let canonical_embedding_precision = canonical_embedding_precision_label
+            .and_then(|raw| {
+                let key = raw.trim().to_ascii_lowercase();
+                let stripped =
+                    key.strip_prefix("embedding_precision_").unwrap_or(&key);
+                match stripped {
+                    "fp32" | "f32" | "float32" => Some(EmbeddingPrecision::Fp32),
+                    "fp16" | "f16" | "half" | "float16" => Some(EmbeddingPrecision::Fp16),
+                    "bf16" | "bfloat16" => Some(EmbeddingPrecision::Bf16),
+                    "int8" | "i8" | "int8_scalar" => Some(EmbeddingPrecision::Int8),
+                    "uint8" | "u8" | "uint8_scalar" => Some(EmbeddingPrecision::Uint8),
+                    _ => None,
+                }
+            })
+            .map(|p| p as i32);
+
+        // Relational tables don't carry vectors; the backing collection is a
+        // catalog-visibility shim. CollectionService rejects dimension=0, so
+        // pin the shim at 1 (matches other zero-vector compatibility paths).
         let config = CollectionConfig {
             name: table_name.to_string(),
-            dimension: 0,
+            dimension: 1,
             storage_engine: Some(StorageEngine::Sst as i32),
             description: Some(format!(
                 "Relational table backing collection: {}",
                 table_name
             )),
+            canonical_embedding_precision,
             ..Default::default()
         };
 
         match self.collection_service.create_collection(&config).await {
-            Ok(_) => {
+            Ok(resp) if resp.success => {
                 debug!(
                     "Created relational backing collection '{}' via PostgreSQL",
                     table_name
                 );
                 Ok(())
+            }
+            Ok(resp) => {
+                let err_code = resp.error_code.as_deref().unwrap_or("");
+                if err_code.to_ascii_lowercase().contains("already exists") {
+                    Ok(())
+                } else {
+                    warn!(
+                        "Backing collection create returned success=false for '{}': {}",
+                        table_name, err_code
+                    );
+                    Err(anyhow::anyhow!(
+                        "Failed to create relational backing collection '{}': {}",
+                        table_name,
+                        err_code
+                    ))
+                }
             }
             Err(e) if e.to_string().contains("already exists") => Ok(()),
             Err(e) => {

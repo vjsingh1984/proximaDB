@@ -423,6 +423,10 @@ proptest = "1.0"
 # tempdir = "0.3"  # REMOVED: Deprecated since 2018, has TOCTOU vulnerability (RUSTSEC-2023-0018). Use tempfile instead.
 env_logger = "0.10"
 walkdir = "2"
+# Real Postgres wire-protocol client for the pgwire transport e2e tests
+# (tests/fp16_pgwire_e2e.rs). Same major as the optional CDC dep but
+# dev-only so it doesn't affect production binary size.
+tokio-postgres = "0.7"
 
 [features]
 default = ["sql_frontend", "graph-first-sks", "unified-facade-routing"]

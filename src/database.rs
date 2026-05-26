@@ -236,9 +236,23 @@ impl ProximaDB {
         }
 
         tracing::debug!("🔧 ProximaDB::new - Building multi-server config...");
-        let multi_config = builder
+        let mut multi_config = builder
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to create server config: {}", e))?;
+        // Honor the optional `[api].pg_port` override so the pgwire
+        // listener binds where the operator (or a test fixture) asked.
+        // The builder hardcodes 5433; this is the seam test fixtures
+        // use to pick a free port without colliding with a real
+        // Postgres or a sibling test.
+        if let Some(pg_port) = config.api.pg_port {
+            multi_config.postgres_config.port = pg_port;
+            multi_config.postgres_config.bind_address =
+                format!("{}:{}", config.server.bind_address, pg_port)
+                    .parse()
+                    .map_err(|e| {
+                        anyhow::anyhow!("Failed to parse postgres bind address: {}", e)
+                    })?;
+        }
         tracing::debug!("✅ ProximaDB::new - Multi-server config created successfully");
 
         // Initialize security coordinator if configured
