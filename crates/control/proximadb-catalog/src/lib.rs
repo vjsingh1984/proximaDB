@@ -29,6 +29,7 @@ pub mod embedding_precision_policy;
 #[cfg(feature = "aws")]
 pub mod glue;
 pub mod hive;
+pub mod iceberg;
 pub mod native;
 pub mod oltp;
 #[cfg(feature = "polaris-catalog")]

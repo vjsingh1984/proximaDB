@@ -236,7 +236,7 @@ impl CatalogManager {
         uri: &str,
         warehouse: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use crate::proto::proximadb_v1::IcebergCatalogConfig;
+        use iceberg::IcebergCatalogConfig;
 
         let config = IcebergCatalogConfig {
             uri: uri.to_string(),
