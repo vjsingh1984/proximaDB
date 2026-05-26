@@ -691,4 +691,149 @@ mod tests {
         // Default behavior: default_deny = false, so unassigned users are allowed
         assert_eq!(response.allowed, true);
     }
+
+    /// ADR-016 / Task #69: lock in the lossy-projection semantics so
+    /// future step-4 consumer migrations can rely on the contract.
+    mod port_user_context_projection {
+        use super::*;
+        use chrono::Utc;
+        use std::collections::{HashMap, HashSet};
+
+        fn ctx(
+            tenant_id: Option<&str>,
+            roles: &[&str],
+            session_id: &str,
+            auth_method: UnifiedAuthMethod,
+            permissions: HashSet<UnifiedPermission>,
+        ) -> UnifiedUserContext {
+            UnifiedUserContext {
+                user_id: "u1".to_string(),
+                tenant_id: tenant_id.map(str::to_string),
+                roles: roles.iter().map(|s| s.to_string()).collect(),
+                effective_permissions: permissions,
+                auth_method,
+                session_id: session_id.to_string(),
+                expires_at: None,
+                created_at: Utc::now(),
+                metadata: HashMap::new(),
+            }
+        }
+
+        #[test]
+        fn tenant_id_none_becomes_empty_string() {
+            let p = project_unified_to_port_context(ctx(
+                None,
+                &[],
+                "",
+                UnifiedAuthMethod::Internal,
+                HashSet::new(),
+            ));
+            assert_eq!(p.tenant_id, "");
+        }
+
+        #[test]
+        fn tenant_id_some_passes_through() {
+            let p = project_unified_to_port_context(ctx(
+                Some("acme"),
+                &[],
+                "",
+                UnifiedAuthMethod::Internal,
+                HashSet::new(),
+            ));
+            assert_eq!(p.tenant_id, "acme");
+        }
+
+        #[test]
+        fn empty_session_id_becomes_none() {
+            let p = project_unified_to_port_context(ctx(
+                None,
+                &[],
+                "",
+                UnifiedAuthMethod::Internal,
+                HashSet::new(),
+            ));
+            assert!(p.session_id.is_none());
+        }
+
+        #[test]
+        fn nonempty_session_id_passes_through() {
+            let p = project_unified_to_port_context(ctx(
+                None,
+                &[],
+                "sess-42",
+                UnifiedAuthMethod::Internal,
+                HashSet::new(),
+            ));
+            assert_eq!(p.session_id.as_deref(), Some("sess-42"));
+        }
+
+        #[test]
+        fn auth_method_stringification() {
+            let cases = [
+                (
+                    UnifiedAuthMethod::SSO {
+                        provider: "okta".into(),
+                    },
+                    "sso",
+                ),
+                (UnifiedAuthMethod::JWT, "jwt"),
+                (UnifiedAuthMethod::ApiKey, "apikey"),
+                (UnifiedAuthMethod::ClientCertificate, "mtls"),
+                (UnifiedAuthMethod::Internal, "internal"),
+            ];
+            for (am, expected) in cases {
+                let p =
+                    project_unified_to_port_context(ctx(None, &[], "", am, HashSet::new()));
+                assert_eq!(p.auth_method, expected);
+            }
+        }
+
+        #[test]
+        fn roles_pass_through() {
+            let p = project_unified_to_port_context(ctx(
+                None,
+                &["admin", "reader"],
+                "",
+                UnifiedAuthMethod::Internal,
+                HashSet::new(),
+            ));
+            assert_eq!(p.roles, vec!["admin", "reader"]);
+        }
+
+        #[test]
+        fn scopes_default_empty() {
+            // No source field on UnifiedUserContext — projection always
+            // emits an empty scopes vec.  Step 4 consumers needing
+            // scopes will require a port-surface extension first.
+            let p = project_unified_to_port_context(ctx(
+                None,
+                &["any"],
+                "any",
+                UnifiedAuthMethod::Internal,
+                HashSet::new(),
+            ));
+            assert!(p.scopes.is_empty());
+        }
+
+        #[test]
+        fn effective_permissions_serializes_to_json() {
+            let mut perms = HashSet::new();
+            perms.insert(UnifiedPermission::CollectionRead);
+            let p = project_unified_to_port_context(ctx(
+                None,
+                &[],
+                "",
+                UnifiedAuthMethod::Internal,
+                perms,
+            ));
+            // Opaque JSON to the runtime layer — assert it round-trips
+            // through serde_json and contains the variant name so
+            // consumers know they can re-deserialize with the
+            // root-crate `UnifiedPermission` schema.
+            let v: serde_json::Value =
+                serde_json::from_str(&p.effective_permissions_json).expect("valid JSON");
+            assert!(v.is_array());
+            assert!(p.effective_permissions_json.contains("CollectionRead"));
+        }
+    }
 }
