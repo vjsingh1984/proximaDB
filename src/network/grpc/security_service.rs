@@ -21,6 +21,7 @@ use tracing::{debug, info};
 
 use crate::proto::proximadb_v1;
 use crate::proto::proximadb_v1::security_service_server::{SecurityService, SecurityServiceServer};
+use crate::security::auth_service::{AuthenticationData, UnifiedAuthService};
 use crate::security::rbac_service::{
     ConsolidatedRBACManager, RBACConfig, UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext,
 };
@@ -29,12 +30,20 @@ use crate::security::rbac_service::{
 pub struct SecurityServiceImpl {
     /// RBAC manager for permission validation
     rbac_manager: Arc<ConsolidatedRBACManager>,
+    /// Optional unified auth service for `SecurityPort::authenticate`
+    /// (ADR-016 / Task #69).  When `None`, the port's `authenticate`
+    /// method returns "not configured"; the existing gRPC RBAC methods
+    /// continue to work without it.
+    auth_service: Option<Arc<UnifiedAuthService>>,
 }
 
 impl SecurityServiceImpl {
     /// Create a new security service
     pub fn new(rbac_manager: Arc<ConsolidatedRBACManager>) -> Self {
-        Self { rbac_manager }
+        Self {
+            rbac_manager,
+            auth_service: None,
+        }
     }
 
     /// Create a new security service with default config
@@ -42,6 +51,15 @@ impl SecurityServiceImpl {
         let config = RBACConfig::default();
         let rbac_manager = Arc::new(ConsolidatedRBACManager::new(config));
         Self::new(rbac_manager)
+    }
+
+    /// Wire in the unified auth service so the port's
+    /// `authenticate(PortAuthCredential)` method can actually
+    /// authenticate.  Without this, `authenticate` returns
+    /// "not configured" — composition is opt-in.
+    pub fn with_auth_service(mut self, auth_service: Arc<UnifiedAuthService>) -> Self {
+        self.auth_service = Some(auth_service);
+        self
     }
 
     /// Convert gRPC auth context to UnifiedUserContext
@@ -566,6 +584,80 @@ impl proximadb_runtime::SecurityPort for SecurityServiceImpl {
             .await
             .map(|r| r.into_inner())
             .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    /// ADR-016 / Task #69: lossy-projection authenticate.
+    ///
+    /// Converts `PortAuthCredential` → root-crate `AuthenticationData`,
+    /// calls the unified auth service, fills in effective permissions
+    /// via the RBAC manager (mirroring `SecurityCoordinator::authenticate_request`),
+    /// then projects `UnifiedUserContext` → `PortUserContext`.
+    ///
+    /// Returns "not configured" when no auth service is wired —
+    /// composition is opt-in via `with_auth_service`.
+    async fn authenticate(
+        &self,
+        credential: proximadb_runtime::PortAuthCredential,
+    ) -> anyhow::Result<proximadb_runtime::PortUserContext> {
+        let auth_service = self.auth_service.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "SecurityPort::authenticate: auth_service not configured on this SecurityServiceImpl (call with_auth_service to enable)"
+            )
+        })?;
+
+        let auth_data = match credential {
+            proximadb_runtime::PortAuthCredential::Jwt(token) => {
+                AuthenticationData::JWTToken(token)
+            }
+            proximadb_runtime::PortAuthCredential::ApiKey(key) => AuthenticationData::ApiKey(key),
+        };
+
+        let auth_result = auth_service.authenticate(auth_data).await?;
+        if !auth_result.success {
+            return Err(anyhow::anyhow!(
+                "Authentication failed: {}",
+                auth_result.error_message.as_deref().unwrap_or("unknown")
+            ));
+        }
+
+        let mut user_context = auth_result.user_context;
+        let effective_permissions = self
+            .rbac_manager
+            .get_effective_permissions(&user_context)
+            .await?;
+        user_context.effective_permissions = effective_permissions;
+
+        Ok(project_unified_to_port_context(user_context))
+    }
+}
+
+/// Lossy projection of root-crate `UnifiedUserContext` →
+/// port-level `PortUserContext` (ADR-016).
+fn project_unified_to_port_context(
+    ctx: UnifiedUserContext,
+) -> proximadb_runtime::PortUserContext {
+    let effective_permissions_json = serde_json::to_string(&ctx.effective_permissions)
+        .unwrap_or_else(|_| "[]".to_string());
+    let auth_method = match ctx.auth_method {
+        UnifiedAuthMethod::SSO { .. } => "sso".to_string(),
+        UnifiedAuthMethod::JWT => "jwt".to_string(),
+        UnifiedAuthMethod::ApiKey => "apikey".to_string(),
+        UnifiedAuthMethod::ClientCertificate => "mtls".to_string(),
+        UnifiedAuthMethod::Internal => "internal".to_string(),
+    };
+    let session_id = if ctx.session_id.is_empty() {
+        None
+    } else {
+        Some(ctx.session_id)
+    };
+    proximadb_runtime::PortUserContext {
+        user_id: ctx.user_id,
+        tenant_id: ctx.tenant_id.unwrap_or_default(),
+        roles: ctx.roles,
+        scopes: Vec::new(),
+        effective_permissions_json,
+        auth_method,
+        session_id,
     }
 }
 
