@@ -1391,6 +1391,240 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// Public testing surface
+// ---------------------------------------------------------------------------
+
+/// Reference test doubles for the DR engine. Operators wiring real
+/// stores and adapters should treat these as the canonical way to
+/// drive the contract in integration tests — keeps assertions about
+/// the reconciler's behaviour identical across in-process tests and
+/// the operator's CI.
+///
+/// The catalog crate ships these in a `pub` module rather than
+/// behind a `testing` feature flag because they are zero-cost when
+/// unused (no compile-time impact on production binaries — Rust
+/// tree-shakes unreferenced types).
+pub mod testing {
+    use super::{
+        CollectionDrEvent, CollectionDrPolicy, DrApiError, DrHealth, DrMetrics,
+        DrPolicyStore, DrState, LeaseAcquireResult, PolicyLabels,
+        ProviderReplicationBinding, ShardPauseReason, TickOutcome,
+    };
+    use async_trait::async_trait;
+    use parking_lot::Mutex;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// In-memory `DrPolicyStore` for unit and integration tests.
+    /// Records every mutation so assertions can pin the order and
+    /// contents. Atomicity around the lease compare-and-swap is via
+    /// the per-field `parking_lot::Mutex` guards.
+    #[derive(Default)]
+    pub struct MockDrPolicyStore {
+        events: Mutex<Vec<CollectionDrEvent>>,
+        health_updates: Mutex<Vec<(String, DrHealth)>>,
+        state_transitions: Mutex<Vec<(String, DrState, u64)>>,
+        bindings: Mutex<Vec<(String, ProviderReplicationBinding, u64)>>,
+        next_version: AtomicU64,
+        inject_error: Mutex<Option<DrApiError>>,
+        pending: Mutex<Vec<CollectionDrPolicy>>,
+        leases: Mutex<std::collections::HashMap<String, (String, i64)>>,
+    }
+
+    impl MockDrPolicyStore {
+        /// Build a store that allocates new policy versions starting
+        /// from `starting_version`.
+        pub fn new(starting_version: u64) -> Arc<Self> {
+            let s = Self::default();
+            s.next_version.store(starting_version, Ordering::Relaxed);
+            Arc::new(s)
+        }
+
+        /// Snapshot of every event the reconciler recorded.
+        pub fn events_snapshot(&self) -> Vec<CollectionDrEvent> {
+            self.events.lock().clone()
+        }
+        /// Snapshot of every `update_health` call.
+        pub fn health_snapshot(&self) -> Vec<(String, DrHealth)> {
+            self.health_updates.lock().clone()
+        }
+        /// Snapshot of every state transition.
+        pub fn transitions_snapshot(&self) -> Vec<(String, DrState, u64)> {
+            self.state_transitions.lock().clone()
+        }
+        /// Snapshot of every `set_provider_binding` call.
+        pub fn bindings_snapshot(
+            &self,
+        ) -> Vec<(String, ProviderReplicationBinding, u64)> {
+            self.bindings.lock().clone()
+        }
+
+        /// Replace the pending list returned by the next
+        /// `pending_reconcile` call.
+        pub fn seed_pending(&self, policies: Vec<CollectionDrPolicy>) {
+            *self.pending.lock() = policies;
+        }
+
+        /// Inject a one-shot error returned by the next store call
+        /// (whichever method runs first consumes it). Useful for
+        /// driving the reconciler's failure paths.
+        pub fn inject_error(&self, err: DrApiError) {
+            *self.inject_error.lock() = Some(err);
+        }
+    }
+
+    #[async_trait]
+    impl DrPolicyStore for MockDrPolicyStore {
+        async fn pending_reconcile(
+            &self,
+        ) -> Result<Vec<CollectionDrPolicy>, DrApiError> {
+            if let Some(e) = self.inject_error.lock().take() {
+                return Err(e);
+            }
+            Ok(self.pending.lock().clone())
+        }
+
+        async fn acquire_lease(
+            &self,
+            policy_id: &str,
+            holder_id: &str,
+            ttl_ns: i64,
+            now_ns: i64,
+        ) -> Result<LeaseAcquireResult, DrApiError> {
+            if let Some(e) = self.inject_error.lock().take() {
+                return Err(e);
+            }
+            let mut leases = self.leases.lock();
+            let free_or_mine = match leases.get(policy_id) {
+                None => true,
+                Some((existing_holder, until)) => {
+                    existing_holder == holder_id || *until <= now_ns
+                }
+            };
+            if free_or_mine {
+                leases.insert(
+                    policy_id.to_string(),
+                    (holder_id.to_string(), now_ns.saturating_add(ttl_ns)),
+                );
+                Ok(LeaseAcquireResult::Acquired {
+                    policy_version: self.next_version.load(Ordering::Relaxed),
+                })
+            } else {
+                let (current_holder, until_ns) = leases.get(policy_id).unwrap().clone();
+                Ok(LeaseAcquireResult::HeldElsewhere {
+                    current_holder,
+                    until_ns,
+                })
+            }
+        }
+
+        async fn release_lease(
+            &self,
+            policy_id: &str,
+            holder_id: &str,
+        ) -> Result<(), DrApiError> {
+            if let Some(e) = self.inject_error.lock().take() {
+                return Err(e);
+            }
+            let mut leases = self.leases.lock();
+            if let Some((existing, _)) = leases.get(policy_id) {
+                if existing == holder_id {
+                    leases.remove(policy_id);
+                }
+            }
+            Ok(())
+        }
+
+        async fn transition_state(
+            &self,
+            policy_id: &str,
+            next: DrState,
+            expected_version: u64,
+        ) -> Result<u64, DrApiError> {
+            if let Some(e) = self.inject_error.lock().take() {
+                return Err(e);
+            }
+            self.state_transitions
+                .lock()
+                .push((policy_id.into(), next, expected_version));
+            Ok(self.next_version.fetch_add(1, Ordering::Relaxed) + 1)
+        }
+
+        async fn set_provider_binding(
+            &self,
+            policy_id: &str,
+            binding: ProviderReplicationBinding,
+            expected_version: u64,
+        ) -> Result<u64, DrApiError> {
+            if let Some(e) = self.inject_error.lock().take() {
+                return Err(e);
+            }
+            self.bindings
+                .lock()
+                .push((policy_id.into(), binding, expected_version));
+            Ok(self.next_version.fetch_add(1, Ordering::Relaxed) + 1)
+        }
+
+        async fn update_health(
+            &self,
+            policy_id: &str,
+            health: DrHealth,
+        ) -> Result<(), DrApiError> {
+            if let Some(e) = self.inject_error.lock().take() {
+                return Err(e);
+            }
+            self.health_updates.lock().push((policy_id.into(), health));
+            Ok(())
+        }
+
+        async fn record_event(
+            &self,
+            event: CollectionDrEvent,
+        ) -> Result<(), DrApiError> {
+            if let Some(e) = self.inject_error.lock().take() {
+                return Err(e);
+            }
+            self.events.lock().push(event);
+            Ok(())
+        }
+    }
+
+    /// Recording `DrMetrics` for tests. Captures every
+    /// `observe_tick` and `observe_shard_paused` call so tests can
+    /// assert that the reconciler hit the metric layer correctly.
+    #[derive(Default)]
+    pub struct RecordingDrMetrics {
+        ticks: Mutex<Vec<(PolicyLabels, TickOutcome)>>,
+        pauses: Mutex<Vec<ShardPauseReason>>,
+    }
+
+    impl RecordingDrMetrics {
+        /// Build an empty recorder, returned as `Arc` so it can be
+        /// shared between the shard and the test that asserts.
+        pub fn new() -> Arc<Self> {
+            Arc::new(Self::default())
+        }
+        /// Snapshot of every tick observation.
+        pub fn ticks(&self) -> Vec<(PolicyLabels, TickOutcome)> {
+            self.ticks.lock().clone()
+        }
+        /// Snapshot of every pause observation.
+        pub fn pauses(&self) -> Vec<ShardPauseReason> {
+            self.pauses.lock().clone()
+        }
+    }
+
+    impl DrMetrics for RecordingDrMetrics {
+        fn observe_tick(&self, labels: &PolicyLabels, outcome: &TickOutcome) {
+            self.ticks.lock().push((labels.clone(), outcome.clone()));
+        }
+        fn observe_shard_paused(&self, reason: ShardPauseReason) {
+            self.pauses.lock().push(reason);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Async runner (P3c5) — interval-driven loop + shutdown
 // ---------------------------------------------------------------------------
 
@@ -1909,167 +2143,9 @@ mod tests {
     // --- Driver (P3b) -------------------------------------------------
 
     use crate::collection_dr_policy::MockDrProviderAdapter;
+    use crate::dr_reconciler::testing::MockDrPolicyStore;
     use parking_lot::Mutex;
     use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
-
-    /// In-memory store for driver tests. Records every store mutation
-    /// so assertions can pin the order and contents.
-    #[derive(Default)]
-    struct MockDrPolicyStore {
-        events: Mutex<Vec<CollectionDrEvent>>,
-        health_updates: Mutex<Vec<(String, DrHealth)>>,
-        state_transitions: Mutex<Vec<(String, DrState, u64)>>,
-        bindings: Mutex<Vec<(String, ProviderReplicationBinding, u64)>>,
-        next_version: AtomicU64,
-        inject_error: Mutex<Option<DrApiError>>,
-        /// Policies the mock returns from `pending_reconcile`. Tests
-        /// seed this via `seed_pending`.
-        pending: Mutex<Vec<CollectionDrPolicy>>,
-        /// policy_id -> (holder_id, until_ns). Atomicity is via the
-        /// single Mutex guard around the read-modify-write inside
-        /// `acquire_lease`.
-        leases: Mutex<std::collections::HashMap<String, (String, i64)>>,
-    }
-
-    impl MockDrPolicyStore {
-        fn new(starting_version: u64) -> Arc<Self> {
-            let s = Self::default();
-            s.next_version.store(starting_version, Ordering::Relaxed);
-            Arc::new(s)
-        }
-
-        fn events_snapshot(&self) -> Vec<CollectionDrEvent> {
-            self.events.lock().clone()
-        }
-        fn health_snapshot(&self) -> Vec<(String, DrHealth)> {
-            self.health_updates.lock().clone()
-        }
-        fn transitions_snapshot(&self) -> Vec<(String, DrState, u64)> {
-            self.state_transitions.lock().clone()
-        }
-        fn bindings_snapshot(&self) -> Vec<(String, ProviderReplicationBinding, u64)> {
-            self.bindings.lock().clone()
-        }
-
-        fn seed_pending(&self, policies: Vec<CollectionDrPolicy>) {
-            *self.pending.lock() = policies;
-        }
-    }
-
-    #[async_trait]
-    impl DrPolicyStore for MockDrPolicyStore {
-        async fn pending_reconcile(
-            &self,
-        ) -> Result<Vec<CollectionDrPolicy>, DrApiError> {
-            if let Some(e) = self.inject_error.lock().take() {
-                return Err(e);
-            }
-            Ok(self.pending.lock().clone())
-        }
-
-        async fn acquire_lease(
-            &self,
-            policy_id: &str,
-            holder_id: &str,
-            ttl_ns: i64,
-            now_ns: i64,
-        ) -> Result<LeaseAcquireResult, DrApiError> {
-            if let Some(e) = self.inject_error.lock().take() {
-                return Err(e);
-            }
-            let mut leases = self.leases.lock();
-            let free_or_mine = match leases.get(policy_id) {
-                None => true,
-                Some((existing_holder, until)) => {
-                    existing_holder == holder_id || *until <= now_ns
-                }
-            };
-            if free_or_mine {
-                leases.insert(
-                    policy_id.to_string(),
-                    (holder_id.to_string(), now_ns.saturating_add(ttl_ns)),
-                );
-                Ok(LeaseAcquireResult::Acquired {
-                    policy_version: self.next_version.load(Ordering::Relaxed),
-                })
-            } else {
-                let (current_holder, until_ns) = leases.get(policy_id).unwrap().clone();
-                Ok(LeaseAcquireResult::HeldElsewhere {
-                    current_holder,
-                    until_ns,
-                })
-            }
-        }
-
-        async fn release_lease(
-            &self,
-            policy_id: &str,
-            holder_id: &str,
-        ) -> Result<(), DrApiError> {
-            if let Some(e) = self.inject_error.lock().take() {
-                return Err(e);
-            }
-            let mut leases = self.leases.lock();
-            if let Some((existing, _)) = leases.get(policy_id) {
-                if existing == holder_id {
-                    leases.remove(policy_id);
-                }
-            }
-            Ok(())
-        }
-
-        async fn transition_state(
-            &self,
-            policy_id: &str,
-            next: DrState,
-            expected_version: u64,
-        ) -> Result<u64, DrApiError> {
-            if let Some(e) = self.inject_error.lock().take() {
-                return Err(e);
-            }
-            self.state_transitions
-                .lock()
-                .push((policy_id.into(), next, expected_version));
-            Ok(self.next_version.fetch_add(1, Ordering::Relaxed) + 1)
-        }
-
-        async fn set_provider_binding(
-            &self,
-            policy_id: &str,
-            binding: ProviderReplicationBinding,
-            expected_version: u64,
-        ) -> Result<u64, DrApiError> {
-            if let Some(e) = self.inject_error.lock().take() {
-                return Err(e);
-            }
-            self.bindings
-                .lock()
-                .push((policy_id.into(), binding, expected_version));
-            Ok(self.next_version.fetch_add(1, Ordering::Relaxed) + 1)
-        }
-
-        async fn update_health(
-            &self,
-            policy_id: &str,
-            health: DrHealth,
-        ) -> Result<(), DrApiError> {
-            if let Some(e) = self.inject_error.lock().take() {
-                return Err(e);
-            }
-            self.health_updates
-                .lock()
-                .push((policy_id.into(), health));
-            Ok(())
-        }
-
-        async fn record_event(&self, event: CollectionDrEvent) -> Result<(), DrApiError> {
-            if let Some(e) = self.inject_error.lock().take() {
-                return Err(e);
-            }
-            self.events.lock().push(event);
-            Ok(())
-        }
-    }
 
     fn make_driver(
         store: Arc<MockDrPolicyStore>,
@@ -2980,33 +3056,9 @@ mod tests {
     }
 
     // --- DrMetrics sink (P3c4) ----------------------------------------
-
-    #[derive(Default)]
-    struct RecordingDrMetrics {
-        ticks: Mutex<Vec<(PolicyLabels, TickOutcome)>>,
-        pauses: Mutex<Vec<ShardPauseReason>>,
-    }
-
-    impl RecordingDrMetrics {
-        fn new() -> Arc<Self> {
-            Arc::new(Self::default())
-        }
-        fn ticks(&self) -> Vec<(PolicyLabels, TickOutcome)> {
-            self.ticks.lock().clone()
-        }
-        fn pauses(&self) -> Vec<ShardPauseReason> {
-            self.pauses.lock().clone()
-        }
-    }
-
-    impl DrMetrics for RecordingDrMetrics {
-        fn observe_tick(&self, labels: &PolicyLabels, outcome: &TickOutcome) {
-            self.ticks.lock().push((labels.clone(), outcome.clone()));
-        }
-        fn observe_shard_paused(&self, reason: ShardPauseReason) {
-            self.pauses.lock().push(reason);
-        }
-    }
+    // `RecordingDrMetrics` is now part of the public testing surface;
+    // tests import it from there rather than redefining it locally.
+    use crate::dr_reconciler::testing::RecordingDrMetrics;
 
     #[test]
     fn policy_labels_snapshot_carries_label_set() {
@@ -3407,9 +3459,7 @@ mod tests {
         // first call; subsequent calls succeed. The runner must log
         // and continue, not exit on the failure.
         let (store, shard) = make_runner_shard();
-        store.inject_error.lock().replace(DrApiError::StoreUnavailable(
-            "test injected".into(),
-        ));
+        store.inject_error(DrApiError::StoreUnavailable("test injected".into()));
         let cfg = RunnerConfig {
             poll_interval: std::time::Duration::from_millis(50),
         };
