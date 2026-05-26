@@ -11,9 +11,12 @@ pub use crate::core::CompressionAlgorithm;
 
 use serde::{Deserialize, Serialize};
 
+/// Backwards-compat alias for [`WalEncryptionConfig`].
+pub type EncryptionConfig = WalEncryptionConfig;
+
 /// Encryption configuration for WAL (TD-016)
 #[derive(Debug, Clone)]
-pub struct EncryptionConfig {
+pub struct WalEncryptionConfig {
     /// Enable encryption for WAL segments
     pub enabled: bool,
 
@@ -27,7 +30,7 @@ pub struct EncryptionConfig {
     pub chunk_size: usize,
 }
 
-impl Default for EncryptionConfig {
+impl Default for WalEncryptionConfig {
     fn default() -> Self {
         Self {
             enabled: false, // Disabled by default for backward compatibility
@@ -306,7 +309,7 @@ pub struct WALConfig {
     pub compression: CompressionConfig,
 
     /// Encryption settings (TD-016)
-    pub encryption: EncryptionConfig,
+    pub encryption: WalEncryptionConfig,
 
     /// Performance tuning
     pub performance: WalPerformanceConfig,
@@ -346,7 +349,7 @@ impl Default for WALConfig {
             memtable: MemTableConfig::default(), // ART for metadata filtering efficiency
             multi_disk: MultiDiskConfig::default(), // LoadBalanced for bulk insert optimization
             compression: CompressionConfig::default(), // Snappy for balanced performance
-            encryption: EncryptionConfig::default(), // Encryption disabled by default (TD-016)
+            encryption: WalEncryptionConfig::default(), // Encryption disabled by default (TD-016)
             performance: WalPerformanceConfig::default(), // Optimized for large vectors and bulk processing
             enable_mvcc: true, // Enable for consistency and document versioning
             enable_ttl: true,  // Enable for data lifecycle management
@@ -896,7 +899,7 @@ mod tests {
                 compress_disk: true,
                 min_compress_size: 2048,
             },
-            encryption: EncryptionConfig::default(),
+            encryption: WalEncryptionConfig::default(),
             performance: WalPerformanceConfig {
                 memory_flush_size_bytes: 128 * 1024 * 1024,
                 disk_segment_size: 512 * 1024 * 1024,
@@ -971,7 +974,7 @@ mod tests {
                 enable_concurrency: true,
             },
             compression: CompressionConfig::default(),
-            encryption: EncryptionConfig::default(),
+            encryption: WalEncryptionConfig::default(),
             performance: WalPerformanceConfig::default(),
             enable_mvcc: true,
             enable_ttl: true,

@@ -13,9 +13,12 @@ pub struct MemoryStats {
     pub usage_percent: f64,
 }
 
-/// Disk statistics  
+/// Backwards-compat alias for [`SystemDiskStats`].
+pub type DiskStats = SystemDiskStats;
+
+/// Disk statistics
 #[derive(Debug, Clone)]
-pub struct DiskStats {
+pub struct SystemDiskStats {
     pub used_bytes: u64,
     pub total_bytes: u64,
     pub usage_percent: f64,
@@ -241,7 +244,7 @@ impl SystemMetricsCollector {
     }
 
     /// Get disk statistics
-    async fn get_disk_stats(&self) -> Result<DiskStats> {
+    async fn get_disk_stats(&self) -> Result<SystemDiskStats> {
         #[cfg(target_os = "linux")]
         {
             use std::process::Command;
@@ -266,7 +269,7 @@ impl SystemMetricsCollector {
                         0.0
                     };
 
-                    return Ok(DiskStats {
+                    return Ok(SystemDiskStats {
                         used_bytes,
                         total_bytes,
                         usage_percent,
@@ -275,7 +278,7 @@ impl SystemMetricsCollector {
             }
 
             // Fallback if parsing fails
-            Ok(DiskStats {
+            Ok(SystemDiskStats {
                 used_bytes: 10 * 1024 * 1024 * 1024,   // 10GB
                 total_bytes: 100 * 1024 * 1024 * 1024, // 100GB
                 usage_percent: 10.0,
@@ -307,7 +310,7 @@ impl SystemMetricsCollector {
                         0.0
                     };
 
-                    return Ok(DiskStats {
+                    return Ok(SystemDiskStats {
                         used_bytes,
                         total_bytes,
                         usage_percent,
@@ -316,7 +319,7 @@ impl SystemMetricsCollector {
             }
 
             // Fallback
-            Ok(DiskStats {
+            Ok(SystemDiskStats {
                 used_bytes: 25 * 1024 * 1024 * 1024,   // 25GB
                 total_bytes: 250 * 1024 * 1024 * 1024, // 250GB
                 usage_percent: 10.0,
@@ -326,7 +329,7 @@ impl SystemMetricsCollector {
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             // Default values for other platforms
-            Ok(DiskStats {
+            Ok(SystemDiskStats {
                 used_bytes: 10 * 1024 * 1024 * 1024,   // 10GB
                 total_bytes: 100 * 1024 * 1024 * 1024, // 100GB
                 usage_percent: 10.0,

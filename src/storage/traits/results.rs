@@ -15,8 +15,11 @@ use crate::storage::persistence::write_ahead_log::BatchId;
 /// This allows distinguishing between:
 /// - Uninitialized: u64::MAX (default)
 /// - Successful operation with zero results: 0
+/// Backwards-compat alias for [`StorageFlushResult`].
+pub type FlushResult = StorageFlushResult;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FlushResult {
+pub struct StorageFlushResult {
     /// Operation completed successfully
     pub success: bool,
 
@@ -54,7 +57,7 @@ pub struct FlushResult {
     pub flushed_batch_ids: Vec<BatchId>,
 }
 
-impl Default for FlushResult {
+impl Default for StorageFlushResult {
     fn default() -> Self {
         Self {
             success: false,
@@ -225,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_flush_result_default() {
-        let result = FlushResult::default();
+        let result = StorageFlushResult::default();
         assert!(!result.success);
         assert!(result.collections_affected.is_empty());
     }

@@ -398,9 +398,12 @@ impl Default for DefaultParquetWriterFactory {
     }
 }
 
+/// Backwards-compat alias for [`ViperPipelineFlushResult`].
+pub type FlushResult = ViperPipelineFlushResult;
+
 /// Flush result information
 #[derive(Debug, Clone)]
-pub struct FlushResult {
+pub struct ViperPipelineFlushResult {
     pub entries_flushed: u64,
     pub bytes_written: u64,
     pub segments_created: u64,
@@ -640,7 +643,7 @@ impl ViperPipeline {
         collection_id: &str,
         records: Vec<VectorRecord>,
         output_path: &str,
-    ) -> Result<FlushResult> {
+    ) -> Result<ViperPipelineFlushResult> {
         let start_time = Instant::now();
 
         info!(
@@ -701,7 +704,7 @@ impl ViperPipeline {
 
     async fn update_stats(
         &self,
-        flush_result: &FlushResult,
+        flush_result: &ViperPipelineFlushResult,
         processing_time_ms: u64,
     ) -> Result<()> {
         let mut stats = self.stats.write().await;
@@ -2068,7 +2071,7 @@ impl ParquetFlusher {
             Vec<crate::compute::quantization::quantization_engine::QuantizedVector>,
         >,
         output_path: &str,
-    ) -> Result<FlushResult> {
+    ) -> Result<ViperPipelineFlushResult> {
         // Augment batch with quantized vector columns if available
         let augmented_batch = if let Some(ref qvecs) = quantized_vectors {
             self.augment_batch_with_quantized_vectors(batch, qvecs)?
@@ -2080,7 +2083,7 @@ impl ParquetFlusher {
     }
 
     /// Flush record batch to parquet file
-    pub async fn flush_batch(&self, batch: RecordBatch, output_path: &str) -> Result<FlushResult> {
+    pub async fn flush_batch(&self, batch: RecordBatch, output_path: &str) -> Result<ViperPipelineFlushResult> {
         let start_time = Instant::now();
         let original_size = batch.get_array_memory_size();
 
@@ -2115,7 +2118,7 @@ impl ParquetFlusher {
         self.update_flushing_stats(bytes_written, flush_duration, compression_ratio)
             .await;
 
-        Ok(FlushResult {
+        Ok(ViperPipelineFlushResult {
             entries_flushed: batch.num_rows() as u64,
             bytes_written,
             segments_created: 1,

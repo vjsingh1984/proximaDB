@@ -321,15 +321,18 @@ pub struct RowBasedConfig {
     pub quantization: crate::compute::quantization::storage_engine::StorageQuantizationConfig,
 
     /// Index configuration
-    pub indexing: IndexConfiguration,
+    pub indexing: BlockIndexConfiguration,
 
     /// Performance tuning
     pub performance: PerformanceConfiguration,
 }
 
+/// Backwards-compat alias for [`BlockIndexConfiguration`].
+pub type IndexConfiguration = BlockIndexConfiguration;
+
 /// Index configuration shared between SST and SWIFT
 #[derive(Debug, Clone)]
-pub struct IndexConfiguration {
+pub struct BlockIndexConfiguration {
     /// Bloom filter settings
     pub bloom_filter_enabled: bool,
     pub bloom_filter_false_positive_rate: f64,
@@ -498,13 +501,13 @@ impl Default for RowBasedConfig {
             compression: RowBasedCompressionConfig::default(),
             quantization:
                 crate::compute::quantization::storage_engine::StorageQuantizationConfig::default(),
-            indexing: IndexConfiguration::default(),
+            indexing: BlockIndexConfiguration::default(),
             performance: PerformanceConfiguration::default(),
         }
     }
 }
 
-impl Default for IndexConfiguration {
+impl Default for BlockIndexConfiguration {
     fn default() -> Self {
         Self {
             bloom_filter_enabled: true,

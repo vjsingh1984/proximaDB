@@ -196,7 +196,7 @@ impl UnifiedOperationCoordinator {
         &self,
         collection_id: &str,
         engine_type: StorageEngineType,
-    ) -> Result<FlushResult> {
+    ) -> Result<OpsFlushResult> {
         info!(
             "Scheduling flush for collection: {} (engine: {:?})",
             collection_id, engine_type
@@ -542,9 +542,12 @@ impl UnifiedOperationCoordinator {
     }
 }
 
+/// Backwards-compat alias for [`OpsFlushResult`].
+pub type FlushResult = OpsFlushResult;
+
 /// Flush operation result
 #[derive(Debug, Clone)]
-pub struct FlushResult {
+pub struct OpsFlushResult {
     pub collection_id: String,
     pub files_created: Vec<String>,
     pub bytes_written: u64,

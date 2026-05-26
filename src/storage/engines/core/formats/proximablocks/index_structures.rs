@@ -33,7 +33,7 @@ pub struct RowBasedIdIndex {
 
     /// Configuration
     #[allow(dead_code)]
-    config: IndexConfiguration,
+    config: IndexStructuresConfiguration,
 }
 
 /// Index type selection
@@ -166,9 +166,12 @@ pub struct LevelStatistics {
     pub bloom_false_positive_rate: f64,
 }
 
+/// Backwards-compat alias for [`IndexStructuresConfiguration`].
+pub type IndexConfiguration = IndexStructuresConfiguration;
+
 /// Index configuration
 #[derive(Debug, Clone)]
-pub struct IndexConfiguration {
+pub struct IndexStructuresConfiguration {
     /// Basic settings
     pub index_type: Index,
     pub compression: bool,
@@ -296,7 +299,7 @@ pub enum AccessType {
 
 impl RowBasedIdIndex {
     /// Create a new ID index with specified type
-    pub fn new(index_type: Index, config: IndexConfiguration) -> Self {
+    pub fn new(index_type: Index, config: IndexStructuresConfiguration) -> Self {
         // Create bloom filter builders
         let mut bloom_filter_builders = Vec::new();
         if config.bloom_config.enabled {
@@ -653,7 +656,7 @@ impl Default for LevelStatistics {
     }
 }
 
-impl Default for IndexConfiguration {
+impl Default for IndexStructuresConfiguration {
     fn default() -> Self {
         Self {
             index_type: Index::Hybrid,
@@ -689,7 +692,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_btree_index_operations() {
-        let config = IndexConfiguration::default();
+        let config = IndexStructuresConfiguration::default();
         let mut index = RowBasedIdIndex::new(Index::BTree, config);
 
         let location = BlockLocation {
@@ -719,7 +722,7 @@ mod tests {
             enable_sparse_regions: true,
         };
 
-        let config = IndexConfiguration {
+        let config = IndexStructuresConfiguration {
             index_type: Index::Dense(dense_config),
             ..Default::default()
         };
@@ -753,7 +756,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hybrid_index_operations() {
-        let config = IndexConfiguration::default();
+        let config = IndexStructuresConfiguration::default();
         let mut index = RowBasedIdIndex::new(Index::Hybrid, config);
 
         let location = BlockLocation {

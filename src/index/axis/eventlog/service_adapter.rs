@@ -19,9 +19,12 @@ use super::{
     service_interface::*,
 };
 
+/// Backwards-compat alias for [`AxisEventLogStats`].
+pub type EventLogStats = AxisEventLogStats;
+
 /// Event log statistics
 #[derive(Debug, Clone)]
-pub struct EventLogStats {
+pub struct AxisEventLogStats {
     /// Total number of events processed since service start.
     pub total_events: u64,
     /// Number of events awaiting processing.

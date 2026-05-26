@@ -37,9 +37,12 @@ pub enum EncryptionAlgorithm {
     Aes256Gcm,
 }
 
+/// Backwards-compat alias for [`StorageEncryptionConfig`].
+pub type EncryptionConfig = StorageEncryptionConfig;
+
 /// Encryption configuration
 #[derive(Debug, Clone)]
-pub struct EncryptionConfig {
+pub struct StorageEncryptionConfig {
     /// Whether encryption is enabled
     pub enabled: bool,
     /// Encryption algorithm
@@ -52,7 +55,7 @@ pub struct EncryptionConfig {
     pub chunk_size: usize,
 }
 
-impl Default for EncryptionConfig {
+impl Default for StorageEncryptionConfig {
     fn default() -> Self {
         Self {
             enabled: true,

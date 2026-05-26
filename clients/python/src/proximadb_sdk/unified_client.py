@@ -82,6 +82,44 @@ logger = logging.getLogger(__name__)
 # Protocol enum imported from config module
 
 
+# Substrings that mark an error as a transport/connection failure rather
+# than a server-side rejection. The gRPC sync layer prefixes connection
+# errors with "connection failed"; tonic/grpcio surface "unavailable" and
+# "connect" in their messages. REST raises requests.exceptions.* whose
+# class names match. Keep this list narrow — anything not on it should
+# propagate to the caller.
+_CONNECTION_ERROR_MARKERS = (
+    "connection failed",
+    "unavailable",
+    "connect failed",
+    "connection refused",
+    "failed to connect",
+    "name or service not known",
+    "errors resolving",
+)
+_CONNECTION_ERROR_CLASSES = (
+    "ConnectionError",
+    "ConnectTimeout",
+    "ConnectionRefusedError",
+    "MaxRetryError",
+)
+
+
+def _is_connection_error(error: Exception) -> bool:
+    """True when `error` denotes server-unreachable, not server-rejected.
+
+    Used to gate `_activate_local_fallback`: legitimate transport
+    failures fall back to in-memory mode; server-returned errors
+    (INVALID_ARGUMENT, ALREADY_EXISTS, INTERNAL, etc.) must propagate so
+    the user sees real failures instead of fake-success Collections.
+    """
+    cls_name = type(error).__name__
+    if cls_name in _CONNECTION_ERROR_CLASSES:
+        return True
+    msg = str(error).lower()
+    return any(marker in msg for marker in _CONNECTION_ERROR_MARKERS)
+
+
 class ProximaDBClient:
     """
     Unified ProximaDB Python Client
@@ -1530,15 +1568,22 @@ class ProximaDBClient:
                     self._adapter.create_collection(name=name, config=config, **kwargs)
                 )
             except Exception as e:
-                self._activate_local_fallback(e)
-                logger.debug(
-                    "Create collection failed, using local fallback for %s: %s",
-                    name,
-                    e,
-                )
-                return self._store_local_collection(
-                    self._build_local_collection(name, config)
-                )
+                # Only fall back to in-memory mode on connection failures —
+                # the legitimate "server unreachable, work offline" case.
+                # Server-returned errors (INVALID_ARGUMENT, ALREADY_EXISTS,
+                # INTERNAL, etc.) MUST propagate; silently faking success
+                # masks real failures and hides bugs from the user.
+                if _is_connection_error(e):
+                    self._activate_local_fallback(e)
+                    logger.debug(
+                        "Create collection unreachable, using local fallback for %s: %s",
+                        name,
+                        e,
+                    )
+                    return self._store_local_collection(
+                        self._build_local_collection(name, config)
+                    )
+                raise
 
         if self._prefer_local_fallback:
             return self._store_local_collection(
@@ -1607,9 +1652,13 @@ class ProximaDBClient:
                         updated_at=int(time.time() * 1e6),
                     )
             except Exception as e:
+                # Same gating as the adapter path above — only fall back on
+                # transport errors, never on server-rejected requests.
+                if not _is_connection_error(e):
+                    raise
                 self._activate_local_fallback(e)
                 logger.debug(
-                    "gRPC create_collection failed, using local fallback for %s: %s",
+                    "gRPC create_collection unreachable, using local fallback for %s: %s",
                     name,
                     e,
                 )

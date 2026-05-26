@@ -139,9 +139,12 @@ impl Default for EventLogConfig {
     }
 }
 
+/// Backwards-compat alias for [`EventLogEngineStats`].
+pub type EventLogStats = EventLogEngineStats;
+
 /// Event log statistics
 #[derive(Debug, Clone, Default)]
-pub struct EventLogStats {
+pub struct EventLogEngineStats {
     /// Total events stored
     pub total_events: u64,
 
@@ -179,7 +182,7 @@ pub struct EventLogEngine {
     filesystem: Arc<UnifiedCachingFilesystem>,
 
     /// Statistics
-    stats: Arc<RwLock<EventLogStats>>,
+    stats: Arc<RwLock<EventLogEngineStats>>,
 }
 
 impl EventLogEngine {
@@ -211,7 +214,7 @@ impl EventLogEngine {
             snapshot_manager,
             temporal_engine,
             filesystem,
-            stats: Arc::new(RwLock::new(EventLogStats::default())),
+            stats: Arc::new(RwLock::new(EventLogEngineStats::default())),
         })
     }
 
@@ -418,7 +421,7 @@ impl EventLogEngine {
     }
 
     /// Get event log statistics
-    pub async fn get_stats(&self) -> EventLogStats {
+    pub async fn get_stats(&self) -> EventLogEngineStats {
         self.stats.read().await.clone()
     }
 

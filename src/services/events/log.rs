@@ -219,15 +219,15 @@ impl EventLogService {
     ///
     /// Returns current statistics about the EventLog service including
     /// pending events, processed events, active collections, and uptime.
-    pub async fn stats(&self) -> EventLogStats {
+    pub async fn stats(&self) -> ServiceEventLogStats {
         match self.inner.get_health().await {
-            Ok(health) => EventLogStats {
+            Ok(health) => ServiceEventLogStats {
                 pending_events: health.pending_events,
                 processed_events: health.processed_events,
                 active_collections: health.active_collections,
                 uptime_seconds: health.uptime_seconds,
             },
-            Err(_) => EventLogStats::default(),
+            Err(_) => ServiceEventLogStats::default(),
         }
     }
 
@@ -240,9 +240,12 @@ impl EventLogService {
     }
 }
 
+/// Backwards-compat alias for [`ServiceEventLogStats`].
+pub type EventLogStats = ServiceEventLogStats;
+
 /// EventLog statistics
 #[derive(Debug, Default, Clone)]
-pub struct EventLogStats {
+pub struct ServiceEventLogStats {
     /// Number of events queued but not yet processed.
     pub pending_events: usize,
     /// Cumulative number of events that have been processed since startup.

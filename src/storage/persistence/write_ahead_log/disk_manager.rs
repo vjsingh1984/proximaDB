@@ -25,12 +25,15 @@ pub struct WriteAheadLogDiskManager {
     /// Optional WAL encryption layer (TD-016)
     encryption_layer: Option<Arc<WALEncryptionLayer>>,
     /// Statistics
-    stats: Arc<tokio::sync::RwLock<DiskStats>>,
+    stats: Arc<tokio::sync::RwLock<WalDiskManagerStats>>,
 }
+
+/// Backwards-compat alias for [`WalDiskManagerStats`].
+pub type DiskStats = WalDiskManagerStats;
 
 /// Statistics for disk operations
 #[derive(Debug, Clone, Default)]
-pub struct DiskStats {
+pub struct WalDiskManagerStats {
     pub total_bytes_written: u64,
     pub total_bytes_read: u64,
     pub total_files_written: u64,
@@ -81,7 +84,7 @@ impl WriteAheadLogDiskManager {
             filesystem_factory,
             wal_base_url,
             encryption_layer,
-            stats: Arc::new(tokio::sync::RwLock::new(DiskStats::default())),
+            stats: Arc::new(tokio::sync::RwLock::new(WalDiskManagerStats::default())),
         }
     }
 
@@ -468,7 +471,7 @@ impl WriteAheadLogDiskManager {
     }
 
     /// Get statistics
-    pub async fn get_stats(&self) -> Result<DiskStats> {
+    pub async fn get_stats(&self) -> Result<WalDiskManagerStats> {
         let stats = self.stats.read().await;
         Ok(stats.clone())
     }

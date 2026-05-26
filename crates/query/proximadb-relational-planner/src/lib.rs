@@ -703,7 +703,8 @@ pub fn push_predicates<R: CapabilityResolver>(
                     // Try PK-lookup rewrite first when applicable.
                     let pk_cols = resolver.primary_key(&table);
                     let pk_lookup_supported = caps.pk_lookup;
-                    let combined = combine_predicates(existing, Some(predicate.clone()));
+                    let combined =
+                        combine_predicates(existing.clone(), Some(predicate.clone()));
                     if pk_lookup_supported
                         && !pk_cols.is_empty()
                         && matches!(access, ScanAccess::FullScan)
@@ -1720,17 +1721,21 @@ mod tests {
         // equality — but `id=42 AND age>25` has an extra
         // non-PK conjunct, so PK lookup is skipped and we fall
         // back to FullScan + predicate.
+        // All 3 table columns are needed (`name` for projection,
+        // `id` + `age` for the pushed-down predicate), so the
+        // planner correctly leaves `projection: None` — narrowing
+        // is impossible when the requirement set equals the full
+        // table.
         match physical {
             PhysicalPlan::Project { input, .. } => match *input {
                 PhysicalPlan::Scan {
                     access: ScanAccess::FullScan,
                     predicate: Some(_),
-                    projection: Some(cols),
+                    projection: None,
+                    output_schema,
                     ..
                 } => {
-                    assert!(cols.contains(&"name".to_string()));
-                    assert!(cols.contains(&"id".to_string()));
-                    assert!(cols.contains(&"age".to_string()));
+                    assert_eq!(output_schema.len(), 3);
                 }
                 other => panic!("expected Scan with pushed predicate, got {other:?}"),
             },
