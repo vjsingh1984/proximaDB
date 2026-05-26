@@ -122,6 +122,17 @@ pub struct SharedServices {
     /// **Suboptimal**: same wrapper-as-port-host pattern as
     /// `observability_port`. ADR-015 cleanup is a follow-up session.
     pub graph_port: Arc<dyn proximadb_runtime::GraphPort>,
+
+    /// Shared in-process full-text index map for hybrid retrieval
+    /// (BM25 side of `/api/v1/hybrid/search`). REST and gRPC entry
+    /// points read from this single map so an indexed document is
+    /// immediately searchable on both protocols.
+    ///
+    /// Added 2026-05-26 (T3.2 Slice 1 of pre-release plan). Prior
+    /// behavior had REST construct its own map locally in `AppState`
+    /// and gRPC `HybridSearchServiceImpl` return mocks; this field
+    /// gives both paths a shared backing.
+    pub fulltext_indexes: crate::network::hybrid_search::HybridFullTextIndexMap,
 }
 
 impl SharedServices {
@@ -948,6 +959,11 @@ impl SharedServices {
                         query_adapter.clone(),
                     ),
                 ) as Arc<dyn proximadb_runtime::GraphPort>,
+                // T3.2 Slice 1: shared full-text index map for hybrid
+                // retrieval. Same in-process map serves REST and gRPC.
+                fulltext_indexes: Arc::new(std::sync::RwLock::new(
+                    std::collections::HashMap::new(),
+                )),
             },
             collection_service,
         ))

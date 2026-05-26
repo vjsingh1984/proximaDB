@@ -427,8 +427,12 @@ impl MultiServer {
                 Arc::new(crate::network::grpc::StreamingServiceImpl::new());
             let security_port: Arc<dyn proximadb_runtime::SecurityPort> =
                 Arc::new(crate::network::grpc::SecurityServiceImpl::with_default_config());
-            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
-                Arc::new(crate::network::grpc::HybridSearchServiceImpl::new());
+            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> = Arc::new(
+                crate::network::hybrid_search::RestHybridPortImpl::new(
+                    self.shared_services.vector_ops_port.clone(),
+                    self.shared_services.fulltext_indexes.clone(),
+                ),
+            );
 
             // Clone ports for REST server before they are consumed by the gRPC factory
             rest_ports_opt = Some(crate::network::rest::server::RestServerPorts {
@@ -849,8 +853,12 @@ impl MultiServer {
                 Arc::new(crate::network::grpc::StreamingServiceImpl::new());
             let grpc_security_port: Arc<dyn proximadb_runtime::SecurityPort> =
                 Arc::new(crate::network::grpc::SecurityServiceImpl::with_default_config());
-            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
-                Arc::new(crate::network::grpc::HybridSearchServiceImpl::new());
+            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> = Arc::new(
+                crate::network::hybrid_search::RestHybridPortImpl::new(
+                    self.shared_services.vector_ops_port.clone(),
+                    self.shared_services.fulltext_indexes.clone(),
+                ),
+            );
             let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
                 services.request_handlers.clone();
             let grpc_cfg = proximadb_api::grpc::builder::GrpcServiceConfig::default();
@@ -1229,8 +1237,12 @@ impl MultiServer {
                     services.request_handlers.clone(),
                     services.query_adapter(),
                 ));
-            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
-                Arc::new(crate::network::grpc::HybridSearchServiceImpl::new());
+            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> = Arc::new(
+                crate::network::hybrid_search::RestHybridPortImpl::new(
+                    self.shared_services.vector_ops_port.clone(),
+                    self.shared_services.fulltext_indexes.clone(),
+                ),
+            );
             let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
                 services.request_handlers.clone();
             let grpc_cfg = proximadb_api::grpc::builder::GrpcServiceConfig::default();

@@ -97,9 +97,9 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 | Integration test: two graph branches with divergent nodes + edges; merge resolves per CRDT spec.
 
 | T3.2 — Wire real BM25 + vector backend through the gRPC hybrid_search route. Target `crates/platform/proximadb-api/src/grpc/v1/hybrid.rs` (the new home; the root-crate `hybrid_search_service.rs` is a deprecated shim). Mirror the REST `/api/v1/hybrid/search` behavior.
-| Pending
-|
-| Existing REST hybrid test ported to the gRPC client; returns same results within tolerance.
+| Slice 1 done — gRPC no longer mocks (vector path real; BM25 shares-with-REST is slice 1b)
+| (this session)
+| Slice 1 (landed): added `fulltext_indexes: HybridFullTextIndexMap` to `SharedServices`; replaced 3 deprecated-shim wire-ups in `src/network/multi_server.rs` (L431/L853/L1233) with `RestHybridPortImpl::new(self.shared_services.vector_ops_port.clone(), self.shared_services.fulltext_indexes.clone())`. gRPC `hybrid_search` now returns real vector results (no more mocks) + empty BM25 component until slice 1b shares the index map across REST + gRPC. Slice 1b (next): plumb `SharedServices.fulltext_indexes` into REST `AppState` so REST and gRPC see the same indexed documents. Slices 2-4 per audit (fusion strategy params, filter propagation, gRPC integration tests) follow.
 
 | T3.3 — Audit `src/network/rest/v1/iceberg_rest_catalog.rs` per-endpoint completeness. Document gaps in ADR-007 `Status:` block if any handler is a stub; implement only if a customer-facing endpoint is missing.
 | Done
