@@ -107,9 +107,12 @@ impl AqlSource for DocumentAqlSource {
             .query_documents(&collection, params)
             .await
             .map_err(|e| {
-                proximadb_kernel::error::ProximaDBError::Storage(
-                    proximadb_kernel::error::StorageError::SstEngine(e.to_string()),
-                )
+                // Not an SST engine error — wraps a downstream document
+                // service failure. Use Internal until a dedicated query-
+                // source-error variant exists.
+                proximadb_kernel::error::ProximaDBError::Internal(format!(
+                    "document query source failed: {e}"
+                ))
             })?;
 
         let wall_time_us = start.elapsed().as_micros() as u64;
