@@ -24,6 +24,16 @@
 //! - Validates operations during prepare phase
 //! - Applies changes during commit phase
 //! - Rolls back changes during abort phase
+//!
+//! ## Error type note
+//!
+//! The four commit-failure sites in this module construct
+//! `proximadb_kernel::error::StorageError::TransactionCommitFailed`. This is
+//! intentionally kernel-owned (not migrated to `proximadb_storage_common`)
+//! because the kernel is the transaction-aware layer, and
+//! `TransactionCommitFailed` is part of the kernel transaction contract.
+//! Per the 2026-05-20 proliferation audit (P2): do NOT consolidate these
+//! sites — kernel ownership here is correct by design.
 
 use crate::transaction::two_phase_commit::{TransactionId, TransactionParticipant, Vote};
 use async_trait::async_trait;

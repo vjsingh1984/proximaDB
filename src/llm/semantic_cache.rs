@@ -50,7 +50,12 @@ struct CacheEntry {
     valid: bool,
 }
 
-/// Semantic cache statistics
+/// Semantic cache statistics.
+///
+/// Note: part of the external API surface (appears in REST/gRPC responses
+/// for semantic-search observability). Do NOT consolidate with
+/// `proximadb_runtime_common::cache::CacheStats` without bumping the
+/// public API version — clients may depend on the exact field names.
 #[derive(Debug, Clone, Default)]
 pub struct SemanticCacheStats {
     /// Total cache lookups

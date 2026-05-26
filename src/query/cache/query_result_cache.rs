@@ -572,7 +572,12 @@ impl Default for QueryResultCache {
     }
 }
 
-/// Public cache statistics
+/// Public cache statistics.
+///
+/// Part of the external API surface — appears in query-observability
+/// REST/gRPC responses. Do NOT consolidate with
+/// `proximadb_runtime_common::cache::CacheStats` without bumping the
+/// public API version.
 #[derive(Debug, Clone)]
 pub struct QueryCacheStats {
     /// Number of cached entries

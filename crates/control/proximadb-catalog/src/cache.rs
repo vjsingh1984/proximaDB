@@ -59,6 +59,12 @@ pub struct CatalogCache {
 }
 
 /// Cache hit/miss/eviction counters.
+///
+/// Specialized — multi-category cache. Tracks 4 distinct cache types
+/// (namespace, table, index, schema-stats) with separate hit/miss
+/// counters per category. Not canonicalizable to
+/// `proximadb_runtime_common::cache::CacheStats` without losing the
+/// per-category breakdown that catalog observability depends on.
 #[derive(Debug, Clone, Default)]
 pub struct CacheStats {
     pub namespace_hits: u64,
