@@ -1385,8 +1385,20 @@ mod tests {
 
     #[test]
     fn union_with_mismatched_arity_errors() {
+        // Build a schema with only 2 columns so the arity differs
+        // from users(3 cols).
+        let two_col_schema = RelationalSchema::new(vec![
+            ColumnInfo::new("a", ProximaType::Int64, false),
+            ColumnInfo::new("b", ProximaType::Int64, false),
+        ]);
+        let right = LogicalNode::Scan {
+            table: TableId::new("t_short"),
+            table_schema: two_col_schema,
+            projected_columns: None,
+            predicate: None,
+        };
         let n = LogicalNode::Union {
-            inputs: vec![scan_users(), scan_orders()],
+            inputs: vec![scan_users(), right],
             all: true,
         };
         assert!(matches!(
