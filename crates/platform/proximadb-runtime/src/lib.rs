@@ -35,7 +35,7 @@ pub use hybrid_port::HybridPort;
 pub use observability_port::ObservabilityPort;
 pub use port::ApiHandlersPort;
 pub use resources::{MemoryBudget, ResourceManager};
-pub use security_port::SecurityPort;
+pub use security_port::{PortAuthCredential, PortUserContext, SecurityPort};
 pub use service_ports::{CollectionPort, QueryAdapterPort, VectorOpsPort};
 pub use streaming_port::StreamingPort;
 pub use unified_query_port::UnifiedQueryPort;

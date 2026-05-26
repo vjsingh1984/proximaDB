@@ -23,6 +23,48 @@ use proximadb_proto::v1::{
     SetTenantSecurityPolicyResponse, ValidateAccessRequest, ValidateAccessResponse,
 };
 
+/// Port-level user context (ADR-016): a minimal, lossy projection of the
+/// root-crate `UnifiedUserContext`.  Production callers that need typed
+/// permission objects continue to use the root-crate path via
+/// `SecurityCoordinator` directly; cross-crate-boundary callers
+/// (`proximadb-api` gRPC, future port-based middleware) consume this
+/// projection.
+///
+/// All fields are owned strings or owned Vec<String>; no lifetime
+/// parameters, no root-crate types, no proto types.
+#[derive(Debug, Clone)]
+pub struct PortUserContext {
+    /// Opaque user identifier (string for forward-compat across auth providers).
+    pub user_id: String,
+    /// Tenant the request is being authenticated under.
+    pub tenant_id: String,
+    /// Roles assigned to the user — strings, not the typed root-crate enum.
+    pub roles: Vec<String>,
+    /// Scopes / capabilities granted to the request — strings.
+    pub scopes: Vec<String>,
+    /// JSON-serialized effective-permissions snapshot.  Opaque to the
+    /// runtime layer; consumers either pass through or deserialize via
+    /// the root-crate `UnifiedPermission` schema.
+    pub effective_permissions_json: String,
+    /// Authentication method label (e.g. "oidc", "ldap", "jwt", "apikey").
+    pub auth_method: String,
+    /// Optional session id (None for stateless auth).
+    pub session_id: Option<String>,
+}
+
+/// Port-level authentication credential (ADR-016): a minimal projection
+/// of the root-crate `AuthenticationData` enum.  Covers the two
+/// most-common production paths (JWT for OIDC, API key for
+/// service-to-service); SSO and mTLS remain on the typed root-crate
+/// path until those flows have an articulated port need.
+#[derive(Debug, Clone)]
+pub enum PortAuthCredential {
+    /// Bearer JWT (OIDC, custom).
+    Jwt(String),
+    /// API key for service-to-service auth.
+    ApiKey(String),
+}
+
 /// Port for security operations (RBAC, audit, tenant policy).
 ///
 /// Implemented by root-crate `SecurityCoordinator`.  The protocol adapter
@@ -78,4 +120,20 @@ pub trait SecurityPort: Send + Sync {
         &self,
         request: SetTenantSecurityPolicyRequest,
     ) -> Result<SetTenantSecurityPolicyResponse>;
+
+    /// Authenticate an incoming request and return a port-level user
+    /// context.  Implementations on the root crate side construct this
+    /// by lossy projection of `UnifiedUserContext` (ADR-016); full
+    /// typed context stays accessible via `SecurityCoordinator`
+    /// directly for callers that need typed permission objects.
+    ///
+    /// Default body returns "not implemented" so existing impls
+    /// compile unchanged during the multi-step migration.  Step 2
+    /// (separate commit) wires the real lossy-projection impl on
+    /// `SecurityCoordinator`.
+    async fn authenticate(&self, _credential: PortAuthCredential) -> Result<PortUserContext> {
+        Err(anyhow::anyhow!(
+            "SecurityPort::authenticate: not implemented on this SecurityPort impl (ADR-016 step 2 pending)"
+        ))
+    }
 }
