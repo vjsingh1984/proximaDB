@@ -2,9 +2,34 @@
 :toc: left
 :toclevels: 2
 :last-updated: 2026-03-12
+:last-audit: 2026-05-26
 
 [.lead]
 Operational execution tracker for closing foundation gaps and achieving best-in-class product quality (UX, robustness, and product-market fit).
+
+[IMPORTANT]
+====
+**Staleness note (2026-05-26 audit)**: the workstream log below was last
+updated 2026-03-14, ~2.5 months before this audit. Several
+workstreams have meaningful progress since (notably Task #76
+`collection_port` consumer chain, Task #69 / ADR-016 PortUserContext
+foundation, Phase 9 platform extraction). For current truth use:
+
+* `docs/_internal/status/PHASE9_REMAINING_2026_05_25.adoc` — Phase 9
+  refactor state (live).
+* `docs/_internal/status/MULTIMODAL_MULTIMODEL_STATE_2026_05_25.adoc` —
+  multimodal migration state (live).
+* `docs/12-design/DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc` —
+  design-doc-to-code wiring snapshot.
+
+This tracker is preserved (not archived) because (a) the workstream log
+is genuinely useful historical context for the March 2026 baseline,
+and (b) several active implementation tickets still cite it
+(`docs/_internal/roadmap/implementation/active/FOUNDATIONAL_MULTIMODEL_EXECUTION_2026.adoc`,
+`docs/_internal/roadmap/implementation/active/TIERED_EXECUTION_REVIEW_2026_03_15.adoc`).
+A future session that refreshes the log should retain the existing
+entries and append a 2026-05 block, not start over.
+====
 
 == Scope
 
