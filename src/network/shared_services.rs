@@ -814,7 +814,9 @@ impl SharedServices {
         debug!("🔧 SharedServices::new - Creating FederatedQueryContext...");
         let federated_context = Arc::new(
             FederatedQueryContext::new(multimodal_storage)
-                .with_collection_service(collection_service.clone())
+                .with_collection_port(
+                    collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
+                )
                 .with_vector_operations(vector_operations_service.clone()),
         );
         debug!("✅ SharedServices::new - FederatedQueryContext created");

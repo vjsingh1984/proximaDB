@@ -229,7 +229,8 @@ pub struct FederatedExecutor {
     /// Multi-model storage facade
     storage: Arc<MultiModelStorageFacade>,
     /// Collection metadata resolver for storage assignments and engine details
-    collection_service: Option<Arc<crate::services::collection::manager::CollectionService>>,
+    /// (Task #76 migration: was `Option<Arc<CollectionService>>`).
+    collection_port: Option<Arc<dyn proximadb_runtime::CollectionPort>>,
     /// Reuse the existing vector service so SQL VECTOR_SEARCH follows the
     /// same engine resolution, WAL visibility, and scoring path as direct search.
     vector_operations_service:
@@ -267,7 +268,7 @@ impl FederatedExecutor {
     pub fn new(storage: Arc<MultiModelStorageFacade>) -> Self {
         Self {
             storage,
-            collection_service: None,
+            collection_port: None,
             vector_operations_service: None,
             config: ExecutionConfig::default(),
         }
@@ -277,18 +278,18 @@ impl FederatedExecutor {
     pub fn with_config(storage: Arc<MultiModelStorageFacade>, config: ExecutionConfig) -> Self {
         Self {
             storage,
-            collection_service: None,
+            collection_port: None,
             vector_operations_service: None,
             config,
         }
     }
 
     /// Reuse live collection metadata instead of synthesizing collection configs.
-    pub fn with_collection_service(
+    pub fn with_collection_port(
         mut self,
-        collection_service: Arc<crate::services::collection::manager::CollectionService>,
+        collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     ) -> Self {
-        self.collection_service = Some(collection_service);
+        self.collection_port = Some(collection_port);
         self
     }
 
@@ -560,9 +561,9 @@ impl FederatedExecutor {
         }
 
         if let Some(vector_ops) = &self.vector_operations_service {
-            let collection_id = if let Some(collection_service) = &self.collection_service {
-                collection_service
-                    .collection(collection)
+            let collection_id = if let Some(collection_port) = &self.collection_port {
+                collection_port
+                    .get_collection(collection, None)
                     .await?
                     .map(|resolved| resolved.id)
                     .unwrap_or_else(|| collection.to_string())
@@ -623,8 +624,8 @@ impl FederatedExecutor {
             .ok_or_else(|| anyhow!("Vector store has no primary engine"))?;
 
         use crate::proto::proximadb_v1::CollectionConfig;
-        let collection_config = if let Some(collection_service) = &self.collection_service {
-            match collection_service.collection(collection).await? {
+        let collection_config = if let Some(collection_port) = &self.collection_port {
+            match collection_port.get_collection(collection, None).await? {
                 Some(mut resolved) => {
                     let mut config = resolved.config.take().unwrap_or_else(|| CollectionConfig {
                         name: collection.to_string(),

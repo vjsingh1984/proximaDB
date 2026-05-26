@@ -170,11 +170,11 @@ impl FederatedQueryContext {
 
     /// Reuse the live collection metadata service so federated vector queries
     /// inherit storage assignments, engines, and canonical collection IDs.
-    pub fn with_collection_service(
+    pub fn with_collection_port(
         mut self,
-        collection_service: Arc<crate::services::collection::manager::CollectionService>,
+        collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     ) -> Self {
-        self.executor = self.executor.with_collection_service(collection_service);
+        self.executor = self.executor.with_collection_port(collection_port);
         self
     }
 
@@ -1085,8 +1085,9 @@ mod tests {
         );
         let vector_store = Arc::new(VectorStore::with_engine(vector_engine.clone()));
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
-        let ctx =
-            FederatedQueryContext::new(storage).with_collection_service(collection_service.clone());
+        let ctx = FederatedQueryContext::new(storage).with_collection_port(
+            collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
+        );
 
         let result = ctx
             .execute_uncached("SELECT id, score FROM VECTOR_SEARCH('productsaa', '[0.1, 0.2]', 1)")
