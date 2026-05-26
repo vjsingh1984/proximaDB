@@ -6,12 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | Resource | Value |
 |----------|-------|
+| **Current Version** | `v0.2.0` (in-development) |
+| **Next Release Target** | **v0.2** (not yet published — pre-release work targets this release) |
 | **Default Ports** | 5678 (unified REST/gRPC), 5679 (gRPC multi-port), 5433 (PostgreSQL wire), 5680 (Arrow Flight) |
 | **Default Data** | `/tmp/proximadb/` |
 | **Config File** | `config/config.toml` |
 | **Health Check** | `curl http://localhost:5678/health` |
 | **WAL Manifest** | `/tmp/proximadb/manifest/manifest_*.jsonl` |
 | **Main Branch** | `main` |
+
+> **Release framing**: pre-release work in `docs/_internal/status/PRE_RELEASE_FOUNDATIONS_2026_05_26.adoc` and related session docs targets **v0.2** (the next release). Anything labeled "v0.3" / "v0.4" refers to releases AFTER v0.2 (post-v0.2 cleanup, future features). The deprecated gRPC service shims marked `// DEPRECATED: ... removed in version 0.3.0` will be removed in the 0.3.0 release that follows v0.2.
 
 ## Build and Development
 

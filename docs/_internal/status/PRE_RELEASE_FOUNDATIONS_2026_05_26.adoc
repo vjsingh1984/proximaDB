@@ -91,7 +91,7 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 |===
 | Item | Status | Commit | Verification
 
-| T3.1 — ADR-012 minimum-viable `merge_branch(source, target, conflict_policy)` for node + edge CRDT semantics. If embedding-merge case is intricate, document the deferral inline and ship node+edge for v0.3.
+| T3.1 — ADR-012 minimum-viable `merge_branch(source, target, conflict_policy)` for node + edge CRDT semantics. If embedding-merge case is intricate, document the deferral inline and ship node+edge for v0.2.
 | Pending
 |
 | Integration test: two graph branches with divergent nodes + edges; merge resolves per CRDT spec.
@@ -232,7 +232,7 @@ Captured here so they don't disappear from the planning surface. Don't implement
 * Tier 3: 1-2 weeks (ADR-012 minimum-merge + hybrid gRPC parity + Iceberg endpoint check)
 * Tier 4: 3-5 days (hardening polish)
 
-**Total realistic v0.3 GA path**: ~5-7 weeks. Tier 0 ships first because it's the customer-trust surface.
+**Total realistic v0.2 GA path**: ~5-7 weeks. Tier 0 ships first because it's the customer-trust surface. (Earlier drafts of this doc referred to "v0.3" — that was incorrect framing; v0.2 is the next release.)
 
 == Cross-references
 

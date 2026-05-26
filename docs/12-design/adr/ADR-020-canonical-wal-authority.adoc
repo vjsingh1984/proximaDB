@@ -39,7 +39,7 @@ Recovery on restart MUST read from the canonical WAL first. Engine-local WALs ar
 
 ==== TD-065 — Document store
 
-**Decision**: The `canonical-document-store` feature becomes default-enabled in v0.3. The existing opt-out flag is preserved during one minor-release migration window so operators with the legacy in-memory-map durability assumption have an explicit downgrade path.
+**Decision**: The `canonical-document-store` feature becomes default-enabled in v0.2 (the next release). The existing opt-out flag is preserved during one minor-release migration window so operators with the legacy in-memory-map durability assumption have an explicit downgrade path. Flag removal is targeted for v0.3 (the release after v0.2).
 
 * In the default (canonical) mode: every `self.documents.write()` call site in `src/storage/document/service.rs` becomes a *cache write*, performed after the canonical WAL append. The map's purpose is read-hit acceleration, not durability.
 * Crash recovery: rebuild the in-memory map from canonical WAL replay. The map is empty at process start and warmed by replay; the legacy "WAL-replays-into-map" path is removed.
