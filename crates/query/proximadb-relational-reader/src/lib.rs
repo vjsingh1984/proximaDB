@@ -400,8 +400,14 @@ impl RelationalReader for VecReader {
     }
 
     async fn next_row(&mut self) -> Result<Option<RelationalRow>, ReaderError> {
+        // Pull the state out first so we don't hold &mut self.open_ctx
+        // across &self.rows accesses (Rust's borrow checker disallows
+        // simultaneous mutable + immutable borrows of `self`).
         let state = self.open_ctx.as_mut().ok_or(ReaderError::NotOpen)?;
-        while state.cursor < self.rows.len() {
+        loop {
+            if state.cursor >= self.rows.len() {
+                return Ok(None);
+            }
             if let Some(limit) = state.limit {
                 if state.rows_emitted >= limit {
                     return Ok(None);
@@ -420,11 +426,14 @@ impl RelationalReader for VecReader {
                     continue;
                 }
             }
-            let projected = self.project_row(row, &state.projection_indices);
+            let projected: RelationalRow = state
+                .projection_indices
+                .iter()
+                .map(|&i| row[i].clone())
+                .collect();
             state.rows_emitted += 1;
             return Ok(Some(projected));
         }
-        Ok(None)
     }
 
     async fn lookup_pk(
