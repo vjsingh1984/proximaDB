@@ -183,7 +183,9 @@ impl DecompressionCache {
 
                 if invalidated > 0 {
                     let mut s = stats.write().await;
-                    s.evictions += invalidated;
+                    // Companion fix to the linter rename: evictions
+                    // now lives on `inner` (see line 74 doc comment).
+                    s.inner.evictions += invalidated;
                     info!(
                         "🔄 Cache invalidation: removed {} stale entries",
                         invalidated
@@ -537,6 +539,11 @@ impl CacheStatsProvider for DecompressionCacheStatsProvider {
             } else {
                 64 * 1024
             };
+            // `total` here = aggregate access count (hits + misses). The
+            // collapse of DecompressionCacheStats onto the canonical
+            // `inner: CacheStats` struct removed the inline `total` field;
+            // derive it from the canonical counters.
+            let total = stats.inner.hits + stats.inner.misses;
             return UsageStats {
                 hit_rate,
                 avg_entry_size,

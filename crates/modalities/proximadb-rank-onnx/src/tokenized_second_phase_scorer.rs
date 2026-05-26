@@ -209,6 +209,7 @@ mod tests {
             score: 1.0,
             phase: PhaseId::FIRST,
             features: Some(features.clone()),
+            summary: None,
         }];
         let out = scorer.rescore(inputs, &QueryContext::default()).unwrap();
         assert_eq!(out[0].phase, PhaseId::SECOND);
