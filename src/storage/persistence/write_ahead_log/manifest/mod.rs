@@ -24,6 +24,9 @@
 //! let entries = manifest::get_active_entries().await;
 //! ```
 
+/// Bridge from `GlobalManifestEntry` to the catalog-crate
+/// `ManifestEntryRef` consumed by the DR restore-readiness checker.
+pub mod dr_bridge;
 mod service;
 mod singleton;
 mod types;
