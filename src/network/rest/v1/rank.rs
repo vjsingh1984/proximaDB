@@ -1309,35 +1309,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hybrid_adapter_parses_numeric_doc_ids() {
+    async fn hybrid_adapter_preserves_numeric_doc_ids_in_original_map() {
+        // R-7c.3.2: doc handles are now sequential synthetic indices
+        // (1, 2, 3 …). The original backend strings are preserved in
+        // CandidateBatch.original_ids so the response round-trips them
+        // exactly. This works for both numeric and arbitrary-string ids.
         let backend = Arc::new(MockHybridBackend::new(vec!["42", "7", "99"]));
         let adapter = HybridCoordinatorAdapter::new(
             FusionStrategy::ReciprocalRank { k: 60 },
             backend,
         );
         let req = rank_req("docs", vec![0.5], 10);
-        let docs = adapter.candidates(&req).await.unwrap().docs;
-        let ids: std::collections::HashSet<u32> = docs.iter().map(|d| d.0).collect();
-        assert!(ids.contains(&42));
-        assert!(ids.contains(&7));
-        assert!(ids.contains(&99));
+        let batch = adapter.candidates(&req).await.unwrap();
+        let map = batch.original_ids.expect("adapter must emit original_ids");
+        let strings: std::collections::HashSet<String> =
+            map.values().map(|s| s.to_string()).collect();
+        assert!(strings.contains("42"));
+        assert!(strings.contains("7"));
+        assert!(strings.contains("99"));
     }
 
     #[tokio::test]
-    async fn hybrid_adapter_skips_non_numeric_doc_ids() {
-        // Per the doc-id contract documented on HybridCoordinatorAdapter,
-        // non-numeric ids are dropped in v1 (R-7c.3.1 widens DocHandle).
+    async fn hybrid_adapter_preserves_non_numeric_doc_ids() {
+        // R-7c.3.2: arbitrary-string backend ids no longer get dropped.
+        // All four candidate ids survive the adapter into original_ids.
         let backend = Arc::new(MockHybridBackend::new(vec!["1", "abc", "2", "def"]));
         let adapter = HybridCoordinatorAdapter::new(
             FusionStrategy::ReciprocalRank { k: 60 },
             backend,
         );
         let req = rank_req("docs", vec![0.5], 10);
-        let docs = adapter.candidates(&req).await.unwrap().docs;
-        assert_eq!(docs.len(), 2, "non-numeric ids must be filtered out");
-        let ids: std::collections::HashSet<u32> = docs.iter().map(|d| d.0).collect();
-        assert!(ids.contains(&1));
-        assert!(ids.contains(&2));
+        let batch = adapter.candidates(&req).await.unwrap();
+        assert_eq!(batch.docs.len(), 4);
+        let strings: std::collections::HashSet<String> = batch
+            .original_ids
+            .expect("adapter must emit original_ids")
+            .values()
+            .map(|s| s.to_string())
+            .collect();
+        for expected in ["1", "abc", "2", "def"] {
+            assert!(strings.contains(expected), "missing {expected:?}");
+        }
     }
 
     #[tokio::test]
@@ -1530,5 +1542,80 @@ mod tests {
         };
         let j = serde_json::to_string(&req).unwrap();
         assert!(!j.contains("query_text"));
+    }
+
+    // ---------------- R-7c.3.2: CandidateBatch helpers + e2e round-trip ----------------
+
+    #[test]
+    fn candidate_batch_from_docs_has_no_id_map() {
+        let b = CandidateBatch::from_docs(vec![DocHandle(1), DocHandle(2)]);
+        assert_eq!(b.docs.len(), 2);
+        assert!(b.original_ids.is_none());
+    }
+
+    #[test]
+    fn candidate_batch_from_string_ids_assigns_sequential_handles() {
+        let b = CandidateBatch::from_string_ids(vec!["alpha", "beta", "gamma"]);
+        assert_eq!(b.docs.len(), 3);
+        assert_eq!(b.docs[0], DocHandle(1));
+        assert_eq!(b.docs[1], DocHandle(2));
+        assert_eq!(b.docs[2], DocHandle(3));
+        let m = b.original_ids.unwrap();
+        assert_eq!(m.get(&DocHandle(1)).unwrap().as_ref(), "alpha");
+        assert_eq!(m.get(&DocHandle(2)).unwrap().as_ref(), "beta");
+        assert_eq!(m.get(&DocHandle(3)).unwrap().as_ref(), "gamma");
+    }
+
+    #[tokio::test]
+    async fn handler_with_string_id_backend_round_trips_ids_in_response() {
+        // End-to-end: a CandidateProvider that emits arbitrary string
+        // ids round-trips them through handle_rank_search into
+        // ScoredHitDto.id (rather than the synthetic DocHandle number).
+        struct StringIdProvider(Vec<&'static str>);
+        #[async_trait::async_trait]
+        impl CandidateProvider for StringIdProvider {
+            async fn candidates(
+                &self,
+                _request: &RankSearchRequest,
+            ) -> RankResult<CandidateBatch> {
+                Ok(CandidateBatch::from_string_ids(self.0.clone()))
+            }
+        }
+        let registry = ProfileRegistry::new();
+        let factory = factory_with_docid();
+        let candidates = StringIdProvider(vec!["doc:abc", "doc:xyz", "doc:lmn"]);
+        let req = rank_req("docs", vec![], 3);
+        let resp = handle_rank_search(req, &registry, &candidates, factory, None)
+            .await
+            .unwrap();
+        let ids: std::collections::HashSet<String> =
+            resp.hits.iter().map(|h| h.id.clone()).collect();
+        assert!(ids.contains("doc:abc"));
+        assert!(ids.contains("doc:xyz"));
+        assert!(ids.contains("doc:lmn"));
+        for h in &resp.hits {
+            assert!(
+                h.id.parse::<u32>().is_err(),
+                "response id should be the original string, not the synthetic handle: {}",
+                h.id
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn handler_falls_back_to_handle_number_when_no_id_map() {
+        // Inverse: when CandidateProvider returns CandidateBatch::from_docs
+        // (no original_ids), response ids are DocHandle.0.to_string().
+        let registry = ProfileRegistry::new();
+        let factory = factory_with_docid();
+        let candidates = FixedCandidates(vec![DocHandle(7), DocHandle(42)]);
+        let req = rank_req("docs", vec![], 5);
+        let resp = handle_rank_search(req, &registry, &candidates, factory, None)
+            .await
+            .unwrap();
+        let ids: std::collections::HashSet<String> =
+            resp.hits.iter().map(|h| h.id.clone()).collect();
+        assert!(ids.contains("7"));
+        assert!(ids.contains("42"));
     }
 }
