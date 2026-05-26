@@ -818,7 +818,7 @@ mod tests {
         #[test]
         fn effective_permissions_serializes_to_json() {
             let mut perms = HashSet::new();
-            perms.insert(UnifiedPermission::CollectionRead);
+            perms.insert(UnifiedPermission::CollectionRead("c1".to_string()));
             let p = project_unified_to_port_context(ctx(
                 None,
                 &[],
