@@ -106,6 +106,22 @@ pub struct SharedServices {
     /// bare service (ADR-015). The gRPC `DocumentServiceImpl` wrapper is
     /// no longer in the port chain.
     pub document_port: Arc<dyn proximadb_runtime::DocumentPort>,
+    /// Port-typed view of the observability subsystem (Phase 9.10 / Task #76).
+    ///
+    /// **Suboptimal**: the port impl currently lives on the gRPC wrapper
+    /// `ObservabilityServiceImpl`, not on the bare `ObservabilityService`
+    /// (where ADR-015 says it should live). To unblock consumer migration
+    /// now, this field constructs the wrapper and stores it as the port.
+    /// The ADR-015 cleanup (move `impl ObservabilityPort` to the bare
+    /// service, then update this field to coerce from `Arc<ObservabilityService>`
+    /// directly) is a follow-up session — ~225 lines of port-impl bodies
+    /// to lift from the 15 tonic methods.
+    pub observability_port: Arc<dyn proximadb_runtime::ObservabilityPort>,
+    /// Port-typed view of the graph subsystem (Phase 9.10 / Task #76).
+    ///
+    /// **Suboptimal**: same wrapper-as-port-host pattern as
+    /// `observability_port`. ADR-015 cleanup is a follow-up session.
+    pub graph_port: Arc<dyn proximadb_runtime::GraphPort>,
 }
 
 impl SharedServices {
@@ -883,8 +899,8 @@ impl SharedServices {
                 graph_query_service,
                 graph_execution_service,
                 document_service: document_service.clone(),
-                observability_service,
-                request_handlers,
+                observability_service: observability_service.clone(),
+                request_handlers: request_handlers.clone(),
                 metrics_collector,
                 metrics_updater: Some(metrics_updater.clone()),
                 query_facade,
@@ -908,6 +924,23 @@ impl SharedServices {
                 // impl in src/storage/document/service.rs (ADR-015 step 1).
                 document_port: document_service.clone()
                     as Arc<dyn proximadb_runtime::DocumentPort>,
+                // Task #76 observability slice — wrapper-as-port-host pattern
+                // (suboptimal vs ADR-015; cleanup is a follow-up session).
+                observability_port: Arc::new(
+                    crate::network::grpc::ObservabilityServiceImpl::new(
+                        observability_service.clone(),
+                    ),
+                ) as Arc<dyn proximadb_runtime::ObservabilityPort>,
+                // Task #76 graph slice — same wrapper-as-port-host pattern.
+                // Uses with_adapter() so search/explain methods have the query
+                // adapter wired (matches the production wiring at
+                // src/network/multi_server.rs:415).
+                graph_port: Arc::new(
+                    crate::network::grpc::GraphServiceImpl::with_adapter(
+                        request_handlers.clone(),
+                        query_adapter.clone(),
+                    ),
+                ) as Arc<dyn proximadb_runtime::GraphPort>,
             },
             collection_service,
         ))
