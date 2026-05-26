@@ -139,13 +139,67 @@ impl BertPairTokenizingDocFeatureExtractor {
         max_seq_len: usize,
         emit_token_type_ids: bool,
     ) -> Self {
+        let max_seq_len = max_seq_len.max(1);
+        // R-5b.1.4: clone the shared tokenizer and configure
+        // `with_padding(Fixed, max_seq_len)` + `with_truncation(max_seq_len)`
+        // so `encode_batch` returns Encodings already at the right
+        // shape. Encoding rectangularity is now the tokenizer's
+        // responsibility; `pad_or_truncate_to_i64` downstream still
+        // runs as defense-in-depth (it's a few `Vec::push`es per row,
+        // basically free) AND because we still need the u32 → i64
+        // conversion the tokenizer doesn't do.
+        //
+        // We clone the inner Tokenizer rather than mutate the shared
+        // Arc — the same `Arc<Tokenizer>` is used by the embedding
+        // crate's `SharedTokenizer` for token-count chunking, which
+        // wants per-call defaults. Per-extractor cloning isolates the
+        // padding/truncation config to the rerank path.
+        let configured = configure_tokenizer_for_pair_encoding(
+            tokenizer.as_ref().clone(),
+            max_seq_len,
+        );
         Self {
-            tokenizer,
+            tokenizer: Arc::new(configured),
             doc_text_source,
-            max_seq_len: max_seq_len.max(1),
+            max_seq_len,
             emit_token_type_ids,
         }
     }
+}
+
+/// Apply Fixed-length padding + matching truncation to a cloned
+/// tokenizer so `encode_batch` returns rectangular Encodings without
+/// the caller having to pre-pad. Padding token id is `0` to match
+/// the [`pad_or_truncate_to_i64`] fallback. Both directions truncate
+/// from the end ("right" strategy) — matches BERT's documented
+/// behaviour for long inputs.
+fn configure_tokenizer_for_pair_encoding(
+    mut tokenizer: tokenizers::Tokenizer,
+    max_seq_len: usize,
+) -> tokenizers::Tokenizer {
+    use tokenizers::tokenizer::{PaddingDirection, PaddingParams, PaddingStrategy};
+    use tokenizers::utils::truncation::{TruncationDirection, TruncationParams, TruncationStrategy};
+
+    tokenizer.with_padding(Some(PaddingParams {
+        strategy: PaddingStrategy::Fixed(max_seq_len),
+        direction: PaddingDirection::Right,
+        pad_to_multiple_of: None,
+        pad_id: 0,
+        pad_type_id: 0,
+        pad_token: "[PAD]".into(),
+    }));
+    // with_truncation returns Result because the params can be
+    // self-inconsistent (max_length < stride etc.). Our config is
+    // simple enough that this never fails in practice; on the off
+    // chance it does, fall back to the unconfigured tokenizer and
+    // let pad_or_truncate_to_i64 do the work downstream.
+    let _ = tokenizer.with_truncation(Some(TruncationParams {
+        max_length: max_seq_len,
+        strategy: TruncationStrategy::LongestFirst,
+        stride: 0,
+        direction: TruncationDirection::Right,
+    }));
+    tokenizer
 }
 
 impl TokenizedDocFeatureExtractor for BertPairTokenizingDocFeatureExtractor {
@@ -485,6 +539,86 @@ mod tests {
         };
         let b = e.extract_batch(&[DocHandle(1)], &qctx).unwrap();
         assert!(b.seq_len() >= 1);
+    }
+
+    // ---------------- R-5b.1.4: tokenizer pre-padding/truncation ----------------
+
+    #[test]
+    fn extractor_constructor_does_not_mutate_shared_tokenizer_state() {
+        // The shared Arc<Tokenizer> the caller hands in must NOT have
+        // its padding/truncation config touched — other consumers (e.g.
+        // the embedding crate's SharedTokenizer) rely on per-call
+        // defaults. Verify by encoding the same input twice via the
+        // shared Arc before and after constructing the extractor.
+        let shared = synthetic_tokenizer();
+        let pre = shared.encode("alpha beta", false).unwrap();
+        let _e = BertPairTokenizingDocFeatureExtractor::new(
+            shared.clone(),
+            doc_text_source(&[(1, "doc")]),
+            32,
+            false,
+        );
+        let post = shared.encode("alpha beta", false).unwrap();
+        assert_eq!(
+            pre.get_ids(),
+            post.get_ids(),
+            "constructor must not mutate the caller's shared tokenizer"
+        );
+        assert_eq!(pre.get_ids().len(), post.get_ids().len());
+    }
+
+    #[test]
+    fn extractor_tokenizer_outputs_are_rectangular_at_max_seq_len() {
+        // R-5b.1.4: configured tokenizer pads to exactly max_seq_len.
+        // The pad_or_truncate_to_i64 pass downstream becomes a no-op
+        // for the length dimension (it still does u32 → i64
+        // conversion). Verify rectangular output regardless of the
+        // input doc lengths.
+        let (e, qctx) = extractor_with(
+            "alpha beta gamma",
+            10,
+            false,
+            &[
+                (1, "doc"),                              // shorter than max
+                (2, "alpha beta gamma delta alpha beta"), // longer than max
+                (3, ""),                                  // empty doc
+            ],
+        );
+        let b = e
+            .extract_batch(&[DocHandle(1), DocHandle(2), DocHandle(3)], &qctx)
+            .unwrap();
+        assert_eq!(b.batch_size(), 3);
+        for row in &b.input_ids {
+            assert_eq!(
+                row.len(),
+                10,
+                "tokenizer padding/truncation must pre-shape every row to max_seq_len"
+            );
+        }
+        for row in &b.attention_mask {
+            assert_eq!(row.len(), 10);
+        }
+        assert!(b.validate_rectangular().is_ok());
+    }
+
+    #[test]
+    fn extractor_attention_mask_marks_padding_positions_zero() {
+        // R-5b.1.4: with Fixed padding configured, the attention_mask
+        // distinguishes real tokens (1) from padding (0). A short
+        // doc + short query → most positions should be padding (0).
+        let (e, qctx) = extractor_with(
+            "alpha",
+            10,
+            false,
+            &[(1, "doc")],
+        );
+        let b = e.extract_batch(&[DocHandle(1)], &qctx).unwrap();
+        let mask = &b.attention_mask[0];
+        let real = mask.iter().filter(|&&x| x == 1).count();
+        let pad = mask.iter().filter(|&&x| x == 0).count();
+        assert!(real >= 1, "must include at least 1 real token");
+        assert!(pad >= 1, "must include at least 1 padding position");
+        assert_eq!(real + pad, 10);
     }
 
     #[test]

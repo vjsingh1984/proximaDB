@@ -26,15 +26,19 @@
 //! Wire contract — response (one Arrow IPC stream):
 //! ```text
 //! Schema:
-//!   id              Utf8                  // doc id (round-trips through original_ids)
-//!   rank            UInt32                // 0-based position in the response
-//!   score           Float32               // post-pipeline primary score
-//!   phase           UInt8                 // PhaseId of the score (0/1/2)
-//!   <feature_N>     Float64 (nullable)    // one column per profile.match_features entry
+//!   id                  Utf8               // doc id (round-trips through original_ids)
+//!   rank                UInt32             // 0-based position in the response
+//!   score               Float32            // post-pipeline primary score
+//!   phase               UInt8              // PhaseId of the score (0/1/2)
+//!   <match_feature>     Float64 (nullable) // one column per profile.match_features
+//!   sf_<summary_feature> Float64 (nullable) // one column per profile.summary_features
+//!                                          // (R-7c.4b.1; `sf_` prefix avoids
+//!                                          //  collision with match_features)
 //! ```
-//! Columns 1..K are stable across the response — column order matches
-//! the profile's declared `match_features` order. Missing features (the
-//! hit didn't carry that feature) encode as null in their column.
+//! Columns are stable across the response — column order matches the
+//! profile's declared `match_features` followed by `summary_features`.
+//! Missing features (the hit didn't carry that feature) encode as null
+//! in their column.
 //!
 //! No buffering / streaming policy: v1 returns one Arrow IPC stream
 //! with a single batch. The rank pipeline already truncates to `k`, so
@@ -80,17 +84,17 @@ pub async fn export_rank_features_to_arrow_ipc(
         ))
     })?;
 
-    // Resolve match_features column order from the active profile BEFORE
-    // the pipeline runs — we need the canonical column order to keep the
-    // Arrow schema stable across requests for the same profile (a row
-    // missing a feature emits null in that column rather than reshaping
-    // the schema). Profiles without a rank_profile name use an empty
-    // column list (id/rank/score/phase only).
-    let column_names: Vec<String> = request
+    // Resolve match_features + summary_features column order from the
+    // active profile BEFORE the pipeline runs — we need stable Arrow
+    // column ordering for the same profile so a row missing a feature
+    // emits null in that column rather than reshaping the schema.
+    // Profiles without a rank_profile name use an empty column list
+    // (id/rank/score/phase only).
+    let (match_column_names, summary_column_names): (Vec<String>, Vec<String>) = request
         .rank_profile
         .as_deref()
         .and_then(|name| services.profile_registry.get(name))
-        .map(profile_match_feature_names)
+        .map(profile_feature_column_names)
         .unwrap_or_default();
 
     let second_phase_scorer = request
@@ -107,34 +111,53 @@ pub async fn export_rank_features_to_arrow_ipc(
     )
     .await?;
 
-    let batch = build_record_batch(response, &column_names).map_err(|e| {
-        RankError::ModelInference {
+    let batch = build_record_batch(response, &match_column_names, &summary_column_names)
+        .map_err(|e| RankError::ModelInference {
             model_id: "rank_features_export:arrow_build".into(),
             reason: e,
-        }
-    })?;
+        })?;
     encode_ipc_stream(&batch).map_err(|e| RankError::ModelInference {
         model_id: "rank_features_export:ipc_encode".into(),
         reason: e,
     })
 }
 
-/// Canonical match-feature column order: the profile spec's declared
-/// `match_features` list, in declaration order. Acts as the Arrow
-/// schema's stable column ordering. Public so server-side tests and
-/// future schema-introspection RPCs can compute the same ordering.
+/// Canonical column order from the profile: `(match_features,
+/// summary_features)` in declaration order. Acts as the stable Arrow
+/// schema ordering — same profile always emits the same column layout
+/// regardless of which docs the request happens to return.
+///
+/// R-7c.4b.1: returns both vectors as a tuple. Match-feature columns
+/// take the slots right after `id/rank/score/phase`; summary-feature
+/// columns follow, named with an `sf_` prefix to avoid collision with
+/// match-feature columns that happen to declare the same expression.
+pub fn profile_feature_column_names(
+    profile: Arc<CompiledRankProfile>,
+) -> (Vec<String>, Vec<String>) {
+    let match_cols = profile.spec.match_features.iter().cloned().collect();
+    let summary_cols = profile.spec.summary_features.iter().cloned().collect();
+    (match_cols, summary_cols)
+}
+
+/// Legacy match-feature-only column order. Kept for backwards
+/// compatibility with the R-7c.4b API surface; new callers should use
+/// [`profile_feature_column_names`] which returns both column groups.
 pub fn profile_match_feature_names(profile: Arc<CompiledRankProfile>) -> Vec<String> {
-    profile
-        .spec
-        .match_features
-        .iter()
-        .cloned()
-        .collect::<Vec<_>>()
+    profile_feature_column_names(profile).0
+}
+
+/// Apply the summary-features column-name prefix. Symmetric with the
+/// pgvector convention of prefixing computed columns and matches the
+/// LTR consumer expectation that match vs summary features stay
+/// visually separable in the resulting Parquet / Iceberg sink.
+fn summary_column_name(raw: &str) -> String {
+    format!("sf_{raw}")
 }
 
 fn build_record_batch(
     response: RankSearchResponse,
-    column_names: &[String],
+    match_column_names: &[String],
+    summary_column_names: &[String],
 ) -> Result<RecordBatch, String> {
     let n = response.hits.len();
 
@@ -155,36 +178,49 @@ fn build_record_batch(
             .collect::<Vec<_>>(),
     ));
 
-    // Per-feature columns: collect values in row order; missing values
-    // emit null so the column shape stays stable even when a hit didn't
-    // carry the feature. Use BTreeMap-free indexing — column_names
-    // already pins the order.
-    let mut feature_columns: Vec<ArrayRef> = Vec::with_capacity(column_names.len());
-    for name in column_names {
+    // Match-feature columns: collect values in row order; missing
+    // values emit null so the column shape stays stable.
+    let mut match_columns: Vec<ArrayRef> = Vec::with_capacity(match_column_names.len());
+    for name in match_column_names {
         let values: Vec<Option<f64>> = response
             .hits
             .iter()
             .map(|h| h.match_features.get(name).copied())
             .collect();
-        feature_columns.push(Arc::new(Float64Array::from(values)) as ArrayRef);
+        match_columns.push(Arc::new(Float64Array::from(values)) as ArrayRef);
     }
 
-    // Build the schema in matching column order.
+    // Summary-feature columns: same pattern, but read from
+    // h.summary_features and emit under the `sf_<name>` prefix.
+    let mut summary_columns: Vec<ArrayRef> = Vec::with_capacity(summary_column_names.len());
+    for name in summary_column_names {
+        let values: Vec<Option<f64>> = response
+            .hits
+            .iter()
+            .map(|h| h.summary_features.get(name).copied())
+            .collect();
+        summary_columns.push(Arc::new(Float64Array::from(values)) as ArrayRef);
+    }
+
+    // Build the schema in matching column order:
+    //   id, rank, score, phase, <match_features…>, <sf_<summary…>>
     let mut fields: Vec<Field> = vec![
         Field::new("id", DataType::Utf8, false),
         Field::new("rank", DataType::UInt32, false),
         Field::new("score", DataType::Float32, false),
         Field::new("phase", DataType::UInt8, false),
     ];
-    for name in column_names {
-        // Per-feature columns are nullable — a hit that didn't carry a
-        // feature value writes NULL rather than reshaping the schema.
+    for name in match_column_names {
         fields.push(Field::new(name, DataType::Float64, true));
+    }
+    for name in summary_column_names {
+        fields.push(Field::new(summary_column_name(name), DataType::Float64, true));
     }
     let schema = Arc::new(Schema::new(fields));
 
     let mut columns: Vec<ArrayRef> = vec![id_col, rank_col, score_col, phase_col];
-    columns.extend(feature_columns);
+    columns.extend(match_columns);
+    columns.extend(summary_columns);
     RecordBatch::try_new(schema, columns).map_err(|e| format!("RecordBatch::try_new: {e}"))
 }
 
@@ -247,6 +283,23 @@ mod tests {
         }
     }
 
+    /// R-7c.4b.1 helper: build a DTO with both match_features and
+    /// summary_features populated. Used by the new Arrow-side tests
+    /// that exercise the `sf_<feature>` column emission.
+    fn dto_with_summary(
+        id: &str,
+        score: f32,
+        phase: u8,
+        match_features: &[(&str, f64)],
+        summary_features: &[(&str, f64)],
+    ) -> ScoredHitDto {
+        let mut h = dto(id, score, phase, match_features);
+        for (k, v) in summary_features {
+            h.summary_features.insert((*k).into(), *v);
+        }
+        h
+    }
+
     fn resp(hits: Vec<ScoredHitDto>) -> RankSearchResponse {
         RankSearchResponse {
             hits,
@@ -262,7 +315,7 @@ mod tests {
             dto("a", 0.9, 0, &[]),
             dto("b", 0.7, 0, &[]),
         ]);
-        let batch = build_record_batch(r, &[]).unwrap();
+        let batch = build_record_batch(r, &[], &[]).unwrap();
         let s = batch.schema();
         assert_eq!(s.fields().len(), 4);
         assert_eq!(s.field(0).name(), "id");
@@ -281,7 +334,7 @@ mod tests {
             &[("bm25(title)", 12.0), ("closeness(embedding)", 0.91)],
         )]);
         let batch =
-            build_record_batch(r, &["bm25(title)".into(), "closeness(embedding)".into()])
+            build_record_batch(r, &["bm25(title)".into(), "closeness(embedding)".into()], &[])
                 .unwrap();
         let s = batch.schema();
         assert_eq!(s.fields().len(), 6);
@@ -297,7 +350,7 @@ mod tests {
             dto("a", 0.9, 0, &[("X", 1.5)]),
             dto("b", 0.7, 0, &[]),
         ]);
-        let batch = build_record_batch(r, &["X".into()]).unwrap();
+        let batch = build_record_batch(r, &["X".into()], &[]).unwrap();
         let col = batch.column(4);
         let arr = col.as_primitive::<arrow_array::types::Float64Type>();
         assert_eq!(arr.value(0), 1.5);
@@ -311,7 +364,7 @@ mod tests {
             dto("b", 0.7, 0, &[]),
             dto("c", 0.5, 0, &[]),
         ]);
-        let batch = build_record_batch(r, &[]).unwrap();
+        let batch = build_record_batch(r, &[], &[]).unwrap();
         let rank = batch
             .column(1)
             .as_primitive::<arrow_array::types::UInt32Type>();
@@ -328,7 +381,7 @@ mod tests {
             dto("doc:1", 0.8, 1, &[("F", 3.5)]),
             dto("doc:2", 0.6, 1, &[("F", 2.5)]),
         ]);
-        let batch = build_record_batch(r, &["F".into()]).unwrap();
+        let batch = build_record_batch(r, &["F".into()], &[]).unwrap();
         let bytes = encode_ipc_stream(&batch).unwrap();
 
         let mut reader = StreamReader::try_new(bytes.as_slice(), None).unwrap();
@@ -522,5 +575,198 @@ mod tests {
         let compiled = Arc::new(CompiledRankProfile::compile(spec, f).unwrap());
         let names = profile_match_feature_names(compiled);
         assert_eq!(names, vec!["alpha", "beta", "gamma"]);
+    }
+
+    // ---------------- R-7c.4b.1: summary_features columns ----------------
+
+    #[test]
+    fn profile_feature_column_names_returns_match_and_summary_in_declaration_order() {
+        let f = factory_with_docid();
+        let mut spec = RankProfileSpec::new("o");
+        spec.first_phase = Some(PhaseSpec {
+            expression: "docid()".into(),
+            heap_size: Some(10),
+            rerank_count: None,
+            batch_size: None,
+        });
+        spec.match_features = vec!["a".into(), "b".into()];
+        spec.summary_features = vec!["c".into(), "d".into(), "e".into()];
+        let compiled = Arc::new(CompiledRankProfile::compile(spec, f).unwrap());
+        let (match_cols, summary_cols) = profile_feature_column_names(compiled);
+        assert_eq!(match_cols, vec!["a", "b"]);
+        assert_eq!(summary_cols, vec!["c", "d", "e"]);
+    }
+
+    #[test]
+    fn summary_column_name_applies_sf_prefix() {
+        assert_eq!(summary_column_name("bm25(title)"), "sf_bm25(title)");
+        assert_eq!(summary_column_name(""), "sf_");
+    }
+
+    #[test]
+    fn build_batch_emits_sf_prefixed_summary_columns_after_match_columns() {
+        // Both groups present → schema layout is
+        //   id, rank, score, phase, <match…>, sf_<summary…>
+        // Column ordering is stable across rows and across requests
+        // for the same profile.
+        let r = resp(vec![dto_with_summary(
+            "x",
+            0.9,
+            0,
+            &[("bm25", 12.0)],
+            &[("snippet", 0.5), ("freshness", 0.9)],
+        )]);
+        let batch = build_record_batch(
+            r,
+            &["bm25".into()],
+            &["snippet".into(), "freshness".into()],
+        )
+        .unwrap();
+        let s = batch.schema();
+        assert_eq!(s.fields().len(), 7); // 4 fixed + 1 match + 2 summary
+        assert_eq!(s.field(4).name(), "bm25");
+        assert_eq!(s.field(5).name(), "sf_snippet");
+        assert_eq!(s.field(6).name(), "sf_freshness");
+
+        // Values land in the right columns.
+        let match_col = batch
+            .column(4)
+            .as_primitive::<arrow_array::types::Float64Type>();
+        assert_eq!(match_col.value(0), 12.0);
+        let snippet_col = batch
+            .column(5)
+            .as_primitive::<arrow_array::types::Float64Type>();
+        assert_eq!(snippet_col.value(0), 0.5);
+        let fresh_col = batch
+            .column(6)
+            .as_primitive::<arrow_array::types::Float64Type>();
+        assert_eq!(fresh_col.value(0), 0.9);
+    }
+
+    #[test]
+    fn build_batch_with_only_summary_columns_skips_match_section() {
+        // Profile declares only summary_features → schema is
+        //   id, rank, score, phase, sf_<summary…>
+        // (no match columns at all).
+        let r = resp(vec![dto_with_summary("x", 0.5, 0, &[], &[("only_s", 7.0)])]);
+        let batch = build_record_batch(r, &[], &["only_s".into()]).unwrap();
+        let s = batch.schema();
+        assert_eq!(s.fields().len(), 5);
+        assert_eq!(s.field(4).name(), "sf_only_s");
+        let col = batch
+            .column(4)
+            .as_primitive::<arrow_array::types::Float64Type>();
+        assert_eq!(col.value(0), 7.0);
+    }
+
+    #[test]
+    fn build_batch_summary_missing_value_emits_null() {
+        // Two-row response: only row "a" has summary feature X; row
+        // "b" doesn't. Column `sf_X` must encode null for row "b".
+        let r = resp(vec![
+            dto_with_summary("a", 0.9, 0, &[], &[("X", 1.5)]),
+            dto_with_summary("b", 0.7, 0, &[], &[]),
+        ]);
+        let batch = build_record_batch(r, &[], &["X".into()]).unwrap();
+        let col = batch
+            .column(4)
+            .as_primitive::<arrow_array::types::Float64Type>();
+        assert_eq!(col.value(0), 1.5);
+        assert!(col.is_null(1));
+    }
+
+    #[test]
+    fn build_batch_match_and_summary_columns_independent_on_same_row() {
+        // `bm25(title)` declared in BOTH match and summary groups. The
+        // wire layout keeps them in distinct columns (`bm25(title)` and
+        // `sf_bm25(title)`) and they read from independent sources on
+        // the hit DTO (match_features vs summary_features maps).
+        let r = resp(vec![dto_with_summary(
+            "x",
+            0.9,
+            0,
+            &[("bm25(title)", 3.0)],
+            &[("bm25(title)", 9.0)],
+        )]);
+        let batch = build_record_batch(
+            r,
+            &["bm25(title)".into()],
+            &["bm25(title)".into()],
+        )
+        .unwrap();
+        let s = batch.schema();
+        assert_eq!(s.field(4).name(), "bm25(title)");
+        assert_eq!(s.field(5).name(), "sf_bm25(title)");
+        let m = batch
+            .column(4)
+            .as_primitive::<arrow_array::types::Float64Type>();
+        let sf = batch
+            .column(5)
+            .as_primitive::<arrow_array::types::Float64Type>();
+        assert_eq!(m.value(0), 3.0);
+        assert_eq!(sf.value(0), 9.0);
+    }
+
+    #[tokio::test]
+    async fn export_drives_handler_and_emits_summary_columns_alongside_match() {
+        // End-to-end: profile declares both match_features and
+        // summary_features → the Arrow stream has both column groups
+        // populated with per-doc values from a real pipeline run.
+        let candidates: Arc<dyn CandidateProvider> =
+            Arc::new(FixedCandidates(vec![DocHandle(2), DocHandle(5)]));
+
+        // Build a profile with one match feature (docid()) and one
+        // summary feature (1.0 — constant per doc).
+        let factory = factory_with_docid();
+        let registry = ProfileRegistry::new();
+        let mut spec = RankProfileSpec::new("both");
+        spec.first_phase = Some(PhaseSpec {
+            expression: "docid()".into(),
+            heap_size: Some(50),
+            rerank_count: None,
+            batch_size: None,
+        });
+        spec.match_features = vec!["docid()".into()];
+        spec.summary_features = vec!["1.0".into()];
+        spec.version = 1;
+        let compiled = CompiledRankProfile::compile(spec, factory.clone()).unwrap();
+        registry.install(compiled);
+        let services = Arc::new(RankServices {
+            profile_registry: Arc::new(registry),
+            blueprint_factory: factory,
+            candidate_provider: candidates,
+            second_phase_scorers: dashmap::DashMap::new(),
+        });
+
+        let body = serde_json::to_vec(&serde_json::json!({
+            "collection": "docs",
+            "query_vector": [],
+            "k": 2,
+            "rank_profile": "both",
+        }))
+        .unwrap();
+        let ipc = export_rank_features_to_arrow_ipc(&services, &body).await.unwrap();
+        let mut reader = StreamReader::try_new(ipc.as_slice(), None).unwrap();
+        let batch = reader.next().unwrap().unwrap();
+        // id/rank/score/phase + 1 match + 1 summary = 6 columns
+        assert_eq!(batch.num_columns(), 6);
+        assert_eq!(batch.num_rows(), 2);
+        let s = batch.schema();
+        assert_eq!(s.field(4).name(), "docid()");
+        assert_eq!(s.field(5).name(), "sf_1.0");
+
+        // Per-doc values verified through the wire encoding.
+        let ids = batch.column(0).as_string::<i32>();
+        assert_eq!(ids.value(0), "5"); // top hit (docid scorer)
+        let match_col = batch
+            .column(4)
+            .as_primitive::<arrow_array::types::Float64Type>();
+        assert_eq!(match_col.value(0), 5.0);
+        assert_eq!(match_col.value(1), 2.0);
+        let summary_col = batch
+            .column(5)
+            .as_primitive::<arrow_array::types::Float64Type>();
+        assert_eq!(summary_col.value(0), 1.0);
+        assert_eq!(summary_col.value(1), 1.0);
     }
 }
