@@ -614,7 +614,7 @@ embedded-all = ["python", "java", "nodejs", "c_ffi"]
 # Enterprise catalog integrations (optional)
 unity-catalog = []      # Databricks Unity Catalog integration
 polaris-catalog = ["proximadb-catalog/polaris-catalog"]    # Apache Polaris (Iceberg REST Catalog) integration
-delta-lake = []         # Delta Lake table format support
+delta-lake = ["proximadb-catalog/delta-lake"]         # Delta Lake table format support
 enterprise-catalogs = ["unity-catalog", "polaris-catalog", "delta-lake"]
 
 # OLTP catalog backends — metadata-only; record data stays in ProximaDB engines.
