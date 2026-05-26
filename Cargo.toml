@@ -66,6 +66,7 @@ members = [
     "crates/query/proximadb-relational-reader",
     "crates/query/proximadb-relational-planner",
     "crates/query/proximadb-relational-executor",
+    "crates/query/proximadb-relational-frontend",
     "crates/contracts/quantization",
     "crates/query/proximadb-observability-query",
     "crates/query/proximadb-query",
@@ -88,6 +89,12 @@ homepage = "https://github.com/vjsingh1984/proximadb"
 
 [workspace.dependencies]
 anyhow = "1.0"
+# R-5b.1.3 workaround: an auto-refactor commit added
+# crates/query/proximadb-relational-frontend referencing
+# `sqlparser = { workspace = true }` without first declaring the
+# dep at the workspace level. Same pin as the root `[dependencies]`
+# entry.
+sqlparser = "0.59"
 arrow = { version = "57.1", features = ["prettyprint"] }
 arrow-array = { version = "57.1", default-features = false }
 bincode = "1.3"
@@ -113,6 +120,7 @@ proximadb-relational-algebra = { path = "crates/query/proximadb-relational-algeb
 proximadb-relational-reader = { path = "crates/query/proximadb-relational-reader" }
 proximadb-relational-planner = { path = "crates/query/proximadb-relational-planner" }
 proximadb-relational-executor = { path = "crates/query/proximadb-relational-executor" }
+proximadb-relational-frontend = { path = "crates/query/proximadb-relational-frontend" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 dashmap = "6.1.0"
 parking_lot = "0.12"
