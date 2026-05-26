@@ -231,6 +231,15 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
             return result
 
         if isinstance(result, dict):
+            # Collection requires `config`; supply a minimal one when the
+            # raw dict only carries id/name/dimension (the path taken when
+            # gRPC returns the new typed Collection wrapper).
+            if "config" not in result:
+                cfg_payload = {
+                    "name": result.get("name", fallback_name or ""),
+                    "dimension": result.get("dimension", fallback_dimension or 0),
+                }
+                result = {**result, "config": cfg_payload}
             return Collection(**result)
 
         # Handle CollectionWrapper or protobuf objects
@@ -240,8 +249,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
 
         return Collection(
             id=coll_id,
-            name=name,
-            dimension=dimension,
+            config=CollectionConfig(name=name or coll_id, dimension=dimension or 0),
         )
 
     # ==========================================================================
