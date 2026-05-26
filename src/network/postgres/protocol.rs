@@ -13,10 +13,11 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use bytes::{Buf, BufMut, BytesMut};
+use futures::FutureExt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 use super::session::Session;
 use super::translator::QueryTranslator;
@@ -557,10 +558,8 @@ impl PostgresProtocol {
         }
         for statement in statements {
             // Translate each statement to ProximaDB format.
-            match self.translator.translate(&statement) {
-                Ok(result) => {
-                    self.execute_query(&result).await?;
-                }
+            let translated = match self.translator.translate(&statement) {
+                Ok(t) => t,
                 Err(e) => {
                     self.send_error(
                         "ERROR",
@@ -573,6 +572,61 @@ impl PostgresProtocol {
                     // inside a multi-statement query.
                     break;
                 }
+            };
+            // Panic-guard the SQL execution path. Several SELECT
+            // shapes (aggregates, JOINs, certain catalog views)
+            // currently panic inside the executor; without this
+            // guard the panic propagates up and the runtime drops
+            // the TCP connection, leaving the client with an EOF.
+            // The guard converts those panics into well-formed
+            // PostgreSQL ErrorResponse messages (SQLSTATE XX000 —
+            // "internal error") so clients see a real SQL error
+            // and the connection survives. This is a stopgap until
+            // each crasher is implemented properly (Phase 1.3+ for
+            // the easier ones, Phase 2 for the relational planner).
+            //
+            // After a panic the connection state may be partially
+            // corrupted (mid-response writes), so we still stop
+            // processing subsequent statements in this multi-
+            // statement query.
+            let exec_result =
+                std::panic::AssertUnwindSafe(self.execute_query(&translated))
+                    .catch_unwind()
+                    .await;
+            match exec_result {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    self.send_error(
+                        "ERROR",
+                        "XX000",
+                        &format!("execution failed: {}", e),
+                    )
+                    .await?;
+                    break;
+                }
+                Err(panic_payload) => {
+                    let panic_msg = Self::panic_payload_to_string(&panic_payload);
+                    error!(
+                        target: "proximadb::pgwire::panic_guard",
+                        statement = %statement,
+                        panic = %panic_msg,
+                        "pgwire execution panicked; converted to SQL error"
+                    );
+                    // Best-effort error response. If writing fails
+                    // (socket already closed), let `?` propagate
+                    // so the connection loop exits cleanly.
+                    self.send_error(
+                        "ERROR",
+                        "XX000",
+                        &format!(
+                            "internal pgwire error: {} (likely an \
+                             unsupported SQL feature; see ADR-018)",
+                            panic_msg
+                        ),
+                    )
+                    .await?;
+                    break;
+                }
             }
         }
 
@@ -580,6 +634,23 @@ impl PostgresProtocol {
         self.send_ready_for_query('I').await?;
 
         Ok(())
+    }
+
+    /// Best-effort downcast of a panic payload to a printable
+    /// string. Standard panic payloads are either `&'static str`
+    /// (from `panic!("literal")`) or `String` (from
+    /// `panic!("{}", x)`); we fall back to a generic marker
+    /// otherwise so the error message is always non-empty.
+    fn panic_payload_to_string(
+        payload: &Box<dyn std::any::Any + Send>,
+    ) -> String {
+        if let Some(s) = payload.downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "unrecoverable error (panic payload not stringifiable)".to_string()
+        }
     }
 
     /// Split a multi-statement SQL query on top-level semicolons.
