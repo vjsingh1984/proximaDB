@@ -78,7 +78,7 @@ use tracing::{debug, instrument};
 use crate::compute::plan::{ComputePlan, PlanHints, PlanNode};
 use crate::compute::scheduler::ComputeScheduler;
 use crate::proto::proximadb_v1;
-use crate::services::{CollectionService, VectorOperationsService};
+use crate::services::VectorOperationsService;
 
 // ============================================================================
 // Unified Request Types
@@ -985,8 +985,8 @@ pub struct UnifiedQueryHandler {
     vector_ops: Arc<VectorOperationsService>,
     /// Vector query service trait object (Phase 2.3 - preferred interface)
     vector_query_service: Option<Arc<dyn VectorQueryService>>,
-    /// Collection service
-    collection_service: Arc<CollectionService>,
+    /// Collection port (Phase 9 / Task #76)
+    collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     /// Graph query/traversal service
     graph_service: Option<Arc<dyn GraphQueryService>>,
 }
@@ -995,13 +995,13 @@ impl UnifiedQueryHandler {
     /// Create a new unified query handler (legacy interface)
     pub fn new(
         vector_ops: Arc<VectorOperationsService>,
-        collection_service: Arc<CollectionService>,
+        collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     ) -> Self {
         Self {
             scheduler: None,
             vector_ops,
             vector_query_service: None,
-            collection_service,
+            collection_port,
             graph_service: None,
         }
     }
@@ -1013,13 +1013,13 @@ impl UnifiedQueryHandler {
     pub fn with_vector_query_service(
         vector_query_service: Arc<dyn VectorQueryService>,
         vector_ops: Arc<VectorOperationsService>,
-        collection_service: Arc<CollectionService>,
+        collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     ) -> Self {
         Self {
             scheduler: None,
             vector_ops,
             vector_query_service: Some(vector_query_service),
-            collection_service,
+            collection_port,
             graph_service: None,
         }
     }
@@ -1028,13 +1028,13 @@ impl UnifiedQueryHandler {
     pub fn with_scheduler(
         scheduler: Arc<ComputeScheduler>,
         vector_ops: Arc<VectorOperationsService>,
-        collection_service: Arc<CollectionService>,
+        collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     ) -> Self {
         Self {
             scheduler: Some(scheduler),
             vector_ops,
             vector_query_service: None,
-            collection_service,
+            collection_port,
             graph_service: None,
         }
     }
@@ -1044,13 +1044,13 @@ impl UnifiedQueryHandler {
         scheduler: Arc<ComputeScheduler>,
         vector_query_service: Arc<dyn VectorQueryService>,
         vector_ops: Arc<VectorOperationsService>,
-        collection_service: Arc<CollectionService>,
+        collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     ) -> Self {
         Self {
             scheduler: Some(scheduler),
             vector_ops,
             vector_query_service: Some(vector_query_service),
-            collection_service,
+            collection_port,
             graph_service: None,
         }
     }
@@ -1421,8 +1421,8 @@ impl UnifiedQueryHandler {
         match &op.operation {
             CollectionOperationType::List => {
                 let collections = self
-                    .collection_service
-                    .list_collections()
+                    .collection_port
+                    .list_collections(None)
                     .await
                     .map_err(|e| anyhow!("Failed to list collections: {}", e))?;
 
@@ -1465,8 +1465,8 @@ impl UnifiedQueryHandler {
                     .ok_or_else(|| anyhow!("Collection ID required for GET"))?;
 
                 let collection = self
-                    .collection_service
-                    .collection(name)
+                    .collection_port
+                    .get_collection(name, None)
                     .await
                     .map_err(|e| anyhow!("Failed to get collection: {}", e))?
                     .ok_or_else(|| anyhow!("Collection not found: {}", name))?;
