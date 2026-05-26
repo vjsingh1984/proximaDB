@@ -20,6 +20,26 @@
 //! - Snapshots with compression
 //! - Write-Ahead Logging (WAL)
 //! - Cloud storage integration via IntelligentFilesystem
+//!
+//! ## Error type note
+//!
+//! This module returns `proximadb_kernel::error::ProximaDBError`. Storage
+//! failures are wrapped via `ProximaDBError::Storage(kernel::StorageError)`.
+//! The 2026-05-20 proliferation audit (P2) flagged the ~30 kernel
+//! `StorageError` constructions here as a "migration candidate" toward the
+//! richer `proximadb_storage_common::StorageError`, but a deeper review on
+//! 2026-05-26 found this is not a clean migration: `ProximaDBError::Storage`
+//! is defined to wrap kernel `StorageError` specifically, and the `From`
+//! bridge is one-directional (kernel → storage_common, not the reverse).
+//!
+//! Migrating would require either:
+//! - Adding a new `ProximaDBError::StorageCommon(...)` variant (introduces
+//!   a third error path, not consolidation), or
+//! - Migrating every caller of `ProximaDBError::Storage` to the richer
+//!   type (massive blast radius across the codebase).
+//!
+//! Neither is consolidation in the reuse-first sense. Leave kernel
+//! `StorageError` here until a broader VectorDBError shape decision is made.
 
 use crate::core::serialization::CompressionAlgorithm;
 use crate::graph::engines::orion::OrionGraphEngine;

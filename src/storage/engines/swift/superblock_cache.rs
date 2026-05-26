@@ -494,7 +494,13 @@ impl SwiftSuperBlockCache {
     }
 }
 
-/// Cache statistics for monitoring SWIFT's performance
+/// Cache statistics for monitoring SWIFT's performance.
+///
+/// Specialized — tracks 5 distinct hit categories (superblock,
+/// tree-navigation, datablock, bloom-filter, progressive-search) plus
+/// two optimization-savings counters. Not canonicalizable to
+/// `proximadb_runtime_common::cache::CacheStats` without losing the
+/// multi-level hit breakdown that SWIFT observability depends on.
 #[derive(Debug, Clone)]
 pub struct SwiftCacheStats {
     pub superblock_hits: u64,

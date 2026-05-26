@@ -424,6 +424,11 @@ impl PlanCache {
 }
 
 /// Statistics for the plan cache.
+///
+/// Part of the external API surface — appears in optimizer observability
+/// (EXPLAIN output, query-planner metrics). Do NOT consolidate with
+/// `proximadb_runtime_common::cache::CacheStats` without bumping the
+/// public API version.
 #[derive(Debug, Clone)]
 pub struct PlanCacheStats {
     /// Current number of cached plans.
