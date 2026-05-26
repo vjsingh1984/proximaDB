@@ -2028,6 +2028,24 @@ impl DmlService {
         table_schema: &CatalogTableSchema,
         mutation_kind: RelationalMutationKind,
     ) -> Result<ProximaRecord> {
+        // `INSERT INTO t VALUES (...)` without an explicit column
+        // list is standard SQL — the values are mapped to the table's
+        // declared columns in order. Synthesize the column list
+        // here when it's empty so the validation + per-column
+        // mapping below behaves uniformly. The arity check then
+        // catches actual mismatches (too many/few values vs the
+        // schema's column count) with a clearer error.
+        let synthesized: Vec<String>;
+        let columns: &[String] = if columns.is_empty() && !values.is_empty() {
+            synthesized = table_schema
+                .columns
+                .iter()
+                .map(|c| c.name.clone())
+                .collect();
+            &synthesized
+        } else {
+            columns
+        };
         if columns.len() != values.len() {
             return Err(anyhow!(
                 "Column count ({}) doesn't match value count ({})",
