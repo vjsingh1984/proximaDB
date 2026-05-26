@@ -87,10 +87,16 @@ The current REST hybrid route is a deprecated v1 compatibility facade and emits
 deprecation metadata. Prefer pgwire/SQL and record-native query routes as those
 surfaces are promoted.
 
+NOTE: The previously-documented `/api/v1/experimental/hybrid/search` route was
+mock-backed and removed 2026-05-26. Use the production endpoint
+`/api/v1/hybrid/search` below (real BM25 + vector fusion via
+`RestHybridPortImpl`). gRPC parity landed in commit `6a73ead7f` +
+`10a0ea1b2` — REST and gRPC share the same in-process index map.
+
 [source,bash]
 ----
 # RRF (default)
-curl -X POST http://localhost:5678/api/v1/experimental/hybrid/search \
+curl -X POST http://localhost:5678/api/v1/hybrid/search \
   -H "Content-Type: application/json" \
   -d '{
     "collection": "products",
@@ -101,7 +107,7 @@ curl -X POST http://localhost:5678/api/v1/experimental/hybrid/search \
   }'
 
 # Projection (speed/diversity tradeoff)
-curl -X POST http://localhost:5678/api/v1/experimental/hybrid/search \
+curl -X POST http://localhost:5678/api/v1/hybrid/search \
   -H "Content-Type: application/json" \
   -d '{
     "collection": "products",
@@ -111,8 +117,11 @@ curl -X POST http://localhost:5678/api/v1/experimental/hybrid/search \
     "top_k": 10
   }'
 
-# List all strategies
-curl http://localhost:5678/api/v1/experimental/hybrid/strategies
+# NOTE: The `/strategies` listing endpoint that lived under the removed
+# experimental route has not been re-mounted on `/api/v1/hybrid`.
+# The supported strategy names are listed in the FusionStrategy enum at
+# `src/core/search/hybrid/strategies.rs` and reproduced below in
+# "Selecting via Python SDK".
 ----
 
 == Selecting via Python SDK
