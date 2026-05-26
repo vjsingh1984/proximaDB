@@ -6146,6 +6146,7 @@ dependencies = [
  "proximadb-records",
  "proximadb-runtime",
  "proximadb-runtime-common",
+ "proximadb-sdk",
  "proximadb-security",
  "proximadb-storage-common",
  "proximadb-telemetry",

@@ -433,6 +433,11 @@ walkdir = "2"
 # (tests/fp16_pgwire_e2e.rs). Same major as the optional CDC dep but
 # dev-only so it doesn't affect production binary size.
 tokio-postgres = "0.7"
+# Rust SDK in client (REST) mode for SDK-level integration tests
+# (tests/fp16_rust_sdk_e2e.rs). The SDK lives in clients/rust as a
+# workspace member; dev-dep here so we can drive it against an
+# in-process server fixture.
+proximadb-sdk = { path = "clients/rust", default-features = false, features = ["client"] }
 
 [features]
 default = ["sql_frontend", "graph-first-sks", "unified-facade-routing"]
