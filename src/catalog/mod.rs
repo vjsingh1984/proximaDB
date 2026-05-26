@@ -266,7 +266,7 @@ impl CatalogManager {
         region: &str,
         catalog_id: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use crate::proto::proximadb_v1::GlueCatalogConfig;
+        use glue::GlueCatalogConfig;
 
         let config = GlueCatalogConfig {
             region: region.to_string(),

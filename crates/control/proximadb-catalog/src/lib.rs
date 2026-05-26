@@ -26,6 +26,8 @@ pub mod dr_reconciler;
 pub mod dr_restore;
 // Embedding-precision rollout (PR 6 of EMBEDDING_PRECISION_LLD_2026_05_22).
 pub mod embedding_precision_policy;
+#[cfg(feature = "aws")]
+pub mod glue;
 pub mod hive;
 pub mod native;
 pub mod oltp;
