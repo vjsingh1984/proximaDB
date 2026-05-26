@@ -538,15 +538,41 @@ impl PostgresProtocol {
             return Ok(());
         }
 
-        // Translate query to ProximaDB format
-        match self.translator.translate(&query) {
-            Ok(result) => {
-                // Execute translated query
-                self.execute_query(&result).await?;
-            }
-            Err(e) => {
-                self.send_error("ERROR", "42601", &format!("Syntax error: {}", e))
+        // Split semicolon-separated statements. The PostgreSQL Simple
+        // Query protocol explicitly supports multi-statement queries;
+        // each statement gets its own RowDescription / DataRow /
+        // CommandComplete sequence. The split is quote-aware so
+        // semicolons inside string literals don't accidentally cut a
+        // statement.
+        //
+        // Previously the entire multi-statement string was passed to
+        // the translator + execute_query, which only matched the
+        // FIRST keyword — meaning `BEGIN; INSERT ...; COMMIT;` was
+        // processed as a single `BEGIN` and the INSERT silently
+        // disappeared. This was a data-loss bug, not a feature gap.
+        let statements = Self::split_sql_statements(&query);
+        if statements.is_empty() {
+            self.send_ready_for_query('I').await?;
+            return Ok(());
+        }
+        for statement in statements {
+            // Translate each statement to ProximaDB format.
+            match self.translator.translate(&statement) {
+                Ok(result) => {
+                    self.execute_query(&result).await?;
+                }
+                Err(e) => {
+                    self.send_error(
+                        "ERROR",
+                        "42601",
+                        &format!("Syntax error: {}", e),
+                    )
                     .await?;
+                    // Stop processing subsequent statements on error to
+                    // match PostgreSQL's "abort on error" semantics
+                    // inside a multi-statement query.
+                    break;
+                }
             }
         }
 
@@ -554,6 +580,50 @@ impl PostgresProtocol {
         self.send_ready_for_query('I').await?;
 
         Ok(())
+    }
+
+    /// Split a multi-statement SQL query on top-level semicolons.
+    /// Quote-aware: semicolons inside single- or double-quoted
+    /// strings are not statement separators. SQL-style `''`
+    /// inside a single-quoted string is treated as an escaped
+    /// single quote, not as the end of the string.
+    fn split_sql_statements(query: &str) -> Vec<String> {
+        let mut statements = Vec::new();
+        let mut current = String::new();
+        let mut in_single = false;
+        let mut in_double = false;
+        let mut chars = query.chars().peekable();
+        while let Some(c) = chars.next() {
+            match c {
+                '\'' if !in_double => {
+                    current.push(c);
+                    if in_single && chars.peek() == Some(&'\'') {
+                        // SQL '' escape — consume the second quote
+                        // verbatim and stay inside the literal.
+                        current.push(chars.next().unwrap());
+                    } else {
+                        in_single = !in_single;
+                    }
+                }
+                '"' if !in_single => {
+                    current.push(c);
+                    in_double = !in_double;
+                }
+                ';' if !in_single && !in_double => {
+                    let trimmed = current.trim();
+                    if !trimmed.is_empty() {
+                        statements.push(trimmed.to_string());
+                    }
+                    current.clear();
+                }
+                _ => current.push(c),
+            }
+        }
+        let trimmed = current.trim();
+        if !trimmed.is_empty() {
+            statements.push(trimmed.to_string());
+        }
+        statements
     }
 
     fn is_set_statement(query: &str) -> bool {
@@ -615,6 +685,84 @@ impl PostgresProtocol {
     /// Execute a translated query
     async fn execute_query(&mut self, query: &str) -> Result<()> {
         let upper = query.to_uppercase();
+
+        // Transaction control. ProximaDB does not yet implement real
+        // MVCC isolation, so BEGIN/COMMIT/ROLLBACK are autocommit
+        // no-ops at the engine level. We still emit the correct
+        // PostgreSQL command tag so clients (psql, ORM drivers,
+        // connection poolers) parse the response normally instead of
+        // silently mis-classifying it. The tracing warning records
+        // the autocommit truth so operator dashboards can surface it
+        // until real transactions land in Phase 3.
+        //
+        // Previously these statements fell through to
+        // `send_command_complete("OK")` at the bottom of this
+        // method — which caused multi-statement queries like
+        // `BEGIN; INSERT ...; COMMIT;` to look successful while
+        // silently dropping work. See ADR-018 for the autocommit
+        // contract and the Phase 3 plan for real transactions.
+        let trimmed_upper = upper.trim();
+        let trimmed_upper = trimmed_upper
+            .strip_suffix(';')
+            .map(str::trim)
+            .unwrap_or(trimmed_upper);
+        if trimmed_upper == "BEGIN"
+            || trimmed_upper == "BEGIN TRANSACTION"
+            || trimmed_upper == "BEGIN WORK"
+            || trimmed_upper == "START TRANSACTION"
+        {
+            warn!(
+                target: "proximadb::pgwire::transactions",
+                "BEGIN observed; ProximaDB pgwire is autocommit-only — \
+                 isolation/savepoints are not yet implemented"
+            );
+            return self.send_command_complete("BEGIN").await;
+        }
+        if trimmed_upper == "COMMIT"
+            || trimmed_upper == "COMMIT TRANSACTION"
+            || trimmed_upper == "COMMIT WORK"
+            || trimmed_upper == "END"
+            || trimmed_upper == "END TRANSACTION"
+            || trimmed_upper == "END WORK"
+        {
+            return self.send_command_complete("COMMIT").await;
+        }
+        if trimmed_upper == "ROLLBACK"
+            || trimmed_upper == "ROLLBACK TRANSACTION"
+            || trimmed_upper == "ROLLBACK WORK"
+            || trimmed_upper == "ABORT"
+            || trimmed_upper == "ABORT TRANSACTION"
+            || trimmed_upper == "ABORT WORK"
+        {
+            // Loud warning because ROLLBACK is the dangerous one:
+            // clients calling ROLLBACK expect uncommitted writes to
+            // disappear, but under autocommit each statement has
+            // already committed and there is nothing to roll back.
+            // Phase 3 will replace this with real rollback semantics.
+            warn!(
+                target: "proximadb::pgwire::transactions",
+                "ROLLBACK observed but pgwire is autocommit-only — \
+                 prior statements in this query have ALREADY been \
+                 applied; this ROLLBACK has no effect"
+            );
+            return self.send_command_complete("ROLLBACK").await;
+        }
+        if trimmed_upper.starts_with("SAVEPOINT ")
+            || trimmed_upper.starts_with("RELEASE SAVEPOINT ")
+            || trimmed_upper.starts_with("ROLLBACK TO ")
+        {
+            // Loud error: savepoints have no defensible autocommit
+            // emulation, and tools that issue them (e.g. SQLAlchemy
+            // nested-transaction emulation) MUST know they are not
+            // supported instead of silently misbehaving.
+            return self
+                .send_error(
+                    "ERROR",
+                    "0A000",
+                    "savepoints are not supported (autocommit-only pgwire)",
+                )
+                .await;
+        }
 
         // Handle SHOW commands converted to SELECT
         if upper.contains("AS SERVER_VERSION") {
