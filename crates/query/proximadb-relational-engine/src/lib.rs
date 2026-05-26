@@ -46,6 +46,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 
+pub mod transaction;
+pub use transaction::{
+    PkKey, Transaction, TransactionBuffer, TableWrites, TxReaderFactory,
+};
+
 // =========================================================================
 // Errors
 // =========================================================================
