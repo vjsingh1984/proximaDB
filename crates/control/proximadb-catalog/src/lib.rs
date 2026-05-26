@@ -24,6 +24,8 @@ pub mod dr_policy_store;
 pub mod dr_reconciler;
 // DR restore-readiness primitives (P5 of the same contract).
 pub mod dr_restore;
+#[cfg(feature = "delta-lake")]
+pub mod delta;
 // Embedding-precision rollout (PR 6 of EMBEDDING_PRECISION_LLD_2026_05_22).
 pub mod embedding_precision_policy;
 #[cfg(feature = "aws")]
