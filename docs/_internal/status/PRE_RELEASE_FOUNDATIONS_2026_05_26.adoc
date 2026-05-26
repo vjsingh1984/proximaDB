@@ -122,9 +122,9 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 | Design + impact analysis first. Cross-crate change touching `crates/foundation/proximadb-records/`, every writer, every projection rebuilder.
 
 | T3.1 Slice 3 — WAL iteration API filter by branch_id + LSN range
-| Pending
-|
-| Builds on Slice 2's `branch_id` field. Filter the canonical WAL entry stream.
+| Done
+| (this commit)
+| Added `filter_wal_by_branch_lsn(entries, branch_id, lsn_range) -> Vec<&CanonicalWalEntry>` to `crates/storage/proximadb-storage-common/src/wal_entry.rs`. Pure function; 8 tests covering empty input, LSN-range edges, branch-id matching, None-branch exclusion, RecordDelete/Checkpoint/CdcBarrier exclusion, combined LSN+branch filtering. Caller materializes input (e.g. via `recover_from_canonical_wal`). RecordDelete handled separately by the orchestrator in Slice 4+.
 
 | T3.1 Slice 4 — Merge-base discovery (catalog `BranchMetadata` or walk-back)
 | Pending

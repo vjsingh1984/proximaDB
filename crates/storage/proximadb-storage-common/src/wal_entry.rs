@@ -394,6 +394,65 @@ pub fn latest_checkpoint(entries: &[CanonicalWalEntry]) -> Option<&SnapshotManif
 }
 
 // ---------------------------------------------------------------------------
+// Branch / LSN filter (T3.1 Slice 3 — 2026-05-26)
+// ---------------------------------------------------------------------------
+
+/// Filter a canonical WAL slice down to `RecordUpsert` entries that belong
+/// to a specific branch and fall within an LSN range.
+///
+/// Used by the graph branch merge orchestrator (ADR-012) to extract one
+/// branch's mutations from a shared WAL stream before passing them through
+/// the per-branch event lists that `walk_diff` (in `src/graph/merge.rs`)
+/// consumes.
+///
+/// **Scope (T3.1 Slice 3):**
+///
+/// * Only `CanonicalOperation::RecordUpsert` entries are considered.
+/// * The record's `branch_id` MUST equal `Some(branch_id)` — entries with
+///   `branch_id: None` are EXCLUDED. (A record with no branch tag has not
+///   been tagged for any branch; the orchestrator treats those as "main"
+///   via a separate code path, not via this filter.)
+/// * `RecordDelete` entries are ALWAYS excluded. They lack a full record
+///   and therefore have no branch metadata; the orchestrator tracks
+///   deletes via separate context.
+/// * `Checkpoint` and `CdcBarrier` entries are ALWAYS excluded. They are
+///   recovery / publish markers, not branch-scoped data mutations.
+///
+/// Returns references into the input slice — caller owns lifetimes. The
+/// function is `O(n)` over the input.
+///
+/// # Example
+///
+/// ```ignore
+/// // Get all RecordUpserts on branch "feature-x" with LSN > merge_base_lsn
+/// // and LSN <= current_head_lsn.
+/// let entries = filter_wal_by_branch_lsn(
+///     &all_entries,
+///     "feature-x",
+///     (merge_base_lsn + 1)..=current_head_lsn,
+/// );
+/// ```
+pub fn filter_wal_by_branch_lsn<'a, R>(
+    entries: &'a [CanonicalWalEntry],
+    branch_id: &str,
+    lsn_range: R,
+) -> Vec<&'a CanonicalWalEntry>
+where
+    R: std::ops::RangeBounds<u64>,
+{
+    entries
+        .iter()
+        .filter(|entry| lsn_range.contains(&entry.sequence_number))
+        .filter(|entry| match &entry.operation {
+            CanonicalOperation::RecordUpsert { record, .. } => {
+                record.branch_id.as_deref() == Some(branch_id)
+            }
+            _ => false,
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -868,5 +927,142 @@ mod tests {
 
         assert_eq!(result.upserts_replayed, 3);
         assert_eq!(result.directives_applied, 3);
+    }
+
+    // ── T3.1 Slice 3 — filter_wal_by_branch_lsn tests ──────────────────────
+
+    fn branch_upsert(seq: u64, oid: &str, branch: Option<&str>) -> CanonicalWalEntry {
+        let mut record = make_record(oid);
+        record.branch_id = branch.map(String::from);
+        CanonicalWalEntry::new(
+            seq,
+            CanonicalOperation::RecordUpsert {
+                collection_id: "col".into(),
+                record: Box::new(record),
+                projections: vec![],
+            },
+            None,
+        )
+    }
+
+    #[test]
+    fn filter_empty_input_returns_empty() {
+        let out = filter_wal_by_branch_lsn(&[], "any", 0..u64::MAX);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn filter_lsn_range_drops_pre_range_entries() {
+        let entries = vec![
+            branch_upsert(1, "a", Some("dev")),
+            branch_upsert(5, "b", Some("dev")),
+            branch_upsert(10, "c", Some("dev")),
+        ];
+        let out = filter_wal_by_branch_lsn(&entries, "dev", 5..=10);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].sequence_number, 5);
+        assert_eq!(out[1].sequence_number, 10);
+    }
+
+    #[test]
+    fn filter_lsn_range_drops_post_range_entries() {
+        let entries = vec![
+            branch_upsert(1, "a", Some("dev")),
+            branch_upsert(5, "b", Some("dev")),
+            branch_upsert(10, "c", Some("dev")),
+        ];
+        let out = filter_wal_by_branch_lsn(&entries, "dev", 0..5);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].sequence_number, 1);
+    }
+
+    #[test]
+    fn filter_keeps_only_matching_branch_id() {
+        let entries = vec![
+            branch_upsert(1, "a", Some("dev")),
+            branch_upsert(2, "b", Some("prod")),
+            branch_upsert(3, "c", Some("dev")),
+            branch_upsert(4, "d", Some("feature-x")),
+        ];
+        let out = filter_wal_by_branch_lsn(&entries, "dev", 0..u64::MAX);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].sequence_number, 1);
+        assert_eq!(out[1].sequence_number, 3);
+    }
+
+    #[test]
+    fn filter_excludes_records_with_no_branch_id() {
+        // Records with branch_id == None should be excluded from any
+        // specific-branch filter. They are not part of "any" branch.
+        let entries = vec![
+            branch_upsert(1, "a", None),
+            branch_upsert(2, "b", Some("dev")),
+            branch_upsert(3, "c", None),
+        ];
+        let out = filter_wal_by_branch_lsn(&entries, "dev", 0..u64::MAX);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].sequence_number, 2);
+    }
+
+    #[test]
+    fn filter_excludes_record_delete_entries() {
+        let entries = vec![
+            branch_upsert(1, "a", Some("dev")),
+            delete_entry(2, "b", vec![]),
+            branch_upsert(3, "c", Some("dev")),
+        ];
+        let out = filter_wal_by_branch_lsn(&entries, "dev", 0..u64::MAX);
+        // RecordDelete excluded regardless of LSN/branch.
+        assert_eq!(out.len(), 2);
+        assert!(matches!(
+            out[0].operation,
+            CanonicalOperation::RecordUpsert { .. }
+        ));
+    }
+
+    #[test]
+    fn filter_excludes_checkpoint_entries() {
+        let entries = vec![
+            branch_upsert(1, "a", Some("dev")),
+            checkpoint_entry(2, vec!["col".into()]),
+            branch_upsert(3, "c", Some("dev")),
+        ];
+        let out = filter_wal_by_branch_lsn(&entries, "dev", 0..u64::MAX);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].sequence_number, 1);
+        assert_eq!(out[1].sequence_number, 3);
+    }
+
+    #[test]
+    fn filter_excludes_cdc_barrier_entries() {
+        let cdc = CanonicalWalEntry::new(
+            5,
+            CanonicalOperation::CdcBarrier {
+                barrier_sequence: 4,
+                events: vec![],
+            },
+            None,
+        );
+        let entries = vec![branch_upsert(1, "a", Some("dev")), cdc];
+        let out = filter_wal_by_branch_lsn(&entries, "dev", 0..u64::MAX);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].sequence_number, 1);
+    }
+
+    #[test]
+    fn filter_combines_lsn_and_branch_filters() {
+        let entries = vec![
+            branch_upsert(1, "a", Some("dev")),
+            branch_upsert(2, "b", Some("prod")),
+            branch_upsert(3, "c", Some("dev")),
+            branch_upsert(4, "d", Some("dev")),
+            delete_entry(5, "e", vec![]),
+            branch_upsert(6, "f", Some("dev")),
+        ];
+        // dev branch entries in LSN range [2, 4]: should return seq 3, 4.
+        let out = filter_wal_by_branch_lsn(&entries, "dev", 2..=4);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].sequence_number, 3);
+        assert_eq!(out[1].sequence_number, 4);
     }
 }
