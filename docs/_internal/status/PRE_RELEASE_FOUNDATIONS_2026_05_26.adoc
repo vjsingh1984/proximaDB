@@ -102,7 +102,57 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 | **Slice 1** (`6a73ead7f`): added `fulltext_indexes: HybridFullTextIndexMap` to `SharedServices`; replaced 3 deprecated-shim wire-ups in `src/network/multi_server.rs` (L431/L853/L1233) with `RestHybridPortImpl`. **Slice 1b** (this commit): added `with_fulltext_indexes` builder to `AppState`; threaded `Option<FullTextIndexMap>` param through `RestServer::with_security_and_config_and_ports` + `build_router_for_unified`; wired production sites to pass `shared_services.fulltext_indexes.clone()`. Net effect: REST and gRPC `hybrid_search` now share the same in-process index map — a document indexed via REST is searchable via gRPC and vice versa. Slices 2-4 remain (fusion params, filter propagation, integration tests).
 |===
 
-== Tier 4b — Superficial-mock cleanup sweep (this session)
+== Tier 3.1 — ADR-012 graph branch merge orchestration
+
+[cols="3,1,3,2", options="header"]
+|===
+| Item | Status | Commit | Verification
+
+| T3.1 Slice 1 — WAL diff walker (pure logic, no WAL integration yet).
+  Adds `MutationEvent` struct + `walk_diff(left, right) -> Vec<MergeConflict>`
+  + `classify_mutation(base, branch_a, branch_b) -> MutationClass` to
+  `src/graph/merge.rs`. Branch identity implicit in "which input list."
+| Done
+| (this commit)
+| 13 tests passing (7 existing + 6 walk_diff/classify_mutation new). `cargo test --lib graph::merge`. Steps 1-2 (merge base discovery, WAL iteration) + step 5 (write back) require `branch_id` plumbing into `ProximaRecord` — future slices.
+
+| T3.1 Slice 2 — `branch_id` field plumbing into `ProximaRecord`
+| Pending (next session)
+|
+| Design + impact analysis first. Cross-crate change touching `crates/foundation/proximadb-records/`, every writer, every projection rebuilder.
+
+| T3.1 Slice 3 — WAL iteration API filter by branch_id + LSN range
+| Pending
+|
+| Builds on Slice 2's `branch_id` field. Filter the canonical WAL entry stream.
+
+| T3.1 Slice 4 — Merge-base discovery (catalog `BranchMetadata` or walk-back)
+| Pending
+|
+|
+
+| T3.1 Slice 5 — `GraphBranchMerger` orchestrator
+| Pending
+|
+| Wires Slices 1-4 into the full merge protocol from ADR-012 §3.
+
+| T3.1 Slice 6 — Catalog `branch_merge_policy` fields on `CatalogTableSchema`
+| Pending
+|
+| Per ADR-012's File Plan.
+
+| T3.1 Slice 7 — REST `POST /collections/{name}/branches/{branch}/merge` endpoint
+| Pending
+|
+|
+
+| T3.1 Slice 8 — Integration tests for full branch creation → divergent mutations → merge cycle
+| Pending
+|
+|
+|===
+
+== Tier 4b — Superficial-mock cleanup sweep (prior session)
 
 [cols="3,1,3,2", options="header"]
 |===
