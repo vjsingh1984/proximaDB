@@ -30,6 +30,8 @@ pub mod graph_service;
 pub mod hybrid_search_service;
 /// gRPC service for observability (logs, metrics, traces) (implements ObservabilityPort)
 pub mod observability_service;
+/// gRPC handler for the multi-phase ranking pipeline (R-7c.4a.1)
+pub mod rank_service;
 /// gRPC service for security and authentication management (implements SecurityPort)
 pub mod security_service;
 /// gRPC service for bidirectional streaming operations (implements StreamingPort)
@@ -48,6 +50,8 @@ pub use hybrid_search_service::HybridSearchServiceImpl;
 // Re-export document and observability services
 pub use document_service::DocumentServiceImpl;
 pub use observability_service::ObservabilityServiceImpl;
+// Re-export rank handler (R-7c.4a.1)
+pub use rank_service::RankServiceImpl;
 // Re-export streaming service
 pub use streaming_service::StreamingServiceImpl;
 // Re-export security service
