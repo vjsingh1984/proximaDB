@@ -103,10 +103,10 @@ This audit complements (does not replace) `link:DOCUMENTATION_CONSOLIDATION_AND_
 | Per-module breakdown paired with ARCHITECTURE_ATLAS.
 
 | MULTIMODEL_TRAJECTORY_ALIGNMENT_2026_05_18.adoc
-| Active
-| NOT_WIRED
+| Relocated 2026-05-26
+| N/A
 | Multimodel
-| `StoreType` (0 hits as named symbol). Guideline doc subordinate to `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`. Candidate to fold into the parent spec's "Design Rationale" section.
+| Moved to `docs/06-internals/MULTIMODEL_TRAJECTORY_ALIGNMENT_2026_05_18.adoc` — it's execution guardrails / code-review guidance derived from `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`, not a design blueprint, so `docs/06-internals/` (workflow/internals) is the better home per the consolidation plan's taxonomy.
 
 | NAMING_CONVENTIONS.adoc
 | Reference
@@ -220,11 +220,11 @@ OPEN_FORMAT_CATALOG (active design) + COLLECTION_DR_CRR_ENGINE_CONTRACT (SaaS-pe
 
 * **Action**: add explicit "SaaS-pending" status banner to DR_CRR doc with a pointer to ADR-017.
 
-=== Cluster: Multimodel guideline (1 doc — orphan candidate)
+=== Cluster: Multimodel guideline (resolved 2026-05-26)
 
-MULTIMODEL_TRAJECTORY_ALIGNMENT_2026_05_18.
+MULTIMODEL_TRAJECTORY_ALIGNMENT_2026_05_18 — was an orphan in `docs/12-design/`.
 
-* **Action**: candidate to fold into `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` as a "Design Rationale" section; the spec is the canonical authority.
+* **Resolved 2026-05-26**: moved to `docs/06-internals/MULTIMODEL_TRAJECTORY_ALIGNMENT_2026_05_18.adoc` rather than folded into the spec. Rationale: it's execution guardrails / code-review guidance, not design definition. Two different doc functions → relocate, don't merge. Canonical spec remains `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`.
 
 [[pending-consolidation-batches]]
 == Pending consolidation batches
