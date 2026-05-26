@@ -44,7 +44,7 @@ impl KnowledgeGraphFactory {
     /// * `tenant_config` - Tenant configuration including security policies
     pub async fn create_tenant_graph(
         tenant_id: &str,
-        tenant_config: TenantConfig,
+        tenant_config: KnowledgeGraphTenantConfig,
     ) -> Result<Arc<TenantKnowledgeGraph>> {
         let knowledge_graph = TenantKnowledgeGraph::new(
             tenant_id.to_string(),
@@ -215,7 +215,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_knowledge_graph_factory() {
-        let tenant_config = TenantConfig::default();
+        let tenant_config = KnowledgeGraphTenantConfig::default();
         let result = KnowledgeGraphFactory::create_tenant_graph("test_tenant", tenant_config).await;
         assert!(result.is_ok());
     }
