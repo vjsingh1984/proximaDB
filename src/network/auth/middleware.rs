@@ -149,6 +149,71 @@ pub async fn auth_middleware_unified<B>(
     Ok(next.run(request).await)
 }
 
+/// Parallel port-based auth middleware (ADR-016 / Task #69 step 3).
+///
+/// Behaves like `auth_middleware_unified` but talks to a
+/// `proximadb_runtime::SecurityPort` trait object instead of the
+/// concrete `SecurityCoordinator`, and stores the port-level
+/// `PortUserContext` in `request.extensions` instead of the rich
+/// root-crate `UnifiedUserContext`.  Consumers that have migrated to
+/// the port projection can mount this middleware; the legacy
+/// `auth_middleware_unified` remains the production path until step 4
+/// (per-consumer migrations) completes.
+///
+/// `DataPlaneCapability` handling is deliberately omitted here — the
+/// capability lookup currently requires `UnifiedUserContext`-typed
+/// info that's lost in the port projection.  Step 4 either extends
+/// the port surface for capability extraction or leaves callers needing
+/// capability on the legacy middleware.
+pub async fn auth_middleware_unified_port<B>(
+    State(security_port): State<Arc<dyn proximadb_runtime::SecurityPort>>,
+    mut request: Request<B>,
+    next: Next<B>,
+) -> Result<Response, (StatusCode, Json<AuthErrorResponse>)> {
+    let path = request.uri().path();
+
+    if should_skip_auth(path) {
+        return Ok(next.run(request).await);
+    }
+
+    let auth_header = extract_auth_header(&request)?;
+    let credential = map_header_to_port_credential(&auth_header)?;
+
+    let port_context = security_port.authenticate(credential).await.map_err(|e| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(AuthErrorResponse {
+                error: "authentication_failed".to_string(),
+                message: format!("{}", e),
+                code: 401,
+            }),
+        )
+    })?;
+
+    request.extensions_mut().insert(port_context);
+    Ok(next.run(request).await)
+}
+
+/// Map an HTTP `Authorization` header value to a port-level credential.
+/// Mirrors `map_header_to_auth_data` but emits `PortAuthCredential`
+/// instead of the root-crate `AuthenticationData` enum.
+fn map_header_to_port_credential(
+    auth_header: &str,
+) -> Result<proximadb_runtime::PortAuthCredential, (StatusCode, Json<AuthErrorResponse>)> {
+    if let Some(token) = auth_header.strip_prefix("Bearer ") {
+        return Ok(proximadb_runtime::PortAuthCredential::Jwt(token.to_string()));
+    }
+    if let Some(key) = auth_header.strip_prefix("API-Key ") {
+        return Ok(proximadb_runtime::PortAuthCredential::ApiKey(key.to_string()));
+    }
+    if let Some(key) = auth_header.strip_prefix("Api-Key ") {
+        return Ok(proximadb_runtime::PortAuthCredential::ApiKey(key.to_string()));
+    }
+    Ok(proximadb_runtime::PortAuthCredential::ApiKey(
+        auth_header.to_string(),
+    ))
+}
+
 /// Middleware to authenticate and authorize requests
 pub async fn auth_middleware<B>(
     State(auth_state): State<AuthMiddlewareState>,
