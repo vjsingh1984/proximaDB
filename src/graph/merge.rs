@@ -375,6 +375,130 @@ pub fn classify_mutation(
     MutationClass::NodeUpsert
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// T3.1 Slice 5 (2026-05-26) — GraphBranchMerger orchestrator.
+//
+// Composes Slices 1+3+4 into the merge protocol from ADR-012 §3 (steps 1-5).
+// Step 6 (write merged records back through the canonical WAL) is deferred to
+// Slice 6 — this slice is a pure orchestrator that returns a `MergeReport`
+// for the caller to act on.
+//
+//   1. Identify merge base       → find_merge_base_lsn         (Slice 4)
+//   2. Filter per-branch diff    → filter_wal_by_branch_lsn    (Slice 3)
+//   3. Classify mutations        → entry_to_mutation_event     (NEW here)
+//   4. Walk diff for conflicts   → walk_diff                   (Slice 1)
+//   5. Resolve conflicts         → resolve_batch               (Slice 1)
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Outcome of a merge operation (T3.1 Slice 5).
+///
+/// Returned by [`merge_branches`]. The caller is responsible for what to do
+/// next — typically: inspect `conflicts` and `resolutions`, then write the
+/// resolved records back through the canonical WAL (Slice 6+). This slice
+/// is deliberately a read-only orchestrator.
+#[derive(Debug, Clone)]
+pub struct MergeReport {
+    /// LSN at which the two branches diverged (per `find_merge_base_lsn`).
+    pub merge_base_lsn: u64,
+    /// `MutationEvent` derived from the left branch's WAL slice (LSN > merge_base).
+    pub left_events: Vec<MutationEvent>,
+    /// `MutationEvent` derived from the right branch's WAL slice.
+    pub right_events: Vec<MutationEvent>,
+    /// Conflicts detected by `walk_diff` over the two event lists.
+    pub conflicts: Vec<MergeConflict>,
+    /// Resolutions per the policy table in ADR-012 §3.
+    pub resolutions: Vec<GraphMergeResolution>,
+}
+
+/// Compose the merge protocol from ADR-012 §3 (steps 1-5; step 6 is the
+/// caller's job).
+///
+/// Returns `None` when either branch has no `RecordUpsert` entries in the
+/// WAL — there is nothing to merge in that case.
+///
+/// **Classification limitation (Slice 5):** uses a per-entry heuristic —
+/// `entry_to_mutation_event` inspects each record on its own and cannot
+/// distinguish `EmbeddingUpdate` / `LabelSet` / `PropsKey` mutations (those
+/// require base-vs-branch pairwise comparison). The resulting class falls
+/// into one of: `NodeUpsert`, `EdgeUpsert`, `NodeDelete`, `EdgeDelete`.
+/// Pairwise classification is a future refinement that would call Slice 1's
+/// `classify_mutation` with state-reconstructed `Option<&ProximaRecord>`
+/// arguments.
+pub fn merge_branches(
+    wal: &[proximadb_storage_common::CanonicalWalEntry],
+    branch_a: &str,
+    branch_b: &str,
+) -> Option<MergeReport> {
+    let merge_base_lsn = proximadb_storage_common::find_merge_base_lsn(wal, branch_a, branch_b)?;
+    let diff_range = merge_base_lsn.saturating_add(1)..;
+
+    let left_entries =
+        proximadb_storage_common::filter_wal_by_branch_lsn(wal, branch_a, diff_range.clone());
+    let right_entries =
+        proximadb_storage_common::filter_wal_by_branch_lsn(wal, branch_b, diff_range);
+
+    let left_events: Vec<MutationEvent> = left_entries
+        .iter()
+        .filter_map(|e| entry_to_mutation_event(e))
+        .collect();
+    let right_events: Vec<MutationEvent> = right_entries
+        .iter()
+        .filter_map(|e| entry_to_mutation_event(e))
+        .collect();
+
+    let conflicts = walk_diff(&left_events, &right_events);
+    let resolutions = resolve_batch(conflicts.clone());
+
+    Some(MergeReport {
+        merge_base_lsn,
+        left_events,
+        right_events,
+        conflicts,
+        resolutions,
+    })
+}
+
+/// Per-entry heuristic classification: takes a single canonical WAL entry
+/// and produces a `MutationEvent` if the entry is a `RecordUpsert`.
+///
+/// Returns `None` for non-upsert entries (`RecordDelete`, `Checkpoint`,
+/// `CdcBarrier`); the orchestrator handles those via separate context.
+///
+/// Class mapping:
+///   - `valid_to_ns <= 0 && embeddings.is_empty() && origin == "delete"`
+///     → tombstone → `NodeDelete` (or `EdgeDelete` if `edge.is_some`)
+///   - `edge.is_some()` → `EdgeUpsert`
+///   - otherwise → `NodeUpsert`
+///
+/// Timestamp: `entry.timestamp_ms * 1000` (ms → us), saturating on overflow.
+fn entry_to_mutation_event(
+    entry: &proximadb_storage_common::CanonicalWalEntry,
+) -> Option<MutationEvent> {
+    use proximadb_storage_common::CanonicalOperation;
+    match &entry.operation {
+        CanonicalOperation::RecordUpsert { record, .. } => {
+            let is_tombstone = record.valid_to_ns.is_some_and(|vt| vt <= 0)
+                && record.embeddings.is_empty()
+                && record.origin.as_deref() == Some("delete");
+            let is_edge = record.edge.is_some();
+            let class = if is_tombstone {
+                if is_edge {
+                    MutationClass::EdgeDelete
+                } else {
+                    MutationClass::NodeDelete
+                }
+            } else if is_edge {
+                MutationClass::EdgeUpsert
+            } else {
+                MutationClass::NodeUpsert
+            };
+            let wal_ts_us = (entry.timestamp_ms as i64).saturating_mul(1_000);
+            Some(MutationEvent::new(record.oid.clone(), class, wal_ts_us))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -649,5 +773,182 @@ mod tests {
             classify_mutation(Some(&base), Some(&a), Some(&b)),
             MutationClass::PropsKey
         );
+    }
+
+    // ── T3.1 Slice 5 — merge_branches orchestrator tests ───────────────────
+
+    fn upsert_canonical_entry(
+        seq: u64,
+        oid: &str,
+        branch: Option<&str>,
+        ts_ms: u64,
+    ) -> proximadb_storage_common::CanonicalWalEntry {
+        let mut record = proximadb_records::ProximaRecord::default();
+        record.oid = oid.to_string();
+        record.branch_id = branch.map(String::from);
+        proximadb_storage_common::CanonicalWalEntry {
+            sequence_number: seq,
+            timestamp_ms: ts_ms,
+            operation: proximadb_storage_common::CanonicalOperation::RecordUpsert {
+                collection_id: "col".to_string(),
+                record: Box::new(record),
+                projections: vec![],
+            },
+            tenant_id: None,
+        }
+    }
+
+    fn tombstone_canonical_entry(
+        seq: u64,
+        oid: &str,
+        branch: Option<&str>,
+        ts_ms: u64,
+    ) -> proximadb_storage_common::CanonicalWalEntry {
+        let mut record = proximadb_records::ProximaRecord::default();
+        record.oid = oid.to_string();
+        record.branch_id = branch.map(String::from);
+        record.valid_to_ns = Some(0);
+        record.embeddings = Vec::new();
+        record.origin = Some("delete".to_string());
+        proximadb_storage_common::CanonicalWalEntry {
+            sequence_number: seq,
+            timestamp_ms: ts_ms,
+            operation: proximadb_storage_common::CanonicalOperation::RecordUpsert {
+                collection_id: "col".to_string(),
+                record: Box::new(record),
+                projections: vec![],
+            },
+            tenant_id: None,
+        }
+    }
+
+    #[test]
+    fn merge_branches_returns_none_for_empty_wal() {
+        assert!(merge_branches(&[], "a", "b").is_none());
+    }
+
+    #[test]
+    fn merge_branches_returns_none_when_branch_a_has_no_entries() {
+        let wal = vec![upsert_canonical_entry(5, "x", Some("b"), 100)];
+        assert!(merge_branches(&wal, "a", "b").is_none());
+    }
+
+    #[test]
+    fn merge_branches_returns_report_with_correct_merge_base() {
+        let wal = vec![
+            upsert_canonical_entry(5, "x", Some("a"), 100),
+            upsert_canonical_entry(7, "y", Some("b"), 200),
+        ];
+        let report = merge_branches(&wal, "a", "b").expect("both branches present");
+        // min(5, 7) - 1 = 4
+        assert_eq!(report.merge_base_lsn, 4);
+        assert_eq!(report.left_events.len(), 1);
+        assert_eq!(report.right_events.len(), 1);
+        assert_eq!(report.left_events[0].record_oid, "x");
+        assert_eq!(report.right_events[0].record_oid, "y");
+    }
+
+    #[test]
+    fn merge_branches_finds_no_conflicts_for_disjoint_oids() {
+        let wal = vec![
+            upsert_canonical_entry(5, "x", Some("a"), 100),
+            upsert_canonical_entry(7, "y", Some("b"), 200),
+        ];
+        let report = merge_branches(&wal, "a", "b").unwrap();
+        assert!(report.conflicts.is_empty());
+        assert!(report.resolutions.is_empty());
+    }
+
+    #[test]
+    fn merge_branches_finds_conflict_for_overlapping_oid() {
+        // Both branches touch OID "shared" — should produce a conflict.
+        let wal = vec![
+            upsert_canonical_entry(5, "shared", Some("a"), 100),
+            upsert_canonical_entry(7, "shared", Some("b"), 200),
+        ];
+        let report = merge_branches(&wal, "a", "b").unwrap();
+        assert_eq!(report.conflicts.len(), 1);
+        assert_eq!(report.conflicts[0].record_id, "shared");
+        assert_eq!(report.conflicts[0].mutation_class, MutationClass::NodeUpsert);
+        // NodeUpsert → LastWriteWins → right (ts=200_000) wins over left (ts=100_000).
+        assert_eq!(report.resolutions.len(), 1);
+        assert_eq!(report.resolutions[0].outcome, MergeOutcome::KeepRight);
+    }
+
+    #[test]
+    fn merge_branches_classifies_edge_record_as_edge_upsert() {
+        let mut edge_record = proximadb_records::ProximaRecord::default();
+        edge_record.oid = "edge-1".to_string();
+        edge_record.branch_id = Some("a".to_string());
+        edge_record.edge = Some(proximadb_records::EdgeShape {
+            source_id: "src".to_string(),
+            target_id: "dst".to_string(),
+            edge_type: "rel".to_string(),
+            weight: None,
+        });
+        let entry = proximadb_storage_common::CanonicalWalEntry {
+            sequence_number: 5,
+            timestamp_ms: 100,
+            operation: proximadb_storage_common::CanonicalOperation::RecordUpsert {
+                collection_id: "col".to_string(),
+                record: Box::new(edge_record),
+                projections: vec![],
+            },
+            tenant_id: None,
+        };
+        let wal = vec![
+            entry,
+            upsert_canonical_entry(7, "node-1", Some("b"), 200),
+        ];
+        let report = merge_branches(&wal, "a", "b").unwrap();
+        assert_eq!(
+            report.left_events[0].mutation_class,
+            MutationClass::EdgeUpsert
+        );
+    }
+
+    #[test]
+    fn merge_branches_classifies_tombstone_as_node_delete() {
+        let wal = vec![
+            tombstone_canonical_entry(5, "doomed", Some("a"), 100),
+            upsert_canonical_entry(7, "fresh", Some("b"), 200),
+        ];
+        let report = merge_branches(&wal, "a", "b").unwrap();
+        assert_eq!(
+            report.left_events[0].mutation_class,
+            MutationClass::NodeDelete
+        );
+    }
+
+    #[test]
+    fn entry_to_mutation_event_returns_none_for_non_upsert_entries() {
+        // Checkpoint, CdcBarrier, and RecordDelete entries don't carry a
+        // record we can classify. They yield None from the helper and are
+        // implicitly skipped by `filter_map` in merge_branches.
+        let checkpoint = proximadb_storage_common::CanonicalWalEntry {
+            sequence_number: 3,
+            timestamp_ms: 50,
+            operation: proximadb_storage_common::CanonicalOperation::Checkpoint(
+                proximadb_storage_common::SnapshotManifest {
+                    sequence_number: 3,
+                    timestamp_ms: 50,
+                    collection_ids: vec!["col".into()],
+                    projection_freshness: vec![],
+                },
+            ),
+            tenant_id: None,
+        };
+        let delete = proximadb_storage_common::CanonicalWalEntry {
+            sequence_number: 4,
+            timestamp_ms: 75,
+            operation: proximadb_storage_common::CanonicalOperation::RecordDelete {
+                collection_id: "col".into(),
+                oid: "victim".into(),
+                projections: vec![],
+            },
+            tenant_id: None,
+        };
+        assert!(entry_to_mutation_event(&checkpoint).is_none());
+        assert!(entry_to_mutation_event(&delete).is_none());
     }
 }
