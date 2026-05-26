@@ -287,7 +287,7 @@ mod tests {
     fn test_unified_search_orchestrator_creation() {
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new());
-        let collection_service = Arc::new(CollectionService::new_for_testing());
+        let collection_service: Arc<dyn proximadb_runtime::CollectionPort> = Arc::new(CollectionService::new_for_testing());
         
         let orchestrator = IntegratedSearchOptimizer::new(
             distance_compute,
@@ -302,7 +302,7 @@ mod tests {
     fn test_engine_registration() {
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new());
-        let collection_service = Arc::new(CollectionService::new_for_testing());
+        let collection_service: Arc<dyn proximadb_runtime::CollectionPort> = Arc::new(CollectionService::new_for_testing());
         
         let mut orchestrator = IntegratedSearchOptimizer::new(
             distance_compute,
@@ -371,7 +371,7 @@ mod tests {
     async fn test_engine_selection_by_capability() {
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new());
-        let collection_service = Arc::new(CollectionService::new_for_testing());
+        let collection_service: Arc<dyn proximadb_runtime::CollectionPort> = Arc::new(CollectionService::new_for_testing());
         
         let mut orchestrator = IntegratedSearchOptimizer::new(
             distance_compute,
@@ -411,7 +411,7 @@ mod tests {
     async fn test_engine_selection_by_cost() {
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new());
-        let collection_service = Arc::new(CollectionService::new_for_testing());
+        let collection_service: Arc<dyn proximadb_runtime::CollectionPort> = Arc::new(CollectionService::new_for_testing());
         
         let mut orchestrator = IntegratedSearchOptimizer::new(
             distance_compute,
@@ -452,7 +452,7 @@ mod tests {
     async fn test_unified_ranking() {
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new());
-        let collection_service = Arc::new(CollectionService::new_for_testing());
+        let collection_service: Arc<dyn proximadb_runtime::CollectionPort> = Arc::new(CollectionService::new_for_testing());
         
         let orchestrator = IntegratedSearchOptimizer::new(
             distance_compute,
@@ -491,7 +491,7 @@ mod tests {
     async fn test_unified_ranking_with_limit() {
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new());
-        let collection_service = Arc::new(CollectionService::new_for_testing());
+        let collection_service: Arc<dyn proximadb_runtime::CollectionPort> = Arc::new(CollectionService::new_for_testing());
         
         let orchestrator = IntegratedSearchOptimizer::new(
             distance_compute,
@@ -528,7 +528,7 @@ mod tests {
     async fn test_analyze_storage_info() {
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new());
-        let collection_service = Arc::new(CollectionService::new_for_testing());
+        let collection_service: Arc<dyn proximadb_runtime::CollectionPort> = Arc::new(CollectionService::new_for_testing());
         
         let orchestrator = IntegratedSearchOptimizer::new(
             distance_compute,

@@ -14,7 +14,7 @@ use crate::compute::quantization::quantization_engine::{
     UnifiedQuantizationEngine, UnifiedQuantizationLevel,
 };
 use crate::core::search::{OptimizedSearchRecord, SearchParams, SearchResultSet};
-use crate::services::collection::manager::CollectionService;
+use proximadb_runtime::CollectionPort;
 
 /// SearchPlan - High-level search execution plan with optimization metadata
 ///
@@ -193,7 +193,9 @@ pub struct IntegratedSearchOptimizer {
     engines: Vec<Arc<dyn UnifiedSearchEngine>>,
     distance_compute: Arc<UnifiedDistanceCompute>,
     quantization_engine: Arc<UnifiedQuantizationEngine>,
-    collection_service: Arc<CollectionService>,
+    /// Collection port for metadata lookup (Task #76 migration: was
+    /// `Arc<CollectionService>`, now port-typed view).
+    collection_port: Arc<dyn CollectionPort>,
 }
 
 impl IntegratedSearchOptimizer {
@@ -201,13 +203,13 @@ impl IntegratedSearchOptimizer {
     pub fn new(
         distance_compute: Arc<UnifiedDistanceCompute>,
         quantization_engine: Arc<UnifiedQuantizationEngine>,
-        collection_service: Arc<CollectionService>,
+        collection_port: Arc<dyn CollectionPort>,
     ) -> Self {
         Self {
             engines: Vec::new(),
             distance_compute,
             quantization_engine,
-            collection_service,
+            collection_port,
         }
     }
 
@@ -274,10 +276,10 @@ impl IntegratedSearchOptimizer {
         collection_id: &str,
         _params: &SearchParams,
     ) -> Result<SearchPlan> {
-        // Get collection from service
+        // Get collection from port
         let collection = self
-            .collection_service
-            .collection(collection_id)
+            .collection_port
+            .get_collection(collection_id, None)
             .await?
             .ok_or_else(|| anyhow::anyhow!("Collection not found: {}", collection_id))?;
 
