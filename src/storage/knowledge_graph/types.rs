@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc, Duration};
 
 /// Tenant configuration for knowledge graph setup
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TenantConfig {
+pub struct KnowledgeGraphTenantConfig {
     /// Compliance frameworks required for this tenant
     pub compliance_requirements: Vec<ComplianceFramework>,
     
@@ -549,7 +549,7 @@ pub struct GlobalToTenantMigrationPlan {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TenantMigration {
     pub tenant_id: String,
-    pub tenant_config: TenantConfig,
+    pub tenant_config: KnowledgeGraphTenantConfig,
     pub domain_migrations: Vec<DomainMigration>,
     pub collection_assignments: HashMap<String, String>, // collection_id -> domain_name
 }
@@ -572,7 +572,7 @@ pub struct EntityAssignment {
     pub migration_priority: MigrationPriority,
 }
 
-impl Default for TenantConfig {
+impl Default for KnowledgeGraphTenantConfig {
     fn default() -> Self {
         Self {
             compliance_requirements: vec![ComplianceFramework::SOC2],
@@ -732,7 +732,7 @@ mod tests {
 
     #[test]
     fn test_tenant_config_default() {
-        let config = TenantConfig::default();
+        let config = KnowledgeGraphTenantConfig::default();
         assert_eq!(config.compliance_requirements, vec![ComplianceFramework::SOC2]);
         assert_eq!(config.default_performance_tier, PerformanceTier::Warm);
         assert!(!config.default_domains.is_empty());
