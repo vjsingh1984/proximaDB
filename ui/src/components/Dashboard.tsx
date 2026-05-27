@@ -49,12 +49,12 @@ const Dashboard: React.FC = () => {
           </svg>
           <div className="header-text">
             <h1>ProximaDB Enterprise Dashboard</h1>
-            <span className="version">v1.0.4 - Production Ready (99.99%)</span>
+            <span className="version">v0.2.0 - Supported core, beta extended surfaces</span>
           </div>
         </div>
         <div className="status-indicators">
-          <div className="status-badge healthy">Healthy</div>
-          <div className="uptime">Uptime: 15d 7h 23m</div>
+          <div className="status-badge healthy">See /health</div>
+          <div className="uptime">Live status pending</div>
           <ThemeToggle />
         </div>
       </header>
