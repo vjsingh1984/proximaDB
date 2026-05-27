@@ -33,7 +33,8 @@ use crate::observability::ObservabilityService;
 use crate::query::distributed::DistributedQueryConfig;
 use crate::query::distributed::DistributedQueryCoordinator;
 use crate::query::facade::{
-    QueryContent, QueryContext, QueryRequest, QueryResult, QueryResultData, QueryStrategy,
+    ExecutionMetrics, QueryContent, QueryContext, QueryRequest, QueryResult, QueryResultData,
+    QueryStrategy,
 };
 use crate::query::federated::parser::{SqlExtension, VectorQuery};
 use crate::query::federated::{FederatedParser, QueryType as FederatedQueryType};
@@ -485,6 +486,10 @@ impl DistributedQueryStrategy {
                 "Distributed execution does not support TRACES('{}') yet; use the federated observability executor",
                 namespace
             )),
+            SqlExtension::RerankSearch { .. } => Err(anyhow!(
+                "Distributed execution does not support RerankSearch yet; \
+                 route through the local rank pipeline"
+            )),
         }
     }
 }
@@ -511,27 +516,74 @@ impl QueryStrategy for DistributedQueryStrategy {
         let normalized_sql = self.strip_strategy_comments(sql)?;
         let query = self.query_to_multimodal(&request, &normalized_sql)?;
 
+        let stats_before = self.coordinator.get_stats().await;
+
         // Execute via distributed coordinator
-        let results = self
+        let execution = self
             .coordinator
-            .execute(&query)
+            .execute_with_metadata(&query)
             .await
             .map_err(|e| anyhow!("Distributed query failed: {}", e))?;
+        let stats_after = self.coordinator.get_stats().await;
+
+        let nodes_involved = execution.plan.as_ref().map(|plan| {
+            plan.local_subqueries
+                .iter()
+                .chain(plan.remote_subqueries.iter())
+                .map(|subquery| subquery.target_node.as_str())
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+        });
+        let local_subqueries = execution
+            .plan
+            .as_ref()
+            .map(|plan| plan.local_subqueries.len())
+            .unwrap_or_default();
+        let remote_subqueries = execution
+            .plan
+            .as_ref()
+            .map(|plan| plan.remote_subqueries.len())
+            .unwrap_or_default();
+        let records_returned = execution
+            .results
+            .iter()
+            .map(|result| result.records.len())
+            .sum::<usize>();
 
         // Convert results
-        let data = self.convert_results(results.clone());
+        let data = self.convert_results(execution.results);
 
         // Create execution metrics
-        let metrics = serde_json::json!({
+        let extra = serde_json::json!({
             "query_type": "distributed",
-            "num_results": results.len(),
+            "num_results": records_returned,
             "num_components": query.components.len(),
             "local_node_id": self.local_node_id,
+            "nodes_involved": nodes_involved,
+            "local_subqueries": local_subqueries,
+            "remote_subqueries": remote_subqueries,
+            "cache_hits": stats_after.cache_hits.saturating_sub(stats_before.cache_hits),
+            "total_queries_delta": stats_after.total_queries.saturating_sub(stats_before.total_queries),
+            "local_only_queries_delta": stats_after
+                .local_only_queries
+                .saturating_sub(stats_before.local_only_queries),
+            "distributed_queries_delta": stats_after
+                .distributed_queries
+                .saturating_sub(stats_before.distributed_queries),
+            "failed_remote_subqueries_delta": stats_after
+                .failed_remote_subqueries
+                .saturating_sub(stats_before.failed_remote_subqueries),
+            "shuffle_count_delta": stats_after.shuffle_count.saturating_sub(stats_before.shuffle_count),
         });
 
         Ok(QueryResult {
             data,
-            metrics: Some(serde_json::from_value(metrics)?),
+            metrics: Some(ExecutionMetrics {
+                results_returned: records_returned,
+                cache_hit: execution.cache_hit,
+                extra,
+                ..Default::default()
+            }),
         })
     }
 }

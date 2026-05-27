@@ -819,6 +819,7 @@ impl DeltaManager {
 
 #[cfg(test)]
 mod tests {
+    use crate::index::axis::storage::serialization::AxisSerializedIndexMetadata;
     use crate::index::axis::*;
     use serde::{Deserialize, Serialize};
 

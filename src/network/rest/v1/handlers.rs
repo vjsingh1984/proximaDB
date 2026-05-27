@@ -6,7 +6,7 @@
 //! 3. Use unified ApiError for consistent error handling
 
 use axum::{
-    extract::{Extension, Json, Query, State},
+    extract::{Extension, Json, Path, Query, State},
     http::StatusCode,
     response::Json as JsonResponse,
 };
@@ -227,6 +227,114 @@ fn sql_params_to_proxima_values(
     })
 }
 
+/// ADR-012 graph branch merge endpoint.
+///
+/// This slice intentionally supports dry-run reports only. Commit/write-back
+/// requires the follow-up canonical WAL merge-fragment writer, so non-dry-run
+/// requests return 501 rather than pretending a merge was durable.
+pub async fn merge_graph_branch(
+    State(state): State<AppState>,
+    Path((collection, branch)): Path<(String, String)>,
+    Json(request): Json<GraphBranchMergeRequest>,
+) -> ApiResult<JsonResponse<serde_json::Value>> {
+    if collection.trim().is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "collection path parameter must not be empty".to_string(),
+        ));
+    }
+    if branch.trim().is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "branch path parameter must not be empty".to_string(),
+        ));
+    }
+    if request.target_branch.trim().is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "target_branch must not be empty".to_string(),
+        ));
+    }
+    if !request.dry_run {
+        return Err(ApiError::NotImplemented(
+            "graph branch merge commit/write-back is not implemented; retry with dry_run=true"
+                .to_string(),
+        ));
+    }
+
+    let wal_path = graph_branch_merge_wal_path(&state);
+    if !tokio::fs::try_exists(&wal_path).await.map_err(|err| {
+        ApiError::Internal(format!(
+            "checking canonical WAL {} failed: {}",
+            wal_path.display(),
+            err
+        ))
+    })? {
+        return Err(ApiError::NotFound(format!(
+            "canonical WAL not found at {}",
+            wal_path.display()
+        )));
+    }
+
+    let entries = crate::services::FramedTableWalAppender::read_entries_from_path(&wal_path)
+        .await
+        .map_err(|err| {
+            ApiError::Internal(format!(
+                "reading canonical WAL {} failed: {}",
+                wal_path.display(),
+                err
+            ))
+        })?;
+    let collection_entries = filter_canonical_wal_for_collection(entries, &collection);
+    let report =
+        crate::graph::merge::merge_branches(&collection_entries, &branch, &request.target_branch)
+            .ok_or_else(|| {
+            ApiError::NotFound(format!(
+                "no mergeable branch entries found for collection '{}' source '{}' target '{}'",
+                collection, branch, request.target_branch
+            ))
+        })?;
+
+    Ok(JsonResponse(serde_json::json!({
+        "collection": collection,
+        "source_branch": branch,
+        "target_branch": request.target_branch,
+        "dry_run": true,
+        "merge_base_lsn": report.merge_base_lsn,
+        "left_events": report.left_events,
+        "right_events": report.right_events,
+        "conflicts": report.conflicts,
+        "resolutions": report.resolutions,
+        "summary": {
+            "left_event_count": report.left_events.len(),
+            "right_event_count": report.right_events.len(),
+            "conflict_count": report.conflicts.len(),
+            "resolution_count": report.resolutions.len(),
+            "wal_path": wal_path.display().to_string()
+        }
+    })))
+}
+
+fn graph_branch_merge_wal_path(state: &AppState) -> std::path::PathBuf {
+    state.data_dir.join("pgwire").join("canonical-records.wal")
+}
+
+fn filter_canonical_wal_for_collection(
+    entries: Vec<proximadb_storage_common::CanonicalWalEntry>,
+    collection: &str,
+) -> Vec<proximadb_storage_common::CanonicalWalEntry> {
+    entries
+        .into_iter()
+        .filter(|entry| match &entry.operation {
+            proximadb_storage_common::CanonicalOperation::RecordUpsert {
+                collection_id, ..
+            } => collection_id == collection,
+            proximadb_storage_common::CanonicalOperation::RecordDelete {
+                collection_id, ..
+            } => collection_id == collection,
+            proximadb_storage_common::CanonicalOperation::Checkpoint(_)
+            | proximadb_storage_common::CanonicalOperation::CdcBarrier { .. } => false,
+        })
+        .collect()
+}
+
 // SQL query response structure
 // For REST, we now return proximadb.v1 ExecuteSqlResponse directly, wrapped by ProtoApiResponse
 /// Column information in SQL results
@@ -258,6 +366,24 @@ pub struct TableWriteExplainRequest {
     pub estimated_bytes: Option<u64>,
     pub requires_row_level_semantics: Option<bool>,
     pub batch_local_constraints_sufficient: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GraphBranchMergeRequest {
+    /// Target branch to merge into. Defaults to `main`.
+    #[serde(default = "default_graph_branch_merge_target")]
+    pub target_branch: String,
+    /// Dry-run returns the ADR-012 merge report without writing a merge commit.
+    #[serde(default = "default_graph_branch_merge_dry_run")]
+    pub dry_run: bool,
+}
+
+fn default_graph_branch_merge_target() -> String {
+    "main".to_string()
+}
+
+fn default_graph_branch_merge_dry_run() -> bool {
+    true
 }
 
 /// Execute SQL query handler
@@ -890,6 +1016,10 @@ pub fn create_router(state: AppState) -> axum::Router {
             "/api/v1/catalog/table_write/explain",
             post(explain_table_write_route),
         )
+        .route(
+            "/api/v1/collections/:collection/branches/:branch/merge",
+            post(merge_graph_branch),
+        )
         // Multi-phase ranking pipeline (R-7c.1).
         // `rank_search_dispatch` runs the arena-bearing first phase
         // inside `tokio::task::spawn_blocking` so the outer future
@@ -1230,6 +1360,54 @@ mod tests {
     use std::path::Path;
     use tempfile::TempDir;
     use tower::ServiceExt;
+
+    fn branch_merge_test_entry(
+        seq: u64,
+        collection_id: &str,
+        oid: &str,
+        branch_id: Option<&str>,
+    ) -> proximadb_storage_common::CanonicalWalEntry {
+        let mut record = proximadb_records::ProximaRecord {
+            oid: oid.to_string(),
+            ..Default::default()
+        };
+        record.branch_id = branch_id.map(String::from);
+        proximadb_storage_common::CanonicalWalEntry::new(
+            seq,
+            proximadb_storage_common::CanonicalOperation::RecordUpsert {
+                collection_id: collection_id.to_string(),
+                record: Box::new(record),
+                projections: vec![],
+            },
+            None,
+        )
+    }
+
+    #[test]
+    fn branch_merge_request_defaults_to_main_dry_run() {
+        let request: GraphBranchMergeRequest = serde_json::from_value(serde_json::json!({}))
+            .expect("empty request should use defaults");
+        assert_eq!(request.target_branch, "main");
+        assert!(request.dry_run);
+    }
+
+    #[test]
+    fn branch_merge_collection_filter_keeps_only_matching_wal_entries() {
+        let entries = vec![
+            branch_merge_test_entry(1, "graph_a", "base", None),
+            branch_merge_test_entry(2, "graph_a", "left", Some("feature")),
+            branch_merge_test_entry(3, "graph_b", "right", Some("feature")),
+        ];
+
+        let filtered = filter_canonical_wal_for_collection(entries, "graph_a");
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().all(|entry| match &entry.operation {
+            proximadb_storage_common::CanonicalOperation::RecordUpsert {
+                collection_id, ..
+            } => collection_id == "graph_a",
+            _ => false,
+        }));
+    }
 
     #[tokio::test]
     async fn v1_deprecation_middleware_marks_api_v1_only() {

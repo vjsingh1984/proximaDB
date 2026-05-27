@@ -1198,9 +1198,9 @@ mod tests {
         assert_eq!(retrieved.schema_fingerprint, 12345);
 
         let stats = cache.stats();
-        assert_eq!(stats.entries, 1);
-        assert_eq!(stats.hits, 1);
-        assert_eq!(stats.misses, 0);
+        assert_eq!(stats.entries(), 1);
+        assert_eq!(stats.hits(), 1);
+        assert_eq!(stats.misses(), 0);
     }
 
     #[test]

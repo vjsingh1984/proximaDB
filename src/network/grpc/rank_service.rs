@@ -195,6 +195,7 @@ mod tests {
     use proximadb_rank_profile::{
         CompiledRankProfile, PhaseSpec, ProfileRegistry, RankProfileSpec,
     };
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     // ---------------- Translation round-trip tests ----------------

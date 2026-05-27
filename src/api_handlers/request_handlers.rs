@@ -942,13 +942,45 @@ impl UnifiedHandlers {
                 "WAL_LANE_REJECTED".to_string(),
             ));
         }
+
+        // Coerce embeddings to the collection's canonical precision before
+        // handing the batch to the WAL writer. Mirrors the v1 vector batch
+        // handler (handle_vector_batch_v1_internal). Without this, records
+        // arriving over v2 records/batch keep their input precision (fp32
+        // off the wire) and the per-precision canonical_bytes metric
+        // accumulates under "fp32" even for fp16 collections — observed
+        // 2026-05-26 via fp16_v2_insert_search_e2e. The fix puts v2 on
+        // the same precision-coercion contract as v1.
+        let mut records = request.records;
+        if let Some(resolver) = self.precision_resolver.get() {
+            let table_id = Self::collection_to_table_identifier(&request.collection_id);
+            match resolver.resolve(&table_id).await {
+                Ok(target_precision)
+                    if target_precision != proximadb_records::EmbeddingScalarType::Fp32 =>
+                {
+                    for record in &mut records {
+                        for cell in &mut record.embeddings {
+                            cell.coerce_to_precision(target_precision);
+                        }
+                    }
+                }
+                Ok(_) => {
+                    // Fp32 — no coercion needed.
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        collection = %request.collection_id,
+                        error = %e,
+                        "v2 record batch: precision resolver lookup failed; \
+                         records will land at their input precision"
+                    );
+                }
+            }
+        }
+
         match self
             .vector_operations_service
-            .insert_records_with_tenant_context(
-                &collection_id,
-                request.records,
-                tenant_context.as_ref(),
-            )
+            .insert_records_with_tenant_context(&collection_id, records, tenant_context.as_ref())
             .await
         {
             Ok(result) => {
@@ -1120,12 +1152,10 @@ impl UnifiedHandlers {
         // boot / fp32 collection / no catalog wired) keeps the legacy
         // fp32 behavior.
         if let Some(resolver) = self.precision_resolver.get() {
-            let table_id =
-                Self::collection_to_table_identifier(collection_identifier);
+            let table_id = Self::collection_to_table_identifier(collection_identifier);
             match resolver.resolve(&table_id).await {
                 Ok(target_precision)
-                    if target_precision
-                        != proximadb_records::EmbeddingScalarType::Fp32 =>
+                    if target_precision != proximadb_records::EmbeddingScalarType::Fp32 =>
                 {
                     for record in &mut records {
                         for cell in &mut record.embeddings {

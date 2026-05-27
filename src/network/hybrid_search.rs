@@ -72,7 +72,7 @@ impl BM25IndexPort for Bm25IndexPortImpl {
 use proximadb_proto::v1::{
     FusionStrategyInfo, HybridFusionSearchRequest, HybridFusionSearchResponse, HybridSearchMetrics,
     HybridSearchResult, ListFusionStrategiesRequest, ListFusionStrategiesResponse,
-    TextHighlight as ProtoTextHighlight,
+    TextHighlight as ProtoTextHighlight, fusion_strategy_params,
 };
 use proximadb_runtime::HybridPort;
 
@@ -114,7 +114,11 @@ impl HybridPort for RestHybridPortImpl {
                 collection_id: request.collection.clone(),
                 queries: vec![crate::proto::proximadb_v1::SearchQuery {
                     vector: request.query_vector.clone(),
-                    filters: std::collections::HashMap::new(),
+                    filters: request
+                        .filters
+                        .iter()
+                        .map(|(key, value)| (key.clone(), prost_value_to_sql_value(value)))
+                        .collect(),
                     advanced_filter: None,
                 }],
                 top_k: top_k as u32,
@@ -184,10 +188,7 @@ impl HybridPort for RestHybridPortImpl {
         // ── Fusion ─────────────────────────────────────────────────────────
         let fusion_start = std::time::Instant::now();
         let internal_strategy =
-            match proximadb_proto::v1::FusionStrategy::try_from(request.fusion_strategy) {
-                Ok(proximadb_proto::v1::FusionStrategy::BordaCount) => FusionStrategy::BordaCount,
-                _ => FusionStrategy::ReciprocalRank { k: 60 },
-            };
+            proto_fusion_strategy(request.fusion_strategy, request.fusion_params.as_ref())?;
         let fused = HybridFusionEngine::new(internal_strategy)
             .fuse(bm25_results, vector_results)
             .map_err(|e| anyhow!("Fusion failed: {}", e))?;
@@ -269,6 +270,74 @@ impl HybridPort for RestHybridPortImpl {
             ],
         })
     }
+}
+
+fn proto_fusion_strategy(
+    strategy: i32,
+    params: Option<&proximadb_proto::v1::FusionStrategyParams>,
+) -> Result<FusionStrategy> {
+    use proximadb_proto::v1::FusionStrategy as ProtoFusionStrategy;
+
+    let parsed =
+        ProtoFusionStrategy::try_from(strategy).unwrap_or(ProtoFusionStrategy::Unspecified);
+    Ok(match parsed {
+        ProtoFusionStrategy::Unspecified | ProtoFusionStrategy::Rrf => {
+            FusionStrategy::ReciprocalRank {
+                k: params
+                    .and_then(|params| params.params.as_ref())
+                    .and_then(|params| match params {
+                        fusion_strategy_params::Params::RrfK(k) => Some(*k as usize),
+                        _ => None,
+                    })
+                    .unwrap_or(60),
+            }
+        }
+        ProtoFusionStrategy::WeightedLinear => {
+            let weighted = params
+                .and_then(|params| params.params.as_ref())
+                .and_then(|params| match params {
+                    fusion_strategy_params::Params::WeightedLinear(weighted) => Some(weighted),
+                    _ => None,
+                });
+            let alpha = weighted.map(|params| params.alpha).unwrap_or(0.5);
+            if !alpha.is_finite() || !(0.0..=1.0).contains(&alpha) {
+                bail!("weighted linear fusion alpha must be finite and between 0.0 and 1.0");
+            }
+            FusionStrategy::WeightedLinear {
+                alpha,
+                bm25_normalize: weighted.map(|params| params.bm25_normalize).unwrap_or(true),
+                vector_normalize: weighted
+                    .map(|params| params.vector_normalize)
+                    .unwrap_or(true),
+            }
+        }
+        ProtoFusionStrategy::RankBiasedPrecision => FusionStrategy::RankBiasedPrecision {
+            persistence: params
+                .and_then(|params| params.params.as_ref())
+                .and_then(|params| match params {
+                    fusion_strategy_params::Params::RbpPersistence(persistence) => {
+                        Some(*persistence)
+                    }
+                    _ => None,
+                })
+                .unwrap_or(0.95),
+        },
+        ProtoFusionStrategy::BordaCount => FusionStrategy::BordaCount,
+        ProtoFusionStrategy::CombSum => FusionStrategy::CombSum,
+        ProtoFusionStrategy::CombMin => FusionStrategy::CombMin,
+        ProtoFusionStrategy::CombMax => FusionStrategy::CombMax,
+        ProtoFusionStrategy::Condorcet => FusionStrategy::Condorcet,
+        ProtoFusionStrategy::DempsterShafer => FusionStrategy::DempsterShafer {
+            alpha: params
+                .and_then(|params| params.params.as_ref())
+                .and_then(|params| match params {
+                    fusion_strategy_params::Params::DsAlpha(alpha) => Some(*alpha),
+                    _ => None,
+                })
+                .unwrap_or(0.5),
+        },
+        ProtoFusionStrategy::Adaptive => FusionStrategy::Adaptive,
+    })
 }
 
 /// Parameters for executing a hybrid (vector + BM25 text) search
@@ -563,7 +632,9 @@ fn truncate_integral_number(value: f64) -> Option<i64> {
 mod tests {
     use super::*;
     use crate::core::search::hybrid::FusionStrategy;
+    use async_trait::async_trait;
     use prost_types::{ListValue, Struct, Value, value::Kind};
+    use std::sync::Mutex;
 
     fn make_request() -> HybridSearchExecutionRequest {
         HybridSearchExecutionRequest {
@@ -678,5 +749,138 @@ mod tests {
             result.metadata.get("source"),
             Some(&JsonValue::String("embedded".to_string()))
         );
+    }
+
+    #[test]
+    fn proto_fusion_strategy_honors_rrf_and_weighted_params() {
+        let rrf = proto_fusion_strategy(
+            proximadb_proto::v1::FusionStrategy::Rrf as i32,
+            Some(&proximadb_proto::v1::FusionStrategyParams {
+                params: Some(fusion_strategy_params::Params::RrfK(17)),
+            }),
+        )
+        .unwrap();
+        assert!(matches!(rrf, FusionStrategy::ReciprocalRank { k: 17 }));
+
+        let weighted = proto_fusion_strategy(
+            proximadb_proto::v1::FusionStrategy::WeightedLinear as i32,
+            Some(&proximadb_proto::v1::FusionStrategyParams {
+                params: Some(fusion_strategy_params::Params::WeightedLinear(
+                    proximadb_proto::v1::WeightedLinearParams {
+                        alpha: 0.25,
+                        bm25_normalize: false,
+                        vector_normalize: true,
+                    },
+                )),
+            }),
+        )
+        .unwrap();
+        assert!(matches!(
+            weighted,
+            FusionStrategy::WeightedLinear {
+                alpha,
+                bm25_normalize: false,
+                vector_normalize: true,
+            } if (alpha - 0.25).abs() < f64::EPSILON
+        ));
+    }
+
+    #[derive(Default)]
+    struct CapturingVectorOpsPort {
+        last_request: Mutex<Option<proximadb_v1::VectorSearchRequest>>,
+    }
+
+    #[async_trait]
+    impl proximadb_runtime::VectorOpsPort for CapturingVectorOpsPort {
+        async fn search(
+            &self,
+            request: proximadb_v1::VectorSearchRequest,
+            _tenant_id: Option<&str>,
+        ) -> Result<proximadb_v1::VectorOperationResponse> {
+            *self.last_request.lock().unwrap() = Some(request);
+            Ok(proximadb_v1::VectorOperationResponse {
+                success: true,
+                results: Some(proximadb_v1::SearchResult {
+                    results: vec![proximadb_v1::SearchVectorRecord {
+                        id: "doc-1".to_string(),
+                        score: 0.9,
+                        ..Default::default()
+                    }],
+                    total_found: 1,
+                    collection_id: Some("test".to_string()),
+                }),
+                ..Default::default()
+            })
+        }
+
+        async fn batch_upsert(
+            &self,
+            _request: proximadb_v1::VectorBatchRequest,
+            _tenant_id: Option<&str>,
+        ) -> Result<proximadb_v1::VectorOperationResponse> {
+            unimplemented!("not used by hybrid tests")
+        }
+
+        async fn get_vector(
+            &self,
+            _collection_id: &str,
+            _vector_id: &str,
+            _include_vector: bool,
+            _include_metadata: bool,
+            _tenant_id: Option<&str>,
+        ) -> Result<proximadb_v1::VectorOperationResponse> {
+            unimplemented!("not used by hybrid tests")
+        }
+
+        async fn flush_all(&self) -> Result<()> {
+            Ok(())
+        }
+
+        async fn metrics(&self) -> Result<serde_json::Value> {
+            Ok(serde_json::json!({}))
+        }
+    }
+
+    #[tokio::test]
+    async fn rest_hybrid_port_forwards_proto_filters_to_vector_search() {
+        let vector_ops = Arc::new(CapturingVectorOpsPort::default());
+        let port =
+            RestHybridPortImpl::new(vector_ops.clone(), Arc::new(RwLock::new(HashMap::new())));
+
+        let mut filters = HashMap::new();
+        filters.insert(
+            "tenant".to_string(),
+            Value {
+                kind: Some(Kind::StringValue("acme".to_string())),
+            },
+        );
+
+        let response = port
+            .hybrid_search(HybridFusionSearchRequest {
+                collection: "test".to_string(),
+                query_vector: vec![0.1, 0.2],
+                top_k: 3,
+                filters,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(response.results_count, 1);
+        let captured = vector_ops
+            .last_request
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("vector search should be called");
+        assert_eq!(captured.collection_id, "test");
+        assert_eq!(captured.top_k, 3);
+        assert!(matches!(
+            captured.queries[0]
+                .filters
+                .get("tenant")
+                .and_then(|value| value.value.as_ref()),
+            Some(SqlValueKind::StringValue(value)) if value == "acme"
+        ));
     }
 }

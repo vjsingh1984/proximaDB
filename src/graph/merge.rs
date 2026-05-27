@@ -192,10 +192,9 @@ pub fn merge_labels(existing: &[String], incoming: &[String]) -> Vec<String> {
 //   5. Write merged records through the canonical WAL.
 //
 // This slice lands steps 3-4 at the pure-logic boundary. Steps 1-2 + 5
-// require `branch_id` plumbing into `ProximaRecord` (not currently a field —
-// only a catalog system column at `__proxima_branch_id`) and integration with
-// the canonical WAL iteration API. Those land in future slices per
-// `docs/_internal/status/PRE_RELEASE_FOUNDATIONS_2026_05_26.adoc`.
+// originally required `branch_id` plumbing into `ProximaRecord` and integration
+// with the canonical WAL iteration API. Those landed in follow-up slices; this
+// module now consumes branch-tagged canonical WAL entries directly.
 //
 // The caller is responsible for extracting per-branch mutation events into
 // the input lists. Branch identity is implicit: "which list."
@@ -270,9 +269,9 @@ pub fn walk_diff(left: &[MutationEvent], right: &[MutationEvent]) -> Vec<MergeCo
     let mut conflicts: Vec<MergeConflict> = left_latest
         .iter()
         .filter_map(|(oid, l)| {
-            right_latest.get(oid).map(|r| {
-                MergeConflict::new(*oid, l.mutation_class, l.wal_ts_us, r.wal_ts_us)
-            })
+            right_latest
+                .get(oid)
+                .map(|r| MergeConflict::new(*oid, l.mutation_class, l.wal_ts_us, r.wal_ts_us))
         })
         .collect();
 
@@ -416,14 +415,11 @@ pub struct MergeReport {
 /// Returns `None` when either branch has no `RecordUpsert` entries in the
 /// WAL — there is nothing to merge in that case.
 ///
-/// **Classification limitation (Slice 5):** uses a per-entry heuristic —
-/// `entry_to_mutation_event` inspects each record on its own and cannot
-/// distinguish `EmbeddingUpdate` / `LabelSet` / `PropsKey` mutations (those
-/// require base-vs-branch pairwise comparison). The resulting class falls
-/// into one of: `NodeUpsert`, `EdgeUpsert`, `NodeDelete`, `EdgeDelete`.
-/// Pairwise classification is a future refinement that would call Slice 1's
-/// `classify_mutation` with state-reconstructed `Option<&ProximaRecord>`
-/// arguments.
+/// Conflict classification reconstructs the latest base, left, and right
+/// record states from the supplied WAL slice and applies [`classify_mutation`]
+/// to the pairwise conflict. This lets the report distinguish
+/// `EmbeddingUpdate`, `LabelSet`, and `PropsKey` conflicts instead of treating
+/// every non-delete node mutation as a generic `NodeUpsert`.
 pub fn merge_branches(
     wal: &[proximadb_storage_common::CanonicalWalEntry],
     branch_a: &str,
@@ -437,16 +433,24 @@ pub fn merge_branches(
     let right_entries =
         proximadb_storage_common::filter_wal_by_branch_lsn(wal, branch_b, diff_range);
 
+    let base_records = latest_base_records(wal, merge_base_lsn);
+
     let left_events: Vec<MutationEvent> = left_entries
         .iter()
-        .filter_map(|e| entry_to_mutation_event(e))
+        .filter_map(|e| entry_to_mutation_event_with_base(e, &base_records))
         .collect();
     let right_events: Vec<MutationEvent> = right_entries
         .iter()
-        .filter_map(|e| entry_to_mutation_event(e))
+        .filter_map(|e| entry_to_mutation_event_with_base(e, &base_records))
         .collect();
 
-    let conflicts = walk_diff(&left_events, &right_events);
+    let mut conflicts = walk_diff(&left_events, &right_events);
+    refine_conflicts_with_pairwise_records(
+        &mut conflicts,
+        &left_entries,
+        &right_entries,
+        &base_records,
+    );
     let resolutions = resolve_batch(conflicts.clone());
 
     Some(MergeReport {
@@ -471,31 +475,119 @@ pub fn merge_branches(
 ///   - otherwise → `NodeUpsert`
 ///
 /// Timestamp: `entry.timestamp_ms * 1000` (ms → us), saturating on overflow.
+#[cfg(test)]
 fn entry_to_mutation_event(
     entry: &proximadb_storage_common::CanonicalWalEntry,
+) -> Option<MutationEvent> {
+    entry_to_mutation_event_with_base(entry, &std::collections::HashMap::new())
+}
+
+fn entry_to_mutation_event_with_base(
+    entry: &proximadb_storage_common::CanonicalWalEntry,
+    base_records: &std::collections::HashMap<String, &proximadb_records::ProximaRecord>,
 ) -> Option<MutationEvent> {
     use proximadb_storage_common::CanonicalOperation;
     match &entry.operation {
         CanonicalOperation::RecordUpsert { record, .. } => {
-            let is_tombstone = record.valid_to_ns.is_some_and(|vt| vt <= 0)
-                && record.embeddings.is_empty()
-                && record.origin.as_deref() == Some("delete");
-            let is_edge = record.edge.is_some();
-            let class = if is_tombstone {
-                if is_edge {
-                    MutationClass::EdgeDelete
-                } else {
-                    MutationClass::NodeDelete
-                }
-            } else if is_edge {
-                MutationClass::EdgeUpsert
-            } else {
-                MutationClass::NodeUpsert
-            };
+            let base = base_records.get(record.oid.as_str()).copied();
+            let class = classify_mutation(base, Some(record), None);
             let wal_ts_us = (entry.timestamp_ms as i64).saturating_mul(1_000);
             Some(MutationEvent::new(record.oid.clone(), class, wal_ts_us))
         }
         _ => None,
+    }
+}
+
+fn latest_base_records(
+    wal: &[proximadb_storage_common::CanonicalWalEntry],
+    merge_base_lsn: u64,
+) -> std::collections::HashMap<String, &proximadb_records::ProximaRecord> {
+    use proximadb_storage_common::CanonicalOperation;
+
+    let mut latest: std::collections::HashMap<String, (u64, &proximadb_records::ProximaRecord)> =
+        std::collections::HashMap::new();
+    for entry in wal {
+        if entry.sequence_number > merge_base_lsn {
+            continue;
+        }
+        if let CanonicalOperation::RecordUpsert { record, .. } = &entry.operation {
+            if record.branch_id.is_some() {
+                continue;
+            }
+            let replace = latest
+                .get(record.oid.as_str())
+                .map_or(true, |(seq, _)| entry.sequence_number >= *seq);
+            if replace {
+                latest.insert(record.oid.clone(), (entry.sequence_number, record.as_ref()));
+            }
+        }
+    }
+
+    latest
+        .into_iter()
+        .map(|(oid, (_, record))| (oid, record))
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LatestBranchRecord<'a> {
+    record: &'a proximadb_records::ProximaRecord,
+    wal_ts_us: i64,
+    sequence_number: u64,
+}
+
+fn latest_branch_records<'a>(
+    entries: &[&'a proximadb_storage_common::CanonicalWalEntry],
+) -> std::collections::HashMap<&'a str, LatestBranchRecord<'a>> {
+    use proximadb_storage_common::CanonicalOperation;
+
+    let mut latest: std::collections::HashMap<&'a str, LatestBranchRecord<'a>> =
+        std::collections::HashMap::new();
+    for entry in entries {
+        if let CanonicalOperation::RecordUpsert { record, .. } = &entry.operation {
+            let wal_ts_us = (entry.timestamp_ms as i64).saturating_mul(1_000);
+            let candidate = LatestBranchRecord {
+                record,
+                wal_ts_us,
+                sequence_number: entry.sequence_number,
+            };
+            let replace = latest.get(record.oid.as_str()).map_or(true, |current| {
+                wal_ts_us > current.wal_ts_us
+                    || (wal_ts_us == current.wal_ts_us
+                        && entry.sequence_number >= current.sequence_number)
+            });
+            if replace {
+                latest.insert(record.oid.as_str(), candidate);
+            }
+        }
+    }
+    latest
+}
+
+fn refine_conflicts_with_pairwise_records(
+    conflicts: &mut [MergeConflict],
+    left_entries: &[&proximadb_storage_common::CanonicalWalEntry],
+    right_entries: &[&proximadb_storage_common::CanonicalWalEntry],
+    base_records: &std::collections::HashMap<String, &proximadb_records::ProximaRecord>,
+) {
+    let left_records = latest_branch_records(left_entries);
+    let right_records = latest_branch_records(right_entries);
+
+    for conflict in conflicts {
+        let Some(left) = left_records.get(conflict.record_id.as_str()) else {
+            continue;
+        };
+        let Some(right) = right_records.get(conflict.record_id.as_str()) else {
+            continue;
+        };
+        let base = base_records.get(conflict.record_id.as_str()).copied();
+        let mutation_class = classify_mutation(base, Some(left.record), Some(right.record));
+        *conflict = MergeConflict::new(
+            conflict.record_id.clone(),
+            mutation_class,
+            left.wal_ts_us,
+            right.wal_ts_us,
+        );
     }
 }
 
@@ -665,10 +757,7 @@ mod tests {
             ev("m", MutationClass::NodeUpsert, 200),
         ];
         let conflicts = walk_diff(&left, &right);
-        let oids: Vec<&str> = conflicts
-            .iter()
-            .map(|c| c.record_id.as_str())
-            .collect();
+        let oids: Vec<&str> = conflicts.iter().map(|c| c.record_id.as_str()).collect();
         assert_eq!(oids, vec!["a", "m", "z"]);
     }
 
@@ -761,7 +850,8 @@ mod tests {
 
     #[test]
     fn classify_props_change_returns_props_key() {
-        use proximadb_records::{ProximaTreeNode, ProximaValue};
+        use proximadb_data_model::ProximaValue;
+        use proximadb_records::ProximaTreeNode;
         let base = rec_default();
         let mut a = rec_default();
         a.props.insert(
@@ -796,6 +886,39 @@ mod tests {
             },
             tenant_id: None,
         }
+    }
+
+    fn upsert_record_canonical_entry(
+        seq: u64,
+        ts_ms: u64,
+        record: proximadb_records::ProximaRecord,
+    ) -> proximadb_storage_common::CanonicalWalEntry {
+        proximadb_storage_common::CanonicalWalEntry {
+            sequence_number: seq,
+            timestamp_ms: ts_ms,
+            operation: proximadb_storage_common::CanonicalOperation::RecordUpsert {
+                collection_id: "col".to_string(),
+                record: Box::new(record),
+                projections: vec![],
+            },
+            tenant_id: None,
+        }
+    }
+
+    fn branch_record(oid: &str, branch: Option<&str>) -> proximadb_records::ProximaRecord {
+        let mut record = proximadb_records::ProximaRecord::default();
+        record.oid = oid.to_string();
+        record.branch_id = branch.map(String::from);
+        record
+    }
+
+    fn fp32_embedding(values: &[f32]) -> proximadb_records::EmbeddingCell {
+        proximadb_records::EmbeddingCell::new_fp32(
+            "test-model",
+            "dense_vector",
+            values.len() as u32,
+            values.to_vec(),
+        )
     }
 
     fn tombstone_canonical_entry(
@@ -869,7 +992,10 @@ mod tests {
         let report = merge_branches(&wal, "a", "b").unwrap();
         assert_eq!(report.conflicts.len(), 1);
         assert_eq!(report.conflicts[0].record_id, "shared");
-        assert_eq!(report.conflicts[0].mutation_class, MutationClass::NodeUpsert);
+        assert_eq!(
+            report.conflicts[0].mutation_class,
+            MutationClass::NodeUpsert
+        );
         // NodeUpsert → LastWriteWins → right (ts=200_000) wins over left (ts=100_000).
         assert_eq!(report.resolutions.len(), 1);
         assert_eq!(report.resolutions[0].outcome, MergeOutcome::KeepRight);
@@ -896,10 +1022,7 @@ mod tests {
             },
             tenant_id: None,
         };
-        let wal = vec![
-            entry,
-            upsert_canonical_entry(7, "node-1", Some("b"), 200),
-        ];
+        let wal = vec![entry, upsert_canonical_entry(7, "node-1", Some("b"), 200)];
         let report = merge_branches(&wal, "a", "b").unwrap();
         assert_eq!(
             report.left_events[0].mutation_class,
@@ -918,6 +1041,100 @@ mod tests {
             report.left_events[0].mutation_class,
             MutationClass::NodeDelete
         );
+    }
+
+    #[test]
+    fn merge_branches_pairwise_classifies_label_conflict() {
+        let mut base = branch_record("shared", None);
+        base.labels = proximadb_records::LabelSet::from(vec!["base".to_string()]);
+        let mut left = branch_record("shared", Some("a"));
+        left.labels =
+            proximadb_records::LabelSet::from(vec!["base".to_string(), "left".to_string()]);
+        let mut right = branch_record("shared", Some("b"));
+        right.labels =
+            proximadb_records::LabelSet::from(vec!["base".to_string(), "right".to_string()]);
+
+        let wal = vec![
+            upsert_record_canonical_entry(3, 50, base),
+            upsert_record_canonical_entry(5, 100, left),
+            upsert_record_canonical_entry(7, 200, right),
+        ];
+        let report = merge_branches(&wal, "a", "b").unwrap();
+        assert_eq!(
+            report.left_events[0].mutation_class,
+            MutationClass::LabelSet
+        );
+        assert_eq!(
+            report.right_events[0].mutation_class,
+            MutationClass::LabelSet
+        );
+        assert_eq!(report.conflicts[0].mutation_class, MutationClass::LabelSet);
+        assert_eq!(report.resolutions[0].outcome, MergeOutcome::UnionLabels);
+    }
+
+    #[test]
+    fn merge_branches_pairwise_classifies_props_conflict() {
+        use proximadb_data_model::ProximaValue;
+        use proximadb_records::ProximaTreeNode;
+
+        let base = branch_record("shared", None);
+        let mut left = branch_record("shared", Some("a"));
+        left.props.insert(
+            "name".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("left".to_string())),
+        );
+        let mut right = branch_record("shared", Some("b"));
+        right.props.insert(
+            "name".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("right".to_string())),
+        );
+
+        let wal = vec![
+            upsert_record_canonical_entry(3, 50, base),
+            upsert_record_canonical_entry(5, 100, left),
+            upsert_record_canonical_entry(7, 200, right),
+        ];
+        let report = merge_branches(&wal, "a", "b").unwrap();
+        assert_eq!(
+            report.left_events[0].mutation_class,
+            MutationClass::PropsKey
+        );
+        assert_eq!(
+            report.right_events[0].mutation_class,
+            MutationClass::PropsKey
+        );
+        assert_eq!(report.conflicts[0].mutation_class, MutationClass::PropsKey);
+        assert_eq!(report.resolutions[0].outcome, MergeOutcome::KeepRight);
+    }
+
+    #[test]
+    fn merge_branches_pairwise_classifies_embedding_conflict() {
+        let mut base = branch_record("shared", None);
+        base.embeddings = vec![fp32_embedding(&[0.0, 0.0])];
+        let mut left = branch_record("shared", Some("a"));
+        left.embeddings = vec![fp32_embedding(&[1.0, 0.0])];
+        let mut right = branch_record("shared", Some("b"));
+        right.embeddings = vec![fp32_embedding(&[0.0, 1.0])];
+
+        let wal = vec![
+            upsert_record_canonical_entry(3, 50, base),
+            upsert_record_canonical_entry(5, 300, left),
+            upsert_record_canonical_entry(7, 200, right),
+        ];
+        let report = merge_branches(&wal, "a", "b").unwrap();
+        assert_eq!(
+            report.left_events[0].mutation_class,
+            MutationClass::EmbeddingUpdate
+        );
+        assert_eq!(
+            report.right_events[0].mutation_class,
+            MutationClass::EmbeddingUpdate
+        );
+        assert_eq!(
+            report.conflicts[0].mutation_class,
+            MutationClass::EmbeddingUpdate
+        );
+        assert_eq!(report.resolutions[0].outcome, MergeOutcome::KeepLeft);
     }
 
     #[test]

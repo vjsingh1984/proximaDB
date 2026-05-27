@@ -1584,6 +1584,9 @@ impl VectorOperationsService {
         let mut vectors = vectors;
         apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
 
+        self.validate_records_for_insert(collection_id, &vectors)
+            .await?;
+
         let decision = self.bulk_write_router.route_records(&vectors);
 
         debug!(
@@ -1687,6 +1690,8 @@ impl VectorOperationsService {
         }
 
         let config = config.clone();
+        let collection = self.get_or_load_collection(collection_id).await?;
+        Self::validate_query_vector_for_search(collection_id, &collection, &query_vector)?;
 
         // Create cache key for unified result caching
         let filter_str = filter.as_ref().map(|f| format!("{:?}", f));
@@ -1711,9 +1716,6 @@ impl VectorOperationsService {
             "Search: collection={}, progressive={}",
             collection_id, progressive_enabled
         );
-
-        // Get collection configuration
-        let _collection = self.get_or_load_collection(collection_id).await?;
 
         // Execute search based on configuration
         let results = if progressive_enabled {
@@ -3444,6 +3446,20 @@ impl VectorOperationsService {
                 .unwrap_or(0);
             let is_tombstone = dim == 0 && record.valid_to_ns.is_some_and(|v| v <= current_time_ns);
 
+            for (embedding_idx, embedding) in record.embeddings.iter().enumerate() {
+                if let Some((dimension_idx, value)) =
+                    Self::first_non_finite_embedding_value(&embedding.values)
+                {
+                    return Err(anyhow::anyhow!(
+                        "Record at index {} embedding {} contains non-finite value at dimension {}: {}",
+                        i,
+                        embedding_idx,
+                        dimension_idx,
+                        value
+                    ));
+                }
+            }
+
             if !is_tombstone && expected_dimension > 0 && dim != expected_dimension as usize {
                 return Err(anyhow::anyhow!(
                     "Record at index {} has dimension {} but collection '{}' expects dimension {}",
@@ -3477,6 +3493,71 @@ impl VectorOperationsService {
                     ));
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    fn first_non_finite_embedding_value(
+        values: &proximadb_records::EmbeddingValues,
+    ) -> Option<(usize, f32)> {
+        match values {
+            proximadb_records::EmbeddingValues::Fp32(v) => v
+                .iter()
+                .copied()
+                .enumerate()
+                .find(|(_, value)| !value.is_finite()),
+            proximadb_records::EmbeddingValues::Fp16(v) => v
+                .iter()
+                .map(|value| value.to_f32())
+                .enumerate()
+                .find(|(_, value)| !value.is_finite()),
+            proximadb_records::EmbeddingValues::Bf16(v) => v
+                .iter()
+                .map(|value| value.to_f32())
+                .enumerate()
+                .find(|(_, value)| !value.is_finite()),
+            proximadb_records::EmbeddingValues::Int8Scalar { scale, .. }
+            | proximadb_records::EmbeddingValues::UInt8Scalar { scale, .. } => {
+                if scale.is_finite() {
+                    None
+                } else {
+                    Some((0, *scale))
+                }
+            }
+        }
+    }
+
+    fn validate_query_vector_for_search(
+        collection_id: &str,
+        collection: &Collection,
+        query_vector: &[f32],
+    ) -> Result<()> {
+        if let Some((i, value)) = query_vector
+            .iter()
+            .enumerate()
+            .find(|(_, value)| !value.is_finite())
+        {
+            return Err(anyhow::anyhow!(
+                "Query vector for collection '{}' contains non-finite value at dimension {}: {}",
+                collection_id,
+                i,
+                value
+            ));
+        }
+
+        let expected_dimension = collection
+            .config
+            .as_ref()
+            .map(|config| config.dimension)
+            .unwrap_or_default();
+        if expected_dimension > 0 && query_vector.len() != expected_dimension as usize {
+            return Err(anyhow::anyhow!(
+                "Query vector has dimension {} but collection '{}' expects dimension {}",
+                query_vector.len(),
+                collection_id,
+                expected_dimension
+            ));
         }
 
         Ok(())
@@ -4424,6 +4505,118 @@ mod index_first_search_tests {
         ));
 
         Ok((service, temp_dir))
+    }
+
+    fn cache_test_collection(
+        service: &VectorOperationsService,
+        collection_id: &str,
+        dimension: u32,
+    ) {
+        service.collection_cache.insert(
+            collection_id.to_string(),
+            Arc::new(crate::proto::proximadb_v1::Collection {
+                id: collection_id.to_string(),
+                config: Some(crate::proto::proximadb_v1::CollectionConfig {
+                    name: collection_id.to_string(),
+                    dimension,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+        );
+    }
+
+    fn record_with_vector(id: &str, values: Vec<f32>) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                dim: values.len() as u32,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn insert_batch_rejects_non_finite_embedding_before_wal() {
+        let (service, _temp_dir) = create_test_service().await.unwrap();
+        cache_test_collection(&service, "validation-collection", 3);
+
+        let err = service
+            .insert_records_with_tenant_context(
+                "validation-collection",
+                vec![record_with_vector("bad", vec![1.0, f32::NAN, 3.0])],
+                None,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("contains non-finite value"));
+    }
+
+    #[tokio::test]
+    async fn insert_batch_rejects_wrong_dimension_before_wal() {
+        let (service, _temp_dir) = create_test_service().await.unwrap();
+        cache_test_collection(&service, "validation-collection", 3);
+
+        let err = service
+            .insert_records_with_tenant_context(
+                "validation-collection",
+                vec![record_with_vector("bad", vec![1.0, 2.0])],
+                None,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains(
+            "has dimension 2 but collection 'validation-collection' expects dimension 3"
+        ));
+    }
+
+    #[tokio::test]
+    async fn search_rejects_non_finite_query_vector_before_execution() {
+        let (service, _temp_dir) = create_test_service().await.unwrap();
+        cache_test_collection(&service, "validation-collection", 3);
+
+        let err = service
+            .unified_search_with_tenant_context(
+                "validation-collection",
+                vec![1.0, f32::INFINITY, 3.0],
+                10,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(err.to_string().contains("contains non-finite value"));
+    }
+
+    #[tokio::test]
+    async fn search_rejects_wrong_dimension_before_execution() {
+        let (service, _temp_dir) = create_test_service().await.unwrap();
+        cache_test_collection(&service, "validation-collection", 3);
+
+        let err = service
+            .unified_search_with_tenant_context(
+                "validation-collection",
+                vec![1.0, 2.0],
+                10,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("Query vector has dimension 2 but collection 'validation-collection' expects dimension 3")
+        );
     }
 
     #[test]

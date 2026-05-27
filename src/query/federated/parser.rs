@@ -7,6 +7,11 @@
 //! - **VECTOR_SEARCH(collection, query_vector, top_k)**: Similarity search
 //! - **GRAPH_QUERY('cypher_query')**: Graph traversal via Cypher
 //! - **DOCUMENT_QUERY(collection, filter)**: Document queries
+//! - **RERANK(collection, query_text, query_vector, k, rank_profile)**:
+//!   multi-phase rank pipeline (R-7c.4c parser slice). Returns
+//!   `(id, score, phase, match_features, summary_features)` rows.
+//!   Planner + executor wiring deferred to R-7c.4c.1 — this slice
+//!   only establishes the extension surface.
 //! - **LOGS(namespace)**: Observability log queries
 //! - **METRICS(namespace)**: Observability metric queries
 //! - **TRACES(namespace)**: Observability trace queries
@@ -26,6 +31,10 @@ pub enum QueryType {
     GraphQuery,
     /// Document query
     DocumentQuery,
+    /// Multi-phase rank pipeline (R-7c.4c). RERANK(...) SRF — drives
+    /// first/second/global rank phases against the per-process
+    /// `RankServices`. Returns one row per scored hit.
+    RerankSearch,
     /// Observability log query
     LogQuery,
     /// Observability metric query
@@ -60,6 +69,23 @@ pub enum SqlExtension {
     DocumentQuery {
         collection: String,
         filter: Option<String>,
+    },
+    /// RERANK(collection, query_text, query_vector, k, rank_profile)
+    /// — multi-phase rank pipeline. R-7c.4c. Positional args:
+    /// 1. collection (required): collection name
+    /// 2. query_text (required): text for BM25 / cross-encoder reranking
+    /// 3. query_vector (required): retrieval vector — `[…]` literal
+    ///    or column reference
+    /// 4. k (optional, default 10): result count after global phase
+    /// 5. rank_profile (optional): named profile in the ProfileRegistry;
+    ///    absent means retrieval-only (mirrors the REST handler's
+    ///    `rank_profile: None` path)
+    RerankSearch {
+        collection: String,
+        query_text: String,
+        query_vector: VectorQuery,
+        k: usize,
+        rank_profile: Option<String>,
     },
     /// LOGS(namespace)
     Logs { namespace: String },
@@ -188,6 +214,7 @@ impl FederatedParser {
                 !upper.starts_with("VECTOR_SEARCH")
                     && !upper.starts_with("GRAPH_QUERY")
                     && !upper.starts_with("DOCUMENT_QUERY")
+                    && !upper.starts_with("RERANK")
                     && !upper.starts_with("LOGS")
                     && !upper.starts_with("METRICS")
                     && !upper.starts_with("TRACES")
@@ -224,6 +251,7 @@ impl FederatedParser {
                 QueryType::VectorSearch
             }
             SqlExtension::GraphQuery { .. } => QueryType::GraphQuery,
+            SqlExtension::RerankSearch { .. } => QueryType::RerankSearch,
             SqlExtension::DocumentQuery { .. } => QueryType::DocumentQuery,
             SqlExtension::Logs { .. } => QueryType::LogQuery,
             SqlExtension::Metrics { .. } => QueryType::MetricQuery,
@@ -232,10 +260,14 @@ impl FederatedParser {
     }
 
     fn parse_function_extensions(&self, sql: &str) -> Vec<(SqlExtension, usize, Option<String>)> {
-        const FUNCTION_NAMES: [&str; 6] = [
+        // RERANK comes before LOGS/METRICS/TRACES so a query like
+        // `SELECT * FROM RERANK(...)` is matched as a single token
+        // rather than colliding with a partial prefix.
+        const FUNCTION_NAMES: [&str; 7] = [
             "VECTOR_SEARCH",
             "GRAPH_QUERY",
             "DOCUMENT_QUERY",
+            "RERANK",
             "LOGS",
             "METRICS",
             "TRACES",
@@ -284,11 +316,45 @@ impl FederatedParser {
             "VECTOR_SEARCH" => self.parse_vector_search_args(args),
             "GRAPH_QUERY" => self.parse_graph_query_args(args),
             "DOCUMENT_QUERY" => self.parse_document_query_args(args),
+            "RERANK" => self.parse_rerank_args(args),
             "LOGS" => self.parse_logs_query_args(args),
             "METRICS" => self.parse_metrics_query_args(args),
             "TRACES" => self.parse_traces_query_args(args),
             _ => None,
         }
+    }
+
+    /// Parse `RERANK(collection, query_text, query_vector, k, rank_profile)`
+    /// argument list. Positional args 1–3 are required; `k` defaults
+    /// to 10; `rank_profile` defaults to absent (retrieval-only path).
+    /// R-7c.4c.
+    fn parse_rerank_args(&self, args: &str) -> Option<SqlExtension> {
+        let parts = self.split_function_args(args);
+        if parts.len() < 3 {
+            return None;
+        }
+        let collection = Self::unquote_sql_string(&parts[0]).to_string();
+        let query_text = Self::unquote_sql_string(&parts[1]).to_string();
+        let query_vector = self.parse_vector_argument(&parts[2])?;
+        let k = parts.get(3).and_then(|s| s.parse().ok()).unwrap_or(10);
+        // Empty rank_profile string → None (retrieval-only path); a
+        // non-empty string → Some(name). Mirrors the REST DTO
+        // `rank_profile: Option<String>` contract.
+        let rank_profile = parts.get(4).and_then(|s| {
+            let unquoted = Self::unquote_sql_string(s);
+            if unquoted.is_empty() {
+                None
+            } else {
+                Some(unquoted.to_string())
+            }
+        });
+        Some(SqlExtension::RerankSearch {
+            collection,
+            query_text,
+            query_vector,
+            k,
+            rank_profile,
+        })
     }
 
     /// Parse VECTOR_SEARCH(collection, vector, top_k)
@@ -849,6 +915,116 @@ mod tests {
             }
             _ => panic!("Expected VectorSearch extension"),
         }
+    }
+
+    // ---------------- R-7c.4c: RERANK() parser ----------------
+
+    #[test]
+    fn test_parse_rerank_with_all_args() {
+        let parser = FederatedParser::new();
+        let query = parser
+            .parse(
+                "SELECT * FROM RERANK('docs', 'laptop computer', '[0.1,0.2,0.3]', 50, 'semantic_plus_ce')",
+            )
+            .unwrap();
+        assert_eq!(query.query_type, QueryType::RerankSearch);
+        assert_eq!(query.extensions.len(), 1);
+        match &query.extensions[0] {
+            SqlExtension::RerankSearch {
+                collection,
+                query_text,
+                query_vector,
+                k,
+                rank_profile,
+            } => {
+                assert_eq!(collection, "docs");
+                assert_eq!(query_text, "laptop computer");
+                assert_eq!(*query_vector, VectorQuery::Literal(vec![0.1, 0.2, 0.3]));
+                assert_eq!(*k, 50);
+                assert_eq!(rank_profile.as_deref(), Some("semantic_plus_ce"));
+            }
+            _ => panic!("Expected RerankSearch extension"),
+        }
+    }
+
+    #[test]
+    fn test_parse_rerank_defaults_k_to_ten() {
+        // Omitting `k` and `rank_profile` → k=10, rank_profile=None.
+        let parser = FederatedParser::new();
+        let query = parser
+            .parse("SELECT * FROM RERANK('docs', 'q', '[0.5]')")
+            .unwrap();
+        match &query.extensions[0] {
+            SqlExtension::RerankSearch {
+                k, rank_profile, ..
+            } => {
+                assert_eq!(*k, 10);
+                assert!(rank_profile.is_none());
+            }
+            _ => panic!("Expected RerankSearch extension"),
+        }
+    }
+
+    #[test]
+    fn test_parse_rerank_empty_profile_treated_as_none() {
+        // An empty string profile name → None (retrieval-only path).
+        let parser = FederatedParser::new();
+        let query = parser
+            .parse("SELECT * FROM RERANK('docs', 'q', '[0.5]', 5, '')")
+            .unwrap();
+        match &query.extensions[0] {
+            SqlExtension::RerankSearch { rank_profile, .. } => {
+                assert!(rank_profile.is_none());
+            }
+            _ => panic!("Expected RerankSearch extension"),
+        }
+    }
+
+    #[test]
+    fn test_parse_rerank_rejects_missing_required_args() {
+        // Only 2 args (collection + query_text), no query_vector →
+        // the extension fails to parse, so query falls back to
+        // QueryType::Sql with no extensions detected.
+        let parser = FederatedParser::new();
+        let query = parser.parse("SELECT * FROM RERANK('docs', 'q')").unwrap();
+        assert_eq!(query.query_type, QueryType::Sql);
+        assert!(query.extensions.is_empty());
+    }
+
+    #[test]
+    fn test_parse_rerank_with_query_vector_column_reference() {
+        // Production callers pass an expression (e.g. an embedded
+        // table-column reference) rather than a literal vector. The
+        // parser must accept it as VectorQuery::Expression.
+        let parser = FederatedParser::new();
+        let query = parser
+            .parse("SELECT * FROM RERANK('docs', 'q', u.embedding, 20, 'p')")
+            .unwrap();
+        match &query.extensions[0] {
+            SqlExtension::RerankSearch {
+                query_vector,
+                k,
+                rank_profile,
+                ..
+            } => {
+                assert_eq!(*query_vector, VectorQuery::Expression("u.embedding".into()));
+                assert_eq!(*k, 20);
+                assert_eq!(rank_profile.as_deref(), Some("p"));
+            }
+            _ => panic!("Expected RerankSearch extension"),
+        }
+    }
+
+    #[test]
+    fn test_parse_rerank_query_type_routes_through_extension_mapping() {
+        // The extension-to-QueryType mapping must point RERANK at
+        // QueryType::RerankSearch — verified end-to-end through the
+        // parser entry point.
+        let parser = FederatedParser::new();
+        let query = parser
+            .parse("SELECT * FROM RERANK('docs', 'q', '[0.5]', 5, 'p')")
+            .unwrap();
+        assert_eq!(query.query_type, QueryType::RerankSearch);
     }
 
     #[test]

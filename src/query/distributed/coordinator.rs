@@ -106,6 +106,17 @@ pub struct DistributedQueryStats {
     pub shuffle_count: u64,
 }
 
+/// Result plus execution metadata from a distributed query.
+#[derive(Debug, Clone)]
+pub struct DistributedQueryExecution {
+    /// Query results from local, remote, and optional shuffle execution.
+    pub results: Vec<SubQueryResult>,
+    /// Plan used for execution. Cache hits return no fresh plan.
+    pub plan: Option<DistributedQueryPlan>,
+    /// Whether the result came from the coordinator result cache.
+    pub cache_hit: bool,
+}
+
 /// Distributed Query Coordinator
 ///
 /// Coordinates query execution across the cluster by:
@@ -248,6 +259,14 @@ impl DistributedQueryCoordinator {
     /// The query is analyzed, decomposed into subqueries, routed to appropriate
     /// nodes, executed (locally and remotely), and results are aggregated.
     pub async fn execute(&self, query: &MultiModelQuery) -> Result<Vec<SubQueryResult>> {
+        Ok(self.execute_with_metadata(query).await?.results)
+    }
+
+    /// Execute a distributed query and return planning/cache metadata.
+    pub async fn execute_with_metadata(
+        &self,
+        query: &MultiModelQuery,
+    ) -> Result<DistributedQueryExecution> {
         let start = Instant::now();
 
         // Check cache
@@ -257,7 +276,11 @@ impl DistributedQueryCoordinator {
             let mut stats = self.stats.write().await;
             stats.cache_hits += 1;
             stats.total_queries += 1;
-            return Ok(cached);
+            return Ok(DistributedQueryExecution {
+                results: cached,
+                plan: None,
+                cache_hit: true,
+            });
         }
 
         // Plan the query distribution
@@ -298,7 +321,11 @@ impl DistributedQueryCoordinator {
             results.iter().map(|r| r.records.len()).sum::<usize>()
         );
 
-        Ok(results)
+        Ok(DistributedQueryExecution {
+            results,
+            plan: Some(plan),
+            cache_hit: false,
+        })
     }
 
     /// Plan query distribution across the cluster

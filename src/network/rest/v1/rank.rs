@@ -1439,11 +1439,14 @@ mod tests {
         // passthrough (preserves scores).
         let s = services.second_phase_scorer("p").unwrap();
         let out = s
-            .rescore(vec![ScoredHit::bare(
-                DocHandle(1),
-                5.0,
-                proximadb_kernel::PhaseId::FIRST,
-            )])
+            .rescore(
+                vec![ScoredHit::bare(
+                    DocHandle(1),
+                    5.0,
+                    proximadb_kernel::PhaseId::FIRST,
+                )],
+                &QueryContext::default(),
+            )
             .unwrap();
         assert_eq!(out[0].score, 10.0);
     }

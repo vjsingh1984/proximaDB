@@ -3043,6 +3043,27 @@ impl CrossModelOptimizer {
                         required_capabilities: CapabilitySet::new(),
                     }
                 }
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::RerankSearch { .. },
+                    ..
+                } => {
+                    // RerankSearch is a local rank-pipeline construct; the
+                    // federated optimizer doesn't plan it directly. Treat
+                    // as a no-op scan placeholder so plan construction
+                    // succeeds for queries that mix it with regular sources.
+                    PlanNode {
+                        id: self.next_id(),
+                        node_type: PlanNodeType::Scan {
+                            target: "rerank_search".to_string(),
+                            model_type: ModelType::Vector,
+                            predicates: vec![],
+                        },
+                        estimated_cost: 100.0,
+                        estimated_rows: 100,
+                        output_columns: vec!["id".to_string(), "score".to_string()],
+                        required_capabilities: CapabilitySet::new(),
+                    }
+                }
             };
             sub_plans.push(sub_plan);
         }
@@ -3110,6 +3131,11 @@ impl CrossModelOptimizer {
                 self.plan_observability_query(query)
             }
             QueryType::Federated => self.plan_federated_query(query),
+            // RerankSearch is a local rank-pipeline construct; the federated
+            // optimizer doesn't plan it independently — it's expressed as a
+            // SqlExtension::RerankSearch source inside a federated query.
+            // Route to vector search as a safe default for the top-level case.
+            QueryType::RerankSearch => self.plan_vector_search(query),
         }?;
 
         self.apply_sql_clauses(plan, query)
@@ -3642,6 +3668,21 @@ impl CrossModelOptimizer {
                     estimated_cost: 100.0,
                     estimated_rows: 1000,
                     output_columns: vec!["*".to_string()],
+                    required_capabilities: CapabilitySet::new(),
+                },
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::RerankSearch { .. },
+                    ..
+                } => PlanNode {
+                    id: self.next_id(),
+                    node_type: PlanNodeType::Scan {
+                        target: "rerank_search".to_string(),
+                        model_type: ModelType::Vector,
+                        predicates: vec![],
+                    },
+                    estimated_cost: 100.0,
+                    estimated_rows: 100,
+                    output_columns: vec!["id".to_string(), "score".to_string()],
                     required_capabilities: CapabilitySet::new(),
                 },
             };

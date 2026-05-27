@@ -2426,8 +2426,9 @@ impl proximadb_runtime::DocumentPort for DocumentService {
 mod tests {
     use super::*;
     use crate::proto::proximadb_v1::{
-        DocFilterCondition, DocFilterOperator, DocumentCollectionConfig, DocumentFilter,
-        DocumentUpdate, SqlObject, SqlValue, UpdateOperation, sql_value,
+        DocFilterCondition, DocFilterOperator, DocIndexType, DocumentCollectionConfig,
+        DocumentFilter, DocumentUpdate, IndexDefinition, SqlObject, SqlValue, UpdateOperation,
+        sql_value,
     };
     use crate::storage::traits::{
         CompactionParameters, CompactionResult, FlushParameters, FlushResult,

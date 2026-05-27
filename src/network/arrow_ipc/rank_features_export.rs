@@ -249,6 +249,7 @@ mod tests {
     use crate::network::rest::v1::rank::{
         CandidateBatch, CandidateProvider, ScoredHitDto, ScoreVectorDto,
     };
+    use arrow_array::Array;
     use arrow_array::cast::AsArray;
     use arrow_ipc::reader::StreamReader;
     use proximadb_kernel::ScoreComponent;

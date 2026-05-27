@@ -547,6 +547,9 @@ impl QueryFacadeAdapter {
         sql_upper.contains("VECTOR_SEARCH")
             || sql_upper.contains("GRAPH_QUERY")
             || sql_upper.contains("DOCUMENT_QUERY")
+            // R-7c.4c: RERANK() routes through the same federated path
+            // so pgwire clients can `SELECT * FROM RERANK(...)`.
+            || sql_upper.contains("RERANK(")
             || sql_upper.contains("LOGS(")
             || sql_upper.contains("METRICS(")
             || sql.contains("<->")
