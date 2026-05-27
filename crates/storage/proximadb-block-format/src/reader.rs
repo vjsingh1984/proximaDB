@@ -192,6 +192,20 @@ impl<'a> PaxBlockReader<'a> {
         decode_str_with_encoding(raw, meta.encoding_id, n).ok()
     }
 
+    /// Decode all f64 values from a scalar double column stripe.
+    pub fn decode_f64_stripe(&self, column_id: i32) -> Option<Vec<Option<f64>>> {
+        let raw = self.read_stripe_raw(column_id)?;
+        let meta = self.columns.iter().find(|m| m.column_id == column_id)?;
+        let n = self.row_count() as usize;
+        let decoded = decode_f64_with_encoding(raw, meta.encoding_id, n).ok()?;
+        Some(
+            decoded
+                .into_iter()
+                .map(|v| if v.is_nan() { None } else { Some(v) })
+                .collect(),
+        )
+    }
+
     /// Decode f32 vector values from an embedding stripe.
     pub fn decode_f32_vec_stripe(&self, column_id: i32) -> Option<Vec<Option<Vec<f32>>>> {
         let raw = self.read_stripe_raw(column_id)?;
@@ -249,6 +263,16 @@ fn decode_i64_with_encoding(data: &[u8], encoding_id: u8, count: usize) -> Resul
             }
         }
         ProximaScheme::Adaptive => functions::adaptive::decode_i64(data, count),
+    }
+}
+
+fn decode_f64_with_encoding(data: &[u8], encoding_id: u8, count: usize) -> Result<Vec<f64>> {
+    let scheme = scheme_from_encoding_id(encoding_id)
+        .ok_or_else(|| anyhow::anyhow!("unknown PAX f64 encoding id: {encoding_id}"))?;
+    match scheme {
+        ProximaScheme::Raw => functions::raw::decode_f64(data),
+        ProximaScheme::Gorilla => functions::gorilla::decode_f64(data, count),
+        other => bail!("unsupported PAX f64 encoding: {}", other.name()),
     }
 }
 

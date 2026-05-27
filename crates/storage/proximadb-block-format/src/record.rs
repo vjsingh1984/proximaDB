@@ -168,6 +168,8 @@ pub struct FlatRow {
     pub edge_weight: Option<f64>,
     /// One entry per embedding (model order from record).
     pub embeddings: Vec<Vec<f32>>,
+    /// User-defined columns projected from props or other sources.
+    pub user_columns: Vec<Option<proximadb_data_model::ProximaValue>>,
 }
 
 impl FlatRow {
@@ -176,10 +178,31 @@ impl FlatRow {
     /// `props` and `labels` are serialised to msgpack bytes so they can be
     /// stored opaquely in the Props column stripe.
     pub fn from_record(record: &ProximaRecord) -> anyhow::Result<Self> {
-        let props_bytes = if record.props.is_empty() {
+        Self::from_record_with_user_columns(record, &[])
+    }
+
+    /// Extract a `FlatRow` from a `ProximaRecord`, projecting specific keys from `props`
+    /// into the `user_columns` list.
+    pub fn from_record_with_user_columns(
+        record: &ProximaRecord,
+        user_column_keys: &[String],
+    ) -> anyhow::Result<Self> {
+        let mut props = record.props.clone();
+
+        // Extract promoted columns from props
+        let mut user_columns = Vec::with_capacity(user_column_keys.len());
+        for key in user_column_keys {
+            let val = match props.remove(key) {
+                Some(proximadb_records::ProximaTreeNode::Value(v)) => Some(v),
+                _ => None,
+            };
+            user_columns.push(val);
+        }
+
+        let props_bytes = if props.is_empty() {
             None
         } else {
-            Some(rmp_serde::to_vec_named(&record.props)?)
+            Some(rmp_serde::to_vec_named(&props)?)
         };
 
         let labels_vec: Vec<&str> = record.labels.iter().map(|s| s.as_str()).collect();
@@ -225,20 +248,37 @@ impl FlatRow {
             edge_type,
             edge_weight,
             embeddings,
+            user_columns,
         })
     }
 
     /// Reconstruct a `ProximaRecord` from a decoded `FlatRow`.
     ///
-    /// Embedding model IDs are provided externally (from the collection schema).
-    pub fn into_record(self, embedding_model_ids: &[String]) -> anyhow::Result<ProximaRecord> {
+    /// Embedding model IDs and user column keys are provided externally (from the collection schema).
+    pub fn into_record(
+        self,
+        embedding_model_ids: &[String],
+        user_column_keys: &[String],
+    ) -> anyhow::Result<ProximaRecord> {
         use proximadb_records::{EdgeShape, EmbeddingCell, LabelSet};
         use std::collections::HashMap;
 
-        let props = match self.props_bytes {
+        let mut props = match self.props_bytes {
             Some(b) => rmp_serde::from_slice(&b)?,
             None => HashMap::new(),
         };
+
+        // Merge user columns back into props
+        for (i, val) in self.user_columns.into_iter().enumerate() {
+            if let Some(key) = user_column_keys.get(i) {
+                if let Some(v) = val {
+                    props.insert(
+                        key.clone(),
+                        proximadb_records::ProximaTreeNode::Value(v),
+                    );
+                }
+            }
+        }
 
         let labels: LabelSet = match self.labels_bytes {
             Some(b) => {

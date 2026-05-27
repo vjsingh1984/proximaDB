@@ -340,6 +340,12 @@ impl PaxBlockWriter {
                 ColumnRole::Edge,
                 &self.edge_type,
             ));
+            stripes.push(self.build_f64_stripe(
+                col_id::EDGE_WEIGHT,
+                ColumnRole::Edge,
+                true,
+                &self.edge_weight,
+            )?);
 
             for (i, col) in self.embeddings.iter().enumerate() {
                 let refs: Vec<Option<&[f32]>> = col.iter().map(|v| v.as_deref()).collect();
@@ -528,6 +534,36 @@ impl PaxBlockWriter {
         Ok(ColumnStripe::new(meta, data))
     }
 
+    fn build_f64_stripe(
+        &self,
+        id: i32,
+        role: ColumnRole,
+        nullable: bool,
+        vals: &[Option<f64>],
+    ) -> Result<ColumnStripe> {
+        let (raw_values, null_count) = flatten_f64_values(vals);
+        let scheme = select_f64_scheme(role, nullable, vals);
+        let data = encode_f64_with_scheme(&raw_values, &scheme)?;
+        let meta = ColumnMeta {
+            column_id: id,
+            role,
+            data_type_id: 0x07, // F64
+            encoding_id: scheme.to_marker(),
+            nullable,
+            has_bloom: false,
+            is_sorted: false,
+            stripe_offset: 0,
+            stripe_len: data.len() as u32,
+            null_count,
+            distinct_hint: distinct_f64_hint(vals),
+            min_val: [0u8; 16],
+            max_val: [0u8; 16],
+            bloom_offset: 0,
+            bloom_len: 0,
+        };
+        Ok(ColumnStripe::new(meta, data))
+    }
+
     fn build_str_opt_stripe(
         &self,
         id: i32,
@@ -636,6 +672,21 @@ fn flatten_i64_values(values: &[Option<i64>]) -> (Vec<i64>, u32) {
     (raw_values, null_count)
 }
 
+fn flatten_f64_values(values: &[Option<f64>]) -> (Vec<f64>, u32) {
+    let mut null_count = 0u32;
+    let raw_values = values
+        .iter()
+        .map(|value| match value {
+            Some(value) => *value,
+            None => {
+                null_count += 1;
+                f64::NAN
+            }
+        })
+        .collect();
+    (raw_values, null_count)
+}
+
 fn is_i64_sorted(values: &[Option<i64>]) -> bool {
     let mut previous = None;
     for value in values.iter().flatten() {
@@ -654,6 +705,16 @@ fn distinct_i64_hint(values: &[Option<i64>]) -> u32 {
         .iter()
         .flatten()
         .copied()
+        .collect::<HashSet<_>>()
+        .len()
+        .min(u32::MAX as usize) as u32
+}
+
+fn distinct_f64_hint(values: &[Option<f64>]) -> u32 {
+    values
+        .iter()
+        .flatten()
+        .map(|v| v.to_bits())
         .collect::<HashSet<_>>()
         .len()
         .min(u32::MAX as usize) as u32
@@ -765,6 +826,31 @@ fn select_i64_scheme(role: ColumnRole, nullable: bool, values: &[Option<i64>]) -
         hints.dictionary_scope = DictionaryScope::Block;
     }
 
+    StrategyRegistry::default()
+        .select_decision(&analysis, &context, &profile, &hints)
+        .scheme
+}
+
+fn select_f64_scheme(role: ColumnRole, _nullable: bool, values: &[Option<f64>]) -> ProximaScheme {
+    let non_null_values: Vec<f64> = values.iter().flatten().copied().collect();
+    if non_null_values.is_empty() {
+        return ProximaScheme::Raw;
+    }
+
+    let analysis = DataAnalysis::from_f64_values(&non_null_values);
+    let domain = match role {
+        ColumnRole::Edge => DataDomain::General,
+        _ => DataDomain::TimeSeries,
+    };
+    let mut context = SelectionContext::for_pax_stripe(TypeId::F64, domain);
+    context.target_compression = None;
+
+    let mut profile = CompressionProfile::from_selection_context(&context);
+    profile.target_compression_ratio = None;
+    profile.hotness = AccessTemperature::Warm;
+    profile.workload_profile = WorkloadProfile::Htap;
+
+    let hints = context.layout_hints();
     StrategyRegistry::default()
         .select_decision(&analysis, &context, &profile, &hints)
         .scheme
@@ -931,6 +1017,14 @@ fn encode_i64_with_scheme(values: &[i64], scheme: &ProximaScheme) -> Result<Vec<
         ProximaScheme::Dictionary => functions::dictionary::encode_i64(values),
         ProximaScheme::RunLength => functions::run_length::encode_i64(values),
         ProximaScheme::Adaptive => functions::adaptive::encode_i64(values),
+    }
+}
+
+fn encode_f64_with_scheme(values: &[f64], scheme: &ProximaScheme) -> Result<Vec<u8>> {
+    match scheme {
+        ProximaScheme::Raw => functions::raw::encode_f64(values),
+        ProximaScheme::Gorilla => functions::gorilla::encode_f64(values),
+        other => anyhow::bail!("unsupported PAX f64 scheme: {}", other.name()),
     }
 }
 
