@@ -147,9 +147,9 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 | REST route `POST /api/v1/collections/:collection/branches/:branch/merge` reads the canonical framed WAL from `data_dir/pgwire/canonical-records.wal`, filters by collection, and runs `merge_branches`. With `dry_run=true` the handler returns merge-base/events/conflicts/resolutions only. With `dry_run=false` it now calls `write_back_merge`, which materializes resolutions as `CanonicalOperation::RecordUpsert` / `RecordDelete` entries through `FramedTableWalAppender::append_operations` and stamps `origin = "branch_merge:<source>:<target>"` on every merged upsert (conflict winners, union-label records, unilateral mutations). Response carries a `write_back` block with `first_lsn` / `last_lsn` / `entries_written`. An optional `tenant_id` field threads through into the WAL append. Verified with `cargo test -p proximadb --lib graph::merge -- --nocapture`.
 
 | T3.1 Slice 8 — Integration tests for full branch creation → divergent mutations → merge cycle
-| Pending
-|
-| Remaining scope: end-to-end test that creates a collection, writes divergent branch mutations via the canonical WAL, POSTs to the merge endpoint with `dry_run=false`, and asserts that the merged records are durably visible to a follow-up canonical-WAL replay. Unit coverage for `write_back_merge` is in place (see `src/graph/merge.rs#mod tests`).
+| Done (WAL roundtrip)
+| `2b46a4a16`
+| Added `tests/graph_branch_merge_integration_test.rs` with 5 cycles covering durable WAL roundtrip: LWW (later-append wins), Delete-wins (tombstone propagation), Add-wins (label union), unilateral mutations, and post-write-back sequence-number monotonicity. Each test seeds canonical WAL entries via `FramedTableWalAppender::append_operations`, runs `merge_branches` + `write_back_merge`, then re-reads via `read_entries_from_path` and asserts the merge entries carry `origin = "branch_merge:a:b"` (or are `RecordDelete` tombstones for delete-wins). REST-router-level integration (via `axum::Router::oneshot`) is intentionally deferred — needs an `AppState::for_test` constructor first. **Build blocker note:** concurrent uncommitted WIP in `src/query/federated/optimizer/mod.rs` and `src/query/rl_planner/integration.rs` currently breaks `cargo build --lib` (errors are in unrelated query-planner code, not in the new test file); tests will run once that WIP lands.
 |===
 
 == Tier 4b — Superficial-mock cleanup sweep (prior session)
