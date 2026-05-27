@@ -106,6 +106,9 @@ pub mod tenant_label;
 /// Embedding-precision metrics — Prometheus gauges/counters per
 /// EMBEDDING_PRECISION_LLD_2026_05_22 §"Observability (Q11)" (PR 7b).
 pub mod precision_metrics;
+/// Rank-pipeline metrics — Prometheus histograms/counters per
+/// RANKING_FRAMEWORK_SPEC NFR-8 (R-7c.4d follow-up).
+pub mod rank_metrics;
 
 use std::collections::HashMap;
 use std::sync::Arc;
