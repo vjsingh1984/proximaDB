@@ -11,7 +11,7 @@ mod tests {
     use crate::query::federated::execution::{ExecutionConfig, ExecutionResult, FederatedExecutor};
     use crate::storage::MultiModelStorageFacade;
     use crate::storage::traits::DocumentRecord;
-    use arrow::array::{ArrayRef, StringArray};
+    use arrow::array::{Array, ArrayRef, StringArray};
     use arrow::datatypes::{DataType, Field, Schema};
     use arrow::record_batch::RecordBatch;
     use std::sync::Arc;

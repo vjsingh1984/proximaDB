@@ -3208,11 +3208,13 @@ impl CrossModelOptimizer {
                 self.plan_observability_query(query)
             }
             QueryType::Federated => self.plan_federated_query(query),
-            // RerankSearch is a local rank-pipeline construct; the federated
-            // optimizer doesn't plan it independently — it's expressed as a
-            // SqlExtension::RerankSearch source inside a federated query.
-            // Route to vector search as a safe default for the top-level case.
-            QueryType::RerankSearch => self.plan_vector_search(query),
+            // R-7c.4c.1: RERANK(...) SRF is expressed as a
+            // SqlExtension::RerankSearch source. Route through
+            // plan_federated_query so the per-source match arm fires
+            // and emits PlanNodeType::RerankSearch (instead of the
+            // legacy Scan/VectorSearch fallback this branch used
+            // before the variant existed).
+            QueryType::RerankSearch => self.plan_federated_query(query),
         }?;
 
         self.apply_sql_clauses(plan, query)

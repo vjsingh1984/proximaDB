@@ -203,12 +203,16 @@ impl FederatedParser {
             }
         }
 
-        // Parse FROM clause targets (excluding function calls)
-        let targets = self.parse_from_targets(sql);
-
-        // Filter out function calls (like VECTOR_SEARCH, GRAPH_QUERY) from targets
-        let real_target_count = targets
-            .iter()
+        // Parse FROM clause targets, then drop the function-call
+        // pseudo-targets (`RERANK('docs', ...)`, `VECTOR_SEARCH(...)`,
+        // etc.). Each function-call SRF already lives in `extensions`
+        // — leaving its raw FROM token in `targets` would make the
+        // optimizer's `ordered_query_sources` emit both an Extension
+        // sub-plan AND a Scan over a bogus collection name like
+        // `"RERANK('docs',"`, then HashJoin them. R-7c.4c.1.
+        let targets: Vec<_> = self
+            .parse_from_targets(sql)
+            .into_iter()
             .filter(|t| {
                 let upper = t.name.to_uppercase();
                 !upper.starts_with("VECTOR_SEARCH")
@@ -219,7 +223,8 @@ impl FederatedParser {
                     && !upper.starts_with("METRICS")
                     && !upper.starts_with("TRACES")
             })
-            .count();
+            .collect();
+        let real_target_count = targets.len();
 
         // Detect cross-model joins (only when we have multiple real tables or extensions)
         if extensions.len() > 1 || (!extensions.is_empty() && real_target_count > 1) {

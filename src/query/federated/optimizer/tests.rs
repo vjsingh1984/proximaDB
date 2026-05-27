@@ -1556,8 +1556,10 @@ mod tests {
     #[test]
     fn test_rerank_with_profile_costs_more_than_retrieval_only() {
         // Second-phase rescoring adds latency; the optimizer must
-        // reflect that in the plan cost.
-        let optimizer = CrossModelOptimizer::new();
+        // reflect that in the plan cost. Use separate optimizer
+        // instances so the plan cache doesn't collapse the two
+        // queries into one cached plan (the cache key normalizes
+        // literals away, which would mask the profile difference).
         let with_profile = parser::FederatedParser::new()
             .parse("SELECT * FROM RERANK('docs', 'q', '[0.5]', 10, 'ce_v1')")
             .unwrap();
@@ -1565,8 +1567,10 @@ mod tests {
             .parse("SELECT * FROM RERANK('docs', 'q', '[0.5]', 10)")
             .unwrap();
 
-        let plan_with = optimizer.optimize(&with_profile).unwrap();
-        let plan_without = optimizer.optimize(&without_profile).unwrap();
+        let plan_with = CrossModelOptimizer::new().optimize(&with_profile).unwrap();
+        let plan_without = CrossModelOptimizer::new()
+            .optimize(&without_profile)
+            .unwrap();
         assert!(
             plan_with.total_cost > plan_without.total_cost,
             "rerank-with-profile cost {:.2} should exceed retrieval-only cost {:.2}",
