@@ -17,4 +17,4 @@ commonLabels:
 
 images:
   - name: proximadb/proximadb
-    newTag: "0.1.4"
+    newTag: "0.2.0"

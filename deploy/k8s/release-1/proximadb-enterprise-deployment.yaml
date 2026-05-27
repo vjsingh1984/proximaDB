@@ -1,3 +1,7 @@
+# Historical enterprise release example only.
+# Not a supported OSS deployment contract. Do not apply without reconciling
+# against docs/SUPPORTED_SURFACE.adoc and the canonical chart at
+# deploy/helm/proximadb.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

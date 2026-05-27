@@ -223,10 +223,10 @@ gcloud container clusters get-credentials proximadb-gke \
 |--------|----------|-------------|
 | `sst` | Write-optimized, real-time | ~5ms (10K vectors) |
 | `helix` | Locality-optimized | ~13ms |
-| `raptor` | Adaptive row-group | ~9ms |
 | `viper` | Columnar analytics | ~90ms |
 | `nova` | Progressive columnar | ~100ms |
-| `swift` | Ultra-low latency (<5K) | ~95ms |
+
+`swift` and `raptor` remain behind `experimental-engines` as deprecated research engines. Do not use them for new production deployments.
 
 ## Production Recommendations
 
