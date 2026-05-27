@@ -92,9 +92,9 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 | Item | Status | Commit | Verification
 
 | T3.1 — ADR-012 minimum-viable `merge_branch(source, target, conflict_policy)` for node + edge CRDT semantics. If embedding-merge case is intricate, document the deferral inline and ship node+edge for v0.2.
-| Pending
-|
-| Integration test: two graph branches with divergent nodes + edges; merge resolves per CRDT spec.
+| Done (8 slices)
+| Slices 1-8 below
+| Slices 1-5 built the pure-logic merge pipeline (`walk_diff` / `classify_mutation` / `MergeReport` / `merge_branches` over canonical-WAL filter + merge-base discovery). Slice 2 added `ProximaRecord.branch_id` (V2 wire-visible). Slice 6 added `CatalogBranchMergePolicy` to `CatalogTableSchema` with ADR-012 defaults. Slice 7 (`0c87e4640`) landed durable WAL write-back via `write_back_merge` → `FramedTableWalAppender::append_operations` and wired the REST endpoint `POST /api/v1/collections/:collection/branches/:branch/merge` to honor `dry_run=false`, stamping `origin = "branch_merge:<a>:<b>"` on every merged upsert. Slice 8 (`2b46a4a16`) added `tests/graph_branch_merge_integration_test.rs` covering 5 durable-roundtrip cycles (LWW / Delete-wins / Add-wins union / unilateral / sequence monotonicity). Embedding-merge classification per Slice 5 covers `EmbeddingUpdate`, `LabelSet`, `PropsKey` pairwise — no deferral needed.
 
 | T3.2 — Wire real BM25 + vector backend through the gRPC hybrid_search route. Target `crates/platform/proximadb-api/src/grpc/v1/hybrid.rs` (the new home; the root-crate `hybrid_search_service.rs` is a deprecated shim). Mirror the REST `/api/v1/hybrid/search` behavior.
 | Slice 1 + 1b + filter/fusion unit coverage done
