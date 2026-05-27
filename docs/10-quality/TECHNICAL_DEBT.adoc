@@ -970,10 +970,27 @@ physical layouts.
 | Predicate-Aware Vector Search Correctness And Fallback Reporting
 | P7
 | CRITICAL
-| In Progress
+| In Progress (Foundation + AXIS wiring landed 2026-05-27)
 | Post-filtered ANN can return fewer than the requested matching top-k under tenant/RLS, time, branch, and typed metadata filters. This is a correctness and security surface, not just a latency issue.
 | 6-8 weeks
 | Active blueprint: `docs/12-design/TD_064_PREDICATE_AWARE_VECTOR_SEARCH_DESIGN_2026_05_27.adoc`. Extend ADR-011 `VectorTopK` planning to state PreFilter, Inline predicate-aware ANN, or PostFilter fallback. Push tenant/RLS and typed predicates into candidate generation where supported. `EXPLAIN` must disclose recall/failure risk for fallback plans. Coordinates with Phase C in the overhaul spec.
+
+**Status 2026-05-27 (slices 1-3 landed)**:
+
+* Foundation: `FilterableHnswMetadata` schema + shared `FilterableMetadataCache` helper in `src/index/axis/filterable_metadata.rs`. <50-byte per-record overhead target.
+* `AxisVectorIndex` trait extended with `add_with_metadata`, `search_with_predicate(tenant, time_range, rls_tags)`, `supports_predicate_search`, `configure_filterable_fields`. All four AXIS-native indexes (HNSW, IVF, Annoy, LSH) implement them — HNSW with native skip-through traversal, IVF/Annoy/LSH with oversample-and-postfilter.
+* Snapshot persistence v2 with v1 backward-compat decoder. Old HNSW snapshots upgrade to v2 in-memory with empty metadata.
+* `AxisManager` insert paths (HNSW direct, IVF trained-path, IVF cold-start bulk-add, HMGI partitions) all call `add_with_metadata` so cached metadata is populated as records flow in. IVF cold-start hydrates metadata from `collection_vectors` to close the gap.
+* `AxisManagerQueryResult.predicate_shortfall: Option<PredicateShortfall>` populated by inline path when post-filter trimming drops survivors below `top_k`. Prometheus counters `axis_predicate_shortfall_total` + `axis_predicate_shortfall_missing_sum` for operator dashboards.
+* `SearchPlanTrace.predicate_shortfall: Option<PredicateShortfall>` + `mark_predicate_shortfall(...)` helper. `TraceBuilderInputs.predicate_shortfall` carries it into the assembled trace; `failure_class = PermissionThin` set when populated.
+* 9 new TD-064 tests (218 AXIS tests pass).
+
+**Remaining work**:
+
+* Plumb `AxisManagerQueryResult.predicate_shortfall` through `services/operations/vectors` and `RichSearchResponse` so REST/gRPC handlers can populate `TraceBuilderInputs.predicate_shortfall` (currently always `None` at the handler).
+* IVF inline predicate pushdown (replace oversample-and-postfilter with nprobe-time predicate evaluation) — TD-064 Phase 3.
+* PreFilter / route-selection mode wiring through `ADR-011 AnnFilteringPolicy::routing_mode()` rather than the current `AnnFilteringMode::Inline` switch.
+* Non-AXIS index deletion (`src/index/{hnsw,ivf,diskann,sparse_hnsw}` orphans — see `docs/12-design/NON_AXIS_INDEX_MIGRATION_AUDIT_2026_05_27.adoc`).
 
 | TD-065
 | Document Service In-Memory Map As Temporary Durable Source
@@ -1042,8 +1059,8 @@ physical layouts.
 | `ProximaRecord.branch_id` is `#[serde(skip)]` — invisible to canonical WAL → REST branch-merge endpoint structurally broken
 | P3
 | HIGH
-| Open
-| Slice 2 of T3.1 (commit `1dca6ea7b`) annotated `crates/foundation/proximadb-records/src/lib.rs:848` with `#[serde(skip, default)]` to keep the V1 bincode wire format stable. The canonical WAL uses `rmp_serde::to_vec_named` (`src/services/canonical_wal.rs:225`), which is schema-tolerant by itself — but `#[serde(skip)]` drops `branch_id` from the serialization regardless of encoder. Result: every record read back via `FramedTableWalAppender::read_entries_from_path` has `branch_id: None`, so `merge_branches` cannot identify branch entries and returns `None`. The REST endpoint `POST /api/v1/collections/:collection/branches/:branch/merge` is therefore non-functional for any real-world data; the 6 unit tests in `src/graph/merge.rs` only pass because they construct `CanonicalWalEntry` via struct literals (bypassing the WAL roundtrip).
-| 1-2 days
-| **DISCOVERED 2026-05-27** by `tests/graph_branch_merge_integration_test.rs` (Slice 8). All 5 tests fail at `merge_branches(...).expect("seed produced mergeable branches")` because `branch_id` is lost in the WAL roundtrip. Tests are marked `#[ignore]` with a pointer to this TD pending the fix. **Two fix options:** (A) Switch the canonical WAL encoding from `ProximaRecord` to `ProximaRecordV2` (which carries `branch_id` natively without `#[serde(skip)]`); this is a WAL format change and needs an upgrade path for existing data. (B) Add `branch_id: Option<String>` directly to `CanonicalWalEntry` in `crates/storage/proximadb-storage-common/src/wal_entry.rs` — branch identity becomes a WAL-frame property rather than a record property, which is the cleaner layering (the WAL is the merge boundary, not the record). Either way the fix is its own slice with careful blast-radius review (`ProximaRecord` has 551+ construction sites in the workspace).
+| Resolved
+| Slice 2 of T3.1 (commit `1dca6ea7b`) annotated `crates/foundation/proximadb-records/src/lib.rs:848` with `#[serde(skip, default)]` to keep the V1 bincode wire format stable. The canonical WAL uses `rmp_serde::to_vec_named` (`src/services/canonical_wal.rs:225`), which is schema-tolerant by itself — but `#[serde(skip)]` drops `branch_id` from the serialization regardless of encoder. Result: every record read back via `FramedTableWalAppender::read_entries_from_path` had `branch_id: None`, so `merge_branches` could not identify branch entries and returned `None`. The REST endpoint `POST /api/v1/collections/:collection/branches/:branch/merge` was therefore non-functional for any real-world data; the 6 unit tests in `src/graph/merge.rs` only passed because they construct `CanonicalWalEntry` via struct literals (bypassing the WAL roundtrip).
+| Done
+| **RESOLVED 2026-05-27** by commit `996626595`: flipped `#[serde(skip, default)]` → `#[serde(default)]` on `branch_id`. Considered 3 fix options: A = switch WAL to `ProximaRecordV2` (~35 RecordUpsert constructor sites); B = move `branch_id` onto `CanonicalWalEntry` (16 + 7 + 2 sites); **C (chosen) = unskip the attribute (1 line)**. Option C is safe because (1) no production code bincode-serializes `ProximaRecord` directly — only tests do; (2) the canonical WAL encoder is named-field schema-tolerant; (3) no production data with `branch_id = Some(...)` exists on disk yet — the canonical WAL has been silently dropping the field since Slice 2 landed, so there is nothing to migrate. Added 3 regression tests in `proximadb-records/src/lib.rs#mod tests` (rmp-named roundtrip, bincode roundtrip, default-on-missing) and flipped the existing `branch_id_is_dropped_by_v1_bincode_path_serde_skip` test in `wire_v2.rs` to assert the new contract. The 5 Slice 8 integration tests are no longer `#[ignore]`-d and all pass (`cargo test --test graph_branch_merge_integration_test`: 5 passed). Cleaner-layering Option B is available as a future refactor; it doesn't block anything.
 |===
