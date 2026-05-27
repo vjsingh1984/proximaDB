@@ -85,7 +85,7 @@ pub use logging::{
     ActionHistory, ExecutionLog, ExplainIntegration, RLDecisionContext, RLDecisionLogger, StageLog,
 };
 pub use reward::{OptimizationGoal, OptimizationTarget, RewardCalculator};
-pub use state::{FilterComplexity, PlannerState};
+pub use state::{FilterComplexity, ObjectEconomyFeatures, PlannerState};
 
 // Re-export integration utilities
 pub use integration::{RLPlannerIntegration, get_rl_planner, init_rl_planner, rl_select_action};

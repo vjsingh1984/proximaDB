@@ -740,6 +740,115 @@ impl ExecutionStep {
 // UNIFIED COST MODEL (Eliminates duplication between systems)
 // ================================================================================
 
+/// Object economy cost factors for accurate cost estimation
+///
+/// Encodes block-level statistics from VectorObjectEconomyDirectory
+/// to enable cost-aware query routing and tier-specific optimization.
+#[derive(Debug, Clone)]
+pub struct ObjectEconomyCostFactors {
+    /// Number of blocks in the SST file
+    pub block_count: u32,
+    /// Average block size in bytes
+    pub avg_block_size: u64,
+    /// Estimated effectiveness of centroid-based filtering (0.0 = none, 1.0 = perfect)
+    pub centroid_filter_effectiveness: f32,
+    /// Estimated effectiveness of Z-order code based pruning (0.0 = none, 1.0 = perfect)
+    pub zorder_filter_effectiveness: f32,
+    /// Estimated effectiveness of zone map filtering (0.0 = none, 1.0 = perfect)
+    pub zone_map_filter_effectiveness: f32,
+    /// Freshness penalty multiplier for stale metadata (1.0 = fresh, >1.0 = stale penalty)
+    pub freshness_penalty: f32,
+}
+
+impl ObjectEconomyCostFactors {
+    /// Create disabled cost factors when no object economy directory is available
+    pub fn disabled() -> Self {
+        Self {
+            block_count: 0,
+            avg_block_size: 0,
+            centroid_filter_effectiveness: 0.0,
+            zorder_filter_effectiveness: 0.0,
+            zone_map_filter_effectiveness: 0.0,
+            freshness_penalty: 1.0,
+        }
+    }
+
+    /// Create cost factors from block metadata with heuristics
+    pub fn from_block_metadata(
+        block_count: u32,
+        avg_block_size: u64,
+        has_centroids: bool,
+        has_zorder: bool,
+        has_zone_maps: bool,
+    ) -> Self {
+        // Use heuristics for filter effectiveness when actual statistics aren't available
+        let centroid_effectiveness = if has_centroids {
+            // Centroid routing typically filters 70-90% of blocks
+            0.8
+        } else {
+            0.0
+        };
+
+        let zorder_effectiveness = if has_zorder {
+            // Z-order pruning typically filters 50-80% of blocks
+            0.65
+        } else {
+            0.0
+        };
+
+        let zone_effectiveness = if has_zone_maps {
+            // Zone maps typically filter 60-90% of blocks
+            0.75
+        } else {
+            0.0
+        };
+
+        Self {
+            block_count,
+            avg_block_size,
+            centroid_filter_effectiveness: centroid_effectiveness,
+            zorder_filter_effectiveness: zorder_effectiveness,
+            zone_map_filter_effectiveness: zone_effectiveness,
+            freshness_penalty: 1.0,
+        }
+    }
+
+    /// Calculate expected blocks to scan given filter effectiveness
+    pub fn expected_blocks_to_scan(&self, use_centroid: bool, use_zorder: bool) -> u32 {
+        let mut reduction: f64 = 1.0;
+
+        if use_centroid {
+            reduction *= (1.0 - self.centroid_filter_effectiveness as f64).max(0.1);
+        }
+
+        if use_zorder {
+            reduction *= (1.0 - self.zorder_filter_effectiveness as f64).max(0.1);
+        }
+
+        ((self.block_count as f64) * reduction).ceil() as u32
+    }
+
+    /// Calculate I/O cost adjustment based on filtering
+    pub fn io_cost_multiplier(&self, use_centroid: bool, use_zorder: bool, use_zone: bool) -> f64 {
+        let mut reduction: f64 = 1.0;
+
+        if use_centroid && self.centroid_filter_effectiveness > 0.0 {
+            reduction *= 1.0 - self.centroid_filter_effectiveness as f64;
+        }
+
+        if use_zorder && self.zorder_filter_effectiveness > 0.0 {
+            reduction *= 1.0 - self.zorder_filter_effectiveness as f64;
+        }
+
+        if use_zone && self.zone_map_filter_effectiveness > 0.0 {
+            reduction *= 1.0 - self.zone_map_filter_effectiveness as f64;
+        }
+
+        // Apply freshness penalty for stale metadata
+        (reduction.max(0.1) * self.freshness_penalty as f64).min(1.0)
+    }
+}
+
 /// Unified cost model - SINGLE SOURCE OF TRUTH
 pub struct UnifiedCostModel {
     /// Cost calculation strategies
@@ -1461,6 +1570,22 @@ pub enum QuantizationType {
     PQ4,
     /// Product quantization with 8-bit sub-quantizers
     PQ8,
+}
+
+impl QuantizationType {
+    /// Quality rank where higher = higher precision/recall. Aligned with
+    /// [`QuantizationStage::quality_rank`] so RL-side floor comparisons can
+    /// be done uniformly across both enums.
+    ///
+    /// [`QuantizationStage::quality_rank`]: crate::query::rl_planner::action::QuantizationStage::quality_rank
+    pub fn quality_rank(self) -> u8 {
+        match self {
+            Self::Binary => 0,
+            Self::PQ4 => 1,
+            Self::PQ8 => 2,
+            Self::INT8 => 3,
+        }
+    }
 }
 
 /// Index types
@@ -3011,6 +3136,100 @@ mod tests {
             "Expected an optimized execution step, got {:?}",
             plan.execution_steps.first()
         );
+    }
+
+    #[test]
+    fn test_object_economy_cost_factors_disabled() {
+        let oe = ObjectEconomyCostFactors::disabled();
+        assert_eq!(oe.block_count, 0);
+        assert_eq!(oe.avg_block_size, 0);
+        assert_eq!(oe.centroid_filter_effectiveness, 0.0);
+    }
+
+    #[test]
+    fn test_object_economy_cost_factors_from_metadata() {
+        let oe = ObjectEconomyCostFactors::from_block_metadata(
+            100,     // block_count
+            1048576, // avg_block_size (1MB)
+            true,    // has_centroids
+            true,    // has_zorder
+            true,    // has_zone_maps
+        );
+
+        assert_eq!(oe.block_count, 100);
+        assert_eq!(oe.avg_block_size, 1048576);
+        assert!(oe.centroid_filter_effectiveness > 0.0);
+        assert!(oe.zorder_filter_effectiveness > 0.0);
+        assert!(oe.zone_map_filter_effectiveness > 0.0);
+    }
+
+    #[test]
+    fn test_expected_blocks_to_scan() {
+        let oe = ObjectEconomyCostFactors {
+            block_count: 1000,
+            avg_block_size: 1048576,
+            centroid_filter_effectiveness: 0.8, // Filters 80%
+            zorder_filter_effectiveness: 0.5,   // Filters 50%
+            zone_map_filter_effectiveness: 0.0,
+            freshness_penalty: 1.0,
+        };
+
+        // With centroid routing: 1000 * (1 - 0.8) = 200 blocks
+        let blocks = oe.expected_blocks_to_scan(true, false);
+        assert!(
+            blocks >= 190 && blocks <= 210,
+            "Expected ~200 blocks, got {}",
+            blocks
+        );
+
+        // With centroid + Z-order: 1000 * (1 - 0.8) * (1 - 0.5) = 100 blocks
+        let blocks = oe.expected_blocks_to_scan(true, true);
+        assert!(
+            blocks >= 90 && blocks <= 110,
+            "Expected ~100 blocks, got {}",
+            blocks
+        );
+    }
+
+    #[test]
+    fn test_io_cost_multiplier() {
+        let oe = ObjectEconomyCostFactors {
+            block_count: 1000,
+            avg_block_size: 1048576,
+            centroid_filter_effectiveness: 0.9, // Filters 90%
+            zorder_filter_effectiveness: 0.0,
+            zone_map_filter_effectiveness: 0.8, // Zone maps filter 80%
+            freshness_penalty: 1.0,
+        };
+
+        // With centroid only: 1 - 0.9 = 0.1 (90% reduction)
+        let mult = oe.io_cost_multiplier(true, false, false);
+        assert!(mult >= 0.09 && mult <= 0.11, "Expected ~0.1, got {}", mult);
+
+        // With centroid + zone: (1 - 0.9) * (1 - 0.8) = 0.02 (98% reduction)
+        let mult = oe.io_cost_multiplier(true, false, true);
+        assert!(
+            mult >= 0.015 && mult <= 0.025,
+            "Expected ~0.02, got {}",
+            mult
+        );
+    }
+
+    #[test]
+    fn test_freshness_penalty() {
+        let mut oe =
+            ObjectEconomyCostFactors::from_block_metadata(100, 1048576, true, false, false);
+
+        // Fresh metadata: no penalty
+        assert_eq!(oe.freshness_penalty, 1.0);
+
+        // Stale metadata: 2x penalty
+        oe.freshness_penalty = 2.0;
+        let mult = oe.io_cost_multiplier(true, false, false);
+
+        // Should be 2x the base reduction
+        let base = 1.0 - oe.centroid_filter_effectiveness as f64;
+        assert!((mult - base * 2.0).abs() < 0.01);
     }
 }
 

@@ -232,6 +232,7 @@ pub mod flush_eventlog_integration;
 pub mod compactor_impl;
 pub mod indexed_reader;
 pub mod multi_stage_filter;
+pub mod object_economy_directory;
 pub mod readers;
 pub mod row_filter;
 pub mod streaming_compaction;

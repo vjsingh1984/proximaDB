@@ -256,11 +256,7 @@ pub enum Tier {
     #[serde(alias = "pro")]
     Tier3,
     /// Pooled tier with full connector set + webhook integration support.
-    #[serde(
-        alias = "business",
-        alias = "enterprise_pooled",
-        alias = "premium"
-    )]
+    #[serde(alias = "business", alias = "enterprise_pooled", alias = "premium")]
     Tier4,
     /// Dedicated single-tenant infrastructure tier.
     #[serde(alias = "enterprise", alias = "enterprise_dedicated")]
@@ -321,6 +317,93 @@ impl Tier {
     /// metric label set automatically without a recompile.
     pub fn prometheus_label(self) -> &'static str {
         pricing_row(self).prom_label.as_str()
+    }
+
+    /// Object economy routing configuration for this tier.
+    /// Returns tier-specific caps for block-level routing based on
+    /// object economy metadata (centroids, Z-order codes, zone maps).
+    /// Cheap tiers are capped at lower precision and smaller block budgets;
+    /// premium tiers are uncapped.
+    pub fn object_economy_config(self) -> TierObjectEconomyConfig {
+        match self {
+            Tier::Tier1 => TierObjectEconomyConfig {
+                allow_centroid_routing: true,
+                allow_zorder_pruning: true,
+                max_blocks_per_query: 100,
+                quantization_ceiling: ObjectEconomyQuantizationCeiling::INT8,
+            },
+            Tier::Tier2 => TierObjectEconomyConfig {
+                allow_centroid_routing: true,
+                allow_zorder_pruning: true,
+                max_blocks_per_query: 500,
+                quantization_ceiling: ObjectEconomyQuantizationCeiling::INT8,
+            },
+            Tier::Tier3 => TierObjectEconomyConfig {
+                allow_centroid_routing: true,
+                allow_zorder_pruning: true,
+                max_blocks_per_query: 2000,
+                quantization_ceiling: ObjectEconomyQuantizationCeiling::FP16,
+            },
+            Tier::Tier4 => TierObjectEconomyConfig {
+                allow_centroid_routing: true,
+                allow_zorder_pruning: true,
+                max_blocks_per_query: 10000,
+                quantization_ceiling: ObjectEconomyQuantizationCeiling::FP16,
+            },
+            Tier::Tier5 => TierObjectEconomyConfig {
+                allow_centroid_routing: true,
+                allow_zorder_pruning: true,
+                max_blocks_per_query: u32::MAX,
+                quantization_ceiling: ObjectEconomyQuantizationCeiling::FP32,
+            },
+        }
+    }
+}
+
+/// Object economy routing caps per tier.
+///
+/// Encodes the upper bounds a tenant in this tier can request. Cheap tiers
+/// have tighter caps to control resource usage; premium tiers are uncapped.
+/// The planner consults this to clamp request-side asks before route
+/// selection — it does not raise quality for queries that asked for less.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TierObjectEconomyConfig {
+    /// Whether centroid-based block routing is allowed for this tier.
+    pub allow_centroid_routing: bool,
+    /// Whether Z-order code based pruning is allowed for this tier.
+    pub allow_zorder_pruning: bool,
+    /// Maximum number of blocks that can be scanned per query.
+    /// Lower tiers have tighter limits to control I/O costs.
+    pub max_blocks_per_query: u32,
+    /// Maximum precision a query in this tier may request. Cheap tiers are
+    /// capped at lower precision so a Tier1 tenant cannot demand FP32 over
+    /// object storage. Premium tiers (Tier5) are effectively uncapped via
+    /// [`ObjectEconomyQuantizationCeiling::FP32`].
+    pub quantization_ceiling: ObjectEconomyQuantizationCeiling,
+}
+
+/// Highest quantization precision a tier is allowed to request.
+///
+/// This is a *ceiling*, not a floor: a Tier1 query capped at INT8 may still
+/// run at lower precision (Binary, INT8) but cannot escalate to FP16/FP32.
+/// `FP32` means "no effective cap" — used by the premium tier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectEconomyQuantizationCeiling {
+    /// No cap — full FP32 precision available (Tier5 / Enterprise).
+    FP32,
+    /// FP16 half precision — Tier3/Tier4 balance of quality and cost.
+    FP16,
+    /// INT8 cap — Tier1/Tier2 aggressive compression for cost control.
+    INT8,
+}
+
+impl std::fmt::Display for ObjectEconomyQuantizationCeiling {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FP32 => write!(f, "FP32"),
+            Self::FP16 => write!(f, "FP16"),
+            Self::INT8 => write!(f, "INT8"),
+        }
     }
 }
 
@@ -705,10 +788,7 @@ mod tests {
         .iter()
         .map(|t| t.prometheus_label())
         .collect();
-        assert_eq!(
-            labels,
-            vec!["tier1", "tier2", "tier3", "tier4", "tier5"]
-        );
+        assert_eq!(labels, vec!["tier1", "tier2", "tier3", "tier4", "tier5"]);
     }
 
     #[test]
@@ -760,5 +840,52 @@ mod tests {
                 "{hi:?} freshness SLA must be tighter than {lo:?}"
             );
         }
+    }
+
+    #[test]
+    fn object_economy_config_increases_with_tier() {
+        // Lower tiers should have stricter limits
+        let t1 = Tier::Tier1.object_economy_config();
+        let t2 = Tier::Tier2.object_economy_config();
+        let t3 = Tier::Tier3.object_economy_config();
+        let t4 = Tier::Tier4.object_economy_config();
+        let t5 = Tier::Tier5.object_economy_config();
+
+        // max_blocks_per_query should increase monotonically
+        assert!(t2.max_blocks_per_query > t1.max_blocks_per_query);
+        assert!(t3.max_blocks_per_query > t2.max_blocks_per_query);
+        assert!(t4.max_blocks_per_query > t3.max_blocks_per_query);
+        assert_eq!(t5.max_blocks_per_query, u32::MAX);
+
+        // quantization ceiling should rise (cap loosens) with tier
+        assert_eq!(t1.quantization_ceiling, ObjectEconomyQuantizationCeiling::INT8);
+        assert_eq!(t2.quantization_ceiling, ObjectEconomyQuantizationCeiling::INT8);
+        assert_eq!(t3.quantization_ceiling, ObjectEconomyQuantizationCeiling::FP16);
+        assert_eq!(t4.quantization_ceiling, ObjectEconomyQuantizationCeiling::FP16);
+        assert_eq!(t5.quantization_ceiling, ObjectEconomyQuantizationCeiling::FP32);
+    }
+
+    #[test]
+    fn tier1_has_strictest_object_economy_limits() {
+        let config = Tier::Tier1.object_economy_config();
+        assert!(config.allow_centroid_routing); // Enabled to reduce costs
+        assert!(config.allow_zorder_pruning);
+        assert_eq!(config.max_blocks_per_query, 100);
+        assert_eq!(
+            config.quantization_ceiling,
+            ObjectEconomyQuantizationCeiling::INT8
+        );
+    }
+
+    #[test]
+    fn tier5_has_no_object_economy_limits() {
+        let config = Tier::Tier5.object_economy_config();
+        assert!(config.allow_centroid_routing);
+        assert!(config.allow_zorder_pruning);
+        assert_eq!(config.max_blocks_per_query, u32::MAX);
+        assert_eq!(
+            config.quantization_ceiling,
+            ObjectEconomyQuantizationCeiling::FP32
+        );
     }
 }

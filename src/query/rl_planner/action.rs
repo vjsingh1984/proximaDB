@@ -127,6 +127,49 @@ impl fmt::Display for QuantizationStage {
     }
 }
 
+impl QuantizationStage {
+    /// Quality rank where higher = higher precision/recall. Ordering is
+    /// derived from the per-variant doc comments above:
+    /// `Binary ~70% < PQ4 ~85% < PQ8 ~90% < INT8 ~95% < FP16 < FP32 100%`.
+    /// Used by the object-economy floor enforcement to compare current
+    /// search precision against a required minimum.
+    pub fn quality_rank(self) -> u8 {
+        match self {
+            Self::Binary => 0,
+            Self::PQ4 => 1,
+            Self::PQ8 => 2,
+            Self::INT8 => 3,
+            Self::FP16 => 4,
+            Self::FP32 => 5,
+        }
+    }
+
+    /// Map to the query optimizer's [`QuantizationType`] enum when a direct
+    /// equivalent exists. `FP16` and `FP32` return `None` because they are
+    /// not quantization — they are full/half precision and require an exact
+    /// search path.
+    ///
+    /// [`QuantizationType`]: crate::query::query_optimizer::QuantizationType
+    pub fn as_quantization_type(
+        self,
+    ) -> Option<crate::query::query_optimizer::QuantizationType> {
+        use crate::query::query_optimizer::QuantizationType;
+        match self {
+            Self::Binary => Some(QuantizationType::Binary),
+            Self::PQ4 => Some(QuantizationType::PQ4),
+            Self::PQ8 => Some(QuantizationType::PQ8),
+            Self::INT8 => Some(QuantizationType::INT8),
+            Self::FP16 | Self::FP32 => None,
+        }
+    }
+
+    /// True when this floor requires an exact (FP32) final stage. Floors at
+    /// FP16/FP32 cannot be satisfied by quantized-only paths.
+    pub fn requires_exact_final_stage(self) -> bool {
+        self.quality_rank() >= Self::FP16.quality_rank()
+    }
+}
+
 /// Block pruning configuration
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub enum BlockPruneConfig {
@@ -179,6 +222,103 @@ impl Default for ParallelismConfig {
     }
 }
 
+/// Object economy routing actions
+///
+/// Encodes decisions for using object economy metadata
+/// for cost-aware routing and tier-specific optimization.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ObjectEconomyAction {
+    /// Whether object economy routing is enabled
+    pub enabled: bool,
+    /// Use centroid-based routing for block selection
+    pub use_centroid_routing: bool,
+    /// Use Z-order code based pruning
+    pub use_zorder_pruning: bool,
+    /// Maximum blocks to scan (None = no limit)
+    pub max_blocks_to_scan: Option<u32>,
+    /// Request-side minimum quality floor: when set, this query must run at
+    /// least at this quantization stage (e.g. FP16 for quality-critical
+    /// reranking). Distinct from the tier-side
+    /// [`ObjectEconomyQuantizationCeiling`](crate::catalog::tenant_tier::ObjectEconomyQuantizationCeiling),
+    /// which caps the *maximum* precision a tier is allowed to request.
+    pub quantization_floor: Option<QuantizationStage>,
+}
+
+impl Default for ObjectEconomyAction {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            use_centroid_routing: false,
+            use_zorder_pruning: false,
+            max_blocks_to_scan: None,
+            quantization_floor: None,
+        }
+    }
+}
+
+impl fmt::Display for ObjectEconomyAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if !self.enabled {
+            return write!(f, "OE:OFF");
+        }
+
+        let mut parts = vec!["OE:ON".to_string()];
+
+        if self.use_centroid_routing {
+            parts.push("Centroid".to_string());
+        }
+
+        if self.use_zorder_pruning {
+            parts.push("ZOrder".to_string());
+        }
+
+        if let Some(max_blocks) = self.max_blocks_to_scan {
+            parts.push(format!("MaxBlocks({})", max_blocks));
+        }
+
+        if let Some(floor) = &self.quantization_floor {
+            parts.push(format!("Floor({})", floor));
+        }
+
+        write!(f, "{}", parts.join("+"))
+    }
+}
+
+impl ObjectEconomyAction {
+    /// Create enabled object economy action with centroid routing
+    pub fn with_centroid_routing(max_blocks: Option<u32>) -> Self {
+        Self {
+            enabled: true,
+            use_centroid_routing: true,
+            use_zorder_pruning: false,
+            max_blocks_to_scan: max_blocks,
+            quantization_floor: None,
+        }
+    }
+
+    /// Create enabled object economy action with Z-order pruning
+    pub fn with_zorder_pruning(max_blocks: Option<u32>) -> Self {
+        Self {
+            enabled: true,
+            use_centroid_routing: false,
+            use_zorder_pruning: true,
+            max_blocks_to_scan: max_blocks,
+            quantization_floor: None,
+        }
+    }
+
+    /// Create action with quantization floor (for tier routing)
+    pub fn with_quantization_floor(floor: QuantizationStage) -> Self {
+        Self {
+            enabled: true,
+            use_centroid_routing: false,
+            use_zorder_pruning: false,
+            max_blocks_to_scan: None,
+            quantization_floor: Some(floor),
+        }
+    }
+}
+
 /// Complete execution action combining all optimization choices
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExecutionAction {
@@ -198,6 +338,8 @@ pub struct ExecutionAction {
     pub bloom_filter_enabled: bool,
     /// Parallelism settings
     pub parallelism: ParallelismConfig,
+    /// Object economy routing actions
+    pub object_economy: ObjectEconomyAction,
 }
 
 impl Default for ExecutionAction {
@@ -211,6 +353,7 @@ impl Default for ExecutionAction {
             zone_map_enabled: false,
             bloom_filter_enabled: false,
             parallelism: ParallelismConfig::default(),
+            object_economy: ObjectEconomyAction::default(),
         }
     }
 }
@@ -280,6 +423,12 @@ impl ExecutionAction {
     /// Enable bloom filter
     pub fn with_bloom_filter(mut self) -> Self {
         self.bloom_filter_enabled = true;
+        self
+    }
+
+    /// Set object economy routing action
+    pub fn with_object_economy(mut self, oe: ObjectEconomyAction) -> Self {
+        self.object_economy = oe;
         self
     }
 
@@ -440,6 +589,7 @@ impl ExecutionAction {
             zone_map_enabled,
             bloom_filter_enabled: bloom == 1,
             parallelism: ParallelismConfig::default(),
+            object_economy: ObjectEconomyAction::default(), // Disabled by default for backward compat
         }
     }
 
@@ -470,6 +620,11 @@ impl ExecutionAction {
 
         if self.bloom_filter_enabled {
             parts.push("Bloom: ON".to_string());
+        }
+
+        // Include object economy action if enabled
+        if self.object_economy.enabled {
+            parts.push(format!("{}", self.object_economy));
         }
 
         parts.join(", ")
@@ -812,5 +967,60 @@ mod tests {
         assert_eq!(action.quantization_stages[0], QuantizationStage::Binary);
         assert_eq!(action.quantization_stages[1], QuantizationStage::INT8);
         assert_eq!(action.quantization_stages[2], QuantizationStage::FP32);
+    }
+
+    #[test]
+    fn test_object_economy_action_default() {
+        let oe = ObjectEconomyAction::default();
+        assert!(!oe.enabled);
+        assert!(!oe.use_centroid_routing);
+        assert!(!oe.use_zorder_pruning);
+        assert!(oe.max_blocks_to_scan.is_none());
+        assert!(oe.quantization_floor.is_none());
+    }
+
+    #[test]
+    fn test_object_economy_action_with_centroid_routing() {
+        let oe = ObjectEconomyAction::with_centroid_routing(Some(100));
+        assert!(oe.enabled);
+        assert!(oe.use_centroid_routing);
+        assert!(!oe.use_zorder_pruning);
+        assert_eq!(oe.max_blocks_to_scan, Some(100));
+    }
+
+    #[test]
+    fn test_object_economy_action_with_zorder_pruning() {
+        let oe = ObjectEconomyAction::with_zorder_pruning(None);
+        assert!(oe.enabled);
+        assert!(!oe.use_centroid_routing);
+        assert!(oe.use_zorder_pruning);
+        assert!(oe.max_blocks_to_scan.is_none());
+    }
+
+    #[test]
+    fn test_object_economy_action_with_quantization_floor() {
+        let oe = ObjectEconomyAction::with_quantization_floor(QuantizationStage::INT8);
+        assert!(oe.enabled);
+        assert_eq!(oe.quantization_floor, Some(QuantizationStage::INT8));
+    }
+
+    #[test]
+    fn test_execution_action_with_object_economy() {
+        let action = ExecutionAction::default()
+            .with_object_economy(ObjectEconomyAction::with_centroid_routing(Some(50)));
+
+        assert!(action.object_economy.enabled);
+        assert!(action.object_economy.use_centroid_routing);
+        assert_eq!(action.object_economy.max_blocks_to_scan, Some(50));
+    }
+
+    #[test]
+    fn test_action_describe_includes_object_economy() {
+        let action = ExecutionAction::default()
+            .with_object_economy(ObjectEconomyAction::with_centroid_routing(Some(100)));
+
+        let desc = action.describe();
+        assert!(desc.contains("OE"));
+        assert!(desc.contains("Centroid"));
     }
 }

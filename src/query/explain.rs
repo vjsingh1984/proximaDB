@@ -59,6 +59,9 @@ pub struct ExplainPlan {
     /// xCatalog storage authority, projection freshness, and relational capability metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub storage_authority: Option<StorageAuthorityExplanation>,
+    /// Vector object-storage route economics for SST/centroid/IVF-like projections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vector_object_economy: Option<VectorObjectEconomyExplain>,
 }
 
 /// Cost estimate for a single operation in the query plan
@@ -166,6 +169,83 @@ impl ExplainPlan {
     /// Add xCatalog storage authority and projection metadata to the plan.
     pub fn with_storage_authority(mut self, authority: StorageAuthorityExplanation) -> Self {
         self.storage_authority = Some(authority);
+        self
+    }
+
+    /// Add object-storage vector route economics to the plan.
+    pub fn with_vector_object_economy(mut self, explain: VectorObjectEconomyExplain) -> Self {
+        self.vector_object_economy = Some(explain);
+        self
+    }
+}
+
+/// Vector object-storage route metadata for EXPLAIN and trace events.
+///
+/// This describes an access-method projection over canonical storage. It does
+/// not make the projection authoritative; `authority_mode` and
+/// `freshness_mode` must remain explicit so callers can audit stale or lossy
+/// routes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct VectorObjectEconomyExplain {
+    pub route_kind: String,
+    pub authority_mode: String,
+    pub freshness_mode: String,
+    pub freshness_watermark_lsn: Option<u64>,
+    pub policy_boundary: String,
+    pub cache_status: String,
+    pub cache_affinity_key: Option<String>,
+    pub selected_files: usize,
+    pub selected_blocks: usize,
+    pub pruned_blocks: usize,
+    pub estimated_object_gets: usize,
+    pub actual_object_gets: Option<usize>,
+    pub estimated_remote_bytes: u64,
+    pub actual_remote_bytes: Option<u64>,
+    pub overfetch_bytes: u64,
+    pub wal_delta_searched: bool,
+    pub rejected_route_reasons: Vec<String>,
+}
+
+impl VectorObjectEconomyExplain {
+    pub fn from_index_stats(stats: &crate::core::service_types::ServiceIndexStats) -> Self {
+        Self {
+            route_kind: "vector_object_economy".to_string(),
+            authority_mode: "projection_over_canonical_records".to_string(),
+            freshness_mode: "strong".to_string(),
+            policy_boundary: "proxima_internal_policy".to_string(),
+            cache_status: "unknown".to_string(),
+            selected_blocks: stats.object_selected_blocks.max(0) as usize,
+            pruned_blocks: stats.object_pruned_blocks.max(0) as usize,
+            estimated_object_gets: stats.object_estimated_gets.max(0) as usize,
+            actual_object_gets: Some(stats.object_actual_gets.max(0) as usize),
+            estimated_remote_bytes: stats.object_estimated_remote_bytes.max(0) as u64,
+            actual_remote_bytes: Some(stats.object_actual_remote_bytes.max(0) as u64),
+            overfetch_bytes: stats.object_overfetch_bytes.max(0) as u64,
+            ..Default::default()
+        }
+    }
+
+    pub fn with_cache_status(mut self, cache_status: impl Into<String>) -> Self {
+        self.cache_status = cache_status.into();
+        self
+    }
+
+    pub fn with_selected_files(mut self, selected_files: usize) -> Self {
+        self.selected_files = selected_files;
+        self
+    }
+
+    /// Record the outcome of a per-collection directory load. Pushes a
+    /// reason into `rejected_route_reasons` when the load was degraded so
+    /// EXPLAIN reflects the fallback to embedded SST index reads.
+    pub fn record_directory_load(
+        mut self,
+        status: &crate::storage::engines::sst::object_economy_directory::DirectoryLoadStatus,
+        sidecar_path: &str,
+    ) -> Self {
+        if status.is_degraded() {
+            self.rejected_route_reasons.push(status.reason(sidecar_path));
+        }
         self
     }
 }
@@ -2126,5 +2206,85 @@ mod tests {
         assert!(plan.join_strategy.is_some());
         assert!(plan.fusion_strategy.is_some());
         assert_eq!(plan.estimated_total_cost, Some(9.5));
+    }
+
+    #[test]
+    fn test_vector_object_economy_explain_from_index_stats() {
+        let stats = crate::core::service_types::ServiceIndexStats {
+            object_selected_blocks: 8,
+            object_pruned_blocks: 24,
+            object_estimated_gets: 2,
+            object_actual_gets: 2,
+            object_estimated_remote_bytes: 128 * 1024,
+            object_actual_remote_bytes: 128 * 1024,
+            object_overfetch_bytes: 4096,
+            ..Default::default()
+        };
+
+        let explain = VectorObjectEconomyExplain::from_index_stats(&stats)
+            .with_cache_status("cold")
+            .with_selected_files(1);
+
+        assert_eq!(explain.route_kind, "vector_object_economy");
+        assert_eq!(explain.authority_mode, "projection_over_canonical_records");
+        assert_eq!(explain.selected_files, 1);
+        assert_eq!(explain.selected_blocks, 8);
+        assert_eq!(explain.pruned_blocks, 24);
+        assert_eq!(explain.estimated_object_gets, 2);
+        assert_eq!(explain.actual_object_gets, Some(2));
+        assert_eq!(explain.estimated_remote_bytes, 128 * 1024);
+        assert_eq!(explain.overfetch_bytes, 4096);
+        assert_eq!(explain.cache_status, "cold");
+    }
+
+    #[test]
+    fn vector_object_economy_explain_records_directory_degradation_reason() {
+        use crate::storage::engines::sst::object_economy_directory::DirectoryLoadStatus;
+
+        let path = "s3://bucket/coll/oedir/v5.bin";
+        let loaded = VectorObjectEconomyExplain::default()
+            .record_directory_load(&DirectoryLoadStatus::Loaded, path);
+        assert!(loaded.rejected_route_reasons.is_empty());
+
+        let missing = VectorObjectEconomyExplain::default()
+            .record_directory_load(&DirectoryLoadStatus::Missing, path);
+        assert_eq!(missing.rejected_route_reasons.len(), 1);
+        assert!(
+            missing.rejected_route_reasons[0]
+                .starts_with("object_economy_directory_missing:")
+        );
+
+        let mismatch = VectorObjectEconomyExplain::default().record_directory_load(
+            &DirectoryLoadStatus::Mismatch {
+                expected_collection: "coll".into(),
+                found_collection: "other".into(),
+            },
+            path,
+        );
+        assert_eq!(mismatch.rejected_route_reasons.len(), 1);
+        assert!(
+            mismatch.rejected_route_reasons[0]
+                .contains("collection_mismatch")
+        );
+    }
+
+    #[test]
+    fn test_explain_plan_carries_vector_object_economy_metadata() {
+        let plan = ExplainPlan::new().with_vector_object_economy(VectorObjectEconomyExplain {
+            selected_blocks: 3,
+            estimated_object_gets: 1,
+            ..Default::default()
+        });
+
+        let json = serde_json::to_string(&plan).expect("serialize explain");
+
+        assert!(json.contains("vector_object_economy"));
+        assert!(json.contains("selected_blocks"));
+        assert_eq!(
+            plan.vector_object_economy
+                .as_ref()
+                .map(|explain| explain.selected_blocks),
+            Some(3)
+        );
     }
 }
