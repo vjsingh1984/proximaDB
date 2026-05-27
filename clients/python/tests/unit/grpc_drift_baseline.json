@@ -1,13 +1,6 @@
 {
   "_comment": "Accepted drift between proto/ and generated Python *_pb2_grpc.py stubs. Each entry is one of: missing-stub:<path>, missing-servicer:<path>::<Service>, missing-rpc:<path>::<Service>.<Rpc>. To shrink this list, regenerate the Python proto stubs for the affected services.",
   "accepted_drift": [
-    "missing-rpc:proto/proximadb/v1/graph.proto::GraphService.CreateGraphWithEngine",
-    "missing-rpc:proto/proximadb/v1/graph.proto::GraphService.CrossShardQuery",
-    "missing-rpc:proto/proximadb/v1/graph.proto::GraphService.GetPulsarStats",
-    "missing-rpc:proto/proximadb/v1/graph.proto::GraphService.GetQuasarStats",
-    "missing-rpc:proto/proximadb/v1/graph.proto::GraphService.GetTierStats",
-    "missing-rpc:proto/proximadb/v1/graph.proto::GraphService.RebalanceShards",
-    "missing-rpc:proto/proximadb/v1/graph.proto::GraphService.TriggerMigration",
     "missing-servicer:proto/proximadb/v1/catalog.proto::CatalogService",
     "missing-servicer:proto/proximadb/v1/cluster.proto::ConsensusService",
     "missing-servicer:proto/proximadb/v1/cluster.proto::HealthService",
