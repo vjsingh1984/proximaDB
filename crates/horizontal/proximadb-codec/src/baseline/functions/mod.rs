@@ -113,8 +113,9 @@ pub use double_delta::{
 };
 
 pub use gorilla::{
-    decode_f32 as gorilla_decode_f32, decode_i32 as gorilla_decode_i32,
-    decode_i64 as gorilla_decode_i64, encode_f32 as gorilla_encode_f32,
+    decode_f32 as gorilla_decode_f32, decode_f64 as gorilla_decode_f64,
+    decode_i32 as gorilla_decode_i32, decode_i64 as gorilla_decode_i64,
+    encode_f32 as gorilla_encode_f32, encode_f64 as gorilla_encode_f64,
     encode_i32 as gorilla_encode_i32, encode_i64 as gorilla_encode_i64,
 };
 

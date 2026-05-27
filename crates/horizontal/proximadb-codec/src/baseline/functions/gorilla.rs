@@ -180,6 +180,11 @@ pub fn encode_f32(values: &[f32]) -> Result<Vec<u8>> {
     helpers::encode_generic(values, encode_gorilla_u32_wire)
 }
 
+/// Encode f64 values using Gorilla compression (raw, no headers)
+pub fn encode_f64(values: &[f64]) -> Result<Vec<u8>> {
+    helpers::encode_generic(values, encode_gorilla_u64_wire)
+}
+
 /// Encode i64 values using Gorilla-style XOR compression
 pub fn encode_i64(values: &[i64]) -> Result<Vec<u8>> {
     helpers::encode_generic(values, encode_gorilla_u64_wire)
@@ -305,6 +310,11 @@ fn decode_gorilla_u64_wire(data: &[u8], count: usize) -> Result<Vec<i64>> {
 /// Decode f32 values from Gorilla compressed data
 pub fn decode_f32(data: &[u8], count: usize) -> Result<Vec<f32>> {
     helpers::decode_generic::<f32>(data, count, decode_gorilla_u32_wire)
+}
+
+/// Decode f64 values from Gorilla compressed data
+pub fn decode_f64(data: &[u8], count: usize) -> Result<Vec<f64>> {
+    helpers::decode_generic::<f64>(data, count, decode_gorilla_u64_wire)
 }
 
 /// Decode i64 values from Gorilla compressed data
