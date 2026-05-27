@@ -23,6 +23,7 @@
 use prometheus::{
     CounterVec, HistogramOpts, HistogramVec, Opts, Registry,
 };
+use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
 // Spec-locked metric names
@@ -133,6 +134,55 @@ impl RankPipelineMetrics {
     }
 }
 
+/// `RankMetricsSink` adapter that bridges per-feature observations
+/// in the rank pipeline (which sees only `(feature, ns)`) into the
+/// spec's `{profile, phase, feature}` label set.
+///
+/// Captures `profile` + `phase` at construction so the trait method
+/// stays the narrow `(feature, ns)` shape the pipeline expects. The
+/// pipeline drops + recreates its `ScoreCtx` between phases, so one
+/// sink instance per phase is the natural fit.
+///
+/// The `record_phase_truncated` trait method receives the phase
+/// dynamically (the pipeline knows which phase truncated), so it
+/// uses the call-site phase rather than the captured one.
+pub struct PrometheusRankSink {
+    metrics: Arc<RankPipelineMetrics>,
+    profile: Arc<str>,
+    phase_label: &'static str,
+}
+
+impl PrometheusRankSink {
+    pub fn new(
+        metrics: Arc<RankPipelineMetrics>,
+        profile: impl Into<Arc<str>>,
+        phase: proximadb_kernel::PhaseId,
+    ) -> Self {
+        Self {
+            metrics,
+            profile: profile.into(),
+            phase_label: RankPipelineMetrics::phase_label_for(phase.0),
+        }
+    }
+}
+
+impl proximadb_rank_core::RankMetricsSink for PrometheusRankSink {
+    fn record_feature_latency_ns(&self, feature: &str, ns: u64) {
+        let us = ns as f64 / 1_000.0;
+        self.metrics
+            .observe_feature_latency_us(&self.profile, self.phase_label, feature, us);
+    }
+
+    fn record_phase_truncated(&self, phase: proximadb_kernel::PhaseId, reason: &str) {
+        // Always honor the call-site phase (not the captured one) —
+        // the pipeline may surface a truncation on a phase other
+        // than the one this sink was built for (e.g. global phase
+        // truncations bubbling up through the same context).
+        let phase_label = RankPipelineMetrics::phase_label_for(phase.0);
+        self.metrics.inc_phase_truncated(phase_label, reason);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,5 +228,53 @@ mod tests {
         assert_eq!(RankPipelineMetrics::phase_label_for(1), "second");
         assert_eq!(RankPipelineMetrics::phase_label_for(2), "global");
         assert_eq!(RankPipelineMetrics::phase_label_for(7), "unknown");
+    }
+
+    #[test]
+    fn prometheus_sink_records_per_feature_with_captured_profile_and_phase() {
+        // The bridge captures profile+phase at construction so the
+        // narrow `record_feature_latency_ns(feature, ns)` trait
+        // method still emits the spec's full `{profile, phase,
+        // feature}` label set.
+        use proximadb_kernel::PhaseId;
+        use proximadb_rank_core::RankMetricsSink;
+
+        let registry = Registry::new();
+        let metrics = Arc::new(RankPipelineMetrics::register(&registry).unwrap());
+        let sink = PrometheusRankSink::new(metrics.clone(), "default", PhaseId::FIRST);
+
+        sink.record_feature_latency_ns("bm25(body)", 1_500);
+        sink.record_feature_latency_ns("docid()", 100);
+
+        let observed = metrics
+            .feature_latency_us
+            .with_label_values(&["default", "first", "bm25(body)"])
+            .get_sample_count();
+        assert_eq!(observed, 1);
+        let observed_docid = metrics
+            .feature_latency_us
+            .with_label_values(&["default", "first", "docid()"])
+            .get_sample_count();
+        assert_eq!(observed_docid, 1);
+    }
+
+    #[test]
+    fn prometheus_sink_truncation_uses_call_site_phase_not_captured() {
+        // record_phase_truncated honors its phase argument so a
+        // bubbled-up truncation on global phase isn't mislabeled
+        // "first" by a first-phase sink instance.
+        use proximadb_kernel::PhaseId;
+        use proximadb_rank_core::RankMetricsSink;
+
+        let registry = Registry::new();
+        let metrics = Arc::new(RankPipelineMetrics::register(&registry).unwrap());
+        let sink = PrometheusRankSink::new(metrics.clone(), "p", PhaseId::FIRST);
+
+        sink.record_phase_truncated(PhaseId::GLOBAL, "budget");
+        let cnt = metrics
+            .phase_truncated_total
+            .with_label_values(&["global", "budget"])
+            .get();
+        assert!((cnt - 1.0).abs() < f64::EPSILON);
     }
 }
