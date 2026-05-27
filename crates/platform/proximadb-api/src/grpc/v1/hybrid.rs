@@ -74,6 +74,7 @@ impl HybridSearchService for HybridSearchServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use tonic::Code;
 
     fn assert_unimplemented<T>(result: Result<Response<T>, Status>) {
@@ -104,5 +105,104 @@ mod tests {
     #[test]
     fn backendless_hybrid_service_can_be_wrapped_as_tonic_server() {
         let _server = HybridSearchServiceImpl::without_backend().into_server();
+    }
+
+    #[derive(Default)]
+    struct RecordingHybridPort {
+        last_request: Mutex<Option<HybridFusionSearchRequest>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HybridPort for RecordingHybridPort {
+        async fn hybrid_search(
+            &self,
+            request: HybridFusionSearchRequest,
+        ) -> anyhow::Result<HybridFusionSearchResponse> {
+            *self.last_request.lock().unwrap() = Some(request);
+            Ok(HybridFusionSearchResponse {
+                results_count: 1,
+                fusion_strategy: FusionStrategy::WeightedLinear as i32,
+                ..Default::default()
+            })
+        }
+
+        async fn list_fusion_strategies(
+            &self,
+            _request: ListFusionStrategiesRequest,
+        ) -> anyhow::Result<ListFusionStrategiesResponse> {
+            Ok(Default::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn grpc_hybrid_service_forwards_filters_and_fusion_to_port() {
+        use proximadb_proto::v1::{
+            WeightedLinearParams, fusion_strategy_params,
+            hybrid_search_service_server::HybridSearchService,
+        };
+
+        let port = Arc::new(RecordingHybridPort::default());
+        let service = HybridSearchServiceImpl::new(port.clone());
+        let mut filters = std::collections::HashMap::new();
+        filters.insert(
+            "region".to_string(),
+            prost_types::Value {
+                kind: Some(prost_types::value::Kind::StringValue("us".to_string())),
+            },
+        );
+
+        let response = HybridSearchService::hybrid_search(
+            &service,
+            Request::new(HybridFusionSearchRequest {
+                collection: "docs".to_string(),
+                text_query: "alpha".to_string(),
+                query_vector: vec![0.1, 0.2],
+                fusion_strategy: FusionStrategy::WeightedLinear as i32,
+                fusion_params: Some(FusionStrategyParams {
+                    params: Some(fusion_strategy_params::Params::WeightedLinear(
+                        WeightedLinearParams {
+                            alpha: 0.25,
+                            bm25_normalize: true,
+                            vector_normalize: true,
+                        },
+                    )),
+                }),
+                top_k: 5,
+                filters,
+            }),
+        )
+        .await
+        .unwrap()
+        .into_inner();
+
+        assert_eq!(response.results_count, 1);
+        let captured = port
+            .last_request
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("gRPC service should call port");
+        assert_eq!(captured.collection, "docs");
+        assert_eq!(captured.text_query, "alpha");
+        assert_eq!(captured.query_vector, vec![0.1, 0.2]);
+        assert_eq!(captured.top_k, 5);
+        assert_eq!(
+            captured.fusion_strategy,
+            FusionStrategy::WeightedLinear as i32
+        );
+        assert!(matches!(
+            captured.fusion_params.and_then(|params| params.params),
+            Some(fusion_strategy_params::Params::WeightedLinear(params))
+                if (params.alpha - 0.25).abs() < f64::EPSILON
+                    && params.bm25_normalize
+                    && params.vector_normalize
+        ));
+        assert!(matches!(
+            captured
+                .filters
+                .get("region")
+                .and_then(|value| value.kind.as_ref()),
+            Some(prost_types::value::Kind::StringValue(value)) if value == "us"
+        ));
     }
 }

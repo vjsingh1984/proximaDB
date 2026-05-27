@@ -74,6 +74,8 @@ pub struct HybridSearchRestRequest {
     pub top_k: u32,
     pub vector_weight: Option<f32>,
     pub rrf_k: Option<u32>,
+    pub fusion_strategy: Option<String>,
+    pub filters: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
 fn default_top_k() -> u32 {
@@ -166,15 +168,7 @@ pub async fn hybrid_search(
         ));
     }
 
-    let proto_request = HybridFusionSearchRequest {
-        collection: request.collection,
-        text_query: request.text_query.unwrap_or_default(),
-        query_vector: request.vector.unwrap_or_default(),
-        fusion_strategy: FusionStrategy::Rrf as i32,
-        fusion_params: None,
-        top_k: request.top_k,
-        filters: std::collections::HashMap::new(),
-    };
+    let proto_request = build_hybrid_fusion_request(request)?;
 
     match state.hybrid_port.hybrid_search(proto_request).await {
         Ok(resp) => {
@@ -204,6 +198,107 @@ pub async fn hybrid_search(
             Err(RestError::Internal(e.to_string()))
         }
     }
+}
+
+fn build_hybrid_fusion_request(
+    request: HybridSearchRestRequest,
+) -> RestResult<HybridFusionSearchRequest> {
+    let (fusion_strategy, fusion_params) = rest_fusion_strategy_params(&request)?;
+    Ok(HybridFusionSearchRequest {
+        collection: request.collection,
+        text_query: request.text_query.unwrap_or_default(),
+        query_vector: request.vector.unwrap_or_default(),
+        fusion_strategy,
+        fusion_params,
+        top_k: request.top_k,
+        filters: request
+            .filters
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(key, value)| (key, json_to_prost_value(value)))
+            .collect(),
+    })
+}
+
+fn rest_fusion_strategy_params(
+    request: &HybridSearchRestRequest,
+) -> RestResult<(i32, Option<proximadb_proto::v1::FusionStrategyParams>)> {
+    use proximadb_proto::v1::{FusionStrategyParams, WeightedLinearParams, fusion_strategy_params};
+
+    let name = request
+        .fusion_strategy
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(if request.vector_weight.is_some() {
+            "weighted_linear"
+        } else {
+            "rrf"
+        })
+        .to_ascii_lowercase();
+
+    match name.as_str() {
+        "rrf" | "reciprocal_rank" | "reciprocal_rank_fusion" => Ok((
+            FusionStrategy::Rrf as i32,
+            request.rrf_k.map(|k| FusionStrategyParams {
+                params: Some(fusion_strategy_params::Params::RrfK(k)),
+            }),
+        )),
+        "weighted_linear" | "linear" => {
+            let vector_weight = request.vector_weight.unwrap_or(0.5);
+            if !vector_weight.is_finite() || !(0.0..=1.0).contains(&vector_weight) {
+                return Err(RestError::InvalidArgument(
+                    "vector_weight must be finite and between 0.0 and 1.0".to_string(),
+                ));
+            }
+            Ok((
+                FusionStrategy::WeightedLinear as i32,
+                Some(FusionStrategyParams {
+                    params: Some(fusion_strategy_params::Params::WeightedLinear(
+                        WeightedLinearParams {
+                            alpha: 1.0 - vector_weight as f64,
+                            bm25_normalize: true,
+                            vector_normalize: true,
+                        },
+                    )),
+                }),
+            ))
+        }
+        "borda" | "borda_count" => Ok((FusionStrategy::BordaCount as i32, None)),
+        "comb_sum" | "combsum" => Ok((FusionStrategy::CombSum as i32, None)),
+        "comb_min" | "combmin" => Ok((FusionStrategy::CombMin as i32, None)),
+        "comb_max" | "combmax" => Ok((FusionStrategy::CombMax as i32, None)),
+        "rank_biased_precision" | "rbp" => Ok((FusionStrategy::RankBiasedPrecision as i32, None)),
+        "condorcet" => Ok((FusionStrategy::Condorcet as i32, None)),
+        "dempster_shafer" | "ds" => Ok((FusionStrategy::DempsterShafer as i32, None)),
+        "adaptive" => Ok((FusionStrategy::Adaptive as i32, None)),
+        other => Err(RestError::InvalidArgument(format!(
+            "unsupported fusion_strategy '{}'",
+            other
+        ))),
+    }
+}
+
+fn json_to_prost_value(value: serde_json::Value) -> prost_types::Value {
+    use prost_types::value::Kind;
+
+    let kind = match value {
+        serde_json::Value::Null => Kind::NullValue(prost_types::NullValue::NullValue as i32),
+        serde_json::Value::Bool(value) => Kind::BoolValue(value),
+        serde_json::Value::Number(value) => Kind::NumberValue(value.as_f64().unwrap_or_default()),
+        serde_json::Value::String(value) => Kind::StringValue(value),
+        serde_json::Value::Array(values) => Kind::ListValue(prost_types::ListValue {
+            values: values.into_iter().map(json_to_prost_value).collect(),
+        }),
+        serde_json::Value::Object(fields) => Kind::StructValue(prost_types::Struct {
+            fields: fields
+                .into_iter()
+                .map(|(key, value)| (key, json_to_prost_value(value)))
+                .collect(),
+        }),
+    };
+
+    prost_types::Value { kind: Some(kind) }
 }
 
 /// `POST /api/v1/hybrid/index` — index documents for BM25 full-text search.
@@ -383,7 +478,9 @@ mod tests {
     use super::*;
     use crate::test_support::{ApiCall, RecordingApiPort};
     use proximadb_proto::v1::{SqlArray, SqlObject, SqlRow, SqlRowField};
+    use proximadb_runtime::HybridPort;
     use std::collections::HashMap;
+    use std::sync::Mutex;
 
     fn sql_value(value: proximadb_proto::v1::sql_value::Value) -> SqlValue {
         SqlValue { value: Some(value) }
@@ -395,6 +492,153 @@ mod tests {
         let _hybrid = HybridSearchHandler::default();
         let _progressive = ProgressiveSearchHandler::new();
         let _hybrid_router = create_hybrid_search_router();
+    }
+
+    #[test]
+    fn rest_hybrid_request_preserves_filters_and_weighted_fusion_params() {
+        use proximadb_proto::v1::fusion_strategy_params;
+
+        let proto = build_hybrid_fusion_request(HybridSearchRestRequest {
+            collection: "docs".to_string(),
+            vector: Some(vec![0.1, 0.2]),
+            text_query: Some("laptop".to_string()),
+            top_k: 7,
+            vector_weight: Some(0.8),
+            rrf_k: None,
+            fusion_strategy: Some("weighted_linear".to_string()),
+            filters: Some(HashMap::from([(
+                "tenant".to_string(),
+                serde_json::json!("acme"),
+            )])),
+        })
+        .unwrap();
+
+        assert_eq!(proto.collection, "docs");
+        assert_eq!(proto.text_query, "laptop");
+        assert_eq!(proto.query_vector, vec![0.1, 0.2]);
+        assert_eq!(proto.top_k, 7);
+        assert_eq!(proto.fusion_strategy, FusionStrategy::WeightedLinear as i32);
+        assert!(matches!(
+            proto.fusion_params.and_then(|params| params.params),
+            Some(fusion_strategy_params::Params::WeightedLinear(params))
+                if (params.alpha - 0.2).abs() < 1e-6
+                    && params.bm25_normalize
+                    && params.vector_normalize
+        ));
+        assert!(matches!(
+            proto.filters
+                .get("tenant")
+                .and_then(|value| value.kind.as_ref()),
+            Some(prost_types::value::Kind::StringValue(value)) if value == "acme"
+        ));
+    }
+
+    #[test]
+    fn rest_hybrid_request_preserves_rrf_k() {
+        use proximadb_proto::v1::fusion_strategy_params;
+
+        let proto = build_hybrid_fusion_request(HybridSearchRestRequest {
+            collection: "docs".to_string(),
+            vector: None,
+            text_query: Some("laptop".to_string()),
+            top_k: 10,
+            vector_weight: None,
+            rrf_k: Some(17),
+            fusion_strategy: Some("rrf".to_string()),
+            filters: None,
+        })
+        .unwrap();
+
+        assert_eq!(proto.fusion_strategy, FusionStrategy::Rrf as i32);
+        assert!(matches!(
+            proto.fusion_params.and_then(|params| params.params),
+            Some(fusion_strategy_params::Params::RrfK(17))
+        ));
+    }
+
+    #[derive(Default)]
+    struct RecordingHybridPort {
+        last_request: Mutex<Option<HybridFusionSearchRequest>>,
+    }
+
+    #[async_trait::async_trait]
+    impl HybridPort for RecordingHybridPort {
+        async fn hybrid_search(
+            &self,
+            request: HybridFusionSearchRequest,
+        ) -> anyhow::Result<proximadb_proto::v1::HybridFusionSearchResponse> {
+            *self.last_request.lock().unwrap() = Some(request);
+            Ok(proximadb_proto::v1::HybridFusionSearchResponse {
+                results_count: 1,
+                fusion_strategy: FusionStrategy::WeightedLinear as i32,
+                ..Default::default()
+            })
+        }
+
+        async fn list_fusion_strategies(
+            &self,
+            _request: proximadb_proto::v1::ListFusionStrategiesRequest,
+        ) -> anyhow::Result<proximadb_proto::v1::ListFusionStrategiesResponse> {
+            Ok(Default::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn rest_hybrid_handler_forwards_filters_and_fusion_to_port() {
+        use proximadb_proto::v1::fusion_strategy_params;
+
+        let port = Arc::new(RecordingHybridPort::default());
+        let state = HybridRestState {
+            hybrid_port: port.clone(),
+            bm25_port: None,
+        };
+
+        let response = hybrid_search(
+            State(state),
+            Json(HybridSearchRestRequest {
+                collection: "docs".to_string(),
+                vector: Some(vec![0.1, 0.2]),
+                text_query: Some("alpha".to_string()),
+                top_k: 5,
+                vector_weight: Some(0.75),
+                rrf_k: None,
+                fusion_strategy: Some("weighted_linear".to_string()),
+                filters: Some(HashMap::from([(
+                    "region".to_string(),
+                    serde_json::json!("us"),
+                )])),
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(response.0["total"], serde_json::json!(1));
+        let captured = port
+            .last_request
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("hybrid handler should call port");
+        assert_eq!(captured.collection, "docs");
+        assert_eq!(captured.text_query, "alpha");
+        assert_eq!(captured.query_vector, vec![0.1, 0.2]);
+        assert_eq!(captured.top_k, 5);
+        assert_eq!(
+            captured.fusion_strategy,
+            FusionStrategy::WeightedLinear as i32
+        );
+        assert!(matches!(
+            captured.fusion_params.and_then(|params| params.params),
+            Some(fusion_strategy_params::Params::WeightedLinear(params))
+                if (params.alpha - 0.25).abs() < 1e-6
+        ));
+        assert!(matches!(
+            captured
+                .filters
+                .get("region")
+                .and_then(|value| value.kind.as_ref()),
+            Some(prost_types::value::Kind::StringValue(value)) if value == "us"
+        ));
     }
 
     #[test]
