@@ -1024,17 +1024,17 @@ physical layouts.
 | Distributed Query Response Metrics Not Plumbed From Coordinator
 | P3
 | LOW
-| Open
-| `src/network/rest/v1/multimodal_query.rs:1488` reports `nodes_involved` and `cache_hits` as hardcoded `0` (was `1` and `0` until 2026-05-26 — changed to `0` so the values are clearly "unwired" rather than misleading). The `DistributedCoordinator` exposes `pub cache_hits: u64` at `src/query/distributed/coordinator.rs:104`; the execution plan has `node_count` data but it's not surfaced through `result.metrics`. Result: customers reading the response metrics can't tell how many cluster nodes participated or how many cache hits served the query.
-| 1 week
-| Plumb `cache_hits` from `coordinator.stats()` (or equivalent accessor) to the `metrics_info` returned by `adapter.distributed_query()`. Plumb `nodes_involved` from the execution plan's node-count field. The fields exist; the wiring between distributed coordinator → QueryFacadeAdapter → REST handler is the missing piece. Tracked alongside [[T3.2 Slice X]] gRPC parity work.
+| Resolved
+| `DistributedQueryCoordinator::execute_with_metadata` returns plan/cache metadata; `DistributedQueryStrategy` preserves node/cache/subquery deltas in `ExecutionMetrics.extra`; REST distributed query responses read `nodes_involved` and `cache_hits` from those structured metrics instead of hardcoded zeros.
+| Done
+| *RESOLVED 2026-05-26*: verified by `cargo check -p proximadb --lib`. Follow-up can add response-level integration coverage, but the implementation gap is closed.
 
 | TD-070
 | Insert/Query Hot Path Skips Dimension + NaN/Inf Validation
 | P3
 | MEDIUM
-| Open
-| `validate_insert_request` (`src/core/utils/validation.rs:479`) and `validate_search_request` (`:507`) aggregate dimension + NaN/Inf checks via `validate_vector`, but workspace-wide grep finds zero callers. The active insert hot path (`VectorOperationsService::insert_batch_with_tenant_context` in `src/services/operations/vectors/legacy.rs:1421`) validates tenant + precision-schema only. Engine-layer bridge `src/storage/schema/proxima_record_bridge.rs:1298` does reject wrong-dim records but only after the request has traveled through several layers. NaN/Inf in query vectors are not rejected before reaching SIMD distance computation, which can produce undefined results.
-| 1-2 weeks
-| Add explicit `validate_records_pre_wal` call in `insert_batch_with_tenant_context` that (a) looks up collection's expected dimension from catalog, (b) calls `validate_vector(&record.embedding, Some(expected_dim))` for each record. Mirror on the query path. Tests: insert with NaN vector → 400; insert with wrong-dim → 400 before WAL write; query with Inf vector → 400. T4.3 audit recorded this gap on 2026-05-26.
+| Resolved
+| `VectorOperationsService::insert_batch_internal` now validates records before WAL/bulk routing, and `unified_search_with_tenant_context` validates query vectors before cache lookup/execution. Dimension mismatches and NaN/Inf are rejected at the shared vector service boundary.
+| Done
+| *RESOLVED 2026-05-26*: implementation verified by `cargo check -p proximadb --lib` and `cargo test -p proximadb --lib services::operations::vectors::legacy::index_first_search_tests -- --nocapture` (18 passed, including insert/search non-finite and dimension rejection tests). Follow-up can add REST/gRPC response-shape coverage, but the shared hot-path gap is closed.
 |===

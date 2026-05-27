@@ -759,33 +759,33 @@ For v1.0 release, the following must be complete:
 * Documentation comprehensive overhaul
 * CI/CD pipeline hardening
 
-=== Q1 2026 [In Progress]
+=== Q1 2026 [Complete]
 
-* Hybrid search (BM25) implementation
-* Event sourcing engine foundation
-* Framework integrations (LangChain, LlamaIndex)
-* ibkrtrading: Replace JSONL with event sourcing
+* Hybrid search (BM25) implementation landed; support maturity remains Beta until gRPC/live-smoke and benchmark evidence close.
+* Event sourcing engine foundation landed (TD-010 resolved).
+* Framework integrations landed for LangChain, LlamaIndex, Haystack, CrewAI, DSPy, and AutoGen.
+* ibkrtrading replacement path began with event-sourcing/document-store foundations; documented 30-day dogfood evidence remains TD-030.
 
-=== Q2 2026 [Planned]
+=== Q2 2026 [Current hardening]
 
-* Time-series engine (TST) implementation
-* ibkrtrading: Replace PostgreSQL with TST
-* Backup / point-in-time recovery
-* mTLS completion
+* Time-series engine (TST) implementation is complete at engine level (TD-009 resolved); product packaging, API parity, and at-scale validation keep the surface Beta.
+* Backup / point-in-time recovery is complete (TD-013 resolved).
+* mTLS infrastructure is complete (TD-006 resolved); remaining security work is admin/status and stronger online revocation policy.
+* Pre-release foundations focus: dashboard/support-surface honesty, multi-tenant safety hardening, canonical WAL authority, ADR-012 minimum branch merge, and hybrid gRPC parity.
 
 === Q3 2026 [Planned]
 
-* ibkrtrading: Full ProximaDB-only operation
-* Integrated inference (ONNX runtime)
-* Streaming subscriptions
-* Published benchmarks
+* v0.2 GA validation: run the ibkrtrading dogfood window and publish documented results (TD-030).
+* Complete ADR-012 minimum branch merge write-back and close the remaining pgwire/SQL Phase 2 parity gaps from ADR-018.
+* Predicate-aware vector search correctness and planner disclosure work (TD-064).
+* Publish benchmark baselines tied to the support-surface and projection-retention criteria.
 
 === Q4 2026 [Planned]
 
-* Raft consensus foundation
-* Cross-model ACID transactions
-* DiskANN index
-* CNCF submission preparation
+* Competitive platform Phase 7 follow-through: storage authority planner integration, relational capability cataloging, and vector correctness hardening.
+* Distributed cluster execution: move from Experimental transport/remote-execution foundations toward validated multi-node behavior.
+* DiskANN / advanced ANN evaluation only after predicate-aware top-k correctness is explicit.
+* CNCF submission preparation after supported-surface claims, benchmark evidence, and operator docs converge.
 
 == Metrics and Success Criteria
 
@@ -810,6 +810,6 @@ For v1.0 release, the following must be complete:
 
 ---
 
-_Last Updated_: May 9, 2026
+_Last Updated_: May 27, 2026
 _Version_: 0.2.0
 _Next Review_: End of Phase 6 Design Review (Graph-Linked Chunking + Uncertainty-Gated Search spec)

@@ -2,7 +2,7 @@
 :toc: left
 :toclevels: 2
 :icons: font
-:last-updated: December 2025
+:last-updated: 2026-05-27
 
 [.lead]
 **Vision-aligned roadmap with phase-based organization and feature tracking**
@@ -13,24 +13,25 @@
 | Document | Purpose | Status
 
 | link:STRATEGIC_ROADMAP.adoc[Strategic Roadmap] | **Start here** - Vision-aligned phase planning | ✅ Authoritative
-| link:MASTER_FEATURE_DASHBOARD.adoc[Feature Dashboard] | All 135 features with status by phase | ✅ Current
+| link:MASTER_FEATURE_DASHBOARD.adoc[Feature Dashboard] | 143-feature implementation inventory; support tier is governed by `docs/SUPPORTED_SURFACE.adoc` | 🔄 Partially reconciled
 | link:LOW_LATENCY_OPERATIONAL_QUERIES_SPEC.adoc[Operational Queries Spec] | Low-latency SQL query engine specification | 📅 New (2025-04-07)
 | link:operational_queries_implementation_guide.adoc[Operational Queries Implementation] | Detailed implementation guide and code examples | 📅 New (2025-04-07)
 | link:operational_queries_competitive_analysis.adoc[Operational Queries Competitive Analysis] | Market analysis and positioning strategy | 📅 New (2025-04-07)
-| link:CURRENT_ROADMAP.adoc[Current Roadmap] | Quarterly focus areas | ✅ Current
+| link:implementation/CURRENT_ROADMAP.adoc[Current Roadmap] | Historical/current-quarter implementation notes | ⚠️ Secondary
 | link:../DOCUMENTATION_STATUS.adoc[Documentation Status] | All docs with phase and status | ✅ Current
 |===
 
 == Vision Phase Alignment
 
-Features are organized into three phases from the link:../../concepts/vision.adoc[Vision Document]:
+Features were originally organized into three phases from the link:../../concepts/vision.adoc[Vision Document].
+The current canonical sequencing is in link:STRATEGIC_ROADMAP.adoc[Strategic Roadmap].
 
 |===
 | Phase | Focus | Status | Features
 
 | **Phase 1** | Format & Catalog Contract (MVP) | ✅ Complete | 40 features
 | **Phase 2** | Cross-Model Query & Indexing | ✅ Complete | 43 features
-| **Phase 3** | Ecosystem Integration | 🔄 In Progress | 42 features
+| **Phase 3** | Ecosystem Integration | ✅ Complete (market entry) | 42 features
 |===
 
 == Status Overview
@@ -55,14 +56,13 @@ Features are organized into three phases from the link:../../concepts/vision.ado
 * ✅ Cross-model LATERAL joins
 * ✅ Multi-modal search with reranking
 
-=== Phase 3: Ecosystem Integration (Scale) 🔄
+=== Phase 3: Ecosystem Integration (Scale) ✅
 
-* 🔄 PULSAR/QUASAR distributed graph engines
-* 🔄 External catalog integration (Iceberg, Delta Lake, Glue)
-* 📅 Streaming infrastructure
-* 📅 CDC connectors
-* 📅 Multi-language SDKs (Go, Java, Node.js)
-* 📅 Trino/Spark compute adapters
+* ⚠️ PULSAR/QUASAR distributed/tiered graph engines remain experimental.
+* ✅ External catalog integration foundations exist (Iceberg, Delta Lake, Glue, Unity, Polaris).
+* ✅ Streaming and CDC foundations exist; packaging/API maturity follows `docs/SUPPORTED_SURFACE.adoc`.
+* ⚠️ Multi-language SDK surface is mixed: Python/Rust/Go exist, embedded bindings exist for Java/Node.js, and several standalone SDKs remain planned.
+* 📅 Trino/Spark compute adapters remain future work.
 
 == Directory Structure
 
@@ -97,7 +97,7 @@ roadmap/
 |===
 | Symbol | Meaning
 
-| ✅ | Complete - Production ready
+| ✅ | Complete - implemented or closed; check `docs/SUPPORTED_SURFACE.adoc` for production support tier
 | 🔄 | In Progress - Active development
 | 📅 | Planned - Scheduled for future phase
 | 💡 | Nice to Have - Optional/opportunistic

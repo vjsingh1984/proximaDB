@@ -154,10 +154,10 @@ This audit complements (does not replace) `link:DOCUMENTATION_CONSOLIDATION_AND_
 | Reference
 | N/A
 | Support
-| Support contract surface list.
+| Technical API/projection companion to the product support contract at `docs/SUPPORTED_SURFACE.adoc`.
 |===
 
-== docs/12-design/adr (19 ADRs)
+== docs/12-design/adr (20 ADRs)
 
 All ADRs are **Accepted**. Wiring breakdown:
 
@@ -228,13 +228,14 @@ MULTIMODEL_TRAJECTORY_ALIGNMENT_2026_05_18 — was an orphan in `docs/12-design/
 * **Resolved 2026-05-26**: moved to `docs/06-internals/MULTIMODEL_TRAJECTORY_ALIGNMENT_2026_05_18.adoc` rather than folded into the spec. Rationale: it's execution guardrails / code-review guidance, not design definition. Two different doc functions → relocate, don't merge. Canonical spec remains `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`.
 
 [[pending-consolidation-batches]]
-== Pending consolidation batches
+== Consolidation batch status
 
 Per `DOCUMENTATION_CONSOLIDATION_AND_ARCHIVE_PLAN_2026_05_22.adoc`:
 
-=== Batch 3 — internal roadmap/status cleanup (pending)
+=== Batch 3 — internal roadmap/status cleanup (done 2026-05-26)
 
-Move from `docs/_internal/roadmap/` to `docs/_archive/roadmap/2026-05/`:
+Moved from `docs/_internal/roadmap/` to `docs/_archive/roadmap/2026-05/` with archive manifest
+`docs/_archive/roadmap/2026-05/README.adoc`:
 
 * `*_COMPLETION_REPORT.adoc` (PHASE2, PHASE3, PHASE4, PROJECT — multiple files)
 * `*_SESSION_SUMMARY*` files
@@ -243,11 +244,11 @@ Move from `docs/_internal/roadmap/` to `docs/_archive/roadmap/2026-05/`:
 
 Keep in `docs/_internal/roadmap/`: `README.adoc`, `STRATEGIC_ROADMAP.adoc`, `MASTER_FEATURE_DASHBOARD.adoc`, `BEST_IN_CLASS_EXECUTION_TRACKER.adoc`, `CAPABILITY_MATRIX.toml`, the `in-progress/` / `future/` / `implementation/` / `completed/` subdir scaffolding.
 
-=== Batch 4 — design index refresh (pending)
+=== Batch 4 — design index refresh (partially done 2026-05-26)
 
-* Keep `docs/12-design/README.adoc` as the design front door.
-* Link this index doc into README's "current load-bearing docs" section.
-* Cross-link each ADR's `== Governs` block to a wired path + symbol (so wiring is queryable from the ADR itself, not just from this index).
+* Done: `docs/12-design/README.adoc` remains the design front door.
+* Done: this index doc is linked from the README's current-doc callout.
+* Pending: cross-link each ADR's `== Governs` block to a wired path + symbol (so wiring is queryable from the ADR itself, not just from this index).
 
 == Other doc roots (source-of-truth proposal)
 
@@ -259,12 +260,13 @@ Keep in `docs/_internal/roadmap/`: `README.adoc`, `STRATEGIC_ROADMAP.adoc`, `MAS
 | Roadmap (Phases 1-5) | `docs/_internal/roadmap/STRATEGIC_ROADMAP.adoc`
 | Multimodal Spec (Phase A-G) | `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`
 | Active Architecture Anchor | `docs/12-design/DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc`
-| Design Decisions | `docs/12-design/adr/` (ADR-001..019)
+| Design Decisions | `docs/12-design/adr/` (ADR-001..020)
 | Technical Debt | `docs/10-quality/TECHNICAL_DEBT.adoc`
 | Multimodal/multimodel migration state | `docs/_internal/status/MULTIMODAL_MULTIMODEL_STATE_2026_05_25.adoc`
 | Phase 9 refactor state | `docs/_internal/status/PHASE9_REMAINING_2026_05_25.adoc`
 | Active implementation tickets | `docs/_internal/roadmap/implementation/active/` (no single doc)
-| Supported surfaces | `docs/12-design/SUPPORTED_SURFACES.adoc` + `docs/SUPPORTED_SURFACE.adoc`
+| Product support contract | `docs/SUPPORTED_SURFACE.adoc`
+| Technical API/projection companion | `docs/12-design/SUPPORTED_SURFACES.adoc`
 | Doc taxonomy / archive rules | `docs/12-design/DOCUMENTATION_CONSOLIDATION_AND_ARCHIVE_PLAN_2026_05_22.adoc`
 | Design-doc-to-code wiring snapshot | this doc (`DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc`)
 |===
@@ -273,7 +275,7 @@ Cross-tracker overlap to retire / cross-reference:
 
 * ~`docs/10-quality/PANIC_PRONE_CODE_AUDIT.md` and `docs/10-quality/TEST_INLINING_PROGRESS.md` — fold as TD-XXX rows in TECHNICAL_DEBT.adoc, then archive the standalone files.~ — **Done 2026-05-26**. PANIC_PRONE remained tracked as the existing TD-007 row (Resolved); a new TD-069 row was added for the test-inlining work. Both companion docs archived to `docs/_archive/quality/2026-05/`.
 * ~`docs/_internal/roadmap/BEST_IN_CLASS_EXECUTION_TRACKER.adoc` (last update March 12) — verify against STRATEGIC_ROADMAP; if no new info, archive.~ — **Resolved 2026-05-26: NOT archived.** Verification found 4 active inbound references (STRATEGIC_ROADMAP, FOUNDATIONAL_MULTIMODEL_EXECUTION_2026, TIERED_EXECUTION_REVIEW_2026_03_15) + 108 workstream-log rows that capture March 2026 baseline. Archiving would break live links. Instead added a `:last-audit: 2026-05-26` attribute + staleness header pointing readers at the May 2026 status docs for current truth.
-* `docs/_internal/roadmap/MASTER_FEATURE_DASHBOARD.adoc` `:last-updated: March 31` — refresh to reference 2026-05 work or archive its phase-completion claims (most are "Complete" but several were marked "Production Ready" before the May design docs landed; review category-by-category).
+* `docs/_internal/roadmap/MASTER_FEATURE_DASHBOARD.adoc` — **Partially refreshed 2026-05-26/27.** Header maturity table is reconciled to the support contract; lower roll-ups now warn that they are inventory-only. Remaining work: row-by-row support-tier reconciliation for feature IDs 001-143.
 
 == Deprecated / legacy code surfaces (cross-reference)
 

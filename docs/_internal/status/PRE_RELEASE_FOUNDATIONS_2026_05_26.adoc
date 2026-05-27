@@ -48,19 +48,19 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 | Item | Status | Commit | Verification
 
 | T1.1 — Implement `rls_record_filter` on NOVA + HELIX engines, mirroring SST's `trait_impl.rs:303` pattern. Use the generic `RlsRecordPredicate` from `src/storage/traits/query.rs:21`. Skip SWIFT + RAPTOR (`experimental-engines` feature, not production-multi-tenant targets).
-| Pending
-|
-| Multi-tenant integration test: tenant A queries against a collection populated under tenant B; engine returns zero records. Repeat for HELIX. Existing SST/VIPER baseline.
+| Done
+| (verified in current tree)
+| NOVA implements `rls_record_filter` in `src/storage/engines/nova/engine.rs`; HELIX implements it in `src/storage/engines/helix/mod.rs`. Follow-up: add a narrow integration test for tenant A/B isolation on both engines.
 
 | T1.2 — Add startup `warn!` log when production-mode server runs without auth (Option B). Keep `RestAuthConfig::default().enabled = false`. Touch the server-startup path that constructs `RestServerSecurityConfig` so the warning fires when `development_mode == false && auth.enabled == false`.
-| Pending
-|
-| Run server in non-development mode without auth config; inspect logs for the new warning. Run in `multi_tenant()` mode; warning should NOT fire (auth is enabled there).
+| Done
+| (verified in current tree)
+| `src/network/rest/server.rs` emits a `proximadb::security` warning when `development_mode == false && auth.enabled == false`.
 
 | T1.3 — Document the `auth_middleware_unified_port` dormant status. Add a comment block at `src/network/auth/middleware.rs:168` confirming this is the parallel-shortcut state (ADR-016 step 3 of 4), and that step 4 (consumer migrations) is intentionally demand-blocked.
-| Pending
-|
-| Comment exists; future readers don't think the middleware was forgotten.
+| Done
+| (verified in current tree)
+| `src/network/auth/middleware.rs` documents the dormant production status and ADR-016 step-4 deferral.
 |===
 
 == Tier 2 — Canonical WAL fragmentation (durability story)
@@ -97,9 +97,9 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 | Integration test: two graph branches with divergent nodes + edges; merge resolves per CRDT spec.
 
 | T3.2 — Wire real BM25 + vector backend through the gRPC hybrid_search route. Target `crates/platform/proximadb-api/src/grpc/v1/hybrid.rs` (the new home; the root-crate `hybrid_search_service.rs` is a deprecated shim). Mirror the REST `/api/v1/hybrid/search` behavior.
-| Slice 1 + 1b done — gRPC and REST share indexes; full BM25+vector parity
+| Slice 1 + 1b + filter/fusion unit coverage done
 | (this session)
-| **Slice 1** (`6a73ead7f`): added `fulltext_indexes: HybridFullTextIndexMap` to `SharedServices`; replaced 3 deprecated-shim wire-ups in `src/network/multi_server.rs` (L431/L853/L1233) with `RestHybridPortImpl`. **Slice 1b** (this commit): added `with_fulltext_indexes` builder to `AppState`; threaded `Option<FullTextIndexMap>` param through `RestServer::with_security_and_config_and_ports` + `build_router_for_unified`; wired production sites to pass `shared_services.fulltext_indexes.clone()`. Net effect: REST and gRPC `hybrid_search` now share the same in-process index map — a document indexed via REST is searchable via gRPC and vice versa. Slices 2-4 remain (fusion params, filter propagation, integration tests).
+| **Slice 1** (`6a73ead7f`): added `fulltext_indexes: HybridFullTextIndexMap` to `SharedServices`; replaced 3 deprecated-shim wire-ups in `src/network/multi_server.rs` (L431/L853/L1233) with `RestHybridPortImpl`. **Slice 1b**: added `with_fulltext_indexes` builder to `AppState`; threaded `Option<FullTextIndexMap>` param through REST server builders; wired production sites to pass `shared_services.fulltext_indexes.clone()`. **Filter/fusion slice**: REST request translation now preserves filters + RRF/weighted fusion params; `RestHybridPortImpl` forwards filters into vector search and honors proto fusion params. REST handler and gRPC service tests verify filters/fusion params reach `HybridPort`. Verified with `cargo test -p proximadb-api rest::v1::hybrid::tests -- --nocapture`, `cargo test -p proximadb-api grpc::v1::hybrid::tests -- --nocapture`, and `cargo test -p proximadb --lib network::hybrid_search::tests -- --nocapture`. Remaining work: optional live server REST/gRPC smoke.
 |===
 
 == Tier 3.1 — ADR-012 graph branch merge orchestration
@@ -117,9 +117,9 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 | 13 tests passing (7 existing + 6 walk_diff/classify_mutation new). `cargo test --lib graph::merge`. Steps 1-2 (merge base discovery, WAL iteration) + step 5 (write back) require `branch_id` plumbing into `ProximaRecord` — future slices.
 
 | T3.1 Slice 2 — `branch_id` field plumbing into `ProximaRecord`
-| Pending (next session)
-|
-| Design + impact analysis first. Cross-crate change touching `crates/foundation/proximadb-records/`, every writer, every projection rebuilder.
+| Done
+| (this session)
+| Verified in current tree: runtime `ProximaRecord.branch_id` exists in `crates/foundation/proximadb-records/src/lib.rs`; `ProximaRecordV2` carries it while legacy v1 bincode skips it. Covered by `branch_id_round_trips_through_v2_wire`, `branch_id_is_dropped_by_v1_bincode_path_serde_skip`, and `branch_id_none_default_for_v2_wire`.
 
 | T3.1 Slice 3 — WAL iteration API filter by branch_id + LSN range
 | Done
@@ -133,23 +133,23 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 
 | T3.1 Slice 5 — `GraphBranchMerger` orchestrator
 | Done (pure; WAL write-back deferred to Slice 6)
-| (this commit)
-| Added `merge_branches(wal, branch_a, branch_b) -> Option<MergeReport>` + `MergeReport` struct + `entry_to_mutation_event` heuristic helper to `src/graph/merge.rs`. Composes Slices 1+3+4 into ADR-012 §3 steps 1-5; step 6 (write resolved records back through canonical WAL) deferred. Per-entry heuristic classification (NodeUpsert / EdgeUpsert / NodeDelete / EdgeDelete) — pairwise EmbeddingUpdate/LabelSet/PropsKey distinction is a future refinement. Added 8 tests covering empty WAL, missing branch, correct merge-base, disjoint OIDs, overlapping conflict, edge-record class, tombstone class, non-upsert exclusion. Also added `filter_wal_by_branch_lsn` + `find_merge_base_lsn` to `proximadb_storage_common`'s re-export list so callers can import them at the crate root.
+| (this session)
+| `merge_branches(wal, branch_a, branch_b) -> Option<MergeReport>` now reconstructs latest base/left/right records from canonical WAL and applies pairwise `classify_mutation`, so branch conflicts distinguish `EmbeddingUpdate`, `LabelSet`, and `PropsKey` in addition to node/edge upsert/delete. Verification: `cargo test -p proximadb --lib graph::merge -- --nocapture` (31 passed).
 
 | T3.1 Slice 6 — Catalog `branch_merge_policy` fields on `CatalogTableSchema`
-| Pending
-|
-| Per ADR-012's File Plan.
+| Done
+| (this session)
+| Added `CatalogBranchMergePolicy` + `CatalogBranchMergeResolution` to `crates/control/proximadb-catalog/src/lib.rs` and added `CatalogTableSchema.branch_merge_policy` with ADR-012 defaults. Legacy catalog JSON deserializes with default policy. Verified with `cargo test -p proximadb-catalog branch_merge_policy -- --nocapture`, `cargo test -p proximadb-catalog catalog_table_schema_serde_back_compat_with_pre_branch_policy_json -- --nocapture`, and `cargo check -p proximadb --lib`.
 
 | T3.1 Slice 7 — REST `POST /collections/{name}/branches/{branch}/merge` endpoint
-| Pending
-|
-|
+| Done (dry-run report; commit returns 501)
+| (this session)
+| Added root REST route `POST /api/v1/collections/:collection/branches/:branch/merge`. The handler reads the canonical framed WAL from `data_dir/pgwire/canonical-records.wal`, filters by collection, runs `merge_branches`, and returns merge-base/events/conflicts/resolutions for `dry_run=true`. `dry_run=false` returns 501 until canonical WAL merge-fragment write-back lands. Verified with `cargo test -p proximadb --lib network::rest::v1::handlers::tests::branch_merge -- --nocapture`.
 
 | T3.1 Slice 8 — Integration tests for full branch creation → divergent mutations → merge cycle
 | Pending
 |
-|
+| Remaining scope now includes durable merge write-back plus full branch-cycle integration coverage.
 |===
 
 == Tier 4b — Superficial-mock cleanup sweep (prior session)
@@ -174,9 +174,9 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 | Changed to `String::new()` with a comment explaining the proto field is unused (engine uses the explicit `&str` arg). Not a behavior change — `traverse_with_overrides` already takes the URL-extracted graph_id correctly.
 
 | Item 5 — `multimodal_query.rs:1488,1495` distributed metrics → TD-071
-| Tracked (FIXME + TD-071)
-| (this commit)
-| Changed hardcoded `nodes_involved: 1` → `0` (clearly "unwired" vs misleading "1"); kept `cache_hits: 0`. Added FIXME comments referencing TD-071 in `TECHNICAL_DEBT.adoc` for the proper plumbing (coordinator stats → metrics_info → response).
+| Done
+| (this session)
+| `DistributedQueryCoordinator::execute_with_metadata` now returns plan/cache metadata, `DistributedQueryStrategy` preserves node/cache/subquery deltas in `ExecutionMetrics.extra`, and REST distributed query responses read `nodes_involved` + `cache_hits` from those structured metrics instead of hardcoded zeros.
 
 | Item 6 — `/api/v1/experimental/hybrid/search` mock route removed
 | Done
@@ -201,15 +201,15 @@ User-confirmed decisions (from plan AskUserQuestion 2026-05-26):
 | Both already implemented in `src/storage/engines/factory.rs`: lines 181-208 emit `anyhow::bail!` for Swift/Raptor when feature is absent; lines 505/518 emit `tracing::warn!` when the feature IS compiled in. Verified by `tests/engine_safety_test.rs` (4 passing tests: SWIFT and RAPTOR blocked without feature; SST/VIPER/HELIX/NOVA always available).
 
 | T4.2 — Proto compatibility CI gate. In CI, regenerate proto types and diff against committed types. Fail on non-additive changes (field removal, type change). Add `make proto-check` as the canonical local invocation.
-| Partial (Python side already in place; Rust-side TBD)
-| (audit 2026-05-26)
-| **Python side**: `clients/python/tests/unit/test_grpc_proto_drift.py` exists with a ratcheting baseline (`grpc_drift_baseline.json`) that fails on new drift AND on resolved-but-not-baselined drift. `test_openapi_contract.py` covers OpenAPI contract drift. **Rust side**: no `buf breaking` config, no `proto-check` make target. The standard tool is `buf breaking` against a reference image; alternative is to regenerate via `--features compile_protobuf` and diff `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs`. Recording as deferred — adding `buf` tooling is its own CI infrastructure change, not a code change.
+| Partial (local target added; full Rust breaking gate still TBD)
+| (this session)
+| `make proto-check PYTHON=/Users/vijaysingh/code/.venv/bin/python` passes: it runs `cargo check -p proximadb-proto` plus Python gRPC drift and OpenAPI contract tests. The target uses `--confcutdir=tests/unit` so offline contract checks do not initialize the root test embedding model. `grpc_drift_baseline.json` was shrunk for seven resolved graph RPC drift entries. Full Rust regeneration/breaking diff remains deferred because the current manual regeneration path is not deterministic enough for CI; add `buf breaking` or a refreshed descriptor-image gate before marking this complete.
 |===
 
 | T4.3 — Dimension / NaN / Inf validation hardening on hot paths (insert + query). Audit entry points; reject NaN/Inf in quantization pipeline; add regression tests.
-| Audited; opened TD-070 for follow-up
+| Done
 | (this session)
-| Audit finding: `validate_vector` (NaN/Inf + dim) exists in runtime-common but the high-level `validate_insert_request` / `validate_search_request` wrappers have zero callers. Insert hot path validates tenant + precision-schema only; engine-layer bridge does dim-rejection but only after several layers. Opened TD-070 (`docs/10-quality/TECHNICAL_DEBT.adoc`) capturing the gap + remediation. Not implemented this session because it needs catalog-dim lookup at insert time — proper wiring is its own ~1-2 week effort tracked under TD-070.
+| `src/services/operations/vectors/legacy.rs` now validates insert records before WAL/bulk routing and validates search query vectors before cache lookup/execution. Insert validation rejects dimension mismatches and non-finite values across fp32/fp16/bf16 and scalar-quantized scale metadata; search validation rejects non-finite query values and dimension mismatches against collection config. Verified by `cargo check -p proximadb --lib` and `cargo test -p proximadb --lib services::operations::vectors::legacy::index_first_search_tests -- --nocapture` (18 passed, including four new validation regression tests). REST/gRPC response-shape tests remain useful follow-up coverage, not a blocker for TD-070 closure.
 |===
 |===
 

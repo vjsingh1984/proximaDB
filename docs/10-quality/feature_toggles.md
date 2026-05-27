@@ -190,7 +190,7 @@ cargo build --features enterprise-catalogs
 Features must meet the following criteria to be considered "Production Ready":
 
 1. **Test Coverage**: ≥80% for core features, ≥70% for optional features
-2. **Performance**: Meets performance benchmarks documented in SUPPORTED_SURFACE.md
+2. **Performance**: Meets performance benchmarks documented in docs/SUPPORTED_SURFACE.adoc
 3. **Security**: Passes security audit for relevant components
 4. **Documentation**: Complete API documentation and usage examples
 5. **Backward Compatibility**: Clear migration path for breaking changes
@@ -344,7 +344,7 @@ Action required before next upgrade.
 
 ## Related Documentation
 
-- **SUPPORTED_SURFACE.md** - Feature status and production readiness matrix
+- **docs/SUPPORTED_SURFACE.adoc** - Feature status and production readiness matrix
 - **../04-operations/production-readiness.adoc** - Detailed production readiness criteria
 - **ADR-006** - Infrastructure and platform decisions (including test binary fix)
 - **TECHNICAL_DEBT.adoc** - Known gaps and limitations

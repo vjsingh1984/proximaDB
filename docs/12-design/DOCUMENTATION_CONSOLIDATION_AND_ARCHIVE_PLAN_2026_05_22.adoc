@@ -12,11 +12,13 @@ archive rules.
 **2026-05-26 audit update**: see
 link:DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc[DESIGN_DOC_STATUS_INDEX_2026_05_26]
 for the bookkeeping snapshot of every file under `docs/12-design/` plus
-ADRs (21 top-level + 19 ADRs audited) with `Wired` / `Status` columns.
+ADRs (21 top-level + 20 ADRs audited) with `Wired` / `Status` columns.
 Batches 1 and 2 (quick-start legacy + duplicate concept format) are
-**done**; Batches 3 (internal roadmap/status cleanup) and 4 (design
-index refresh) are **still pending** — explicit per-file list in the
-status index doc's `<<pending-consolidation-batches>>` section.
+**done**; Batch 3 (internal roadmap/status cleanup) is **done** with an
+archive manifest; Batch 4 (design index refresh) is **partially done**
+with per-ADR `== Governs` backfill still pending — explicit per-file
+state in the status index doc's `<<pending-consolidation-batches>>`
+section.
 ====
 
 == Goals
@@ -149,8 +151,9 @@ Archive a document when any of these are true:
   active blueprint.
 * It duplicates another current doc and is not the selected canonical format.
 * It describes a retired API, route, feature flag, engine maturity, or packaging workflow.
-* It makes support claims that conflict with `SUPPORTED_SURFACE.md`,
-  `docs/SUPPORTED_SURFACE.adoc`, or `docs/12-design/SUPPORTED_SURFACES.adoc`.
+* It makes product support claims that conflict with the canonical product
+  support contract at `docs/SUPPORTED_SURFACE.adoc` or technical
+  API/projection status in `docs/12-design/SUPPORTED_SURFACES.adoc`.
 * It is useful historical context but not useful as a current implementation instruction.
 
 Do not delete obsolete docs in this repository cleanup pass. Move them under `docs/_archive/` with
@@ -171,17 +174,17 @@ Batch 2: duplicate concept format cleanup. Status: completed 2026-05-22.
 * Moved duplicate Markdown guides into `docs/_archive/concepts/2026-05-22/`.
 * Updated active public links to the canonical AsciiDoc guides.
 
-Batch 3: internal roadmap/status cleanup.
+Batch 3: internal roadmap/status cleanup. Status: completed 2026-05-26.
 
 * Move phase/session/completion reports from `docs/_internal/roadmap/` to
   `docs/_archive/roadmap/2026-05/`.
 * Keep `docs/_internal/roadmap/README.adoc`, active trackers, and machine-readable artifacts only.
 
-Batch 4: current architecture index refresh.
+Batch 4: current architecture index refresh. Status: partially completed 2026-05-26.
 
-* Keep `docs/12-design/README.adoc` as the design front door.
+* Keep `docs/12-design/README.adoc` as the design front door. Done.
 * Link this plan, `ARCHITECTURE_ATLAS_2026_05_22.adoc`, and
-  `MODULE_COMPONENT_LLD_2026_05_22.adoc`.
+  `MODULE_COMPONENT_LLD_2026_05_22.adoc`. Done.
 * Archive superseded design docs to `docs/_archive/design/<yyyy-mm>/` with manifest notes.
 
 == Public Navigation Standard

@@ -5,6 +5,11 @@
 
 == Purpose
 
+This is a technical companion to the product support contract at
+`docs/SUPPORTED_SURFACE.adoc`. It is not the customer-facing maturity
+contract by itself; it records API reachability, physical projection
+status, and retirement criteria for architecture work.
+
 This document distinguishes two orthogonal axes for every capability in ProximaDB:
 
 * **API support** — whether a capability is reachable from REST, gRPC, Arrow Flight, or PostgreSQL wire.

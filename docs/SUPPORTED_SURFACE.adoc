@@ -2,17 +2,18 @@
 :toc: left
 :toclevels: 2
 :icons: font
-:last-updated: March 2026
+:last-updated: 2026-05-27
 
 [.lead]
-Current support contract for the ProximaDB working tree. This document separates customer-safe defaults from beta and experimental surfaces.
+Canonical product support contract for the ProximaDB working tree. This document separates customer-safe defaults from beta and experimental surfaces.
 
 [IMPORTANT]
 ====
-This matrix is the support contract.
+This matrix is the product support contract.
 
 * Use link:./10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] for the active backlog.
 * Use link:./_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategic Roadmap] for sequencing and investment direction.
+* Use link:./12-design/SUPPORTED_SURFACES.adoc[Supported Surfaces: API vs. Physical Projection Status] for the technical API/projection companion matrix.
 * Do not infer support level from code presence alone.
 ====
 

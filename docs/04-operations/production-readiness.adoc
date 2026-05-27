@@ -10,7 +10,7 @@ Accepted
 
 == Context
 
-This document defines the production readiness criteria for ProximaDB features, engines, and capabilities. These criteria ensure that features marked as "Production Ready" in SUPPORTED_SURFACE.md meet the quality, performance, and operational standards required for production deployments.
+This document defines the production readiness criteria for ProximaDB features, engines, and capabilities. These criteria ensure that features marked as "Production Ready" in docs/SUPPORTED_SURFACE.adoc meet the quality, performance, and operational standards required for production deployments.
 
 == Purpose
 
@@ -462,6 +462,6 @@ Production readiness at ProximaDB means:
 * ✅ **Backward compatibility** with migration guides
 * ✅ **Operational readiness** for production deployment
 
-Features meeting these criteria earn "Production Ready" status in SUPPORTED_SURFACE.md and can be deployed with confidence.
+Features meeting these criteria earn "Production Ready" status in docs/SUPPORTED_SURFACE.adoc and can be deployed with confidence.
 
 '''

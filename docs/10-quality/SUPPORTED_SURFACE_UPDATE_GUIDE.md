@@ -1,10 +1,10 @@
 # Supported Surface Update Guide
 
-This document describes how to update the SUPPORTED_SURFACE.md document when capabilities change.
+This document describes how to update the docs/SUPPORTED_SURFACE.adoc document when capabilities change.
 
 ## When to Update
 
-Update SUPPORTED_SURFACE.md when:
+Update docs/SUPPORTED_SURFACE.adoc when:
 1. New capabilities are added to an engine
 2. Capabilities are removed (requires major version bump)
 3. New engines are added
@@ -53,9 +53,9 @@ This creates/updates JSON files in `snapshots/capabilities/`:
 - `swift.json`
 - `raptor.json`
 
-### 4. Update SUPPORTED_SURFACE.md
+### 4. Update docs/SUPPORTED_SURFACE.adoc
 
-Review and manually update `SUPPORTED_SURFACE.md`:
+Review and manually update `docs/SUPPORTED_SURFACE.adoc`:
 
 1. **Update engine sections** - Add/remove capabilities in the appropriate engine section
 2. **Update feature matrix** - Add/remove checkmarks in the feature matrix table
@@ -68,11 +68,11 @@ Commit the updates together:
 
 ```bash
 git add snapshots/capabilities/
-git add SUPPORTED_SURFACE.md
+git add docs/SUPPORTED_SURFACE.adoc
 git commit -m "docs: Update supported surface for [feature]
 
 - Added [capability] to [engine]
-- Updated SUPPORTED_SURFACE.md
+- Updated docs/SUPPORTED_SURFACE.adoc
 - Regenerated capability snapshots
 
 Co-Authored-By: Claude Code <noreply@anthropic.com>"
@@ -83,12 +83,12 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 The CI pipeline will automatically:
 1. Run capability contract tests
 2. Check snapshot consistency
-3. Verify SUPPORTED_SURFACE.md is updated
+3. Verify docs/SUPPORTED_SURFACE.adoc is updated
 
 If the CI fails:
 - Contract test failed: Engine doesn't actually support the claimed capability
 - Snapshot drift: Run `./scripts/generate_capability_snapshots.sh` and commit
-- Documentation check: Update SUPPORTED_SURFACE.md
+- Documentation check: Update docs/SUPPORTED_SURFACE.adoc
 
 ## Example: Adding a New Capability
 
@@ -135,7 +135,7 @@ cargo test --test capability_contract_test test_sst_fulltext_search_contract
 ./scripts/generate_capability_snapshots.sh
 ```
 
-**Step 5**: Update SUPPORTED_SURFACE.md
+**Step 5**: Update docs/SUPPORTED_SURFACE.adoc
 
 Add to SST engine section:
 ```markdown
@@ -162,7 +162,7 @@ Update feature matrix:
 git add src/storage/engines/impls/sst/mod.rs
 git add tests/query/capability_contract_test.rs
 git add snapshots/capabilities/sst.json
-git add SUPPORTED_SURFACE.md
+git add docs/SUPPORTED_SURFACE.adoc
 git commit -m "feat: Add full-text search support to SST engine"
 ```
 
@@ -173,7 +173,7 @@ The `.github/workflows/capability-contract-tests.yml` workflow automatically:
 1. **On every PR**:
    - Runs capability contract tests
    - Checks snapshot consistency
-   - Validates SUPPORTED_SURFACE.md updates
+   - Validates docs/SUPPORTED_SURFACE.adoc updates
 
 2. **On main branch push**:
    - Generates and uploads capability matrix artifact
@@ -191,18 +191,18 @@ The `.github/workflows/capability-contract-tests.yml` workflow automatically:
 **Problem**: Engine claims capability it doesn't support  
 **Solution**: Either remove the capability claim or implement the capability
 
-### "SUPPORTED_SURFACE.md should be updated" Warning
+### "docs/SUPPORTED_SURFACE.adoc should be updated" Warning
 
 **Problem**: Documentation doesn't match code  
-**Solution**: Update SUPPORTED_SURFACE.md to reflect the new capabilities
+**Solution**: Update docs/SUPPORTED_SURFACE.adoc to reflect the new capabilities
 
 ## Best Practices
 
 1. **Test Before Claiming**: Always implement and test capabilities before claiming them
-2. **Update Documentation**: Keep SUPPORTED_SURFACE.md in sync with code changes
+2. **Update Documentation**: Keep docs/SUPPORTED_SURFACE.adoc in sync with code changes
 3. **Version Carefully**: Removing capabilities requires a major version bump
 4. **Experimental Features**: Mark experimental capabilities clearly
-5. **Cross-Reference**: Ensure API docs, SUPPORTED_SURFACE.md, and code all agree
+5. **Cross-Reference**: Ensure API docs, docs/SUPPORTED_SURFACE.adoc, and code all agree
 
 ## Automated Update Script (Future)
 
@@ -221,7 +221,7 @@ cargo test --test capability_contract_test
 # 3. Extract capability matrix
 cargo test --test capability_contract_test generate_capability_matrix -- --nocapture > capability-matrix.txt
 
-# 4. Update SUPPORTED_SURFACE.md from template
+# 4. Update docs/SUPPORTED_SURFACE.adoc from template
 # (TODO: Implement template-based generation)
 
 echo "✅ Supported surface updated successfully"

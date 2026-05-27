@@ -67,7 +67,7 @@ Main gaps before claiming full agentic backing-store coverage:
 - Victor's existing `ProximaDBMultiModelProvider` targets the server SDK, not the embedded
   `proximadb_embedded` package.
 - Document, relational, observability, and event engines are still marked experimental or
-  in-memory in `SUPPORTED_SURFACE.md`; MVP claims must be local/experimental until durability
+  in-memory in `docs/SUPPORTED_SURFACE.adoc`; MVP claims must be local/experimental until durability
   tests prove otherwise.
 - Cross-modal embedded tests need to prove one real flow, not only parser/fusion units.
 

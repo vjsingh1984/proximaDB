@@ -4,11 +4,16 @@
 
 == Status
 
-**In progress, blocked by ~7 consumer-migration files.** No structural blocker; just unfinished sweep work.
+**Resolved in current tree.** `src/storage/multimodal/` is gone, `src/storage/mod.rs` only exports `multimodel`, and no active source consumer imports `storage::multimodal`.
+
+[NOTE]
+====
+This file is retained as historical migration evidence. The active state was rechecked during the 2026-05-26 consolidated review.
+====
 
 == Background
 
-Per memory `project_multimodel_architecture`, the canonical module is `src/storage/multimodel/` (matches the "Multi-Model Overhaul Spec 2026-05-08" naming). `src/storage/multimodal/` is the legacy path being phased out. Both currently live in the tree as twin directories.
+Per memory `project_multimodel_architecture`, the canonical module is `src/storage/multimodel/` (matches the "Multi-Model Overhaul Spec 2026-05-08" naming). The old `src/storage/multimodal/` path has since been removed from the active source tree.
 
 == Current state (2026-05-25)
 

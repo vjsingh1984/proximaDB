@@ -70,8 +70,8 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 
 | Graph
 | **Beta**
-| ORION node/edge CRUD, traversal, neighbors, shortest-path, adjacency projections all usable. Declarative graph query on the canonical gRPC path is still incomplete; branch-merge logic absent.
-| ADR-012 PARTIAL (no `merge_branch` logic); TD-066 (open — ORION engine WAL parallel to canonical). PULSAR/QUASAR remain Experimental per SUPPORTED_SURFACE.
+| ORION node/edge CRUD, traversal, neighbors, shortest-path, adjacency projections all usable. Declarative graph query on the canonical gRPC path is still incomplete; branch-merge is present as a pure canonical-WAL orchestrator with cataloged policy metadata and a dry-run REST report endpoint, but lacks durable merge write-back.
+| ADR-012 PARTIAL (pure `merge_branches` + xCatalog policy + dry-run endpoint only; no write-back yet); TD-066 (open — ORION engine WAL parallel to canonical). PULSAR/QUASAR remain Experimental per SUPPORTED_SURFACE.
 
 | Observability
 | **Beta**
@@ -85,8 +85,8 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 
 | Hybrid retrieval
 | **Beta**
-| BM25 + RRF/weighted fusion functional on REST `/api/v1/hybrid/search`. gRPC parity in progress.
-| TD-008 resolved on REST. gRPC route currently routes to a mock backend pending Tier-3 wire-through. SUPPORTED_SURFACE "Beta".
+| BM25 + RRF/weighted fusion functional on REST `/api/v1/hybrid/search`; production gRPC uses the same `RestHybridPortImpl` backend and shared in-process full-text indexes; filters/fusion params now flow through the port path.
+| TD-008 resolved on REST. Remaining Beta hardening: optional live REST/gRPC smoke and quality benchmarks. SUPPORTED_SURFACE "Beta".
 
 | Time-series (TST)
 | **Beta**
@@ -172,8 +172,8 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 | 011 | SST Storage Engine | Storage | ✅ | Hybrid columnar; `src/storage/engines/impls/sst/`
 | 012 | VIPER Storage Engine | Storage | ✅ | Columnar Parquet; `src/storage/engines/impls/viper/`
 | 013 | NOVA Storage Engine | Storage | ✅ | Progressive columnar; `src/storage/engines/impls/nova/`
-| 014 | SWIFT Storage Engine | Storage | ✅ | Fast traversal; `src/storage/engines/impls/swift/`
-| 015 | RAPTOR Storage Engine | Storage | ✅ | Matrix-optimized; `src/storage/engines/impls/raptor/`
+| 014 | SWIFT Storage Engine | Storage | ⚠️ Deprecated | Research engine behind `experimental-engines`; use SST/NOVA/HELIX/VIPER for supported paths.
+| 015 | RAPTOR Storage Engine | Storage | ⚠️ Deprecated | Research engine behind `experimental-engines`; use VIPER/NOVA for supported paths.
 | 016 | HELIX Storage Engine | Storage | ✅ | PCA + Hilbert; `src/storage/engines/impls/helix/`
 
 | 017 | HNSW Index Algorithm | Search | ✅ | `src/index/axis/indexes/hnsw_index.rs`
@@ -198,22 +198,22 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 | 035 | Bloom Filters | Performance | ✅ | Found in SSTable
 
 | 036 | ORION Graph Engine | Graph | ✅ | In-memory CSR; `src/graph/engines/orion/`
-| 037 | PULSAR Graph Engine | Graph | ⚠️ Partial | Distributed engine; `src/graph/engines/pulsar/` (experimental, not wired to service layer)
-| 038 | QUASAR Graph Engine | Graph | ⚠️ Partial | Hybrid engine; `src/graph/engines/quasar/` (experimental, not wired to service layer)
+| 037 | PULSAR Graph Engine | Graph | ⚠️ Experimental | Distributed graph foundation; not the canonical production graph path.
+| 038 | QUASAR Graph Engine | Graph | ⚠️ Experimental | Hybrid/tiered graph foundation; TD-068 tracks rewire-vs-retire decision.
 | 039 | GraphMemoryPool | Graph | ✅ | Zero-copy sharing
 
 | 040 | UnifiedAuthService | Security | ⚠️ Partial | SSO/JWT/API key plus mTLS identity and CRL support; admin/status plane still incomplete.
 | 041 | ConsolidatedRBACManager | Security | ✅ | RBAC exists
 | 042 | Multi-Factor Authentication | Security | ❌ | Not implemented
-| 043 | Enterprise SSO | Security | ❌ | Not implemented
+| 043 | Enterprise SSO | Security | ⚠️ Partial | Hooks exist; production admin/status and provider hardening remain incomplete.
 | 044 | Audit Logging | Security | ⚠️ Partial | Basic logging
 | 045 | Multi-Tenancy | Security | ✅ | Basic implementation
 | 046 | Rate Limiting | Security | ✅ | Enabled by default; `src/network/middleware/rate_limit.rs`
 | 047 | IP Access Control | Security | ❌ | Not found
 | 048 | Field-Level Encryption | Security | ❌ | Not implemented
-| 049 | Row-Level Security | Security | ❌ | Not implemented
-| 050 | Compliance Framework | Security | ❌ | Not implemented
-| 051 | Security Context Management | Security | ❌ | Not implemented
+| 049 | Row-Level Security | Security | ⚠️ Partial | Engine hooks exist for SST/VIPER/NOVA/HELIX; broader policy/admin surface remains Beta.
+| 050 | Compliance Framework | Security | ⚠️ Beta | SOC 2 roadmap/templates exist; control evidence and automation remain rollout work.
+| 051 | Security Context Management | Security | ⚠️ Partial | `UnifiedUserContext` is production path; `PortUserContext` migration is ADR-016 step 4.
 
 | 052 | AIIntelligenceFoundation | AI | ❌ | Does not exist
 | 053 | EnterpriseNLPEngine | AI | ❌ | Does not exist
@@ -243,7 +243,7 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 | 074 | API Reference | Docs | ✅ | Basic API docs
 | 075 | Docker Guide | Docs | ✅ | Deployment guide
 
-| 076 | Multi-Modal Search | Platform | ⚠️ Partial | UQL and fusion foundations exist; canonical hybrid execution still in progress
+| 076 | Multi-Modal Search | Platform | ⚠️ Partial | UQL and fusion foundations exist; planner-level hybrid/rerank execution still in progress
 | 077 | Distributed Operations Assessment | Platform | ⚠️ Partial | Raft/sharding foundations exist; transport and distributed execution remain incomplete
 | 078 | Documentation Migration | Docs | 🔄 | AsciiDoc conversion
 
@@ -284,16 +284,16 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 
 | 109 | Cross-Modal Reranking | Platform | ✅ | Complete - MMR, context-aware, explanations
 | 110 | Unified Query Language | Platform | ✅ | Complete - SQL-like parser with VECTOR_SIMILAR
-| 111 | Real-time Streaming | Platform | ❌ | Q2 2025
-| 112 | CDC Integration | Platform | ❌ | Q2 2025
+| 111 | Real-time Streaming | Platform | ✅ | Implemented; product packaging/API scope still follows SUPPORTED_SURFACE.
+| 112 | CDC Integration | Platform | ✅ | PostgreSQL/MySQL/MongoDB connectors implemented; feature-gated where appropriate.
 | 113 | Natural Language Admin | Platform | ❌ | Q3 2025
 
-| 114 | Java SDK | Developer | ❌ | Client library
+| 114 | Java SDK | Developer | ⚠️ Embedded Beta | Embedded binding exists under `clients/java-embedded/`; full standalone SDK remains planned.
 | 115 | C++ SDK | Developer | ❌ | Client library
 | 116 | Rust Native SDK | Developer | ✅ | Client library; `clients/rust/`
-| 117 | Go SDK | Developer | ❌ | Client library
+| 117 | Go SDK | Developer | ⚠️ Beta | Client and embedded binding exist under `clients/go/` and `clients/go-embedded/`.
 | 118 | .NET SDK | Developer | ❌ | Client library
-| 119 | Node.js SDK | Developer | ❌ | Client library
+| 119 | Node.js SDK | Developer | ⚠️ Embedded Beta | Embedded binding exists under `clients/nodejs-embedded/`; full standalone SDK remains planned.
 | 120 | Ruby SDK | Developer | ❌ | Client library
 | 121 | Swift SDK | Developer | ❌ | Client library
 
@@ -303,30 +303,37 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 | 125 | Retry with Backoff | Enterprise | ✅ | `src/core/resilience/retry.rs`
 | 126 | Health Aggregator | Enterprise | ✅ | `src/core/resilience/health_aggregator.rs`
 
-| 127 | BM25 Full-Text Index (tantivy) | Hybrid Search | ⚠️ Partial | Full-text foundations exist, but not yet wired as the canonical hybrid product path
-| 128 | Reciprocal Rank Fusion | Hybrid Search | ⚠️ Partial | Fusion logic exists; production backend integration remains incomplete
-| 129 | Hybrid Search API | Hybrid Search | ⚠️ Partial | API surface exists, but gRPC backend integration is still mocked
+| 127 | BM25 Full-Text Index (tantivy) | Hybrid Search | ⚠️ Beta | In-process full-text index is shared by REST and production gRPC hybrid backends; durability/catalog promotion remains pending.
+| 128 | Reciprocal Rank Fusion | Hybrid Search | ⚠️ Beta | Fusion logic is wired into REST and production gRPC hybrid backends; labeled-quality benchmark remains pending.
+| 129 | Hybrid Search API | Hybrid Search | ⚠️ Beta | REST and production gRPC share backend/index state; handler/service tests cover filters/fusion; optional live smoke remains.
 | 130 | Search Mode Selection | Hybrid Search | Planned | vector_only/keyword_only/hybrid
 
-| 131 | TST Time-Partitioned Storage | Time-Series | Planned | 7th storage engine
-| 132 | ASOF Joins | Time-Series | Planned | Point-in-time lookups
-| 133 | Time-Bucketing / Downsampling | Time-Series | Planned | Multi-granularity
-| 134 | OHLC Aggregation | Time-Series | Planned | Native OHLC computation
+| 131 | TST Time-Partitioned Storage | Time-Series | ⚠️ Beta | Engine exists; product packaging/API parity and scale validation remain.
+| 132 | ASOF Joins | Time-Series | ⚠️ Beta | Engine capability exists; promote only with supported API + validation evidence.
+| 133 | Time-Bucketing / Downsampling | Time-Series | ⚠️ Beta | Engine capability exists; promote only with supported API + validation evidence.
+| 134 | OHLC Aggregation | Time-Series | ⚠️ Beta | Engine capability exists; promote only with supported API + validation evidence.
 | 135 | Grafana Query API | Time-Series | Planned | Direct datasource
 
-| 136 | Append-Only Event Store | Event Sourcing | Planned | Immutable event log
-| 137 | Event Stream Projections | Event Sourcing | Planned | Materialized views
-| 138 | Temporal Queries | Event Sourcing | Planned | Historical state replay
-| 139 | Compliance Event Immutability | Event Sourcing | Planned | MiFID II / SEC
+| 136 | Append-Only Event Store | Event Sourcing | ⚠️ Beta | Engine exists; packaging/API parity and production validation remain.
+| 137 | Event Stream Projections | Event Sourcing | ⚠️ Beta | Foundation exists; product surface remains Beta.
+| 138 | Temporal Queries | Event Sourcing | ⚠️ Beta | Engine capability exists; promote only with supported API + validation evidence.
+| 139 | Compliance Event Immutability | Event Sourcing | ⚠️ Beta | Audit-trail foundation exists; compliance evidence remains rollout work.
 
 | 140 | LangChain VectorStore | Framework Integration | ✅ | `clients/python/src/proximadb_sdk/integrations/langchain.py`
-| 141 | LlamaIndex Integration | Framework Integration | Planned | Python integration
-| 142 | Haystack Integration | Framework Integration | Planned | Python integration
+| 141 | LlamaIndex Integration | Framework Integration | ✅ | `clients/python/src/proximadb_sdk/integrations/llama_index.py`
+| 142 | Haystack Integration | Framework Integration | ✅ | `clients/python/src/proximadb_sdk/integrations/haystack.py`
 | 143 | CrewAI Integration | Framework Integration | ✅ | `clients/python/src/proximadb_sdk/integrations/crewai.py`
 |===
 
 [[category-index]]
-== 📂 Features by Category (status reflects v0.2.0 code)
+== 📂 Features by Category (inventory status, not support tier)
+
+[IMPORTANT]
+====
+The roll-ups below summarize the feature-index inventory. They are not
+the support contract and should not be used to promote a surface beyond
+the maturity summary at the top of this file or `docs/SUPPORTED_SURFACE.adoc`.
+====
 
 [[completed-features]]
 === ✅ COMPLETED (representative set)
@@ -344,15 +351,18 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 ==== Quantization & Performance (10/10 - 100%)
 * 026-035, 066: Complete optimization suite
 
-==== Graph Database (4/4 - 100%)
-* 036-039: All 3 engines + memory pool
+==== Graph Database (ORION usable; distributed/tiered engines experimental)
+* 036, 039: ORION and graph memory pool are usable
+* 037-038: PULSAR / QUASAR remain experimental compatibility or projection candidates
 
-==== Enterprise Security (12/12 - 100%)
-* 040-051: Comprehensive security
+==== Enterprise Security (Beta)
+* 041, 045-046: RBAC, multi-tenancy foundation, and rate limiting are implemented
+* 040, 043-044, 049-051: partial or Beta surfaces
+* 042, 047-048: MFA, IP access control, and field-level encryption are not implemented
 
-==== AI & Intelligence (0/10 - 4%)
+==== AI & Intelligence (not in v0.2 scope)
 * 061: AutoML Framework foundation (35% complete - workload analyzer, basic service, stubs for ML models)
-* 052-060: Not implemented
+* 052-060: Not implemented and not part of the v0.2 support surface
 
 ==== Platform Features (4/8 - 50%)
 * 067-070: Basic platform support
@@ -365,17 +375,18 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 * 101-108: Developer resources
 
 [[in-progress-features]]
-=== 🔄 IN PROGRESS (1 item)
+=== 🔄 IN PROGRESS / PARTIAL SURFACES
 
-==== Completed Recently
+==== Recently implemented but not production-promoted
 * **076**: Multi-Modal Search ✅ **COMPLETE**
   - Completed: UQL Parser, Cross-Modal Reranking, Learned Fusion
   - 92 unit tests passing
+  - Support tier: Beta / planner-hardening dependent
 
-* **077**: Distributed Operations Assessment ✅ **COMPLETE**
+* **077**: Distributed Operations Assessment ⚠️ **EXPERIMENTAL**
   - Assessed: 3,850+ lines cluster infrastructure
   - Found: Raft consensus, sharding, PULSAR/QUASAR engines
-  - Status: Production-ready
+  - Status: Experimental until RPC transport, remote execution, and failover validation close
 
 ==== Documentation
 * **078**: Documentation Migration to AsciiDoc
@@ -383,62 +394,45 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
   - Adding professional diagrams
 
 [[future-features]]
-=== ❌ NOT STARTED (22 items)
+=== ❌ NOT STARTED / OUT OF v0.2 SUPPORT SCOPE
 
-==== Documentation Priorities (ALL COMPLETE)
+==== Documentation Priorities
 * **079-084**: Storage Engine Deep Dives ✅ **COMPLETE**
 * **085-090**: Technical Guides ✅ **COMPLETE**
 * **091-094**: Migration Guides ✅ **COMPLETE**
 * **095-100**: Operational Guides ✅ **COMPLETE**
 * **101-108**: Developer Resources ✅ **COMPLETE**
 
-==== Platform Features (5 items) - SPECIFICATIONS COMPLETE
+==== Platform Features
 * **109-110**: Cross-Modal Reranking, UQL ✅ **COMPLETE**
-* **111-113**: Streaming, CDC, NL Admin - Specifications ready
+* **111-112**: Streaming and CDC implemented; product packaging/API scope follows `SUPPORTED_SURFACE`
+* **113**: Natural Language Admin ❌ **NOT STARTED**
 
-==== Developer SDKs (8 items) - SPECIFICATION COMPLETE
-* **114-121**: Multi-language SDKs - Specification ready
+==== Developer SDKs
+* **114, 119**: Java and Node.js embedded bindings are Beta; full standalone SDKs remain planned
+* **115, 118, 120, 121**: C++, .NET, Ruby, and Swift SDKs ❌ **NOT STARTED**
+* **116-117**: Rust and Go SDK surfaces exist; Go remains Beta
 
 == 📈 Progress Metrics
 
-=== Completion by Priority Range
-[cols="2,1,1,1", options="header"]
-|===
-| Priority Range | Total | Completed | %
-| 001-030 (Critical) | 30 | 19 | 63%
-| 031-060 (Important) | 30 | 5 | 17%
-| 061-090 (Standard) | 30 | 7 | 23%
-| 091-121 (Future) | 31 | 0 | 0%
-|===
-
-=== Development Velocity
-* **Q4 2024**: 66 features completed
-* **Q1 2025**: 12 features completed, 3 in progress
-* **Remaining**: 40 features (mostly documentation)
+=== Current Support Snapshot
+* Supported: core vector CRUD/search/get on canonical REST v2 and gRPC record flows.
+* Beta: documents, ORION graph, observability, federated SQL, hybrid retrieval, time-series/event foundations, pgwire/SQL, security runtime.
+* Experimental: distributed cluster execution, PULSAR, and QUASAR.
+* Not in v0.2 scope: AI/BI executive analytics items 052-060 and unstarted SDK/admin/security items listed above.
 
 == 🎯 Action Priority Matrix
 
 [cols="1,2,1,1", options="header"]
 |===
 | Priority | Action Item | Effort | Impact
-| ✅ | Multi-Modal Search | DONE | High
-| ✅ | Distributed Ops Assessment | DONE | High
-| ✅ | Storage Engine Documentation | DONE | High
-| ✅ | API Specifications | DONE | High
-| ✅ | Migration Guides | DONE | Medium
-| ✅ | Technical Guides | DONE | High
-| ✅ | Operational Guides | DONE | Medium
-| ✅ | Cross-Modal Reranking | DONE | Medium
-| ✅ | Developer Resources (101-108) | DONE | Medium
-| ✅ | Platform Specifications (111-113) | DONE | Medium
-| ✅ | SDK Specifications (114-121) | DONE | Medium
-| ✅ | Streaming Implementation Roadmap | DONE | Medium
-| ✅ | CDC Implementation Roadmap | DONE | Medium
-| ✅ | SDK Development Guide & Templates | DONE | Medium
-| ✅ | Integration Test Plans | DONE | Medium
-| P3 | Execute Streaming Implementation | 5 weeks | Medium
-| P3 | Execute CDC Implementation | 6 weeks | Medium
-| P3 | Execute SDK Development | 8 weeks | Low
+| P0 | Finish row-by-row support-tier reconciliation for feature IDs 001-143 | 4-8 hours | High
+| P0 | Close ADR-012 minimum graph branch merge write-back | 1-2 weeks | High
+| P1 | Complete TD-035 graph query executor operators and planner path | 3-4 weeks | High
+| P1 | Complete TD-064 predicate-aware vector top-k correctness disclosure and routing | 6-8 weeks | Critical
+| P1 | Wire TD-040 read-side quantization-aware row-group pruning | 2-3 weeks | Medium-High
+| P2 | Publish ibkrtrading dogfood validation evidence (TD-030) | 2-4 weeks | High
+| P2 | Revisit unstarted SDK/admin/security feature IDs after v0.2 support gates | TBD | Medium
 |===
 
 == 🔗 Quick Links
@@ -530,13 +524,11 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 * **Quarterly**: Strategic realignment
 
 ---
-*Last Updated*: February 7, 2026 +
-*Total Features*: 152 +
-*MVP Features (P1+P2)*: 83 features, 96% complete +
-*Phase 3 Features*: 42 features, 24% complete +
-*Phase 4 Features*: 17 features, 12% complete +
-*Documentation*: 100% complete +
-*Implementation Roadmaps*: Streaming, CDC, SDKs - Ready for P3 execution
+*Last Updated*: May 27, 2026 +
+*Total Indexed Features*: 143 +
+*Support Contract*: `docs/SUPPORTED_SURFACE.adoc` +
+*Technical API/Projection Companion*: `docs/12-design/SUPPORTED_SURFACES.adoc` +
+*Detail Row Reconciliation*: partially refreshed; row-by-row support-tier audit remains open
 
 == Related Documents
 
