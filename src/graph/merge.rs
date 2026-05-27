@@ -27,6 +27,12 @@
 //! | Props key           | LWW per key                   |
 
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+
+use anyhow::{Context, Result};
+
+use crate::services::record_store::TableWalAppender;
 
 /// Mutation class used to select the merge policy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -589,6 +595,193 @@ fn refine_conflicts_with_pairwise_records(
             right.wal_ts_us,
         );
     }
+}
+
+/// Result of a write-back operation, containing the written WAL entries.
+#[derive(Debug, Clone)]
+pub struct WriteBackResult {
+    /// The WAL entries that were written.
+    pub written_entries: Vec<proximadb_storage_common::CanonicalWalEntry>,
+    /// The LSN of the first written entry.
+    pub first_lsn: u64,
+    /// The LSN of the last written entry.
+    pub last_lsn: u64,
+}
+
+/// Apply merge resolutions and write the merged records to the canonical WAL.
+///
+/// This is step 6 of the ADR-012 merge protocol. It takes:
+/// - The original WAL entries (for fetching records to merge)
+/// - The merge report (containing resolutions)
+/// - The WAL path for writing
+/// - The branch names and collection ID
+///
+/// Returns `Ok(None)` if there's nothing to write (all records were deleted).
+pub async fn write_back_merge(
+    wal: &[proximadb_storage_common::CanonicalWalEntry],
+    report: &MergeReport,
+    wal_path: &Path,
+    collection_id: &str,
+    branch_a: &str,
+    branch_b: &str,
+    tenant_id: Option<String>,
+) -> Result<Option<WriteBackResult>> {
+    use proximadb_storage_common::CanonicalOperation;
+
+    let diff_range = report.merge_base_lsn.saturating_add(1)..;
+    let left_entries =
+        proximadb_storage_common::filter_wal_by_branch_lsn(wal, branch_a, diff_range.clone());
+    let right_entries =
+        proximadb_storage_common::filter_wal_by_branch_lsn(wal, branch_b, diff_range);
+
+    // Build OID → latest record maps for each branch
+    let left_records = latest_branch_records_for_write(&left_entries);
+    let right_records = latest_branch_records_for_write(&right_entries);
+
+    // Track which OIDs have been handled (conflicts or unilateral)
+    let mut handled_oids: HashSet<String> = HashSet::new();
+
+    // Tag every merged record with origin = "branch_merge:<a>:<b>" so the
+    // canonical WAL identifies the write as a branch-merge resolution (per
+    // ADR-012 §3 step 6 / T3.1 Slice 6 plan spec).
+    let merge_origin = format!("branch_merge:{}:{}", branch_a, branch_b);
+    let stamp_origin = |record: &proximadb_records::ProximaRecord| {
+        let mut cloned = record.clone();
+        cloned.origin = Some(merge_origin.clone());
+        Box::new(cloned)
+    };
+
+    // Build the merged operations
+    let mut operations = Vec::new();
+
+    // First, handle all conflicts with their resolutions
+    for resolution in &report.resolutions {
+        let oid = &resolution.conflict.record_id;
+        handled_oids.insert(oid.clone());
+
+        match resolution.outcome {
+            MergeOutcome::KeepLeft => {
+                if let Some((record, _)) = left_records.get(oid.as_str()) {
+                    operations.push(CanonicalOperation::RecordUpsert {
+                        collection_id: collection_id.to_string(),
+                        record: stamp_origin(record),
+                        projections: vec![],
+                    });
+                }
+            }
+            MergeOutcome::KeepRight => {
+                if let Some((record, _)) = right_records.get(oid.as_str()) {
+                    operations.push(CanonicalOperation::RecordUpsert {
+                        collection_id: collection_id.to_string(),
+                        record: stamp_origin(record),
+                        projections: vec![],
+                    });
+                }
+            }
+            MergeOutcome::BothDeleted => {
+                // Write a tombstone delete operation
+                operations.push(CanonicalOperation::RecordDelete {
+                    collection_id: collection_id.to_string(),
+                    oid: oid.clone(),
+                    projections: vec![],
+                });
+            }
+            MergeOutcome::UnionLabels => {
+                // Merge label sets from both branches
+                if let (Some((left_rec, _)), Some((right_rec, _))) = (
+                    left_records.get(oid.as_str()),
+                    right_records.get(oid.as_str()),
+                ) {
+                    let mut merged_rec = (*left_rec).clone();
+                    let left_labels: Vec<String> = left_rec.labels.iter().cloned().collect();
+                    let right_labels: Vec<String> = right_rec.labels.iter().cloned().collect();
+                    merged_rec.labels = proximadb_records::LabelSet::from(merge_labels(
+                        &left_labels,
+                        &right_labels,
+                    ));
+                    merged_rec.origin = Some(merge_origin.clone());
+                    operations.push(CanonicalOperation::RecordUpsert {
+                        collection_id: collection_id.to_string(),
+                        record: Box::new(merged_rec),
+                        projections: vec![],
+                    });
+                }
+            }
+        }
+    }
+
+    // Second, handle unilateral mutations (OIDs that appear on only one side)
+    for (oid, (record, _seq)) in &left_records {
+        if !handled_oids.contains(*oid) {
+            handled_oids.insert(oid.to_string());
+            operations.push(CanonicalOperation::RecordUpsert {
+                collection_id: collection_id.to_string(),
+                record: stamp_origin(record),
+                projections: vec![],
+            });
+        }
+    }
+    for (oid, (record, _seq)) in &right_records {
+        if !handled_oids.contains(*oid) {
+            handled_oids.insert(oid.to_string());
+            operations.push(CanonicalOperation::RecordUpsert {
+                collection_id: collection_id.to_string(),
+                record: stamp_origin(record),
+                projections: vec![],
+            });
+        }
+    }
+
+    if operations.is_empty() {
+        return Ok(None);
+    }
+
+    // Write to WAL using the FramedTableWalAppender
+    let appender = crate::services::FramedTableWalAppender::open(wal_path)
+        .await
+        .context("opening WAL appender for merge write-back")?;
+
+    let written_entries = appender
+        .append_operations(operations, tenant_id)
+        .await
+        .context("writing merged operations to WAL")?;
+
+    let first_lsn = written_entries
+        .first()
+        .map(|e| e.sequence_number)
+        .unwrap_or(0);
+    let last_lsn = written_entries
+        .last()
+        .map(|e| e.sequence_number)
+        .unwrap_or(0);
+
+    Ok(Some(WriteBackResult {
+        written_entries,
+        first_lsn,
+        last_lsn,
+    }))
+}
+
+/// Helper to get the latest record per OID from a slice of WAL entries.
+/// Returns (record, sequence_number) tuples.
+fn latest_branch_records_for_write<'a>(
+    entries: &'a [&'a proximadb_storage_common::CanonicalWalEntry],
+) -> HashMap<&'a str, (&'a proximadb_records::ProximaRecord, u64)> {
+    use proximadb_storage_common::CanonicalOperation;
+
+    let mut latest: HashMap<&'a str, (&'a proximadb_records::ProximaRecord, u64)> = HashMap::new();
+    for entry in entries {
+        if let CanonicalOperation::RecordUpsert { record, .. } = &entry.operation {
+            let candidate = (record.as_ref(), entry.sequence_number);
+            let replace = latest
+                .get(record.oid.as_str())
+                .map_or(true, |&(_, prev_seq)| entry.sequence_number > prev_seq);
+            if replace {
+                latest.insert(record.oid.as_str(), candidate);
+            }
+        }
+    }
+    latest
 }
 
 #[cfg(test)]
@@ -1167,5 +1360,234 @@ mod tests {
         };
         assert!(entry_to_mutation_event(&checkpoint).is_none());
         assert!(entry_to_mutation_event(&delete).is_none());
+    }
+
+    // ── T3.1 Slice 6 — write_back_merge tests ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn write_back_merge_handles_keep_left_resolution() {
+        use proximadb_records::ProximaTreeNode;
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let wal_path = temp_dir.path().join("test.wal");
+
+        // Create WAL entries for a conflict
+        let mut left_rec = branch_record("shared", Some("a"));
+        left_rec.props.insert(
+            "side".to_string(),
+            ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                "left".to_string(),
+            )),
+        );
+        let mut right_rec = branch_record("shared", Some("b"));
+        right_rec.props.insert(
+            "side".to_string(),
+            ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                "right".to_string(),
+            )),
+        );
+
+        let wal = vec![
+            upsert_canonical_entry(3, "base", None, 50),
+            upsert_record_canonical_entry(5, 100, left_rec),
+            upsert_record_canonical_entry(7, 200, right_rec),
+        ];
+
+        let report = merge_branches(&wal, "a", "b").unwrap();
+
+        // Write back should keep the left (earlier timestamp) record due to LWW
+        let result = write_back_merge(&wal, &report, &wal_path, "col", "a", "b", None)
+            .await
+            .unwrap();
+
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.written_entries.len(), 1);
+        assert_eq!(result.first_lsn, 1);
+        assert_eq!(result.last_lsn, 1);
+
+        // Verify the written operation contains the left record
+        match &result.written_entries[0].operation {
+            proximadb_storage_common::CanonicalOperation::RecordUpsert { record, .. } => {
+                assert_eq!(record.oid, "shared");
+                assert!(record.props.contains_key("side"));
+                assert_eq!(record.origin.as_deref(), Some("branch_merge:a:b"));
+            }
+            _ => panic!("Expected RecordUpsert"),
+        }
+    }
+
+    #[tokio::test]
+    async fn write_back_merge_stamps_origin_on_unilateral_records() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let wal_path = temp_dir.path().join("test.wal");
+
+        // Disjoint OIDs → unilateral path on both sides
+        let wal = vec![
+            upsert_canonical_entry(3, "left-only", Some("a"), 100),
+            upsert_canonical_entry(5, "right-only", Some("b"), 200),
+        ];
+
+        let report = merge_branches(&wal, "a", "b").unwrap();
+        let result = write_back_merge(&wal, &report, &wal_path, "col", "a", "b", None)
+            .await
+            .unwrap()
+            .expect("write_back_merge should return Some");
+
+        assert_eq!(result.written_entries.len(), 2);
+        for entry in &result.written_entries {
+            match &entry.operation {
+                proximadb_storage_common::CanonicalOperation::RecordUpsert { record, .. } => {
+                    assert_eq!(
+                        record.origin.as_deref(),
+                        Some("branch_merge:a:b"),
+                        "every merged record must carry the branch-merge origin"
+                    );
+                }
+                other => panic!("expected RecordUpsert, got {:?}", other),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn write_back_merge_handles_both_deleted_resolution() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let wal_path = temp_dir.path().join("test.wal");
+
+        // Create WAL entries where one side is a tombstone
+        let mut left_rec = branch_record("shared", Some("a"));
+        left_rec.valid_to_ns = Some(0);
+        left_rec.embeddings = Vec::new();
+        left_rec.origin = Some("delete".to_string());
+        let right_rec = branch_record("shared", Some("b"));
+
+        let wal = vec![
+            upsert_record_canonical_entry(3, 50, rec_default()),
+            upsert_record_canonical_entry(5, 100, left_rec),
+            upsert_record_canonical_entry(7, 200, right_rec),
+        ];
+
+        let report = merge_branches(&wal, "a", "b").unwrap();
+
+        let result = write_back_merge(&wal, &report, &wal_path, "col", "a", "b", None)
+            .await
+            .unwrap();
+
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.written_entries.len(), 1);
+
+        // Should write a delete operation
+        match &result.written_entries[0].operation {
+            proximadb_storage_common::CanonicalOperation::RecordDelete { oid, .. } => {
+                assert_eq!(oid, "shared");
+            }
+            _ => panic!("Expected RecordDelete"),
+        }
+    }
+
+    #[tokio::test]
+    async fn write_back_merge_handles_union_labels_resolution() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let wal_path = temp_dir.path().join("test.wal");
+
+        // Create WAL entries for label conflict
+        let base = branch_record("shared", None);
+        let mut left = branch_record("shared", Some("a"));
+        left.labels =
+            proximadb_records::LabelSet::from(vec!["base".to_string(), "left".to_string()]);
+        let mut right = branch_record("shared", Some("b"));
+        right.labels =
+            proximadb_records::LabelSet::from(vec!["base".to_string(), "right".to_string()]);
+
+        let wal = vec![
+            upsert_record_canonical_entry(3, 50, base),
+            upsert_record_canonical_entry(5, 100, left),
+            upsert_record_canonical_entry(7, 200, right),
+        ];
+
+        let report = merge_branches(&wal, "a", "b").unwrap();
+
+        let result = write_back_merge(&wal, &report, &wal_path, "col", "a", "b", None)
+            .await
+            .unwrap();
+
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.written_entries.len(), 1);
+
+        // Verify merged labels contain all unique labels
+        match &result.written_entries[0].operation {
+            proximadb_storage_common::CanonicalOperation::RecordUpsert { record, .. } => {
+                assert_eq!(record.oid, "shared");
+                let labels: Vec<&str> = record.labels.iter().map(|s| s.as_str()).collect();
+                assert_eq!(labels.len(), 3);
+                assert!(labels.contains(&"base"));
+                assert!(labels.contains(&"left"));
+                assert!(labels.contains(&"right"));
+            }
+            _ => panic!("Expected RecordUpsert"),
+        }
+    }
+
+    #[tokio::test]
+    async fn write_back_merge_handles_unilateral_mutations() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let wal_path = temp_dir.path().join("test.wal");
+
+        // Create WAL entries with no conflicts (disjoint OIDs)
+        let wal = vec![
+            upsert_canonical_entry(3, "left-only", Some("a"), 100),
+            upsert_canonical_entry(5, "right-only", Some("b"), 200),
+        ];
+
+        let report = merge_branches(&wal, "a", "b").unwrap();
+
+        let result = write_back_merge(&wal, &report, &wal_path, "col", "a", "b", None)
+            .await
+            .unwrap();
+
+        assert!(result.is_some());
+        let result = result.unwrap();
+        // Both unilateral records should be written
+        assert_eq!(result.written_entries.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn write_back_merge_returns_none_for_empty_operations() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let wal_path = temp_dir.path().join("test.wal");
+
+        // Empty WAL
+        let result = write_back_merge(
+            &[],
+            &MergeReport {
+                merge_base_lsn: 0,
+                left_events: vec![],
+                right_events: vec![],
+                conflicts: vec![],
+                resolutions: vec![],
+            },
+            &wal_path,
+            "col",
+            "a",
+            "b",
+            None,
+        )
+        .await
+        .unwrap();
+
+        assert!(result.is_none());
     }
 }

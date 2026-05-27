@@ -252,12 +252,6 @@ pub async fn merge_graph_branch(
             "target_branch must not be empty".to_string(),
         ));
     }
-    if !request.dry_run {
-        return Err(ApiError::NotImplemented(
-            "graph branch merge commit/write-back is not implemented; retry with dry_run=true"
-                .to_string(),
-        ));
-    }
 
     let wal_path = graph_branch_merge_wal_path(&state);
     if !tokio::fs::try_exists(&wal_path).await.map_err(|err| {
@@ -292,11 +286,37 @@ pub async fn merge_graph_branch(
             ))
         })?;
 
+    // If not dry-run, write the merged records to WAL
+    let write_back_result = if !request.dry_run {
+        match crate::graph::merge::write_back_merge(
+            &collection_entries,
+            &report,
+            &wal_path,
+            &collection,
+            &branch,
+            &request.target_branch,
+            request.tenant_id.clone(),
+        )
+        .await
+        {
+            Ok(Some(result)) => Some(result),
+            Ok(None) => None, // Nothing to write
+            Err(err) => {
+                return Err(ApiError::Internal(format!(
+                    "merge write-back failed: {}",
+                    err
+                )));
+            }
+        }
+    } else {
+        None
+    };
+
     Ok(JsonResponse(serde_json::json!({
         "collection": collection,
         "source_branch": branch,
         "target_branch": request.target_branch,
-        "dry_run": true,
+        "dry_run": request.dry_run,
         "merge_base_lsn": report.merge_base_lsn,
         "left_events": report.left_events,
         "right_events": report.right_events,
@@ -308,6 +328,14 @@ pub async fn merge_graph_branch(
             "conflict_count": report.conflicts.len(),
             "resolution_count": report.resolutions.len(),
             "wal_path": wal_path.display().to_string()
+        },
+        "write_back": match write_back_result {
+            Some(result) => serde_json::json!({
+                "first_lsn": result.first_lsn,
+                "last_lsn": result.last_lsn,
+                "entries_written": result.written_entries.len()
+            }),
+            None => serde_json::json!(null)
         }
     })))
 }
@@ -376,6 +404,8 @@ pub struct GraphBranchMergeRequest {
     /// Dry-run returns the ADR-012 merge report without writing a merge commit.
     #[serde(default = "default_graph_branch_merge_dry_run")]
     pub dry_run: bool,
+    /// Optional tenant ID for multi-tenant deployments.
+    pub tenant_id: Option<String>,
 }
 
 fn default_graph_branch_merge_target() -> String {
