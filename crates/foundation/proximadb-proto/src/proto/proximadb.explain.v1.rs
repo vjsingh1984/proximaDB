@@ -113,6 +113,8 @@ pub enum NodeType {
     NodeTypeHybridSearch = 50,
     NodeTypeFilterContract = 51,
     NodeTypeCandidateSet = 52,
+    /// Multi-phase rank pipeline (RERANK SRF surface, R-7c.4c.1)
+    NodeTypeRerank = 53,
     NodeTypeMock = 99,
 }
 
@@ -146,6 +148,7 @@ impl NodeType {
             NodeType::NodeTypeHybridSearch => "NODE_TYPE_HYBRID_SEARCH",
             NodeType::NodeTypeFilterContract => "NODE_TYPE_FILTER_CONTRACT",
             NodeType::NodeTypeCandidateSet => "NODE_TYPE_CANDIDATE_SET",
+            NodeType::NodeTypeRerank => "NODE_TYPE_RERANK",
             NodeType::NodeTypeMock => "NODE_TYPE_MOCK",
         }
     }
@@ -173,6 +176,8 @@ pub struct NodeDetails {
     pub graph_scan: ::core::option::Option<GraphScanDetails>,
     #[prost(message, optional, tag = "10")]
     pub hybrid_search: ::core::option::Option<HybridSearchDetails>,
+    #[prost(message, optional, tag = "11")]
+    pub rerank: ::core::option::Option<RerankDetails>,
     #[prost(message, optional, tag = "100")]
     pub additional_metadata: ::core::option::Option<::prost_types::Struct>,
 }
@@ -373,6 +378,24 @@ pub struct StrategyMetrics {
     pub candidates_found: i32,
     #[prost(double, tag = "3")]
     pub recall: f64,
+}
+
+/// RerankDetails describes a multi-phase rank-pipeline (RERANK SRF)
+/// plan node (R-7c.4c.1). `rank_profile` is empty on the
+/// retrieval-only path. `executed_phase` is filled only with
+/// ANALYZE.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct RerankDetails {
+    #[prost(string, tag = "1")]
+    pub collection: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub query_text: ::prost::alloc::string::String,
+    #[prost(int32, tag = "3")]
+    pub k: i32,
+    #[prost(string, tag = "4")]
+    pub rank_profile: ::prost::alloc::string::String,
+    #[prost(string, tag = "5")]
+    pub executed_phase: ::prost::alloc::string::String,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]

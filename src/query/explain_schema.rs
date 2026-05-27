@@ -39,7 +39,7 @@ use tracing::info;
 
 use crate::proto::explain::v1::{
     ExecutionStats, ExplainFormat, ExplainPlan, ExplainPlanRequest, ExplainPlanResponse,
-    ExplainWarning, NodeDetails, NodeType, PlanMetadata, PlanNode,
+    ExplainWarning, NodeDetails, NodeType, PlanMetadata, PlanNode, RerankDetails,
 };
 
 /// Plan context for explain operations
@@ -277,6 +277,86 @@ fn create_placeholder_plan_nodes(query: &str) -> Vec<PlanNode> {
     ]
 }
 
+/// Convert a federated optimizer plan node into the proto explain
+/// `PlanNode` shape (R-7c.4c.1 EXPLAIN integration).
+///
+/// Only handles leaf node types today — RerankSearch, VectorSearch,
+/// Scan. Other variants fall back to an unknown placeholder with a
+/// descriptive display_name so callers still see *something* in the
+/// EXPLAIN output. The full converter (joins, projections, etc.)
+/// lands when the federated → proto bridge is fleshed out.
+pub fn federated_node_to_explain(
+    node: &crate::query::federated::optimizer::PlanNode,
+    node_id: String,
+) -> PlanNode {
+    use crate::query::federated::optimizer::PlanNodeType as Fpn;
+    let (proto_node_type, display_name, description, node_details) = match &node.node_type {
+        Fpn::RerankSearch {
+            collection,
+            query_text,
+            k,
+            rank_profile,
+            ..
+        } => (
+            NodeType::NodeTypeRerank,
+            format!("Rerank({collection})"),
+            format!(
+                "Multi-phase rank pipeline; k={k}{}",
+                rank_profile
+                    .as_deref()
+                    .map(|p| format!(", profile={p}"))
+                    .unwrap_or_default(),
+            ),
+            Some(NodeDetails {
+                rerank: Some(RerankDetails {
+                    collection: collection.clone(),
+                    query_text: query_text.clone(),
+                    k: *k as i32,
+                    rank_profile: rank_profile.clone().unwrap_or_default(),
+                    executed_phase: String::new(),
+                }),
+                ..Default::default()
+            }),
+        ),
+        Fpn::VectorSearch {
+            collection, top_k, ..
+        } => (
+            NodeType::NodeTypeVectorSearch,
+            format!("VectorSearch({collection})"),
+            format!("Vector similarity search; top_k={top_k}"),
+            None,
+        ),
+        Fpn::Scan {
+            target, model_type, ..
+        } => (
+            NodeType::NodeTypeScan,
+            format!("Scan({target})"),
+            format!("Scan over model {model_type:?}"),
+            None,
+        ),
+        other => (
+            NodeType::NodeTypeUnknown,
+            format!("{other:?}"),
+            "Unsupported plan node (EXPLAIN converter incomplete)".to_string(),
+            None,
+        ),
+    };
+    PlanNode {
+        node_id,
+        node_type: proto_node_type as i32,
+        display_name,
+        description,
+        parent_ids: vec![],
+        child_ids: vec![],
+        estimated_cost: node.estimated_cost,
+        estimated_rows: node.estimated_rows as i64,
+        actual_rows: 0,
+        node_details,
+        node_stats: None,
+        hints: vec![],
+    }
+}
+
 /// Format explain plan according to requested format
 pub fn format_explain_plan(plan: &ExplainPlan, format: ExplainFormat) -> String {
     match format {
@@ -398,6 +478,80 @@ mod tests {
         let formatted = format_explain_plan_text(&plan);
         assert!(formatted.contains("Query Plan: test_plan"));
         assert!(formatted.contains("Query Type:"));
+    }
+
+    // ---------------- R-7c.4c.1: RerankSearch → EXPLAIN ----------------
+
+    #[test]
+    fn test_federated_node_to_explain_rerank_emits_node_type_rerank_with_details() {
+        // A federated RerankSearch plan node must lower into
+        // proto NodeType::NodeTypeRerank with RerankDetails populated
+        // from the source variant, so EXPLAIN output exposes
+        // collection/query_text/k/rank_profile to the caller.
+        use crate::query::federated::optimizer::{PlanNode, PlanNodeType, VectorSource};
+        use crate::query::capability::CapabilitySet;
+
+        let fed_node = PlanNode {
+            id: 0,
+            node_type: PlanNodeType::RerankSearch {
+                collection: "docs".to_string(),
+                query_text: "laptop computer".to_string(),
+                query_vector_source: VectorSource::Literal(vec![0.1, 0.2]),
+                k: 25,
+                rank_profile: Some("semantic_plus_ce".to_string()),
+            },
+            estimated_cost: 25.0,
+            estimated_rows: 25,
+            output_columns: vec!["id".to_string(), "score".to_string()],
+            required_capabilities: CapabilitySet::new(),
+        };
+        let explain_node = federated_node_to_explain(&fed_node, "n0".to_string());
+        assert_eq!(explain_node.node_type, NodeType::NodeTypeRerank as i32);
+        assert_eq!(explain_node.display_name, "Rerank(docs)");
+        assert!(explain_node.description.contains("k=25"));
+        assert!(explain_node.description.contains("profile=semantic_plus_ce"));
+        assert!((explain_node.estimated_cost - 25.0).abs() < f64::EPSILON);
+        assert_eq!(explain_node.estimated_rows, 25);
+
+        let details = explain_node
+            .node_details
+            .expect("rerank node must have node_details");
+        let rerank = details.rerank.expect("rerank details must be set");
+        assert_eq!(rerank.collection, "docs");
+        assert_eq!(rerank.query_text, "laptop computer");
+        assert_eq!(rerank.k, 25);
+        assert_eq!(rerank.rank_profile, "semantic_plus_ce");
+        // executed_phase is empty until ANALYZE is wired through.
+        assert_eq!(rerank.executed_phase, "");
+    }
+
+    #[test]
+    fn test_federated_node_to_explain_rerank_no_profile_emits_empty_rank_profile() {
+        // Retrieval-only path (no rank_profile) must surface as an
+        // empty string in RerankDetails.rank_profile and the
+        // description must NOT include "profile=" — keeping the
+        // EXPLAIN output honest about whether second-phase will run.
+        use crate::query::federated::optimizer::{PlanNode, PlanNodeType, VectorSource};
+        use crate::query::capability::CapabilitySet;
+
+        let fed_node = PlanNode {
+            id: 0,
+            node_type: PlanNodeType::RerankSearch {
+                collection: "docs".to_string(),
+                query_text: "q".to_string(),
+                query_vector_source: VectorSource::Literal(vec![0.5]),
+                k: 10,
+                rank_profile: None,
+            },
+            estimated_cost: 10.0,
+            estimated_rows: 10,
+            output_columns: vec![],
+            required_capabilities: CapabilitySet::new(),
+        };
+        let explain_node = federated_node_to_explain(&fed_node, "n0".to_string());
+        assert!(!explain_node.description.contains("profile="));
+        let rerank = explain_node.node_details.unwrap().rerank.unwrap();
+        assert_eq!(rerank.rank_profile, "");
     }
 
     #[test]

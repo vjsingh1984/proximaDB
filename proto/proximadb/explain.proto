@@ -131,6 +131,8 @@ enum NodeType {
   NODE_TYPE_HYBRID_SEARCH = 50;
   NODE_TYPE_FILTER_CONTRACT = 51;
   NODE_TYPE_CANDIDATE_SET = 52;
+  // Multi-phase rank pipeline (RERANK SRF surface, R-7c.4c.1)
+  NODE_TYPE_RERANK = 53;
 
   // Utility nodes
   NODE_TYPE_MOCK = 99;
@@ -149,6 +151,7 @@ message NodeDetails {
     SortDetails sort = 8;
     GraphScanDetails graph_scan = 9;
     HybridSearchDetails hybrid_search = 10;
+    RerankDetails rerank = 11;
   }
 
   // Additional metadata (for extensibility)
@@ -286,6 +289,23 @@ message StrategyMetrics {
   double latency_ms = 1;
   int32 candidates_found = 2;
   double recall = 3;
+}
+
+// RerankDetails describes a multi-phase rank-pipeline (RERANK SRF)
+// plan node (R-7c.4c.1). Mirrors the SQL RERANK(collection,
+// query_text, query_vector, k, rank_profile) surface — `rank_profile`
+// is absent on the retrieval-only path.
+message RerankDetails {
+  string collection = 1;
+  string query_text = 2;
+  int32 k = 3;
+  // Absent / empty when no profile is attached (retrieval-only path,
+  // same shape the SQL parser emits as `Option<String>::None`).
+  string rank_profile = 4;
+  // Optional: which path the executor took at run time. One of
+  // "first", "first_only", "second". Empty when EXPLAIN runs
+  // without ANALYZE.
+  string executed_phase = 5;
 }
 
 // NodeStats describes execution statistics for a single node
