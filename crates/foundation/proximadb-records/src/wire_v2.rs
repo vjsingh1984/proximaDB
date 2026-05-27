@@ -345,12 +345,15 @@ mod tests {
     }
 
     #[test]
-    fn branch_id_is_dropped_by_v1_bincode_path_serde_skip() {
-        // ProximaRecord uses #[serde(skip, default)] on branch_id so any
-        // direct bincode of ProximaRecord (V1 wire path) drops the field.
-        // This guarantees old V1 frames continue to deserialize correctly
-        // (as branch_id = None) and that we don't accidentally start
-        // writing branch_id onto the V1 wire mid-rollout.
+    fn branch_id_survives_v1_bincode_roundtrip() {
+        // TD-072 (2026-05-27): branch_id was originally `#[serde(skip)]` to
+        // preserve the V1 bincode wire — but that silently dropped the
+        // field through the canonical WAL (rmp_serde named-field) too,
+        // structurally breaking the merge endpoint. The fix flipped the
+        // attribute to `#[serde(default)]`. This test pins the new
+        // contract: V1 bincode now carries branch_id end-to-end. No
+        // production code bincode-serializes ProximaRecord directly, so
+        // there's no on-disk artifact to migrate.
         let original = ProximaRecord {
             oid: "node-2".to_string(),
             branch_id: Some("dev".to_string()),
@@ -359,7 +362,7 @@ mod tests {
         let bytes = bincode::serialize(&original).expect("serialize v1");
         let recovered: ProximaRecord =
             bincode::deserialize(&bytes).expect("deserialize v1");
-        assert_eq!(recovered.branch_id, None);
+        assert_eq!(recovered.branch_id.as_deref(), Some("dev"));
     }
 
     #[test]

@@ -28,3 +28,5 @@ half = { version = "2.7", features = ["serde"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 # PR 2: schema_version skip-on-bincode round-trip tests.
 bincode = { workspace = true }
+# TD-072: branch_id-survives-rmp roundtrip tests (matches canonical WAL encoder).
+rmp-serde = "1.1"

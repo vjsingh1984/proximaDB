@@ -840,12 +840,18 @@ pub struct ProximaRecord {
     // === Branch identity (ADR-012 graph branch merge) ===
     /// Branch identifier this record belongs to. `None` = main / default branch.
     ///
-    /// **Wire visibility (T3.1 Slice 2, 2026-05-26)**: the runtime field is
-    /// `#[serde(skip, default)]` so the legacy V1 bincode WAL format and the
-    /// JSON / proto bridges stay byte-compatible. The V2 wire format
-    /// (`ProximaRecordV2` in `wire_v2.rs`) DOES carry this field — that's
-    /// the path the WAL filter (T3.1 Slice 3) will read.
-    #[serde(skip, default)]
+    /// **Wire visibility (TD-072 fix, 2026-05-27)**: this field IS serialized
+    /// by every serde encoder. Originally Slice 2 (`1dca6ea7b`) set
+    /// `#[serde(skip, default)]` to protect the V1 bincode wire — but that
+    /// silently dropped `branch_id` from the canonical WAL too (which uses
+    /// `rmp_serde::to_vec_named`), structurally breaking the REST endpoint
+    /// `POST /api/v1/collections/:col/branches/:b/merge`. TD-072 flipped the
+    /// attribute to `#[serde(default)]`: rmp_serde named-field is
+    /// schema-tolerant so old readers ignore the field, and no production
+    /// code bincode-serializes `ProximaRecord` directly. See
+    /// `docs/10-quality/TECHNICAL_DEBT.adoc#TD-072` and
+    /// `tests/graph_branch_merge_integration_test.rs`.
+    #[serde(default)]
     pub branch_id: Option<String>,
 }
 
@@ -1703,6 +1709,49 @@ text\\x04\\x00\\x00\\x00\\x00\\x00\\x00\\x00\
         let parsed: ProximaRecord = bincode::deserialize(&bytes).unwrap();
         assert_eq!(parsed.schema_version, schema_version::V1);
         assert_eq!(parsed.oid, "oid-bincode");
+    }
+
+    // === TD-072: branch_id survives canonical-WAL roundtrip ===
+    //
+    // Regression tests for the bug Slice 8 surfaced: the canonical WAL
+    // (rmp_serde::to_vec_named) was dropping `branch_id` because of the
+    // prior `#[serde(skip)]` attribute, structurally breaking the merge
+    // endpoint. The fix flipped the attribute to `#[serde(default)]`; these
+    // tests pin that behavior so it can't silently regress.
+
+    #[test]
+    fn branch_id_survives_rmp_serde_named_roundtrip() {
+        let mut record = ProximaRecord::default();
+        record.oid = "oid-rmp".into();
+        record.branch_id = Some("dev".to_string());
+        let bytes = rmp_serde::to_vec_named(&record).expect("rmp encode");
+        let decoded: ProximaRecord = rmp_serde::from_slice(&bytes).expect("rmp decode");
+        assert_eq!(decoded.branch_id.as_deref(), Some("dev"));
+        assert_eq!(decoded.oid, "oid-rmp");
+    }
+
+    #[test]
+    fn branch_id_survives_bincode_roundtrip() {
+        let mut record = ProximaRecord::default();
+        record.oid = "oid-bincode".into();
+        record.branch_id = Some("feature-x".to_string());
+        let bytes = bincode::serialize(&record).expect("bincode encode");
+        let decoded: ProximaRecord = bincode::deserialize(&bytes).expect("bincode decode");
+        assert_eq!(decoded.branch_id.as_deref(), Some("feature-x"));
+        assert_eq!(decoded.oid, "oid-bincode");
+    }
+
+    #[test]
+    fn branch_id_defaults_to_none_when_absent_in_rmp_named() {
+        // The #[serde(default)] half of the attribute: a record encoded
+        // without setting branch_id (or by an older writer that lacked the
+        // field entirely) must decode to None, not error.
+        let mut record = ProximaRecord::default();
+        record.oid = "oid-no-branch".into();
+        let bytes = rmp_serde::to_vec_named(&record).expect("rmp encode");
+        let decoded: ProximaRecord = rmp_serde::from_slice(&bytes).expect("rmp decode");
+        assert!(decoded.branch_id.is_none());
+        assert_eq!(decoded.oid, "oid-no-branch");
     }
 
     // === PR 3: validate_records_for_schema_v1 ===
