@@ -970,10 +970,10 @@ physical layouts.
 | Predicate-Aware Vector Search Correctness And Fallback Reporting
 | P7
 | CRITICAL
-| Open
+| In Progress
 | Post-filtered ANN can return fewer than the requested matching top-k under tenant/RLS, time, branch, and typed metadata filters. This is a correctness and security surface, not just a latency issue.
 | 6-8 weeks
-| Extend `VectorTopK` planning to state exact, predicate-aware ANN, prefilter-exact, or post-filter fallback. Push tenant/RLS and typed predicates into candidate generation where supported. `EXPLAIN` must disclose recall/failure risk for fallback plans. Coordinates with Phase C in the overhaul spec.
+| Active blueprint: `docs/12-design/TD_064_PREDICATE_AWARE_VECTOR_SEARCH_DESIGN_2026_05_27.adoc`. Extend ADR-011 `VectorTopK` planning to state PreFilter, Inline predicate-aware ANN, or PostFilter fallback. Push tenant/RLS and typed predicates into candidate generation where supported. `EXPLAIN` must disclose recall/failure risk for fallback plans. Coordinates with Phase C in the overhaul spec.
 
 | TD-065
 | Document Service In-Memory Map As Temporary Durable Source
@@ -1037,4 +1037,13 @@ physical layouts.
 | `VectorOperationsService::insert_batch_internal` now validates records before WAL/bulk routing, and `unified_search_with_tenant_context` validates query vectors before cache lookup/execution. Dimension mismatches and NaN/Inf are rejected at the shared vector service boundary.
 | Done
 | *RESOLVED 2026-05-26*: implementation verified by `cargo check -p proximadb --lib` and `cargo test -p proximadb --lib services::operations::vectors::legacy::index_first_search_tests -- --nocapture` (18 passed, including insert/search non-finite and dimension rejection tests). Follow-up can add REST/gRPC response-shape coverage, but the shared hot-path gap is closed.
+
+| TD-072
+| `ProximaRecord.branch_id` is `#[serde(skip)]` — invisible to canonical WAL → REST branch-merge endpoint structurally broken
+| P3
+| HIGH
+| Open
+| Slice 2 of T3.1 (commit `1dca6ea7b`) annotated `crates/foundation/proximadb-records/src/lib.rs:848` with `#[serde(skip, default)]` to keep the V1 bincode wire format stable. The canonical WAL uses `rmp_serde::to_vec_named` (`src/services/canonical_wal.rs:225`), which is schema-tolerant by itself — but `#[serde(skip)]` drops `branch_id` from the serialization regardless of encoder. Result: every record read back via `FramedTableWalAppender::read_entries_from_path` has `branch_id: None`, so `merge_branches` cannot identify branch entries and returns `None`. The REST endpoint `POST /api/v1/collections/:collection/branches/:branch/merge` is therefore non-functional for any real-world data; the 6 unit tests in `src/graph/merge.rs` only pass because they construct `CanonicalWalEntry` via struct literals (bypassing the WAL roundtrip).
+| 1-2 days
+| **DISCOVERED 2026-05-27** by `tests/graph_branch_merge_integration_test.rs` (Slice 8). All 5 tests fail at `merge_branches(...).expect("seed produced mergeable branches")` because `branch_id` is lost in the WAL roundtrip. Tests are marked `#[ignore]` with a pointer to this TD pending the fix. **Two fix options:** (A) Switch the canonical WAL encoding from `ProximaRecord` to `ProximaRecordV2` (which carries `branch_id` natively without `#[serde(skip)]`); this is a WAL format change and needs an upgrade path for existing data. (B) Add `branch_id: Option<String>` directly to `CanonicalWalEntry` in `crates/storage/proximadb-storage-common/src/wal_entry.rs` — branch identity becomes a WAL-frame property rather than a record property, which is the cleaner layering (the WAL is the merge boundary, not the record). Either way the fix is its own slice with careful blast-radius review (`ProximaRecord` has 551+ construction sites in the workspace).
 |===
