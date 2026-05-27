@@ -192,6 +192,18 @@ impl FederatedQueryContext {
         self
     }
 
+    /// Wire the rank-pipeline singleton so SQL RERANK(...) shares the
+    /// REST profile registry + candidate provider + scorer wiring
+    /// (R-7c.4d). Without this, the federated executor falls back to
+    /// the first-phase-only stub for any rank profile.
+    pub fn with_rank_services(
+        mut self,
+        rank_services: Arc<crate::network::rest::v1::rank::RankServices>,
+    ) -> Self {
+        self.executor = self.executor.with_rank_services(rank_services);
+        self
+    }
+
     /// Create a new federated query context
     pub fn new(storage: Arc<MultiModelStorageFacade>) -> Self {
         Self {
