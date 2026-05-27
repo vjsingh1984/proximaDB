@@ -122,22 +122,16 @@ impl Drop for V2InsertSearchServer {
 /// Once that wiring lands, remove `#[ignore]` and this test will
 /// validate fp16 INSERT+SEARCH end-to-end (cosine ≈ 1.0 for an exact-
 /// match query proves the fp16 round-trip preserves direction).
-/// Companion to the ignored SEARCH test below: proves the v2 records/batch
-/// INSERT path converts vectors to fp16 at write time by scraping the
-/// canonical_bytes Prometheus metric.
+/// Proves the v2 records/batch INSERT path converts vectors to the
+/// collection's canonical precision (fp16 here) at write time, by
+/// scraping the per-precision canonical_bytes Prometheus metric.
 ///
-/// **IGNORED — found:** the v2 records/batch INSERT path does NOT emit
-/// `proximadb_embedding_precision_canonical_bytes` for the collection.
-/// The v1 `/api/v1/vectors/batch` path does (proven by
-/// `fp16_network_e2e::rest_insert_into_fp16_collection_increments_canonical_bytes_metric`),
-/// so v2 INSERT must route through a different writer that bypasses
-/// the precision-metric emission AND the search-index update (see the
-/// ignored search test below — same root cause).
-///
-/// Once v2 INSERT is wired through the canonical write path that emits
-/// metrics + updates the index, remove `#[ignore]` and this asserts
-/// the fp16 byte accounting matches expectation (n × dim × 2 B/fp16).
-#[ignore = "v2 records/batch INSERT bypasses canonical_bytes metric — pre-existing gap"]
+/// Pre-fix: the v2 handler skipped the precision coercion that v1 does
+/// — records arrived as fp32 off the wire and the metric accumulated
+/// under precision="fp32" even for fp16 collections. Fixed by adding
+/// the same precision_resolver+coerce_to_precision block to
+/// `handle_record_batch_for_tenant` that v1's
+/// `handle_vector_batch_v1_internal` already had.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rest_v2_insert_into_fp16_collection_accumulates_canonical_bytes_metric() {
     let server = V2InsertSearchServer::start().await.expect("server start");
@@ -337,7 +331,8 @@ async fn rest_v2_insert_and_search_fp16_collection_round_trips() {
         .await
         .expect("v2 search");
     let search_status = search_resp.status();
-    let search_body: serde_json::Value = search_resp.json().await.unwrap_or(serde_json::Value::Null);
+    let search_body: serde_json::Value =
+        search_resp.json().await.unwrap_or(serde_json::Value::Null);
     assert!(
         search_status.is_success(),
         "v2 search failed: {search_status} {search_body}"
