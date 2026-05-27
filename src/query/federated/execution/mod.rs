@@ -238,6 +238,11 @@ pub struct FederatedExecutor {
     /// same engine resolution, WAL visibility, and scoring path as direct search.
     vector_operations_service:
         Option<Arc<crate::services::operations::vectors::VectorOperationsService>>,
+    /// Rank-pipeline singleton (R-7c.4c.2). When wired, RERANK(...) SRF
+    /// dispatches second-phase rescoring via the registered profile +
+    /// scorer; when `None`, RERANK degrades to first-phase retrieval
+    /// only (the R-7c.4c.1 stub path).
+    rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
     /// Execution configuration
     config: ExecutionConfig,
 }
@@ -273,6 +278,7 @@ impl FederatedExecutor {
             storage,
             collection_port: None,
             vector_operations_service: None,
+            rank_services: None,
             config: ExecutionConfig::default(),
         }
     }
@@ -283,6 +289,7 @@ impl FederatedExecutor {
             storage,
             collection_port: None,
             vector_operations_service: None,
+            rank_services: None,
             config,
         }
     }
@@ -305,6 +312,18 @@ impl FederatedExecutor {
         >,
     ) -> Self {
         self.vector_operations_service = Some(vector_operations_service);
+        self
+    }
+
+    /// Wire the rank-pipeline singleton (R-7c.4c.2). When set, RERANK(...)
+    /// SRF dispatches second-phase rescoring via the registered profile +
+    /// scorer. Without it, RERANK degrades to first-phase retrieval only
+    /// (the R-7c.4c.1 stub path).
+    pub fn with_rank_services(
+        mut self,
+        rank_services: Arc<crate::network::rest::v1::rank::RankServices>,
+    ) -> Self {
+        self.rank_services = Some(rank_services);
         self
     }
 
@@ -713,13 +732,19 @@ impl FederatedExecutor {
         Ok(FederatedExecutionResult::from_batch(batch))
     }
 
-    /// Execute RERANK SRF (R-7c.4c.1).
+    /// Execute RERANK SRF.
     ///
-    /// First-phase retrieval lands today; the second-phase rescorer
-    /// dispatch lands in R-7c.4c.2 once `RankServices` is plumbed
-    /// into `FederatedExecutor`. Until then a non-`None` profile is
-    /// surfaced as `phase = "first_only"` so callers can detect the
-    /// degraded path.
+    /// R-7c.4c.1 landed the first-phase-only stub; R-7c.4c.2 wires the
+    /// real second-phase dispatch through [`RankServices`]. The two
+    /// paths still share the same 5-column output schema
+    /// (`id` / `score` / `phase` / `match_features` / `summary_features`),
+    /// so downstream SELECTs are stable regardless of which path runs.
+    ///
+    /// Phase column values:
+    /// - `"first"` — retrieval-only (no `rank_profile`)
+    /// - `"first_only"` — profile requested but [`RankServices`] not
+    ///   wired (degraded path)
+    /// - `"second"` — full rank pipeline ran (profile + rank_services)
     async fn execute_rerank_search(
         &self,
         collection: &str,
@@ -736,6 +761,23 @@ impl FederatedExecutor {
             Field::new("summary_features", DataType::Utf8, true),
         ]));
 
+        // R-7c.4c.2: full rank pipeline when rank_services is wired AND
+        // a profile is requested. Other cases fall through to the
+        // first-phase-only path below.
+        if let (Some(rank_services), Some(profile_name)) = (&self.rank_services, rank_profile) {
+            return self
+                .execute_rerank_full_pipeline(
+                    rank_services.as_ref(),
+                    collection,
+                    query_text,
+                    query_vector_source,
+                    k,
+                    profile_name,
+                    schema,
+                )
+                .await;
+        }
+
         // Reuse the dense-retrieval path for the first phase.
         let retrieval = self
             .execute_vector_search(collection, query_vector_source, k)
@@ -744,9 +786,8 @@ impl FederatedExecutor {
             return Ok(FederatedExecutionResult::empty_with_schema(schema));
         }
 
-        // R-7c.4c.2 owns the second-phase rescorer dispatch. Until then
-        // we surface the degraded path via the `phase` column so the
-        // SRF caller can tell rescored from retrieval-only rows.
+        // Without RankServices, profile + first-phase-only is the
+        // degraded path; without profile it's retrieval-only.
         let phase_label = if rank_profile.is_some() {
             "first_only"
         } else {
@@ -786,10 +827,114 @@ impl FederatedExecutor {
             ],
         )?;
 
-        // `query_text` is unused in the stub today; R-7c.4c.2 threads
-        // it into the rank pipeline's QueryContext.query_text.
+        // `query_text` is unused in the stub path; the full-pipeline
+        // path above threads it into the rank pipeline's
+        // QueryContext.query_text.
         let _ = query_text;
 
+        Ok(FederatedExecutionResult::from_batch(batch))
+    }
+
+    /// Run the full rank pipeline through [`RankServices`] (R-7c.4c.2).
+    ///
+    /// Delegates to [`handle_rank_search`] so REST + SQL dispatch share
+    /// one code path (profile lookup, blueprint materialisation,
+    /// blocking phase runner, optional global cross-modal rescoring,
+    /// truncation, identifier rendering). The response shape
+    /// (`Vec<ScoredHitDto>`) is then projected back into the canonical
+    /// 5-column rerank Arrow schema so RERANK(...) consumers see the
+    /// same shape regardless of which path produced the rows.
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_rerank_full_pipeline(
+        &self,
+        rank_services: &crate::network::rest::v1::rank::RankServices,
+        collection: &str,
+        query_text: &str,
+        query_vector_source: &VectorSource,
+        k: usize,
+        profile_name: &str,
+        schema: Arc<Schema>,
+    ) -> Result<FederatedExecutionResult> {
+        let query_vector = self.resolve_query_vector(query_vector_source)?;
+        let req = crate::network::rest::v1::rank::RankSearchRequest {
+            collection: collection.to_string(),
+            query_vector,
+            query_text: if query_text.is_empty() {
+                None
+            } else {
+                Some(query_text.to_string())
+            },
+            k,
+            rank_profile: Some(profile_name.to_string()),
+            rank_overrides: None,
+        };
+
+        // Resolve the per-profile second-phase scorer (may be absent —
+        // matches `handle_rank_search`'s contract that a missing scorer
+        // skips the second phase).
+        let scorer = rank_services
+            .second_phase_scorers
+            .get(profile_name)
+            .map(|entry| entry.value().clone());
+
+        let response = crate::network::rest::v1::rank::handle_rank_search(
+            req,
+            rank_services.profile_registry.as_ref(),
+            rank_services.candidate_provider.as_ref(),
+            rank_services.blueprint_factory.clone(),
+            scorer,
+        )
+        .await
+        .map_err(|err| anyhow!("rerank pipeline error: {err}"))?;
+
+        Self::rerank_hits_to_batch(&response.hits, schema)
+    }
+
+    /// Project the wire-shape rerank hits into the canonical 5-column
+    /// Arrow batch. Extracted as a pure helper so the reshape is
+    /// testable without standing up the full [`RankServices`] +
+    /// pipeline scaffolding (R-7c.4c.2).
+    ///
+    /// `phase = "second"` flags rows produced by this path; the
+    /// first-phase-only stub path emits `"first"` or `"first_only"`
+    /// (see `execute_rerank_search`).
+    fn rerank_hits_to_batch(
+        hits: &[crate::network::rest::v1::rank::ScoredHitDto],
+        schema: Arc<Schema>,
+    ) -> Result<FederatedExecutionResult> {
+        if hits.is_empty() {
+            return Ok(FederatedExecutionResult::empty_with_schema(schema));
+        }
+        let n = hits.len();
+        let mut ids: Vec<String> = Vec::with_capacity(n);
+        let mut scores: Vec<f32> = Vec::with_capacity(n);
+        let mut match_feats: Vec<Option<String>> = Vec::with_capacity(n);
+        let mut summary_feats: Vec<Option<String>> = Vec::with_capacity(n);
+        for hit in hits.iter() {
+            ids.push(hit.id.clone());
+            scores.push(hit.score);
+            match_feats.push(if hit.match_features.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&hit.match_features).unwrap_or_default())
+            });
+            summary_feats.push(if hit.summary_features.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_string(&hit.summary_features).unwrap_or_default())
+            });
+        }
+        let phase: ArrayRef = Arc::new(StringArray::from(vec!["second".to_string(); n]));
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(StringArray::from(ids)) as ArrayRef,
+                Arc::new(Float32Array::from(scores)) as ArrayRef,
+                phase,
+                Arc::new(StringArray::from(match_feats)) as ArrayRef,
+                Arc::new(StringArray::from(summary_feats)) as ArrayRef,
+            ],
+        )?;
         Ok(FederatedExecutionResult::from_batch(batch))
     }
 

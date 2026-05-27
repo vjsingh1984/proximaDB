@@ -57,6 +57,111 @@ mod tests {
         assert!(executor.config.parallel_execution);
     }
 
+    // ---------------- R-7c.4c.2: rerank hits → Arrow batch ----------------
+
+    #[test]
+    fn test_rerank_hits_to_batch_emits_5_column_schema_with_second_phase() {
+        // The projection must emit the canonical 5-column rerank shape
+        // with phase = "second" so SRF consumers can distinguish full-
+        // pipeline rows from the first-phase-only stub path.
+        use crate::network::rest::v1::rank::{ScoreVectorDto, ScoredHitDto};
+        use arrow::array::{Float32Array, StringArray};
+
+        let hits = vec![
+            ScoredHitDto {
+                id: "doc-1".into(),
+                score: 0.87,
+                score_vector: Some(ScoreVectorDto {
+                    primary: 0.87,
+                    phase: 2,
+                    components: vec![],
+                }),
+                match_features: HashMap::from([("docid()".to_string(), 1.0)]),
+                summary_features: HashMap::new(),
+            },
+            ScoredHitDto {
+                id: "doc-2".into(),
+                score: 0.42,
+                score_vector: None,
+                match_features: HashMap::new(),
+                summary_features: HashMap::from([("bm25(body)".to_string(), 3.7)]),
+            },
+        ];
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("score", DataType::Float32, false),
+            Field::new("phase", DataType::Utf8, false),
+            Field::new("match_features", DataType::Utf8, true),
+            Field::new("summary_features", DataType::Utf8, true),
+        ]));
+        let result = FederatedExecutor::rerank_hits_to_batch(&hits, schema).unwrap();
+        let batch = &result.batches[0];
+        assert_eq!(batch.num_rows(), 2);
+        assert_eq!(batch.num_columns(), 5);
+
+        let ids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(ids.value(0), "doc-1");
+        assert_eq!(ids.value(1), "doc-2");
+
+        let scores = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .unwrap();
+        assert!((scores.value(0) - 0.87).abs() < 1e-5);
+
+        let phase = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(phase.value(0), "second");
+        assert_eq!(phase.value(1), "second");
+
+        let match_feats = batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        // Row 0 has match features → JSON string; row 1 doesn't → null.
+        assert!(!match_feats.is_null(0));
+        assert!(match_feats.value(0).contains("docid()"));
+        assert!(match_feats.is_null(1));
+
+        let summary_feats = batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        // Inverse of match_features: row 0 is null, row 1 has the
+        // summary feature serialized.
+        assert!(summary_feats.is_null(0));
+        assert!(!summary_feats.is_null(1));
+        assert!(summary_feats.value(1).contains("bm25(body)"));
+    }
+
+    #[test]
+    fn test_rerank_hits_to_batch_empty_returns_empty_result_with_schema() {
+        // Empty hits must produce an empty result that still carries
+        // the canonical 5-column schema, so downstream SELECT clauses
+        // resolve the same way regardless of whether the pipeline
+        // returned rows.
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("score", DataType::Float32, false),
+            Field::new("phase", DataType::Utf8, false),
+            Field::new("match_features", DataType::Utf8, true),
+            Field::new("summary_features", DataType::Utf8, true),
+        ]));
+        let result = FederatedExecutor::rerank_hits_to_batch(&[], schema.clone()).unwrap();
+        assert!(result.batches.is_empty());
+        assert_eq!(result.schema.fields().len(), 5);
+    }
+
     async fn seed_service_backed_graph() -> Arc<GraphOperationsService> {
         let service = Arc::new(GraphOperationsService::new());
         for graph_id in ["left", "right"] {
