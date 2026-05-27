@@ -56,9 +56,6 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use tracing::{debug, info, warn};
 
-
-
-
 use serde::{Deserialize, Serialize};
 
 use crate::cache::CatalogCache;
@@ -207,7 +204,10 @@ impl GlueCatalog {
             CatalogDataType::Json => "string".to_string(), // Glue doesn't have native JSON
             CatalogDataType::Vector => {
                 // Store as array<float> with dimension in comment
-                let dim = properties.get("dimension").map(String::as_str).unwrap_or("0");
+                let dim = properties
+                    .get("dimension")
+                    .map(String::as_str)
+                    .unwrap_or("0");
                 format!("array<float>({})", dim)
             }
             CatalogDataType::SparseVector => "map<int,float>".to_string(),
@@ -220,8 +220,14 @@ impl GlueCatalog {
 
     /// Create vector column comment for Glue
     fn vector_column_comment(properties: &HashMap<String, String>) -> String {
-        let dim = properties.get("dimension").map(String::as_str).unwrap_or("0");
-        let metric = properties.get("metric").map(String::as_str).unwrap_or("cosine");
+        let dim = properties
+            .get("dimension")
+            .map(String::as_str)
+            .unwrap_or("0");
+        let metric = properties
+            .get("metric")
+            .map(String::as_str)
+            .unwrap_or("cosine");
         format!("vector:{}:metric={}", dim, metric)
     }
 
@@ -734,8 +740,7 @@ impl Catalog for GlueCatalog {
         self.drop_table(from, false).await?;
 
         // Invalidate cache
-        self.cache
-            .invalidate_table_in_catalog(&self.name, from);
+        self.cache.invalidate_table_in_catalog(&self.name, from);
 
         info!("Renamed Glue table: {} -> {}", from, to);
         Ok(())

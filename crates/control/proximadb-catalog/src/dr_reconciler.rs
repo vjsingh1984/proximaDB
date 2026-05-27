@@ -19,9 +19,8 @@
 //! function itself — keeps the decision logic free of async lifetimes.
 
 use crate::collection_dr_policy::{
-    CollectionDrEvent, CollectionDrPolicy, DrEventType, DrHealth, DrHealthState,
-    DrProviderAdapter, DrState, ObjectProvider, ProviderError, ProviderObservedState,
-    ProviderReplicationBinding,
+    CollectionDrEvent, CollectionDrPolicy, DrEventType, DrHealth, DrHealthState, DrProviderAdapter,
+    DrState, ObjectProvider, ProviderError, ProviderObservedState, ProviderReplicationBinding,
 };
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -450,11 +449,7 @@ pub fn is_ready(entry: &BackoffEntry, now_ns: i64) -> bool {
 /// Compute the jittered delay for `attempt` (1-indexed). Pure helper
 /// — exponential base * 2^(attempt-1), capped at `max_delay_secs`,
 /// then multiplied by `uniform(1 - jitter, 1 + jitter)`.
-fn jittered_delay_ns(
-    policy: BackoffPolicy,
-    attempt: u32,
-    jitter_uniform_01: f64,
-) -> i64 {
+fn jittered_delay_ns(policy: BackoffPolicy, attempt: u32, jitter_uniform_01: f64) -> i64 {
     // Cap the shift to avoid overflow on absurd attempt counts.
     let shift = attempt.saturating_sub(1).min(30);
     let base_secs = (policy.initial_delay_secs as u64)
@@ -484,13 +479,8 @@ impl PerPolicyRateLimit {
     /// Attempt to reserve a provider call slot at `now_ns`. Returns
     /// true if the call is permitted (and updates `last_call_ns`),
     /// false if the caller should defer until later.
-    pub fn try_acquire(
-        &mut self,
-        policy: BackoffPolicy,
-        now_ns: i64,
-    ) -> bool {
-        let min_interval_ns =
-            (policy.min_call_interval_secs as i64).saturating_mul(1_000_000_000);
+    pub fn try_acquire(&mut self, policy: BackoffPolicy, now_ns: i64) -> bool {
+        let min_interval_ns = (policy.min_call_interval_secs as i64).saturating_mul(1_000_000_000);
         let allowed = match self.last_call_ns {
             None => true,
             Some(last) => now_ns.saturating_sub(last) >= min_interval_ns,
@@ -659,11 +649,7 @@ pub trait DrPolicyStore: Send + Sync {
     /// Release the lease if `holder_id` currently holds it. Idempotent
     /// — releasing a lease the caller doesn't hold is a no-op (so a
     /// crashed shard's stale release doesn't kick a fresh holder).
-    async fn release_lease(
-        &self,
-        policy_id: &str,
-        holder_id: &str,
-    ) -> Result<(), DrApiError>;
+    async fn release_lease(&self, policy_id: &str, holder_id: &str) -> Result<(), DrApiError>;
 
     /// Persist a state transition. Returns the new `policy_version`.
     /// Bumps `policy_version` because the contract S2 rule says state
@@ -687,11 +673,7 @@ pub trait DrPolicyStore: Send + Sync {
 
     /// Update the row's health. Health updates do NOT bump
     /// `policy_version` — they are reconciler observations only.
-    async fn update_health(
-        &self,
-        policy_id: &str,
-        health: DrHealth,
-    ) -> Result<(), DrApiError>;
+    async fn update_health(&self, policy_id: &str, health: DrHealth) -> Result<(), DrApiError>;
 
     /// Append a row to `xcatalog_collection_dr_events`. Append-only;
     /// the caller (driver) generates the `event_id`.
@@ -822,9 +804,7 @@ where
         let observed = match self.adapter.fetch_state(policy).await {
             Ok(o) => o,
             Err(e) => {
-                let outcome = self
-                    .handle_adapter_error(policy, e, "fetch_state")
-                    .await?;
+                let outcome = self.handle_adapter_error(policy, e, "fetch_state").await?;
                 return Ok((outcome, None));
             }
         };
@@ -858,8 +838,12 @@ where
             ReconcileDecision::RetireRule => self.do_retire(policy).await,
 
             ReconcileDecision::RepairDrift { reason } => {
-                self.emit_event(policy, DrEventType::DriftDetected, Some(format!("{reason:?}")))
-                    .await?;
+                self.emit_event(
+                    policy,
+                    DrEventType::DriftDetected,
+                    Some(format!("{reason:?}")),
+                )
+                .await?;
                 let outcome = self.do_ensure(policy, Some(reason)).await?;
                 // Successful repair → emit drift_repaired.
                 if matches!(outcome, ReconcileOutcome::RepairedDrift(_)) {
@@ -874,14 +858,14 @@ where
             }
 
             ReconcileDecision::MarkDrifted { reason } => {
-                self.set_health(
+                self.set_health(policy, DrHealthState::Drifted, Some(format!("{reason:?}")))
+                    .await?;
+                self.emit_event(
                     policy,
-                    DrHealthState::Drifted,
+                    DrEventType::DriftDetected,
                     Some(format!("{reason:?}")),
                 )
                 .await?;
-                self.emit_event(policy, DrEventType::DriftDetected, Some(format!("{reason:?}")))
-                    .await?;
                 Ok(ReconcileOutcome::MarkedDrifted(reason))
             }
 
@@ -922,15 +906,10 @@ where
             Ok(binding) => {
                 let new_version = self
                     .store
-                    .set_provider_binding(
-                        &policy.policy_id,
-                        binding,
-                        policy.policy_version,
-                    )
+                    .set_provider_binding(&policy.policy_id, binding, policy.policy_version)
                     .await?;
                 // Drive to Active if we were in PendingProviderProvisioning.
-                let next_state = if policy.state == DrState::PendingProviderProvisioning
-                {
+                let next_state = if policy.state == DrState::PendingProviderProvisioning {
                     Some(DrState::Active)
                 } else {
                     None
@@ -941,7 +920,8 @@ where
                         .await?;
                     self.emit_event(policy, DrEventType::Active, None).await?;
                 }
-                self.set_health(policy, DrHealthState::Healthy, None).await?;
+                self.set_health(policy, DrHealthState::Healthy, None)
+                    .await?;
                 Ok(match drift_reason {
                     Some(r) => ReconcileOutcome::RepairedDrift(r),
                     None => ReconcileOutcome::EnsuredRule {
@@ -953,18 +933,11 @@ where
         }
     }
 
-    async fn do_retire(
-        &self,
-        policy: &CollectionDrPolicy,
-    ) -> Result<ReconcileOutcome, DrApiError> {
+    async fn do_retire(&self, policy: &CollectionDrPolicy) -> Result<ReconcileOutcome, DrApiError> {
         match self.adapter.retire_rule(policy).await {
             Ok(()) => {
                 self.store
-                    .transition_state(
-                        &policy.policy_id,
-                        DrState::Retired,
-                        policy.policy_version,
-                    )
+                    .transition_state(&policy.policy_id, DrState::Retired, policy.policy_version)
                     .await?;
                 self.emit_event(policy, DrEventType::ProviderRuleDisabled, None)
                     .await?;
@@ -984,9 +957,7 @@ where
         if err.is_retryable() {
             // Transient: do not flip health, do not emit a blocking
             // event. The async loop's backoff layer (P3c) will retry.
-            return Ok(ReconcileOutcome::AdapterTransient(format!(
-                "{op}: {err}"
-            )));
+            return Ok(ReconcileOutcome::AdapterTransient(format!("{op}: {err}")));
         }
         let reason = match err {
             ProviderError::Misconfiguration(_) => BlockReason::ProviderMisconfiguration,
@@ -1160,8 +1131,7 @@ pub struct DrReconcilerShard<S, A> {
     store: Arc<S>,
     config: BackoffPolicy,
     backoffs: parking_lot::Mutex<std::collections::HashMap<String, BackoffEntry>>,
-    rate_limits:
-        parking_lot::Mutex<std::collections::HashMap<String, PerPolicyRateLimit>>,
+    rate_limits: parking_lot::Mutex<std::collections::HashMap<String, PerPolicyRateLimit>>,
     pause: parking_lot::Mutex<ShardPauseState>,
     now_ns: Arc<dyn Fn() -> i64 + Send + Sync>,
     /// Sampled per `apply_backoff_signal` call. Production wires
@@ -1312,12 +1282,7 @@ where
             // this path; the store always returns Acquired.
             let lease = self
                 .store
-                .acquire_lease(
-                    &policy.policy_id,
-                    &self.holder_id,
-                    self.lease_ttl_ns,
-                    now,
-                )
+                .acquire_lease(&policy.policy_id, &self.holder_id, self.lease_ttl_ns, now)
                 .await?;
             match lease {
                 LeaseAcquireResult::HeldElsewhere {
@@ -1340,13 +1305,9 @@ where
             // Dispatch. The richer entry point also returns the
             // observation so we can surface lag without a second
             // fetch_state round-trip.
-            let (outcome, observation) = self
-                .driver
-                .reconcile_one_with_observation(&policy)
-                .await?;
-            if let Some(lag) =
-                observation.as_ref().and_then(|o| o.observed_lag_seconds)
-            {
+            let (outcome, observation) =
+                self.driver.reconcile_one_with_observation(&policy).await?;
+            if let Some(lag) = observation.as_ref().and_then(|o| o.observed_lag_seconds) {
                 self.metrics.observe_lag(&labels, lag);
             }
             // Record the shard pause event exactly once on the
@@ -1445,9 +1406,9 @@ where
 /// tree-shakes unreferenced types).
 pub mod testing {
     use super::{
-        CollectionDrEvent, CollectionDrPolicy, DrApiError, DrHealth, DrMetrics,
-        DrPolicyStore, DrState, LeaseAcquireResult, PolicyLabels,
-        ProviderReplicationBinding, ShardPauseReason, TickOutcome,
+        CollectionDrEvent, CollectionDrPolicy, DrApiError, DrHealth, DrMetrics, DrPolicyStore,
+        DrState, LeaseAcquireResult, PolicyLabels, ProviderReplicationBinding, ShardPauseReason,
+        TickOutcome,
     };
     use async_trait::async_trait;
     use parking_lot::Mutex;
@@ -1492,9 +1453,7 @@ pub mod testing {
             self.state_transitions.lock().clone()
         }
         /// Snapshot of every `set_provider_binding` call.
-        pub fn bindings_snapshot(
-            &self,
-        ) -> Vec<(String, ProviderReplicationBinding, u64)> {
+        pub fn bindings_snapshot(&self) -> Vec<(String, ProviderReplicationBinding, u64)> {
             self.bindings.lock().clone()
         }
 
@@ -1514,9 +1473,7 @@ pub mod testing {
 
     #[async_trait]
     impl DrPolicyStore for MockDrPolicyStore {
-        async fn pending_reconcile(
-            &self,
-        ) -> Result<Vec<CollectionDrPolicy>, DrApiError> {
+        async fn pending_reconcile(&self) -> Result<Vec<CollectionDrPolicy>, DrApiError> {
             if let Some(e) = self.inject_error.lock().take() {
                 return Err(e);
             }
@@ -1536,9 +1493,7 @@ pub mod testing {
             let mut leases = self.leases.lock();
             let free_or_mine = match leases.get(policy_id) {
                 None => true,
-                Some((existing_holder, until)) => {
-                    existing_holder == holder_id || *until <= now_ns
-                }
+                Some((existing_holder, until)) => existing_holder == holder_id || *until <= now_ns,
             };
             if free_or_mine {
                 leases.insert(
@@ -1557,11 +1512,7 @@ pub mod testing {
             }
         }
 
-        async fn release_lease(
-            &self,
-            policy_id: &str,
-            holder_id: &str,
-        ) -> Result<(), DrApiError> {
+        async fn release_lease(&self, policy_id: &str, holder_id: &str) -> Result<(), DrApiError> {
             if let Some(e) = self.inject_error.lock().take() {
                 return Err(e);
             }
@@ -1604,11 +1555,7 @@ pub mod testing {
             Ok(self.next_version.fetch_add(1, Ordering::Relaxed) + 1)
         }
 
-        async fn update_health(
-            &self,
-            policy_id: &str,
-            health: DrHealth,
-        ) -> Result<(), DrApiError> {
+        async fn update_health(&self, policy_id: &str, health: DrHealth) -> Result<(), DrApiError> {
             if let Some(e) = self.inject_error.lock().take() {
                 return Err(e);
             }
@@ -1616,10 +1563,7 @@ pub mod testing {
             Ok(())
         }
 
-        async fn record_event(
-            &self,
-            event: CollectionDrEvent,
-        ) -> Result<(), DrApiError> {
+        async fn record_event(&self, event: CollectionDrEvent) -> Result<(), DrApiError> {
             if let Some(e) = self.inject_error.lock().take() {
                 return Err(e);
             }
@@ -1739,10 +1683,7 @@ where
     /// (tokio::time::interval's MissedTickBehavior defaults to Burst,
     /// which we override to Delay so a slow tick doesn't compound
     /// into a tick storm).
-    pub async fn run(
-        self,
-        mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
-    ) -> RunnerStats {
+    pub async fn run(self, mut shutdown_rx: tokio::sync::watch::Receiver<bool>) -> RunnerStats {
         let mut interval = tokio::time::interval(self.config.poll_interval);
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut stats = RunnerStats::default();
@@ -1777,12 +1718,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collection_dr_policy::{
-        CollectionDrPolicy, DrBillingBinding, DrHealth, DrPlacement,
-        DrReplicationBehavior, ObjectProvider, ProviderObservedState,
-        ProviderReplicationBinding,
-    };
     use crate::StoragePoolClass;
+    use crate::collection_dr_policy::{
+        CollectionDrPolicy, DrBillingBinding, DrHealth, DrPlacement, DrReplicationBehavior,
+        ObjectProvider, ProviderObservedState, ProviderReplicationBinding,
+    };
 
     fn base_policy() -> CollectionDrPolicy {
         CollectionDrPolicy {
@@ -1832,13 +1772,8 @@ mod tests {
         ProviderObservedState {
             rule_exists: true,
             observed_prefix: Some(policy.placement.source_prefix.clone()),
-            observed_destination: Some(
-                policy.placement.destination_bucket_or_account.clone(),
-            ),
-            observed_destination_container: policy
-                .placement
-                .destination_container
-                .clone(),
+            observed_destination: Some(policy.placement.destination_bucket_or_account.clone()),
+            observed_destination_container: policy.placement.destination_container.clone(),
             rule_enabled: true,
             source_versioning_enabled: true,
             destination_write_protected: true,
@@ -2208,9 +2143,8 @@ mod tests {
         });
         let clock_counter = Arc::new(AtomicI64::new(1_700_000_000_000_000_000));
         let clock_clone = clock_counter.clone();
-        let now_ns: Arc<dyn Fn() -> i64 + Send + Sync> = Arc::new(move || {
-            clock_clone.fetch_add(1_000, Ordering::Relaxed)
-        });
+        let now_ns: Arc<dyn Fn() -> i64 + Send + Sync> =
+            Arc::new(move || clock_clone.fetch_add(1_000, Ordering::Relaxed));
         DrReconcilerDriver::with_clocks(store, adapter, "reconciler", event_id, now_ns)
     }
 
@@ -2331,9 +2265,11 @@ mod tests {
         assert!(h.iter().any(|(_, h)| h.state == DrHealthState::Drifted));
         // drift_detected event recorded.
         let events = store.events_snapshot();
-        assert!(events
-            .iter()
-            .any(|e| e.event_type == DrEventType::DriftDetected));
+        assert!(
+            events
+                .iter()
+                .any(|e| e.event_type == DrEventType::DriftDetected)
+        );
     }
 
     #[tokio::test]
@@ -2349,15 +2285,14 @@ mod tests {
         let outcome = driver.reconcile_one(&p).await.unwrap();
         assert_eq!(
             outcome,
-            ReconcileOutcome::MarkedProviderBlocked(
-                BlockReason::ProviderMisconfiguration
-            )
+            ReconcileOutcome::MarkedProviderBlocked(BlockReason::ProviderMisconfiguration)
         );
         assert_eq!(adapter.ensure_call_count(), 0);
         let h = store.health_snapshot();
-        assert!(h
-            .iter()
-            .any(|(_, h)| h.state == DrHealthState::ProviderBlocked));
+        assert!(
+            h.iter()
+                .any(|(_, h)| h.state == DrHealthState::ProviderBlocked)
+        );
     }
 
     #[tokio::test]
@@ -2375,8 +2310,11 @@ mod tests {
         let transitions = store.transitions_snapshot();
         assert_eq!(transitions.len(), 1);
         assert_eq!(transitions[0].1, DrState::Retired);
-        let event_types: Vec<_> =
-            store.events_snapshot().iter().map(|e| e.event_type).collect();
+        let event_types: Vec<_> = store
+            .events_snapshot()
+            .iter()
+            .map(|e| e.event_type)
+            .collect();
         assert!(event_types.contains(&DrEventType::ProviderRuleDisabled));
         assert!(event_types.contains(&DrEventType::Retired));
     }
@@ -2396,8 +2334,11 @@ mod tests {
             ReconcileOutcome::MarkedBillingBlocked(BlockReason::BillingApprovalMissing)
         );
         assert_eq!(adapter.ensure_call_count(), 0);
-        let event_types: Vec<_> =
-            store.events_snapshot().iter().map(|e| e.event_type).collect();
+        let event_types: Vec<_> = store
+            .events_snapshot()
+            .iter()
+            .map(|e| e.event_type)
+            .collect();
         assert!(event_types.contains(&DrEventType::BillingBlocked));
     }
 
@@ -2434,9 +2375,10 @@ mod tests {
             ReconcileOutcome::AdapterEscalated(BlockReason::ProviderAuthDenied)
         );
         let h = store.health_snapshot();
-        assert!(h
-            .iter()
-            .any(|(_, h)| h.state == DrHealthState::ProviderBlocked));
+        assert!(
+            h.iter()
+                .any(|(_, h)| h.state == DrHealthState::ProviderBlocked)
+        );
     }
 
     #[tokio::test]
@@ -2491,14 +2433,8 @@ mod tests {
         let mut delays = Vec::new();
         let mut entry = BackoffEntry::default();
         for _ in 0..6 {
-            entry = apply_backoff_signal(
-                p,
-                entry,
-                BackoffSignal::TransientFailure,
-                now,
-                0.5,
-            )
-            .expect("transient yields a new entry");
+            entry = apply_backoff_signal(p, entry, BackoffSignal::TransientFailure, now, 0.5)
+                .expect("transient yields a new entry");
             delays.push(entry.earliest_retry_ns - now);
         }
         // 30s → 60s → 120s → 240s → 480s → 960s
@@ -2526,8 +2462,8 @@ mod tests {
         let now = 0_i64;
         let mut entry = BackoffEntry::default();
         for _ in 0..6 {
-            entry = apply_backoff_signal(p, entry, BackoffSignal::TransientFailure, now, 0.5)
-                .unwrap();
+            entry =
+                apply_backoff_signal(p, entry, BackoffSignal::TransientFailure, now, 0.5).unwrap();
         }
         // Once past the cap, every subsequent delay equals 120s.
         assert_eq!(entry.earliest_retry_ns, 120 * 1_000_000_000);
@@ -2545,12 +2481,30 @@ mod tests {
         let now = 0_i64;
         // u01 = 0.0 → multiplier 0.5; u01 = 1.0 → multiplier 1.5;
         // u01 = 0.5 → multiplier 1.0.
-        let low = apply_backoff_signal(p, BackoffEntry::default(), BackoffSignal::TransientFailure, now, 0.0)
-            .unwrap();
-        let mid = apply_backoff_signal(p, BackoffEntry::default(), BackoffSignal::TransientFailure, now, 0.5)
-            .unwrap();
-        let high = apply_backoff_signal(p, BackoffEntry::default(), BackoffSignal::TransientFailure, now, 1.0)
-            .unwrap();
+        let low = apply_backoff_signal(
+            p,
+            BackoffEntry::default(),
+            BackoffSignal::TransientFailure,
+            now,
+            0.0,
+        )
+        .unwrap();
+        let mid = apply_backoff_signal(
+            p,
+            BackoffEntry::default(),
+            BackoffSignal::TransientFailure,
+            now,
+            0.5,
+        )
+        .unwrap();
+        let high = apply_backoff_signal(
+            p,
+            BackoffEntry::default(),
+            BackoffSignal::TransientFailure,
+            now,
+            1.0,
+        )
+        .unwrap();
         let base_ns = 100_i64 * 1_000_000_000;
         assert_eq!(low.earliest_retry_ns, base_ns / 2);
         assert_eq!(mid.earliest_retry_ns, base_ns);
@@ -2582,9 +2536,27 @@ mod tests {
     #[test]
     fn should_escalate_fires_at_max_attempts() {
         let p = test_policy(); // max_attempts = 4
-        assert!(!should_escalate(p, &BackoffEntry { attempt: 3, earliest_retry_ns: 0 }));
-        assert!(should_escalate(p, &BackoffEntry { attempt: 4, earliest_retry_ns: 0 }));
-        assert!(should_escalate(p, &BackoffEntry { attempt: 99, earliest_retry_ns: 0 }));
+        assert!(!should_escalate(
+            p,
+            &BackoffEntry {
+                attempt: 3,
+                earliest_retry_ns: 0
+            }
+        ));
+        assert!(should_escalate(
+            p,
+            &BackoffEntry {
+                attempt: 4,
+                earliest_retry_ns: 0
+            }
+        ));
+        assert!(should_escalate(
+            p,
+            &BackoffEntry {
+                attempt: 99,
+                earliest_retry_ns: 0
+            }
+        ));
     }
 
     #[test]
@@ -2699,9 +2671,8 @@ mod tests {
     ) -> DrReconcilerShard<MockDrPolicyStore, MockDrProviderAdapter> {
         let driver = Arc::new(make_driver(store.clone(), adapter.clone()));
         let clock_clone = clock.clone();
-        let now: Arc<dyn Fn() -> i64 + Send + Sync> = Arc::new(move || {
-            clock_clone.load(Ordering::Relaxed)
-        });
+        let now: Arc<dyn Fn() -> i64 + Send + Sync> =
+            Arc::new(move || clock_clone.load(Ordering::Relaxed));
         let jitter_src: Arc<dyn Fn() -> f64 + Send + Sync> = Arc::new(move || jitter);
         DrReconcilerShard::with_clocks(driver, store, config, now, jitter_src)
     }
@@ -2711,8 +2682,7 @@ mod tests {
         let store = MockDrPolicyStore::new(1);
         let adapter = Arc::new(MockDrProviderAdapter::new());
         let clock = Arc::new(AtomicI64::new(0));
-        let shard =
-            make_shard(store, adapter, BackoffPolicy::default(), clock, 0.5);
+        let shard = make_shard(store, adapter, BackoffPolicy::default(), clock, 0.5);
         let results = shard.tick().await.unwrap();
         assert!(results.is_empty());
     }
@@ -2731,13 +2701,7 @@ mod tests {
         adapter.seed_observed(&p.policy_id, healthy_observed(&p));
         store.seed_pending(vec![p.clone()]);
         let clock = Arc::new(AtomicI64::new(0));
-        let shard = make_shard(
-            store.clone(),
-            adapter,
-            BackoffPolicy::default(),
-            clock,
-            0.5,
-        );
+        let shard = make_shard(store.clone(), adapter, BackoffPolicy::default(), clock, 0.5);
 
         let results = shard.tick().await.unwrap();
         assert_eq!(results.len(), 1);
@@ -2891,9 +2855,10 @@ mod tests {
         assert!(!shard.backoffs_snapshot().contains_key(&p.policy_id));
         // Store recorded a health flip to ProviderBlocked.
         let h = store.health_snapshot();
-        assert!(h
-            .iter()
-            .any(|(_, h)| h.state == DrHealthState::ProviderBlocked));
+        assert!(
+            h.iter()
+                .any(|(_, h)| h.state == DrHealthState::ProviderBlocked)
+        );
     }
 
     #[tokio::test]
@@ -3081,14 +3046,8 @@ mod tests {
         store.seed_pending(vec![p.clone()]);
 
         let clock = Arc::new(AtomicI64::new(100));
-        let shard = make_shard(
-            store.clone(),
-            adapter,
-            BackoffPolicy::default(),
-            clock,
-            0.5,
-        )
-        .with_holder_id("shard-x");
+        let shard = make_shard(store.clone(), adapter, BackoffPolicy::default(), clock, 0.5)
+            .with_holder_id("shard-x");
 
         let results = shard.tick().await.unwrap();
         assert!(matches!(results[0].1, TickOutcome::Reconciled(_)));
@@ -3144,14 +3103,8 @@ mod tests {
         store.seed_pending(vec![p.clone()]);
         let clock = Arc::new(AtomicI64::new(0));
         let metrics = RecordingDrMetrics::new();
-        let shard = make_shard(
-            store.clone(),
-            adapter,
-            BackoffPolicy::default(),
-            clock,
-            0.5,
-        )
-        .with_metrics(metrics.clone());
+        let shard = make_shard(store.clone(), adapter, BackoffPolicy::default(), clock, 0.5)
+            .with_metrics(metrics.clone());
 
         let _ = shard.tick().await.unwrap();
         let recorded = metrics.ticks();
@@ -3180,14 +3133,8 @@ mod tests {
         store.seed_pending(vec![p.clone()]);
         let clock = Arc::new(AtomicI64::new(100));
         let metrics = RecordingDrMetrics::new();
-        let shard = make_shard(
-            store.clone(),
-            adapter,
-            BackoffPolicy::default(),
-            clock,
-            0.5,
-        )
-        .with_metrics(metrics.clone());
+        let shard = make_shard(store.clone(), adapter, BackoffPolicy::default(), clock, 0.5)
+            .with_metrics(metrics.clone());
 
         // Tick 1: reconciles successfully.
         let _ = shard.tick().await.unwrap();
@@ -3219,14 +3166,8 @@ mod tests {
         adapter.inject_error(ProviderError::QuotaExceeded("rule cap".into()));
         let clock = Arc::new(AtomicI64::new(1_000));
         let metrics = RecordingDrMetrics::new();
-        let shard = make_shard(
-            store.clone(),
-            adapter,
-            BackoffPolicy::default(),
-            clock,
-            0.5,
-        )
-        .with_metrics(metrics.clone());
+        let shard = make_shard(store.clone(), adapter, BackoffPolicy::default(), clock, 0.5)
+            .with_metrics(metrics.clone());
 
         // First tick triggers the pause.
         let _ = shard.tick().await.unwrap();
@@ -3296,10 +3237,12 @@ mod tests {
                 .count(),
             1
         );
-        assert!(store
-            .events_snapshot()
-            .iter()
-            .any(|e| e.event_type == DrEventType::Active));
+        assert!(
+            store
+                .events_snapshot()
+                .iter()
+                .any(|e| e.event_type == DrEventType::Active)
+        );
 
         // ---------- Phase 2: Active + healthy ----------
         // Mirror what the store would project: state = Active, binding set.
@@ -3323,9 +3266,7 @@ mod tests {
 
         let phase3 = shard.tick().await.unwrap();
         match &phase3[0].1 {
-            TickOutcome::Reconciled(ReconcileOutcome::RepairedDrift(
-                DriftReason::RuleMissing,
-            )) => {}
+            TickOutcome::Reconciled(ReconcileOutcome::RepairedDrift(DriftReason::RuleMissing)) => {}
             other => panic!("phase 3 expected RepairedDrift(RuleMissing), got {other:?}"),
         }
         let event_types: Vec<_> = store
@@ -3359,10 +3300,12 @@ mod tests {
         }
         // retire_rule was called once; transition to Retired recorded.
         assert_eq!(adapter.retire_call_count(), 1);
-        assert!(store
-            .transitions_snapshot()
-            .iter()
-            .any(|(_, s, _)| *s == DrState::Retired));
+        assert!(
+            store
+                .transitions_snapshot()
+                .iter()
+                .any(|(_, s, _)| *s == DrState::Retired)
+        );
         let event_types: Vec<_> = store
             .events_snapshot()
             .iter()
@@ -3419,8 +3362,10 @@ mod tests {
     /// policies. The runner exercises pure cadence and shutdown
     /// semantics; the per-policy gates already have coverage in
     /// the dedicated tick tests.
-    fn make_runner_shard(
-    ) -> (Arc<MockDrPolicyStore>, Arc<DrReconcilerShard<MockDrPolicyStore, MockDrProviderAdapter>>) {
+    fn make_runner_shard() -> (
+        Arc<MockDrPolicyStore>,
+        Arc<DrReconcilerShard<MockDrPolicyStore, MockDrProviderAdapter>>,
+    ) {
         let store = MockDrPolicyStore::new(1);
         let adapter = Arc::new(MockDrProviderAdapter::new());
         let clock = Arc::new(AtomicI64::new(0));
@@ -3546,13 +3491,10 @@ mod tests {
         drop(shutdown_tx);
         // Tiny advance so the runner's select! has a chance to wake.
         tokio::time::advance(std::time::Duration::from_millis(1)).await;
-        let stats = tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            handle,
-        )
-        .await
-        .expect("runner exited within timeout")
-        .unwrap();
+        let stats = tokio::time::timeout(std::time::Duration::from_secs(1), handle)
+            .await
+            .expect("runner exited within timeout")
+            .unwrap();
         // At most one immediate tick before shutdown won the select.
         assert!(stats.successful_ticks <= 1);
     }
@@ -3577,14 +3519,8 @@ mod tests {
         store.seed_pending(vec![p.clone()]);
         let clock = Arc::new(AtomicI64::new(0));
         let metrics = RecordingDrMetrics::new();
-        let shard = make_shard(
-            store.clone(),
-            adapter,
-            BackoffPolicy::default(),
-            clock,
-            0.5,
-        )
-        .with_metrics(metrics.clone());
+        let shard = make_shard(store.clone(), adapter, BackoffPolicy::default(), clock, 0.5)
+            .with_metrics(metrics.clone());
 
         let _ = shard.tick().await.unwrap();
         let lags = metrics.lags();
@@ -3611,14 +3547,8 @@ mod tests {
         store.seed_pending(vec![p.clone()]);
         let clock = Arc::new(AtomicI64::new(0));
         let metrics = RecordingDrMetrics::new();
-        let shard = make_shard(
-            store.clone(),
-            adapter,
-            BackoffPolicy::default(),
-            clock,
-            0.5,
-        )
-        .with_metrics(metrics.clone());
+        let shard = make_shard(store.clone(), adapter, BackoffPolicy::default(), clock, 0.5)
+            .with_metrics(metrics.clone());
 
         let _ = shard.tick().await.unwrap();
         assert!(metrics.lags().is_empty(), "no lag observation");
@@ -3640,10 +3570,7 @@ mod tests {
         adapter.seed_observed(&p.policy_id, obs);
         let driver = make_driver(store.clone(), adapter);
 
-        let (outcome, observation) = driver
-            .reconcile_one_with_observation(&p)
-            .await
-            .unwrap();
+        let (outcome, observation) = driver.reconcile_one_with_observation(&p).await.unwrap();
         assert!(matches!(
             outcome,
             ReconcileOutcome::Idle(IdleReason::HealthyActive)
@@ -3660,10 +3587,7 @@ mod tests {
         let driver = make_driver(store.clone(), adapter);
 
         let p = base_policy();
-        let (outcome, observation) = driver
-            .reconcile_one_with_observation(&p)
-            .await
-            .unwrap();
+        let (outcome, observation) = driver.reconcile_one_with_observation(&p).await.unwrap();
         assert!(matches!(outcome, ReconcileOutcome::AdapterTransient(_)));
         assert!(observation.is_none(), "no observation when fetch failed");
     }

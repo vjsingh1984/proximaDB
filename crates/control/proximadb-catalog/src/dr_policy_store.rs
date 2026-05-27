@@ -24,12 +24,12 @@
 //!   acknowledgements.
 //! - One policy per `(tenant_id, namespace_id, collection_id)`.
 
+use crate::CatalogAuthorityMode;
 use crate::collection_dr_policy::{
-    CollectionDrPolicy, DrBillingBinding, DrHealth, DrPlacement,
-    DrReplicationBehavior, DrState, ObjectProvider,
+    CollectionDrPolicy, DrBillingBinding, DrHealth, DrPlacement, DrReplicationBehavior, DrState,
+    ObjectProvider,
 };
 use crate::dr_reconciler::DrApiError;
-use crate::CatalogAuthorityMode;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -108,10 +108,7 @@ pub trait CollectionDrPolicyStore: Send + Sync {
     /// - A namespace whose `region_home` is `None`.
     /// - Empty billing SKU or cost-owner.
     /// - Duplicate `(tenant_id, namespace_id, collection_id)`.
-    async fn create(
-        &self,
-        req: CreatePolicyRequest,
-    ) -> Result<CollectionDrPolicy, DrApiError>;
+    async fn create(&self, req: CreatePolicyRequest) -> Result<CollectionDrPolicy, DrApiError>;
 
     /// Move from `PendingBillingApproval` to
     /// `PendingProviderProvisioning`. Requires the approval to carry
@@ -147,16 +144,10 @@ pub trait CollectionDrPolicyStore: Send + Sync {
     async fn resume(&self, policy_id: &str) -> Result<CollectionDrPolicy, DrApiError>;
 
     /// Read-only fetch by primary key.
-    async fn get(
-        &self,
-        policy_id: &str,
-    ) -> Result<Option<CollectionDrPolicy>, DrApiError>;
+    async fn get(&self, policy_id: &str) -> Result<Option<CollectionDrPolicy>, DrApiError>;
 
     /// All policies owned by a tenant.
-    async fn list_by_tenant(
-        &self,
-        tenant_id: &str,
-    ) -> Result<Vec<CollectionDrPolicy>, DrApiError>;
+    async fn list_by_tenant(&self, tenant_id: &str) -> Result<Vec<CollectionDrPolicy>, DrApiError>;
 
     /// The policy for a specific `(tenant, collection)` if any.
     /// Returns `None` if the collection has no policy. The trait
@@ -205,8 +196,7 @@ impl InMemoryCollectionDrPolicyStore {
         let counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let counter_clone = counter.clone();
         let id_source: Arc<dyn Fn() -> String + Send + Sync> = Arc::new(move || {
-            let n = counter_clone
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let n = counter_clone.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             format!("drp_{n:020}")
         });
         let now_ns: Arc<dyn Fn() -> i64 + Send + Sync> = Arc::new(|| {
@@ -244,10 +234,7 @@ impl Default for InMemoryCollectionDrPolicyStore {
 
 #[async_trait]
 impl CollectionDrPolicyStore for InMemoryCollectionDrPolicyStore {
-    async fn create(
-        &self,
-        req: CreatePolicyRequest,
-    ) -> Result<CollectionDrPolicy, DrApiError> {
+    async fn create(&self, req: CreatePolicyRequest) -> Result<CollectionDrPolicy, DrApiError> {
         // D8: refuse ExternalAuthoritative.
         if req.collection_authority_mode.is_external_authoritative() {
             return Err(DrApiError::ExternalAuthoritativeRefused(format!(
@@ -353,9 +340,7 @@ impl CollectionDrPolicyStore for InMemoryCollectionDrPolicyStore {
             ));
         }
         if approval.accepted_by.is_empty() {
-            return Err(DrApiError::ValidationFailed(
-                "accepted_by is empty".into(),
-            ));
+            return Err(DrApiError::ValidationFailed("accepted_by is empty".into()));
         }
         let mut state = self.inner.lock();
         let policy = state
@@ -369,8 +354,7 @@ impl CollectionDrPolicyStore for InMemoryCollectionDrPolicyStore {
                 to: next,
             });
         }
-        policy.billing.billing_approval_id =
-            Some(approval.accepted_approval_id);
+        policy.billing.billing_approval_id = Some(approval.accepted_approval_id);
         policy.billing.estimated_monthly_cost_cents = approval.accepted_estimate_cents;
         policy.approved_by = Some(approval.accepted_by);
         policy.state = next;
@@ -395,9 +379,7 @@ impl CollectionDrPolicyStore for InMemoryCollectionDrPolicyStore {
             ));
         }
         if ack.requested_by.is_empty() {
-            return Err(DrApiError::ValidationFailed(
-                "requested_by is empty".into(),
-            ));
+            return Err(DrApiError::ValidationFailed("requested_by is empty".into()));
         }
         let mut state = self.inner.lock();
         let policy = state
@@ -459,17 +441,11 @@ impl CollectionDrPolicyStore for InMemoryCollectionDrPolicyStore {
         Ok(policy.clone())
     }
 
-    async fn get(
-        &self,
-        policy_id: &str,
-    ) -> Result<Option<CollectionDrPolicy>, DrApiError> {
+    async fn get(&self, policy_id: &str) -> Result<Option<CollectionDrPolicy>, DrApiError> {
         Ok(self.inner.lock().policies.get(policy_id).cloned())
     }
 
-    async fn list_by_tenant(
-        &self,
-        tenant_id: &str,
-    ) -> Result<Vec<CollectionDrPolicy>, DrApiError> {
+    async fn list_by_tenant(&self, tenant_id: &str) -> Result<Vec<CollectionDrPolicy>, DrApiError> {
         let state = self.inner.lock();
         Ok(state
             .policies
@@ -500,13 +476,10 @@ mod tests {
 
     fn make_store() -> InMemoryCollectionDrPolicyStore {
         // Deterministic clocks for predictable assertions.
-        let now_counter = Arc::new(std::sync::atomic::AtomicI64::new(
-            1_700_000_000_000_000_000,
-        ));
+        let now_counter = Arc::new(std::sync::atomic::AtomicI64::new(1_700_000_000_000_000_000));
         let now_clone = now_counter.clone();
-        let now_ns: Arc<dyn Fn() -> i64 + Send + Sync> = Arc::new(move || {
-            now_clone.fetch_add(1_000, std::sync::atomic::Ordering::Relaxed)
-        });
+        let now_ns: Arc<dyn Fn() -> i64 + Send + Sync> =
+            Arc::new(move || now_clone.fetch_add(1_000, std::sync::atomic::Ordering::Relaxed));
         let id_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
         let id_clone = id_counter.clone();
         let id_source: Arc<dyn Fn() -> String + Send + Sync> = Arc::new(move || {
@@ -660,10 +633,7 @@ mod tests {
             accepted_approval_id: "appr_001".into(),
             accepted_estimate_cents: Some(18_400),
         };
-        let p2 = store
-            .approve_billing(&p.policy_id, approval)
-            .await
-            .unwrap();
+        let p2 = store.approve_billing(&p.policy_id, approval).await.unwrap();
         assert_eq!(p2.state, DrState::PendingProviderProvisioning);
         assert_eq!(p2.billing.billing_approval_id.as_deref(), Some("appr_001"));
         assert_eq!(p2.billing.estimated_monthly_cost_cents, Some(18_400));
@@ -696,7 +666,10 @@ mod tests {
             accepted_approval_id: "appr".into(),
             accepted_estimate_cents: None,
         };
-        let err = store.approve_billing("drp_nope", approval).await.unwrap_err();
+        let err = store
+            .approve_billing("drp_nope", approval)
+            .await
+            .unwrap_err();
         assert!(matches!(err, DrApiError::ValidationFailed(_)));
     }
 
@@ -854,11 +827,13 @@ mod tests {
     #[tokio::test]
     async fn list_by_collection_returns_none_when_missing() {
         let store = make_store();
-        assert!(store
-            .list_by_collection("tnt_acme", "col_nope")
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            store
+                .list_by_collection("tnt_acme", "col_nope")
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]

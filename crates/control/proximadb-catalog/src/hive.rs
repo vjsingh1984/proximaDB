@@ -48,9 +48,6 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use tracing::{debug, info, warn};
 
-
-
-
 use serde::{Deserialize, Serialize};
 
 use crate::cache::CatalogCache;
@@ -569,8 +566,7 @@ impl Catalog for HiveCatalog {
         table.table_name = to.name.clone();
         tables.insert(to_key, table);
 
-        self.cache
-            .invalidate_table_in_catalog(&self.name, from);
+        self.cache.invalidate_table_in_catalog(&self.name, from);
 
         info!("Renamed Hive table: {} -> {}", from, to);
         Ok(())

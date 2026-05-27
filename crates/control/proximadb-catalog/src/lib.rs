@@ -23,9 +23,9 @@ pub mod dr_policy_store;
 // DR reconciler decision logic (P3a of the same contract).
 pub mod dr_reconciler;
 // DR restore-readiness primitives (P5 of the same contract).
-pub mod dr_restore;
 #[cfg(feature = "delta-lake")]
 pub mod delta;
+pub mod dr_restore;
 // Embedding-precision rollout (PR 6 of EMBEDDING_PRECISION_LLD_2026_05_22).
 pub mod embedding_precision_policy;
 #[cfg(feature = "aws")]
@@ -503,6 +503,9 @@ pub struct CatalogTableSchema {
     /// and open-format planners.
     #[serde(default)]
     pub compression_stats_profiles: Vec<CatalogCompressionStatsProfile>,
+    /// Cataloged ADR-012 graph branch merge policy for this table.
+    #[serde(default)]
+    pub branch_merge_policy: CatalogBranchMergePolicy,
 
     // === Embedding-precision rollout (PR 6 of EMBEDDING_PRECISION_LLD_2026_05_22) ===
     /// Reference to the precision policy row in `embedding_precision_policy`.
@@ -565,6 +568,7 @@ impl Default for CatalogTableSchema {
             props_auto_promotion: PropsAutoPromotionPolicy::default(),
             observability_compression: None,
             compression_stats_profiles: Vec::new(),
+            branch_merge_policy: CatalogBranchMergePolicy::default(),
             // PR 6: inherit cluster default policy; fp32-only baseline.
             embedding_precision_policy_id: None,
             embedding_precision_policy_version: None,
@@ -668,6 +672,12 @@ impl CatalogTableSchema {
         self.compression_stats_profiles.push(profile);
         self
     }
+
+    /// Set the ADR-012 graph branch merge policy.
+    pub fn with_branch_merge_policy(mut self, policy: CatalogBranchMergePolicy) -> Self {
+        self.branch_merge_policy = policy;
+        self
+    }
 }
 
 /// xCatalog feedback record for one measured compression/layout profile.
@@ -751,6 +761,79 @@ impl CatalogCompressionStatsProfile {
             self.encoded_bytes as f64 / self.value_count as f64
         }
     }
+}
+
+/// Cataloged ADR-012 branch merge policy for graph-capable tables.
+///
+/// This is metadata only: xCatalog records the policy the branch merge service
+/// must apply, while the graph merge runtime owns conflict detection and WAL
+/// write-back. Defaults match `docs/12-design/adr/ADR-012-graph-branch-merge-semantics.adoc`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogBranchMergePolicy {
+    #[serde(default = "catalog_branch_merge_policy_lww")]
+    pub node_upsert: CatalogBranchMergeResolution,
+    #[serde(default = "catalog_branch_merge_policy_delete_wins")]
+    pub node_delete: CatalogBranchMergeResolution,
+    #[serde(default = "catalog_branch_merge_policy_lww")]
+    pub edge_upsert: CatalogBranchMergeResolution,
+    #[serde(default = "catalog_branch_merge_policy_delete_wins")]
+    pub edge_delete: CatalogBranchMergeResolution,
+    #[serde(default = "catalog_branch_merge_policy_lww")]
+    pub embedding_update: CatalogBranchMergeResolution,
+    #[serde(default = "catalog_branch_merge_policy_add_wins")]
+    pub label_set: CatalogBranchMergeResolution,
+    #[serde(default = "catalog_branch_merge_policy_lww_per_key")]
+    pub props_key: CatalogBranchMergeResolution,
+    /// Extension point for future branch ancestry/schema-mode knobs.
+    #[serde(default)]
+    pub properties: HashMap<String, String>,
+}
+
+impl Default for CatalogBranchMergePolicy {
+    fn default() -> Self {
+        Self {
+            node_upsert: CatalogBranchMergeResolution::LastWriteWins,
+            node_delete: CatalogBranchMergeResolution::DeleteWins,
+            edge_upsert: CatalogBranchMergeResolution::LastWriteWins,
+            edge_delete: CatalogBranchMergeResolution::DeleteWins,
+            embedding_update: CatalogBranchMergeResolution::LastWriteWins,
+            label_set: CatalogBranchMergeResolution::AddWinsSetUnion,
+            props_key: CatalogBranchMergeResolution::LastWriteWinsPerKey,
+            properties: HashMap::new(),
+        }
+    }
+}
+
+impl CatalogBranchMergePolicy {
+    pub fn adr_012_default() -> Self {
+        Self::default()
+    }
+}
+
+/// Per-conflict resolution mode recorded in xCatalog for ADR-012 merges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CatalogBranchMergeResolution {
+    LastWriteWins,
+    DeleteWins,
+    AddWinsSetUnion,
+    LastWriteWinsPerKey,
+}
+
+fn catalog_branch_merge_policy_lww() -> CatalogBranchMergeResolution {
+    CatalogBranchMergeResolution::LastWriteWins
+}
+
+fn catalog_branch_merge_policy_delete_wins() -> CatalogBranchMergeResolution {
+    CatalogBranchMergeResolution::DeleteWins
+}
+
+fn catalog_branch_merge_policy_add_wins() -> CatalogBranchMergeResolution {
+    CatalogBranchMergeResolution::AddWinsSetUnion
+}
+
+fn catalog_branch_merge_policy_lww_per_key() -> CatalogBranchMergeResolution {
+    CatalogBranchMergeResolution::LastWriteWinsPerKey
 }
 
 /// xCatalog rejected codec candidate recorded from profiling.
@@ -2314,8 +2397,8 @@ mod tests {
             "created_at_ms": 1000,
             "updated_at_ms": 2000
         }"#;
-        let ns: CatalogNamespace = serde_json::from_str(legacy_json)
-            .expect("legacy namespace JSON must deserialize");
+        let ns: CatalogNamespace =
+            serde_json::from_str(legacy_json).expect("legacy namespace JSON must deserialize");
         assert!(ns.namespace_id.is_none());
         assert!(ns.tenant_id.is_none());
         assert_eq!(ns.storage_pool_class, StoragePoolClass::Pooled);
@@ -2338,7 +2421,10 @@ mod tests {
             (StoragePoolClass::Pooled, "\"pooled\""),
             (StoragePoolClass::Business, "\"business\""),
             (StoragePoolClass::Enterprise, "\"enterprise\""),
-            (StoragePoolClass::EnterpriseDedicated, "\"enterprise_dedicated\""),
+            (
+                StoragePoolClass::EnterpriseDedicated,
+                "\"enterprise_dedicated\"",
+            ),
         ];
         for (variant, expected_json) in classes {
             let s = serde_json::to_string(&variant).unwrap();
@@ -3009,6 +3095,75 @@ mod tests {
         let encoded = serde_json::to_string(&schema).unwrap();
         let decoded: CatalogTableSchema = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded.compression_stats_profiles[0], profile);
+    }
+
+    #[test]
+    fn catalog_branch_merge_policy_defaults_match_adr_012() {
+        let policy = CatalogBranchMergePolicy::default();
+        assert_eq!(
+            policy.node_upsert,
+            CatalogBranchMergeResolution::LastWriteWins
+        );
+        assert_eq!(policy.node_delete, CatalogBranchMergeResolution::DeleteWins);
+        assert_eq!(
+            policy.edge_upsert,
+            CatalogBranchMergeResolution::LastWriteWins
+        );
+        assert_eq!(policy.edge_delete, CatalogBranchMergeResolution::DeleteWins);
+        assert_eq!(
+            policy.embedding_update,
+            CatalogBranchMergeResolution::LastWriteWins
+        );
+        assert_eq!(
+            policy.label_set,
+            CatalogBranchMergeResolution::AddWinsSetUnion
+        );
+        assert_eq!(
+            policy.props_key,
+            CatalogBranchMergeResolution::LastWriteWinsPerKey
+        );
+    }
+
+    #[test]
+    fn catalog_table_schema_serde_back_compat_with_pre_branch_policy_json() {
+        let legacy_json = serde_json::json!({
+            "name": "legacy_graph",
+            "columns": [],
+            "primary_key": [],
+            "indexes": [],
+            "schema_version": 1,
+            "properties": {},
+            "location": null,
+            "created_at_ms": 1700000000000_i64,
+            "updated_at_ms": 1700000000000_i64,
+        });
+        let schema: CatalogTableSchema = serde_json::from_value(legacy_json).unwrap();
+        assert_eq!(
+            schema.branch_merge_policy,
+            CatalogBranchMergePolicy::adr_012_default()
+        );
+    }
+
+    #[test]
+    fn catalog_table_schema_round_trips_branch_merge_policy() {
+        let mut policy = CatalogBranchMergePolicy::adr_012_default();
+        policy
+            .properties
+            .insert("merge_endpoint".to_string(), "rest-v1".to_string());
+
+        let schema = CatalogTableSchema::new("graph_docs").with_branch_merge_policy(policy.clone());
+        let encoded = serde_json::to_string(&schema).unwrap();
+        let decoded: CatalogTableSchema = serde_json::from_str(&encoded).unwrap();
+
+        assert_eq!(decoded.branch_merge_policy, policy);
+        assert_eq!(
+            decoded
+                .branch_merge_policy
+                .properties
+                .get("merge_endpoint")
+                .map(String::as_str),
+            Some("rest-v1")
+        );
     }
 
     #[test]

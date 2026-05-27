@@ -518,8 +518,7 @@ pub trait DrProviderAdapter: Send + Sync {
 
     /// Disable and tombstone the provider rule. Idempotent. Returns
     /// `Ok(())` even if no rule exists.
-    async fn retire_rule(&self, policy: &CollectionDrPolicy)
-        -> Result<(), ProviderError>;
+    async fn retire_rule(&self, policy: &CollectionDrPolicy) -> Result<(), ProviderError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -637,10 +636,7 @@ impl DrProviderAdapter for MockDrProviderAdapter {
             .entry(key.clone())
             .or_insert_with(|| ProviderReplicationBinding {
                 provider_policy_id: Some(format!("mock_policy_{key}")),
-                provider_rule_id: format!(
-                    "dr-{}-v{}",
-                    policy.policy_id, policy.policy_version
-                ),
+                provider_rule_id: format!("dr-{}-v{}", policy.policy_id, policy.policy_version),
                 provider_role_arn: None,
                 provider_kms_key_id: policy
                     .provider_binding
@@ -655,13 +651,8 @@ impl DrProviderAdapter for MockDrProviderAdapter {
             ProviderObservedState {
                 rule_exists: true,
                 observed_prefix: Some(policy.placement.source_prefix.clone()),
-                observed_destination: Some(
-                    policy.placement.destination_bucket_or_account.clone(),
-                ),
-                observed_destination_container: policy
-                    .placement
-                    .destination_container
-                    .clone(),
+                observed_destination: Some(policy.placement.destination_bucket_or_account.clone()),
+                observed_destination_container: policy.placement.destination_container.clone(),
                 rule_enabled: true,
                 source_versioning_enabled: true,
                 destination_write_protected: true,
@@ -689,10 +680,7 @@ impl DrProviderAdapter for MockDrProviderAdapter {
             .unwrap_or_default())
     }
 
-    async fn retire_rule(
-        &self,
-        policy: &CollectionDrPolicy,
-    ) -> Result<(), ProviderError> {
+    async fn retire_rule(&self, policy: &CollectionDrPolicy) -> Result<(), ProviderError> {
         let mut state = self.inner.lock();
         state.retire_calls += 1;
         if let Some(err) = state.next_error.take() {
@@ -871,7 +859,10 @@ mod tests {
     fn dr_state_serde_uses_snake_case() {
         let pairs = [
             (DrState::Disabled, "\"disabled\""),
-            (DrState::PendingBillingApproval, "\"pending_billing_approval\""),
+            (
+                DrState::PendingBillingApproval,
+                "\"pending_billing_approval\"",
+            ),
             (
                 DrState::PendingProviderProvisioning,
                 "\"pending_provider_provisioning\"",
@@ -935,14 +926,12 @@ mod tests {
                 source_pool_class: StoragePoolClass::Business,
                 destination_pool_class: StoragePoolClass::Business,
                 source_bucket_or_account: "proximadb-prod-us-east-1-business-data".into(),
-                destination_bucket_or_account: "proximadb-prod-us-west-2-business-dr"
-                    .into(),
+                destination_bucket_or_account: "proximadb-prod-us-west-2-business-dr".into(),
                 source_container: None,
                 destination_container: None,
-                source_prefix:
-                    "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5G/col_orders/".into(),
-                destination_prefix:
-                    "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5G/col_orders/".into(),
+                source_prefix: "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5G/col_orders/".into(),
+                destination_prefix: "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5G/col_orders/"
+                    .into(),
             },
             replication: DrReplicationBehavior::default(),
             billing: DrBillingBinding {
@@ -957,9 +946,7 @@ mod tests {
                 provider_role_arn: Some(
                     "arn:aws:iam::123456789012:role/proximadb-dr-replication".into(),
                 ),
-                provider_kms_key_id: Some(
-                    "arn:aws:kms:us-east-1:123456789012:key/abc".into(),
-                ),
+                provider_kms_key_id: Some("arn:aws:kms:us-east-1:123456789012:key/abc".into()),
             }),
             health: DrHealth {
                 state: DrHealthState::Healthy,
@@ -1036,13 +1023,19 @@ mod tests {
                 DrEventType::ProviderProvisionStarted,
                 "\"provider_provision_started\"",
             ),
-            (DrEventType::ProviderRuleCreated, "\"provider_rule_created\""),
+            (
+                DrEventType::ProviderRuleCreated,
+                "\"provider_rule_created\"",
+            ),
             (DrEventType::Active, "\"active\""),
             (DrEventType::DriftDetected, "\"drift_detected\""),
             (DrEventType::DriftRepaired, "\"drift_repaired\""),
             (DrEventType::BillingBlocked, "\"billing_blocked\""),
             (DrEventType::RetirementRequested, "\"retirement_requested\""),
-            (DrEventType::ProviderRuleDisabled, "\"provider_rule_disabled\""),
+            (
+                DrEventType::ProviderRuleDisabled,
+                "\"provider_rule_disabled\"",
+            ),
             (DrEventType::Retired, "\"retired\""),
         ];
         for (variant, expected) in pairs {
@@ -1092,7 +1085,10 @@ mod tests {
         let state = m.fetch_state(&p).await.unwrap();
         assert!(state.rule_exists);
         assert!(state.rule_enabled);
-        assert_eq!(state.observed_prefix.as_deref(), Some(p.placement.source_prefix.as_str()));
+        assert_eq!(
+            state.observed_prefix.as_deref(),
+            Some(p.placement.source_prefix.as_str())
+        );
         assert_eq!(
             state.observed_destination.as_deref(),
             Some(p.placement.destination_bucket_or_account.as_str()),

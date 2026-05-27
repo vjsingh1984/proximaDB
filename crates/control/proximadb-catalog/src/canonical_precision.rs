@@ -105,7 +105,9 @@ mod tests {
         s
     }
 
-    async fn setup(precision: EmbeddingScalarType) -> (CanonicalPrecisionResolver, TableIdentifier) {
+    async fn setup(
+        precision: EmbeddingScalarType,
+    ) -> (CanonicalPrecisionResolver, TableIdentifier) {
         let cache = Arc::new(CatalogCache::new(1000, 60));
         let cat = make_test_catalog(cache.clone()).await;
         cat.create_namespace(&["db".to_string()], HashMap::new())
@@ -150,7 +152,8 @@ mod tests {
         let id = TableIdentifier::new(vec!["db".to_string()], "t");
         cat.create_table(&id, fp16_schema("t")).await.unwrap();
 
-        let resolver = CanonicalPrecisionResolver::new(cat.clone() as Arc<dyn Catalog>, cache.clone());
+        let resolver =
+            CanonicalPrecisionResolver::new(cat.clone() as Arc<dyn Catalog>, cache.clone());
 
         // Prime cache by reading from a fresh OltpCatalog instance (so the
         // OltpCatalog backend itself doesn't have warmed state).

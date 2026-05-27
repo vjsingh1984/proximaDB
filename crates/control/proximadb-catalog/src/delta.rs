@@ -57,7 +57,6 @@ use serde::{Deserialize, Serialize};
 use tokio::fs;
 use tracing::{debug, info, warn};
 
-
 use crate::cache::CatalogCache;
 use crate::schema::{apply_evolution, validate_schema};
 use crate::{
@@ -857,8 +856,7 @@ impl Catalog for DeltaCatalog {
 
         let _ = fs::rename(&from_path, &to_path).await;
 
-        self.cache
-            .invalidate_table_in_catalog(&self.name, from);
+        self.cache.invalidate_table_in_catalog(&self.name, from);
         self.save_catalog_metadata().await?;
 
         info!("Renamed Delta table: {} -> {}", from, to);

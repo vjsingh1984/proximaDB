@@ -54,9 +54,6 @@ use tokio::fs;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-
-
-
 use crate::cache::CatalogCache;
 use crate::schema::{apply_evolution, validate_schema};
 use crate::{
@@ -595,8 +592,7 @@ impl Catalog for NativeCatalog {
         self.tables.write().await.remove(&from.to_fqn());
 
         // Invalidate catalog cache
-        self.cache
-            .invalidate_table_in_catalog(&self.name, from);
+        self.cache.invalidate_table_in_catalog(&self.name, from);
 
         info!("Renamed table: {} -> {}", from, to);
         Ok(())

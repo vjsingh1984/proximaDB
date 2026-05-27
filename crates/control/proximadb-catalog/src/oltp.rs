@@ -37,7 +37,6 @@ use async_trait::async_trait;
 use serde_json;
 use tracing::{debug, info, warn};
 
-
 use crate::cache::CatalogCache;
 use crate::schema::apply_evolution;
 use crate::{

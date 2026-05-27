@@ -51,7 +51,10 @@ impl ManifestEntryStatus {
     /// yet durable; RolledBack rows must be skipped; Flushed and
     /// Archived rows are valid restore inputs.
     pub fn is_restorable(self) -> bool {
-        matches!(self, ManifestEntryStatus::Flushed | ManifestEntryStatus::Archived)
+        matches!(
+            self,
+            ManifestEntryStatus::Flushed | ManifestEntryStatus::Archived
+        )
     }
 }
 
@@ -294,10 +297,7 @@ pub trait DestinationPresenceCheck: Send + Sync {
 /// zero-byte canary blob.
 #[async_trait]
 pub trait KmsAccessibilityCheck: Send + Sync {
-    async fn is_accessible(
-        &self,
-        policy: &CollectionDrPolicy,
-    ) -> Result<bool, ProviderError>;
+    async fn is_accessible(&self, policy: &CollectionDrPolicy) -> Result<bool, ProviderError>;
 }
 
 // ---------------------------------------------------------------------------
@@ -331,13 +331,12 @@ impl<M, D, K> EngineRestoreReadinessChecker<M, D, K> {
         destination: std::sync::Arc<D>,
         kms: std::sync::Arc<K>,
     ) -> Self {
-        let now_ms: std::sync::Arc<dyn Fn() -> i64 + Send + Sync> =
-            std::sync::Arc::new(|| {
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis() as i64)
-                    .unwrap_or(0)
-            });
+        let now_ms: std::sync::Arc<dyn Fn() -> i64 + Send + Sync> = std::sync::Arc::new(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0)
+        });
         Self {
             manifest,
             destination,
@@ -427,8 +426,8 @@ where
 /// inputs without standing up a real manifest service or provider.
 pub mod testing {
     use super::{
-        CollectionDrPolicy, DestinationPresenceCheck, KmsAccessibilityCheck,
-        ManifestEntryRef, ManifestSource, ProviderError,
+        CollectionDrPolicy, DestinationPresenceCheck, KmsAccessibilityCheck, ManifestEntryRef,
+        ManifestSource, ProviderError,
     };
     use async_trait::async_trait;
     use parking_lot::Mutex;
@@ -550,10 +549,7 @@ pub mod testing {
 
     #[async_trait]
     impl KmsAccessibilityCheck for StaticKmsCheck {
-        async fn is_accessible(
-            &self,
-            _policy: &CollectionDrPolicy,
-        ) -> Result<bool, ProviderError> {
+        async fn is_accessible(&self, _policy: &CollectionDrPolicy) -> Result<bool, ProviderError> {
             if let Some(e) = self.next_error.lock().take() {
                 return Err(e);
             }
@@ -565,11 +561,10 @@ pub mod testing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::collection_dr_policy::{
-        DrBillingBinding, DrHealth, DrPlacement, DrReplicationBehavior,
-        DrState, ObjectProvider,
-    };
     use crate::StoragePoolClass;
+    use crate::collection_dr_policy::{
+        DrBillingBinding, DrHealth, DrPlacement, DrReplicationBehavior, DrState, ObjectProvider,
+    };
 
     fn policy_with_rpo(rpo_target_seconds: u32) -> CollectionDrPolicy {
         CollectionDrPolicy {
@@ -777,8 +772,7 @@ mod tests {
         let p = policy_with_rpo(60); // 60s RPO target
         // entry timestamp at 0ms, now_ms at 120_000ms → lag = 120s
         let entries = vec![entry(1, 0, ManifestEntryStatus::Flushed, "col_orders")];
-        let r =
-            assemble_readiness(&p, 100, &entries, vec![], vec![], true, 120_000);
+        let r = assemble_readiness(&p, 100, &entries, vec![], vec![], true, 120_000);
         assert_eq!(r.observed_rpo_seconds, 120);
         assert_eq!(r.status, RestoreStatus::Stale);
     }
@@ -811,8 +805,7 @@ mod tests {
         // sure the wire format round-trips so dashboards can rebuild.
         let p = policy_with_rpo(900);
         let entries = vec![entry(7, 7_000, ManifestEntryStatus::Flushed, "col_orders")];
-        let r =
-            assemble_readiness(&p, 10, &entries, vec![], vec![], true, 7_500);
+        let r = assemble_readiness(&p, 10, &entries, vec![], vec![], true, 7_500);
         let json = serde_json::to_string(&r).unwrap();
         let back: RestoreReadiness = serde_json::from_str(&json).unwrap();
         assert_eq!(back, r);
@@ -837,9 +830,7 @@ mod tests {
 
     // -- EngineRestoreReadinessChecker ---------------------------------
 
-    use super::testing::{
-        StaticDestinationPresence, StaticKmsCheck, StaticManifestSource,
-    };
+    use super::testing::{StaticDestinationPresence, StaticKmsCheck, StaticManifestSource};
     use std::sync::Arc as TestArc;
 
     fn make_checker(
@@ -852,8 +843,7 @@ mod tests {
         StaticDestinationPresence,
         StaticKmsCheck,
     > {
-        let now_ms: TestArc<dyn Fn() -> i64 + Send + Sync> =
-            TestArc::new(move || now_ms_val);
+        let now_ms: TestArc<dyn Fn() -> i64 + Send + Sync> = TestArc::new(move || now_ms_val);
         EngineRestoreReadinessChecker::with_clock(manifest, destination, kms, now_ms)
     }
 
@@ -887,9 +877,7 @@ mod tests {
             entry(2, 2_000, ManifestEntryStatus::Flushed, "col_orders"),
         ]);
         let destination = StaticDestinationPresence::new();
-        destination.set_missing(vec![
-            "data/tnt_acme/ns_1/col_orders/segments/2.seg".into(),
-        ]);
+        destination.set_missing(vec!["data/tnt_acme/ns_1/col_orders/segments/2.seg".into()]);
         let kms = StaticKmsCheck::new(true);
         let checker = make_checker(manifest, destination, kms, 2_500);
 

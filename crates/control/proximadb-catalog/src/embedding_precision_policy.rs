@@ -100,7 +100,10 @@ pub enum DerivedQuantizationLevel {
     Int8,
     Int4,
     /// Product-quantization with `m` sub-vectors and `nbits` per code.
-    Pq { m: u32, nbits: u8 },
+    Pq {
+        m: u32,
+        nbits: u8,
+    },
 }
 
 /// Where derived quantizations are materialized.
@@ -169,9 +172,18 @@ impl RecallSlo {
     /// because raw magnitude affects ranking.
     pub const fn lld_defaults() -> Self {
         Self {
-            cosine: RecallTargets { at_10: 0.99, at_100: 0.995 },
-            l2: RecallTargets { at_10: 0.99, at_100: 0.995 },
-            dot: RecallTargets { at_10: 0.995, at_100: 0.998 },
+            cosine: RecallTargets {
+                at_10: 0.99,
+                at_100: 0.995,
+            },
+            l2: RecallTargets {
+                at_10: 0.99,
+                at_100: 0.995,
+            },
+            dot: RecallTargets {
+                at_10: 0.995,
+                at_100: 0.998,
+            },
         }
     }
 }
