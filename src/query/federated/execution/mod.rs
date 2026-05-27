@@ -347,6 +347,22 @@ impl FederatedExecutor {
                     self.execute_vector_search(collection, query_vector_source, *top_k)
                         .await
                 }
+                PlanNodeType::RerankSearch {
+                    collection,
+                    query_text,
+                    query_vector_source,
+                    k,
+                    rank_profile,
+                } => {
+                    self.execute_rerank_search(
+                        collection,
+                        query_text,
+                        query_vector_source,
+                        *k,
+                        rank_profile.as_deref(),
+                    )
+                    .await
+                }
                 PlanNodeType::GraphTraversal {
                     cypher,
                     start_nodes,
@@ -693,6 +709,86 @@ impl FederatedExecutor {
                 Arc::new(Float32Array::from(scores)) as ArrayRef,
             ],
         )?;
+
+        Ok(FederatedExecutionResult::from_batch(batch))
+    }
+
+    /// Execute RERANK SRF (R-7c.4c.1).
+    ///
+    /// First-phase retrieval lands today; the second-phase rescorer
+    /// dispatch lands in R-7c.4c.2 once `RankServices` is plumbed
+    /// into `FederatedExecutor`. Until then a non-`None` profile is
+    /// surfaced as `phase = "first_only"` so callers can detect the
+    /// degraded path.
+    async fn execute_rerank_search(
+        &self,
+        collection: &str,
+        query_text: &str,
+        query_vector_source: &VectorSource,
+        k: usize,
+        rank_profile: Option<&str>,
+    ) -> Result<FederatedExecutionResult> {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("score", DataType::Float32, false),
+            Field::new("phase", DataType::Utf8, false),
+            Field::new("match_features", DataType::Utf8, true),
+            Field::new("summary_features", DataType::Utf8, true),
+        ]));
+
+        // Reuse the dense-retrieval path for the first phase.
+        let retrieval = self
+            .execute_vector_search(collection, query_vector_source, k)
+            .await?;
+        if retrieval.batches.is_empty() {
+            return Ok(FederatedExecutionResult::empty_with_schema(schema));
+        }
+
+        // R-7c.4c.2 owns the second-phase rescorer dispatch. Until then
+        // we surface the degraded path via the `phase` column so the
+        // SRF caller can tell rescored from retrieval-only rows.
+        let phase_label = if rank_profile.is_some() {
+            "first_only"
+        } else {
+            "first"
+        };
+
+        // Coalesce retrieval batches into a single 5-column batch.
+        let id_chunks: Vec<ArrayRef> = retrieval
+            .batches
+            .iter()
+            .map(|b| b.column(0).clone())
+            .collect();
+        let score_chunks: Vec<ArrayRef> = retrieval
+            .batches
+            .iter()
+            .map(|b| b.column(1).clone())
+            .collect();
+        let id_refs: Vec<&dyn Array> = id_chunks.iter().map(|a| a.as_ref()).collect();
+        let score_refs: Vec<&dyn Array> = score_chunks.iter().map(|a| a.as_ref()).collect();
+        let id_concat = concat(&id_refs)?;
+        let score_concat = concat(&score_refs)?;
+        let total_rows = id_concat.len();
+        let phase_array: ArrayRef =
+            Arc::new(StringArray::from(vec![phase_label.to_string(); total_rows]));
+        let null_strings: Vec<Option<String>> = vec![None; total_rows];
+        let match_array: ArrayRef = Arc::new(StringArray::from(null_strings.clone()));
+        let summary_array: ArrayRef = Arc::new(StringArray::from(null_strings));
+
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                id_concat,
+                score_concat,
+                phase_array,
+                match_array,
+                summary_array,
+            ],
+        )?;
+
+        // `query_text` is unused in the stub today; R-7c.4c.2 threads
+        // it into the rank pipeline's QueryContext.query_text.
+        let _ = query_text;
 
         Ok(FederatedExecutionResult::from_batch(batch))
     }
@@ -3430,6 +3526,13 @@ impl FederatedExecutor {
                 Field::new("id", DataType::Utf8, false),
                 Field::new("score", DataType::Float32, false),
             ]))),
+            PlanNodeType::RerankSearch { .. } => Ok(Arc::new(Schema::new(vec![
+                Field::new("id", DataType::Utf8, false),
+                Field::new("score", DataType::Float32, false),
+                Field::new("phase", DataType::Utf8, false),
+                Field::new("match_features", DataType::Utf8, true),
+                Field::new("summary_features", DataType::Utf8, true),
+            ]))),
             PlanNodeType::GraphTraversal { .. } => Ok(Arc::new(Schema::new(vec![
                 Field::new("node_id", DataType::Utf8, false),
                 Field::new("label", DataType::Utf8, true),
@@ -3490,6 +3593,10 @@ impl FederatedExecutor {
     ) -> Result<bool> {
         match &mut node.node_type {
             PlanNodeType::VectorSearch {
+                query_vector_source,
+                ..
+            }
+            | PlanNodeType::RerankSearch {
                 query_vector_source,
                 ..
             } => {

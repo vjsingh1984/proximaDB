@@ -57,6 +57,26 @@ pub enum PlanNodeType {
         /// Source of the query vector
         query_vector_source: VectorSource,
     },
+    /// Multi-phase rank pipeline (RERANK SRF surface).
+    ///
+    /// R-7c.4c.1: parser-recognized RERANK(...) lowers into this
+    /// node. The optimizer doesn't break it down further — execution
+    /// dispatches to the rank pipeline (first-phase retrieval +
+    /// optional second-phase rescorer per `rank_profile`).
+    RerankSearch {
+        /// Collection to retrieve from
+        collection: String,
+        /// Free-text query (threaded into the rank pipeline's
+        /// `QueryContext.query_text` for tokenized scorers)
+        query_text: String,
+        /// Source of the dense embedding for first-phase retrieval
+        query_vector_source: VectorSource,
+        /// First-phase k (cut-off before second-phase rescoring)
+        k: usize,
+        /// Optional rank profile name. `None` = retrieval-only path
+        /// (skip second phase).
+        rank_profile: Option<String>,
+    },
     /// Graph traversal
     GraphTraversal {
         /// Cypher query to execute
@@ -455,6 +475,23 @@ impl PlanNode {
                 }
             }
 
+            PlanNodeType::RerankSearch {
+                query_vector_source,
+                ..
+            } => {
+                // R-7c.4c.1: rerank requires vector retrieval; the
+                // optional second-phase rescorer is profile-driven and
+                // doesn't surface as a separate capability here.
+                capabilities.add(Capability::VectorSearch);
+                capabilities.add(Capability::Scan);
+                capabilities.add(Capability::CosineDistance);
+                capabilities.add(Capability::EuclideanDistance);
+                capabilities.add(Capability::DotProduct);
+                if matches!(query_vector_source, VectorSource::ColumnRef { .. }) {
+                    capabilities.add(Capability::Project);
+                }
+            }
+
             PlanNodeType::GraphTraversal {
                 cypher,
                 start_nodes: _,
@@ -724,6 +761,7 @@ impl PlanNodeType {
         match self {
             PlanNodeType::Scan { model_type: mt, .. } => *mt == model_type,
             PlanNodeType::VectorSearch { .. } => model_type == ModelType::Vector,
+            PlanNodeType::RerankSearch { .. } => model_type == ModelType::Vector,
             PlanNodeType::GraphTraversal { .. } => model_type == ModelType::Graph,
             PlanNodeType::DocumentQuery { .. } => model_type == ModelType::Document,
             PlanNodeType::ObservabilityQuery { .. } => model_type == ModelType::Observability,
@@ -2488,6 +2526,10 @@ impl CrossModelOptimizer {
             PlanNodeType::VectorSearch {
                 query_vector_source,
                 ..
+            }
+            | PlanNodeType::RerankSearch {
+                query_vector_source,
+                ..
             } => Self::collect_vector_source_correlations(query_vector_source, correlations),
             PlanNodeType::HashJoin { left, right, .. }
             | PlanNodeType::IndexJoin { left, right, .. } => {
@@ -3044,23 +3086,58 @@ impl CrossModelOptimizer {
                     }
                 }
                 QuerySourceRef::Extension {
-                    extension: SqlExtension::RerankSearch { .. },
+                    extension:
+                        SqlExtension::RerankSearch {
+                            collection,
+                            query_text,
+                            query_vector,
+                            k,
+                            rank_profile,
+                        },
                     ..
                 } => {
-                    // RerankSearch is a local rank-pipeline construct; the
-                    // federated optimizer doesn't plan it directly. Treat
-                    // as a no-op scan placeholder so plan construction
-                    // succeeds for queries that mix it with regular sources.
+                    // R-7c.4c.1: emit RerankSearch plan node; execution
+                    // dispatches to the rank pipeline (first-phase
+                    // retrieval + optional second-phase rescore).
+                    let vec_stats = stats.get(collection).and_then(|s| {
+                        if let ModelStatistics::Vector(vs) = s {
+                            Some(vs)
+                        } else {
+                            None
+                        }
+                    });
+                    let (cost, rows) = if let Some(vs) = vec_stats {
+                        (
+                            self.advanced_cost_estimator.vector_search_cost(vs, *k),
+                            self.cardinality_estimator
+                                .estimate_vector_search_cardinality(*k, vs),
+                        )
+                    } else {
+                        (100.0, *k as u64)
+                    };
+                    // Second-phase rescoring adds latency on top of
+                    // retrieval — bump cost when a profile is set.
+                    let rerank_cost_factor = if rank_profile.is_some() { 2.5 } else { 1.0 };
                     PlanNode {
                         id: self.next_id(),
-                        node_type: PlanNodeType::Scan {
-                            target: "rerank_search".to_string(),
-                            model_type: ModelType::Vector,
-                            predicates: vec![],
+                        node_type: PlanNodeType::RerankSearch {
+                            collection: collection.clone(),
+                            query_text: query_text.clone(),
+                            query_vector_source: vector_query_parsing::vector_source_from_query(
+                                query_vector,
+                            ),
+                            k: *k,
+                            rank_profile: rank_profile.clone(),
                         },
-                        estimated_cost: 100.0,
-                        estimated_rows: 100,
-                        output_columns: vec!["id".to_string(), "score".to_string()],
+                        estimated_cost: cost * rerank_cost_factor,
+                        estimated_rows: rows,
+                        output_columns: vec![
+                            "id".to_string(),
+                            "score".to_string(),
+                            "phase".to_string(),
+                            "match_features".to_string(),
+                            "summary_features".to_string(),
+                        ],
                         required_capabilities: CapabilitySet::new(),
                     }
                 }
@@ -3671,20 +3748,44 @@ impl CrossModelOptimizer {
                     required_capabilities: CapabilitySet::new(),
                 },
                 QuerySourceRef::Extension {
-                    extension: SqlExtension::RerankSearch { .. },
+                    extension:
+                        SqlExtension::RerankSearch {
+                            collection,
+                            query_text,
+                            query_vector,
+                            k,
+                            rank_profile,
+                        },
                     ..
-                } => PlanNode {
-                    id: self.next_id(),
-                    node_type: PlanNodeType::Scan {
-                        target: "rerank_search".to_string(),
-                        model_type: ModelType::Vector,
-                        predicates: vec![],
-                    },
-                    estimated_cost: 100.0,
-                    estimated_rows: 100,
-                    output_columns: vec!["id".to_string(), "score".to_string()],
-                    required_capabilities: CapabilitySet::new(),
-                },
+                } => {
+                    // R-7c.4c.1: parallel arm to the
+                    // plan_federated_query_with_statistics path, but
+                    // without a stats-table lookup (cost falls back to
+                    // the default vector-search heuristic).
+                    let rerank_cost_factor = if rank_profile.is_some() { 2.5 } else { 1.0 };
+                    PlanNode {
+                        id: self.next_id(),
+                        node_type: PlanNodeType::RerankSearch {
+                            collection: collection.clone(),
+                            query_text: query_text.clone(),
+                            query_vector_source: vector_query_parsing::vector_source_from_query(
+                                query_vector,
+                            ),
+                            k: *k,
+                            rank_profile: rank_profile.clone(),
+                        },
+                        estimated_cost: 10.0 * rerank_cost_factor,
+                        estimated_rows: *k as u64,
+                        output_columns: vec![
+                            "id".to_string(),
+                            "score".to_string(),
+                            "phase".to_string(),
+                            "match_features".to_string(),
+                            "summary_features".to_string(),
+                        ],
+                        required_capabilities: CapabilitySet::new(),
+                    }
+                }
             };
             sub_plans.push(sub_plan);
         }
@@ -5160,7 +5261,7 @@ impl CrossModelOptimizer {
                     models.push(*model_type);
                 }
             }
-            PlanNodeType::VectorSearch { .. } => {
+            PlanNodeType::VectorSearch { .. } | PlanNodeType::RerankSearch { .. } => {
                 if !models.contains(&ModelType::Vector) {
                     models.push(ModelType::Vector);
                 }

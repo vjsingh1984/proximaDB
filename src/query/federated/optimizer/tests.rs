@@ -1494,6 +1494,100 @@ mod tests {
         assert!(error_msg.contains("capabilities that the storage engine doesn't support"));
     }
 
+    // ---------------- R-7c.4c.1: RerankSearch lowering ----------------
+
+    #[test]
+    fn test_rerank_search_lowers_to_rerank_plan_node() {
+        // RERANK(...) SRF must lower into PlanNodeType::RerankSearch
+        // (not a Scan placeholder) so execution dispatches to the
+        // rank pipeline.
+        let optimizer = CrossModelOptimizer::new();
+        let query = parser::FederatedParser::new()
+            .parse("SELECT * FROM RERANK('docs', 'laptop', '[0.1,0.2,0.3]', 25, 'semantic_plus_ce')")
+            .expect("RERANK query should parse");
+
+        let plan = optimizer
+            .optimize(&query)
+            .expect("RERANK plan should build");
+
+        match &plan.root.node_type {
+            PlanNodeType::RerankSearch {
+                collection,
+                query_text,
+                k,
+                rank_profile,
+                ..
+            } => {
+                assert_eq!(collection, "docs");
+                assert_eq!(query_text, "laptop");
+                assert_eq!(*k, 25);
+                assert_eq!(rank_profile.as_deref(), Some("semantic_plus_ce"));
+            }
+            other => panic!("Expected PlanNodeType::RerankSearch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_rerank_search_output_columns_include_phase_and_features() {
+        // The rerank SRF surface must expose the 5-column shape
+        // (id/score/phase/match_features/summary_features) so callers
+        // can downstream-SELECT it.
+        let optimizer = CrossModelOptimizer::new();
+        let query = parser::FederatedParser::new()
+            .parse("SELECT * FROM RERANK('docs', 'q', '[0.5]', 10)")
+            .expect("RERANK query should parse");
+
+        let plan = optimizer
+            .optimize(&query)
+            .expect("RERANK plan should build");
+
+        assert_eq!(
+            plan.root.output_columns,
+            vec![
+                "id".to_string(),
+                "score".to_string(),
+                "phase".to_string(),
+                "match_features".to_string(),
+                "summary_features".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_rerank_with_profile_costs_more_than_retrieval_only() {
+        // Second-phase rescoring adds latency; the optimizer must
+        // reflect that in the plan cost.
+        let optimizer = CrossModelOptimizer::new();
+        let with_profile = parser::FederatedParser::new()
+            .parse("SELECT * FROM RERANK('docs', 'q', '[0.5]', 10, 'ce_v1')")
+            .unwrap();
+        let without_profile = parser::FederatedParser::new()
+            .parse("SELECT * FROM RERANK('docs', 'q', '[0.5]', 10)")
+            .unwrap();
+
+        let plan_with = optimizer.optimize(&with_profile).unwrap();
+        let plan_without = optimizer.optimize(&without_profile).unwrap();
+        assert!(
+            plan_with.total_cost > plan_without.total_cost,
+            "rerank-with-profile cost {:.2} should exceed retrieval-only cost {:.2}",
+            plan_with.total_cost,
+            plan_without.total_cost,
+        );
+    }
+
+    #[test]
+    fn test_rerank_node_has_vector_model_capability() {
+        // Plan-level capability inference must treat RerankSearch as
+        // a vector-modality consumer so engine-capability checks
+        // route to the vector engine.
+        let optimizer = CrossModelOptimizer::new();
+        let query = parser::FederatedParser::new()
+            .parse("SELECT * FROM RERANK('docs', 'q', '[0.5]', 10)")
+            .unwrap();
+        let plan = optimizer.optimize(&query).unwrap();
+        assert!(plan.root.has_model(ModelType::Vector));
+    }
+
     #[test]
     fn test_scan_honesty_gap_detection() {
         // Test detection of honesty gap in scan operations
