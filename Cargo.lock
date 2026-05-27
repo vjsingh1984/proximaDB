@@ -6222,6 +6222,7 @@ dependencies = [
  "chrono",
  "futures",
  "hyper 0.14.32",
+ "prost-types",
  "proximadb-data-model",
  "proximadb-kernel",
  "proximadb-proto",

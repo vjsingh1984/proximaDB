@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust benchmark release install help capability-matrix-check workspace-boundaries-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check
+.PHONY: all clean build test test-python test-rust benchmark release install help capability-matrix-check workspace-boundaries-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check
 
 # Default target
 all: build test
@@ -8,6 +8,7 @@ all: build test
 PANIC_POLICY_BASELINE ?= docs/_internal/roadmap/PANIC_POLICY_BASELINE.json
 PANIC_POLICY_ARTIFACT ?= artifacts/panic_policy/latest_metrics.json
 PANIC_POLICY_CRITICAL_MODULES ?= network_rest,api_handlers,graph,query
+PYTHON ?= python3
 
 # Build targets
 build:
@@ -36,7 +37,7 @@ test-integration:
 
 test-python:
 	@echo "🐍 Running Python tests..."
-	cd clients/python && PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python PYTHONPATH=$(PWD)/clients/python/src python3 -m pytest -v
+	cd clients/python && PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python PYTHONPATH=$(PWD)/clients/python/src $(PYTHON) -m pytest -v
 
 test-python-install:
 	@echo "📦 Installing Python test dependencies..."
@@ -80,6 +81,11 @@ check: fmt clippy test hygiene-check
 capability-matrix-check:
 	@echo "🧭 Validating capability matrix..."
 	python3 scripts/validate_capability_matrix.py
+
+proto-check:
+	@echo "🧬 Validating protobuf/OpenAPI contract drift..."
+	cargo check -p proximadb-proto
+	cd clients/python && $(PYTHON) -m pytest --confcutdir=tests/unit -q tests/unit/test_grpc_proto_drift.py tests/unit/test_openapi_contract.py
 
 workspace-boundaries-check:
 	@echo "🧱 Validating workspace dependency boundaries..."
@@ -206,6 +212,7 @@ help:
 	@echo "  check              - Format + lint + test"
 	@echo "  hygiene-check      - Detect tracked backup/disabled/.victor artifacts"
 	@echo "  capability-matrix-check - Validate docs/_internal/roadmap/CAPABILITY_MATRIX.toml"
+	@echo "  proto-check        - Validate generated proto crate and Python/OpenAPI contract drift"
 	@echo "  panic-policy-report - WS-2 panic metrics report (non-blocking)"
 	@echo "  panic-policy-no-regression - Fail on total panic-pattern regression"
 	@echo "  panic-policy-module-guard - Fail on critical module panic regression"
