@@ -21,7 +21,7 @@
 //! cardinality discipline).
 
 use prometheus::{
-    CounterVec, HistogramOpts, HistogramVec, Opts, Registry,
+    CounterVec, GaugeVec, HistogramOpts, HistogramVec, IntGauge, Opts, Registry,
 };
 use std::sync::Arc;
 
@@ -65,6 +65,29 @@ pub const METRIC_PROFILE_RELOAD_TOTAL: &str = "proximadb_rank_profile_reload_tot
 /// before observing.
 pub const METRIC_FEATURE_CONTRIBUTION: &str = "proximadb_rank_feature_contribution";
 
+/// `proximadb_rank_model_cache_hit_ratio{model_id}` — rolling
+/// hit/(hit+miss) ratio per model (spec §4.10). Gauge — published
+/// by the model cache after each acquire() call.
+pub const METRIC_MODEL_CACHE_HIT_RATIO: &str = "proximadb_rank_model_cache_hit_ratio";
+
+/// `proximadb_rank_model_cache_size_bytes` — total resident
+/// memory held by the model cache across all loaded sessions
+/// (spec §4.10). Gauge — published after install() / evict()
+/// runs.
+pub const METRIC_MODEL_CACHE_SIZE_BYTES: &str = "proximadb_rank_model_cache_size_bytes";
+
+/// `proximadb_rank_model_evictions_total{model_id,reason}` —
+/// number of cache evictions, partitioned by model + reason
+/// (spec §4.10; reason ∈ {budget, count, manual, ttl}). Counter.
+pub const METRIC_MODEL_EVICTIONS_TOTAL: &str = "proximadb_rank_model_evictions_total";
+
+/// `proximadb_rank_model_inflight_loads` — concurrent cold loads
+/// in flight (spec §4.10). Gauge incremented when a load begins,
+/// decremented when it completes. v1 OnnxModelCache has no
+/// async loader so this stays at 0 until R-5b's loader path
+/// lands.
+pub const METRIC_MODEL_INFLIGHT_LOADS: &str = "proximadb_rank_model_inflight_loads";
+
 // ---------------------------------------------------------------------------
 // Label keys
 // ---------------------------------------------------------------------------
@@ -74,6 +97,7 @@ pub const LABEL_PHASE: &str = "phase";
 pub const LABEL_FEATURE: &str = "feature";
 pub const LABEL_REASON: &str = "reason";
 pub const LABEL_OUTCOME: &str = "outcome";
+pub const LABEL_MODEL_ID: &str = "model_id";
 
 /// Bounded histogram buckets for per-feature latency in
 /// microseconds. Tuned for the per-doc cost target (≤ 250 ns per 5
@@ -93,6 +117,10 @@ pub struct RankPipelineMetrics {
     phase_truncated_total: CounterVec,
     profile_reload_total: CounterVec,
     feature_contribution: HistogramVec,
+    model_cache_hit_ratio: GaugeVec,
+    model_cache_size_bytes: IntGauge,
+    model_evictions_total: CounterVec,
+    model_inflight_loads: IntGauge,
 }
 
 /// Bounded histogram buckets for per-feature contribution values.
@@ -116,6 +144,10 @@ impl RankPipelineMetrics {
         registry.register(Box::new(metrics.phase_truncated_total.clone()))?;
         registry.register(Box::new(metrics.profile_reload_total.clone()))?;
         registry.register(Box::new(metrics.feature_contribution.clone()))?;
+        registry.register(Box::new(metrics.model_cache_hit_ratio.clone()))?;
+        registry.register(Box::new(metrics.model_cache_size_bytes.clone()))?;
+        registry.register(Box::new(metrics.model_evictions_total.clone()))?;
+        registry.register(Box::new(metrics.model_inflight_loads.clone()))?;
         Ok(metrics)
     }
 
@@ -162,6 +194,28 @@ impl RankPipelineMetrics {
                 )
                 .buckets(FEATURE_CONTRIBUTION_BUCKETS.to_vec()),
                 &[LABEL_PROFILE, LABEL_FEATURE],
+            )?,
+            model_cache_hit_ratio: GaugeVec::new(
+                Opts::new(
+                    METRIC_MODEL_CACHE_HIT_RATIO,
+                    "Rolling hit/(hit+miss) ratio for the model cache, per model",
+                ),
+                &[LABEL_MODEL_ID],
+            )?,
+            model_cache_size_bytes: IntGauge::new(
+                METRIC_MODEL_CACHE_SIZE_BYTES,
+                "Total resident memory held by the model cache (bytes)",
+            )?,
+            model_evictions_total: CounterVec::new(
+                Opts::new(
+                    METRIC_MODEL_EVICTIONS_TOTAL,
+                    "Number of model-cache evictions, by model and reason",
+                ),
+                &[LABEL_MODEL_ID, LABEL_REASON],
+            )?,
+            model_inflight_loads: IntGauge::new(
+                METRIC_MODEL_INFLIGHT_LOADS,
+                "Concurrent cold model loads in flight",
             )?,
         })
     }
@@ -219,6 +273,50 @@ impl RankPipelineMetrics {
         self.feature_contribution
             .with_label_values(&[profile, feature])
             .observe(value as f64);
+    }
+
+    // -- Model-cache typed setters (spec §4.10 model-cache family) --
+    //
+    // The OnnxModelCache call sites (acquire, install, evict) will
+    // call into these. Wiring is a follow-up slice that decides
+    // the cross-crate observability strategy (rank-onnx → root
+    // crate) — these handles are defined here today so the
+    // wiring slice can land standalone.
+
+    /// Set the rolling hit ratio for `model_id` (0.0..1.0). The
+    /// cache computes hits / (hits + misses) over its rolling
+    /// window and calls this after every `acquire()`.
+    pub fn set_model_cache_hit_ratio(&self, model_id: &str, ratio: f64) {
+        self.model_cache_hit_ratio
+            .with_label_values(&[model_id])
+            .set(ratio);
+    }
+
+    /// Set the total resident bytes held by the cache. Called
+    /// after `install()` and `evict_if_over_budget()` so the
+    /// gauge tracks the live size.
+    pub fn set_model_cache_size_bytes(&self, bytes: i64) {
+        self.model_cache_size_bytes.set(bytes);
+    }
+
+    /// Increment the eviction counter for `(model_id, reason)`.
+    /// Reason ∈ {"budget", "count", "manual", "ttl"} (spec §4.10).
+    pub fn inc_model_evictions(&self, model_id: &str, reason: &str) {
+        self.model_evictions_total
+            .with_label_values(&[model_id, reason])
+            .inc();
+    }
+
+    /// Increment the inflight-loads gauge when a cold load begins.
+    /// Pair with `dec_model_inflight_loads()` when the load
+    /// completes (or fails). Today's OnnxModelCache has no async
+    /// loader so this stays at 0 until R-5b lands.
+    pub fn inc_model_inflight_loads(&self) {
+        self.model_inflight_loads.inc();
+    }
+
+    pub fn dec_model_inflight_loads(&self) {
+        self.model_inflight_loads.dec();
     }
 
     /// Convenience: convert a `PhaseId` integer to its canonical
@@ -316,6 +414,59 @@ mod tests {
             METRIC_FEATURE_CONTRIBUTION,
             "proximadb_rank_feature_contribution"
         );
+        assert_eq!(
+            METRIC_MODEL_CACHE_HIT_RATIO,
+            "proximadb_rank_model_cache_hit_ratio"
+        );
+        assert_eq!(
+            METRIC_MODEL_CACHE_SIZE_BYTES,
+            "proximadb_rank_model_cache_size_bytes"
+        );
+        assert_eq!(
+            METRIC_MODEL_EVICTIONS_TOTAL,
+            "proximadb_rank_model_evictions_total"
+        );
+        assert_eq!(
+            METRIC_MODEL_INFLIGHT_LOADS,
+            "proximadb_rank_model_inflight_loads"
+        );
+    }
+
+    #[test]
+    fn model_cache_setters_roundtrip_through_registry() {
+        // Smoke-test all four model-cache metric handles —
+        // verifies registration succeeds + the typed setters
+        // actually emit values readable through prometheus::gather.
+        let registry = Registry::new();
+        let metrics = RankPipelineMetrics::register(&registry).unwrap();
+
+        metrics.set_model_cache_hit_ratio("rerank-v3", 0.82);
+        metrics.set_model_cache_size_bytes(1_048_576);
+        metrics.inc_model_evictions("rerank-v3", "budget");
+        metrics.inc_model_evictions("rerank-v3", "budget");
+        metrics.inc_model_evictions("rerank-v3", "ttl");
+        metrics.inc_model_inflight_loads();
+        metrics.inc_model_inflight_loads();
+        metrics.dec_model_inflight_loads();
+
+        let hit_ratio = metrics
+            .model_cache_hit_ratio
+            .with_label_values(&["rerank-v3"])
+            .get();
+        assert!((hit_ratio - 0.82).abs() < 1e-6);
+        assert_eq!(metrics.model_cache_size_bytes.get(), 1_048_576);
+
+        let budget_evictions = metrics
+            .model_evictions_total
+            .with_label_values(&["rerank-v3", "budget"])
+            .get();
+        assert!((budget_evictions - 2.0).abs() < f64::EPSILON);
+        let ttl_evictions = metrics
+            .model_evictions_total
+            .with_label_values(&["rerank-v3", "ttl"])
+            .get();
+        assert!((ttl_evictions - 1.0).abs() < f64::EPSILON);
+        assert_eq!(metrics.model_inflight_loads.get(), 1);
     }
 
     #[test]
