@@ -13,6 +13,26 @@ Developer‑first REST API reference. Base URL: `http://localhost:5678`.
 * Document, graph, and observability APIs are beta.
 * Cross-model SQL should prefer pgwire/SQL. REST v1 unified query routes remain compatibility facades while record-native query APIs mature.
 
+[WARNING]
+====
+**Not supported in v0.2** (the live source of truth is the `writes` block on
+the route-health diagnostic endpoint `GET /api/v2/_diagnostics/collections/:id/route-health`):
+
+* Optimistic versioning / compare-and-set on insert or upsert.
+* Conditional writes (predicate-gated insert / upsert / delete).
+* Update-by-filter and delete-by-filter.
+* Patch / partial-record update.
+* Collection-default freshness mode (per-request `freshness_mode` only).
+
+Search-side limits in v0.2:
+
+* `top_k` is capped at **10000** by default (override via env var
+  `PROXIMADB_MAX_SEARCH_TOP_K`). Requests above the cap return HTTP 400.
+
+See link:../SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`] "Not Supported
+in v0.2" for the full list and TD pointers.
+====
+
 === Key Differentiator
 
 ProximaDB's multi-model query engine enables cross-model joins that are impossible with single-model databases (Pinecone, Weaviate, Milvus). Use pgwire SQL as the canonical query surface; `POST /api/v1/unified/federated` remains available only as a deprecated REST compatibility facade.

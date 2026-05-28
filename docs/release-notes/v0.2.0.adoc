@@ -36,8 +36,9 @@ These are usable but not part of the production positioning:
 * pgwire / federated SQL (basic DML and vector-distance syntax; ADR-018 Phase 2/3 incomplete).
 * Object-economy vector route (SST sidecar directory + cache; opt-in, no published cost SLA).
 * Filtered ANN routing (ADR-011 — Inline / PostFilter / PreFilter mechanics exist; per-collection
-  catalog policy not wired; differential recall verified across selectivity bands by
-  `tests/filtered_ann_recall_bands.rs` but no recall SLA is claimed).
+  catalog policy not wired; the deterministic recall-band harness exists in
+  `tests/filtered_ann_recall_bands.rs` but remains ignored until TD-073 lands, so no recall SLA is
+  claimed).
 * Security runtime (JWT, API key, SSO hooks, mTLS, CRL revocation freshness).
 * Time-series / event sourcing engine foundations.
 

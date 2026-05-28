@@ -1127,4 +1127,58 @@ physical layouts.
 | `cargo clippy --workspace --lib --bins -- -D warnings` is now CLEAN across all 50+ non-root workspace crates and the workspace `cargo fmt --all -- --check` exits 0. The root `proximadb` crate still surfaces accumulated lint debt (CLAUDE.md `src/lib.rs:22-31` explicitly downgrades these to `#![warn(…)]` and `CI uses RUSTFLAGS: '-A warnings'`). First wave of session-15 cleanup landed in 13 commits ending at `486096c96`, covering ~57 errors workspace-wide + ~55 in the root crate. Remaining lint counts (categorized from a workspace pass): collapsible_if ~30, unnecessary_sort_by ~20, manual_checked_ops ~20, doc_lazy_continuation ~15, unwrap_used/expect_used/panic ~21 (these need real Result-handling refactors, not just allows), derivable_impls ~11, plus a long tail of one-off lints (~70 mixed: needless_borrow, useless_conversion, clone_on_copy, large_enum_variant, dead_code, …).
 | 8-12 hours dedicated cleanup PR
 | **First wave landed 2026-05-28** across `7db1d804e` → `486096c96` (13 commits, ~55 source files): all foundation + horizontal + storage + modality + query + control + platform crates clippy-clean under `-D warnings`; root-crate sweep covered `rank.rs`, `filterable_metadata.rs`, `dml/mod.rs`, `viper/pipeline.rs`, `schema/document/mod.rs`, `database.rs`, `tenant_tier.rs`, and an 11-file `sort_by_key` sweep. **Acceptance for closing**: `cargo clippy -p proximadb --lib --bins -- -D warnings` exits 0 (or each remaining lint has an audited `#[allow(...)]` with an inline justification). Schedule as a focused multi-day PR per CLAUDE.md "the main codebase has accumulated lint warnings that should be addressed in a dedicated cleanup PR". The categorized counts above let the cleanup PR slice by lint type (each batch reviewable on its own).
+
+| TD-080
+| Catalog default-bootstrap in embedded test harnesses (precision_resolver wiring)
+| P3
+| MEDIUM
+| Open
+| `src/database.rs:159` wires `precision_resolver` into `RequestHandlers` only when `catalog_manager.default_catalog()` succeeds. In embedded test harnesses that don't register a default catalog (the pattern in `tests/fp16_v2_insert_search_e2e.rs` and `tests/release_smoke_v2.rs`), the resolver stays unwired and fp16 collections silently accumulate the canonical_bytes Prometheus metric under `precision="fp32"`. Production wires it correctly; the gap is test-harness-only.
+| 2-3 days
+| Surfaced 2026-05-28 (round-2 audit) when `rest_v2_insert_into_fp16_collection_accumulates_canonical_bytes_metric` failed after the WS3 fixes; the test is `#[ignore]`'d with a pointer to this TD. Acceptance: (1) `ProximaDB::new` registers a default catalog OR test harness fixtures call `set_precision_resolver` explicitly; (2) the metric test is unignored and green; (3) regression covered by `release-smoke`.
+
+| TD-081
+| Python SDK live v2 INSERT→SEARCH integration coverage
+| P3
+| MEDIUM
+| Open
+| `tests/release_smoke_v2.rs` is the v0.2 release-gate smoke for the v2 record path but is Rust-only. The Python SDK at `clients/python/src/proximadb_sdk/protocols/rest_sync.py` (insert_records → v2 records/batch) is exercised only by mocked-HTTP unit tests in `clients/python/tests/unit/test_rest_record_ingest.py`. A regression in the SDK's insert→search round trip would not be caught by `make release-check`.
+| 1-2 days
+| Surfaced 2026-05-28 (round-2 audit). Acceptance: (1) `clients/python/tests/integration/test_v2_insert_search_e2e.py` exists, brings up an embedded server via the existing test harness, exercises insert_records + search, asserts top-k contains the inserted record; (2) the Python integration suite runs as part of `make release-check`.
+
+| TD-082
+| Arrow Flight INSERT vs. REST/gRPC UPSERT handler parity test
+| P3
+| MEDIUM
+| Open
+| Round-2 audit (2026-05-28) found that `handle_record_insert_batch_for_tenant` was missing the precision-coercion block that `handle_record_batch_for_tenant` already applied — Arrow Flight INSERT into an fp16 collection would land fp32 records. Fix landed this session, but no test asserts the two handlers remain behaviourally equivalent under identical input. Another precision/validation block could regress one path silently.
+| 1 day
+| Acceptance: a unit/integration test feeds the same `RichRecordBatchRequest` to both handlers and asserts identical written records (precision, props, tenant_id projection). Add to `make release-check`.
+
+| TD-083
+| Rust SDK v2 INSERT exposure (props / text_fields)
+| P3
+| MEDIUM
+| Open
+| `clients/rust/src/collection.rs:621` (`UpdateBuilder`) exposes v2 upsert only — no full INSERT with the v2 `props` / `text_fields` schema. Rust SDK users stay on v1-shape metadata dict and cannot leverage canonical record features.
+| 2-3 days
+| Acceptance: a `ProximaRecordBuilder` paralleling the Python SDK with typed `props` / `text_fields` support; smoke test against the live REST v2 records/batch endpoint.
+
+| TD-084
+| PostgreSQL wire v2 record features exposure
+| P3
+| MEDIUM
+| Open
+| `src/network/postgres/protocol.rs` converts Arrow data to `ProximaRecord` internally but does not expose v2 `props` / `text_fields` typed-field insert via SQL. pgvector users are confined to v1-shape SQL.
+| 3-5 days
+| ADR-018 Phase 2/3 territory; acceptance: documented SQL syntax for typed-field insert (e.g. `PROPS '{...}'::jsonb`) and a pgwire integration test covering the path.
+
+| TD-085
+| Marketing copy in `docs/_internal/enterprise/` and `docs/_internal/business/` overclaims
+| P4
+| LOW
+| Open — owner: product
+| Round-2 audit (2026-05-28) found multiple overclaims that survived round-1 cleanup because the round-1 `docs-claim-check` allowlisted internal marketing paths. Examples: "85-96% cost reduction", "296% performance" competitor claims, "Industry-leading" superlatives.
+| 1 day
+| Out of scope for the engineering reconciliation. Acceptance: product owner reviews and either (a) scrubs the claims, (b) cites a published evidence source, or (c) scopes the directories to internal-only audiences.
 |===

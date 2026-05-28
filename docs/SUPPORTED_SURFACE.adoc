@@ -133,9 +133,9 @@ GET `/api/v2/_diagnostics/collections/{collection_id}/route-health`):
 | Filtered ANN per-collection policy
 | Not supported (default policy only)
 | `AnnFilteringPolicy` runs from the default in v0.2; per-collection catalog
-  policy plumbing tracked in TD-073. Differential recall envelope across
-  selectivity bands is verified by `tests/filtered_ann_recall_bands.rs` but
-  no recall SLA is claimed.
+  policy plumbing tracked in TD-073. A deterministic recall-band harness exists
+  at `tests/filtered_ann_recall_bands.rs`, but it is intentionally ignored
+  while ADR-011 remains Beta; no recall SLA is claimed.
 
 | `RecallProbeGate` enforced route selection
 | Not supported (diagnostic only)

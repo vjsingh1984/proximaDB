@@ -1044,11 +1044,42 @@ impl UnifiedHandlers {
                 "WAL_LANE_REJECTED".to_string(),
             ));
         }
+        // v0.2 release-readiness audit round 2: this insert-only handler
+        // (used by Arrow Flight INSERT path, `arrow_ipc/service.rs:834`)
+        // was missing the precision-coercion block that
+        // `handle_record_batch_for_tenant` already applies. Without it,
+        // an Arrow Flight INSERT into an fp16 collection lands fp32
+        // records — divergent from REST/gRPC v2 behaviour. Keep the two
+        // handlers behaviourally aligned.
+        let mut records = request.records;
+        if let Some(resolver) = self.precision_resolver.get() {
+            let table_id = Self::collection_to_table_identifier(&request.collection_id);
+            match resolver.resolve(&table_id).await {
+                Ok(target_precision)
+                    if target_precision != proximadb_records::EmbeddingScalarType::Fp32 =>
+                {
+                    for record in &mut records {
+                        for cell in &mut record.embeddings {
+                            cell.coerce_to_precision(target_precision);
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        collection = %request.collection_id,
+                        error = %e,
+                        "v2 record insert-only batch: precision resolver lookup failed; \
+                         records will land at their input precision"
+                    );
+                }
+            }
+        }
         match self
             .vector_operations_service
             .insert_records_only_with_tenant_context(
                 &collection_id,
-                request.records,
+                records,
                 tenant_context.as_ref(),
             )
             .await

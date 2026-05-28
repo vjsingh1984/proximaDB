@@ -1136,6 +1136,21 @@ pub async fn insert_records(
         .await
     {
         Ok(resp) => {
+            // v0.2 release-readiness audit (round 2): a missing collection
+            // was returning HTTP 200 with `BatchOperationResult::failure` in
+            // the body, which broke the v2 INSERT data-path silently for
+            // weeks. Map the well-known NOT_FOUND error_code onto a real
+            // HTTP 404 here so SDK consumers and curl users see the same
+            // signal. Other failure codes still flow through the body, which
+            // matches the batched per-record contract.
+            if !resp.success && resp.error_code.as_deref() == Some("NOT_FOUND") {
+                return Err(ApiError::NotFound(
+                    resp.errors
+                        .into_iter()
+                        .next()
+                        .unwrap_or_else(|| format!("Collection '{}' not found", collection)),
+                ));
+            }
             // Check for success - if successful, all records were inserted
             let validation_error_count = errors.len();
             let success_count = if resp.success {
@@ -1355,6 +1370,23 @@ pub async fn search_with_typed_filters(
         return Err(ApiError::InvalidArgument(
             "top_k must be greater than 0".to_string(),
         ));
+    }
+    // v0.2 release-readiness audit (round 2): cap top_k to a defensive
+    // upper bound so a malformed client (or a malicious one) cannot ask
+    // the server to allocate an unbounded result buffer. The cap is
+    // intentionally generous — production HNSW workloads top out far
+    // below this — but small enough that a single bad request can't
+    // exhaust memory. Operators can raise it via an env var if they
+    // need a wider window for benchmark or batch-export shapes.
+    let max_top_k: usize = std::env::var("PROXIMADB_MAX_SEARCH_TOP_K")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10_000);
+    if request.top_k > max_top_k {
+        return Err(ApiError::InvalidArgument(format!(
+            "top_k={} exceeds server cap {} (set PROXIMADB_MAX_SEARCH_TOP_K to override)",
+            request.top_k, max_top_k
+        )));
     }
 
     // Validate filters if provided

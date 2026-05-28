@@ -63,6 +63,16 @@ Choose the vector storage engine that fits your workload. Engines are pluggable 
 | 96%+
 |===
 
+[WARNING]
+====
+**SWIFT and RAPTOR are gated behind the `experimental-engines` Cargo feature
+in v0.2 and are disabled by default.** Selecting them on a stock build returns
+an error from the engine factory; they are not part of the v0.2 supported
+surface. For production single-node workloads in v0.2, use **SST**, **HELIX**,
+**VIPER**, or **NOVA**. See `Cargo.toml` `[features]` and
+link:../SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`].
+====
+
 == Decision Flowchart
 
 [source,mermaid]

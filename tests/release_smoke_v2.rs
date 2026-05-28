@@ -285,3 +285,90 @@ async fn rest_v2_record_release_smoke_round_trip() {
         "rec-0 should be tombstoned after DELETE. Got ids={ids:?}, body={search2_body}"
     );
 }
+
+/// v0.2 release-readiness audit round 2: POST to a non-existent collection
+/// must return HTTP 404, not HTTP 200 with `BatchOperationResult::failure`
+/// in the body. The first reconciliation missed this because every test in
+/// the suite used a freshly created collection; the bug was discoverable
+/// only by adversarial calls.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rest_v2_insert_to_missing_collection_returns_404() {
+    let server = ReleaseSmokeServer::start().await.expect("server start");
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let missing = "definitely_not_a_real_collection_4d4f0a";
+    let resp = http
+        .post(format!(
+            "{}/api/v2/collections/{}/records/batch",
+            server.base_url(),
+            missing
+        ))
+        .json(&json!({ "records": [{ "id": "x", "vector": [0.0, 0.0] }] }))
+        .send()
+        .await
+        .expect("insert send");
+    assert_eq!(
+        resp.status().as_u16(),
+        404,
+        "POST to missing collection must return HTTP 404 (got {}): {}",
+        resp.status(),
+        resp.text().await.unwrap_or_default()
+    );
+}
+
+/// v0.2 release-readiness audit round 2: the search endpoint must cap
+/// `top_k` to prevent a malformed/malicious client from requesting an
+/// unbounded result buffer allocation. Default cap is 10_000; the test
+/// requests one above the cap and asserts HTTP 400.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rest_v2_search_top_k_above_cap_returns_400() {
+    let server = ReleaseSmokeServer::start().await.expect("server start");
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .no_proxy()
+        .build()
+        .unwrap();
+
+    let coll = format!(
+        "release_top_k_cap_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    let create_resp = http
+        .post(format!("{}/api/v2/collections", server.base_url()))
+        .json(&json!({
+            "name": coll,
+            "dimension": 4,
+            "engine": "sst",
+            "distance_metric": "cosine",
+            "canonical_embedding_precision": "fp32",
+        }))
+        .send()
+        .await
+        .expect("v2 create");
+    assert!(create_resp.status().is_success(), "v2 create");
+
+    let resp = http
+        .post(format!(
+            "{}/api/v2/collections/{}/search",
+            server.base_url(),
+            coll
+        ))
+        .json(&json!({ "vector": [0.0, 0.0, 0.0, 0.0], "top_k": 100_001 }))
+        .send()
+        .await
+        .expect("search send");
+    assert_eq!(
+        resp.status().as_u16(),
+        400,
+        "top_k above cap must return HTTP 400 (got {}): {}",
+        resp.status(),
+        resp.text().await.unwrap_or_default()
+    );
+}

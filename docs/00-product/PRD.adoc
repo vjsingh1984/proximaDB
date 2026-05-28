@@ -71,7 +71,7 @@ For AI/ML engineers, platform engineers, data engineers, and trading system deve
 | None
 
 | Time-Series
-| Planned (P0)
+| Beta (post-v0.2 P0)
 | None
 | None
 | None
@@ -79,7 +79,7 @@ For AI/ML engineers, platform engineers, data engineers, and trading system deve
 | Native
 
 | Event Sourcing
-| Planned (P0)
+| Beta (post-v0.2 P0)
 | None
 | None
 | None

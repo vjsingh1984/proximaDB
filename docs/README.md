@@ -213,7 +213,9 @@ flowchart TB
 
 ## Version
 
-**Current Release**: v0.2.0 (February 2026)
+**Pre-release (in development)**: v0.2.0 — narrow single-node cut targeting May 2026. See
+[`SUPPORTED_SURFACE.adoc`](./SUPPORTED_SURFACE.adoc) for the supported/beta/experimental split
+and [`release-notes/v0.2.0.adoc`](./release-notes/v0.2.0.adoc) for the release contract.
 
 - Platform packages (RPM, DEB, MSI)
 - Unified port architecture (5678)
