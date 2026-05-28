@@ -466,7 +466,7 @@ impl QueryResultCache {
             .collect();
 
         // Sort by age (oldest first)
-        entries.sort_by(|a, b| a.1.cmp(&b.1));
+        entries.sort_by_key(|e| e.1);
 
         let to_evict = entries
             .into_iter()

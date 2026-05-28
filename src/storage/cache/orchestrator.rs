@@ -548,7 +548,7 @@ impl OrchestratorAccessPatternTracker {
 
         // Sort by access count and take top N
         let mut sorted: Vec<_> = key_counts.into_iter().collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|s| std::cmp::Reverse(s.1));
         sorted.into_iter().take(top_count).collect()
     }
 

@@ -307,7 +307,7 @@ impl PartitionedStorage {
         }
 
         // Sort by timestamp descending (most recent first)
-        results.sort_by(|a, b| b.timestamp_ns.cmp(&a.timestamp_ns));
+        results.sort_by_key(|r| std::cmp::Reverse(r.timestamp_ns));
 
         if results.len() > limit {
             results.truncate(limit);

@@ -243,7 +243,7 @@ impl TraceStorage {
             .collect();
 
         // Sort by start time descending
-        results.sort_by(|a, b| b.start_time_ns.cmp(&a.start_time_ns));
+        results.sort_by_key(|r| std::cmp::Reverse(r.start_time_ns));
 
         if results.len() > limit {
             results.truncate(limit);

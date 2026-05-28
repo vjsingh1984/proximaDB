@@ -776,7 +776,7 @@ impl ArrowFileExportHandler {
         }
 
         // Sort by modification time (newest first)
-        files.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+        files.sort_by_key(|f| std::cmp::Reverse(f.modified_at));
 
         Ok(files)
     }

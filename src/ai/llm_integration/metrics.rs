@@ -246,7 +246,7 @@ impl LLMMetrics {
                 .iter()
                 .map(|(k, v)| (k.clone(), *v))
                 .collect();
-            common_errors.sort_by(|a, b| b.1.cmp(&a.1));
+            common_errors.sort_by_key(|e| std::cmp::Reverse(e.1));
             common_errors.truncate(5);
 
             provider_stats.insert(

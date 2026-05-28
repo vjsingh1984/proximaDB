@@ -358,7 +358,7 @@ impl LogAggregator {
             .collect();
 
         // Sort by count descending
-        buckets.sort_by(|a, b| b.count.cmp(&a.count));
+        buckets.sort_by_key(|b| std::cmp::Reverse(b.count));
         buckets
     }
 
@@ -383,7 +383,7 @@ impl LogAggregator {
             })
             .collect();
 
-        buckets.sort_by(|a, b| b.count.cmp(&a.count));
+        buckets.sort_by_key(|b| std::cmp::Reverse(b.count));
         buckets
     }
 

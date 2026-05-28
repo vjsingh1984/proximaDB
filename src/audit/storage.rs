@@ -123,7 +123,7 @@ impl AuditStorage for FileAuditStorage {
         }
 
         // Sort by timestamp (newest first)
-        events.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        events.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
 
         debug!("🔍 Queried {} audit events matching criteria", events.len());
         Ok(events)

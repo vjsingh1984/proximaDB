@@ -354,7 +354,7 @@ impl PreparedStatement {
 
         // Sort bindings by position in reverse order to avoid index shifting
         let mut bindings_with_params: Vec<_> = self.parameter_bindings.iter().enumerate().collect();
-        bindings_with_params.sort_by(|a, b| b.1.position.cmp(&a.1.position));
+        bindings_with_params.sort_by_key(|b| std::cmp::Reverse(b.1.position));
 
         // Replace from the end to avoid position shifts
         for (param_idx, _binding) in &bindings_with_params {

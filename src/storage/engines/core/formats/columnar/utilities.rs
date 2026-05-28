@@ -224,7 +224,7 @@ impl ColumnarUtilities {
             .iter()
             .map(|(col, count)| (col.clone(), *count))
             .collect();
-        hot_columns.sort_by(|a, b| b.1.cmp(&a.1));
+        hot_columns.sort_by_key(|c| std::cmp::Reverse(c.1));
         hot_columns.truncate(10); // Top 10 hot columns
 
         // Identify frequently used filters
@@ -232,7 +232,7 @@ impl ColumnarUtilities {
             .iter()
             .map(|(filter, count)| (filter.clone(), *count))
             .collect();
-        popular_filters.sort_by(|a, b| b.1.cmp(&a.1));
+        popular_filters.sort_by_key(|p| std::cmp::Reverse(p.1));
         popular_filters.truncate(10); // Top 10 filters
 
         // Identify hot row groups
@@ -240,7 +240,7 @@ impl ColumnarUtilities {
             .iter()
             .map(|(rg_id, count)| (*rg_id, *count))
             .collect();
-        hot_row_groups.sort_by(|a, b| b.1.cmp(&a.1));
+        hot_row_groups.sort_by_key(|h| std::cmp::Reverse(h.1));
         hot_row_groups.truncate(20); // Top 20 hot row groups
 
         Ok(QueryPatternAnalysis {
