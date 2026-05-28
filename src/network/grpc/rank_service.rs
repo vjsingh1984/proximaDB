@@ -407,6 +407,7 @@ mod tests {
             blueprint_factory: factory,
             candidate_provider: candidates,
             second_phase_scorers: dashmap::DashMap::new(),
+            metrics: None,
         })
     }
 
@@ -561,6 +562,7 @@ mod tests {
             blueprint_factory: factory,
             candidate_provider: candidates,
             second_phase_scorers: dashmap::DashMap::new(),
+            metrics: None,
         })
     }
 
@@ -587,6 +589,7 @@ mod tests {
             blueprint_factory: factory,
             candidate_provider: candidates,
             second_phase_scorers: dashmap::DashMap::new(),
+            metrics: None,
         })
     }
 

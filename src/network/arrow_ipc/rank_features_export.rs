@@ -466,6 +466,7 @@ mod tests {
             blueprint_factory: factory,
             candidate_provider: candidates,
             second_phase_scorers: dashmap::DashMap::new(),
+            metrics: None,
         })
     }
 
@@ -737,6 +738,7 @@ mod tests {
             blueprint_factory: factory,
             candidate_provider: candidates,
             second_phase_scorers: dashmap::DashMap::new(),
+            metrics: None,
         });
 
         let body = serde_json::to_vec(&serde_json::json!({

@@ -231,6 +231,23 @@ pub async fn handle_rank_search(
     factory: Arc<BlueprintFactory>,
     second_phase_scorer: Option<Arc<dyn SecondPhaseScorer>>,
 ) -> RankResult<RankSearchResponse> {
+    handle_rank_search_with_metrics(req, registry, candidates, factory, second_phase_scorer, None)
+        .await
+}
+
+/// Like [`handle_rank_search`] but with an optional metrics handle
+/// so per-feature observability fires through the spec's Prometheus
+/// surface. The original entry point delegates to this with
+/// `metrics = None` so existing callers (tests, mock REST scaffolds)
+/// stay unchanged.
+pub async fn handle_rank_search_with_metrics(
+    req: RankSearchRequest,
+    registry: &ProfileRegistry,
+    candidates: &dyn CandidateProvider,
+    factory: Arc<BlueprintFactory>,
+    second_phase_scorer: Option<Arc<dyn SecondPhaseScorer>>,
+    metrics: Option<Arc<crate::observability::rank_metrics::RankPipelineMetrics>>,
+) -> RankResult<RankSearchResponse> {
     let batch = candidates.candidates(&req).await?;
     let candidate_docs = batch.docs;
     // R-7c.3.2: optional backend-id translation table. Stays in the
@@ -326,12 +343,19 @@ pub async fn handle_rank_search(
     let compiled_for_block = compiled.clone();
     let candidate_docs_for_block = candidate_docs.clone();
     let scorer_for_block = second_phase_scorer.clone();
+    let metrics_for_block = metrics
+        .clone()
+        .map(|m| (m, compiled.spec.name.clone()));
     let phase_outcome: PhaseOutcome = tokio::task::spawn_blocking(move || {
+        let metrics_ref = metrics_for_block
+            .as_ref()
+            .map(|(m, name)| (m.clone(), name.as_str()));
         run_phases_blocking(
             &compiled_for_block,
             &qctx_for_block,
             &candidate_docs_for_block,
             scorer_for_block.as_deref(),
+            metrics_ref,
         )
     })
     .await
@@ -397,14 +421,38 @@ fn run_phases_blocking(
     qctx: &QueryContext,
     candidate_docs: &[DocHandle],
     second_phase_scorer: Option<&dyn SecondPhaseScorer>,
+    metrics: Option<(
+        Arc<crate::observability::rank_metrics::RankPipelineMetrics>,
+        &str,
+    )>,
 ) -> RankResult<PhaseOutcome> {
+    use proximadb_kernel::PhaseId;
     let mut pipeline = compiled.materialize(qctx)?;
     let arena = FeatureArena::new();
     let attr = NoopAttributeAccess;
     let cand = NoopCandidateData;
     let models = NoopModelCache;
-    let metrics = NoopMetricsSink;
-    let mut ctx = ScoreCtx::new(qctx, &arena, &attr, &cand, &models, &metrics);
+
+    // R-7c.4d metrics wiring: when RankServices supplied a
+    // Prometheus handle, build a per-phase sink and emit through
+    // the spec's `{profile, phase, feature}` label set. Without a
+    // handle, keep NoopMetricsSink so the NFR-9 zero-cost-when-
+    // unused contract holds.
+    let prom_sink: Option<crate::observability::rank_metrics::PrometheusRankSink> = metrics
+        .as_ref()
+        .map(|(m, profile)| {
+            crate::observability::rank_metrics::PrometheusRankSink::new(
+                m.clone(),
+                *profile,
+                PhaseId::FIRST,
+            )
+        });
+    let noop_sink = NoopMetricsSink;
+    let metrics_ref: &dyn proximadb_rank_core::RankMetricsSink = match prom_sink.as_ref() {
+        Some(s) => s,
+        None => &noop_sink,
+    };
+    let mut ctx = ScoreCtx::new(qctx, &arena, &attr, &cand, &models, metrics_ref);
     let first_outcome = pipeline.run_first_phase(candidate_docs, &mut ctx)?;
 
     // Drop the arena-bearing context before second phase — the scorer
@@ -446,6 +494,14 @@ pub struct RankServices {
     /// a control-plane RPC installs / swaps scorers at runtime
     /// (R-7c.2.1 follow-up).
     pub second_phase_scorers: dashmap::DashMap<String, Arc<dyn SecondPhaseScorer>>,
+    /// Optional Prometheus metric handles for the rank pipeline.
+    /// When `Some`, `run_phases_blocking` builds a
+    /// `PrometheusRankSink` and emits the spec's
+    /// `proximadb_rank_feature_latency_us` / `_phase_truncated_total`
+    /// metrics. When `None` (the default), the pipeline keeps using
+    /// `NoopMetricsSink` so the zero-cost-when-unused contract
+    /// (NFR-9) holds.
+    pub metrics: Option<Arc<crate::observability::rank_metrics::RankPipelineMetrics>>,
 }
 
 impl RankServices {
@@ -461,7 +517,20 @@ impl RankServices {
             blueprint_factory: factory,
             candidate_provider,
             second_phase_scorers: dashmap::DashMap::new(),
+            metrics: None,
         }
+    }
+
+    /// Wire a `RankPipelineMetrics` handle so per-feature latency +
+    /// phase-truncation observations are emitted via Prometheus
+    /// instead of the noop default. Call once at server startup
+    /// after `RankPipelineMetrics::register(&registry)`.
+    pub fn with_metrics(
+        mut self,
+        metrics: Arc<crate::observability::rank_metrics::RankPipelineMetrics>,
+    ) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// Register a second-phase scorer against a profile name. Used at
@@ -1040,6 +1109,71 @@ mod tests {
         assert_eq!(resp.hits[0].id, "7");
         assert!((resp.hits[0].summary_features["docid()"] - 7.0).abs() < 1e-5);
         assert!((resp.hits[1].summary_features["docid()"] - 4.0).abs() < 1e-5);
+    }
+
+    #[tokio::test]
+    async fn handler_with_metrics_wiring_runs_to_completion_no_crash() {
+        // R-7c.4d follow-up: when RankServices supplies a
+        // RankPipelineMetrics handle, handle_rank_search_with_metrics
+        // must route through PrometheusRankSink instead of the noop.
+        // The integration is *plumbed* (sink construction + ScoreCtx
+        // wiring), but proximadb-rank-core does not yet invoke
+        // `ctx.metrics.record_feature_latency_ns(...)` per-feature
+        // or `record_phase_truncated(...)` at first-phase truncation
+        // — that's a separate slice in rank-core's executor. So this
+        // test asserts the metrics path is harmless (no panic,
+        // response shape unchanged) rather than asserting non-zero
+        // observation counts. When rank-core adds the timer
+        // wrapping, extend this test to check
+        // `proximadb_rank_feature_latency_us{profile,phase,feature}`
+        // sample counts.
+        use crate::observability::rank_metrics::RankPipelineMetrics;
+        let registry = ProfileRegistry::new();
+        let factory = factory_with_docid();
+        let mut spec = RankProfileSpec::new("metrics_test");
+        spec.first_phase = Some(PhaseSpec {
+            expression: "docid()".into(),
+            heap_size: Some(10),
+            rerank_count: None,
+            batch_size: None,
+        });
+        spec.match_features = vec!["docid()".into()];
+        spec.version = 1;
+        let compiled = CompiledRankProfile::compile(spec, factory.clone()).unwrap();
+        registry.install(compiled);
+
+        let prom_registry = prometheus::Registry::new();
+        let metrics = std::sync::Arc::new(
+            RankPipelineMetrics::register(&prom_registry).unwrap(),
+        );
+
+        let candidates = FixedCandidates(vec![DocHandle(1), DocHandle(2), DocHandle(3)]);
+        let req = RankSearchRequest {
+            collection: "docs".into(),
+            query_vector: vec![],
+            query_text: None,
+            k: 3,
+            rank_profile: Some("metrics_test".into()),
+            rank_overrides: None,
+        };
+        let resp = handle_rank_search_with_metrics(
+            req,
+            &registry,
+            &candidates,
+            factory,
+            None,
+            Some(metrics.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.hits.len(), 3);
+        // Sanity-check: the wiring path didn't break the response
+        // shape — match_features still populate from the profile's
+        // declared expression, identical to the noop-metrics path.
+        for h in &resp.hits {
+            assert_eq!(h.match_features.len(), 1);
+            assert!(h.match_features.contains_key("docid()"));
+        }
     }
 
     #[tokio::test]
