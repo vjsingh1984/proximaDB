@@ -207,7 +207,11 @@ mod tests {
             })
             .collect();
         let unique: std::collections::HashSet<_> = arms.iter().collect();
-        assert_eq!(unique.len(), 5, "5 k buckets must produce distinct arms: {arms:?}");
+        assert_eq!(
+            unique.len(),
+            5,
+            "5 k buckets must produce distinct arms: {arms:?}"
+        );
     }
 
     #[test]
@@ -218,10 +222,8 @@ mod tests {
 
     #[test]
     fn planner_action_with_rank_carries_choice() {
-        let a = PlannerAction::with_rank(
-            ExecutionAction::default(),
-            RankPhaseChoice::aggressive(32),
-        );
+        let a =
+            PlannerAction::with_rank(ExecutionAction::default(), RankPhaseChoice::aggressive(32));
         assert!(a.rank_choice.is_some());
         assert_eq!(a.rank_choice.unwrap().second_phase_k, 200);
     }

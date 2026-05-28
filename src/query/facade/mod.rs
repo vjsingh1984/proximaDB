@@ -311,7 +311,11 @@ pub trait QueryStrategy: Send + Sync {
     fn can_handle(&self, request: &QueryRequest) -> bool;
 
     /// Execute the query and return results
-    async fn execute(&self, request: QueryRequest, ctx: &FacadeQueryContext) -> Result<FacadeQueryResult>;
+    async fn execute(
+        &self,
+        request: QueryRequest,
+        ctx: &FacadeQueryContext,
+    ) -> Result<FacadeQueryResult>;
 
     /// Priority when multiple strategies can handle a query (higher = preferred)
     fn priority(&self) -> i32 {
@@ -732,7 +736,11 @@ mod tests {
             fn can_handle(&self, r: &QueryRequest) -> bool {
                 r.query_type == QueryType::VectorSearch
             }
-            async fn execute(&self, _r: QueryRequest, _ctx: &FacadeQueryContext) -> Result<FacadeQueryResult> {
+            async fn execute(
+                &self,
+                _r: QueryRequest,
+                _ctx: &FacadeQueryContext,
+            ) -> Result<FacadeQueryResult> {
                 Ok(FacadeQueryResult {
                     data: QueryResultData::Empty,
                     metrics: Some(ExecutionMetrics {
@@ -754,7 +762,11 @@ mod tests {
             fn can_handle(&self, r: &QueryRequest) -> bool {
                 r.query_type == QueryType::VectorSearch
             }
-            async fn execute(&self, _r: QueryRequest, _ctx: &FacadeQueryContext) -> Result<FacadeQueryResult> {
+            async fn execute(
+                &self,
+                _r: QueryRequest,
+                _ctx: &FacadeQueryContext,
+            ) -> Result<FacadeQueryResult> {
                 Ok(FacadeQueryResult {
                     data: QueryResultData::Empty,
                     metrics: Some(ExecutionMetrics {

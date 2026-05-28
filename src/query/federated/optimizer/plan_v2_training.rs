@@ -259,6 +259,7 @@ mod tests {
             recall_probe_score: None,
             utility_score_avg: None,
             failure_class: None,
+            predicate_shortfall: None,
         }
     }
 

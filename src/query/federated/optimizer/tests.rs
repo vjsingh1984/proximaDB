@@ -1503,7 +1503,9 @@ mod tests {
         // rank pipeline.
         let optimizer = CrossModelOptimizer::new();
         let query = parser::FederatedParser::new()
-            .parse("SELECT * FROM RERANK('docs', 'laptop', '[0.1,0.2,0.3]', 25, 'semantic_plus_ce')")
+            .parse(
+                "SELECT * FROM RERANK('docs', 'laptop', '[0.1,0.2,0.3]', 25, 'semantic_plus_ce')",
+            )
             .expect("RERANK query should parse");
 
         let plan = optimizer

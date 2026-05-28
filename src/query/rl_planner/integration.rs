@@ -10,8 +10,7 @@ use tracing::{debug, info, trace};
 
 use super::{
     ExecutionAction, ExecutionLog, ObjectEconomyFeatures, PlannerState, RLPlanner, RLPlannerConfig,
-    StageLog,
-    action::QuantizationStage,
+    StageLog, action::QuantizationStage,
 };
 use crate::query::query_optimizer::{
     ExecutionStep, Index, QueryOptimizerProgressiveStage, SearchAlgorithm, SearchExecutionMethod,
@@ -509,8 +508,7 @@ fn apply_quantization_floor_to_method(
             if let Some(raised) = floor.as_quantization_type() {
                 trace!(
                     "Object-economy floor raised QuantizedOnly from {:?} to {:?}",
-                    quantization_type,
-                    raised
+                    quantization_type, raised
                 );
                 *quantization_type = raised;
             } else {
@@ -702,7 +700,10 @@ mod tests {
         match method {
             SearchExecutionMethod::Progressive { stages } => {
                 assert_eq!(stages.len(), 2);
-                assert!(matches!(stages[0].algorithm, SearchAlgorithm::QuantizedSearch));
+                assert!(matches!(
+                    stages[0].algorithm,
+                    SearchAlgorithm::QuantizedSearch
+                ));
                 assert!(matches!(stages[1].algorithm, SearchAlgorithm::ExactSearch));
                 assert_eq!(stages[1].candidates, 128);
             }
@@ -746,7 +747,10 @@ mod tests {
         match method {
             SearchExecutionMethod::Progressive { stages } => {
                 assert_eq!(stages.len(), 1);
-                assert!(matches!(stages[0].algorithm, SearchAlgorithm::QuantizedSearch));
+                assert!(matches!(
+                    stages[0].algorithm,
+                    SearchAlgorithm::QuantizedSearch
+                ));
             }
             other => panic!("expected Progressive, got {other:?}"),
         }

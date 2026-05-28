@@ -74,7 +74,13 @@ pub struct ReplayInputs<'a> {
 /// Run a single replay. Pure given the candidate inferencer.
 pub fn replay(inputs: &ReplayInputs<'_>, candidate: &Arc<dyn PlanInferencer>) -> ReplayOutcome {
     let trace = inputs.trace;
-    let features = features_from_trace(trace, inputs.dim, inputs.recall_target, inputs.tier_label, inputs.collection_gb);
+    let features = features_from_trace(
+        trace,
+        inputs.dim,
+        inputs.recall_target,
+        inputs.tier_label,
+        inputs.collection_gb,
+    );
     let inference: PlanInference = candidate.infer(&features);
 
     let agrees_strategy = inference.filter_strategy == trace.filter_strategy;
@@ -180,8 +186,7 @@ pub fn summarize(outcomes: &[ReplayOutcome]) -> ReplaySummary {
         };
     }
     let agree_count = outcomes.iter().filter(|o| o.agrees).count();
-    let mean_conf =
-        outcomes.iter().map(|o| o.candidate_confidence).sum::<f64>() / total as f64;
+    let mean_conf = outcomes.iter().map(|o| o.candidate_confidence).sum::<f64>() / total as f64;
     let quality_samples: Vec<f64> = outcomes.iter().filter_map(|o| o.observed_quality).collect();
     let delta_samples: Vec<f64> = outcomes.iter().filter_map(|o| o.quality_delta).collect();
     let mean_observed = if quality_samples.is_empty() {
@@ -233,6 +238,7 @@ mod tests {
             recall_probe_score: None,
             utility_score_avg: None,
             failure_class: None,
+            predicate_shortfall: None,
         }
     }
 
@@ -269,7 +275,11 @@ mod tests {
         }
     }
 
-    fn fixed(strategy: FilterStrategy, route: IndexRoute, confidence: f64) -> Arc<dyn PlanInferencer> {
+    fn fixed(
+        strategy: FilterStrategy,
+        route: IndexRoute,
+        confidence: f64,
+    ) -> Arc<dyn PlanInferencer> {
         Arc::new(FixedInferencer {
             strategy,
             route,
@@ -338,7 +348,11 @@ mod tests {
     #[test]
     fn candidate_confidence_clamps_to_unit_interval() {
         let t = trace_template();
-        let candidate = fixed(FilterStrategy::HybridFilter, IndexRoute::FullPrecisionGraph, 5.0);
+        let candidate = fixed(
+            FilterStrategy::HybridFilter,
+            IndexRoute::FullPrecisionGraph,
+            5.0,
+        );
         let o = replay(&inputs(&t), &candidate);
         assert_eq!(o.candidate_confidence, 1.0);
     }
@@ -347,7 +361,11 @@ mod tests {
     fn observed_quality_none_without_actual_scan() {
         // Trace has actual_scan_gb = 0 → no ground truth.
         let t = trace_template();
-        let candidate = fixed(FilterStrategy::HybridFilter, IndexRoute::FullPrecisionGraph, 0.8);
+        let candidate = fixed(
+            FilterStrategy::HybridFilter,
+            IndexRoute::FullPrecisionGraph,
+            0.8,
+        );
         let o = replay(&inputs(&t), &candidate);
         assert!(o.observed_quality.is_none());
         assert!(o.quality_delta.is_none());
@@ -358,7 +376,11 @@ mod tests {
         let mut t = trace_template();
         t.actual_scan_gb = 0.3;
         t.latency_ms = 50.0;
-        let candidate = fixed(FilterStrategy::HybridFilter, IndexRoute::FullPrecisionGraph, 0.7);
+        let candidate = fixed(
+            FilterStrategy::HybridFilter,
+            IndexRoute::FullPrecisionGraph,
+            0.7,
+        );
         let o = replay(&inputs(&t), &candidate);
         assert!(o.observed_quality.is_some());
         assert!(o.quality_delta.is_some());
@@ -373,7 +395,11 @@ mod tests {
         t.actual_scan_gb = 0.3;
         let mut i = inputs(&t);
         i.collection_gb = None;
-        let candidate = fixed(FilterStrategy::HybridFilter, IndexRoute::FullPrecisionGraph, 0.7);
+        let candidate = fixed(
+            FilterStrategy::HybridFilter,
+            IndexRoute::FullPrecisionGraph,
+            0.7,
+        );
         let o = replay(&i, &candidate);
         assert!(o.observed_quality.is_none());
     }
@@ -384,7 +410,11 @@ mod tests {
         t.actual_scan_gb = 0.3;
         let mut i = inputs(&t);
         i.latency_target_ms = None;
-        let candidate = fixed(FilterStrategy::HybridFilter, IndexRoute::FullPrecisionGraph, 0.7);
+        let candidate = fixed(
+            FilterStrategy::HybridFilter,
+            IndexRoute::FullPrecisionGraph,
+            0.7,
+        );
         let o = replay(&i, &candidate);
         assert!(o.observed_quality.is_none());
     }
@@ -392,7 +422,11 @@ mod tests {
     #[test]
     fn candidate_source_propagates_to_outcome() {
         let t = trace_template();
-        let candidate = fixed(FilterStrategy::HybridFilter, IndexRoute::FullPrecisionGraph, 0.7);
+        let candidate = fixed(
+            FilterStrategy::HybridFilter,
+            IndexRoute::FullPrecisionGraph,
+            0.7,
+        );
         let o = replay(&inputs(&t), &candidate);
         assert_eq!(o.candidate_source, "test-fixed");
     }
@@ -400,7 +434,11 @@ mod tests {
     #[test]
     fn outcome_round_trips_via_json() {
         let t = trace_template();
-        let candidate = fixed(FilterStrategy::HybridFilter, IndexRoute::FullPrecisionGraph, 0.7);
+        let candidate = fixed(
+            FilterStrategy::HybridFilter,
+            IndexRoute::FullPrecisionGraph,
+            0.7,
+        );
         let o = replay(&inputs(&t), &candidate);
         let s = serde_json::to_string(&o).unwrap();
         let back: ReplayOutcome = serde_json::from_str(&s).unwrap();
@@ -420,8 +458,16 @@ mod tests {
     #[test]
     fn summarize_counts_agreements() {
         let t = trace_template();
-        let agreeing = fixed(FilterStrategy::HybridFilter, IndexRoute::FullPrecisionGraph, 0.7);
-        let disagreeing = fixed(FilterStrategy::PreFilter, IndexRoute::FullPrecisionGraph, 0.7);
+        let agreeing = fixed(
+            FilterStrategy::HybridFilter,
+            IndexRoute::FullPrecisionGraph,
+            0.7,
+        );
+        let disagreeing = fixed(
+            FilterStrategy::PreFilter,
+            IndexRoute::FullPrecisionGraph,
+            0.7,
+        );
         let outcomes = vec![
             replay(&inputs(&t), &agreeing),
             replay(&inputs(&t), &agreeing),
@@ -439,7 +485,11 @@ mod tests {
         let t_no_gt = trace_template();
         let mut t_gt = trace_template();
         t_gt.actual_scan_gb = 0.2;
-        let candidate = fixed(FilterStrategy::HybridFilter, IndexRoute::FullPrecisionGraph, 0.7);
+        let candidate = fixed(
+            FilterStrategy::HybridFilter,
+            IndexRoute::FullPrecisionGraph,
+            0.7,
+        );
         let outcomes = vec![
             replay(&inputs(&t_no_gt), &candidate),
             replay(&inputs(&t_gt), &candidate),
@@ -454,7 +504,11 @@ mod tests {
     #[test]
     fn summary_round_trips_via_json() {
         let t = trace_template();
-        let candidate = fixed(FilterStrategy::HybridFilter, IndexRoute::FullPrecisionGraph, 0.7);
+        let candidate = fixed(
+            FilterStrategy::HybridFilter,
+            IndexRoute::FullPrecisionGraph,
+            0.7,
+        );
         let outcomes = vec![replay(&inputs(&t), &candidate)];
         let s = summarize(&outcomes);
         let s_json = serde_json::to_string(&s).unwrap();
@@ -465,7 +519,11 @@ mod tests {
     #[test]
     fn agree_rate_is_one_on_all_agreement() {
         let t = trace_template();
-        let candidate = fixed(FilterStrategy::HybridFilter, IndexRoute::FullPrecisionGraph, 0.7);
+        let candidate = fixed(
+            FilterStrategy::HybridFilter,
+            IndexRoute::FullPrecisionGraph,
+            0.7,
+        );
         let outcomes = vec![
             replay(&inputs(&t), &candidate),
             replay(&inputs(&t), &candidate),
@@ -478,7 +536,11 @@ mod tests {
     #[test]
     fn agree_rate_is_zero_on_all_disagreement() {
         let t = trace_template();
-        let candidate = fixed(FilterStrategy::PreFilter, IndexRoute::FullPrecisionGraph, 0.7);
+        let candidate = fixed(
+            FilterStrategy::PreFilter,
+            IndexRoute::FullPrecisionGraph,
+            0.7,
+        );
         let outcomes = vec![replay(&inputs(&t), &candidate); 5];
         let s = summarize(&outcomes);
         assert_eq!(s.agree_rate, 0.0);

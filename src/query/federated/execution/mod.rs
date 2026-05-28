@@ -349,8 +349,9 @@ impl FederatedExecutor {
         &'a self,
         node: &'a PlanNode,
         is_root: bool,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<FederatedExecutionResult>> + Send + 'a>>
-    {
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<FederatedExecutionResult>> + Send + 'a>,
+    > {
         Box::pin(async move {
             let result = match &node.node_type {
                 PlanNodeType::Scan {
@@ -4524,7 +4525,11 @@ impl FederatedExecutor {
     }
 
     /// Execute union
-    async fn execute_union(&self, inputs: &[PlanNode], _all: bool) -> Result<FederatedExecutionResult> {
+    async fn execute_union(
+        &self,
+        inputs: &[PlanNode],
+        _all: bool,
+    ) -> Result<FederatedExecutionResult> {
         let mut all_batches = Vec::new();
         let mut schema = None;
 

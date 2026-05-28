@@ -101,7 +101,10 @@ impl Analyzer {
 
     async fn analyze_table_ref(&self, table_ref: &TableRef, scope: &mut Scope) -> Result<()> {
         if let Some(table_name) = &table_ref.name {
-            let collection = self.collection_port.get_collection(table_name, None).await?;
+            let collection = self
+                .collection_port
+                .get_collection(table_name, None)
+                .await?;
             if let Some(collection) = collection {
                 let mut columns = HashMap::new();
 

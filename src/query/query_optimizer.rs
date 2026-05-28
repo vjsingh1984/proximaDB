@@ -339,6 +339,14 @@ pub struct UnifiedExecutionPlan {
     /// ADR-011 ANN filtering mode chosen for this plan ("PreFilter", "Inline", "PostFilter").
     /// Absent when the plan has no vector+filter combination.
     pub ann_filtering_mode: Option<String>,
+
+    /// Estimated fraction of rows that pass the scalar filter used to choose
+    /// `ann_filtering_mode`. Carried to the AXIS manager so execution can use
+    /// the same ADR-011 policy boundary rather than a string-only hint.
+    pub ann_filtering_selectivity: Option<f64>,
+
+    /// Source of `ann_filtering_selectivity` for EXPLAIN/debugging.
+    pub ann_filtering_selectivity_source: Option<String>,
 }
 
 impl UnifiedExecutionPlan {
@@ -369,6 +377,8 @@ impl UnifiedExecutionPlan {
             rl_state: None,
             rl_action: None,
             ann_filtering_mode: None,
+            ann_filtering_selectivity: None,
+            ann_filtering_selectivity_source: None,
         }
     }
 
@@ -1002,6 +1012,11 @@ impl UnifiedQueryOptimizer {
         // Step 4: Optimize execution order (KEY CONSOLIDATION POINT)
         let (execution_steps, ann_filtering_mode) =
             self.optimize_execution_order(&cost_analysis, &query_analysis, &context)?;
+        let ann_filtering_selectivity = (query_analysis.has_metadata_filter
+            && query_analysis.has_vector_search)
+            .then_some(cost_analysis.filter_selectivity.unwrap_or(1.0));
+        let ann_filtering_selectivity_source =
+            ann_filtering_selectivity.map(|_| "cost_analysis".to_string());
 
         // Step 5: Configure resources
         let resource_allocation = self.allocate_resources(&context, &execution_steps)?;
@@ -1033,6 +1048,8 @@ impl UnifiedQueryOptimizer {
             rl_state: rl_state.clone(),
             rl_action: rl_action.clone(),
             ann_filtering_mode,
+            ann_filtering_selectivity,
+            ann_filtering_selectivity_source,
         };
 
         // Step 10: Apply RL-selected action to modify the plan if available
@@ -1150,18 +1167,24 @@ impl UnifiedQueryOptimizer {
             query_analysis.has_vector_search,
         ) {
             (true, true) => {
-                // ADR-011: PreFilter < 5%, Inline 5–50%, PostFilter > 50%.
+                // ADR-011: use the catalog policy as the single source of
+                // truth for PreFilter / Inline / PostFilter thresholds and
+                // PostFilter overfetch.
                 let filter_selectivity = cost_analysis.filter_selectivity.unwrap_or(1.0);
-                let search_cost = cost_analysis.search_cost.unwrap_or(0.0);
+                let ann_policy = proximadb_catalog::AnnFilteringPolicy::default();
+                let ann_mode = ann_policy.routing_mode(filter_selectivity);
 
                 // Derive ADR-011 mode; expose for EXPLAIN via UnifiedExecutionPlan.
-                let ann_mode =
-                    crate::core::search::hybrid::HybridExecutionStrategy::from_selectivity(
-                        filter_selectivity,
-                    );
-                ann_filtering_mode = Some(ann_mode.as_explain_str().to_string());
+                ann_filtering_mode = Some(
+                    match ann_mode {
+                        proximadb_catalog::AnnFilteringMode::PreFilter => "PreFilter",
+                        proximadb_catalog::AnnFilteringMode::Inline => "Inline",
+                        proximadb_catalog::AnnFilteringMode::PostFilter => "PostFilter",
+                    }
+                    .to_string(),
+                );
 
-                if filter_selectivity < 0.05 && search_cost > 100.0 {
+                if matches!(ann_mode, proximadb_catalog::AnnFilteringMode::PreFilter) {
                     trace!(
                         "ANN strategy: PreFilter (selectivity={:.3})",
                         filter_selectivity
@@ -1178,7 +1201,7 @@ impl UnifiedQueryOptimizer {
                         quantization_strategy: self.select_quantization_strategy(cost_analysis),
                         candidates: query_analysis.top_k * 10,
                     });
-                } else if filter_selectivity > 0.50 {
+                } else if matches!(ann_mode, proximadb_catalog::AnnFilteringMode::PostFilter) {
                     trace!(
                         "ANN strategy: PostFilter (selectivity={:.3})",
                         filter_selectivity
@@ -1187,8 +1210,9 @@ impl UnifiedQueryOptimizer {
                         execution_method: self
                             .select_search_method(cost_analysis, query_analysis)?,
                         quantization_strategy: self.select_quantization_strategy(cost_analysis),
-                        // Oversample by 2× per ADR-011 PostFilter spec.
-                        candidates: query_analysis.top_k * 20,
+                        candidates: ann_policy
+                            .effective_top_k_for_post_filter(query_analysis.top_k)
+                            .max(query_analysis.top_k),
                     });
                     steps.push(ExecutionStep::MetadataFilter {
                         conditions: self.extract_filter_conditions(cost_analysis)?,
@@ -2124,9 +2148,14 @@ impl UnifiedQueryOptimizer {
     /// Analyze query components with real complexity assessment
     fn analyze_query_components(&self, context: &UnifiedQueryContext<'_>) -> Result<QueryAnalysis> {
         let top_k = context.search_params.and_then(|p| p.top_k).unwrap_or(10);
+        let filter_expression = context.filter_params.or_else(|| {
+            context
+                .search_params
+                .and_then(|params| params.filter_expression.as_ref())
+        });
 
         // Determine query complexity based on actual filter structure
-        let (filter_depth, filter_count) = if let Some(filter) = context.filter_params {
+        let (filter_depth, filter_count) = if let Some(filter) = filter_expression {
             Self::analyze_filter_complexity(filter)
         } else {
             (0, 0)
@@ -2168,7 +2197,7 @@ impl UnifiedQueryOptimizer {
 
         Ok(QueryAnalysis {
             has_vector_search: context.search_params.is_some(),
-            has_metadata_filter: context.filter_params.is_some(),
+            has_metadata_filter: filter_expression.is_some(),
             has_aggregation: false,
             query_complexity,
             top_k,
@@ -2313,7 +2342,12 @@ impl UnifiedQueryOptimizer {
             });
 
         // Analyze filters and compute selectivity
-        let (filters, combined_selectivity) = if let Some(filter_expr) = context.filter_params {
+        let filter_expression = context.filter_params.or_else(|| {
+            context
+                .search_params
+                .and_then(|params| params.filter_expression.as_ref())
+        });
+        let (filters, combined_selectivity) = if let Some(filter_expr) = filter_expression {
             self.analyze_filters(filter_expr, context)
         } else {
             (vec![], 1.0)
@@ -2830,6 +2864,8 @@ impl UnifiedQueryOptimizer {
                     rl_state: None,
                     rl_action: None,
                     ann_filtering_mode: None,
+                    ann_filtering_selectivity: None,
+                    ann_filtering_selectivity_source: None,
                 }),
             });
         }
@@ -2878,6 +2914,8 @@ impl UnifiedQueryOptimizer {
                 rl_state: None,
                 rl_action: None,
                 ann_filtering_mode: None,
+                ann_filtering_selectivity: None,
+                ann_filtering_selectivity_source: None,
             }),
         });
 
@@ -3138,6 +3176,137 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn search_params_filter_expression_drives_ann_filtering_metadata() {
+        let optimizer = UnifiedQueryOptimizer::new(UnifiedOptimizerConfig::default());
+        let collection = Arc::new(Collection {
+            id: "test".to_string(),
+            config: Some(Default::default()),
+            ..Default::default()
+        });
+        let filter = FilterExpression::Comparison {
+            field: "category".to_string(),
+            operator: crate::core::search::ComparisonOperator::Equals,
+            value: serde_json::json!("electronics"),
+        };
+        let search_params = SearchParams {
+            top_k: Some(10),
+            filter_expression: Some(filter),
+            ..Default::default()
+        };
+        let context = UnifiedQueryContext {
+            collection,
+            search_params: Some(&search_params),
+            filter_params: None,
+            optimization_goal: OptimizationGoal::Balanced,
+            available_files: vec![],
+            total_vectors: 10_000,
+            total_columns: 10,
+            query_vectors: None,
+        };
+
+        let plan = optimizer.optimize_query(context).await.unwrap();
+
+        assert_eq!(plan.ann_filtering_mode.as_deref(), Some("Inline"));
+        assert_eq!(plan.ann_filtering_selectivity, Some(0.1));
+        assert_eq!(
+            plan.ann_filtering_selectivity_source.as_deref(),
+            Some("cost_analysis")
+        );
+    }
+
+    #[tokio::test]
+    async fn ann_post_filter_uses_catalog_policy_overfetch() {
+        let optimizer = UnifiedQueryOptimizer::new(UnifiedOptimizerConfig::default());
+        let collection = Arc::new(Collection {
+            id: "test".to_string(),
+            config: Some(Default::default()),
+            ..Default::default()
+        });
+        let filter = FilterExpression::Not(Box::new(FilterExpression::Comparison {
+            field: "category".to_string(),
+            operator: crate::core::search::ComparisonOperator::Equals,
+            value: serde_json::json!("electronics"),
+        }));
+        let search_params = SearchParams {
+            top_k: Some(10),
+            filter_expression: Some(filter),
+            ..Default::default()
+        };
+        let context = UnifiedQueryContext {
+            collection,
+            search_params: Some(&search_params),
+            filter_params: None,
+            optimization_goal: OptimizationGoal::Balanced,
+            available_files: vec![],
+            total_vectors: 10_000,
+            total_columns: 10,
+            query_vectors: None,
+        };
+
+        let plan = optimizer.optimize_query(context).await.unwrap();
+
+        assert_eq!(plan.ann_filtering_mode.as_deref(), Some("PostFilter"));
+        assert_eq!(plan.ann_filtering_selectivity, Some(0.9));
+        let candidates = plan
+            .execution_steps
+            .iter()
+            .find_map(|step| match step {
+                ExecutionStep::VectorSearch { candidates, .. } => Some(*candidates),
+                _ => None,
+            })
+            .expect("post-filter plan includes vector search");
+        assert_eq!(
+            candidates, 20,
+            "catalog default post-filter overfetch is 2x top_k, not 20x"
+        );
+    }
+
+    #[tokio::test]
+    async fn ann_pre_filter_uses_catalog_policy_threshold() {
+        let optimizer = UnifiedQueryOptimizer::new(UnifiedOptimizerConfig::default());
+        let collection = Arc::new(Collection {
+            id: "test".to_string(),
+            config: Some(Default::default()),
+            ..Default::default()
+        });
+        let ids: Vec<_> = (0..200)
+            .map(|i| serde_json::json!(format!("id-{i}")))
+            .collect();
+        let filter = FilterExpression::Comparison {
+            field: "id".to_string(),
+            operator: crate::core::search::ComparisonOperator::In,
+            value: serde_json::Value::Array(ids),
+        };
+        let search_params = SearchParams {
+            top_k: Some(10),
+            filter_expression: Some(filter),
+            ..Default::default()
+        };
+        let context = UnifiedQueryContext {
+            collection,
+            search_params: Some(&search_params),
+            filter_params: None,
+            optimization_goal: OptimizationGoal::Balanced,
+            available_files: vec![],
+            total_vectors: 10_000,
+            total_columns: 10,
+            query_vectors: None,
+        };
+
+        let plan = optimizer.optimize_query(context).await.unwrap();
+
+        assert_eq!(plan.ann_filtering_mode.as_deref(), Some("PreFilter"));
+        assert_eq!(plan.ann_filtering_selectivity, Some(0.005));
+        assert!(
+            matches!(
+                plan.execution_steps.first(),
+                Some(ExecutionStep::MetadataFilter { .. })
+            ),
+            "pre-filter mode should evaluate scalar predicates before vector search"
+        );
+    }
+
     #[test]
     fn test_object_economy_cost_factors_disabled() {
         let oe = ObjectEconomyCostFactors::disabled();
@@ -3206,11 +3375,14 @@ mod tests {
         let mult = oe.io_cost_multiplier(true, false, false);
         assert!(mult >= 0.09 && mult <= 0.11, "Expected ~0.1, got {}", mult);
 
-        // With centroid + zone: (1 - 0.9) * (1 - 0.8) = 0.02 (98% reduction)
+        // With centroid + zone: raw multiplier is
+        // (1 - 0.9) * (1 - 0.8) = 0.02, but the cost model applies a
+        // conservative 0.1 floor so route planning does not over-trust
+        // stacked pruning signals.
         let mult = oe.io_cost_multiplier(true, false, true);
         assert!(
-            mult >= 0.015 && mult <= 0.025,
-            "Expected ~0.02, got {}",
+            mult >= 0.09 && mult <= 0.11,
+            "Expected conservative floor ~0.1, got {}",
             mult
         );
     }

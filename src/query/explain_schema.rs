@@ -488,8 +488,8 @@ mod tests {
         // proto NodeType::NodeTypeRerank with RerankDetails populated
         // from the source variant, so EXPLAIN output exposes
         // collection/query_text/k/rank_profile to the caller.
-        use crate::query::federated::optimizer::{PlanNode, PlanNodeType, VectorSource};
         use crate::query::capability::CapabilitySet;
+        use crate::query::federated::optimizer::{PlanNode, PlanNodeType, VectorSource};
 
         let fed_node = PlanNode {
             id: 0,
@@ -509,7 +509,11 @@ mod tests {
         assert_eq!(explain_node.node_type, NodeType::NodeTypeRerank as i32);
         assert_eq!(explain_node.display_name, "Rerank(docs)");
         assert!(explain_node.description.contains("k=25"));
-        assert!(explain_node.description.contains("profile=semantic_plus_ce"));
+        assert!(
+            explain_node
+                .description
+                .contains("profile=semantic_plus_ce")
+        );
         assert!((explain_node.estimated_cost - 25.0).abs() < f64::EPSILON);
         assert_eq!(explain_node.estimated_rows, 25);
 
@@ -531,8 +535,8 @@ mod tests {
         // empty string in RerankDetails.rank_profile and the
         // description must NOT include "profile=" — keeping the
         // EXPLAIN output honest about whether second-phase will run.
-        use crate::query::federated::optimizer::{PlanNode, PlanNodeType, VectorSource};
         use crate::query::capability::CapabilitySet;
+        use crate::query::federated::optimizer::{PlanNode, PlanNodeType, VectorSource};
 
         let fed_node = PlanNode {
             id: 0,

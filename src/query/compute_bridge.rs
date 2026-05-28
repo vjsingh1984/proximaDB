@@ -236,7 +236,11 @@ impl ComputeBridge {
     }
 
     /// Check if the plan should be routed through compute layer
-    fn should_use_compute(&self, plan: &UnifiedExecutionPlan, context: &ComputeBridgeQueryContext) -> bool {
+    fn should_use_compute(
+        &self,
+        plan: &UnifiedExecutionPlan,
+        context: &ComputeBridgeQueryContext,
+    ) -> bool {
         // Check if routing is enabled
         if !self.config.enable_compute_routing {
             return false;
@@ -390,7 +394,11 @@ impl ComputeBridge {
     }
 
     /// Build a plan tree from execution steps
-    fn build_plan_tree(&self, steps: &[ExecutionStep], context: &ComputeBridgeQueryContext) -> Result<PlanNode> {
+    fn build_plan_tree(
+        &self,
+        steps: &[ExecutionStep],
+        context: &ComputeBridgeQueryContext,
+    ) -> Result<PlanNode> {
         if steps.is_empty() {
             bail!("No execution steps to convert");
         }
@@ -961,6 +969,8 @@ mod tests {
             rl_state: None,
             rl_action: None,
             ann_filtering_mode: None,
+            ann_filtering_selectivity: None,
+            ann_filtering_selectivity_source: None,
         }
     }
 

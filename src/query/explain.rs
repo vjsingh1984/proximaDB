@@ -292,7 +292,8 @@ impl VectorObjectEconomyExplain {
         sidecar_path: &str,
     ) -> Self {
         if status.is_degraded() {
-            self.rejected_route_reasons.push(status.reason(sidecar_path));
+            self.rejected_route_reasons
+                .push(status.reason(sidecar_path));
         }
         self
     }
@@ -2325,20 +2326,21 @@ mod tests {
     fn vector_object_economy_explain_delta_fields_round_trip_through_json() {
         use crate::core::search::VectorFreshnessMode;
 
-        let explain = VectorObjectEconomyExplain::default()
-            .record_wal_delta_scan(
-                &VectorFreshnessMode::BoundedStale {
-                    max_staleness_ms: 5_000,
-                },
-                42,
-                Some(3),
-                Some(128),
-            );
+        let explain = VectorObjectEconomyExplain::default().record_wal_delta_scan(
+            &VectorFreshnessMode::BoundedStale {
+                max_staleness_ms: 5_000,
+            },
+            42,
+            Some(3),
+            Some(128),
+        );
         let json = serde_json::to_string(&explain).expect("serialize");
-        let decoded: VectorObjectEconomyExplain =
-            serde_json::from_str(&json).expect("deserialize");
+        let decoded: VectorObjectEconomyExplain = serde_json::from_str(&json).expect("deserialize");
 
-        assert_eq!(decoded.freshness_mode_used.as_deref(), Some("bounded_stale"));
+        assert_eq!(
+            decoded.freshness_mode_used.as_deref(),
+            Some("bounded_stale")
+        );
         assert_eq!(decoded.current_lsn_at_query, Some(42));
         assert_eq!(decoded.wal_delta_records_scanned, Some(3));
         assert_eq!(decoded.wal_delta_bytes, Some(128));
@@ -2357,10 +2359,7 @@ mod tests {
         let missing = VectorObjectEconomyExplain::default()
             .record_directory_load(&DirectoryLoadStatus::Missing, path);
         assert_eq!(missing.rejected_route_reasons.len(), 1);
-        assert!(
-            missing.rejected_route_reasons[0]
-                .starts_with("object_economy_directory_missing:")
-        );
+        assert!(missing.rejected_route_reasons[0].starts_with("object_economy_directory_missing:"));
 
         let mismatch = VectorObjectEconomyExplain::default().record_directory_load(
             &DirectoryLoadStatus::Mismatch {
@@ -2370,10 +2369,7 @@ mod tests {
             path,
         );
         assert_eq!(mismatch.rejected_route_reasons.len(), 1);
-        assert!(
-            mismatch.rejected_route_reasons[0]
-                .contains("collection_mismatch")
-        );
+        assert!(mismatch.rejected_route_reasons[0].contains("collection_mismatch"));
     }
 
     #[test]

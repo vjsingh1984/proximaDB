@@ -150,9 +150,7 @@ impl QuantizationStage {
     /// search path.
     ///
     /// [`QuantizationType`]: crate::query::query_optimizer::QuantizationType
-    pub fn as_quantization_type(
-        self,
-    ) -> Option<crate::query::query_optimizer::QuantizationType> {
+    pub fn as_quantization_type(self) -> Option<crate::query::query_optimizer::QuantizationType> {
         use crate::query::query_optimizer::QuantizationType;
         match self {
             Self::Binary => Some(QuantizationType::Binary),
