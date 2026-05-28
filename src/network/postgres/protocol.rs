@@ -161,6 +161,20 @@ fn pg_type_for_catalog_data_type(data_type: CatalogDataType) -> PgType {
     }
 }
 
+/// One ORDER BY key after parsing (ADR-018 Phase 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OrderByKey {
+    /// Bare column name after identifier-cleanup (lowercased, quotes
+    /// stripped). Empty names are rejected during parse.
+    column: String,
+    /// `true` for `DESC`, `false` for `ASC` (default).
+    desc: bool,
+    /// `true` for `NULLS FIRST`, `false` for `NULLS LAST`. Postgres
+    /// default when no explicit NULLS clause: ASC → NULLS LAST,
+    /// DESC → NULLS FIRST.
+    nulls_first: bool,
+}
+
 fn proxima_value_to_pg_text(value: &ProximaValue) -> String {
     match value {
         ProximaValue::Boolean(value) => {
@@ -560,12 +574,8 @@ impl PostgresProtocol {
             let translated = match self.translator.translate(&statement) {
                 Ok(t) => t,
                 Err(e) => {
-                    self.send_error(
-                        "ERROR",
-                        "42601",
-                        &format!("Syntax error: {}", e),
-                    )
-                    .await?;
+                    self.send_error("ERROR", "42601", &format!("Syntax error: {}", e))
+                        .await?;
                     // Stop processing subsequent statements on error to
                     // match PostgreSQL's "abort on error" semantics
                     // inside a multi-statement query.
@@ -588,19 +598,14 @@ impl PostgresProtocol {
             // corrupted (mid-response writes), so we still stop
             // processing subsequent statements in this multi-
             // statement query.
-            let exec_result =
-                std::panic::AssertUnwindSafe(self.execute_query(&translated))
-                    .catch_unwind()
-                    .await;
+            let exec_result = std::panic::AssertUnwindSafe(self.execute_query(&translated))
+                .catch_unwind()
+                .await;
             match exec_result {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
-                    self.send_error(
-                        "ERROR",
-                        "XX000",
-                        &format!("execution failed: {}", e),
-                    )
-                    .await?;
+                    self.send_error("ERROR", "XX000", &format!("execution failed: {}", e))
+                        .await?;
                     break;
                 }
                 Err(panic_payload) => {
@@ -640,9 +645,7 @@ impl PostgresProtocol {
     /// (from `panic!("literal")`) or `String` (from
     /// `panic!("{}", x)`); we fall back to a generic marker
     /// otherwise so the error message is always non-empty.
-    fn panic_payload_to_string(
-        payload: &Box<dyn std::any::Any + Send>,
-    ) -> String {
+    fn panic_payload_to_string(payload: &Box<dyn std::any::Any + Send>) -> String {
         if let Some(s) = payload.downcast_ref::<&str>() {
             (*s).to_string()
         } else if let Some(s) = payload.downcast_ref::<String>() {
@@ -910,14 +913,10 @@ impl PostgresProtocol {
             // vector-collection path. Lowering failures fall
             // through (e.g. `SELECT current_schema()` and other
             // pg-specific queries the new frontend doesn't accept).
-            if let Some(result) =
-                super::relational_pipeline::try_run_select(query).await
-            {
+            if let Some(result) = super::relational_pipeline::try_run_select(query).await {
                 return match result {
                     Ok(pr) => self.emit_pipeline_result(pr).await,
-                    Err(msg) => {
-                        self.send_error("ERROR", "XX000", &msg).await
-                    }
+                    Err(msg) => self.send_error("ERROR", "XX000", &msg).await,
                 };
             }
             if let Some((column, value)) = Self::extract_simple_constant_select(query) {
@@ -966,48 +965,45 @@ impl PostgresProtocol {
                         // relational schema row got the operator's
                         // chosen precision.
                         let backing_precision: Option<String> = match &statement {
-                            crate::services::DdlStatement::CreateTable {
-                                properties,
-                                ..
-                            } => properties
-                                .get("canonical_embedding_precision")
-                                .cloned(),
+                            crate::services::DdlStatement::CreateTable { properties, .. } => {
+                                properties.get("canonical_embedding_precision").cloned()
+                            }
                             _ => None,
                         };
                         match ddl_service.execute(statement).await {
-                        Ok(result) => {
-                            if upper.starts_with("CREATE TABLE")
-                                && let Some(table_name) = self.extract_create_table_name(query)
-                            {
-                                self.ensure_relational_backing_collection(
-                                    &table_name,
-                                    backing_precision.as_deref(),
-                                )
-                                .await?;
+                            Ok(result) => {
+                                if upper.starts_with("CREATE TABLE")
+                                    && let Some(table_name) = self.extract_create_table_name(query)
+                                {
+                                    self.ensure_relational_backing_collection(
+                                        &table_name,
+                                        backing_precision.as_deref(),
+                                    )
+                                    .await?;
+                                }
+                                let tag = if upper.starts_with("CREATE TABLE") {
+                                    "CREATE TABLE"
+                                } else if upper.starts_with("CREATE INDEX") {
+                                    "CREATE INDEX"
+                                } else if upper.starts_with("ALTER TABLE") {
+                                    "ALTER TABLE"
+                                } else if upper.starts_with("DROP TABLE") {
+                                    "DROP TABLE"
+                                } else if upper.starts_with("DROP INDEX") {
+                                    "DROP INDEX"
+                                } else {
+                                    "OK"
+                                };
+                                info!(message = %result.message, "DDL executed via catalog service");
+                                return self.send_command_complete(tag).await;
                             }
-                            let tag = if upper.starts_with("CREATE TABLE") {
-                                "CREATE TABLE"
-                            } else if upper.starts_with("CREATE INDEX") {
-                                "CREATE INDEX"
-                            } else if upper.starts_with("ALTER TABLE") {
-                                "ALTER TABLE"
-                            } else if upper.starts_with("DROP TABLE") {
-                                "DROP TABLE"
-                            } else if upper.starts_with("DROP INDEX") {
-                                "DROP INDEX"
-                            } else {
-                                "OK"
-                            };
-                            info!(message = %result.message, "DDL executed via catalog service");
-                            return self.send_command_complete(tag).await;
+                            Err(e) => {
+                                warn!("DdlService execution failed: {}", e);
+                                return self
+                                    .send_error("ERROR", "42P01", &format!("DDL failed: {}", e))
+                                    .await;
+                            }
                         }
-                        Err(e) => {
-                            warn!("DdlService execution failed: {}", e);
-                            return self
-                                .send_error("ERROR", "42P01", &format!("DDL failed: {}", e))
-                                .await;
-                        }
-                    }
                     }
                     Ok(None) => {}
                     Err(e) => {
@@ -1085,9 +1081,7 @@ impl PostgresProtocol {
         table_name: &str,
         canonical_embedding_precision_label: Option<&str>,
     ) -> Result<()> {
-        use crate::proto::proximadb_v1::{
-            CollectionConfig, EmbeddingPrecision, StorageEngine,
-        };
+        use crate::proto::proximadb_v1::{CollectionConfig, EmbeddingPrecision, StorageEngine};
 
         // Map the SQL WITH-option label to the proto discriminant via the
         // same dispatch the REST `apply_proto_enum_workarounds` and the
@@ -1097,8 +1091,7 @@ impl PostgresProtocol {
         let canonical_embedding_precision = canonical_embedding_precision_label
             .and_then(|raw| {
                 let key = raw.trim().to_ascii_lowercase();
-                let stripped =
-                    key.strip_prefix("embedding_precision_").unwrap_or(&key);
+                let stripped = key.strip_prefix("embedding_precision_").unwrap_or(&key);
                 match stripped {
                     "fp32" | "f32" | "float32" => Some(EmbeddingPrecision::Fp32),
                     "fp16" | "f16" | "half" | "float16" => Some(EmbeddingPrecision::Fp16),
@@ -1232,10 +1225,7 @@ impl PostgresProtocol {
     /// `send_data_row` exists too but takes `&[&str]` — this
     /// variant is needed by the new pipeline to round-trip
     /// SQL NULLs correctly.
-    async fn send_data_row_nullable(
-        &mut self,
-        values: &[Option<String>],
-    ) -> Result<()> {
+    async fn send_data_row_nullable(&mut self, values: &[Option<String>]) -> Result<()> {
         let mut payload_len: usize = 4 /* msg len */ + 2 /* field count */;
         for v in values {
             payload_len += 4;
@@ -1762,13 +1752,17 @@ impl PostgresProtocol {
         }
     }
 
-    /// Extract `ORDER BY <col> [ASC|DESC]` — single-column only.
-    /// Returns `(column_name, is_descending)`. Multi-column ORDER BY
-    /// and ORDER BY <expr> remain unsupported (Phase 2 work — needs
-    /// the relational planner).
+    /// Extract `ORDER BY <col> [ASC|DESC] [NULLS FIRST|LAST] [, ...]`.
+    /// Returns one [`OrderByKey`] per declared column in declaration
+    /// order; the sort lex-orders across keys (first key is the
+    /// primary, then ties break by the next, etc.).
     ///
-    /// Returns `None` if no ORDER BY is present.
-    fn extract_select_order_by(query: &str) -> Option<(String, bool)> {
+    /// Phase 2 of ADR-018: multi-column ORDER BY + explicit NULLS
+    /// placement. Postgres defaults: ASC → NULLS LAST, DESC → NULLS
+    /// FIRST. Returns `None` if no ORDER BY clause is present, or
+    /// if any individual key is malformed (the caller falls back to
+    /// no-ordering — the existing behavior for unsupported clauses).
+    fn extract_select_order_by(query: &str) -> Option<Vec<OrderByKey>> {
         let upper = query.to_ascii_uppercase();
         let pos = Self::find_keyword_outside_literals(&upper, " ORDER BY ")?;
         let after = query[pos + " ORDER BY ".len()..].trim();
@@ -1776,9 +1770,7 @@ impl PostgresProtocol {
         let upper_after = after.to_ascii_uppercase();
         let mut end = after.len();
         for terminator in [" LIMIT ", " OFFSET "] {
-            if let Some(idx) =
-                Self::find_keyword_outside_literals(&upper_after, terminator)
-            {
+            if let Some(idx) = Self::find_keyword_outside_literals(&upper_after, terminator) {
                 if idx < end {
                     end = idx;
                 }
@@ -1788,32 +1780,94 @@ impl PostgresProtocol {
         if clause.is_empty() {
             return None;
         }
-        // Reject multi-column order-by — Phase 1 doesn't implement
-        // it; punting silently is the bug we're fixing.
-        if Self::find_keyword_outside_literals(clause, ",").is_some() {
+        // Split on top-level commas (literal-aware).
+        let segments = Self::split_top_level_commas(clause);
+        if segments.is_empty() {
             return None;
         }
-        // Split column name and optional direction.
-        let (col, desc) = if let Some(stripped) = clause
-            .to_ascii_uppercase()
-            .strip_suffix(" DESC")
-            .map(str::to_string)
+        let mut keys: Vec<OrderByKey> = Vec::with_capacity(segments.len());
+        for raw in segments {
+            let parsed = Self::parse_one_order_by_key(raw.trim())?;
+            keys.push(parsed);
+        }
+        Some(keys)
+    }
+
+    /// Parse one `<col> [ASC|DESC] [NULLS FIRST|NULLS LAST]` segment.
+    fn parse_one_order_by_key(segment: &str) -> Option<OrderByKey> {
+        if segment.is_empty() {
+            return None;
+        }
+        let segment_upper = segment.to_ascii_uppercase();
+        // 1. Strip optional NULLS clause from the end.
+        let (without_nulls, nulls_first) = if let Some(stripped_upper) =
+            segment_upper.strip_suffix(" NULLS FIRST")
         {
-            (clause[..stripped.len()].trim().to_string(), true)
-        } else if let Some(stripped) = clause
-            .to_ascii_uppercase()
-            .strip_suffix(" ASC")
-            .map(str::to_string)
-        {
-            (clause[..stripped.len()].trim().to_string(), false)
+            (segment[..stripped_upper.len()].trim().to_string(), Some(true))
+        } else if let Some(stripped_upper) = segment_upper.strip_suffix(" NULLS LAST") {
+            (segment[..stripped_upper.len()].trim().to_string(), Some(false))
         } else {
-            (clause.to_string(), false)
+            (segment.to_string(), None)
         };
-        let col = Self::clean_identifier(&col);
-        if col.is_empty() {
+        // 2. Strip optional ASC/DESC from the (post-NULLS) end.
+        let without_nulls_upper = without_nulls.to_ascii_uppercase();
+        let (col_str, desc) = if let Some(stripped_upper) = without_nulls_upper.strip_suffix(" DESC")
+        {
+            (without_nulls[..stripped_upper.len()].trim().to_string(), true)
+        } else if let Some(stripped_upper) = without_nulls_upper.strip_suffix(" ASC") {
+            (
+                without_nulls[..stripped_upper.len()].trim().to_string(),
+                false,
+            )
+        } else {
+            (without_nulls, false)
+        };
+        // 3. Apply Postgres NULL-placement default if not explicit:
+        // ASC → NULLS LAST, DESC → NULLS FIRST.
+        let nulls_first = nulls_first.unwrap_or(desc);
+        let column = Self::clean_identifier(&col_str);
+        if column.is_empty() {
             return None;
         }
-        Some((col, desc))
+        Some(OrderByKey {
+            column,
+            desc,
+            nulls_first,
+        })
+    }
+
+    /// Split `s` on commas that aren't inside string literals. Used by
+    /// the ORDER BY multi-column parser so a literal like `'a, b'`
+    /// inside an expression doesn't false-split.
+    fn split_top_level_commas(s: &str) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut buf = String::new();
+        let mut in_str = false;
+        let mut quote: char = '"';
+        for c in s.chars() {
+            if in_str {
+                buf.push(c);
+                if c == quote {
+                    in_str = false;
+                }
+                continue;
+            }
+            match c {
+                '\'' | '"' => {
+                    quote = c;
+                    in_str = true;
+                    buf.push(c);
+                }
+                ',' => {
+                    out.push(std::mem::take(&mut buf));
+                }
+                _ => buf.push(c),
+            }
+        }
+        if !buf.is_empty() {
+            out.push(buf);
+        }
+        out
     }
 
     fn extract_select_where_clause(query: &str) -> Option<&str> {
@@ -1979,7 +2033,11 @@ impl PostgresProtocol {
         _query: &str,
     ) -> Result<()> {
         // Check if collection exists
-        match self.collection_port.get_collection(collection_name, None).await {
+        match self
+            .collection_port
+            .get_collection(collection_name, None)
+            .await
+        {
             Ok(Some(collection)) => {
                 // Return collection info
                 let fields = vec![
@@ -2063,30 +2121,71 @@ impl PostgresProtocol {
             .collect::<Vec<_>>();
         self.send_row_description(&fields).await?;
 
-        // Apply ORDER BY if present. Single-column only; sort by the
-        // string representation of the column's value, which is
-        // correct for TEXT/VARCHAR and ordering-preserving for
-        // canonical numeric/timestamp string forms produced by
-        // `proxima_value_to_pg_text`. The proper type-aware sort
-        // arrives with the relational planner in Phase 2.
-        if let Some((order_col, desc)) = order_by.as_ref() {
-            let col_idx = result
-                .selected_columns
+        // Apply ORDER BY if present (ADR-018 Phase 2: multi-column +
+        // NULLS handling). Sort by the string representation of each
+        // column's value, lex-ordering across keys. Correct for
+        // TEXT/VARCHAR and ordering-preserving for canonical
+        // numeric/timestamp string forms produced by
+        // `proxima_value_to_pg_text`. Real type-aware sort lands with
+        // the relational planner in a later phase.
+        if let Some(keys) = order_by.as_ref() {
+            // Resolve each key's column to its row index up-front so
+            // the per-row hot path is `Vec<usize>` lookups, not
+            // string matching.
+            let resolved: Vec<(usize, bool, bool)> = keys
                 .iter()
-                .position(|c| c.name.eq_ignore_ascii_case(order_col));
-            if let Some(idx) = col_idx {
+                .filter_map(|k| {
+                    let idx = result
+                        .selected_columns
+                        .iter()
+                        .position(|c| c.name.eq_ignore_ascii_case(&k.column));
+                    match idx {
+                        Some(i) => Some((i, k.desc, k.nulls_first)),
+                        None => {
+                            warn!(
+                                target: "proximadb::pgwire::order_by",
+                                column = %k.column,
+                                "ORDER BY column not found in projection; \
+                                 skipping this key"
+                            );
+                            None
+                        }
+                    }
+                })
+                .collect();
+            if !resolved.is_empty() {
                 result.rows.sort_by(|a, b| {
-                    let av = a.get(idx).map(proxima_value_to_pg_text).unwrap_or_default();
-                    let bv = b.get(idx).map(proxima_value_to_pg_text).unwrap_or_default();
-                    if *desc { bv.cmp(&av) } else { av.cmp(&bv) }
+                    for (idx, desc, nulls_first) in resolved.iter() {
+                        let a_val = a.get(*idx);
+                        let b_val = b.get(*idx);
+                        let a_null = matches!(a_val, None | Some(ProximaValue::Null));
+                        let b_null = matches!(b_val, None | Some(ProximaValue::Null));
+                        if a_null && b_null {
+                            continue;
+                        }
+                        if a_null {
+                            return if *nulls_first {
+                                std::cmp::Ordering::Less
+                            } else {
+                                std::cmp::Ordering::Greater
+                            };
+                        }
+                        if b_null {
+                            return if *nulls_first {
+                                std::cmp::Ordering::Greater
+                            } else {
+                                std::cmp::Ordering::Less
+                            };
+                        }
+                        let av = a_val.map(proxima_value_to_pg_text).unwrap_or_default();
+                        let bv = b_val.map(proxima_value_to_pg_text).unwrap_or_default();
+                        let cmp = if *desc { bv.cmp(&av) } else { av.cmp(&bv) };
+                        if cmp != std::cmp::Ordering::Equal {
+                            return cmp;
+                        }
+                    }
+                    std::cmp::Ordering::Equal
                 });
-            } else {
-                warn!(
-                    target: "proximadb::pgwire::order_by",
-                    column = %order_col,
-                    "ORDER BY column not found in projection; \
-                     leaving result rows unsorted"
-                );
             }
         }
 
@@ -2665,8 +2764,11 @@ impl PostgresProtocol {
     async fn execute_create_table(&mut self, query: &str) -> Result<()> {
         let upper = query.to_uppercase();
 
+        // Check if IF NOT EXISTS was specified (ADR-018 Phase 2)
+        let if_not_exists = upper.contains("IF NOT EXISTS");
+
         // Extract table name: CREATE TABLE [IF NOT EXISTS] name
-        let table_start = if upper.contains("IF NOT EXISTS") {
+        let table_start = if if_not_exists {
             upper.find("EXISTS").map(|p| p + 6)
         } else {
             upper.find("TABLE").map(|p| p + 5)
@@ -2690,11 +2792,20 @@ impl PostgresProtocol {
         let store_type = self.detect_store_type(&upper);
 
         match store_type {
-            DataModel::Vector => self.create_vector_collection(&table_name, &upper).await,
-            DataModel::Document => self.create_document_collection(&table_name, &upper).await,
-            DataModel::Graph => self.create_graph_collection(&table_name, &upper).await,
+            DataModel::Vector => {
+                self.create_vector_collection(&table_name, &upper, if_not_exists)
+                    .await
+            }
+            DataModel::Document => {
+                self.create_document_collection(&table_name, &upper, if_not_exists)
+                    .await
+            }
+            DataModel::Graph => {
+                self.create_graph_collection(&table_name, &upper, if_not_exists)
+                    .await
+            }
             DataModel::Observability | DataModel::TimeSeries => {
-                self.create_observability_namespace(&table_name, &upper)
+                self.create_observability_namespace(&table_name, &upper, if_not_exists)
                     .await
             }
             DataModel::Relational | DataModel::Event => {
@@ -2710,7 +2821,12 @@ impl PostgresProtocol {
     }
 
     /// Create a vector collection (existing behavior)
-    async fn create_vector_collection(&mut self, table_name: &str, query: &str) -> Result<()> {
+    async fn create_vector_collection(
+        &mut self,
+        table_name: &str,
+        query: &str,
+        if_not_exists: bool,
+    ) -> Result<()> {
         // Extract dimension from vector(N) type
         let dimension = self.extract_vector_dimension(query).unwrap_or(128);
 
@@ -2735,7 +2851,8 @@ impl PostgresProtocol {
                 self.send_command_complete("CREATE TABLE").await
             }
             Err(e) => {
-                if e.to_string().contains("already exists") {
+                // ADR-018 Phase 2: Only suppress "already exists" error if IF NOT EXISTS was specified
+                if if_not_exists && e.to_string().contains("already exists") {
                     self.send_command_complete("CREATE TABLE").await
                 } else {
                     warn!("Failed to create collection '{}': {}", table_name, e);
@@ -2747,7 +2864,12 @@ impl PostgresProtocol {
     }
 
     /// Create a document collection (MongoDB-like JSON storage)
-    async fn create_document_collection(&mut self, table_name: &str, _query: &str) -> Result<()> {
+    async fn create_document_collection(
+        &mut self,
+        table_name: &str,
+        _query: &str,
+        if_not_exists: bool,
+    ) -> Result<()> {
         debug!("Creating document collection '{}'", table_name);
 
         use crate::proto::proximadb_v1::DocumentCollectionConfig;
@@ -2767,7 +2889,7 @@ impl PostgresProtocol {
                     );
                     return self.send_command_complete("CREATE TABLE").await;
                 }
-                Err(e) if e.to_string().contains("already exists") => {
+                Err(e) if if_not_exists && e.to_string().contains("already exists") => {
                     return self.send_command_complete("CREATE TABLE").await;
                 }
                 Err(e) => {
@@ -2822,7 +2944,12 @@ impl PostgresProtocol {
     }
 
     /// Create a graph (nodes/edges storage)
-    async fn create_graph_collection(&mut self, table_name: &str, _query: &str) -> Result<()> {
+    async fn create_graph_collection(
+        &mut self,
+        table_name: &str,
+        _query: &str,
+        if_not_exists: bool,
+    ) -> Result<()> {
         debug!("Creating graph '{}'", table_name);
 
         if let Some(graph_service) = self.graph_service.clone() {
@@ -2840,7 +2967,7 @@ impl PostgresProtocol {
                     );
                     self.send_command_complete("CREATE TABLE").await
                 }
-                Err(e) if e.to_string().contains("already exists") => {
+                Err(e) if if_not_exists && e.to_string().contains("already exists") => {
                     self.send_command_complete("CREATE TABLE").await
                 }
                 Err(e) => {
@@ -2863,6 +2990,7 @@ impl PostgresProtocol {
         &mut self,
         table_name: &str,
         _query: &str,
+        if_not_exists: bool,
     ) -> Result<()> {
         debug!("Creating observability namespace '{}'", table_name);
 
@@ -2886,7 +3014,7 @@ impl PostgresProtocol {
                     );
                     self.send_command_complete("CREATE TABLE").await
                 }
-                Err(e) if e.to_string().contains("already exists") => {
+                Err(e) if if_not_exists && e.to_string().contains("already exists") => {
                     self.send_command_complete("CREATE TABLE").await
                 }
                 Err(e) => {
@@ -3108,7 +3236,11 @@ impl PostgresProtocol {
 
         debug!("Dropping collection '{}'", table_name);
 
-        match self.collection_port.delete_collection(&table_name, None).await {
+        match self
+            .collection_port
+            .delete_collection(&table_name, None)
+            .await
+        {
             Ok(_) => {
                 info!("Dropped collection '{}' via PostgreSQL", table_name);
                 self.send_command_complete("DROP TABLE").await
@@ -4998,5 +5130,145 @@ mod tests {
             }
             other => panic!("expected In(negated=true) condition, got {:?}", other),
         }
+    }
+
+    // === ADR-018 Phase 2: IF NOT EXISTS tests ===
+
+    #[test]
+    fn test_create_table_without_if_not_exists() {
+        let upper = "CREATE TABLE users (id TEXT, name TEXT)";
+        assert!(!upper.contains("IF NOT EXISTS"));
+    }
+
+    #[test]
+    fn test_create_table_with_if_not_exists() {
+        let upper = "CREATE TABLE IF NOT EXISTS users (id TEXT, name TEXT)";
+        assert!(upper.contains("IF NOT EXISTS"));
+    }
+
+    #[test]
+    fn test_drop_table_without_if_exists() {
+        let upper = "DROP TABLE users";
+        assert!(!upper.contains("IF EXISTS"));
+    }
+
+    #[test]
+    fn test_drop_table_with_if_exists() {
+        let upper = "DROP TABLE IF EXISTS users";
+        assert!(upper.contains("IF EXISTS"));
+    }
+
+    // ---------------- ADR-018 Phase 2: multi-column ORDER BY ----------------
+
+    #[test]
+    fn order_by_single_column_default_asc_nulls_last() {
+        let keys = PostgresProtocol::extract_select_order_by(
+            "SELECT * FROM t ORDER BY name",
+        )
+        .expect("single-col ORDER BY must parse");
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].column, "name");
+        assert!(!keys[0].desc);
+        // Postgres default: ASC → NULLS LAST.
+        assert!(!keys[0].nulls_first);
+    }
+
+    #[test]
+    fn order_by_explicit_desc_default_nulls_first() {
+        let keys = PostgresProtocol::extract_select_order_by(
+            "SELECT * FROM t ORDER BY score DESC",
+        )
+        .unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].column, "score");
+        assert!(keys[0].desc);
+        // Postgres default: DESC → NULLS FIRST.
+        assert!(keys[0].nulls_first);
+    }
+
+    #[test]
+    fn order_by_explicit_nulls_first_overrides_default() {
+        let keys = PostgresProtocol::extract_select_order_by(
+            "SELECT * FROM t ORDER BY score ASC NULLS FIRST",
+        )
+        .unwrap();
+        assert_eq!(keys.len(), 1);
+        assert!(!keys[0].desc);
+        // Override: NULLS FIRST under ASC.
+        assert!(keys[0].nulls_first);
+    }
+
+    #[test]
+    fn order_by_explicit_nulls_last_overrides_default() {
+        let keys = PostgresProtocol::extract_select_order_by(
+            "SELECT * FROM t ORDER BY score DESC NULLS LAST",
+        )
+        .unwrap();
+        assert_eq!(keys.len(), 1);
+        assert!(keys[0].desc);
+        // Override: NULLS LAST under DESC.
+        assert!(!keys[0].nulls_first);
+    }
+
+    #[test]
+    fn order_by_multi_column_preserves_declaration_order() {
+        let keys = PostgresProtocol::extract_select_order_by(
+            "SELECT * FROM t ORDER BY name ASC, score DESC, created_at",
+        )
+        .expect("multi-col ORDER BY must parse (Phase 2)");
+        assert_eq!(keys.len(), 3);
+        assert_eq!(keys[0].column, "name");
+        assert!(!keys[0].desc);
+        assert_eq!(keys[1].column, "score");
+        assert!(keys[1].desc);
+        assert_eq!(keys[2].column, "created_at");
+        assert!(!keys[2].desc);
+    }
+
+    #[test]
+    fn order_by_multi_column_per_key_nulls() {
+        let keys = PostgresProtocol::extract_select_order_by(
+            "SELECT * FROM t ORDER BY a NULLS FIRST, b DESC NULLS LAST",
+        )
+        .unwrap();
+        assert_eq!(keys.len(), 2);
+        assert!(keys[0].nulls_first); // explicit NULLS FIRST on ASC
+        assert!(!keys[1].nulls_first); // explicit NULLS LAST on DESC
+    }
+
+    #[test]
+    fn order_by_terminates_at_limit() {
+        let keys = PostgresProtocol::extract_select_order_by(
+            "SELECT * FROM t ORDER BY name LIMIT 10",
+        )
+        .unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].column, "name");
+    }
+
+    #[test]
+    fn order_by_terminates_at_offset() {
+        let keys = PostgresProtocol::extract_select_order_by(
+            "SELECT * FROM t ORDER BY name OFFSET 5",
+        )
+        .unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].column, "name");
+    }
+
+    #[test]
+    fn order_by_no_clause_returns_none() {
+        assert!(
+            PostgresProtocol::extract_select_order_by("SELECT * FROM t").is_none(),
+        );
+    }
+
+    #[test]
+    fn split_top_level_commas_respects_string_literals() {
+        let parts = PostgresProtocol::split_top_level_commas("a, 'b, c', d");
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0].trim(), "a");
+        assert_eq!(parts[1].trim(), "'b, c'");
+        assert_eq!(parts[2].trim(), "d");
     }
 }
