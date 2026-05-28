@@ -122,18 +122,18 @@ impl StorageCacheMetrics {
         };
 
         let get_latency_count = self.get_latency_count.load(Ordering::Relaxed);
-        let avg_get_latency_us = if get_latency_count > 0 {
-            self.get_latency_sum.load(Ordering::Relaxed) / get_latency_count
-        } else {
-            0
-        };
+        let avg_get_latency_us = self
+            .get_latency_sum
+            .load(Ordering::Relaxed)
+            .checked_div(get_latency_count)
+            .unwrap_or(0);
 
         let put_latency_count = self.put_latency_count.load(Ordering::Relaxed);
-        let avg_put_latency_us = if put_latency_count > 0 {
-            self.put_latency_sum.load(Ordering::Relaxed) / put_latency_count
-        } else {
-            0
-        };
+        let avg_put_latency_us = self
+            .put_latency_sum
+            .load(Ordering::Relaxed)
+            .checked_div(put_latency_count)
+            .unwrap_or(0);
 
         let elapsed_secs = self.start_time.elapsed().as_secs_f64();
         let gets_per_sec = if elapsed_secs > 0.0 {
