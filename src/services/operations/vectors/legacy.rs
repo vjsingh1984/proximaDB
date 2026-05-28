@@ -944,8 +944,10 @@ impl VectorOperationsService {
         // via BulkLoadDrainerSink + CanonicalPrecisionResolver; this
         // is the equivalent for the direct insert path, using the
         // collection metadata that this service already has access to.
-        if let Ok(Some(collection)) =
-            self.collection_port.get_collection(&collection_id, None).await
+        if let Ok(Some(collection)) = self
+            .collection_port
+            .get_collection(&collection_id, None)
+            .await
         {
             if let Some(cfg) = collection.config.as_ref() {
                 if let Some(precision_value) = cfg.canonical_embedding_precision {
@@ -1214,8 +1216,7 @@ impl VectorOperationsService {
         collection_id: &str,
         fs: &dyn crate::storage::persistence::filesystem::FileSystem,
         collection_root: &str,
-    ) -> Option<crate::storage::engines::sst::object_economy_directory::DirectoryLoadStatus>
-    {
+    ) -> Option<crate::storage::engines::sst::object_economy_directory::DirectoryLoadStatus> {
         use proximadb_catalog::CatalogAuthorityMode;
         let cache = self.directory_cache.as_ref()?;
         let entry = cache
@@ -1232,6 +1233,57 @@ impl VectorOperationsService {
             })
             .await;
         Some(entry.status.clone())
+    }
+
+    /// Load the per-collection object-economy directory via the cache
+    /// and return its `freshness_watermark_lsn`. Returns `None` when
+    /// any of the inputs the loader needs is unavailable — the caller
+    /// should treat that as "watermark unknown" and fall back to the
+    /// safe over-approximation (`0`, which forces always-scan).
+    ///
+    /// Phase 5 Slice 5.7: this replaces the hard-coded `0` placeholder
+    /// in `execute_search_internal`. With a real watermark, the strong
+    /// route only scans the WAL when the directory is actually behind
+    /// the committed LSN.
+    ///
+    /// Conservative-by-design: the four loader inputs (filesystem,
+    /// collection_root, storage_epoch, authority_mode) come from
+    /// engine state + collection metadata. When the writer eventually
+    /// emits a real `storage_epoch`, this helper will pick it up via
+    /// the catalog/collection lookup — for now both writer and reader
+    /// use the same placeholder `0`, so cache hits are consistent.
+    pub(crate) async fn cached_directory_watermark_lsn(
+        &self,
+        collection_id: &str,
+    ) -> Option<u64> {
+        let cache = self.directory_cache.as_ref()?;
+
+        // collection_root comes from the collection's storage assignment.
+        // Without it we can't resolve the sidecar URL, so fall back.
+        let collection = self.get_or_load_collection(collection_id).await.ok()?;
+        let collection_root = collection
+            .storage_assignment
+            .as_ref()
+            .map(|a| a.base_location.clone())?;
+
+        // Filesystem reference comes from the SST engine's factory.
+        let fs_factory = self.storage_engine.filesystem().clone();
+        let fs = fs_factory.get_filesystem(&collection_root).ok()?;
+
+        let entry = cache
+            .handle_for(collection_id)
+            .get_or_load(|| async {
+                crate::storage::engines::sst::object_economy_directory::load_directory_for(
+                    &*fs,
+                    collection_id,
+                    &collection_root,
+                    /*storage_epoch*/ 0,
+                    proximadb_catalog::CatalogAuthorityMode::RebuildableProjection,
+                )
+                .await
+            })
+            .await;
+        Some(entry.directory.freshness_watermark_lsn)
     }
 
     /// Scan the WAL/memtable delta for records committed after the
@@ -1278,11 +1330,11 @@ impl VectorOperationsService {
         // the directory-routed result stand. Strong-route correctness
         // is then advertised only when the manifest is wired (which is
         // the common production case via `SharedServices::new`).
-        let current_lsn = match crate::storage::persistence::write_ahead_log::manifest::get_service()
-        {
-            Some(svc) => svc.current_lsn().await,
-            None => return Ok(None),
-        };
+        let current_lsn =
+            match crate::storage::persistence::write_ahead_log::manifest::get_service() {
+                Some(svc) => svc.current_lsn().await,
+                None => return Ok(None),
+            };
 
         if !freshness_mode.should_scan_delta(current_lsn, directory_watermark_lsn) {
             return Ok(None);
@@ -2524,16 +2576,20 @@ impl VectorOperationsService {
             )
             .await?;
 
-        // Phase 5 Slice 5.6: merge WAL/memtable delta with engine
+        // Phase 5 Slice 5.6 + 5.7: merge WAL/memtable delta with engine
         // (directory-routed) results when the request's freshness mode
-        // requires it. Directory watermark is currently a placeholder
-        // (0) — full directory-load wiring lands as a follow-up. With
-        // watermark=0 and a non-zero current_lsn, the scan runs for
-        // every Strong/BoundedStale query (safe over-approximation: at
-        // most more delta-merge work, never less correctness).
+        // requires it. The watermark is loaded from the cached
+        // per-collection object-economy directory. When the cache or its
+        // inputs are unavailable, `cached_directory_watermark_lsn`
+        // returns None and we fall back to `0` — a safe
+        // over-approximation that triggers the scan unconditionally
+        // (more work, never less correctness).
         let merged_results = if freshness_mode.requires_delta_merge() {
-            let distance_metric =
-                crate::compute::distance_computation::DistanceMetric::Cosine;
+            let distance_metric = crate::compute::distance_computation::DistanceMetric::Cosine;
+            let watermark = self
+                .cached_directory_watermark_lsn(collection_id)
+                .await
+                .unwrap_or(0);
             let delta_outcome = self
                 .scan_wal_delta_if_needed(
                     collection_id,
@@ -2542,7 +2598,7 @@ impl VectorOperationsService {
                     distance_metric,
                     delta_filter.as_ref(),
                     &freshness_mode,
-                    /*directory_watermark_lsn*/ 0,
+                    watermark,
                 )
                 .await?;
             match delta_outcome {
@@ -5246,7 +5302,11 @@ mod index_first_search_tests {
                 embeddings: vec![proximadb_records::EmbeddingCell {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
-                    values: proximadb_records::EmbeddingValues::Fp32(vec![i as f32, (i * 2) as f32, (i * 3) as f32]),
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![
+                        i as f32,
+                        (i * 2) as f32,
+                        (i * 3) as f32,
+                    ]),
                     dim: 3,
                     ..Default::default()
                 }],
