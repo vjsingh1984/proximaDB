@@ -113,16 +113,16 @@ fn resolve_tier_config_source() -> TierConfigSource {
     // is the new default. If operator explicitly set PROXIMADB_TIER_CONFIG_PATH
     // to something else and it was missing, don't silently fall back to the
     // legacy path — that would mask a config error.
-    if runtime_path == DEFAULT_RUNTIME_TIER_CONFIG_PATH {
-        if let Ok(content) = std::fs::read_to_string(LEGACY_RUNTIME_TIER_CONFIG_PATH) {
-            return TierConfigSource {
-                label: format!(
-                    "legacy runtime overlay {LEGACY_RUNTIME_TIER_CONFIG_PATH} \
-                     (deprecated; rename to {DEFAULT_RUNTIME_TIER_CONFIG_PATH})"
-                ),
-                content,
-            };
-        }
+    if runtime_path == DEFAULT_RUNTIME_TIER_CONFIG_PATH
+        && let Ok(content) = std::fs::read_to_string(LEGACY_RUNTIME_TIER_CONFIG_PATH)
+    {
+        return TierConfigSource {
+            label: format!(
+                "legacy runtime overlay {LEGACY_RUNTIME_TIER_CONFIG_PATH} \
+                 (deprecated; rename to {DEFAULT_RUNTIME_TIER_CONFIG_PATH})"
+            ),
+            content,
+        };
     }
 
     // Layer 3: compile-time baked baseline. Self-contained fallback for
@@ -138,6 +138,13 @@ fn resolve_tier_config_source() -> TierConfigSource {
 /// the engine refuses to start with a malformed tier config so the operator
 /// catches the problem at process start rather than at first soft-cap
 /// rejection.
+///
+/// The four `panic!()` calls below are intentional startup-time fail-fast
+/// — a malformed tier config is a fatal configuration error and the
+/// engine cannot proceed safely. They're allowed for `clippy::panic`
+/// because the function's whole point IS to crash early with a clear
+/// operator-facing message rather than degrade silently.
+#[allow(clippy::panic)]
 fn parse_and_validate(source: &TierConfigSource) -> PricingConfig {
     let parsed: PricingConfig = serde_json::from_str(&source.content).unwrap_or_else(|e| {
         panic!(
@@ -203,6 +210,11 @@ fn validate_pricing_matches_enum(p: &PricingConfig, source_label: &str) {
 fn pricing_row(tier: Tier) -> &'static PricingTier {
     // Phase B-4: alias-aware lookup. The JSON id may be the canonical id
     // (`tier.id()`) OR any of the serde aliases — both must locate the row.
+    // The panic on miss is intentional: the loaded tier config is
+    // already validated to cover every Tier variant at startup
+    // (`parse_and_validate`), so a missing tier here is a startup-time
+    // invariant violation that should crash, not be silently masked.
+    #[allow(clippy::panic)]
     pricing()
         .tiers
         .iter()
@@ -553,10 +565,10 @@ impl CachedTenantTierStore {
     /// tenant is genuinely unknown to the backing store.
     pub async fn fetch(&self, tenant_id: &str) -> TenantTierRecord {
         let now = Instant::now();
-        if let Some((stored_at, record)) = self.cache.read().await.get(tenant_id).cloned() {
-            if now.duration_since(stored_at) < self.ttl {
-                return record;
-            }
+        if let Some((stored_at, record)) = self.cache.read().await.get(tenant_id).cloned()
+            && now.duration_since(stored_at) < self.ttl
+        {
+            return record;
         }
 
         match self.inner.get(tenant_id).await {

@@ -302,7 +302,7 @@ impl ProximaDB {
         // Create MultiServer with SharedServices (network orchestrator)
         tracing::debug!("🔧 ProximaDB::new - Creating MultiServer...");
         let rest_auth_enabled = security_config.is_some();
-        let rest_multi_tenant_required = security_config.as_ref().map_or(false, |s| {
+        let rest_multi_tenant_required = security_config.as_ref().is_some_and(|s| {
             s.authentication.require_authentication && s.mode != security::SecurityMode::Development
         });
         // Capture an Arc to the request handlers BEFORE shared_services
@@ -401,6 +401,7 @@ impl ProximaDB {
             // resolved_queue is always Some when queue_client is Some
             // (they're built from the same condition), so unwrapping
             // here is safe.
+            #[allow(clippy::expect_used)]
             let rq = resolved_queue
                 .as_ref()
                 .expect("queue_client → resolved_queue");
@@ -969,6 +970,7 @@ impl ProximaDB {
 /// - `PROXIMADB_EMBED_DRAINER_PARTITIONS` (optional, default "0..16"):
 ///   partition range this replica drains. Single-replica deployments
 ///   leave it default; multi-replica needs disjoint per-pod ranges.
+///
 /// Open the queue client from an already-resolved config. The
 /// `resolve()` step (see `core::config::QueueRuntimeConfig::resolve`)
 /// has already folded env > TOML > defaults into a `ResolvedQueueConfig`,
