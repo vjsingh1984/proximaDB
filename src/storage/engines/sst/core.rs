@@ -314,6 +314,18 @@ pub struct SstEngine {
     tiering_integration: Option<
         Arc<crate::storage::engines::sst::tiering_integration::SstTieringIntegration>,
     >,
+
+    /// **Vector Object Economy Freshness Source** (Optional, Phase 5)
+    ///
+    /// Provides the "current committed LSN" used as the directory's
+    /// `freshness_watermark_lsn` at emission time. When `None`, the
+    /// emit path uses `0` — a conservative value that forces strong-route
+    /// readers to always re-scan the WAL delta. Wired by
+    /// `SharedServices::new` with a `WalCursorLsnSource` that delegates
+    /// to the global manifest service.
+    freshness_lsn_source: Option<
+        Arc<dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource>,
+    >,
 }
 
 impl SstEngine {
@@ -419,6 +431,7 @@ impl SstEngine {
             pca_model_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
             directory_cache: None,
             tiering_integration: None,
+            freshness_lsn_source: None,
         })
     }
 
@@ -479,6 +492,39 @@ impl SstEngine {
         >,
     > {
         self.directory_cache.as_ref()
+    }
+
+    /// Attach the [`FreshnessLsnSource`] used to populate the directory's
+    /// `freshness_watermark_lsn` at emission time. When unset (default),
+    /// the engine emits `0` — making strong-route readers always re-scan
+    /// the WAL delta.
+    pub fn with_freshness_lsn_source(
+        mut self,
+        source: Arc<
+            dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource,
+        >,
+    ) -> Self {
+        self.freshness_lsn_source = Some(source);
+        self
+    }
+
+    /// True when [`Self::with_freshness_lsn_source`] has supplied a
+    /// source. Used by tests/operators to confirm wiring.
+    pub fn freshness_lsn_source_configured(&self) -> bool {
+        self.freshness_lsn_source.is_some()
+    }
+
+    /// Borrow the configured freshness source, if any. Used by the
+    /// flush implementation to resolve the watermark before constructing
+    /// hooks.
+    pub(crate) fn freshness_lsn_source_ref(
+        &self,
+    ) -> Option<
+        &Arc<
+            dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource,
+        >,
+    > {
+        self.freshness_lsn_source.as_ref()
     }
 
     /// Initialize quantization engines (storage-aware and fallback)

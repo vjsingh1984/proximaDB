@@ -32,7 +32,7 @@ mod singleton;
 mod types;
 
 // Re-export all public types and functions
-pub use service::{GlobalManifestService, GlobalManifestServiceConfig};
+pub use service::{GlobalManifestService, GlobalManifestServiceConfig, WalCursorLsnSource};
 pub use singleton::{
     // Convenience functions
     append_async,

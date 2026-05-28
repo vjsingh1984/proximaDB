@@ -75,6 +75,30 @@ impl SearchCoordinator {
         // Post-process results
         let optimized_results = self.post_process_results(results, ctx).await?;
 
+        // Tier-migration hook: record access for every vector returned so
+        // the policy engine sees heat for the collection. No-op when the
+        // engine has no tiering integration attached (legacy path) or the
+        // integration is disabled via config. Each result is recorded as
+        // a `Read` access with an approximate byte-size of the vector;
+        // collection-level patterns aggregate from these per-item events.
+        if let Some(tiering) = self.engine.tiering_integration() {
+            let collection_id = ctx.collection_id();
+            let vec_bytes = ctx
+                .query_vector()
+                .map(|v| (v.len() * std::mem::size_of::<f32>()) as u64)
+                .unwrap_or(0);
+            for record in &optimized_results {
+                tiering
+                    .record_access(
+                        collection_id,
+                        &record.id,
+                        crate::storage::tiering::tracker::AccessType::Read,
+                        vec_bytes,
+                    )
+                    .await;
+            }
+        }
+
         info!("✅ SearchCoordinator: Search coordination completed successfully");
         Ok(optimized_results)
     }
@@ -365,6 +389,7 @@ mod tests {
             text_query: None,
             hybrid_mode: crate::core::search::HybridSearchMode::default(),
             vector_weight: None,
+            freshness_mode: None,
         });
 
         let collection = Arc::new(crate::proto::proximadb_v1::Collection {

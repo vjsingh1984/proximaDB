@@ -613,6 +613,39 @@ impl VectorObjectEconomyDirectoryCache {
     }
 }
 
+/// Source of "current committed LSN" for a collection, used by the
+/// engine-level emission path to populate
+/// [`SstableWriterDirectoryHooks::freshness_lsn`] with a real WAL cursor
+/// instead of the placeholder `0`.
+///
+/// Implementations:
+/// * `WalCursorLsnSource` (in the WAL module) delegates to the global
+///   manifest service.
+/// * [`StaticLsnSource`] is a test double that returns a fixed value.
+///
+/// The trait takes `collection_id` so future per-collection cursors can
+/// be plumbed without breaking callers. The initial production impl
+/// returns the global LSN regardless of collection — that is still a
+/// safe over-approximation: a watermark advanced past unrelated writes
+/// just means delta-merge does more work, never less correctness.
+#[async_trait::async_trait]
+pub trait FreshnessLsnSource: Send + Sync {
+    async fn current_lsn(&self, collection_id: &str) -> u64;
+}
+
+/// Static source returning a fixed LSN. Used by the engine when no real
+/// source has been wired (callers explicitly opt in to default `0`)
+/// and by unit tests that need a deterministic value.
+#[derive(Debug, Clone, Copy)]
+pub struct StaticLsnSource(pub u64);
+
+#[async_trait::async_trait]
+impl FreshnessLsnSource for StaticLsnSource {
+    async fn current_lsn(&self, _collection_id: &str) -> u64 {
+        self.0
+    }
+}
+
 /// Constructor-injected dependencies for emitting object-economy
 /// directory updates from the SST writer/compactor.
 ///
@@ -1621,6 +1654,21 @@ mod tests {
             level: 0,
         };
         (hooks, cache)
+    }
+
+    // ── FreshnessLsnSource tests (Slice 5.2) ─────────────────────────────
+
+    #[tokio::test]
+    async fn static_lsn_source_returns_configured_value_per_collection() {
+        let src = StaticLsnSource(1_234);
+        assert_eq!(src.current_lsn("collection-a").await, 1_234);
+        assert_eq!(src.current_lsn("collection-b").await, 1_234);
+    }
+
+    #[tokio::test]
+    async fn freshness_lsn_source_trait_object_dispatch_works() {
+        let dyn_src: Arc<dyn FreshnessLsnSource> = Arc::new(StaticLsnSource(99));
+        assert_eq!(dyn_src.current_lsn("coll").await, 99);
     }
 
     #[tokio::test]

@@ -988,6 +988,43 @@ impl GlobalManifestService {
     }
 }
 
+/// Vector Object Economy `FreshnessLsnSource` adapter backed by the
+/// global manifest service's LSN allocator.
+///
+/// The current impl returns the *global* current LSN regardless of the
+/// requested `collection_id`. That is a safe over-approximation for the
+/// strong-route decision: a watermark advanced past unrelated writes
+/// means the planner does at most more delta-merge work, never less
+/// correctness. A per-collection cursor can be added later without
+/// changing the trait signature.
+#[derive(Clone)]
+pub struct WalCursorLsnSource {
+    manifest: Arc<GlobalManifestService>,
+}
+
+impl std::fmt::Debug for WalCursorLsnSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WalCursorLsnSource")
+            .field("manifest", &"Arc<GlobalManifestService>")
+            .finish()
+    }
+}
+
+impl WalCursorLsnSource {
+    pub fn new(manifest: Arc<GlobalManifestService>) -> Self {
+        Self { manifest }
+    }
+}
+
+#[async_trait::async_trait]
+impl crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource
+    for WalCursorLsnSource
+{
+    async fn current_lsn(&self, _collection_id: &str) -> u64 {
+        self.manifest.current_lsn().await
+    }
+}
+
 // Deferred: Fix compilation errors - global_manifest renamed to manifest, import paths changed
 // #[cfg(test)]
 // mod tests {

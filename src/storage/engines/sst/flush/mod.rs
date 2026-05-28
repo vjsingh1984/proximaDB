@@ -418,13 +418,21 @@ impl SstEngine {
             use crate::storage::engines::sst::object_economy_directory::SstableWriterDirectoryHooks;
             use proximadb_catalog::CatalogAuthorityMode;
 
+            // Resolve the freshness watermark from the configured source
+            // when present. Without a source the engine emits `0`, which
+            // forces strong-route readers to always re-scan the WAL delta.
+            let freshness_lsn = match self.freshness_lsn_source_ref() {
+                Some(source) => source.current_lsn(collection_id.as_str()).await,
+                None => 0,
+            };
+
             let hooks = SstableWriterDirectoryHooks {
                 cache: cache.clone(),
                 collection_id: collection_id.clone(),
                 collection_root: storage_url.to_string(),
                 storage_epoch: 0,
                 authority_mode: CatalogAuthorityMode::RebuildableProjection,
-                freshness_lsn: 0,
+                freshness_lsn,
                 level: 0,
             };
             let final_file_url = format!("{}/{}", atomic_op.final_url, filename);

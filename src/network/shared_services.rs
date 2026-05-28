@@ -278,20 +278,9 @@ impl SharedServices {
             crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
         );
 
-        // Create SST engine
-        debug!("🔧 SharedServices::new - Creating SST engine...");
-        let sst_engine = Arc::new(
-            crate::storage::engines::sst::SstEngine::new()
-                .await?
-                .with_directory_cache(directory_cache.clone()),
-        );
-        debug!("✅ SharedServices::new - SST engine created successfully");
-
-        // Clone SST engine reference for DocumentService (used later for DocumentStrategy)
-        let sst_engine_for_documents: Arc<dyn crate::storage::traits::UnifiedStorageEngine> =
-            sst_engine.clone();
-
-        // Create WAL manager for two-stage search
+        // Create WAL manager for two-stage search FIRST so the SST
+        // engine can read its global manifest singleton when wiring the
+        // Phase 5 freshness LSN source.
         debug!("🔧 SharedServices::new - Creating WAL manager for two-stage search...");
         let wal_manager = {
             use crate::storage::persistence::write_ahead_log::{
@@ -311,6 +300,41 @@ impl SharedServices {
             Arc::new(WriteAheadLogManager::new(strategy, wal_config.clone()).await?)
         };
         debug!("✅ SharedServices::new - WAL manager created successfully");
+
+        // Phase 5 (Slice 5.2): try to resolve the global manifest
+        // singleton and wrap it as a `FreshnessLsnSource`. When the
+        // singleton hasn't been initialised yet (some embedded/test
+        // paths), the engine falls back to emitting `freshness_lsn = 0`
+        // — strong-route readers will simply always re-scan the WAL
+        // delta, which is correct but more expensive.
+        let freshness_lsn_source: Option<
+            Arc<dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource>,
+        > = crate::storage::persistence::write_ahead_log::manifest::get_service()
+            .map(|svc| {
+                Arc::new(
+                    crate::storage::persistence::write_ahead_log::manifest::WalCursorLsnSource::new(svc),
+                )
+                    as Arc<
+                        dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource,
+                    >
+            });
+
+        // Create SST engine
+        debug!("🔧 SharedServices::new - Creating SST engine...");
+        let sst_engine = {
+            let mut engine = crate::storage::engines::sst::SstEngine::new()
+                .await?
+                .with_directory_cache(directory_cache.clone());
+            if let Some(src) = freshness_lsn_source.clone() {
+                engine = engine.with_freshness_lsn_source(src);
+            }
+            Arc::new(engine)
+        };
+        debug!("✅ SharedServices::new - SST engine created successfully");
+
+        // Clone SST engine reference for DocumentService (used later for DocumentStrategy)
+        let sst_engine_for_documents: Arc<dyn crate::storage::traits::UnifiedStorageEngine> =
+            sst_engine.clone();
 
         // Create AxisManager for index operations
         debug!("🔧 SharedServices::new - Creating AxisManager for index operations...");

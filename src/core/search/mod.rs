@@ -71,6 +71,64 @@ pub enum SearchMode {
     },
 }
 
+/// Vector search freshness mode controlling the consistency/cost trade-off
+/// for routes that read from a per-collection
+/// [`VectorObjectEconomyDirectory`](crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectory).
+///
+/// The directory has a `freshness_watermark_lsn` advertised by the
+/// writer/compactor. The search path uses this enum to decide whether to
+/// merge unflushed WAL/memtable records committed after that watermark:
+///
+/// * [`VectorFreshnessMode::Strong`] (default) — always merge the WAL
+///   delta so a write acknowledged by the canonical WAL is visible to a
+///   following search, including tombstones. Matches turbopuffer's
+///   default strong-consistency behaviour.
+/// * [`VectorFreshnessMode::BoundedStale`] — accept up to
+///   `max_staleness_ms` of staleness. Merge the delta only when the
+///   directory watermark is older than the bound.
+/// * [`VectorFreshnessMode::StaleOk`] — skip the WAL delta entirely.
+///   Cheapest read, may miss recent writes. EXPLAIN must surface this
+///   choice plus the directory watermark so callers can audit.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum VectorFreshnessMode {
+    /// Default: WAL/memtable delta is always merged.
+    Strong,
+    /// Accept directory state up to `max_staleness_ms` old before merging.
+    BoundedStale {
+        /// Maximum acceptable staleness in milliseconds.
+        max_staleness_ms: u64,
+    },
+    /// Skip the WAL delta read entirely.
+    StaleOk,
+}
+
+impl Default for VectorFreshnessMode {
+    fn default() -> Self {
+        Self::Strong
+    }
+}
+
+impl VectorFreshnessMode {
+    /// True when the search path MUST merge the WAL/memtable delta for
+    /// this mode (i.e. `Strong`, or `BoundedStale` whose bound has been
+    /// exceeded — the bound check is the caller's responsibility).
+    pub fn requires_delta_merge(&self) -> bool {
+        !matches!(self, Self::StaleOk)
+    }
+
+    /// Stable lowercase mode name used in EXPLAIN payloads and trace
+    /// fields. Kept separate from the `Display` impl so external surfaces
+    /// don't accidentally pin on the human-readable form.
+    pub fn explain_label(&self) -> &'static str {
+        match self {
+            Self::Strong => "strong",
+            Self::BoundedStale { .. } => "bounded_stale",
+            Self::StaleOk => "stale_ok",
+        }
+    }
+}
+
 /// Hybrid search mode controlling how BM25 text and vector results are combined
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Default)]
 pub enum HybridSearchMode {
@@ -208,6 +266,13 @@ pub struct UnifiedSearchParams {
     /// Custom optimization parameters
     pub custom_hints: Option<HashMap<String, serde_json::Value>>,
 
+    /// Vector Object Economy freshness mode. `None` means "use the
+    /// service-layer default", which is currently
+    /// [`VectorFreshnessMode::Strong`] — every search merges the WAL
+    /// delta to honor canonical-WAL durability. Callers opt out
+    /// explicitly via `Some(BoundedStale {..} | StaleOk)`.
+    pub freshness_mode: Option<VectorFreshnessMode>,
+
     /// Internal: Indicates if the query requires ordering (e.g., gRPC/REST always true, SQL with ORDER BY true)
     pub requires_ordering: Option<bool>,
 
@@ -331,11 +396,20 @@ impl Default for UnifiedSearchParams {
             text_query: None,
             hybrid_mode: HybridSearchMode::default(),
             vector_weight: None,
+            freshness_mode: None,
         }
     }
 }
 
 impl UnifiedSearchParams {
+    /// Return the freshness mode the search path should honor for this
+    /// request. Unset → [`VectorFreshnessMode::Strong`] (the safe
+    /// default). The accessor exists so service-layer callers do not
+    /// have to repeat the unwrap-or-default at every read site.
+    pub fn effective_freshness_mode(&self) -> VectorFreshnessMode {
+        self.freshness_mode.clone().unwrap_or_default()
+    }
+
     /// Create search params for a single vector query
     pub fn single_vector(query_vector: Vec<f32>) -> Self {
         Self {
@@ -1198,6 +1272,84 @@ pub mod filter_extraction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── VectorFreshnessMode (Phase 5, Slice 5.1) ────────────────────────
+
+    #[test]
+    fn vector_freshness_mode_defaults_to_strong() {
+        assert_eq!(VectorFreshnessMode::default(), VectorFreshnessMode::Strong);
+    }
+
+    #[test]
+    fn unified_search_params_default_freshness_is_strong() {
+        let params = UnifiedSearchParams::default();
+        // Field unset on default — the safe default is provided by the accessor.
+        assert!(params.freshness_mode.is_none());
+        assert_eq!(
+            params.effective_freshness_mode(),
+            VectorFreshnessMode::Strong
+        );
+    }
+
+    #[test]
+    fn vector_freshness_mode_strong_requires_delta_merge() {
+        assert!(VectorFreshnessMode::Strong.requires_delta_merge());
+        assert!(
+            VectorFreshnessMode::BoundedStale {
+                max_staleness_ms: 5_000,
+            }
+            .requires_delta_merge()
+        );
+        assert!(!VectorFreshnessMode::StaleOk.requires_delta_merge());
+    }
+
+    #[test]
+    fn vector_freshness_mode_explain_label_is_stable() {
+        assert_eq!(VectorFreshnessMode::Strong.explain_label(), "strong");
+        assert_eq!(
+            VectorFreshnessMode::BoundedStale {
+                max_staleness_ms: 1_000,
+            }
+            .explain_label(),
+            "bounded_stale"
+        );
+        assert_eq!(VectorFreshnessMode::StaleOk.explain_label(), "stale_ok");
+    }
+
+    #[test]
+    fn vector_freshness_mode_round_trips_through_json() {
+        for mode in [
+            VectorFreshnessMode::Strong,
+            VectorFreshnessMode::BoundedStale {
+                max_staleness_ms: 2_500,
+            },
+            VectorFreshnessMode::StaleOk,
+        ] {
+            let json = serde_json::to_string(&mode).expect("serialize");
+            let decoded: VectorFreshnessMode =
+                serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(decoded, mode);
+        }
+    }
+
+    #[test]
+    fn search_params_freshness_mode_round_trips_through_json() {
+        let params = UnifiedSearchParams {
+            freshness_mode: Some(VectorFreshnessMode::BoundedStale {
+                max_staleness_ms: 1_000,
+            }),
+            ..UnifiedSearchParams::default()
+        };
+        let json = serde_json::to_string(&params).expect("serialize");
+        let decoded: UnifiedSearchParams =
+            serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            decoded.effective_freshness_mode(),
+            VectorFreshnessMode::BoundedStale {
+                max_staleness_ms: 1_000,
+            }
+        );
+    }
 
     #[test]
     fn test_search_params_default() {
