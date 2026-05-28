@@ -13,8 +13,8 @@ use crate::descriptor::ModelKey;
 use crate::scorer_session::ScorerSession;
 use dashmap::DashMap;
 use proximadb_rank_core::{RankError, RankResult};
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Observer hook for cache events. The root-crate Prometheus glue
@@ -49,6 +49,16 @@ pub trait ModelCacheObserver: Send + Sync {
     /// fired (e.g. after `install()` set the gauge but a parallel
     /// install grew it again).
     fn record_size(&self, _total_bytes: u64) {}
+
+    /// Called when a cold load begins. Pair with `record_load_complete`
+    /// when the loader returns (success or failure). The root-crate
+    /// adapter maps this onto `rank_model_inflight_loads.inc()` so
+    /// dashboards see concurrent cold loads in flight.
+    fn record_load_start(&self, _model_id: &str) {}
+
+    /// Called when a cold load ends. `ok = true` on successful install,
+    /// `false` if the loader returned an error.
+    fn record_load_complete(&self, _model_id: &str, _ok: bool) {}
 }
 
 /// Per-model hit/miss counters, updated atomically by the cache
@@ -157,6 +167,33 @@ impl OnnxModelCache {
         token
     }
 
+    /// Acquire-or-load: returns a token if the model is cached;
+    /// otherwise invokes `loader` to fetch + install + return a
+    /// token. Wraps the loader call with
+    /// `record_load_start`/`record_load_complete` so the
+    /// `rank_model_inflight_loads` gauge sees concurrent cold loads
+    /// in flight (spec §4.10). The loader is invoked synchronously
+    /// here — R-5b can swap in an async variant once an async
+    /// `ScorerSession` loader trait lands.
+    pub fn acquire_or_load_with<F>(&self, key: &ModelKey, loader: F) -> RankResult<ScorerToken>
+    where
+        F: FnOnce() -> RankResult<Arc<dyn ScorerSession>>,
+    {
+        if let Ok(token) = self.acquire(key) {
+            return Ok(token);
+        }
+        if let Some(obs) = &self.observer {
+            obs.record_load_start(&key.model_id);
+        }
+        let result = loader();
+        let outcome_ok = result.is_ok();
+        let token_result = result.map(|session| self.install(session));
+        if let Some(obs) = &self.observer {
+            obs.record_load_complete(&key.model_id, outcome_ok);
+        }
+        token_result
+    }
+
     /// Look up a loaded session by key. Updates last-used timestamp on
     /// hit. Returns `Err(ProfileNotFound)` on miss — R-5b will overload
     /// this with the loader path.
@@ -199,12 +236,8 @@ impl OnnxModelCache {
     /// or budget.
     pub fn evict_if_over_budget(&self) -> usize {
         let (budget_bytes, by_count_max, primary_reason) = match &self.policy {
-            EvictionPolicy::LruByMemory { budget_bytes } => {
-                (Some(*budget_bytes), None, "budget")
-            }
-            EvictionPolicy::LruByCount { max_entries } => {
-                (None, Some(*max_entries), "count")
-            }
+            EvictionPolicy::LruByMemory { budget_bytes } => (Some(*budget_bytes), None, "budget"),
+            EvictionPolicy::LruByCount { max_entries } => (None, Some(*max_entries), "count"),
             EvictionPolicy::Tenanted {
                 per_tenant_budget_bytes,
             } => {
@@ -254,9 +287,10 @@ impl OnnxModelCache {
             }
             // Double-check refcount under the remove — another thread
             // may have acquired between our scan and now.
-            if let Some((_, entry)) = self.entries.remove_if(&key, |_, v| {
-                Arc::strong_count(&v.session) == 1
-            }) {
+            if let Some((_, entry)) = self
+                .entries
+                .remove_if(&key, |_, v| Arc::strong_count(&v.session) == 1)
+            {
                 let b = entry.session.memory_bytes();
                 freed += b;
                 current_bytes = current_bytes.saturating_sub(b);
@@ -445,6 +479,9 @@ mod tests {
         misses: AtomicU64,
         evictions: AtomicU64,
         last_size: AtomicI64,
+        load_starts: AtomicU64,
+        load_completes: AtomicU64,
+        load_ok: AtomicU64,
     }
 
     impl ModelCacheObserver for RecordingObserver {
@@ -464,6 +501,83 @@ mod tests {
         fn record_size(&self, total_bytes: u64) {
             self.last_size.store(total_bytes as i64, Ordering::SeqCst);
         }
+        fn record_load_start(&self, _model_id: &str) {
+            self.load_starts.fetch_add(1, Ordering::SeqCst);
+        }
+        fn record_load_complete(&self, _model_id: &str, ok: bool) {
+            self.load_completes.fetch_add(1, Ordering::SeqCst);
+            if ok {
+                self.load_ok.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    #[test]
+    fn acquire_or_load_with_invokes_loader_on_miss_and_emits_load_events() {
+        // First call misses the cache → loader runs → record_load_start +
+        // record_load_complete(true) fire. Second call hits the cache →
+        // no load events, no loader invocation.
+        let obs = Arc::new(RecordingObserver::default());
+        let cache = OnnxModelCache::new(EvictionPolicy::LruByMemory {
+            budget_bytes: usize::MAX,
+        })
+        .with_observer(obs.clone());
+
+        let invocations = Arc::new(AtomicU64::new(0));
+        let key = ModelKey::new("rerank-v3", "1");
+
+        // Cold path: cache miss → loader runs.
+        let inv1 = invocations.clone();
+        let t1 = cache
+            .acquire_or_load_with(&key, || {
+                inv1.fetch_add(1, Ordering::SeqCst);
+                Ok(session("rerank-v3", 100))
+            })
+            .unwrap();
+        drop(t1);
+        assert_eq!(invocations.load(Ordering::SeqCst), 1);
+        assert_eq!(obs.load_starts.load(Ordering::SeqCst), 1);
+        assert_eq!(obs.load_completes.load(Ordering::SeqCst), 1);
+        assert_eq!(obs.load_ok.load(Ordering::SeqCst), 1);
+
+        // Warm path: cache hit → loader does not run.
+        let inv2 = invocations.clone();
+        let _ = cache
+            .acquire_or_load_with(&key, || {
+                inv2.fetch_add(1, Ordering::SeqCst);
+                Ok(session("rerank-v3", 100))
+            })
+            .unwrap();
+        assert_eq!(
+            invocations.load(Ordering::SeqCst),
+            1,
+            "loader must not run on cache hit"
+        );
+        assert_eq!(
+            obs.load_starts.load(Ordering::SeqCst),
+            1,
+            "no new load start"
+        );
+    }
+
+    #[test]
+    fn acquire_or_load_with_records_load_failure() {
+        // Loader returns an error → record_load_complete fires with ok=false
+        // and the token result is the propagated error.
+        let obs = Arc::new(RecordingObserver::default());
+        let cache = OnnxModelCache::new(EvictionPolicy::LruByMemory {
+            budget_bytes: usize::MAX,
+        })
+        .with_observer(obs.clone());
+
+        let key = ModelKey::new("ghost", "1");
+        let result = cache.acquire_or_load_with(&key, || {
+            Err(RankError::ProfileNotFound("simulated load failure".into()))
+        });
+        assert!(result.is_err());
+        assert_eq!(obs.load_starts.load(Ordering::SeqCst), 1);
+        assert_eq!(obs.load_completes.load(Ordering::SeqCst), 1);
+        assert_eq!(obs.load_ok.load(Ordering::SeqCst), 0);
     }
 
     #[test]

@@ -633,6 +633,10 @@ impl UnifiedTestEnvironment {
 
             // Block format
             block_format: "ProximaBlocks".to_string(),
+
+            // Tier-migration integration — disabled in tests so the
+            // SST engine doesn't pull in the tiering policy engine.
+            tiering: None,
         }
     }
 

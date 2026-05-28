@@ -20,9 +20,7 @@
 //! happen at the query layer (matches `precision_metrics.rs`
 //! cardinality discipline).
 
-use prometheus::{
-    CounterVec, GaugeVec, HistogramOpts, HistogramVec, IntGauge, Opts, Registry,
-};
+use prometheus::{CounterVec, GaugeVec, HistogramOpts, HistogramVec, IntGauge, Opts, Registry};
 use std::sync::Arc;
 
 // ---------------------------------------------------------------------------
@@ -237,12 +235,7 @@ impl RankPipelineMetrics {
 
     /// Record a per-phase wall-clock latency observation in
     /// microseconds (spec §4.10).
-    pub fn observe_phase_latency_us(
-        &self,
-        profile: &str,
-        phase: &str,
-        latency_us: f64,
-    ) {
+    pub fn observe_phase_latency_us(&self, profile: &str, phase: &str, latency_us: f64) {
         self.phase_latency_us
             .with_label_values(&[profile, phase])
             .observe(latency_us);
@@ -388,6 +381,14 @@ impl proximadb_rank_onnx::ModelCacheObserver for ModelCacheMetricsObserver {
     fn record_size(&self, total_bytes: u64) {
         self.metrics.set_model_cache_size_bytes(total_bytes as i64);
     }
+
+    fn record_load_start(&self, _model_id: &str) {
+        self.metrics.inc_model_inflight_loads();
+    }
+
+    fn record_load_complete(&self, _model_id: &str, _ok: bool) {
+        self.metrics.dec_model_inflight_loads();
+    }
 }
 
 /// `RankMetricsSink` adapter that bridges per-feature observations
@@ -457,7 +458,10 @@ mod tests {
         // The spec §NFR-8 + §4.10 commit the codebase to these exact
         // strings. Renaming requires a docs update + dashboards
         // migration.
-        assert_eq!(METRIC_FEATURE_LATENCY_US, "proximadb_rank_feature_latency_us");
+        assert_eq!(
+            METRIC_FEATURE_LATENCY_US,
+            "proximadb_rank_feature_latency_us"
+        );
         assert_eq!(METRIC_PHASE_LATENCY_US, "proximadb_rank_phase_latency_us");
         assert_eq!(
             METRIC_PHASE_TRUNCATED_TOTAL,
@@ -486,6 +490,62 @@ mod tests {
         assert_eq!(
             METRIC_MODEL_INFLIGHT_LOADS,
             "proximadb_rank_model_inflight_loads"
+        );
+    }
+
+    #[test]
+    fn model_cache_observer_records_inflight_loads_through_loader_path() {
+        // ModelCacheMetricsObserver wires load_start/complete to
+        // inc/dec_model_inflight_loads so the spec §4.10
+        // `rank_model_inflight_loads` gauge reflects concurrent
+        // cold loads. Verify via `acquire_or_load_with`: gauge
+        // starts at 0, dips up while loader runs (we can't easily
+        // assert during because the call is sync), and returns
+        // to 0 after.
+        use proximadb_rank_onnx::{
+            DType, EvictionPolicy, MockScorerSession, ModelDescriptor, ModelFramework, ModelKey,
+            OnnxModelCache,
+        };
+
+        let registry = Registry::new();
+        let metrics = Arc::new(RankPipelineMetrics::register(&registry).unwrap());
+        let observer: Arc<dyn proximadb_rank_onnx::ModelCacheObserver> =
+            Arc::new(ModelCacheMetricsObserver::new(metrics.clone()));
+        let cache = OnnxModelCache::new(EvictionPolicy::LruByMemory {
+            budget_bytes: usize::MAX,
+        })
+        .with_observer(observer);
+
+        let descriptor = ModelDescriptor {
+            key: ModelKey::new("rerank-v3", "1"),
+            tenant: None,
+            uri: "file:///tmp/rerank-v3.onnx".to_string(),
+            sha256: [0; 32],
+            size_bytes: 64,
+            framework: ModelFramework::Onnx,
+            dtype: DType::Fp32,
+            input_spec: vec![],
+            output_spec: vec![],
+            max_batch_size: 8,
+            seq: 0,
+            created_at_ms: 0,
+        };
+        assert_eq!(metrics.model_inflight_loads.get(), 0);
+
+        let key = ModelKey::new("rerank-v3", "1");
+        let _t = cache
+            .acquire_or_load_with(&key, || {
+                Ok(Arc::new(MockScorerSession::zeros(descriptor.clone()))
+                    as Arc<dyn proximadb_rank_onnx::ScorerSession>)
+            })
+            .unwrap();
+        // After completion the gauge must return to 0 (the
+        // adapter increments on start and decrements on complete,
+        // synchronously inside acquire_or_load_with).
+        assert_eq!(
+            metrics.model_inflight_loads.get(),
+            0,
+            "inflight_loads must return to 0 after acquire_or_load_with"
         );
     }
 
