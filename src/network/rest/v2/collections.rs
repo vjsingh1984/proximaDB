@@ -1780,6 +1780,35 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
+    fn object_economy_status_label_covers_all_directory_load_status_variants() {
+        // Closed-enum mapping canary: if a future DirectoryLoadStatus variant
+        // lands without an arm here, the route-health response would silently
+        // misrender the status. Pin each variant → label pair.
+        use crate::storage::engines::sst::object_economy_directory::DirectoryLoadStatus;
+        assert_eq!(
+            object_economy_status_label(&DirectoryLoadStatus::Loaded),
+            "loaded"
+        );
+        assert_eq!(
+            object_economy_status_label(&DirectoryLoadStatus::Missing),
+            "missing"
+        );
+        assert_eq!(
+            object_economy_status_label(&DirectoryLoadStatus::Corrupt(
+                "bad header".to_string()
+            )),
+            "corrupt"
+        );
+        assert_eq!(
+            object_economy_status_label(&DirectoryLoadStatus::Mismatch {
+                expected_collection: "products".to_string(),
+                found_collection: "orders".to_string(),
+            }),
+            "mismatch"
+        );
+    }
+
+    #[test]
     fn route_health_pinning_reports_no_pin_by_default() {
         let h = build_route_health(
             "c".to_string(),
