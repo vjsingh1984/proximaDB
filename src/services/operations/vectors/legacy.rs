@@ -1233,6 +1233,79 @@ impl VectorOperationsService {
         Some(entry.status.clone())
     }
 
+    /// Scan the WAL/memtable delta for records committed after the
+    /// directory's freshness watermark, when the request's freshness
+    /// mode requires it.
+    ///
+    /// Phase 5 Slice 5.3: this method delegates the decision to
+    /// [`VectorFreshnessMode::should_scan_delta`] (pure logic, fully
+    /// unit-tested in `core/search`) and the actual scan to the
+    /// existing `WriteAheadLogManager::search_unflushed_vectors`. It is
+    /// deliberately separate from the merge step that lands in Slice
+    /// 5.4 — this slice just returns the delta candidate set; the
+    /// caller decides how to combine it with directory-routed results.
+    ///
+    /// Returns:
+    /// * `Ok(None)` — no scan was needed (mode is `StaleOk`, watermark
+    ///   already covers the WAL, or no WAL cursor available).
+    /// * `Ok(Some(records))` — delta records, possibly empty. Tombstone
+    ///   markers are preserved so the merge step can suppress older
+    ///   directory results.
+    /// * `Err(_)` — WAL scan failed; caller decides whether to fail the
+    ///   query or fall back to directory-only results.
+    pub async fn scan_wal_delta_if_needed(
+        &self,
+        collection_id: &str,
+        query_vector: &[f32],
+        top_k: usize,
+        distance_metric: crate::compute::distance_computation::DistanceMetric,
+        metadata_filters: Option<&crate::core::search::FilterExpression>,
+        freshness_mode: &crate::core::search::VectorFreshnessMode,
+        directory_watermark_lsn: u64,
+    ) -> Result<Option<Vec<crate::core::search::results::OptimizedSearchRecord>>> {
+        // StaleOk short-circuits before we even ask the WAL — saves the
+        // singleton lookup on the cheap-read path.
+        if matches!(
+            freshness_mode,
+            crate::core::search::VectorFreshnessMode::StaleOk
+        ) {
+            return Ok(None);
+        }
+
+        // Without a global manifest service we can't decide whether the
+        // WAL has newer data, so the safe default is to skip and let
+        // the directory-routed result stand. Strong-route correctness
+        // is then advertised only when the manifest is wired (which is
+        // the common production case via `SharedServices::new`).
+        let current_lsn = match crate::storage::persistence::write_ahead_log::manifest::get_service()
+        {
+            Some(svc) => svc.current_lsn().await,
+            None => return Ok(None),
+        };
+
+        if !freshness_mode.should_scan_delta(current_lsn, directory_watermark_lsn) {
+            return Ok(None);
+        }
+
+        // Delta scan: oversample (top_k * 2) so the eventual merge step
+        // still has enough candidates after dedupe + tombstone
+        // suppression. Slice 5.4 owns the merge proper.
+        let oversample = top_k.saturating_mul(2).max(1);
+        let records = self
+            .wal_manager
+            .search_unflushed_vectors(
+                collection_id,
+                query_vector,
+                oversample,
+                distance_metric,
+                metadata_filters,
+                /* include_vectors */ false,
+                /* include_metadata */ true,
+            )
+            .await?;
+        Ok(Some(records))
+    }
+
     /// Attach orchestrator (builder-style)
     pub fn with_orchestrator(
         mut self,

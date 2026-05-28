@@ -127,6 +127,28 @@ impl VectorFreshnessMode {
             Self::StaleOk => "stale_ok",
         }
     }
+
+    /// Decide whether the search path should scan the WAL/memtable
+    /// delta for records committed after the directory watermark.
+    ///
+    /// * `StaleOk` → always false (cheapest read, may miss recent writes).
+    /// * `Strong` → true iff `current_lsn > watermark_lsn`. The directory
+    ///   already reflects everything up to `watermark_lsn`, so a scan is
+    ///   only useful when the WAL has newer entries.
+    /// * `BoundedStale { max_staleness_ms }` → today treated as Strong.
+    ///   The time-bound check (comparing wall-clock against the
+    ///   directory's `freshness_watermark_ns`) is deferred to a later
+    ///   slice — for now, bounded-stale callers get the safer
+    ///   "always scan when newer" behaviour rather than the cheaper
+    ///   "skip if recently fresh."
+    ///
+    /// Pure function — no I/O, no allocation, fully unit-testable.
+    pub fn should_scan_delta(&self, current_lsn: u64, watermark_lsn: u64) -> bool {
+        if matches!(self, Self::StaleOk) {
+            return false;
+        }
+        current_lsn > watermark_lsn
+    }
 }
 
 /// Hybrid search mode controlling how BM25 text and vector results are combined
@@ -1330,6 +1352,41 @@ mod tests {
                 serde_json::from_str(&json).expect("deserialize");
             assert_eq!(decoded, mode);
         }
+    }
+
+    // ── should_scan_delta decision logic (Slice 5.3) ─────────────────────
+
+    #[test]
+    fn should_scan_delta_skips_for_stale_ok_regardless_of_lsns() {
+        // StaleOk MUST never trigger a scan, even when the WAL has
+        // newer data than the directory watermark.
+        assert!(!VectorFreshnessMode::StaleOk.should_scan_delta(/*now*/ 100, /*wm*/ 10));
+        assert!(!VectorFreshnessMode::StaleOk.should_scan_delta(0, 0));
+        assert!(!VectorFreshnessMode::StaleOk.should_scan_delta(u64::MAX, 0));
+    }
+
+    #[test]
+    fn should_scan_delta_skips_strong_when_watermark_matches_or_exceeds_lsn() {
+        // Watermark already covers all committed writes — nothing to merge.
+        assert!(!VectorFreshnessMode::Strong.should_scan_delta(/*now*/ 50, /*wm*/ 50));
+        assert!(!VectorFreshnessMode::Strong.should_scan_delta(/*now*/ 50, /*wm*/ 60));
+    }
+
+    #[test]
+    fn should_scan_delta_triggers_strong_when_wal_has_newer_records() {
+        assert!(VectorFreshnessMode::Strong.should_scan_delta(/*now*/ 100, /*wm*/ 50));
+        assert!(VectorFreshnessMode::Strong.should_scan_delta(/*now*/ 1, /*wm*/ 0));
+    }
+
+    #[test]
+    fn should_scan_delta_treats_bounded_stale_like_strong_for_now() {
+        // BoundedStale time-bound check is deferred — until then it
+        // defaults to the safer Strong behaviour.
+        let mode = VectorFreshnessMode::BoundedStale {
+            max_staleness_ms: 5_000,
+        };
+        assert!(mode.should_scan_delta(100, 50));
+        assert!(!mode.should_scan_delta(50, 50));
     }
 
     #[test]
