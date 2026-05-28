@@ -463,7 +463,46 @@ fn run_phases_blocking(
     drop(arena);
 
     match second_phase_scorer {
-        Some(scorer) => pipeline.run_second_phase(first_outcome, scorer, qctx),
+        Some(scorer) => {
+            // R-7c.4d follow-up: time the second-phase rescore
+            // call here at the orchestrator layer rather than
+            // inside rank-core (the SecondPhaseScorer trait
+            // doesn't take a metrics ref, and extending it would
+            // ripple through every concrete scorer impl). The
+            // scorer's identity surfaces as the `feature` label —
+            // the trait doesn't expose a name today, so we use the
+            // canonical `"second_phase"` placeholder. A future
+            // slice can promote a real model_id when SecondPhaseScorer
+            // grows a `name()` accessor.
+            let t0 = std::time::Instant::now();
+            let result = pipeline.run_second_phase(first_outcome, scorer, qctx);
+            if let Some((m, profile)) = metrics.as_ref() {
+                let elapsed_ns = t0.elapsed().as_nanos() as u64;
+                let phase_label = crate::observability::rank_metrics::RankPipelineMetrics::phase_label_for(
+                    PhaseId::SECOND.0,
+                );
+                m.observe_feature_latency_us(
+                    profile,
+                    phase_label,
+                    "second_phase",
+                    elapsed_ns as f64 / 1_000.0,
+                );
+                if let Ok(ref outcome) = result {
+                    if outcome.truncated {
+                        // The second phase preserves the first
+                        // phase's truncated flag; if it's still set
+                        // post-rescore, surface a second-phase
+                        // truncation event too so dashboards
+                        // attribute correctly (the first-phase
+                        // record_phase_truncated emit at the
+                        // rank-core call site already fired with
+                        // "budget"/"deadline").
+                        m.inc_phase_truncated(phase_label, "carried_forward");
+                    }
+                }
+            }
+            result
+        }
         None => Ok(first_outcome),
     }
 }
@@ -1191,6 +1230,88 @@ mod tests {
         assert!(
             observed >= 3,
             "expected ≥3 histogram observations for first-phase docid() across 3 candidates, got {observed}",
+        );
+    }
+
+    #[tokio::test]
+    async fn handler_with_metrics_emits_second_phase_observation_when_scorer_runs() {
+        // R-7c.4d follow-up: when a SecondPhaseScorer is registered
+        // AND the profile has a `second_phase` configured AND
+        // metrics are wired, the orchestrator must emit one
+        // observation on (profile, phase=second, feature=second_phase)
+        // for the rescore call. The bridge can't reach inside the
+        // scorer (it'd need a trait change), so this is a single
+        // wrapper-level observation per rescore — sufficient for
+        // dashboards to alert on second-phase latency.
+        use crate::observability::rank_metrics::RankPipelineMetrics;
+        let registry = ProfileRegistry::new();
+        let factory = factory_with_docid();
+        let mut spec = RankProfileSpec::new("metrics_test_2p");
+        spec.first_phase = Some(PhaseSpec {
+            expression: "docid()".into(),
+            heap_size: Some(10),
+            rerank_count: Some(5),
+            batch_size: None,
+        });
+        spec.second_phase = Some(PhaseSpec {
+            expression: "docid()".into(),
+            heap_size: Some(5),
+            rerank_count: None,
+            batch_size: None,
+        });
+        spec.version = 1;
+        let compiled = CompiledRankProfile::compile(spec, factory.clone()).unwrap();
+        registry.install(compiled);
+
+        let prom_registry = prometheus::Registry::new();
+        let metrics = std::sync::Arc::new(
+            RankPipelineMetrics::register(&prom_registry).unwrap(),
+        );
+        let scorer: Arc<dyn SecondPhaseScorer> =
+            Arc::new(proximadb_rank_core::PassthroughSecondPhaseScorer);
+
+        let candidates = FixedCandidates(vec![DocHandle(1), DocHandle(2)]);
+        let req = RankSearchRequest {
+            collection: "docs".into(),
+            query_vector: vec![],
+            query_text: None,
+            k: 2,
+            rank_profile: Some("metrics_test_2p".into()),
+            rank_overrides: None,
+        };
+        let resp = handle_rank_search_with_metrics(
+            req,
+            &registry,
+            &candidates,
+            factory,
+            Some(scorer),
+            Some(metrics.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.hits.len(), 2);
+
+        let observed = prom_registry
+            .gather()
+            .into_iter()
+            .filter(|mf| mf.name() == "proximadb_rank_feature_latency_us")
+            .flat_map(|mf| mf.get_metric().to_vec())
+            .filter(|m| {
+                m.get_label().iter().any(|l| {
+                    l.name() == "profile" && l.value() == "metrics_test_2p"
+                }) && m
+                    .get_label()
+                    .iter()
+                    .any(|l| l.name() == "phase" && l.value() == "second")
+                    && m.get_label().iter().any(|l| {
+                        l.name() == "feature" && l.value() == "second_phase"
+                    })
+            })
+            .map(|m| m.get_histogram().get_sample_count())
+            .sum::<u64>();
+        assert_eq!(
+            observed, 1,
+            "expected exactly 1 second-phase observation per rescore call, got {observed}",
         );
     }
 
