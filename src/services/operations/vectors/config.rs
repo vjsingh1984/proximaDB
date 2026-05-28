@@ -66,6 +66,11 @@ pub struct SearchPlanHints {
     pub recall_estimates: Option<Vec<f32>>,
     /// ADR-011 ANN filtering mode chosen by the planner ("PreFilter", "Inline", "PostFilter").
     pub ann_filtering_mode: Option<String>,
+    /// Phase 5: Vector Object Economy route metadata populated when the
+    /// strong-route delta merge runs. `None` when the request didn't
+    /// require a delta merge (`StaleOk`, or watermark up to date), or
+    /// when the request was served from cache.
+    pub vector_object_economy: Option<crate::query::explain::VectorObjectEconomyExplain>,
 }
 
 #[cfg(test)]

@@ -1235,6 +1235,22 @@ impl VectorOperationsService {
         Some(entry.status.clone())
     }
 
+    /// Return the cached object-economy directory status for a collection
+    /// without creating a handle or loading from object storage.
+    ///
+    /// Diagnostics endpoints use this to report live in-process cache state
+    /// while preserving the "no surprise I/O" contract.
+    pub(crate) fn cached_object_economy_directory_status(
+        &self,
+        collection_id: &str,
+    ) -> Option<crate::storage::engines::sst::object_economy_directory::DirectoryLoadStatus> {
+        self.directory_cache
+            .as_ref()?
+            .get_handle(collection_id)?
+            .get_cached()
+            .map(|entry| entry.status.clone())
+    }
+
     /// Load the per-collection object-economy directory via the cache
     /// and return its `freshness_watermark_lsn`. Returns `None` when
     /// any of the inputs the loader needs is unavailable — the caller
@@ -1252,10 +1268,7 @@ impl VectorOperationsService {
     /// emits a real `storage_epoch`, this helper will pick it up via
     /// the catalog/collection lookup — for now both writer and reader
     /// use the same placeholder `0`, so cache hits are consistent.
-    pub(crate) async fn cached_directory_watermark_lsn(
-        &self,
-        collection_id: &str,
-    ) -> Option<u64> {
+    pub(crate) async fn cached_directory_watermark_lsn(&self, collection_id: &str) -> Option<u64> {
         let cache = self.directory_cache.as_ref()?;
 
         // collection_root comes from the collection's storage assignment.
@@ -2576,20 +2589,34 @@ impl VectorOperationsService {
             )
             .await?;
 
-        // Phase 5 Slice 5.6 + 5.7: merge WAL/memtable delta with engine
-        // (directory-routed) results when the request's freshness mode
-        // requires it. The watermark is loaded from the cached
-        // per-collection object-economy directory. When the cache or its
-        // inputs are unavailable, `cached_directory_watermark_lsn`
-        // returns None and we fall back to `0` — a safe
-        // over-approximation that triggers the scan unconditionally
-        // (more work, never less correctness).
+        // Phase 5 Slices 5.6 + 5.7 + 5.8: merge WAL/memtable delta with
+        // engine (directory-routed) results when the request's
+        // freshness mode requires it, and emit a structured EXPLAIN
+        // event so operators can audit route decisions in production
+        // logs without subscribing to a request-side hints surface.
+        //
+        // The watermark is loaded from the cached per-collection
+        // object-economy directory. When the cache or its inputs are
+        // unavailable, `cached_directory_watermark_lsn` returns None
+        // and we fall back to `0` — a safe over-approximation that
+        // triggers the scan unconditionally (more work, never less
+        // correctness).
         let merged_results = if freshness_mode.requires_delta_merge() {
             let distance_metric = crate::compute::distance_computation::DistanceMetric::Cosine;
             let watermark = self
                 .cached_directory_watermark_lsn(collection_id)
                 .await
                 .unwrap_or(0);
+            // Read the WAL cursor independently of the helper so the
+            // EXPLAIN payload carries the value even when no scan ran
+            // (e.g. watermark already covers the cursor). The helper
+            // re-reads it; that's two cheap singleton calls in
+            // exchange for the operator visibility.
+            let current_lsn =
+                match crate::storage::persistence::write_ahead_log::manifest::get_service() {
+                    Some(svc) => svc.current_lsn().await,
+                    None => 0,
+                };
             let delta_outcome = self
                 .scan_wal_delta_if_needed(
                     collection_id,
@@ -2601,15 +2628,65 @@ impl VectorOperationsService {
                     watermark,
                 )
                 .await?;
-            match delta_outcome {
-                Some(delta) => crate::core::search::merge::merge_delta_with_directory_results(
-                    delta,
-                    optimized_results,
-                    top_k,
-                ),
-                None => optimized_results,
+            let scanned_records = delta_outcome.as_ref().map(|d| d.len() as u64);
+            let (final_results, merge_input_directory) = match delta_outcome {
+                Some(delta) => {
+                    let input_directory = optimized_results.len();
+                    (
+                        crate::core::search::merge::merge_delta_with_directory_results(
+                            delta,
+                            optimized_results,
+                            top_k,
+                        ),
+                        Some(input_directory),
+                    )
+                }
+                None => (optimized_results, None),
+            };
+
+            // EXPLAIN emission: tracing event tagged with the per-query
+            // route metadata. Operators can grep / structured-log this
+            // to verify the strong-route is skipping the WAL scan when
+            // the directory is fresh, or to debug staleness incidents.
+            let explain = crate::query::explain::VectorObjectEconomyExplain {
+                route_kind: "vector_object_economy".to_string(),
+                authority_mode: "projection_over_canonical_records".to_string(),
+                freshness_mode: freshness_mode.explain_label().to_string(),
+                freshness_watermark_lsn: Some(watermark),
+                policy_boundary: "proxima_internal_policy".to_string(),
+                cache_status: "unknown".to_string(),
+                ..Default::default()
             }
+            .record_wal_delta_scan(
+                &freshness_mode,
+                current_lsn,
+                scanned_records,
+                /*scanned_bytes — not yet measured here */ None,
+            );
+            tracing::info!(
+                target = "proximadb.vector_route.explain",
+                collection_id = %collection_id,
+                route_kind = %explain.route_kind,
+                freshness_mode = %explain.freshness_mode_used.as_deref().unwrap_or("unknown"),
+                current_lsn = explain.current_lsn_at_query.unwrap_or(0),
+                watermark_lsn = explain.freshness_watermark_lsn.unwrap_or(0),
+                wal_delta_searched = explain.wal_delta_searched,
+                wal_delta_records_scanned = explain.wal_delta_records_scanned.unwrap_or(0),
+                merge_input_directory_records = merge_input_directory.unwrap_or(0),
+                merge_output_records = final_results.len(),
+                "VectorObjectEconomy strong-route query"
+            );
+
+            final_results
         } else {
+            // StaleOk path: still emit a minimal trace event so the
+            // operator can see the route was skipped intentionally.
+            tracing::debug!(
+                target = "proximadb.vector_route.explain",
+                collection_id = %collection_id,
+                freshness_mode = "stale_ok",
+                "VectorObjectEconomy stale_ok route — WAL delta scan skipped"
+            );
             optimized_results
         };
 
