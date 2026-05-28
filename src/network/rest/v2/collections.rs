@@ -878,14 +878,38 @@ pub struct WriteContractHealth {
     pub patch: bool,
 }
 
-/// Freshness state. Collection-level strong / bounded-stale / stale-ok modes
-/// are not wired yet — only per-projection freshness exists in the storage
-/// layer. We report this honestly rather than fabricating booleans.
+/// Freshness state. Two layers:
+///
+/// * `search_request_modes` — what each individual search request can ask for
+///   today. All three `VectorFreshnessMode` variants (Strong, BoundedStale,
+///   StaleOk) are wired in the search path via `should_scan_delta_with_time`.
+/// * `collection_level_modes_wired` — whether a *default* freshness mode is
+///   stored on the collection / projection (so callers don't have to set it
+///   per request). Still `false`: only per-projection `ProjectionFreshness`
+///   exists, no collection-default catalog field.
 #[derive(Debug, Serialize, PartialEq)]
 pub struct FreshnessHealth {
     pub scope: &'static str,
     pub collection_level_modes_wired: bool,
+    pub search_request_modes: SearchFreshnessModes,
     pub notes: &'static str,
+}
+
+/// Per-request freshness modes the search path actually honors. Each flag
+/// corresponds to a verifiable arm of `VectorFreshnessMode::should_scan_delta_with_time`.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct SearchFreshnessModes {
+    /// `Strong`: WAL/memtable delta is always merged. Default.
+    pub strong: bool,
+    /// `BoundedStale { max_staleness_ms }`: directory state up to the bound
+    /// is accepted without merging the delta.
+    pub bounded_stale: bool,
+    /// `StaleOk`: skip the WAL delta entirely.
+    pub stale_ok: bool,
+    /// Whether `BoundedStale` is wired with a real time-bound check (vs
+    /// silently degrading to Strong). True since commit e34a06225 wired
+    /// `freshness_watermark_ns` through `scan_wal_delta_if_needed`.
+    pub bounded_stale_time_bound_check: bool,
 }
 
 /// Object-economy directory state. The directory format and sidecar live in
@@ -1056,8 +1080,15 @@ fn build_route_health_with_live_state(
     let freshness = FreshnessHealth {
         scope: "projection_only",
         collection_level_modes_wired: false,
-        notes: "Collection-level strong/bounded-stale modes are not wired; \
-                projection-level ProjectionFreshness lives in the storage layer only.",
+        search_request_modes: SearchFreshnessModes {
+            strong: true,
+            bounded_stale: true,
+            stale_ok: true,
+            bounded_stale_time_bound_check: true,
+        },
+        notes: "Per-request freshness modes (strong/bounded_stale/stale_ok) \
+                are honored by the search path; collection-default modes are \
+                not yet stored on the catalog.",
     };
     let object_economy_eligible = engine == "sst";
     let object_economy_live_status = if object_economy_eligible {
@@ -1437,6 +1468,37 @@ mod tests {
     }
 
     #[test]
+    fn route_health_freshness_search_request_modes_all_wired() {
+        // All three VectorFreshnessMode variants are honored by
+        // should_scan_delta_with_time. The bounded_stale_time_bound_check
+        // flag specifically requires the watermark_ns threading wired in
+        // commit e34a06225 (Phase 5 slice 5.10). Flipping any of these to
+        // false requires the corresponding mode being removed from the
+        // enum or its branch being disconnected from the search path.
+        let h = build_route_health(
+            "c".to_string(),
+            "sst".to_string(),
+            8,
+            "cosine".to_string(),
+            0,
+            0,
+            0,
+        );
+        assert!(h.freshness.search_request_modes.strong);
+        assert!(h.freshness.search_request_modes.bounded_stale);
+        assert!(h.freshness.search_request_modes.stale_ok);
+        assert!(h.freshness.search_request_modes.bounded_stale_time_bound_check);
+        // Collection-default modes still not stored on the catalog —
+        // separate slice. The reason stays in degraded_reasons.
+        assert!(!h.freshness.collection_level_modes_wired);
+        assert!(
+            h.degraded_reasons
+                .contains(&DegradedReason::FreshnessModesNotCollectionLevel),
+            "search-request modes being wired does NOT imply collection-default modes"
+        );
+    }
+
+    #[test]
     fn route_health_object_economy_is_explicitly_sst_only() {
         let sst = build_route_health(
             "c".to_string(),
@@ -1706,6 +1768,12 @@ mod tests {
         FreshnessHealth {
             scope: "collection_level",
             collection_level_modes_wired: true,
+            search_request_modes: SearchFreshnessModes {
+                strong: true,
+                bounded_stale: true,
+                stale_ok: true,
+                bounded_stale_time_bound_check: true,
+            },
             notes: "",
         }
     }
@@ -1896,6 +1964,12 @@ mod tests {
         let freshness = FreshnessHealth {
             scope: "",
             collection_level_modes_wired: false,
+            search_request_modes: SearchFreshnessModes {
+                strong: false,
+                bounded_stale: false,
+                stale_ok: false,
+                bounded_stale_time_bound_check: false,
+            },
             notes: "",
         };
         let oe = ObjectEconomyHealth {
