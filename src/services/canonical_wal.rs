@@ -130,6 +130,66 @@ impl TableWalAppender for FramedTableWalAppender {
     }
 }
 
+/// In-memory `TableWalAppender` used when no on-disk canonical WAL is
+/// configured. Operations are stored in a `Mutex<Vec<CanonicalWalEntry>>`
+/// keyed by a single monotonic counter so consumers that need to replay or
+/// inspect appended entries can do so.
+///
+/// Intended for test paths and the `opt_config = None` boot path where the
+/// shared canonical WAL is not opened. Not durable — entries are lost when
+/// the process exits.
+pub struct MemoryTableWalAppender {
+    next_sequence: AtomicU64,
+    entries: Mutex<Vec<CanonicalWalEntry>>,
+}
+
+impl MemoryTableWalAppender {
+    /// Build an empty in-memory appender.
+    pub fn new() -> Self {
+        Self {
+            next_sequence: AtomicU64::new(0),
+            entries: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Snapshot the currently appended entries. Cheap clone; intended for
+    /// tests + the rank-profile store's in-memory recovery path.
+    pub async fn entries(&self) -> Vec<CanonicalWalEntry> {
+        self.entries.lock().await.clone()
+    }
+}
+
+impl Default for MemoryTableWalAppender {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl TableWalAppender for MemoryTableWalAppender {
+    async fn append_operations(
+        &self,
+        operations: Vec<CanonicalOperation>,
+        tenant_id: Option<String>,
+    ) -> Result<Vec<CanonicalWalEntry>> {
+        if operations.is_empty() {
+            return Ok(Vec::new());
+        }
+        let base = self.next_sequence.load(Ordering::SeqCst);
+        let entries: Vec<CanonicalWalEntry> = operations
+            .into_iter()
+            .enumerate()
+            .map(|(offset, op)| {
+                CanonicalWalEntry::new(base + offset as u64 + 1, op, tenant_id.clone())
+            })
+            .collect();
+        self.next_sequence
+            .store(base + entries.len() as u64, Ordering::SeqCst);
+        self.entries.lock().await.extend(entries.clone());
+        Ok(entries)
+    }
+}
+
 #[derive(Debug)]
 struct WalRecoveryState {
     last_sequence: u64,

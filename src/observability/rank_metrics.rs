@@ -20,8 +20,11 @@
 //! happen at the query layer (matches `precision_metrics.rs`
 //! cardinality discipline).
 
-use prometheus::{CounterVec, GaugeVec, HistogramOpts, HistogramVec, IntGauge, Opts, Registry};
-use std::sync::Arc;
+use prometheus::{
+    CounterVec, Encoder, GaugeVec, HistogramOpts, HistogramVec, IntGauge, Opts, Registry,
+    TextEncoder,
+};
+use std::sync::{Arc, OnceLock};
 
 // ---------------------------------------------------------------------------
 // Spec-locked metric names
@@ -324,6 +327,66 @@ impl RankPipelineMetrics {
             _ => "unknown",
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Process-wide registry singleton (R-7c.3 production wiring)
+// ---------------------------------------------------------------------------
+
+// Holds the `Registry` that owns the rank metric family. Lives in its own
+// `OnceLock` so the `/metrics/prometheus` endpoint can scrape it without
+// having to thread a registry handle through the wiring layer. Matches the
+// pattern already used by `precision_metrics::REGISTRY`.
+static REGISTRY: OnceLock<Registry> = OnceLock::new();
+static METRICS: OnceLock<Arc<RankPipelineMetrics>> = OnceLock::new();
+
+/// Get-or-init the process-wide rank-metrics registry. Idempotent: later
+/// callers see the same `Registry` the first caller installed.
+pub fn rank_metrics_registry() -> &'static Registry {
+    REGISTRY.get_or_init(Registry::new)
+}
+
+/// Get-or-init the process-wide `RankPipelineMetrics` handle. Registers every
+/// metric in the family against the rank-metrics registry on first call.
+///
+/// The server binary calls this at boot inside `SharedServices::new`; hot-path
+/// callers should read via [`metrics`] and never re-init.
+pub fn init_rank_pipeline_metrics() -> Arc<RankPipelineMetrics> {
+    METRICS
+        .get_or_init(|| {
+            Arc::new(
+                RankPipelineMetrics::register(rank_metrics_registry())
+                    .expect("RankPipelineMetrics::register must succeed on first init"),
+            )
+        })
+        .clone()
+}
+
+/// Read the cached `RankPipelineMetrics` handle. Returns `None` if
+/// `init_rank_pipeline_metrics()` has not been called yet — production hot-path
+/// callers should treat that as "skip the metric" rather than panic so a missed
+/// boot init doesn't take down the request path.
+pub fn metrics() -> Option<Arc<RankPipelineMetrics>> {
+    METRICS.get().cloned()
+}
+
+/// Encode the rank-metrics registry's contents as Prometheus text format.
+/// Returns the empty string if `init_rank_pipeline_metrics()` has not been
+/// called (so the endpoint stays valid for binaries that don't load the rank
+/// pipeline).
+///
+/// The `/metrics/prometheus` endpoint appends this output to the legacy
+/// exporter's output.
+pub fn scrape_text() -> String {
+    let Some(registry) = REGISTRY.get() else {
+        return String::new();
+    };
+    let mut buf = Vec::new();
+    let encoder = TextEncoder::new();
+    if encoder.encode(&registry.gather(), &mut buf).is_err() {
+        return String::new();
+    }
+    String::from_utf8(buf).unwrap_or_default()
 }
 
 /// Adapts `RankPipelineMetrics` to the

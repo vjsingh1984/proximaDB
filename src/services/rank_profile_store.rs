@@ -287,18 +287,15 @@ mod tests {
     use crate::services::canonical_wal::FramedTableWalAppender;
     use tempfile::tempdir;
 
-    fn sample_toml(name: &str) -> String {
-        format!(
-            r#"
-[profile]
-name = "{name}"
-inherits = []
-
+    fn sample_toml(_name: &str) -> String {
+        // Minimal valid TOML body (matches what `parse_single` expects: no
+        // `[profile]` wrapper — top-level keys + `[first_phase]` table).
+        r#"
 [first_phase]
-expression = "bm25(\"body\")"
+expression = "1.0"
 heap_size = 100
 "#
-        )
+        .to_string()
     }
 
     #[tokio::test]

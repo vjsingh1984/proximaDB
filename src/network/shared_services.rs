@@ -202,6 +202,27 @@ pub struct SharedServices {
     /// single registry to persist from. The gate was test-only prior to
     /// being slotted here; this is the first production wiring.
     pub recall_probe_gate: Arc<crate::catalog::RecallProbeGate>,
+
+    /// Process-wide rank-pipeline singleton (R-7c.3 production wiring).
+    ///
+    /// REST, gRPC, and Arrow Flight all pull the same `Arc<RankServices>`
+    /// from here via `AppState::with_rank_services` / equivalent, so SQL
+    /// `RERANK(...)`, the REST `/api/v1/rank/search` route, and the
+    /// `rank_features_export` Arrow Flight action share the same profile
+    /// registry, candidate provider, scorer registry, and metric handles.
+    /// Built around `ProductionHybridBackend` so retrieval lights up
+    /// automatically as soon as ingestion populates per-collection BM25 +
+    /// vector state.
+    pub rank_services: Arc<crate::network::rest::v1::rank::RankServices>,
+
+    /// Durable rank-profile catalog backed by the canonical WAL spine.
+    ///
+    /// `RankServices` recovers profiles from this store at boot and
+    /// `RankProfileStore::install` is the lowering target for `CREATE RANK
+    /// PROFILE` DDL + the REST install endpoint. When `canonical_wal_appender`
+    /// is `None` (some test paths), this store is backed by an in-memory
+    /// appender that does not survive restart.
+    pub rank_profile_store: Arc<dyn crate::services::RankProfileStore>,
 }
 
 impl SharedServices {
@@ -1089,6 +1110,27 @@ impl SharedServices {
         );
         debug!("✅ SharedServices::new - MultiModelStorageFacade created and wired");
 
+        // T3.2 Slice 1: shared full-text index map for hybrid retrieval.
+        // Hoisted ahead of the FederatedQueryContext so the rank-pipeline
+        // singleton can use the same Arc the SharedServices field holds.
+        let fulltext_indexes: crate::network::hybrid_search::HybridFullTextIndexMap =
+            Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+
+        // R-7c.3 production wiring: construct the durable rank-profile store,
+        // the production hybrid backend, the rank metrics handle, and the
+        // singleton `RankServices` that REST / gRPC / Arrow Flight share.
+        let (rank_services, rank_profile_store) =
+            build_rank_services(
+                vector_operations_service.clone() as Arc<dyn proximadb_runtime::VectorOpsPort>,
+                fulltext_indexes.clone(),
+                canonical_wal_appender.clone(),
+            )
+            .await;
+        info!(
+            "✅ SharedServices: RankServices ready (profile_count={}, metrics=on)",
+            rank_services.profile_registry.len()
+        );
+
         // Create FederatedQueryContext for SQL with multi-model extensions
         debug!("🔧 SharedServices::new - Creating FederatedQueryContext...");
         let federated_context = Arc::new(
@@ -1096,7 +1138,8 @@ impl SharedServices {
                 .with_collection_port(
                     collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>
                 )
-                .with_vector_operations(vector_operations_service.clone()),
+                .with_vector_operations(vector_operations_service.clone())
+                .with_rank_services(rank_services.clone()),
         );
         debug!("✅ SharedServices::new - FederatedQueryContext created");
 
@@ -1224,10 +1267,9 @@ impl SharedServices {
                     query_adapter.clone(),
                 )) as Arc<dyn proximadb_runtime::GraphPort>,
                 // T3.2 Slice 1: shared full-text index map for hybrid
-                // retrieval. Same in-process map serves REST and gRPC.
-                fulltext_indexes: Arc::new(
-                    std::sync::RwLock::new(std::collections::HashMap::new()),
-                ),
+                // retrieval. Same in-process map serves REST, gRPC, and the
+                // R-7c rank-pipeline BM25 leg (`ProductionHybridBackend`).
+                fulltext_indexes,
                 // Vector Object Economy Phase 4 (2-B): process-wide
                 // per-collection directory cache. The same Arc is also
                 // attached to `vector_operations_service` via
@@ -1255,6 +1297,11 @@ impl SharedServices {
                 // observe probe outcomes. Route-health surfaces per-scope
                 // state for operator visibility.
                 recall_probe_gate: Arc::new(crate::catalog::RecallProbeGate::new()),
+                // R-7c.3 production wiring: shared rank-pipeline singleton +
+                // durable rank-profile catalog. Both are built ahead of the
+                // FederatedQueryContext so SQL RERANK shares the registry.
+                rank_services,
+                rank_profile_store,
             },
             collection_service,
         ))
@@ -1455,5 +1502,324 @@ impl SharedServices {
             global_manifest_url: toml_config.global_manifest_url.clone(),
             ..Default::default()
         }
+    }
+}
+
+/// Build the process-wide `RankServices` singleton + the durable rank-profile
+/// store that backs it. R-7c.3 production wiring.
+///
+/// When a canonical WAL appender is supplied the store is durable; otherwise
+/// it falls back to an in-memory appender (sufficient for tests and the
+/// embedded-mode boot path). Existing profiles in the canonical WAL are
+/// replayed into the store and then compiled into the `ProfileRegistry` so
+/// dashboards see them on a cold boot. Compile failures bump the
+/// `proximadb_rank_profile_reload_total{outcome="error"}` counter but never
+/// fail the boot — operators can repair the catalog entry without taking
+/// the server down.
+async fn build_rank_services(
+    vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
+    fulltext_indexes: crate::network::hybrid_search::HybridFullTextIndexMap,
+    canonical_wal_appender: Option<Arc<crate::services::FramedTableWalAppender>>,
+) -> (
+    Arc<crate::network::rest::v1::rank::RankServices>,
+    Arc<dyn crate::services::RankProfileStore>,
+) {
+    use crate::services::record_store::TableWalAppender;
+    use crate::services::{FramedTableWalAppender, MemoryTableWalAppender};
+
+    // Load existing profiles from the canonical WAL (when present) so the
+    // store starts populated even before the registry is built.
+    let (store_appender, recovered_entries): (Arc<dyn TableWalAppender>, _) =
+        if let Some(appender) = canonical_wal_appender {
+            let path = appender.path().to_path_buf();
+            let entries = match FramedTableWalAppender::read_entries_from_path(&path).await {
+                Ok(entries) => entries,
+                Err(err) => {
+                    warn!(
+                        "SharedServices: failed to replay rank-profile WAL at {}: {} — starting with empty profile catalog",
+                        path.display(),
+                        err
+                    );
+                    Vec::new()
+                }
+            };
+            (appender as Arc<dyn TableWalAppender>, entries)
+        } else {
+            (
+                Arc::new(MemoryTableWalAppender::new()) as Arc<dyn TableWalAppender>,
+                Vec::new(),
+            )
+        };
+
+    build_rank_services_with_appender(
+        vector_ops,
+        fulltext_indexes,
+        store_appender,
+        &recovered_entries,
+    )
+    .await
+}
+
+/// Inner builder that takes a pre-resolved appender + recovered entries. Split
+/// out so tests can drive it with an in-memory appender without a temp-dir
+/// round-trip.
+async fn build_rank_services_with_appender(
+    vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort>,
+    fulltext_indexes: crate::network::hybrid_search::HybridFullTextIndexMap,
+    store_appender: Arc<dyn crate::services::record_store::TableWalAppender>,
+    recovered_entries: &[proximadb_storage_common::CanonicalWalEntry],
+) -> (
+    Arc<crate::network::rest::v1::rank::RankServices>,
+    Arc<dyn crate::services::RankProfileStore>,
+) {
+    use crate::core::search::hybrid::FusionStrategy;
+    use crate::network::rest::v1::rank::{HybridCoordinatorAdapter, RankServices};
+    use crate::network::rest::v1::rank_backend::ProductionHybridBackend;
+    use crate::observability::rank_metrics::init_rank_pipeline_metrics;
+    use crate::services::CanonicalWalRankProfileStore;
+
+    let store: Arc<dyn crate::services::RankProfileStore> = Arc::new(
+        CanonicalWalRankProfileStore::from_wal_entries(store_appender, recovered_entries),
+    );
+
+    // Build the production hybrid backend over the shared vector port + the
+    // shared per-collection BM25 index map. Both surfaces are already
+    // SharedServices fields.
+    let backend = Arc::new(ProductionHybridBackend::new(vector_ops, fulltext_indexes));
+    let adapter = Arc::new(HybridCoordinatorAdapter::new(
+        FusionStrategy::ReciprocalRank { k: 60 },
+        backend,
+    ));
+
+    // Register the spec §4.10 metric family against the process-wide
+    // rank-metrics registry. Idempotent on hot-reload paths.
+    let metrics = init_rank_pipeline_metrics();
+    let services = Arc::new(RankServices::new(adapter).with_metrics(metrics));
+
+    // Recover compiled profiles from the durable store. Validation /
+    // compilation failures are logged + recorded as failed reloads — they do
+    // not fail the boot.
+    let recovered_profiles = match store.list_all().await {
+        Ok(profiles) => profiles,
+        Err(err) => {
+            warn!(
+                "SharedServices: rank-profile recovery list_all failed: {} — starting with empty registry",
+                err
+            );
+            Vec::new()
+        }
+    };
+    for profile in recovered_profiles {
+        match recover_profile(&services, &profile) {
+            Ok(()) => debug!(
+                "SharedServices: recovered rank profile '{}' (version={})",
+                profile.name, profile.version
+            ),
+            Err(err) => {
+                warn!(
+                    "SharedServices: failed to recover rank profile '{}' (version={}): {}",
+                    profile.name, profile.version, err
+                );
+                services.record_profile_reload_error(&profile.name);
+            }
+        }
+    }
+
+    (services, store)
+}
+
+fn recover_profile(
+    services: &crate::network::rest::v1::rank::RankServices,
+    profile: &crate::services::StoredRankProfile,
+) -> Result<(), String> {
+    use proximadb_rank_profile::{CompiledRankProfile, dsl::parse_single};
+
+    let spec = parse_single(&profile.name, &profile.spec_toml).map_err(|e| e.to_string())?;
+    let compiled = CompiledRankProfile::compile(spec, services.blueprint_factory.clone())
+        .map_err(|e| e.to_string())?;
+    services.install_profile(compiled);
+    Ok(())
+}
+
+#[cfg(test)]
+mod rank_services_wiring_tests {
+    use super::*;
+    use crate::services::record_store::TableWalAppender;
+    use crate::services::{MemoryTableWalAppender, RankProfileStore};
+    use async_trait::async_trait;
+    use proximadb_runtime::VectorOpsPort;
+    use serde_json::Value as JsonValue;
+    use std::collections::HashMap;
+    use std::sync::RwLock;
+
+    // ── Minimal no-op vector port ────────────────────────────────────────────
+
+    struct NoopVectorPort;
+
+    #[async_trait]
+    impl VectorOpsPort for NoopVectorPort {
+        async fn search(
+            &self,
+            _request: crate::proto::proximadb_v1::VectorSearchRequest,
+            _tenant_id: Option<&str>,
+        ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+            Ok(crate::proto::proximadb_v1::VectorOperationResponse {
+                success: true,
+                operation: 0,
+                metrics: None,
+                results: Some(crate::proto::proximadb_v1::SearchResult {
+                    results: Vec::new(),
+                    total_found: 0,
+                    collection_id: None,
+                }),
+                vector_ids: Vec::new(),
+                error_message: None,
+                error_code: None,
+            })
+        }
+
+        async fn batch_upsert(
+            &self,
+            _request: crate::proto::proximadb_v1::VectorBatchRequest,
+            _tenant_id: Option<&str>,
+        ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+            unimplemented!()
+        }
+
+        async fn get_vector(
+            &self,
+            _collection_id: &str,
+            _vector_id: &str,
+            _include_vector: bool,
+            _include_metadata: bool,
+            _tenant_id: Option<&str>,
+        ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+            unimplemented!()
+        }
+
+        async fn flush_all(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn metrics(&self) -> anyhow::Result<JsonValue> {
+            Ok(JsonValue::Null)
+        }
+    }
+
+    fn empty_indexes() -> crate::network::hybrid_search::HybridFullTextIndexMap {
+        Arc::new(RwLock::new(HashMap::new()))
+    }
+
+    fn valid_profile_toml() -> String {
+        // Simplest possible profile: a constant first_phase expression
+        // (`"1.0"`) that the default `BlueprintFactory` compiles without any
+        // extra feature registrations.
+        r#"
+[first_phase]
+expression = "1.0"
+heap_size = 50
+"#
+        .to_string()
+    }
+
+    fn invalid_profile_toml() -> String {
+        // Refers to a feature that the default `BlueprintFactory` knows
+        // nothing about — compilation should fail.
+        r#"
+[first_phase]
+expression = "definitely_not_a_feature(\"missing\")"
+heap_size = 50
+"#
+        .to_string()
+    }
+
+    #[tokio::test]
+    async fn empty_catalog_produces_empty_registry() {
+        let appender: Arc<dyn TableWalAppender> = Arc::new(MemoryTableWalAppender::new());
+        let (services, store) = build_rank_services_with_appender(
+            Arc::new(NoopVectorPort),
+            empty_indexes(),
+            appender,
+            &[],
+        )
+        .await;
+
+        assert_eq!(services.profile_registry.len(), 0);
+        assert_eq!(
+            store.list_all().await.unwrap().len(),
+            0,
+            "store should also start empty"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_valid_profile_recovers_into_registry() {
+        // Step 1: install a profile through a primed store so the appender
+        // accumulates a real `RecordUpsert` entry. We keep a concrete
+        // `Arc<MemoryTableWalAppender>` so the test can read entries back; the
+        // builder receives the same Arc upcast to `dyn TableWalAppender`.
+        let memory_appender = Arc::new(MemoryTableWalAppender::new());
+        let primed_appender: Arc<dyn TableWalAppender> = memory_appender.clone();
+        let primed = crate::services::CanonicalWalRankProfileStore::new(primed_appender);
+        primed
+            .install("good", valid_profile_toml(), None, None)
+            .await
+            .unwrap();
+
+        let entries = memory_appender.entries().await;
+        assert_eq!(entries.len(), 1);
+
+        let builder_appender: Arc<dyn TableWalAppender> = memory_appender.clone();
+        let (services, store) = build_rank_services_with_appender(
+            Arc::new(NoopVectorPort),
+            empty_indexes(),
+            builder_appender,
+            &entries,
+        )
+        .await;
+
+        assert_eq!(services.profile_registry.len(), 1);
+        assert!(services.profile_registry.get("good").is_some());
+        assert_eq!(store.list_all().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn invalid_profile_does_not_panic_boot() {
+        // A profile that parses but fails compilation should be logged and
+        // skipped — boot must succeed and the registry stays empty for that
+        // profile name.
+        let memory_appender = Arc::new(MemoryTableWalAppender::new());
+        let primed_appender: Arc<dyn TableWalAppender> = memory_appender.clone();
+        let primed = crate::services::CanonicalWalRankProfileStore::new(primed_appender);
+        primed
+            .install("broken", invalid_profile_toml(), None, None)
+            .await
+            .unwrap();
+        primed
+            .install("good", valid_profile_toml(), None, None)
+            .await
+            .unwrap();
+
+        let entries = memory_appender.entries().await;
+
+        let builder_appender: Arc<dyn TableWalAppender> = memory_appender.clone();
+        let (services, store) =
+            build_rank_services_with_appender(
+                Arc::new(NoopVectorPort),
+                empty_indexes(),
+                builder_appender,
+                &entries,
+            )
+            .await;
+
+        // Only the valid profile makes it into the live registry.
+        assert!(services.profile_registry.get("good").is_some());
+        assert!(
+            services.profile_registry.get("broken").is_none(),
+            "broken profile must not appear in the live registry"
+        );
+        // But both still exist in the durable store — operators repair, not
+        // the boot path.
+        assert_eq!(store.list_all().await.unwrap().len(), 2);
     }
 }

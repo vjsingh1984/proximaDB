@@ -179,6 +179,17 @@ async fn prometheus_metrics_endpoint(
         }
         text.push_str(&precision_text);
     }
+    // R-7c.3 production wiring: append the rank-pipeline family
+    // (proximadb_rank_*) if the singleton was initialized at boot.
+    // Empty when uninitialized so the response stays valid for
+    // binaries that don't load the rank pipeline.
+    let rank_text = crate::observability::rank_metrics::scrape_text();
+    if !rank_text.is_empty() {
+        if !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(&rank_text);
+    }
     Ok(text)
 }
 

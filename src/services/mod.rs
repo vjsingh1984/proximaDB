@@ -188,7 +188,7 @@ pub mod tenant_access;
 pub mod write_intent;
 
 // Re-export main service types with cleaner names
-pub use canonical_wal::FramedTableWalAppender;
+pub use canonical_wal::{FramedTableWalAppender, MemoryTableWalAppender};
 pub use catalog_introspection::{CatalogIntrospectionResult, CatalogIntrospectionService};
 pub use collection::Collections;
 pub use ddl::{
