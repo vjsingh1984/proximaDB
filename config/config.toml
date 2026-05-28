@@ -233,6 +233,33 @@ collection_affinity = true
 # compression = "zstd"
 # vector_encoding_strategy = "FullVector"
 
+# TD-064 / tier-migration integration
+#
+# When enabled, the SST engine attaches an SstTieringIntegration at
+# bootstrap and the flush / search / compaction hooks begin emitting
+# access events + flush-tier decisions + compaction-time migration
+# evaluations to the policy engine. Physical byte-movement between tier
+# paths is still deferred — the policy engine generates migration tasks
+# but no executor moves the bytes yet.
+#
+# Default: disabled (the entire [storage.sst_config.tiering] block can
+# be omitted, in which case the engine ships with no tiering hooks).
+#
+# [storage.sst_config.tiering]
+# enabled = true
+# evaluation_interval_secs = 300            # background policy eval cadence
+# max_concurrent_migrations = 4
+# auto_evaluate = true                       # run background evaluator on a timer
+# migration_cooldown_secs = 3600             # min interval between migrations for same item
+# hot_tier_path = "file:///fast-ssd/proximadb/hot"
+# warm_tier_path = "file:///proximadb/warm"
+# cold_tier_path = "s3://proximadb-cold-bucket/cold"
+# archive_tier_path = "s3://proximadb-archive-bucket/archive"
+# default_tier = "Warm"                      # tier for newly-flushed data
+# cold_age_threshold_days = 7                # demote to Cold after this many days
+# archive_age_threshold_days = 30            # archive after this many days
+# hot_access_threshold = 100                 # promote to Hot after N accesses
+
 # [storage.viper_config]
 # row_group_size = 100000
 # compression = "zstd"

@@ -6797,6 +6797,7 @@ dependencies = [
  "half",
  "proximadb-data-model",
  "proximadb-proto",
+ "rmp-serde",
  "serde",
  "serde_json",
  "tokio",

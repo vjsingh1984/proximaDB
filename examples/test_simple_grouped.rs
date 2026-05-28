@@ -35,7 +35,9 @@ fn main() -> anyhow::Result<()> {
     };
 
     let block = ProximaDataBlock::new(
-        vec![proximadb::proto::defaults::vector_record_to_proxima_record(record)],
+        vec![proximadb::proto::defaults::vector_record_to_proxima_record(
+            record,
+        )],
         config.clone(),
     );
     let encoded = block.serialize_with_config(&config)?;

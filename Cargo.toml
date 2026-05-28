@@ -882,6 +882,11 @@ name = "bench_vector_object_economy"
 harness = false
 path = "benches/bench_vector_object_economy.rs"
 
+[[bench]]
+name = "bench_vector_object_economy_e2e"
+harness = false
+path = "benches/bench_vector_object_economy_e2e.rs"
+
 # ============================================================================
 # BUILD OPTIMIZATION STRATEGY
 # ============================================================================

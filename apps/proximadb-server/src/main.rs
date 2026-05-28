@@ -271,7 +271,11 @@ async fn main() -> anyhow::Result<()> {
             proximadb_embedding::config::EmbedRoute::BgeM3
         }
     };
-    info!(?variant, ?route, "selected BGE variant from PROXIMADB_EMBED_VARIANT");
+    info!(
+        ?variant,
+        ?route,
+        "selected BGE variant from PROXIMADB_EMBED_VARIANT"
+    );
     proximadb_embedding::EmbeddingService::initialize(
         proximadb_embedding::config::EmbeddingConfig {
             route,

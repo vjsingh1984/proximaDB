@@ -124,7 +124,8 @@ fn main() {
                         {
                             // ProximaRecord stores id as `oid` and vector in props;
                             // convert back to compare with the legacy VectorRecord shape.
-                            let decoded = proximadb_records::conversions::proxima_record_to_vector(decoded);
+                            let decoded =
+                                proximadb_records::conversions::proxima_record_to_vector(decoded);
                             if original.id != decoded.id {
                                 println!(
                                     "   ❌ ID mismatch at {}: {} vs {}",
