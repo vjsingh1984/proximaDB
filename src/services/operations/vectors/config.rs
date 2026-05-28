@@ -22,6 +22,14 @@ pub struct UnifiedSearchConfig {
     /// - Approximate { nprobe }: Faster search with configurable partition count
     /// - Adaptive { threshold }: Auto-selects based on dataset size
     pub search_mode: crate::core::search::SearchMode,
+    /// Vector Object Economy freshness mode (Phase 5). `None` means
+    /// "use the service-layer default", currently
+    /// [`VectorFreshnessMode::Strong`] — every search merges the WAL
+    /// delta with directory-routed candidates so writes acknowledged
+    /// by the canonical WAL are immediately visible.
+    ///
+    /// [`VectorFreshnessMode::Strong`]: crate::core::search::VectorFreshnessMode::Strong
+    pub freshness_mode: Option<crate::core::search::VectorFreshnessMode>,
 }
 
 impl Default for UnifiedSearchConfig {
@@ -34,6 +42,7 @@ impl Default for UnifiedSearchConfig {
             include_metadata: true,
             scenario: None,
             search_mode: crate::core::search::SearchMode::default(),
+            freshness_mode: None,
         }
     }
 }

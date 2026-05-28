@@ -63,6 +63,7 @@ mod tests {
             compaction_config: Default::default(),
             vector_encoding_strategy: "FullVector".to_string(),
             block_format: "ProximaBlocks".to_string(),
+            tiering: None,
         });
 
         // Configure write buffer separately

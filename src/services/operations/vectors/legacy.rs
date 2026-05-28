@@ -843,6 +843,7 @@ impl VectorOperationsService {
             include_metadata,
             scenario: None,
             search_mode: crate::core::search::SearchMode::default(),
+            freshness_mode: None,
         });
         let filter = Self::build_filter_expression_from_v1_query(search_query)?;
 
@@ -1870,6 +1871,10 @@ impl VectorOperationsService {
             .await?
         } else {
             // Direct search without progressive stages
+            let freshness_mode = config
+                .as_ref()
+                .and_then(|c| c.freshness_mode.clone())
+                .unwrap_or_default();
             self.execute_search_internal(
                 collection_id,
                 query_vector,
@@ -1879,6 +1884,7 @@ impl VectorOperationsService {
                     .as_ref()
                     .map(|c| c.optimization_goal)
                     .unwrap_or_default(),
+                freshness_mode,
             )
             .await?
         };
@@ -2412,18 +2418,29 @@ impl VectorOperationsService {
             ..Default::default()
         };
 
-        // Use the internal execution with progressive configuration
+        // Use the internal execution with progressive configuration.
+        // Progressive path inherits the request's freshness_mode from
+        // the same config; defaults to Strong when unset.
+        let freshness_mode = config.freshness_mode.clone().unwrap_or_default();
         self.execute_search_internal(
             collection_id,
             query_vector,
             k,
             filter,
             config.optimization_goal,
+            freshness_mode,
         )
         .await
     }
 
-    /// Internal implementation for search execution
+    /// Internal implementation for search execution.
+    ///
+    /// `freshness_mode` controls whether the WAL/memtable delta is merged
+    /// with the engine's directory-routed result set after the unified
+    /// plan executes. `Strong` (default) merges every query; `StaleOk`
+    /// skips the merge and returns engine results unchanged.
+    /// `BoundedStale` is currently treated as `Strong` until the
+    /// time-bound check is wired (Phase 5 follow-up).
     async fn execute_search_internal(
         &self,
         collection_id: &str,
@@ -2431,6 +2448,7 @@ impl VectorOperationsService {
         top_k: usize,
         filter: Option<FilterExpression>,
         optimization_goal: OptimizationGoal,
+        freshness_mode: crate::core::search::VectorFreshnessMode,
     ) -> Result<Vec<crate::proto::proximadb_v1::SearchResult>> {
         debug!(
             "🔍 Executing unified search+filter query for collection {}",
@@ -2486,6 +2504,13 @@ impl VectorOperationsService {
             execution_plan.execution_steps.len()
         );
 
+        // Phase 5 integration: keep clones of query inputs available for
+        // the WAL delta scan that follows the engine search. The
+        // execute_unified_plan call takes ownership of `query_vector`
+        // and `filter`, so the merge step needs its own copies.
+        let delta_query_vector = query_vector.clone();
+        let delta_filter = filter.clone();
+
         // Execute the unified plan with search parameters
         // Note: For execute_search_internal, we default to Exact search mode for 100% recall
         let optimized_results = self
@@ -2499,9 +2524,42 @@ impl VectorOperationsService {
             )
             .await?;
 
+        // Phase 5 Slice 5.6: merge WAL/memtable delta with engine
+        // (directory-routed) results when the request's freshness mode
+        // requires it. Directory watermark is currently a placeholder
+        // (0) — full directory-load wiring lands as a follow-up. With
+        // watermark=0 and a non-zero current_lsn, the scan runs for
+        // every Strong/BoundedStale query (safe over-approximation: at
+        // most more delta-merge work, never less correctness).
+        let merged_results = if freshness_mode.requires_delta_merge() {
+            let distance_metric =
+                crate::compute::distance_computation::DistanceMetric::Cosine;
+            let delta_outcome = self
+                .scan_wal_delta_if_needed(
+                    collection_id,
+                    &delta_query_vector,
+                    top_k,
+                    distance_metric,
+                    delta_filter.as_ref(),
+                    &freshness_mode,
+                    /*directory_watermark_lsn*/ 0,
+                )
+                .await?;
+            match delta_outcome {
+                Some(delta) => crate::core::search::merge::merge_delta_with_directory_results(
+                    delta,
+                    optimized_results,
+                    top_k,
+                ),
+                None => optimized_results,
+            }
+        } else {
+            optimized_results
+        };
+
         // Prefer v1 build/cache even though this method returns legacy
         let v1_results = vec![self.optimized_results_to_proto_v1(
-            optimized_results,
+            merged_results,
             collection_id,
             true, // include_vectors
         )];
