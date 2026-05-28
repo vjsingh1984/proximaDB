@@ -19,9 +19,12 @@
 //! or external-authoritative directories per ADR-020.
 
 use anyhow::{Context, Result, bail};
+use dashmap::DashMap;
 use proximadb_catalog::CatalogAuthorityMode;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::sync::Arc;
+use tokio::sync::OnceCell;
 
 use crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode;
 use crate::storage::engines::sst::IndexEntry;
@@ -501,6 +504,112 @@ impl DirectoryLoadStatus {
                  expected={expected_collection} found={found_collection}"
             ),
         }
+    }
+}
+
+/// One cached directory load — directory bytes plus the diagnostic status
+/// from the load that populated this entry. Arc-wrapped so the OnceCell can
+/// hand out cheap shared clones to concurrent readers.
+#[derive(Debug, Clone)]
+pub struct CachedDirectoryEntry {
+    pub directory: VectorObjectEconomyDirectory,
+    pub status: DirectoryLoadStatus,
+}
+
+/// Per-collection OnceCell wrapper. First reader pays the load cost,
+/// subsequent readers reuse the cached `Arc<CachedDirectoryEntry>`.
+///
+/// **Invalidation contract:** invalidation is by handle replacement, not
+/// in-place mutation. When the writer's `upsert_and_persist` lands a new
+/// directory version, the orchestrator must call
+/// [`VectorObjectEconomyDirectoryCache::invalidate`] for that collection so
+/// the next reader gets a fresh handle. This is a deliberate trade-off:
+/// `tokio::sync::OnceCell` is one-shot and cheaper than a swap-based
+/// alternative, and Phase 7 cache-affinity routing will need a richer
+/// epoch-keyed structure anyway.
+#[derive(Debug, Default)]
+pub struct CachedDirectoryHandle {
+    cell: OnceCell<Arc<CachedDirectoryEntry>>,
+}
+
+impl CachedDirectoryHandle {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns true if the underlying [`OnceCell`] has been populated by a
+    /// successful `get_or_load`. Useful for tests and observability.
+    pub fn is_initialized(&self) -> bool {
+        self.cell.initialized()
+    }
+
+    /// Load-once: the first caller's `loader` populates the cell; concurrent
+    /// callers wait for the same load. The returned `Arc<CachedDirectoryEntry>`
+    /// is cheap to clone for downstream consumers (search plan, EXPLAIN).
+    ///
+    /// `loader` returns the freshly-loaded directory and its
+    /// [`DirectoryLoadStatus`] so the cached entry carries the original
+    /// degradation reason — even cached `Missing` entries can populate
+    /// EXPLAIN until the cache is invalidated by a write.
+    pub async fn get_or_load<F, Fut>(&self, loader: F) -> Arc<CachedDirectoryEntry>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = (VectorObjectEconomyDirectory, DirectoryLoadStatus)>,
+    {
+        self.cell
+            .get_or_init(|| async {
+                let (directory, status) = loader().await;
+                Arc::new(CachedDirectoryEntry { directory, status })
+            })
+            .await
+            .clone()
+    }
+}
+
+/// Per-process directory cache shared across query workers. Indexed by
+/// `collection_id` so a single OnceCell load amortizes across every query
+/// against that collection until invalidation.
+#[derive(Debug, Default)]
+pub struct VectorObjectEconomyDirectoryCache {
+    inner: DashMap<String, Arc<CachedDirectoryHandle>>,
+}
+
+impl VectorObjectEconomyDirectoryCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Return a handle for `collection_id`, creating a fresh one on first
+    /// touch. The returned `Arc` is cheap to clone for callers that want to
+    /// hold the handle across awaits.
+    pub fn handle_for(&self, collection_id: &str) -> Arc<CachedDirectoryHandle> {
+        self.inner
+            .entry(collection_id.to_string())
+            .or_insert_with(|| Arc::new(CachedDirectoryHandle::new()))
+            .clone()
+    }
+
+    /// Drop the cached handle for `collection_id`. The next reader will
+    /// allocate a new handle and reload via its loader closure. Called by
+    /// the writer/compactor after a directory update lands (Phase 4
+    /// integration step still pending).
+    pub fn invalidate(&self, collection_id: &str) -> bool {
+        self.inner.remove(collection_id).is_some()
+    }
+
+    /// True when a handle exists for this collection — does not guarantee
+    /// the underlying OnceCell has been initialized.
+    pub fn has_handle(&self, collection_id: &str) -> bool {
+        self.inner.contains_key(collection_id)
+    }
+
+    /// Total number of cached collection handles. Used by metrics and tests.
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
     }
 }
 
@@ -1115,6 +1224,164 @@ mod tests {
         let (recovered, status) = store.load_with_status().await;
         assert_eq!(recovered.files.len(), 1);
         assert_eq!(status, DirectoryLoadStatus::Loaded);
+    }
+
+    // ── CachedDirectoryHandle / cache tests ──────────────────────────────
+
+    #[tokio::test]
+    async fn cached_handle_calls_loader_once_and_reuses_entry() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let handle = CachedDirectoryHandle::new();
+        let calls = Arc::new(AtomicUsize::new(0));
+        assert!(!handle.is_initialized());
+
+        // First load.
+        let calls_clone = calls.clone();
+        let first = handle
+            .get_or_load(|| async move {
+                calls_clone.fetch_add(1, Ordering::SeqCst);
+                (
+                    VectorObjectEconomyDirectory::empty(
+                        "coll",
+                        1,
+                        CatalogAuthorityMode::ProximaAuthoritative,
+                    ),
+                    DirectoryLoadStatus::Missing,
+                )
+            })
+            .await;
+        assert!(handle.is_initialized());
+        assert_eq!(first.status, DirectoryLoadStatus::Missing);
+
+        // Second load reuses the cached entry; loader does not fire again.
+        let calls_clone = calls.clone();
+        let second = handle
+            .get_or_load(|| async move {
+                calls_clone.fetch_add(1, Ordering::SeqCst);
+                (
+                    VectorObjectEconomyDirectory::empty(
+                        "coll",
+                        2,
+                        CatalogAuthorityMode::ProximaAuthoritative,
+                    ),
+                    DirectoryLoadStatus::Loaded,
+                )
+            })
+            .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "loader should fire once");
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[tokio::test]
+    async fn cached_handle_concurrent_callers_share_single_load() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let handle = Arc::new(CachedDirectoryHandle::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let tasks: Vec<_> = (0..8)
+            .map(|_| {
+                let handle = handle.clone();
+                let calls = calls.clone();
+                tokio::spawn(async move {
+                    handle
+                        .get_or_load(|| async move {
+                            // Yield to let other tasks queue on the OnceCell.
+                            tokio::task::yield_now().await;
+                            calls.fetch_add(1, Ordering::SeqCst);
+                            (
+                                VectorObjectEconomyDirectory::empty(
+                                    "coll",
+                                    1,
+                                    CatalogAuthorityMode::ProximaAuthoritative,
+                                ),
+                                DirectoryLoadStatus::Missing,
+                            )
+                        })
+                        .await
+                })
+            })
+            .collect();
+
+        for task in tasks {
+            task.await.expect("task");
+        }
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "concurrent callers must coalesce to one load"
+        );
+    }
+
+    #[tokio::test]
+    async fn directory_cache_isolates_per_collection_handles() {
+        let cache = VectorObjectEconomyDirectoryCache::new();
+        let h1 = cache.handle_for("coll-a");
+        let h2 = cache.handle_for("coll-b");
+        let h1_again = cache.handle_for("coll-a");
+
+        assert!(!Arc::ptr_eq(&h1, &h2), "different collections get distinct handles");
+        assert!(Arc::ptr_eq(&h1, &h1_again), "same collection returns same handle");
+        assert_eq!(cache.len(), 2);
+        assert!(cache.has_handle("coll-a"));
+        assert!(!cache.has_handle("coll-c"));
+    }
+
+    #[tokio::test]
+    async fn directory_cache_invalidate_forces_fresh_handle_and_reload() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let cache = VectorObjectEconomyDirectoryCache::new();
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let load = |epoch: u64, status: DirectoryLoadStatus| {
+            let calls = calls.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                (
+                    VectorObjectEconomyDirectory::empty(
+                        "coll",
+                        epoch,
+                        CatalogAuthorityMode::ProximaAuthoritative,
+                    ),
+                    status,
+                )
+            }
+        };
+
+        let handle1 = cache.handle_for("coll");
+        let entry1 = handle1
+            .get_or_load(|| load(1, DirectoryLoadStatus::Missing))
+            .await;
+        assert_eq!(entry1.directory.storage_epoch, 1);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // Without invalidation, the cached handle returns the same entry.
+        let entry_again = handle1
+            .get_or_load(|| load(99, DirectoryLoadStatus::Loaded))
+            .await;
+        assert!(Arc::ptr_eq(&entry1, &entry_again));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // Invalidate → next handle_for returns a fresh OnceCell.
+        assert!(cache.invalidate("coll"));
+        let handle2 = cache.handle_for("coll");
+        assert!(!Arc::ptr_eq(&handle1, &handle2));
+
+        let entry2 = handle2
+            .get_or_load(|| load(2, DirectoryLoadStatus::Loaded))
+            .await;
+        assert_eq!(entry2.directory.storage_epoch, 2);
+        assert_eq!(entry2.status, DirectoryLoadStatus::Loaded);
+        assert_eq!(calls.load(Ordering::SeqCst), 2, "reload fires after invalidate");
+    }
+
+    #[test]
+    fn directory_cache_invalidate_missing_collection_is_no_op() {
+        let cache = VectorObjectEconomyDirectoryCache::new();
+        assert!(!cache.invalidate("never-touched"));
     }
 
     #[test]
