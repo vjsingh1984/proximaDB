@@ -38,7 +38,7 @@
 //! - Cost estimates — that's the planner's responsibility (S2).
 //! - Execution — that's the executor's responsibility (S3).
 
-use proximadb_data_model::{ProximaType, ProximaValue};
+use proximadb_data_model::ProximaType;
 use proximadb_relational_types::{
     ColumnInfo, ColumnRef, Expr, ExprError, RelationalRow, RelationalSchema, cast_value,
 };
@@ -999,6 +999,7 @@ fn transform_inner<F: FnMut(LogicalNode) -> LogicalNode>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_data_model::ProximaValue;
     use proximadb_relational_types::BinaryOp;
 
     fn users_schema() -> RelationalSchema {

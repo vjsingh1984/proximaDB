@@ -532,14 +532,15 @@ impl Expr {
             }
             Expr::Literal { value, ty } => {
                 let actual = proxima_value_type(value);
-                if let Some(actual) = actual {
-                    if &actual != ty && !matches!(value, ProximaValue::Null) {
-                        return Err(ExprError::TypeMismatch {
-                            expected: ty.clone(),
-                            actual,
-                            context: "literal".into(),
-                        });
-                    }
+                if let Some(actual) = actual
+                    && &actual != ty
+                    && !matches!(value, ProximaValue::Null)
+                {
+                    return Err(ExprError::TypeMismatch {
+                        expected: ty.clone(),
+                        actual,
+                        context: "literal".into(),
+                    });
                 }
                 Ok(())
             }
@@ -1149,10 +1150,10 @@ pub fn cast_value(v: &ProximaValue, target: &ProximaType) -> Result<ProximaValue
         return Ok(PV::Null);
     }
     // Identity casts.
-    if let Some(src_ty) = proxima_value_type(v) {
-        if &src_ty == target {
-            return Ok(v.clone());
-        }
+    if let Some(src_ty) = proxima_value_type(v)
+        && &src_ty == target
+    {
+        return Ok(v.clone());
     }
     macro_rules! to_i64 {
         ($n:expr) => {

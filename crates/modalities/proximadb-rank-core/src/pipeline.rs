@@ -15,6 +15,15 @@ use proximadb_kernel::PhaseId;
 use std::sync::Arc;
 use std::time::Instant;
 
+/// Per-doc captured feature/summary values: `Some(shared slice of
+/// (feature_name, value))` when at least one feature was requested,
+/// `None` when the mapping was empty. Wrapped in `Arc<[…]>` so the
+/// snapshot can be cheaply shared across phase boundaries and across
+/// the Arrow Flight export without copying the (name, value) pairs.
+/// Aliased to keep three call sites readable per
+/// `clippy::type_complexity`.
+pub type FeatureSnapshot = Option<Arc<[(Arc<str>, f32)]>>;
+
 /// Per-phase wall-clock budget. `None` means no budget enforcement
 /// (useful in tests; production profiles should always set a budget).
 #[derive(Debug, Clone, Default)]
@@ -64,8 +73,8 @@ pub struct ScoredHit {
     pub doc: DocHandle,
     pub score: f32,
     pub phase: PhaseId,
-    pub features: Option<Arc<[(Arc<str>, f32)]>>,
-    pub summary: Option<Arc<[(Arc<str>, f32)]>>,
+    pub features: FeatureSnapshot,
+    pub summary: FeatureSnapshot,
 }
 
 impl ScoredHit {
@@ -234,7 +243,7 @@ fn capture_feature_snapshot(
     doc: DocHandle,
     program: &mut RankProgram,
     ctx: &mut ScoreCtx<'_>,
-) -> Option<Arc<[(Arc<str>, f32)]>> {
+) -> FeatureSnapshot {
     if mapping.is_empty() {
         return None;
     }

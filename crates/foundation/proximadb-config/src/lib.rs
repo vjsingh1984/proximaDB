@@ -987,7 +987,7 @@ impl Default for WalStorageConfig {
 /// flipping. PR 4 wires this flag into the WAL segment-header writer; PR 3
 /// makes the flag the gate that rejects non-Fp32 records while the cluster
 /// is still on the v1 wire shape.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct EmbeddingPrecisionConfig {
     /// When `true`, the WAL writer is allowed to emit schema-v2 records
@@ -996,14 +996,6 @@ pub struct EmbeddingPrecisionConfig {
     /// rejects records whose `EmbeddingCell.precision` is non-Fp32 with
     /// `unsupported_precision_schema_v1_only`.
     pub schema_v2_enabled: bool,
-}
-
-impl Default for EmbeddingPrecisionConfig {
-    fn default() -> Self {
-        Self {
-            schema_v2_enabled: false,
-        }
-    }
 }
 
 impl EmbeddingPrecisionConfig {

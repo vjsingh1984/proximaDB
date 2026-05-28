@@ -349,6 +349,7 @@ impl VecReader {
         Ok((RelationalSchema::new(cols), indices))
     }
 
+    #[allow(dead_code)]
     fn project_row(&self, row: &RelationalRow, indices: &[usize]) -> RelationalRow {
         indices.iter().map(|&i| row[i].clone()).collect()
     }
@@ -400,10 +401,10 @@ impl RelationalReader for VecReader {
             if state.cursor >= self.rows.len() {
                 return Ok(None);
             }
-            if let Some(limit) = state.limit {
-                if state.rows_emitted >= limit {
-                    return Ok(None);
-                }
+            if let Some(limit) = state.limit
+                && state.rows_emitted >= limit
+            {
+                return Ok(None);
             }
             let row = &self.rows[state.cursor];
             state.cursor += 1;

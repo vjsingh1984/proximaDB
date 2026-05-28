@@ -431,16 +431,15 @@ pub fn fold_expr(expr: Expr) -> Expr {
             let left = fold_expr(*left);
             let right = fold_expr(*right);
             // If BOTH sides are literals, evaluate.
-            if let (Expr::Literal { .. }, Expr::Literal { .. }) = (&left, &right) {
-                if let Ok(v) = (Expr::BinaryOp {
+            if let (Expr::Literal { .. }, Expr::Literal { .. }) = (&left, &right)
+                && let Ok(v) = (Expr::BinaryOp {
                     op,
                     left: Box::new(left.clone()),
                     right: Box::new(right.clone()),
                 })
                 .eval(&Vec::new(), &NoFunctions)
-                {
-                    return Expr::literal(v);
-                }
+            {
+                return Expr::literal(v);
             }
             Expr::BinaryOp {
                 op,
@@ -450,15 +449,14 @@ pub fn fold_expr(expr: Expr) -> Expr {
         }
         Expr::UnaryOp { op, expr } => {
             let inner = fold_expr(*expr);
-            if let Expr::Literal { .. } = &inner {
-                if let Ok(v) = (Expr::UnaryOp {
+            if let Expr::Literal { .. } = &inner
+                && let Ok(v) = (Expr::UnaryOp {
                     op,
                     expr: Box::new(inner.clone()),
                 })
                 .eval(&Vec::new(), &NoFunctions)
-                {
-                    return Expr::literal(v);
-                }
+            {
+                return Expr::literal(v);
             }
             Expr::UnaryOp {
                 op,
