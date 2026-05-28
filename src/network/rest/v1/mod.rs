@@ -30,3 +30,5 @@ pub mod pinning;
 pub mod affinity;
 /// REST DTOs + handler for the multi-phase rank pipeline (R-7b)
 pub mod rank;
+/// Production `HybridSearchBackend` impl backing `RankServices` retrieval (R-7c.2)
+pub mod rank_backend;
