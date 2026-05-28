@@ -29,7 +29,8 @@ use proximadb_proto::ranking as proto_ranking;
 use proximadb_rank_core::RankError;
 
 use crate::network::rest::v1::rank::{
-    handle_rank_search, PhaseOverride, RankOverrides, RankSearchRequest, RankSearchResponse,
+    handle_rank_search_with_metrics, PhaseOverride, RankOverrides, RankSearchRequest,
+    RankSearchResponse,
     RankServices, ScoredHitDto, ScoreVectorDto,
 };
 
@@ -75,12 +76,17 @@ impl RankServiceImpl {
             .rank_profile
             .as_deref()
             .and_then(|name| self.services.second_phase_scorer(name));
-        let rest_resp = handle_rank_search(
+        let rest_resp = handle_rank_search_with_metrics(
             rest_req,
             self.services.profile_registry.as_ref(),
             self.services.candidate_provider.as_ref(),
             self.services.blueprint_factory.clone(),
             second_phase_scorer,
+            // R-7c.4d follow-up: forward the metrics handle so the
+            // gRPC path emits NFR-8 observations alongside REST.
+            // None when RankServices was constructed without
+            // `.with_metrics(...)` — keeps the noop fast path.
+            self.services.metrics.clone(),
         )
         .await
         .map_err(rank_error_to_status)?;

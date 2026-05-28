@@ -56,7 +56,7 @@ use arrow_ipc::writer::StreamWriter;
 use arrow_schema::{DataType, Field, Schema};
 
 use crate::network::rest::v1::rank::{
-    handle_rank_search, RankSearchRequest, RankSearchResponse, RankServices,
+    handle_rank_search_with_metrics, RankSearchRequest, RankSearchResponse, RankServices,
 };
 use proximadb_rank_core::RankError;
 use proximadb_rank_profile::CompiledRankProfile;
@@ -102,12 +102,17 @@ pub async fn export_rank_features_to_arrow_ipc(
         .as_deref()
         .and_then(|name| services.second_phase_scorer(name));
 
-    let response = handle_rank_search(
+    let response = handle_rank_search_with_metrics(
         request,
         services.profile_registry.as_ref(),
         services.candidate_provider.as_ref(),
         services.blueprint_factory.clone(),
         second_phase_scorer,
+        // R-7c.4d follow-up: forward the metrics handle so the
+        // Arrow Flight `rank_features_export` action emits NFR-8
+        // observations alongside REST + gRPC. `None` when
+        // RankServices was constructed without `.with_metrics(...)`.
+        services.metrics.clone(),
     )
     .await?;
 
