@@ -117,4 +117,12 @@ pub fn create_v2_router() -> Router<AppState> {
         // Query facade operations
         .route("/query", post(query::execute_query))
         .route("/query/explain", post(query::explain_query))
+        // Diagnostics — experimental capability contract endpoints.
+        // Namespaced under `_diagnostics` while the shape stabilizes;
+        // promotion to `/collections/:id/route-health` is intentional
+        // future work, not an oversight.
+        .route(
+            "/_diagnostics/collections/:collection_id/route-health",
+            get(collections::get_collection_route_health_v2),
+        )
 }

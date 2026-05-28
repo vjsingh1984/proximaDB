@@ -42,6 +42,24 @@ use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1::{CollectionConfig, CollectionOperation, CollectionRequest};
 
+fn collection_storage_engine_label(storage_engine: Option<i32>) -> &'static str {
+    match storage_engine {
+        Some(raw) if raw != 0 => crate::core::conversions::storage_engine_to_string(raw),
+        _ => "auto",
+    }
+}
+
+fn collection_distance_metric_label(distance_metric: Option<i32>) -> &'static str {
+    match distance_metric {
+        Some(raw) if raw != 0 => crate::core::conversions::distance_metric_to_string(raw),
+        _ => "cosine",
+    }
+}
+
+fn non_negative_stat(value: i64) -> u64 {
+    u64::try_from(value).unwrap_or(0)
+}
+
 /// Request to create a collection with schema support
 ///
 /// ## Example JSON
@@ -373,9 +391,12 @@ pub async fn create_collection_v2(
 
     // Map distance metric name to DistanceMetric enum value
     let distance_metric_value = match request.distance_metric.as_deref() {
-        Some("euclidean") => Some(1),   // DistanceMetric::Euclidean
-        Some("dot_product") => Some(2), // DistanceMetric::DotProduct
-        _ => Some(0),                   // DistanceMetric::Cosine (default)
+        Some(metric) => Some(
+            crate::core::conversions::parse_distance_metric(metric)
+                .map(|metric| metric as i32)
+                .map_err(|e| ApiError::InvalidArgument(e.to_string()))?,
+        ),
+        None => Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32),
     };
 
     // Map canonical_embedding_precision label to the proto discriminant
@@ -546,23 +567,8 @@ pub async fn get_collection_v2(
             let config = collection.config.unwrap_or_default();
             let stats = collection.stats.unwrap_or_default();
 
-            // Map storage engine enum to string
-            let engine_str = match config.storage_engine.unwrap_or(0) {
-                1 => "sst",
-                2 => "helix",
-                3 => "viper",
-                4 => "swift",
-                5 => "nova",
-                6 => "raptor",
-                _ => "auto",
-            };
-
-            // Map distance metric enum to string
-            let distance_metric_str = match config.distance_metric.unwrap_or(0) {
-                1 => "euclidean",
-                2 => "dot_product",
-                _ => "cosine",
-            };
+            let engine_str = collection_storage_engine_label(config.storage_engine);
+            let distance_metric_str = collection_distance_metric_label(config.distance_metric);
 
             let response = CollectionV2Response {
                 collection_id: collection_id.clone(),
@@ -573,8 +579,8 @@ pub async fn get_collection_v2(
                 proxima_record_enabled: false, // Would be stored in metadata
                 schema: None,                  // Would be loaded from metadata
                 stats: CollectionStatsV2 {
-                    record_count: stats.vector_count as u64,
-                    storage_size_bytes: stats.data_size_bytes as u64,
+                    record_count: non_negative_stat(stats.vector_count),
+                    storage_size_bytes: non_negative_stat(stats.data_size_bytes),
                     indexed_fields: 0,
                     text_field_count: 0,
                 },
@@ -797,6 +803,322 @@ pub async fn delete_collection_v2(
     }))
 }
 
+// ---------------------------------------------------------------------------
+// Route-health diagnostic endpoint (experimental, v1)
+//
+// Exposes a machine-readable capability contract for a single collection.
+// Each field reports state that is verifiable from the codebase today; gaps
+// are surfaced as typed `degraded_reasons` rather than hidden behind
+// optimistic defaults. Lives under `/_diagnostics/collections/...` to signal
+// that the JSON shape may evolve before it graduates to `/collections/...`.
+// ---------------------------------------------------------------------------
+
+/// Top-level route-health response. Versioned via `schema_version` so the
+/// shape can evolve without breaking consumers that have pinned the contract.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct CollectionRouteHealthV2 {
+    pub schema_version: &'static str,
+    pub stability: &'static str,
+    pub collection_id: String,
+    pub engine: String,
+    pub dimension: u32,
+    pub distance_metric: String,
+    pub record_count: u64,
+    pub storage_size_bytes: u64,
+    pub index_size_bytes: u64,
+
+    pub filtered_ann: FilteredAnnHealth,
+    pub writes: WriteContractHealth,
+    pub freshness: FreshnessHealth,
+    pub object_economy: ObjectEconomyHealth,
+    pub recall_probe: RecallProbeHealth,
+
+    pub degraded_reasons: Vec<DegradedReason>,
+}
+
+/// Filtered-ANN capability state. Reflects the current Phase-A predicate
+/// bridge (`make_id_predicate` + `search_with_predicate_fn`) plus the
+/// TD-064 record-aware-predicate gap.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct FilteredAnnHealth {
+    /// ID-based filter clauses are evaluated inside the index traversal.
+    pub id_predicate_supported: bool,
+    /// Non-ID metadata predicates are evaluated against ProximaRecord during
+    /// traversal. Currently `false` per TD-064; non-ID clauses pass through
+    /// as `true` and are handled by post-filter, which can short the top-k.
+    pub record_aware_predicates: bool,
+    /// `MetadataFilterPushdown` infrastructure (bloom filters, column stats,
+    /// selectivity estimator) exists in `src/core/search/metadata_filter_pushdown.rs`.
+    pub predicate_pushdown_infrastructure_present: bool,
+    /// Whether that infrastructure is wired into the default query path.
+    /// Today: container is built, runtime integration is minimal.
+    pub predicate_pushdown_default_wired: bool,
+    /// Whether the planner discloses post-filter shortfall in EXPLAIN /
+    /// result metadata. Today the under-k case is silent.
+    pub post_filter_shortfall_disclosure: bool,
+    /// Tracking ID for the open design item. Lets clients correlate the
+    /// state reported here with the design doc.
+    pub td_064_status: &'static str,
+}
+
+/// Write-contract state. Mirrors the modes actually wired through the
+/// v2 records surface, not aspirational batch-mode enums.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct WriteContractHealth {
+    pub insert: bool,
+    pub upsert: bool,
+    pub update: bool,
+    pub delete: bool,
+    /// Conditional writes (compare-and-set semantics) are not wired today.
+    pub conditional_write: bool,
+    /// Filter writes (delete/update where predicate) are not wired today.
+    pub filter_write: bool,
+    /// Patch (partial property update) is not wired today.
+    pub patch: bool,
+}
+
+/// Freshness state. Collection-level strong / bounded-stale / stale-ok modes
+/// are not wired yet — only per-projection freshness exists in the storage
+/// layer. We report this honestly rather than fabricating booleans.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct FreshnessHealth {
+    pub scope: &'static str,
+    pub collection_level_modes_wired: bool,
+    pub notes: &'static str,
+}
+
+/// Object-economy directory state. The directory format and sidecar live in
+/// the SST engine but are not reachable via `AppState` in this endpoint's
+/// scope. v1 reports presence-of-implementation only; live status is a
+/// follow-up that needs `SharedServices` plumbing.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct ObjectEconomyHealth {
+    pub eligible: bool,
+    pub directory_format_present: bool,
+    pub live_status_in_app_state: bool,
+    pub live_status: &'static str,
+    pub route_hint: Option<&'static str>,
+    pub notes: &'static str,
+}
+
+/// Recall-probe gate state. The `RecallProbeGate` exists with a complete
+/// state machine but is not wired into the query path or `AppState` yet.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct RecallProbeHealth {
+    pub implementation_present: bool,
+    pub wired_to_query_path: bool,
+    pub live_state_in_app_state: bool,
+    pub notes: &'static str,
+}
+
+/// Typed reasons the collection's route is degraded. Closed enum — adding a
+/// reason is a contract change, which is the point.
+#[derive(Debug, Serialize, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DegradedReason {
+    FilteredAnnRecordPredicateBridgePartial,
+    PostFilterShortfallNotDisclosed,
+    ObjectEconomyLiveStatusNotReachable,
+    RecallProbeNotWired,
+    FreshnessModesNotCollectionLevel,
+    ConditionalWritesUnsupported,
+    FilterWritesUnsupported,
+}
+
+/// Compute the degraded-reasons list from already-built capability substructs.
+///
+/// Pure function so each `if !flag` branch can be exercised on both sides
+/// without instantiating the full handler. Order is part of the contract —
+/// the JSON snapshot test depends on it.
+fn compute_degraded_reasons(
+    filtered_ann: &FilteredAnnHealth,
+    writes: &WriteContractHealth,
+    freshness: &FreshnessHealth,
+    object_economy: &ObjectEconomyHealth,
+    recall_probe: &RecallProbeHealth,
+) -> Vec<DegradedReason> {
+    let mut reasons = Vec::new();
+    if !filtered_ann.record_aware_predicates {
+        reasons.push(DegradedReason::FilteredAnnRecordPredicateBridgePartial);
+    }
+    if !filtered_ann.post_filter_shortfall_disclosure {
+        reasons.push(DegradedReason::PostFilterShortfallNotDisclosed);
+    }
+    if !object_economy.live_status_in_app_state {
+        reasons.push(DegradedReason::ObjectEconomyLiveStatusNotReachable);
+    }
+    if !recall_probe.wired_to_query_path {
+        reasons.push(DegradedReason::RecallProbeNotWired);
+    }
+    if !freshness.collection_level_modes_wired {
+        reasons.push(DegradedReason::FreshnessModesNotCollectionLevel);
+    }
+    if !writes.conditional_write {
+        reasons.push(DegradedReason::ConditionalWritesUnsupported);
+    }
+    if !writes.filter_write {
+        reasons.push(DegradedReason::FilterWritesUnsupported);
+    }
+    reasons
+}
+
+/// Build the route-health response from the resolved collection facts.
+///
+/// Kept pure so it can be unit-tested without spinning up `AppState`.
+/// The `engine` and `distance_metric` strings are the same labels the
+/// existing `get_collection_v2` handler returns, so contracts stay aligned.
+fn build_route_health(
+    collection_id: String,
+    engine: String,
+    dimension: u32,
+    distance_metric: String,
+    record_count: u64,
+    storage_size_bytes: u64,
+    index_size_bytes: u64,
+) -> CollectionRouteHealthV2 {
+    let filtered_ann = FilteredAnnHealth {
+        id_predicate_supported: true,
+        record_aware_predicates: false,
+        predicate_pushdown_infrastructure_present: true,
+        predicate_pushdown_default_wired: false,
+        post_filter_shortfall_disclosure: false,
+        td_064_status: "open",
+    };
+    let writes = WriteContractHealth {
+        insert: true,
+        upsert: true,
+        update: true,
+        delete: true,
+        conditional_write: false,
+        filter_write: false,
+        patch: false,
+    };
+    let freshness = FreshnessHealth {
+        scope: "projection_only",
+        collection_level_modes_wired: false,
+        notes: "Collection-level strong/bounded-stale modes are not wired; \
+                projection-level ProjectionFreshness lives in the storage layer only.",
+    };
+    let object_economy_eligible = engine == "sst";
+    let object_economy = ObjectEconomyHealth {
+        eligible: object_economy_eligible,
+        directory_format_present: object_economy_eligible,
+        live_status_in_app_state: false,
+        live_status: if object_economy_eligible {
+            "not_checked"
+        } else {
+            "not_applicable"
+        },
+        route_hint: object_economy_eligible.then_some("object_economy"),
+        notes: if object_economy_eligible {
+            "VectorObjectEconomyDirectory exists for SST; live load/staleness \
+             status is not exposed via AppState in v1."
+        } else {
+            "Vector object-economy directory is currently SST-specific."
+        },
+    };
+    let recall_probe = RecallProbeHealth {
+        implementation_present: true,
+        wired_to_query_path: false,
+        live_state_in_app_state: false,
+        notes: "RecallProbeGate state machine exists; query-path wiring and \
+                AppState exposure are deferred (see catalog/recall_probe.rs).",
+    };
+
+    let degraded_reasons = compute_degraded_reasons(
+        &filtered_ann,
+        &writes,
+        &freshness,
+        &object_economy,
+        &recall_probe,
+    );
+
+    CollectionRouteHealthV2 {
+        schema_version: "v1",
+        stability: "experimental",
+        collection_id,
+        engine,
+        dimension,
+        distance_metric,
+        record_count,
+        storage_size_bytes,
+        index_size_bytes,
+        filtered_ann,
+        writes,
+        freshness,
+        object_economy,
+        recall_probe,
+        degraded_reasons,
+    }
+}
+
+/// GET /api/v2/_diagnostics/collections/{collection_id}/route-health
+///
+/// Experimental: returns a machine-readable capability contract describing
+/// what the collection's route can guarantee today. The endpoint does not
+/// perform any search/write side effects; it resolves collection facts via
+/// the same `CollectionGet` path as `get_collection_v2` and otherwise
+/// reports static, code-verified capability state.
+///
+/// ## Errors
+///
+/// - `404 Not Found`: Collection does not exist
+/// - `500 Internal Server Error`: Lookup failed
+pub async fn get_collection_route_health_v2(
+    Path(collection_id): Path<String>,
+    Extension(tenant): Extension<TenantContext>,
+    State(state): State<AppState>,
+) -> ApiResult<Json<CollectionRouteHealthV2>> {
+    debug!(
+        "V2 API: route-health for collection '{}' (experimental)",
+        collection_id
+    );
+
+    if collection_id.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
+    }
+
+    let request = CollectionRequest {
+        operation: CollectionOperation::CollectionGet as i32,
+        collection_id: Some(collection_id.clone()),
+        collection_config: None,
+        query_params: Default::default(),
+        options: Default::default(),
+        migration_config: Default::default(),
+    };
+
+    let resp = state
+        .request_handlers
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                ApiError::CollectionNotFound(collection_id.clone())
+            } else {
+                ApiError::Internal(format!("Failed to get collection: {}", e))
+            }
+        })?;
+
+    let collection = resp.collection.unwrap_or_default();
+    let config = collection.config.unwrap_or_default();
+    let stats = collection.stats.unwrap_or_default();
+
+    let engine_str = collection_storage_engine_label(config.storage_engine).to_string();
+    let distance_metric_str = collection_distance_metric_label(config.distance_metric).to_string();
+
+    Ok(Json(build_route_health(
+        collection_id,
+        engine_str,
+        config.dimension,
+        distance_metric_str,
+        non_negative_stat(stats.vector_count),
+        non_negative_stat(stats.data_size_bytes),
+        non_negative_stat(stats.index_size_bytes),
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -877,5 +1199,533 @@ mod tests {
             crate::core::conversions::parse_storage_engine("tst").unwrap() as i32,
             crate::proto::proximadb_v1::StorageEngine::Tst as i32
         );
+        assert_eq!(
+            collection_storage_engine_label(Some(
+                crate::proto::proximadb_v1::StorageEngine::Viper as i32
+            )),
+            "viper"
+        );
+        assert_eq!(
+            collection_storage_engine_label(Some(
+                crate::proto::proximadb_v1::StorageEngine::Sst as i32
+            )),
+            "sst"
+        );
+        assert_eq!(collection_storage_engine_label(None), "auto");
+    }
+
+    #[test]
+    fn test_v2_distance_metric_mapping_uses_proto_enum_values() {
+        assert_eq!(
+            crate::core::conversions::parse_distance_metric("dot_product").unwrap() as i32,
+            crate::proto::proximadb_v1::DistanceMetric::DotProduct as i32
+        );
+        assert_eq!(
+            collection_distance_metric_label(Some(
+                crate::proto::proximadb_v1::DistanceMetric::Cosine as i32
+            )),
+            "cosine"
+        );
+        assert_eq!(
+            collection_distance_metric_label(Some(
+                crate::proto::proximadb_v1::DistanceMetric::Euclidean as i32
+            )),
+            "euclidean"
+        );
+        assert_eq!(collection_distance_metric_label(None), "cosine");
+    }
+
+    #[test]
+    fn test_v2_stats_do_not_wrap_negative_proto_values() {
+        assert_eq!(non_negative_stat(12), 12);
+        assert_eq!(non_negative_stat(-1), 0);
+    }
+
+    // ------------------------------------------------------------------
+    // Route-health builder tests. These lock the contract shape so that
+    // future flips (e.g. record_aware_predicates → true) are deliberate
+    // edits to both the code and the test, not silent drifts.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn route_health_builder_reports_resolved_collection_facts() {
+        let h = build_route_health(
+            "products".to_string(),
+            "sst".to_string(),
+            768,
+            "cosine".to_string(),
+            42,
+            4096,
+            1024,
+        );
+        assert_eq!(h.collection_id, "products");
+        assert_eq!(h.engine, "sst");
+        assert_eq!(h.dimension, 768);
+        assert_eq!(h.distance_metric, "cosine");
+        assert_eq!(h.record_count, 42);
+        assert_eq!(h.storage_size_bytes, 4096);
+        assert_eq!(h.index_size_bytes, 1024);
+        assert_eq!(h.schema_version, "v1");
+        assert_eq!(h.stability, "experimental");
+    }
+
+    #[test]
+    fn route_health_filtered_ann_reports_td_064_state() {
+        let h = build_route_health(
+            "c".to_string(),
+            "sst".to_string(),
+            8,
+            "cosine".to_string(),
+            0,
+            0,
+            0,
+        );
+        assert!(h.filtered_ann.id_predicate_supported);
+        // TD-064: must remain `false` until the predicate bridge lands.
+        // Flipping this without finishing the predicate bridge is a
+        // silent overclaim and should fail review.
+        assert!(!h.filtered_ann.record_aware_predicates);
+        assert!(!h.filtered_ann.post_filter_shortfall_disclosure);
+        assert_eq!(h.filtered_ann.td_064_status, "open");
+    }
+
+    #[test]
+    fn route_health_writes_match_current_v2_surface() {
+        let h = build_route_health(
+            "c".to_string(),
+            "sst".to_string(),
+            8,
+            "cosine".to_string(),
+            0,
+            0,
+            0,
+        );
+        assert!(h.writes.insert);
+        assert!(h.writes.upsert);
+        assert!(h.writes.update);
+        assert!(h.writes.delete);
+        // Unwired today — flip these only when REST/gRPC actually accepts them.
+        assert!(!h.writes.conditional_write);
+        assert!(!h.writes.filter_write);
+        assert!(!h.writes.patch);
+    }
+
+    #[test]
+    fn route_health_object_economy_is_explicitly_sst_only() {
+        let sst = build_route_health(
+            "c".to_string(),
+            "sst".to_string(),
+            8,
+            "cosine".to_string(),
+            0,
+            0,
+            0,
+        );
+        assert!(sst.object_economy.eligible);
+        assert!(sst.object_economy.directory_format_present);
+        assert_eq!(sst.object_economy.live_status, "not_checked");
+        assert_eq!(sst.object_economy.route_hint, Some("object_economy"));
+
+        let viper = build_route_health(
+            "c".to_string(),
+            "viper".to_string(),
+            8,
+            "cosine".to_string(),
+            0,
+            0,
+            0,
+        );
+        assert!(!viper.object_economy.eligible);
+        assert!(!viper.object_economy.directory_format_present);
+        assert_eq!(viper.object_economy.live_status, "not_applicable");
+        assert_eq!(viper.object_economy.route_hint, None);
+    }
+
+    #[test]
+    fn route_health_degraded_reasons_serialize_as_screaming_snake() {
+        let reasons = vec![
+            DegradedReason::FilteredAnnRecordPredicateBridgePartial,
+            DegradedReason::RecallProbeNotWired,
+            DegradedReason::ConditionalWritesUnsupported,
+        ];
+        let s = serde_json::to_string(&reasons).unwrap();
+        assert!(s.contains("FILTERED_ANN_RECORD_PREDICATE_BRIDGE_PARTIAL"));
+        assert!(s.contains("RECALL_PROBE_NOT_WIRED"));
+        assert!(s.contains("CONDITIONAL_WRITES_UNSUPPORTED"));
+    }
+
+    #[test]
+    fn route_health_v1_degraded_reasons_are_the_expected_seven() {
+        // Snapshot of the v1 reasons set. Adding/removing a reason without
+        // updating this assertion would silently change the contract.
+        let h = build_route_health(
+            "c".to_string(),
+            "sst".to_string(),
+            8,
+            "cosine".to_string(),
+            0,
+            0,
+            0,
+        );
+        let expected = vec![
+            DegradedReason::FilteredAnnRecordPredicateBridgePartial,
+            DegradedReason::PostFilterShortfallNotDisclosed,
+            DegradedReason::ObjectEconomyLiveStatusNotReachable,
+            DegradedReason::RecallProbeNotWired,
+            DegradedReason::FreshnessModesNotCollectionLevel,
+            DegradedReason::ConditionalWritesUnsupported,
+            DegradedReason::FilterWritesUnsupported,
+        ];
+        assert_eq!(h.degraded_reasons, expected);
+    }
+
+    #[test]
+    fn route_health_json_shape_snapshot() {
+        // Snapshot of the top-level JSON keys. Locks the contract so a
+        // field rename surfaces as a test diff. Field *values* are
+        // covered by the other tests; this one is shape-only.
+        let h = build_route_health(
+            "c".to_string(),
+            "sst".to_string(),
+            8,
+            "cosine".to_string(),
+            0,
+            0,
+            0,
+        );
+        let v: serde_json::Value = serde_json::to_value(&h).unwrap();
+        let obj = v.as_object().expect("response is a JSON object");
+        let mut keys: Vec<&str> = obj.keys().map(|k| k.as_str()).collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec![
+                "collection_id",
+                "degraded_reasons",
+                "dimension",
+                "distance_metric",
+                "engine",
+                "filtered_ann",
+                "freshness",
+                "index_size_bytes",
+                "object_economy",
+                "recall_probe",
+                "record_count",
+                "schema_version",
+                "stability",
+                "storage_size_bytes",
+                "writes",
+            ]
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // compute_degraded_reasons branch coverage — exercises BOTH sides of
+    // every `if !flag` so coverage isn't skewed by the v1 hardcoded
+    // constants. These tests treat the function as the source of truth
+    // for the flag → reason mapping; build_route_health is then a thin
+    // assembler whose v1 set is checked by
+    // `route_health_v1_degraded_reasons_are_the_expected_seven`.
+    // ------------------------------------------------------------------
+
+    fn all_wired_filtered_ann() -> FilteredAnnHealth {
+        FilteredAnnHealth {
+            id_predicate_supported: true,
+            record_aware_predicates: true,
+            predicate_pushdown_infrastructure_present: true,
+            predicate_pushdown_default_wired: true,
+            post_filter_shortfall_disclosure: true,
+            td_064_status: "resolved",
+        }
+    }
+    fn all_wired_writes() -> WriteContractHealth {
+        WriteContractHealth {
+            insert: true,
+            upsert: true,
+            update: true,
+            delete: true,
+            conditional_write: true,
+            filter_write: true,
+            patch: true,
+        }
+    }
+    fn all_wired_freshness() -> FreshnessHealth {
+        FreshnessHealth {
+            scope: "collection_level",
+            collection_level_modes_wired: true,
+            notes: "",
+        }
+    }
+    fn all_wired_object_economy() -> ObjectEconomyHealth {
+        ObjectEconomyHealth {
+            eligible: true,
+            directory_format_present: true,
+            live_status_in_app_state: true,
+            live_status: "loaded",
+            route_hint: Some("object_economy"),
+            notes: "",
+        }
+    }
+    fn all_wired_recall_probe() -> RecallProbeHealth {
+        RecallProbeHealth {
+            implementation_present: true,
+            wired_to_query_path: true,
+            live_state_in_app_state: true,
+            notes: "",
+        }
+    }
+
+    #[test]
+    fn compute_degraded_reasons_returns_empty_when_everything_wired() {
+        let reasons = compute_degraded_reasons(
+            &all_wired_filtered_ann(),
+            &all_wired_writes(),
+            &all_wired_freshness(),
+            &all_wired_object_economy(),
+            &all_wired_recall_probe(),
+        );
+        assert!(
+            reasons.is_empty(),
+            "fully-wired capability set must produce no degraded reasons; got {reasons:?}"
+        );
+    }
+
+    #[test]
+    fn compute_degraded_reasons_flips_record_aware_predicate_reason() {
+        let mut fa = all_wired_filtered_ann();
+        fa.record_aware_predicates = false;
+        let reasons = compute_degraded_reasons(
+            &fa,
+            &all_wired_writes(),
+            &all_wired_freshness(),
+            &all_wired_object_economy(),
+            &all_wired_recall_probe(),
+        );
+        assert_eq!(
+            reasons,
+            vec![DegradedReason::FilteredAnnRecordPredicateBridgePartial]
+        );
+    }
+
+    #[test]
+    fn compute_degraded_reasons_flips_post_filter_shortfall_reason() {
+        let mut fa = all_wired_filtered_ann();
+        fa.post_filter_shortfall_disclosure = false;
+        let reasons = compute_degraded_reasons(
+            &fa,
+            &all_wired_writes(),
+            &all_wired_freshness(),
+            &all_wired_object_economy(),
+            &all_wired_recall_probe(),
+        );
+        assert_eq!(
+            reasons,
+            vec![DegradedReason::PostFilterShortfallNotDisclosed]
+        );
+    }
+
+    #[test]
+    fn compute_degraded_reasons_flips_object_economy_reason() {
+        let mut oe = all_wired_object_economy();
+        oe.live_status_in_app_state = false;
+        let reasons = compute_degraded_reasons(
+            &all_wired_filtered_ann(),
+            &all_wired_writes(),
+            &all_wired_freshness(),
+            &oe,
+            &all_wired_recall_probe(),
+        );
+        assert_eq!(
+            reasons,
+            vec![DegradedReason::ObjectEconomyLiveStatusNotReachable]
+        );
+    }
+
+    #[test]
+    fn compute_degraded_reasons_flips_recall_probe_reason() {
+        let mut rp = all_wired_recall_probe();
+        rp.wired_to_query_path = false;
+        let reasons = compute_degraded_reasons(
+            &all_wired_filtered_ann(),
+            &all_wired_writes(),
+            &all_wired_freshness(),
+            &all_wired_object_economy(),
+            &rp,
+        );
+        assert_eq!(reasons, vec![DegradedReason::RecallProbeNotWired]);
+    }
+
+    #[test]
+    fn compute_degraded_reasons_flips_freshness_reason() {
+        let mut f = all_wired_freshness();
+        f.collection_level_modes_wired = false;
+        let reasons = compute_degraded_reasons(
+            &all_wired_filtered_ann(),
+            &all_wired_writes(),
+            &f,
+            &all_wired_object_economy(),
+            &all_wired_recall_probe(),
+        );
+        assert_eq!(
+            reasons,
+            vec![DegradedReason::FreshnessModesNotCollectionLevel]
+        );
+    }
+
+    #[test]
+    fn compute_degraded_reasons_flips_conditional_write_reason() {
+        let mut w = all_wired_writes();
+        w.conditional_write = false;
+        let reasons = compute_degraded_reasons(
+            &all_wired_filtered_ann(),
+            &w,
+            &all_wired_freshness(),
+            &all_wired_object_economy(),
+            &all_wired_recall_probe(),
+        );
+        assert_eq!(reasons, vec![DegradedReason::ConditionalWritesUnsupported]);
+    }
+
+    #[test]
+    fn compute_degraded_reasons_flips_filter_write_reason() {
+        let mut w = all_wired_writes();
+        w.filter_write = false;
+        let reasons = compute_degraded_reasons(
+            &all_wired_filtered_ann(),
+            &w,
+            &all_wired_freshness(),
+            &all_wired_object_economy(),
+            &all_wired_recall_probe(),
+        );
+        assert_eq!(reasons, vec![DegradedReason::FilterWritesUnsupported]);
+    }
+
+    #[test]
+    fn compute_degraded_reasons_preserves_order_when_all_unwired() {
+        // Order must match the v1 set exactly. Reordering the if-chain
+        // in compute_degraded_reasons would silently reshuffle JSON
+        // output for clients that iterate the array.
+        let fa = FilteredAnnHealth {
+            id_predicate_supported: false,
+            record_aware_predicates: false,
+            predicate_pushdown_infrastructure_present: false,
+            predicate_pushdown_default_wired: false,
+            post_filter_shortfall_disclosure: false,
+            td_064_status: "open",
+        };
+        let writes = WriteContractHealth {
+            insert: false,
+            upsert: false,
+            update: false,
+            delete: false,
+            conditional_write: false,
+            filter_write: false,
+            patch: false,
+        };
+        let freshness = FreshnessHealth {
+            scope: "",
+            collection_level_modes_wired: false,
+            notes: "",
+        };
+        let oe = ObjectEconomyHealth {
+            eligible: false,
+            directory_format_present: false,
+            live_status_in_app_state: false,
+            live_status: "not_applicable",
+            route_hint: None,
+            notes: "",
+        };
+        let rp = RecallProbeHealth {
+            implementation_present: false,
+            wired_to_query_path: false,
+            live_state_in_app_state: false,
+            notes: "",
+        };
+        let reasons = compute_degraded_reasons(&fa, &writes, &freshness, &oe, &rp);
+        assert_eq!(
+            reasons,
+            vec![
+                DegradedReason::FilteredAnnRecordPredicateBridgePartial,
+                DegradedReason::PostFilterShortfallNotDisclosed,
+                DegradedReason::ObjectEconomyLiveStatusNotReachable,
+                DegradedReason::RecallProbeNotWired,
+                DegradedReason::FreshnessModesNotCollectionLevel,
+                DegradedReason::ConditionalWritesUnsupported,
+                DegradedReason::FilterWritesUnsupported,
+            ]
+        );
+    }
+
+    #[test]
+    fn each_degraded_reason_variant_serializes_to_unique_screaming_snake() {
+        // Per-variant rename check. If a variant is added without a
+        // serde rename matching SCREAMING_SNAKE_CASE convention, this
+        // fails before the contract leaks to clients.
+        let cases = [
+            (
+                DegradedReason::FilteredAnnRecordPredicateBridgePartial,
+                "\"FILTERED_ANN_RECORD_PREDICATE_BRIDGE_PARTIAL\"",
+            ),
+            (
+                DegradedReason::PostFilterShortfallNotDisclosed,
+                "\"POST_FILTER_SHORTFALL_NOT_DISCLOSED\"",
+            ),
+            (
+                DegradedReason::ObjectEconomyLiveStatusNotReachable,
+                "\"OBJECT_ECONOMY_LIVE_STATUS_NOT_REACHABLE\"",
+            ),
+            (
+                DegradedReason::RecallProbeNotWired,
+                "\"RECALL_PROBE_NOT_WIRED\"",
+            ),
+            (
+                DegradedReason::FreshnessModesNotCollectionLevel,
+                "\"FRESHNESS_MODES_NOT_COLLECTION_LEVEL\"",
+            ),
+            (
+                DegradedReason::ConditionalWritesUnsupported,
+                "\"CONDITIONAL_WRITES_UNSUPPORTED\"",
+            ),
+            (
+                DegradedReason::FilterWritesUnsupported,
+                "\"FILTER_WRITES_UNSUPPORTED\"",
+            ),
+        ];
+        for (variant, expected) in cases {
+            assert_eq!(
+                serde_json::to_string(&variant).unwrap(),
+                expected,
+                "variant {variant:?} did not serialize to {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn build_route_health_passes_through_engine_and_distance_labels() {
+        // Engine/distance strings flow through unchanged — no canonicalization,
+        // no casing change. This pins the contract with `get_collection_v2`
+        // which uses the same enum→string mapping.
+        for (engine, distance) in [
+            ("sst", "cosine"),
+            ("helix", "euclidean"),
+            ("viper", "dot_product"),
+            ("auto", "cosine"),
+        ] {
+            let h = build_route_health(
+                "k".to_string(),
+                engine.to_string(),
+                384,
+                distance.to_string(),
+                7,
+                11,
+                13,
+            );
+            assert_eq!(h.engine, engine);
+            assert_eq!(h.distance_metric, distance);
+            assert_eq!(h.dimension, 384);
+            assert_eq!(h.record_count, 7);
+            assert_eq!(h.storage_size_bytes, 11);
+            assert_eq!(h.index_size_bytes, 13);
+        }
     }
 }
