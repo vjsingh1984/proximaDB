@@ -319,7 +319,26 @@ impl SharedServices {
         // `Arc`. Operator PATCH calls land in the registry; the
         // tier-migration integration consults it during flush and
         // evaluate cycles, overriding policy when a pin is set.
-        let pin_registry = crate::storage::collection_pinning::new_shared();
+        //
+        // Slice 6.5: when `opt_config` is provided, the registry
+        // auto-persists to `<data_dir>/pinning/registry.json` so
+        // pins survive process restarts. Tests / embedded paths
+        // without opt_config use the in-memory constructor.
+        let pin_registry = match opt_config {
+            Some(cfg) => {
+                let registry_path = cfg
+                    .server
+                    .data_dir
+                    .join("pinning")
+                    .join("registry.json");
+                info!(
+                    "📌 SharedServices: pin registry persistence enabled at {}",
+                    registry_path.display()
+                );
+                crate::storage::collection_pinning::new_shared_at(registry_path)
+            }
+            None => crate::storage::collection_pinning::new_shared(),
+        };
 
         // Create WAL manager for two-stage search FIRST so the SST
         // engine can read its global manifest singleton when wiring the
