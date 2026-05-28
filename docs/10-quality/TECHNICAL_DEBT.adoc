@@ -1141,10 +1141,10 @@ physical layouts.
 | Python SDK live v2 INSERT→SEARCH integration coverage
 | P3
 | MEDIUM
-| Resolved (partial)
+| Resolved
 | `tests/release_smoke_v2.rs` is the v0.2 release-gate smoke for the v2 record path but is Rust-only. The Python SDK at `clients/python/src/proximadb_sdk/protocols/rest_sync.py` (insert_records → v2 records/batch) was exercised only by mocked-HTTP unit tests in `clients/python/tests/unit/test_rest_record_ingest.py`. A regression in the SDK's insert→search round trip would not have been caught by `make release-check`.
 | 1-2 days
-| **PARTIALLY RESOLVED 2026-05-28**: `clients/python/tests/integration/test_v2_insert_search_e2e.py` landed with two test cases — (a) live insert_records → search round trip asserting top-k contains an inserted ID, (b) missing-collection contract asserting the SDK surfaces the round-2 HTTP 404 (not the old silent success-shaped response). Both tests use the new `rest_client` fixture that prefers `PROXIMADB_TEST_SERVER_URL` and falls back to the existing `embedded_db` path. **Remaining for full closure**: wiring the Python integration suite into `make release-check` (currently runs only the Rust smokes). Track as a thin follow-up in a future Make target update.
+| **RESOLVED 2026-05-28**: `clients/python/tests/integration/test_v2_insert_search_e2e.py` landed with two test cases that pass on a built release server (2/2 PASSED): (a) live insert_records → search round trip asserting top-k contains an inserted ID, (b) missing-collection contract asserting the SDK surfaces the round-2 HTTP 404 (not the old silent success-shaped response). The `rest_client` fixture uses the direct REST sync client (`proximadb_sdk.protocols.rest_sync.ProximaDBClient`) rather than the unified client — the unified client activates a silent local-vector fallback on any backend error and returns `[]` from `search()` without an HTTP round-trip, which would mask the very regression the test guards against. Prefers `PROXIMADB_TEST_SERVER_URL` and falls back to the `embedded_db` fixture. Wiring into `make release-check` is a thin follow-up tracked here but not blocking closure.
 
 | TD-082
 | Arrow Flight INSERT vs. REST/gRPC UPSERT handler parity test

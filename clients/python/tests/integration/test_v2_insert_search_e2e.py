@@ -31,9 +31,15 @@ def coll_name() -> str:
 
 
 @pytest.fixture
-def rest_client(embedded_db_config):
-    """REST client connected either to an externally-running server
+def rest_client(request):
+    """REST-direct client connected either to an externally-running server
     (``PROXIMADB_TEST_SERVER_URL``) or to the in-fixture embedded database.
+
+    Uses `proximadb_sdk.protocols.rest_sync.ProximaDBClient` directly rather
+    than the unified `proximadb_sdk.ProximaDBClient` — the latter activates
+    a local-vector fallback on any backend exception that returns ``[]`` from
+    `search()` without an HTTP round-trip, which would mask a real INSERT→
+    SEARCH regression. The direct REST client surfaces the live HTTP error.
 
     The external-URL path lets `make release-check` exercise these tests
     against the same release binary the rest of the suite uses, without
@@ -41,45 +47,24 @@ def rest_client(embedded_db_config):
     Falls back to the `embedded_db`-driven path when the env var is unset;
     that path auto-skips when no `proximadb-server` binary is on disk.
     """
-    from proximadb_sdk import Protocol, ProximaDBClient
-    from proximadb_sdk.config import ClientConfig
+    from proximadb_sdk.protocols.rest_sync import ProximaDBClient as RestClient
 
     url = os.getenv("PROXIMADB_TEST_SERVER_URL")
-    if url:
-        config = ClientConfig(url=url, protocol=Protocol.REST, timeout=30.0)
-        client = ProximaDBClient(config=config)
-        yield client
-        client.close()
-        return
+    if not url:
+        # Bring up the embedded server via the conftest fixture (which
+        # handles binary discovery + lifecycle). `request.getfixturevalue`
+        # triggers the fixture and skips this test cleanly when the embedded
+        # server can't start (no binary on disk, etc.).
+        request.getfixturevalue("embedded_db")
+        config_dict = request.getfixturevalue("embedded_db_config")
+        url = f"http://localhost:{config_dict['rest_port']}"
 
-    # Reuse the existing `embedded_rest_client` setup via the conftest
-    # fixture, which will skip when the embedded binary is unavailable.
-    from proximadb_sdk import Protocol, ProximaDBClient
-
-    config = ClientConfig(
-        url=f"http://localhost:{embedded_db_config['rest_port']}",
-        protocol=Protocol.REST,
-        timeout=30.0,
-    )
-    client = ProximaDBClient(config=config)
-    # Ping the embedded server health endpoint; if no server is up, skip
-    # rather than fail with a connection error.
-    import requests
-
-    try:
-        resp = requests.get(f"{config.url}/health", timeout=2.0)
-        if resp.status_code != 200:
-            pytest.skip(
-                f"No server reachable at {config.url}; set PROXIMADB_TEST_SERVER_URL "
-                f"or start the embedded test fixture"
-            )
-    except requests.RequestException as exc:
-        pytest.skip(
-            f"No server reachable at {config.url}: {exc}; set "
-            f"PROXIMADB_TEST_SERVER_URL or start the embedded test fixture"
-        )
+    client = RestClient(url=url, timeout=30.0)
     yield client
-    client.close()
+    try:
+        client.close()
+    except Exception:  # noqa: BLE001 — close is best-effort
+        pass
 
 
 def test_v2_records_batch_insert_then_search_round_trips(
