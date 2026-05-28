@@ -1594,6 +1594,22 @@ pub async fn search_with_typed_filters(
             // explain (route_explain::build over the populated trace).
             let debug_requested = request.debug.unwrap_or(false);
             let (trace_field, explain_field) = if debug_requested {
+                // TD-064 / LLD §5: surface the recall-probe gate state to
+                // EXPLAIN so the route_explain hint chain can emit
+                // RECALL_PROBE_CLOSED when the model wanted the quantized
+                // route but the gate isn't open for this (tenant, collection)
+                // scope. Only paid on debug=true requests — non-debug
+                // searches skip the lock acquisition entirely.
+                let recall_probe_open = match &state.recall_probe_gate {
+                    Some(gate) => {
+                        let scope = crate::catalog::ProbeScope::new(
+                            tenant.tenant_id.clone(),
+                            collection.clone(),
+                        );
+                        Some(gate.is_open(&scope).await)
+                    }
+                    None => None,
+                };
                 let explain = crate::observability::route_explain::build(
                     &crate::observability::route_explain::ExplainInputs {
                         trace: &trace,
@@ -1602,7 +1618,7 @@ pub async fn search_with_typed_filters(
                         // scan-fraction-zero fallback until
                         // collection-size hydration lands.
                         corpus_gb: 0.0,
-                        recall_probe_open: None,
+                        recall_probe_open,
                     },
                 );
                 (Some(trace.clone()), Some(explain))
