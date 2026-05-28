@@ -333,6 +333,63 @@ impl RankPipelineMetrics {
     }
 }
 
+/// Adapts `RankPipelineMetrics` to the
+/// `proximadb_rank_onnx::ModelCacheObserver` trait. Holds
+/// per-model rolling hit/miss counters so the cache can derive the
+/// hit ratio on every `acquire()` without leaving the process.
+///
+/// Wire by passing
+/// `Arc::new(ModelCacheMetricsObserver::new(metrics.clone()))`
+/// into `OnnxModelCache::with_observer(...)` at startup. Without
+/// this wrapper the cache pays zero observability cost — the
+/// observer field defaults to `None`.
+pub struct ModelCacheMetricsObserver {
+    metrics: Arc<RankPipelineMetrics>,
+    counters: dashmap::DashMap<String, (u64, u64)>,
+}
+
+impl ModelCacheMetricsObserver {
+    pub fn new(metrics: Arc<RankPipelineMetrics>) -> Self {
+        Self {
+            metrics,
+            counters: dashmap::DashMap::new(),
+        }
+    }
+}
+
+impl proximadb_rank_onnx::ModelCacheObserver for ModelCacheMetricsObserver {
+    fn record_acquire(&self, model_id: &str, hit: bool) {
+        let mut entry = self.counters.entry(model_id.to_string()).or_insert((0, 0));
+        if hit {
+            entry.0 += 1;
+        } else {
+            entry.1 += 1;
+        }
+        let (h, m) = (entry.0, entry.1);
+        // Drop the dashmap guard before touching prometheus locks
+        // so two concurrent acquires on the same model don't
+        // serialize unnecessarily.
+        drop(entry);
+        let total = h + m;
+        if total > 0 {
+            self.metrics
+                .set_model_cache_hit_ratio(model_id, h as f64 / total as f64);
+        }
+    }
+
+    fn record_install(&self, _model_id: &str, total_bytes: u64) {
+        self.metrics.set_model_cache_size_bytes(total_bytes as i64);
+    }
+
+    fn record_eviction(&self, model_id: &str, reason: &str, _freed_bytes: u64) {
+        self.metrics.inc_model_evictions(model_id, reason);
+    }
+
+    fn record_size(&self, total_bytes: u64) {
+        self.metrics.set_model_cache_size_bytes(total_bytes as i64);
+    }
+}
+
 /// `RankMetricsSink` adapter that bridges per-feature observations
 /// in the rank pipeline (which sees only `(feature, ns)`) into the
 /// spec's `{profile, phase, feature}` label set.
@@ -429,6 +486,76 @@ mod tests {
         assert_eq!(
             METRIC_MODEL_INFLIGHT_LOADS,
             "proximadb_rank_model_inflight_loads"
+        );
+    }
+
+    #[test]
+    fn model_cache_observer_adapter_emits_through_pipeline_metrics() {
+        // End-to-end: ModelCacheMetricsObserver wraps a
+        // RankPipelineMetrics handle, OnnxModelCache calls into the
+        // observer on hit/miss/install/evict, and the resulting
+        // values surface through the prometheus registry.
+        use proximadb_rank_onnx::{
+            EvictionPolicy, MockScorerSession, ModelDescriptor, ModelFramework, ModelKey,
+            OnnxModelCache,
+        };
+
+        let registry = Registry::new();
+        let metrics = Arc::new(RankPipelineMetrics::register(&registry).unwrap());
+        let observer: Arc<dyn proximadb_rank_onnx::ModelCacheObserver> =
+            Arc::new(ModelCacheMetricsObserver::new(metrics.clone()));
+
+        let cache = OnnxModelCache::new(EvictionPolicy::LruByMemory {
+            budget_bytes: usize::MAX,
+        })
+        .with_observer(observer);
+
+        let descriptor = ModelDescriptor {
+            key: ModelKey::new("rerank-v3", "1"),
+            tenant: None,
+            uri: "file:///tmp/rerank-v3.onnx".to_string(),
+            sha256: [0; 32],
+            size_bytes: 128,
+            framework: ModelFramework::Onnx,
+            dtype: proximadb_rank_onnx::DType::Fp32,
+            input_spec: vec![],
+            output_spec: vec![],
+            max_batch_size: 8,
+            seq: 0,
+            created_at_ms: 0,
+        };
+        let session: Arc<dyn proximadb_rank_onnx::ScorerSession> =
+            Arc::new(MockScorerSession::zeros(descriptor));
+        let _t = cache.install(session);
+        // After install, size_bytes gauge reflects the resident size.
+        assert_eq!(metrics.model_cache_size_bytes.get(), 128);
+
+        // Hit ratios are per-model. 3 acquires on "rerank-v3" all
+        // succeed → its ratio is 1.0. The miss on "nonexistent" is
+        // tracked under "nonexistent" → its ratio is 0.0. (Don't
+        // expect the miss to dilute the rerank-v3 ratio — each
+        // model gets its own rolling counters.)
+        for _ in 0..3 {
+            let _ = cache.acquire(&ModelKey::new("rerank-v3", "1")).unwrap();
+        }
+        let _ = cache.acquire(&ModelKey::new("nonexistent", "1"));
+
+        let rerank_ratio = metrics
+            .model_cache_hit_ratio
+            .with_label_values(&["rerank-v3"])
+            .get();
+        assert!(
+            (rerank_ratio - 1.0).abs() < 1e-6,
+            "expected hit_ratio=1.0 for rerank-v3 after 3 successful acquires, got {rerank_ratio}"
+        );
+
+        let ghost_ratio = metrics
+            .model_cache_hit_ratio
+            .with_label_values(&["nonexistent"])
+            .get();
+        assert!(
+            ghost_ratio.abs() < 1e-6,
+            "expected hit_ratio=0.0 for nonexistent after 1 miss, got {ghost_ratio}"
         );
     }
 

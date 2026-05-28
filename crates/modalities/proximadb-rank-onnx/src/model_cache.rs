@@ -13,9 +13,52 @@ use crate::descriptor::ModelKey;
 use crate::scorer_session::ScorerSession;
 use dashmap::DashMap;
 use proximadb_rank_core::{RankError, RankResult};
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Observer hook for cache events. The root-crate Prometheus glue
+/// implements this to emit spec §4.10 model-cache metrics
+/// (`rank_model_cache_hit_ratio`, `_size_bytes`, `_evictions_total`,
+/// `_inflight_loads`). Defining the surface here keeps
+/// `proximadb-rank-onnx` from depending on the root crate's
+/// observability — implementations live wherever the metric
+/// handles live.
+///
+/// All methods take `&self` and are called on the cache's hot
+/// path, so impls should be lock-free / atomic. The default impl
+/// is a no-op — `OnnxModelCache` without an observer pays zero
+/// runtime cost.
+pub trait ModelCacheObserver: Send + Sync {
+    /// Called on every `acquire()`, regardless of hit / miss.
+    /// `hit = true` when the entry was already resident.
+    fn record_acquire(&self, _model_id: &str, _hit: bool) {}
+
+    /// Called after `install()` completes; `total_bytes` is the
+    /// post-install total resident bytes across all sessions.
+    fn record_install(&self, _model_id: &str, _total_bytes: u64) {}
+
+    /// Called once per evicted entry inside `evict_if_over_budget()`.
+    /// `reason` is one of the spec §4.10 values (`budget`,
+    /// `count`, `manual`, `ttl`).
+    fn record_eviction(&self, _model_id: &str, _reason: &str, _freed_bytes: u64) {}
+
+    /// Called immediately after `evict_if_over_budget()` finishes
+    /// with the updated total resident bytes. Lets dashboards
+    /// surface a fresh `cache_size_bytes` even when no eviction
+    /// fired (e.g. after `install()` set the gauge but a parallel
+    /// install grew it again).
+    fn record_size(&self, _total_bytes: u64) {}
+}
+
+/// Per-model hit/miss counters, updated atomically by the cache
+/// on every `acquire()`. The observer can derive a rolling hit
+/// ratio from these (or expose them directly as counters).
+#[derive(Debug, Default)]
+pub struct AcquireStats {
+    pub hits: AtomicU64,
+    pub misses: AtomicU64,
+}
 
 /// LRU eviction strategy.
 #[derive(Debug, Clone)]
@@ -71,6 +114,7 @@ impl CacheEntry {
 pub struct OnnxModelCache {
     entries: DashMap<ModelKey, Arc<CacheEntry>>,
     policy: EvictionPolicy,
+    observer: Option<Arc<dyn ModelCacheObserver>>,
 }
 
 impl OnnxModelCache {
@@ -78,7 +122,17 @@ impl OnnxModelCache {
         Self {
             entries: DashMap::new(),
             policy,
+            observer: None,
         }
+    }
+
+    /// Attach an observer that receives cache events (acquire,
+    /// install, evict). Used by the root crate to wire spec §4.10
+    /// model-cache metrics. `None` (the default) keeps the cache
+    /// allocation- and atomic-lookup-free in the noop case.
+    pub fn with_observer(mut self, observer: Arc<dyn ModelCacheObserver>) -> Self {
+        self.observer = Some(observer);
+        self
     }
 
     /// Insert a loaded session and return a token holding the first
@@ -87,6 +141,7 @@ impl OnnxModelCache {
     /// Triggers an eviction pass after install.
     pub fn install(&self, session: Arc<dyn ScorerSession>) -> ScorerToken {
         let key = session.descriptor().key.clone();
+        let model_id = key.model_id.clone();
         let entry = Arc::new(CacheEntry {
             session: session.clone(),
             last_used_at_ms: AtomicI64::new(now_ms()),
@@ -94,6 +149,11 @@ impl OnnxModelCache {
         self.entries.insert(key, entry);
         let token = ScorerToken { session };
         let _ = self.evict_if_over_budget();
+        if let Some(obs) = &self.observer {
+            let total = self.total_memory_bytes() as u64;
+            obs.record_install(&model_id, total);
+            obs.record_size(total);
+        }
         token
     }
 
@@ -101,7 +161,7 @@ impl OnnxModelCache {
     /// hit. Returns `Err(ProfileNotFound)` on miss — R-5b will overload
     /// this with the loader path.
     pub fn acquire(&self, key: &ModelKey) -> RankResult<ScorerToken> {
-        match self.entries.get(key) {
+        let result = match self.entries.get(key) {
             Some(r) => {
                 r.touch();
                 Ok(ScorerToken {
@@ -111,7 +171,11 @@ impl OnnxModelCache {
             None => Err(RankError::ProfileNotFound(format!(
                 "model not loaded into cache: {key}"
             ))),
+        };
+        if let Some(obs) = &self.observer {
+            obs.record_acquire(&key.model_id, result.is_ok());
         }
+        result
     }
 
     pub fn len(&self) -> usize {
@@ -134,16 +198,20 @@ impl OnnxModelCache {
     /// (`Arc::strong_count > 1`) are NEVER evicted regardless of age
     /// or budget.
     pub fn evict_if_over_budget(&self) -> usize {
-        let (budget_bytes, by_count_max) = match &self.policy {
-            EvictionPolicy::LruByMemory { budget_bytes } => (Some(*budget_bytes), None),
-            EvictionPolicy::LruByCount { max_entries } => (None, Some(*max_entries)),
+        let (budget_bytes, by_count_max, primary_reason) = match &self.policy {
+            EvictionPolicy::LruByMemory { budget_bytes } => {
+                (Some(*budget_bytes), None, "budget")
+            }
+            EvictionPolicy::LruByCount { max_entries } => {
+                (None, Some(*max_entries), "count")
+            }
             EvictionPolicy::Tenanted {
                 per_tenant_budget_bytes,
             } => {
                 // R-5b: per-tenant accounting. Fall back to a global
                 // budget that's tenant_budget * 10 so things at least
                 // don't grow unbounded.
-                (Some(per_tenant_budget_bytes * 10), None)
+                (Some(per_tenant_budget_bytes * 10), None, "budget")
             }
         };
 
@@ -193,7 +261,13 @@ impl OnnxModelCache {
                 freed += b;
                 current_bytes = current_bytes.saturating_sub(b);
                 current_count = current_count.saturating_sub(1);
+                if let Some(obs) = &self.observer {
+                    obs.record_eviction(&key.model_id, primary_reason, b as u64);
+                }
             }
+        }
+        if let Some(obs) = &self.observer {
+            obs.record_size(current_bytes as u64);
         }
         freed
     }
@@ -360,5 +434,67 @@ mod tests {
         let _ = cache.install(session("a", 100));
         let freed = cache.evict_if_over_budget();
         assert_eq!(freed, 0);
+    }
+
+    // ---------------- ModelCacheObserver wiring ----------------
+
+    #[derive(Default)]
+    struct RecordingObserver {
+        installs: AtomicU64,
+        hits: AtomicU64,
+        misses: AtomicU64,
+        evictions: AtomicU64,
+        last_size: AtomicI64,
+    }
+
+    impl ModelCacheObserver for RecordingObserver {
+        fn record_acquire(&self, _model_id: &str, hit: bool) {
+            if hit {
+                self.hits.fetch_add(1, Ordering::SeqCst);
+            } else {
+                self.misses.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        fn record_install(&self, _model_id: &str, _total_bytes: u64) {
+            self.installs.fetch_add(1, Ordering::SeqCst);
+        }
+        fn record_eviction(&self, _model_id: &str, _reason: &str, _freed_bytes: u64) {
+            self.evictions.fetch_add(1, Ordering::SeqCst);
+        }
+        fn record_size(&self, total_bytes: u64) {
+            self.last_size.store(total_bytes as i64, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn observer_fires_on_acquire_install_evict() {
+        // The observer must see install + acquire hit/miss + eviction
+        // events end-to-end so root-crate Prometheus glue can emit
+        // spec §4.10 model-cache metrics without instrumenting each
+        // call site itself.
+        let obs = Arc::new(RecordingObserver::default());
+        let cache = OnnxModelCache::new(EvictionPolicy::LruByMemory { budget_bytes: 150 })
+            .with_observer(obs.clone());
+
+        // Install fires record_install + record_size.
+        let t = cache.install(session("a", 100));
+        drop(t);
+        assert_eq!(obs.installs.load(Ordering::SeqCst), 1);
+        assert_eq!(obs.last_size.load(Ordering::SeqCst), 100);
+
+        // Acquire hit fires record_acquire(true).
+        let _ = cache.acquire(&ModelKey::new("a", "1")).unwrap();
+        assert_eq!(obs.hits.load(Ordering::SeqCst), 1);
+        assert_eq!(obs.misses.load(Ordering::SeqCst), 0);
+
+        // Acquire miss fires record_acquire(false).
+        let _ = cache.acquire(&ModelKey::new("ghost", "1"));
+        assert_eq!(obs.misses.load(Ordering::SeqCst), 1);
+
+        // Trip the budget so eviction fires record_eviction.
+        let throwaway = cache.install(session("b", 100));
+        drop(throwaway);
+        cache.evict_if_over_budget();
+        assert!(obs.evictions.load(Ordering::SeqCst) >= 1);
     }
 }

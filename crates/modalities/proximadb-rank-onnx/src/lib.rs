@@ -61,7 +61,9 @@ pub mod bert_pair_tokenizing_extractor;
 pub use batched_scorer::{BatchInput, BatchOutput, BatchedScorer, OnnxBatchedScorer};
 pub use descriptor::{DType, ModelDescriptor, ModelFramework, ModelKey, TensorIoSpec};
 pub use doc_feature_extractor::{DocFeatureExtractor, FnDocFeatureExtractor, NoopDocFeatureExtractor};
-pub use model_cache::{EvictionPolicy, OnnxModelCache, ScorerToken};
+pub use model_cache::{
+    AcquireStats, EvictionPolicy, ModelCacheObserver, OnnxModelCache, ScorerToken,
+};
 pub use registry::{InMemoryModelRegistry, ModelRegistry};
 pub use scorer_session::{MockScorerSession, ScorerSession};
 pub use second_phase_scorer::OnnxSecondPhaseScorer;
