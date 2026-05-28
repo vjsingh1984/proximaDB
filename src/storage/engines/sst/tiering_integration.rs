@@ -366,10 +366,10 @@ impl SstTieringIntegration {
         // When the collection is pinned to `memory`/`nvme_ssd`/`cloud`,
         // the flush lands on the corresponding `PerformanceTier`. When
         // unpinned, fall back to the access-pattern-policy default.
-        if let Some(registry) = &self.pin_registry {
-            if let Some(pin) = registry.get(collection) {
-                return pin.target.to_performance_tier();
-            }
+        if let Some(registry) = &self.pin_registry
+            && let Some(pin) = registry.get(collection)
+        {
+            return pin.target.to_performance_tier();
         }
         self.config.default_tier
     }

@@ -522,7 +522,7 @@ fn latest_base_records(
             }
             let replace = latest
                 .get(record.oid.as_str())
-                .map_or(true, |(seq, _)| entry.sequence_number >= *seq);
+                .is_none_or(|(seq, _)| entry.sequence_number >= *seq);
             if replace {
                 latest.insert(record.oid.clone(), (entry.sequence_number, record.as_ref()));
             }
@@ -557,7 +557,7 @@ fn latest_branch_records<'a>(
                 wal_ts_us,
                 sequence_number: entry.sequence_number,
             };
-            let replace = latest.get(record.oid.as_str()).map_or(true, |current| {
+            let replace = latest.get(record.oid.as_str()).is_none_or(|current| {
                 wal_ts_us > current.wal_ts_us
                     || (wal_ts_us == current.wal_ts_us
                         && entry.sequence_number >= current.sequence_number)
@@ -775,7 +775,7 @@ fn latest_branch_records_for_write<'a>(
             let candidate = (record.as_ref(), entry.sequence_number);
             let replace = latest
                 .get(record.oid.as_str())
-                .map_or(true, |&(_, prev_seq)| entry.sequence_number > prev_seq);
+                .is_none_or(|&(_, prev_seq)| entry.sequence_number > prev_seq);
             if replace {
                 latest.insert(record.oid.as_str(), candidate);
             }

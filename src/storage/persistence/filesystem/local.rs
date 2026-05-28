@@ -96,10 +96,11 @@ impl LocalFileSystem {
         // Paths that came in with a scheme (file://, etc.) keep their
         // extracted form so callers can reason about them directly.
         let path_buf = PathBuf::from(&path);
-        if !path_buf.is_absolute() && !url.contains("://") {
-            if let Some(ref root) = self.config.root_dir {
-                return Ok(root.join(&path_buf).to_string_lossy().into_owned());
-            }
+        if !path_buf.is_absolute()
+            && !url.contains("://")
+            && let Some(ref root) = self.config.root_dir
+        {
+            return Ok(root.join(&path_buf).to_string_lossy().into_owned());
         }
         Ok(path)
     }

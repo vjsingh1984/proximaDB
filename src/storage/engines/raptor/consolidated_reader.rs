@@ -1144,16 +1144,17 @@ impl RaptorReader {
         let file_size = file_size_u64 as usize;
 
         // Cache hit: same path, same size, same modified timestamp.
-        if let Some(entry) = self.metadata_cache.get(file_path) {
-            if entry.size == file_size_u64 && entry.modified == modified {
-                tracing::debug!(
-                    "RAPTOR read_metadata: cache hit for {} (size={}, modified={:?})",
-                    file_path,
-                    file_size_u64,
-                    modified
-                );
-                return Ok((*entry.metadata).clone());
-            }
+        if let Some(entry) = self.metadata_cache.get(file_path)
+            && entry.size == file_size_u64
+            && entry.modified == modified
+        {
+            tracing::debug!(
+                "RAPTOR read_metadata: cache hit for {} (size={}, modified={:?})",
+                file_path,
+                file_size_u64,
+                modified
+            );
+            return Ok((*entry.metadata).clone());
         }
 
         tracing::debug!("RAPTOR read_metadata: File size: {} bytes", file_size);

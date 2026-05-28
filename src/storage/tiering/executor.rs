@@ -242,13 +242,13 @@ impl TierMigrationExecutor {
         // so we explicitly prep the parent on every move. Best-effort:
         // if create_dir_all reports an error, we continue and let
         // move_atomic surface the canonical write-time error.
-        if let Some((parent_url, _)) = target_url.rsplit_once('/') {
-            if let Err(e) = self.filesystem.create_dir_all(parent_url).await {
-                debug!(
-                    "🪜 TierMigrationExecutor: create_dir_all on {} returned {} (continuing)",
-                    parent_url, e
-                );
-            }
+        if let Some((parent_url, _)) = target_url.rsplit_once('/')
+            && let Err(e) = self.filesystem.create_dir_all(parent_url).await
+        {
+            debug!(
+                "🪜 TierMigrationExecutor: create_dir_all on {} returned {} (continuing)",
+                parent_url, e
+            );
         }
 
         // Atomic copy then delete via the filesystem layer. The

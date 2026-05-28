@@ -473,10 +473,10 @@ impl WalSearchCandidate {
                 self.record.updated_at_ns / 1_000_000,
             );
 
-        if self.include_vectors {
-            if let Some(embedding) = self.record.embeddings.first() {
-                result = result.add_vector(embedding.values.to_fp32_owned());
-            }
+        if self.include_vectors
+            && let Some(embedding) = self.record.embeddings.first()
+        {
+            result = result.add_vector(embedding.values.to_fp32_owned());
         }
 
         result
