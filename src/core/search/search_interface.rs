@@ -309,16 +309,19 @@ impl IntegratedSearchOptimizer {
         let storage_info = self.analyze_storage_info(collection_id).await?;
 
         // Build collection config
-        let collection_config = collection.config.as_ref().map(|config| SearchCollectionConfig {
-            default_distance_metric: config
-                .distance_metric
-                .and_then(|m| DistanceMetric::try_from(m).ok())
-                .unwrap_or(DistanceMetric::Cosine),
-            vector_dimension: config.dimension as usize,
-            enable_quantization: config.quantization.is_some(),
-            enable_metadata_filtering: !filterable_columns.is_empty(),
-            estimated_document_count: storage_info.file_count * 1000, // Rough estimate
-        });
+        let collection_config = collection
+            .config
+            .as_ref()
+            .map(|config| SearchCollectionConfig {
+                default_distance_metric: config
+                    .distance_metric
+                    .and_then(|m| DistanceMetric::try_from(m).ok())
+                    .unwrap_or(DistanceMetric::Cosine),
+                vector_dimension: config.dimension as usize,
+                enable_quantization: config.quantization.is_some(),
+                enable_metadata_filtering: !filterable_columns.is_empty(),
+                estimated_document_count: storage_info.file_count * 1000, // Rough estimate
+            });
 
         Ok(SearchPlan {
             collection_id: collection_id.to_string(),

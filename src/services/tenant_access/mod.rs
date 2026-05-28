@@ -136,7 +136,11 @@ pub trait TenantAccessService: Send + Sync {
         requested_amount: u64,
     ) -> Result<bool>;
     async fn get_resource_usage(&self, tenant_id: &str) -> Result<TenantAccessResourceUsage>;
-    async fn update_resource_usage(&self, tenant_id: &str, usage: TenantAccessResourceUsage) -> Result<()>;
+    async fn update_resource_usage(
+        &self,
+        tenant_id: &str,
+        usage: TenantAccessResourceUsage,
+    ) -> Result<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -382,13 +386,14 @@ impl TenantAccessService for InMemoryTenantAccessService {
             None => return Ok(false), // Tenant doesn't exist
         };
 
-        let current_usage = usage_map
-            .get(tenant_id)
-            .cloned()
-            .unwrap_or_else(|| TenantAccessResourceUsage {
-                tenant_id: tenant_id.to_string(),
-                ..Default::default()
-            });
+        let current_usage =
+            usage_map
+                .get(tenant_id)
+                .cloned()
+                .unwrap_or_else(|| TenantAccessResourceUsage {
+                    tenant_id: tenant_id.to_string(),
+                    ..Default::default()
+                });
 
         let quota_limit = match resource_type {
             ResourceType::Collections => tenant.quotas.max_collections,
@@ -424,7 +429,11 @@ impl TenantAccessService for InMemoryTenantAccessService {
             }))
     }
 
-    async fn update_resource_usage(&self, tenant_id: &str, usage: TenantAccessResourceUsage) -> Result<()> {
+    async fn update_resource_usage(
+        &self,
+        tenant_id: &str,
+        usage: TenantAccessResourceUsage,
+    ) -> Result<()> {
         let mut usage_map = self.resource_usage.write().await;
         usage_map.insert(tenant_id.to_string(), usage);
         info!(

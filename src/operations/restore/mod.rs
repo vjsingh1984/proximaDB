@@ -385,7 +385,10 @@ impl RestoreManager {
     }
 
     /// Validate backup integrity without restoring
-    pub async fn validate_backup(&self, manifest: &BackupManifest) -> Result<RestoreValidationResult> {
+    pub async fn validate_backup(
+        &self,
+        manifest: &BackupManifest,
+    ) -> Result<RestoreValidationResult> {
         info!("Validating backup: {}", manifest.backup_id);
 
         let mut errors = Vec::new();

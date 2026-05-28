@@ -456,10 +456,12 @@ mod tests {
         let adaptive = EmbeddedStreamingSearchConfig::default().with_search_mode("adaptive");
         assert_eq!(adaptive.search_mode, Some("adaptive".to_string()));
 
-        let approx_nprobe = EmbeddedStreamingSearchConfig::default().with_search_mode("approximate:5");
+        let approx_nprobe =
+            EmbeddedStreamingSearchConfig::default().with_search_mode("approximate:5");
         assert_eq!(approx_nprobe.search_mode, Some("approximate:5".to_string()));
 
-        let adaptive_threshold = EmbeddedStreamingSearchConfig::default().with_search_mode("adaptive:5000");
+        let adaptive_threshold =
+            EmbeddedStreamingSearchConfig::default().with_search_mode("adaptive:5000");
         assert_eq!(
             adaptive_threshold.search_mode,
             Some("adaptive:5000".to_string())

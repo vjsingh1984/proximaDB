@@ -81,22 +81,20 @@ impl GlobalScorer for CrossModalGlobalScorer {
         };
 
         // ---- delegate to the production reranker ----
-        let reranked = self
-            .inner
-            .rerank(qr, &self.rerank_ctx)
-            .map_err(|e| RankError::ModelInference {
-                model_id: "cross_modal_reranker".into(),
-                reason: e.to_string(),
-            })?;
+        let reranked =
+            self.inner
+                .rerank(qr, &self.rerank_ctx)
+                .map_err(|e| RankError::ModelInference {
+                    model_id: "cross_modal_reranker".into(),
+                    reason: e.to_string(),
+                })?;
 
         // ---- unwrap: UnifiedRecord → ScoredHit ----
         // Preserve the original DocHandles by lookup table; the
         // reranker only sees stringified ids so we can't trust it to
         // round-trip them as integers.
-        let by_id: HashMap<String, DocHandle> = hits
-            .iter()
-            .map(|h| (h.doc.0.to_string(), h.doc))
-            .collect();
+        let by_id: HashMap<String, DocHandle> =
+            hits.iter().map(|h| (h.doc.0.to_string(), h.doc)).collect();
 
         let mut out: Vec<ScoredHit> = reranked
             .records

@@ -1439,10 +1439,8 @@ mod tests {
     #[test]
     fn time_bound_stale_ok_always_skips_regardless_of_lsn_or_time() {
         let now = 10_000 * MS_NS;
-        assert!(!VectorFreshnessMode::StaleOk
-            .should_scan_delta_with_time(100, 50, 0, now));
-        assert!(!VectorFreshnessMode::StaleOk
-            .should_scan_delta_with_time(100, 50, now - 1, now));
+        assert!(!VectorFreshnessMode::StaleOk.should_scan_delta_with_time(100, 50, 0, now));
+        assert!(!VectorFreshnessMode::StaleOk.should_scan_delta_with_time(100, 50, now - 1, now));
     }
 
     #[test]
@@ -1451,11 +1449,19 @@ mod tests {
         // when the WAL has newer LSNs.
         let now = 10_000 * MS_NS;
         let watermark_ns = now - 100 * MS_NS; // 100ms ago — very fresh
-        assert!(VectorFreshnessMode::Strong
-            .should_scan_delta_with_time(100, 50, watermark_ns, now));
+        assert!(VectorFreshnessMode::Strong.should_scan_delta_with_time(
+            100,
+            50,
+            watermark_ns,
+            now
+        ));
         // And skips when LSN already covers (independent of time).
-        assert!(!VectorFreshnessMode::Strong
-            .should_scan_delta_with_time(50, 50, watermark_ns, now));
+        assert!(!VectorFreshnessMode::Strong.should_scan_delta_with_time(
+            50,
+            50,
+            watermark_ns,
+            now
+        ));
     }
 
     #[test]

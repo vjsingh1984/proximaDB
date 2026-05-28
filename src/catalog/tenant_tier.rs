@@ -858,11 +858,26 @@ mod tests {
         assert_eq!(t5.max_blocks_per_query, u32::MAX);
 
         // quantization ceiling should rise (cap loosens) with tier
-        assert_eq!(t1.quantization_ceiling, ObjectEconomyQuantizationCeiling::INT8);
-        assert_eq!(t2.quantization_ceiling, ObjectEconomyQuantizationCeiling::INT8);
-        assert_eq!(t3.quantization_ceiling, ObjectEconomyQuantizationCeiling::FP16);
-        assert_eq!(t4.quantization_ceiling, ObjectEconomyQuantizationCeiling::FP16);
-        assert_eq!(t5.quantization_ceiling, ObjectEconomyQuantizationCeiling::FP32);
+        assert_eq!(
+            t1.quantization_ceiling,
+            ObjectEconomyQuantizationCeiling::INT8
+        );
+        assert_eq!(
+            t2.quantization_ceiling,
+            ObjectEconomyQuantizationCeiling::INT8
+        );
+        assert_eq!(
+            t3.quantization_ceiling,
+            ObjectEconomyQuantizationCeiling::FP16
+        );
+        assert_eq!(
+            t4.quantization_ceiling,
+            ObjectEconomyQuantizationCeiling::FP16
+        );
+        assert_eq!(
+            t5.quantization_ceiling,
+            ObjectEconomyQuantizationCeiling::FP32
+        );
     }
 
     #[test]

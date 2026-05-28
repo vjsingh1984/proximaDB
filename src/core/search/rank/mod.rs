@@ -15,4 +15,4 @@ pub mod orchestrator;
 
 pub use cross_modal_adapter::CrossModalGlobalScorer;
 pub use metrics::{PhaseScopedSink, RankMetrics};
-pub use orchestrator::{run_pipeline, RankRun};
+pub use orchestrator::{RankRun, run_pipeline};

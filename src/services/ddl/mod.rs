@@ -2066,9 +2066,7 @@ mod tests {
     // `services::collection::manager.rs::catalog_schema_from_collection`
     // is for the proto CollectionConfig path.
 
-    async fn create_with_precision_property(
-        value: &str,
-    ) -> proximadb_records::EmbeddingScalarType {
+    async fn create_with_precision_property(value: &str) -> proximadb_records::EmbeddingScalarType {
         let manager = Arc::new(CatalogManager::new());
         manager
             .create_native_catalog("default", "file:///tmp/proximadb-ddl-precision-test")
@@ -2198,7 +2196,10 @@ mod tests {
         // existing CREATE TABLE statements).
         let manager = Arc::new(CatalogManager::new());
         manager
-            .create_native_catalog("default", "file:///tmp/proximadb-ddl-precision-test-default")
+            .create_native_catalog(
+                "default",
+                "file:///tmp/proximadb-ddl-precision-test-default",
+            )
             .await
             .expect("create catalog");
         let service = DdlService::new(manager.clone());
@@ -2231,10 +2232,7 @@ mod tests {
 
         service.execute(stmt).await.expect("execute create table");
 
-        let (catalog, table_id) = manager
-            .resolve_table(&table_name)
-            .await
-            .expect("resolve");
+        let (catalog, table_id) = manager.resolve_table(&table_name).await.expect("resolve");
         let schema = catalog.get_table(&table_id).await.expect("get schema");
         assert_eq!(
             schema.canonical_embedding_precision,

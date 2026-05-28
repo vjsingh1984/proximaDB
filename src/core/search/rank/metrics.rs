@@ -19,9 +19,7 @@
 //! | `rank_model_evictions_total` | Counter | model_id, reason |
 //! | `rank_profile_reload_total` | Counter | profile, outcome |
 
-use prometheus::{
-    CounterVec, Gauge, HistogramOpts, HistogramVec, Opts, Registry,
-};
+use prometheus::{CounterVec, Gauge, HistogramOpts, HistogramVec, Opts, Registry};
 use proximadb_kernel::PhaseId;
 use proximadb_rank_core::RankMetricsSink;
 
@@ -49,8 +47,21 @@ pub const LABEL_OUTCOME: &str = "outcome";
 /// FEF metric buckets.
 fn latency_us_buckets() -> Vec<f64> {
     vec![
-        0.1, 0.5, 1.0, 5.0, 10.0, 50.0, 100.0, 500.0, 1_000.0, 5_000.0, 10_000.0, 50_000.0,
-        100_000.0, 500_000.0, 1_000_000.0,
+        0.1,
+        0.5,
+        1.0,
+        5.0,
+        10.0,
+        50.0,
+        100.0,
+        500.0,
+        1_000.0,
+        5_000.0,
+        10_000.0,
+        50_000.0,
+        100_000.0,
+        500_000.0,
+        1_000_000.0,
     ]
 }
 
@@ -318,9 +329,7 @@ mod tests {
     fn record_phase_latency_observes_sample() {
         let m = RankMetrics::build().unwrap();
         m.record_phase_latency("p1", PhaseId::FIRST, 1500);
-        let h = m
-            .phase_latency_us
-            .with_label_values(&["p1", "first"]);
+        let h = m.phase_latency_us.with_label_values(&["p1", "first"]);
         assert_eq!(h.get_sample_count(), 1);
         assert!((h.get_sample_sum() - 1500.0).abs() < 1e-6);
     }
@@ -340,9 +349,7 @@ mod tests {
     fn record_feature_contribution_observes() {
         let m = RankMetrics::build().unwrap();
         m.record_feature_contribution("p1", "bm25", 4.96);
-        let h = m
-            .feature_contribution
-            .with_label_values(&["p1", "bm25"]);
+        let h = m.feature_contribution.with_label_values(&["p1", "bm25"]);
         assert_eq!(h.get_sample_count(), 1);
     }
 

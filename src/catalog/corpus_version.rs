@@ -74,12 +74,7 @@ pub trait CorpusVersionStore: Send + Sync {
     /// successful bump or set. A backend may queue writes and flush
     /// asynchronously — the registry only requires that the value
     /// will eventually be durable, not that it has flushed by return.
-    async fn persist(
-        &self,
-        tenant_id: &str,
-        collection: &str,
-        version: u64,
-    ) -> anyhow::Result<()>;
+    async fn persist(&self, tenant_id: &str, collection: &str, version: u64) -> anyhow::Result<()>;
 }
 
 /// In-memory store — the default for tests and for deployments that
@@ -233,7 +228,8 @@ impl CorpusVersionRegistry {
             *entry = entry.saturating_add(1);
             *entry
         };
-        self.persist_through(tenant_id, collection, new_version).await;
+        self.persist_through(tenant_id, collection, new_version)
+            .await;
         new_version
     }
 
@@ -509,10 +505,11 @@ mod tests {
             collection: &str,
             version: u64,
         ) -> anyhow::Result<()> {
-            self.persisted
-                .lock()
-                .unwrap()
-                .push((tenant_id.to_string(), collection.to_string(), version));
+            self.persisted.lock().unwrap().push((
+                tenant_id.to_string(),
+                collection.to_string(),
+                version,
+            ));
             Ok(())
         }
     }
@@ -657,8 +654,7 @@ mod tests {
         // (We can't deterministically test the success path without
         // isolating to a separate process, but the second-call
         // contract is what production cares about.)
-        let store: Arc<dyn CorpusVersionStore> =
-            Arc::new(InMemoryCorpusVersionStore);
+        let store: Arc<dyn CorpusVersionStore> = Arc::new(InMemoryCorpusVersionStore);
         // Force the lazy-init to fire by reading the global first.
         let _ = CorpusVersionRegistry::global();
         // Now the init_global_with_store must return false.

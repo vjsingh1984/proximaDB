@@ -391,8 +391,10 @@ mod tests {
 
     #[test]
     fn test_scenario_configs() {
-        let high_recall = QuantizationProgressiveSearchConfig::for_scenario(SearchScenario::HighRecall);
-        let high_speed = QuantizationProgressiveSearchConfig::for_scenario(SearchScenario::HighSpeed);
+        let high_recall =
+            QuantizationProgressiveSearchConfig::for_scenario(SearchScenario::HighRecall);
+        let high_speed =
+            QuantizationProgressiveSearchConfig::for_scenario(SearchScenario::HighSpeed);
 
         assert!(high_recall.binary_recall > high_speed.binary_recall);
         assert!(high_recall.max_expansion_factor > high_speed.max_expansion_factor);

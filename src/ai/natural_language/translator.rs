@@ -662,7 +662,10 @@ mod tests {
             None
         }
 
-        fn validate_user_permissions(&self, user_context: &TranslatorUserContext) -> anyhow::Result<()> {
+        fn validate_user_permissions(
+            &self,
+            user_context: &TranslatorUserContext,
+        ) -> anyhow::Result<()> {
             if user_context.permissions.is_empty() {
                 return Err(anyhow::anyhow!("User has no permissions"));
             }

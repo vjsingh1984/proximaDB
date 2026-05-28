@@ -158,9 +158,8 @@ impl ProximaDB {
         // compaction keeps producing fp32 records.
         match shared_services.catalog_manager.default_catalog().await {
             Ok(catalog) => {
-                let resolver_cache = Arc::new(
-                    proximadb_catalog::cache::CatalogCache::new(10_000, 60),
-                );
+                let resolver_cache =
+                    Arc::new(proximadb_catalog::cache::CatalogCache::new(10_000, 60));
                 let resolver = Arc::new(
                     proximadb_catalog::canonical_precision::CanonicalPrecisionResolver::new(
                         catalog,
@@ -249,9 +248,7 @@ impl ProximaDB {
             multi_config.postgres_config.bind_address =
                 format!("{}:{}", config.server.bind_address, pg_port)
                     .parse()
-                    .map_err(|e| {
-                        anyhow::anyhow!("Failed to parse postgres bind address: {}", e)
-                    })?;
+                    .map_err(|e| anyhow::anyhow!("Failed to parse postgres bind address: {}", e))?;
         }
         // Propagate `[api].arrow_flight_port` to the Arrow IPC listener. The
         // builder hardcodes 5680, so without this override test fixtures
@@ -259,12 +256,12 @@ impl ProximaDB {
         // already default arrow_flight_port to 5680, so this is a no-op for
         // operators who don't override.
         multi_config.arrow_ipc_config.port = config.api.arrow_flight_port;
-        multi_config.arrow_ipc_config.bind_address =
-            format!("{}:{}", config.server.bind_address, config.api.arrow_flight_port)
-                .parse()
-                .map_err(|e| {
-                    anyhow::anyhow!("Failed to parse arrow flight bind address: {}", e)
-                })?;
+        multi_config.arrow_ipc_config.bind_address = format!(
+            "{}:{}",
+            config.server.bind_address, config.api.arrow_flight_port
+        )
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Failed to parse arrow flight bind address: {}", e))?;
         tracing::debug!("✅ ProximaDB::new - Multi-server config created successfully");
 
         // Initialize security coordinator if configured
@@ -356,12 +353,11 @@ impl ProximaDB {
         // requests haven't yet been served.
         if let Ok(path) = std::env::var("PROXIMADB_CORPUS_VERSION_PATH") {
             if !path.is_empty() {
-                let store = std::sync::Arc::new(
-                    crate::catalog::FileSystemCorpusVersionStore::new(path.clone()),
-                );
-                let inited = crate::catalog::CorpusVersionRegistry::init_global_with_store(
-                    store.clone(),
-                );
+                let store = std::sync::Arc::new(crate::catalog::FileSystemCorpusVersionStore::new(
+                    path.clone(),
+                ));
+                let inited =
+                    crate::catalog::CorpusVersionRegistry::init_global_with_store(store.clone());
                 if inited {
                     let loaded = crate::catalog::CorpusVersionRegistry::global()
                         .hydrate_from_store()
@@ -405,7 +401,9 @@ impl ProximaDB {
             // resolved_queue is always Some when queue_client is Some
             // (they're built from the same condition), so unwrapping
             // here is safe.
-            let rq = resolved_queue.as_ref().expect("queue_client → resolved_queue");
+            let rq = resolved_queue
+                .as_ref()
+                .expect("queue_client → resolved_queue");
             // BulkLoader's per-engine bulk-load fallback uses this
             // as the storage root when an override needs a base_path.
             // The canonical source is `config.storage.storage_locations[0].url`
@@ -1063,9 +1061,7 @@ async fn spawn_embedding_drainer_from_resolved(
             // (60s) before the drainer picks it up; acceptable because
             // precision changes are rare and the mismatched-batch path
             // errors safely.
-            let resolver_cache = Arc::new(
-                proximadb_catalog::cache::CatalogCache::new(10_000, 60),
-            );
+            let resolver_cache = Arc::new(proximadb_catalog::cache::CatalogCache::new(10_000, 60));
             let resolver = Arc::new(
                 proximadb_catalog::canonical_precision::CanonicalPrecisionResolver::new(
                     catalog,
@@ -1159,8 +1155,7 @@ async fn spawn_embedding_drainer(
     );
     let embed_service = proximadb_embedding::EmbeddingService::global();
     let drainer_cfg = crate::services::EmbeddingDrainerConfig::default();
-    let drainer =
-        crate::services::EmbeddingDrainer::new(queue, embed_service, sink, drainer_cfg);
+    let drainer = crate::services::EmbeddingDrainer::new(queue, embed_service, sink, drainer_cfg);
 
     let partitions: Vec<u32> = std::env::var("PROXIMADB_EMBED_DRAINER_PARTITIONS")
         .ok()

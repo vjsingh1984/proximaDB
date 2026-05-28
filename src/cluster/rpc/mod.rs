@@ -156,7 +156,6 @@ pub use types::{
     InstallSnapshotRequest,
     InstallSnapshotResponse,
     LogEntryType,
-    RpcLogEntry,
     // Common types
     NodeEndpoint,
     NodeRole,
@@ -166,6 +165,7 @@ pub use types::{
     ReplicationOperation,
     RequestVoteRequest,
     RequestVoteResponse,
+    RpcLogEntry,
     SearchParams,
     ServingStatus,
     ShardSearchRequest,

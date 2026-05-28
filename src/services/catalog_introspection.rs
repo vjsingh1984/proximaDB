@@ -94,9 +94,7 @@ impl CatalogIntrospectionService {
             && !normalized.contains("pg_attribute")
             && !normalized.contains("pg_namespace")
         {
-            return Ok(Some(
-                self.sqlalchemy_table_names(None).await?,
-            ));
+            return Ok(Some(self.sqlalchemy_table_names(None).await?));
         }
         if normalized.contains(" from xcatalog.columns")
             || normalized.contains(" from information_schema.columns")
@@ -216,11 +214,7 @@ impl CatalogIntrospectionService {
     async fn namespaces(&self) -> Result<CatalogIntrospectionResult> {
         let mut rows = Vec::new();
         for catalog_name in self.catalog_manager.list_catalogs().await {
-            let catalog = match self
-                .catalog_manager
-                .get_catalog(&catalog_name)
-                .await
-            {
+            let catalog = match self.catalog_manager.get_catalog(&catalog_name).await {
                 Ok(c) => c,
                 Err(_) => continue,
             };

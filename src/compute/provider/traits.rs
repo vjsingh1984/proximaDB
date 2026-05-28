@@ -607,7 +607,11 @@ pub trait ComputeProvider: Send + Sync + Debug {
     ///
     /// # Returns
     /// Stream of Arrow RecordBatches containing the results
-    async fn execute(&self, plan: &ComputePlan, ctx: &ExecutionContext) -> Result<ComputeExecutionResult>;
+    async fn execute(
+        &self,
+        plan: &ComputePlan,
+        ctx: &ExecutionContext,
+    ) -> Result<ComputeExecutionResult>;
 
     /// Check if this provider can execute the given plan
     ///

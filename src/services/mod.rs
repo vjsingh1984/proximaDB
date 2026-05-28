@@ -169,7 +169,6 @@
 
 pub mod bulk_load;
 pub mod canonical_wal;
-pub mod queue_fs_adapter;
 pub mod catalog_introspection;
 pub mod collection;
 pub mod ddl;
@@ -178,6 +177,7 @@ pub mod embedding_drainer;
 pub mod events;
 pub mod graph_collection;
 pub mod operations;
+pub mod queue_fs_adapter;
 pub mod record_memtable;
 pub mod record_store;
 pub mod schema;

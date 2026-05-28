@@ -249,7 +249,6 @@ impl BulkLoader {
     }
 }
 
-
 // ── Production DrainerInsertSink wired to BulkLoader ─────────────
 
 use crate::services::embedding_drainer::{DrainerInsertSink, EmbeddedRecord};
@@ -280,11 +279,7 @@ impl BulkLoadDrainerSink {
 ///
 /// Extracted from the [`DrainerInsertSink`] impl so the precision-routing
 /// is exercised by unit tests without booting the full bulk loader.
-fn project_embedded_record(
-    r: EmbeddedRecord,
-    tenant_id: &str,
-    now_ns: i64,
-) -> ProximaRecord {
+fn project_embedded_record(r: EmbeddedRecord, tenant_id: &str, now_ns: i64) -> ProximaRecord {
     let mut props = std::collections::HashMap::new();
     props.insert(
         "text".to_string(),
@@ -398,7 +393,9 @@ mod tests {
         // SortHint enum don't silently break callers.
     }
 
-    fn make_embedded(target_precision: Option<proximadb_records::EmbeddingScalarType>) -> EmbeddedRecord {
+    fn make_embedded(
+        target_precision: Option<proximadb_records::EmbeddingScalarType>,
+    ) -> EmbeddedRecord {
         EmbeddedRecord {
             oid: "rec-1".to_string(),
             text: "hello world".to_string(),

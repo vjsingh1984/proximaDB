@@ -198,7 +198,8 @@ pub struct SearchCostEstimator {
     /// Average search times per index type
     pub index_search_times: HashMap<Index, IntegratedSearchPerformanceStats>,
     /// Average search times per quantization level
-    pub progressive_search_times: HashMap<UnifiedQuantizationLevel, IntegratedSearchPerformanceStats>,
+    pub progressive_search_times:
+        HashMap<UnifiedQuantizationLevel, IntegratedSearchPerformanceStats>,
     /// Average search times by dataset size
     pub direct_search_times: HashMap<usize, IntegratedSearchPerformanceStats>,
     /// Detected hardware profile for SIMD/memory optimization

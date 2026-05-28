@@ -175,7 +175,11 @@ impl ConnectorTableStatistics {
     }
 
     /// Add column statistics.
-    pub fn with_column_stats(mut self, column: impl Into<String>, stats: ConnectorColumnStatistics) -> Self {
+    pub fn with_column_stats(
+        mut self,
+        column: impl Into<String>,
+        stats: ConnectorColumnStatistics,
+    ) -> Self {
         self.column_stats.insert(column.into(), stats);
         self
     }

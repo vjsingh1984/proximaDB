@@ -5,4 +5,6 @@
 
 pub mod axis_builder;
 
-pub use axis_builder::{build_axis_hybrid_query, build_axis_hybrid_query_with_mode};
+pub use axis_builder::{
+    build_axis_hybrid_query, build_axis_hybrid_query_with_mode, build_axis_hybrid_query_with_policy,
+};

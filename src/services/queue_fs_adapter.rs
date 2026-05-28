@@ -145,9 +145,7 @@ impl QueueFs for FactoryQueueFs {
         let url = self.url_for(path);
         let fs = self.factory.get_filesystem(&url).map_err(Self::map_err)?;
         let m = fs.metadata(&url).await.map_err(Self::map_err)?;
-        Ok(Metadata {
-            size_bytes: m.size,
-        })
+        Ok(Metadata { size_bytes: m.size })
     }
 }
 

@@ -25,9 +25,7 @@ pub mod types;
 // (`crate::catalog::traits::Catalog`, etc.) keep working without
 // touching every importer.
 pub mod traits {
-    pub use proximadb_catalog::{
-        Catalog, CatalogHealth, LakehouseExtension, TableFormat,
-    };
+    pub use proximadb_catalog::{Catalog, CatalogHealth, LakehouseExtension, TableFormat};
 }
 
 // Metadata cache

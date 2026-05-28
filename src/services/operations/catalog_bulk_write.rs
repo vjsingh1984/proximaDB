@@ -275,10 +275,9 @@ impl CatalogBulkWriteService {
                 // Same tenant-extraction convention as the DDL paths
                 // (namespace[0] when present).
                 if let Some(tenant_id) = table_id.namespace.first() {
-                    let version =
-                        crate::catalog::CorpusVersionRegistry::global()
-                            .bump(tenant_id, &table_id.name)
-                            .await;
+                    let version = crate::catalog::CorpusVersionRegistry::global()
+                        .bump(tenant_id, &table_id.name)
+                        .await;
                     tracing::debug!(
                         table = %table_id.name,
                         tenant = %tenant_id,

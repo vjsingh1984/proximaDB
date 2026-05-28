@@ -242,7 +242,10 @@ mod queue_config_tests {
         };
         let resolved = QueueRuntimeConfig::resolve(Some(&toml)).expect("resolved");
         assert_eq!(resolved.root, "file:///srv/queue");
-        assert_eq!(resolved.object_archive.as_deref(), Some("adls://example-operator/archive"));
+        assert_eq!(
+            resolved.object_archive.as_deref(),
+            Some("adls://example-operator/archive")
+        );
         assert_eq!(resolved.sync_mode, "lazy");
         assert_eq!(resolved.drainer_partitions, "0..4");
     }
@@ -293,8 +296,7 @@ mod queue_config_tests {
         let _g_root = EnvGuard::set("PROXIMADB_QUEUE_ROOT", None);
         let _g_arc = EnvGuard::set("PROXIMADB_QUEUE_OBJECT_ARCHIVE", None);
         let _g_sync = EnvGuard::set("PROXIMADB_QUEUE_SYNC_MODE", None);
-        let _g_part =
-            EnvGuard::set("PROXIMADB_EMBED_DRAINER_PARTITIONS", Some("12..16"));
+        let _g_part = EnvGuard::set("PROXIMADB_EMBED_DRAINER_PARTITIONS", Some("12..16"));
         let toml = QueueRuntimeConfig {
             root: Some("file:///canonical".to_string()),
             object_archive: Some("adls://canonical".to_string()),
@@ -877,6 +879,23 @@ pub struct SstConfig {
     /// Default: ProximaBlocks
     #[serde(default = "default_block_format")]
     pub block_format: String,
+
+    /// Tier-migration configuration. When `None` or when the inner
+    /// config has `enabled = false`, the engine's flush / search /
+    /// compaction tiering hooks are no-ops.
+    ///
+    /// When `enabled = true`, the engine attaches an
+    /// `SstTieringIntegration` at bootstrap (see
+    /// `src/network/shared_services.rs`) and the policy engine begins
+    /// observing per-collection access patterns, flush events, and
+    /// compaction-time evaluations. Physical byte-movement between
+    /// tier paths is still deferred — the policy engine generates
+    /// migration tasks but no executor moves the bytes yet.
+    ///
+    /// Configure under `[storage.sst_config.tiering]` in TOML.
+    /// Default: `None` (disabled).
+    #[serde(default)]
+    pub tiering: Option<crate::storage::engines::sst::tiering_integration::SstTieringConfig>,
 }
 
 fn default_block_format() -> String {
@@ -958,6 +977,7 @@ impl Default for SstConfig {
             ),
             vector_encoding_strategy: default_vector_encoding_strategy(),
             block_format: default_block_format(),
+            tiering: None, // Default: tier-migration disabled
         }
     }
 }

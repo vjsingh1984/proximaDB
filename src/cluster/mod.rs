@@ -66,13 +66,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
 pub use consensus::{ConsensusConfig, ConsensusState, RaftConsensus};
+/// Backwards-compat alias for the per-shard SearchResult re-exported from distributed_ops.
+pub use distributed_ops::ShardSearchResult as SearchResult;
 pub use distributed_ops::{
     ConsistencyLevel, DistributedCollectionOps, DistributedOpsConfig, DistributedSearchRequest,
     DistributedSearchResult, DistributedWriteRequest, DistributedWriteResult, QueryContext,
     RetryConfig, ShardSearchResult, WriteRecord,
 };
-/// Backwards-compat alias for the per-shard SearchResult re-exported from distributed_ops.
-pub use distributed_ops::ShardSearchResult as SearchResult;
 pub use metadata_service::{ClusterMetadata, MetadataService, MetadataServiceConfig};
 pub use node_registry::{
     NodeHealth, NodeInfo, NodeRegistry, NodeRegistryConfig, NodeRole, NodeStatus,

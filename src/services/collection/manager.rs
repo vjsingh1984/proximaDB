@@ -2238,24 +2238,19 @@ impl CollectionService {
         // on the legacy default.
         if let Some(precision_value) = config.canonical_embedding_precision {
             use crate::proto::proximadb_v1::EmbeddingPrecision;
-            schema.canonical_embedding_precision = match EmbeddingPrecision::try_from(
-                precision_value,
-            ) {
-                Ok(EmbeddingPrecision::Fp16) => {
-                    proximadb_records::EmbeddingScalarType::Fp16
-                }
-                Ok(EmbeddingPrecision::Bf16) => {
-                    proximadb_records::EmbeddingScalarType::Bf16
-                }
-                Ok(EmbeddingPrecision::Int8) => {
-                    proximadb_records::EmbeddingScalarType::Int8Scalar
-                }
-                Ok(EmbeddingPrecision::Uint8) => {
-                    proximadb_records::EmbeddingScalarType::UInt8Scalar
-                }
-                // Unspecified / Fp32 / unknown all map to the legacy default
-                _ => proximadb_records::EmbeddingScalarType::Fp32,
-            };
+            schema.canonical_embedding_precision =
+                match EmbeddingPrecision::try_from(precision_value) {
+                    Ok(EmbeddingPrecision::Fp16) => proximadb_records::EmbeddingScalarType::Fp16,
+                    Ok(EmbeddingPrecision::Bf16) => proximadb_records::EmbeddingScalarType::Bf16,
+                    Ok(EmbeddingPrecision::Int8) => {
+                        proximadb_records::EmbeddingScalarType::Int8Scalar
+                    }
+                    Ok(EmbeddingPrecision::Uint8) => {
+                        proximadb_records::EmbeddingScalarType::UInt8Scalar
+                    }
+                    // Unspecified / Fp32 / unknown all map to the legacy default
+                    _ => proximadb_records::EmbeddingScalarType::Fp32,
+                };
         }
 
         Ok(schema)

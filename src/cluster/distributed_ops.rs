@@ -1579,7 +1579,9 @@ mod tests {
             routing_key: None,
             include_shards: None,
             exclude_shards: None,
-            query_context: Some(DistributedQueryContext::with_tenant("tenant-1").domain("domain-1")),
+            query_context: Some(
+                DistributedQueryContext::with_tenant("tenant-1").domain("domain-1"),
+            ),
         };
 
         let ctx = request

@@ -42,6 +42,25 @@ pub fn build_axis_hybrid_query_with_mode(
     search_params: &crate::core::search::SearchParams,
     ann_filtering_mode: crate::index::axis::management::manager::AnnFilteringMode,
 ) -> Result<crate::index::axis::management::manager::HybridQuery> {
+    build_axis_hybrid_query_with_policy(
+        collection_id,
+        search_params,
+        ann_filtering_mode,
+        None,
+        None,
+    )
+}
+
+/// Like `build_axis_hybrid_query_with_mode`, but carries the ADR-011 policy
+/// inputs through to AXIS so the manager can select PreFilter / Inline /
+/// PostFilter from the same policy contract used by the planner.
+pub fn build_axis_hybrid_query_with_policy(
+    collection_id: &str,
+    search_params: &crate::core::search::SearchParams,
+    ann_filtering_mode: crate::index::axis::management::manager::AnnFilteringMode,
+    ann_filtering_policy: Option<proximadb_catalog::AnnFilteringPolicy>,
+    estimated_selectivity: Option<f64>,
+) -> Result<crate::index::axis::management::manager::HybridQuery> {
     use crate::core::search::{ComparisonOperator, FilterExpression};
     use crate::index::axis::management::manager::{
         FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
@@ -121,6 +140,10 @@ pub fn build_axis_hybrid_query_with_mode(
         }
     }
 
+    fn normalize_selectivity(value: f64) -> Option<f64> {
+        value.is_finite().then(|| value.clamp(0.0, 1.0))
+    }
+
     let vector_query = if let Some(vectors) = &search_params.query_vectors {
         vectors.first().map(|vector| VectorQuery::Dense {
             vector: vector.clone(),
@@ -151,6 +174,18 @@ pub fn build_axis_hybrid_query_with_mode(
         }
     }
 
+    let hinted_selectivity = estimated_selectivity
+        .and_then(normalize_selectivity)
+        .or_else(|| {
+            search_params
+                .runtime_hints
+                .as_ref()
+                .and_then(|hints| hints.expected_selectivity)
+                .and_then(normalize_selectivity)
+        });
+    let ann_filtering_policy =
+        ann_filtering_policy.or_else(|| hinted_selectivity.map(|_| Default::default()));
+
     Ok(HybridQuery {
         collection_id: collection_id.to_string(),
         vector_query,
@@ -159,10 +194,8 @@ pub fn build_axis_hybrid_query_with_mode(
         top_k: search_params.top_k.unwrap_or(10),
         include_expired: search_params.include_expired.unwrap_or(false),
         ann_filtering_mode,
-        // ADR-011 policy-driven routing not exposed via this builder yet;
-        // fall back to the hard-coded ann_filtering_mode above.
-        ann_filtering_policy: None,
-        estimated_selectivity: None,
+        ann_filtering_policy,
+        estimated_selectivity: hinted_selectivity,
     })
 }
 
@@ -225,5 +258,48 @@ mod tests {
         assert_eq!(result.id_filters.len(), 1);
         assert_eq!(result.id_filters[0], "vec123");
         assert!(result.metadata_filters.is_empty());
+    }
+
+    #[test]
+    fn test_build_axis_hybrid_query_carries_runtime_selectivity_hint() {
+        let search_params = SearchParams {
+            vector: Some(vec![1.0, 2.0, 3.0]),
+            runtime_hints: Some(crate::query::query_optimizer::FilterOptimizationHints {
+                expected_selectivity: Some(0.8),
+                preferred_index: None,
+                allow_parallel: true,
+            }),
+            ..Default::default()
+        };
+
+        let result = build_axis_hybrid_query_with_mode(
+            "test_collection",
+            &search_params,
+            crate::index::axis::management::manager::AnnFilteringMode::Inline,
+        )
+        .unwrap();
+
+        assert!(result.ann_filtering_policy.is_some());
+        assert_eq!(result.estimated_selectivity, Some(0.8));
+    }
+
+    #[test]
+    fn test_build_axis_hybrid_query_clamps_explicit_selectivity() {
+        let search_params = SearchParams {
+            vector: Some(vec![1.0, 2.0, 3.0]),
+            ..Default::default()
+        };
+
+        let result = build_axis_hybrid_query_with_policy(
+            "test_collection",
+            &search_params,
+            crate::index::axis::management::manager::AnnFilteringMode::Inline,
+            Some(proximadb_catalog::AnnFilteringPolicy::default()),
+            Some(1.7),
+        )
+        .unwrap();
+
+        assert!(result.ann_filtering_policy.is_some());
+        assert_eq!(result.estimated_selectivity, Some(1.0));
     }
 }

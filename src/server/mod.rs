@@ -7,4 +7,3 @@
 //!
 //! This module contains the server-level abstractions and builders for ProximaDB.
 //! It coordinates all subsystems while maintaining separation of concerns.
-

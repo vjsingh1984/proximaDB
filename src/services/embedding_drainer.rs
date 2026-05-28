@@ -330,8 +330,7 @@ impl EmbeddingDrainer {
             let target_precision = match &self.precision_resolver {
                 None => None,
                 Some(resolver) => {
-                    let table_id =
-                        Self::collection_to_table_identifier(&payload.target_collection);
+                    let table_id = Self::collection_to_table_identifier(&payload.target_collection);
                     match resolver.resolve(&table_id).await {
                         Ok(precision) => Some(precision),
                         Err(e) => {
@@ -641,8 +640,8 @@ mod tests {
     /// for an fp16 collection now produces fp16 records.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn drainer_stamps_target_precision_from_resolver() {
-        use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
         use proximadb_catalog::cache::CatalogCache;
+        use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
         use proximadb_catalog::oltp::{OltpCatalog, OltpCatalogConfig};
         use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier};
 
@@ -683,8 +682,7 @@ mod tests {
             name: "fp16_docs".to_string(),
             ..Default::default()
         };
-        schema.canonical_embedding_precision =
-            proximadb_records::EmbeddingScalarType::Fp16;
+        schema.canonical_embedding_precision = proximadb_records::EmbeddingScalarType::Fp16;
         cat.create_table(&table_id, schema).await.unwrap();
 
         let resolver = Arc::new(CanonicalPrecisionResolver::new(

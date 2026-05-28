@@ -506,11 +506,12 @@ mod tests {
 
     #[test]
     fn test_collection_info_creation() {
-        let info = DataFusionCollectionInfo::new("test_collection".to_string(), 128, EngineType::Sst)
-            .with_vector_count(1000)
-            .with_storage_size(1024 * 1024)
-            .with_file_count(5)
-            .with_base_path("/data/test".to_string());
+        let info =
+            DataFusionCollectionInfo::new("test_collection".to_string(), 128, EngineType::Sst)
+                .with_vector_count(1000)
+                .with_storage_size(1024 * 1024)
+                .with_file_count(5)
+                .with_base_path("/data/test".to_string());
 
         assert_eq!(info.name, "test_collection");
         assert_eq!(info.dimension, 128);
@@ -529,8 +530,8 @@ mod tests {
 
     #[test]
     fn test_collection_info_estimated_size() {
-        let info =
-            DataFusionCollectionInfo::new("test".to_string(), 128, EngineType::Nova).with_vector_count(1000);
+        let info = DataFusionCollectionInfo::new("test".to_string(), 128, EngineType::Nova)
+            .with_vector_count(1000);
         assert_eq!(info.estimated_vector_data_size(), 1000 * 128 * 4);
     }
 

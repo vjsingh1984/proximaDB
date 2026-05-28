@@ -148,8 +148,7 @@ mod tests {
         let candidates: Vec<DocHandle> = (1..=5).map(DocHandle).collect();
         let (q, arena, a, c, m, met) = fresh_ctx_fixtures();
         let mut ctx = ScoreCtx::new(&q, &arena, &a, &c, &m, &met);
-        let scorer: Arc<dyn GlobalScorer> =
-            Arc::new(CrossModalGlobalScorer::new(enabled_config()));
+        let scorer: Arc<dyn GlobalScorer> = Arc::new(CrossModalGlobalScorer::new(enabled_config()));
         let run = run_pipeline(&mut pipe, &candidates, 3, &mut ctx, Some(scorer))
             .await
             .unwrap();
@@ -170,8 +169,7 @@ mod tests {
         let candidates: Vec<DocHandle> = (1..=8).map(DocHandle).collect();
         let (q, arena, a, c, m, met) = fresh_ctx_fixtures();
         let mut ctx = ScoreCtx::new(&q, &arena, &a, &c, &m, &met);
-        let scorer: Arc<dyn GlobalScorer> =
-            Arc::new(CrossModalGlobalScorer::new(enabled_config()));
+        let scorer: Arc<dyn GlobalScorer> = Arc::new(CrossModalGlobalScorer::new(enabled_config()));
 
         let run = run_pipeline(&mut pipe, &candidates, 8, &mut ctx, Some(scorer))
             .await
@@ -195,8 +193,7 @@ mod tests {
         let candidates: Vec<DocHandle> = vec![];
         let (q, arena, a, c, m, met) = fresh_ctx_fixtures();
         let mut ctx = ScoreCtx::new(&q, &arena, &a, &c, &m, &met);
-        let scorer: Arc<dyn GlobalScorer> =
-            Arc::new(CrossModalGlobalScorer::new(enabled_config()));
+        let scorer: Arc<dyn GlobalScorer> = Arc::new(CrossModalGlobalScorer::new(enabled_config()));
         let run = run_pipeline(&mut pipe, &candidates, 5, &mut ctx, Some(scorer))
             .await
             .unwrap();

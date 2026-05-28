@@ -82,7 +82,10 @@ impl FileSystemCorpusVersionStore {
     /// rename over the target. The rename is the only atomic primitive
     /// POSIX guarantees, so this is the smallest reliable durability
     /// pattern. On Windows the rename is also atomic since Rust 1.5.
-    async fn write_snapshot(&self, snapshot: &HashMap<(String, String), u64>) -> anyhow::Result<()> {
+    async fn write_snapshot(
+        &self,
+        snapshot: &HashMap<(String, String), u64>,
+    ) -> anyhow::Result<()> {
         let rows: Vec<PersistedRow> = snapshot
             .iter()
             .map(|((t, c), v)| PersistedRow {
@@ -91,17 +94,15 @@ impl FileSystemCorpusVersionStore {
                 version: *v,
             })
             .collect();
-        let bytes = serde_json::to_vec_pretty(&rows)
-            .context("serialize corpus_version snapshot")?;
+        let bytes =
+            serde_json::to_vec_pretty(&rows).context("serialize corpus_version snapshot")?;
 
         // Ensure parent dir exists. The store may be constructed
         // before any directory layout is set up.
         if let Some(parent) = self.path.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
-                .with_context(|| {
-                    format!("create parent directory {}", parent.display())
-                })?;
+                .with_context(|| format!("create parent directory {}", parent.display()))?;
         }
 
         // Unique temp-file name per persist call so concurrent writes
@@ -153,10 +154,8 @@ impl CorpusVersionStore for FileSystemCorpusVersionStore {
                 return Ok(HashMap::new());
             }
             Err(e) => {
-                return Err(anyhow::Error::new(e).context(format!(
-                    "read corpus_version file {}",
-                    self.path.display()
-                )));
+                return Err(anyhow::Error::new(e)
+                    .context(format!("read corpus_version file {}", self.path.display())));
             }
         };
 
@@ -187,12 +186,7 @@ impl CorpusVersionStore for FileSystemCorpusVersionStore {
         Ok(map)
     }
 
-    async fn persist(
-        &self,
-        tenant_id: &str,
-        collection: &str,
-        version: u64,
-    ) -> anyhow::Result<()> {
+    async fn persist(&self, tenant_id: &str, collection: &str, version: u64) -> anyhow::Result<()> {
         // Hold the mutex through both the map update and the file
         // write. This serializes concurrent persists so a slow writer
         // can't overwrite a faster writer's already-completed file.
@@ -270,7 +264,9 @@ mod tests {
     async fn corrupted_file_returns_empty_and_is_self_healing() {
         let (_dir, store) = tmp_store();
         // Hand-write a malformed JSON file to the store's path.
-        tokio::fs::write(store.path(), b"this is not json").await.unwrap();
+        tokio::fs::write(store.path(), b"this is not json")
+            .await
+            .unwrap();
         // load_all logs + returns empty (no panic, no propagated error).
         let m = store.load_all().await.unwrap();
         assert!(m.is_empty(), "corrupt file → empty load");

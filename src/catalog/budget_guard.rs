@@ -144,14 +144,8 @@ mod tests {
     fn no_request_substitutes_tier_defaults() {
         let r = record(Tier::Tier4, None, None);
         let ok = enforce(&r, None, None).expect("should succeed");
-        assert_eq!(
-            ok.effective_scan_gb,
-            Tier::Tier4.default_scan_budget_gb()
-        );
-        assert_eq!(
-            ok.effective_ef_search,
-            Tier::Tier4.default_ef_search_cap()
-        );
+        assert_eq!(ok.effective_scan_gb, Tier::Tier4.default_scan_budget_gb());
+        assert_eq!(ok.effective_ef_search, Tier::Tier4.default_ef_search_cap());
         assert_eq!(ok.tier_label, "tier4");
     }
 

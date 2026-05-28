@@ -378,6 +378,27 @@ pub struct ServiceIndexStats {
     /// (CatapultDB arXiv 2603.02164). False until catapults land in Phase 7.
     #[serde(default)]
     pub catapult_used: bool,
+    /// Object-storage/SST selected blocks after vector access-method pruning.
+    #[serde(default)]
+    pub object_selected_blocks: i64,
+    /// Object-storage/SST blocks pruned before data-block reads.
+    #[serde(default)]
+    pub object_pruned_blocks: i64,
+    /// Planned object range GET/read requests.
+    #[serde(default)]
+    pub object_estimated_gets: i64,
+    /// Actual object range GET/read requests issued by the reader.
+    #[serde(default)]
+    pub object_actual_gets: i64,
+    /// Planned remote/range bytes for object-economy reads.
+    #[serde(default)]
+    pub object_estimated_remote_bytes: i64,
+    /// Actual remote/range bytes read by the object-economy path.
+    #[serde(default)]
+    pub object_actual_remote_bytes: i64,
+    /// Bytes read because selected blocks were coalesced across small gaps.
+    #[serde(default)]
+    pub object_overfetch_bytes: i64,
 }
 
 /// Search debug information

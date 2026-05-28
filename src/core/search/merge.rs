@@ -150,7 +150,10 @@ mod tests {
         let merged = merge_delta_with_directory_results(delta, directory, 10);
 
         assert_eq!(merged.len(), 3);
-        assert_eq!(merged[0].id, "z", "delta record with highest score wins position 0");
+        assert_eq!(
+            merged[0].id, "z",
+            "delta record with highest score wins position 0"
+        );
         assert_eq!(merged[1].id, "a");
         assert_eq!(merged[2].id, "b");
     }
@@ -189,11 +192,7 @@ mod tests {
         //   - "d" new from delta
         // => 3 final results.
         let directory = vec![live("a", 0.9), live("b", 0.5), live("c", 0.7)];
-        let delta = vec![
-            live("b", 0.95),
-            live("d", 0.85),
-            tombstone("a"),
-        ];
+        let delta = vec![live("b", 0.95), live("d", 0.85), tombstone("a")];
         let merged = merge_delta_with_directory_results(delta, directory, 10);
 
         assert_eq!(merged.len(), 3);
@@ -230,8 +229,7 @@ mod tests {
     #[test]
     fn ties_break_by_id_for_determinism() {
         let directory = vec![live("a", 0.5), live("b", 0.5)];
-        let merged_run1 =
-            merge_delta_with_directory_results(vec![], directory.clone(), 10);
+        let merged_run1 = merge_delta_with_directory_results(vec![], directory.clone(), 10);
         let merged_run2 = merge_delta_with_directory_results(vec![], directory, 10);
 
         assert_eq!(merged_run1[0].id, "a");

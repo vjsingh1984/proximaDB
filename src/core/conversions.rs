@@ -65,7 +65,7 @@ pub fn parse_distance_metric(metric: &str) -> Result<DistanceMetric> {
         "cosine" => Ok(DistanceMetric::Cosine),
         "euclidean" | "l2" => Ok(DistanceMetric::Euclidean),
         "manhattan" | "l1" => Ok(DistanceMetric::Manhattan),
-        "dot" | "inner_product" => Ok(DistanceMetric::DotProduct),
+        "dot" | "dot_product" | "inner_product" => Ok(DistanceMetric::DotProduct),
         _ => Err(anyhow::anyhow!("Invalid distance metric: {}", metric)),
     }
 }
