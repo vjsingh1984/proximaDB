@@ -1120,11 +1120,10 @@ impl RoutingService {
             // if we had access to the shard metadata. For now, we include all shards.
             // In production, the ShardManager would be consulted for metadata bounds.
 
-            let target_node =
-                match self.select_node(route, operation, &state.nodes, affinity_ref) {
-                    Ok(node) => node,
-                    Err(_) => continue, // Skip shards with no available nodes
-                };
+            let target_node = match self.select_node(route, operation, &state.nodes, affinity_ref) {
+                Ok(node) => node,
+                Err(_) => continue, // Skip shards with no available nodes
+            };
 
             let is_primary = target_node.node_id == route.primary;
 
@@ -1865,10 +1864,9 @@ mod tests {
     #[tokio::test]
     async fn route_records_affinity_when_registry_is_attached() {
         let reg = crate::cluster::cache_affinity::new_shared();
-        let service =
-            RoutingService::new(RoutingConfig::default())
-                .unwrap()
-                .with_affinity_registry(reg.clone());
+        let service = RoutingService::new(RoutingConfig::default())
+            .unwrap()
+            .with_affinity_registry(reg.clone());
 
         service
             .register_node(healthy_node("node-1"), 100)
@@ -1882,21 +1880,32 @@ mod tests {
         assert_eq!(decision.target_node.node_id, "node-1");
 
         // Affinity must now point at the node we just used.
-        assert_eq!(service.preferred_node_for("coll-x").as_deref(), Some("node-1"));
+        assert_eq!(
+            service.preferred_node_for("coll-x").as_deref(),
+            Some("node-1")
+        );
     }
 
     #[tokio::test]
     async fn affinity_biases_read_among_replicas() {
         // Two healthy replicas; affinity says use the second one.
         let reg = crate::cluster::cache_affinity::new_shared();
-        let service =
-            RoutingService::new(RoutingConfig::default())
-                .unwrap()
-                .with_affinity_registry(reg.clone());
+        let service = RoutingService::new(RoutingConfig::default())
+            .unwrap()
+            .with_affinity_registry(reg.clone());
 
-        service.register_node(healthy_node("primary"), 100).await.unwrap();
-        service.register_node(healthy_node("replica-a"), 100).await.unwrap();
-        service.register_node(healthy_node("replica-b"), 100).await.unwrap();
+        service
+            .register_node(healthy_node("primary"), 100)
+            .await
+            .unwrap();
+        service
+            .register_node(healthy_node("replica-a"), 100)
+            .await
+            .unwrap();
+        service
+            .register_node(healthy_node("replica-b"), 100)
+            .await
+            .unwrap();
 
         let shard_id = service
             .compute_shard_id("coll-y", Some("vec-1"))
@@ -1933,17 +1942,28 @@ mod tests {
         let reg = crate::cluster::cache_affinity::new_shared();
         let mut cfg = RoutingConfig::default();
         cfg.locality_aware = false; // explicitly disable bias
-        let service = RoutingService::new(cfg).unwrap().with_affinity_registry(reg.clone());
+        let service = RoutingService::new(cfg)
+            .unwrap()
+            .with_affinity_registry(reg.clone());
 
-        service.register_node(healthy_node("node-1"), 100).await.unwrap();
-        service.register_node(healthy_node("node-2"), 100).await.unwrap();
+        service
+            .register_node(healthy_node("node-1"), 100)
+            .await
+            .unwrap();
+        service
+            .register_node(healthy_node("node-2"), 100)
+            .await
+            .unwrap();
 
         // Seed affinity for node-2, but locality_aware=false should
         // skip the bias entirely. preferred_node_for still returns
         // the registry entry (it's a read-only query of the data
         // structure), but routing decisions ignore it.
         reg.record_query("coll-z", "node-2");
-        assert_eq!(service.preferred_node_for("coll-z").as_deref(), Some("node-2"));
+        assert_eq!(
+            service.preferred_node_for("coll-z").as_deref(),
+            Some("node-2")
+        );
 
         // Without a shard route the router round-robins through
         // healthy nodes. We can't deterministically check which
@@ -1956,13 +1976,18 @@ mod tests {
     #[tokio::test]
     async fn writes_ignore_affinity_and_target_primary() {
         let reg = crate::cluster::cache_affinity::new_shared();
-        let service =
-            RoutingService::new(RoutingConfig::default())
-                .unwrap()
-                .with_affinity_registry(reg.clone());
+        let service = RoutingService::new(RoutingConfig::default())
+            .unwrap()
+            .with_affinity_registry(reg.clone());
 
-        service.register_node(healthy_node("primary"), 100).await.unwrap();
-        service.register_node(healthy_node("replica-a"), 100).await.unwrap();
+        service
+            .register_node(healthy_node("primary"), 100)
+            .await
+            .unwrap();
+        service
+            .register_node(healthy_node("replica-a"), 100)
+            .await
+            .unwrap();
 
         let shard_id = service
             .compute_shard_id("coll-w", Some("vec-1"))
@@ -1997,12 +2022,14 @@ mod tests {
         let reg = Arc::new(super::CacheAffinityRegistry::with_ttl(
             std::time::Duration::from_millis(10),
         ));
-        let service =
-            RoutingService::new(RoutingConfig::default())
-                .unwrap()
-                .with_affinity_registry(reg.clone());
+        let service = RoutingService::new(RoutingConfig::default())
+            .unwrap()
+            .with_affinity_registry(reg.clone());
 
-        service.register_node(healthy_node("node-1"), 100).await.unwrap();
+        service
+            .register_node(healthy_node("node-1"), 100)
+            .await
+            .unwrap();
 
         reg.record_query("coll-exp", "ghost-node-that-does-not-exist");
         std::thread::sleep(std::time::Duration::from_millis(30));

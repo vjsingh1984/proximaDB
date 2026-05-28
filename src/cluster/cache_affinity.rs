@@ -267,10 +267,7 @@ mod tests {
 
         let entry = reg.entry("coll").unwrap();
         assert_eq!(entry.node_id, "node-2");
-        assert_eq!(
-            entry.query_count, 1,
-            "new node takeover restarts count"
-        );
+        assert_eq!(entry.query_count, 1, "new node takeover restarts count");
     }
 
     #[test]

@@ -26,5 +26,7 @@ pub mod observability;
 /// Phase 6: per-collection pinning control surface (turbopuffer
 /// `/v1/namespaces/:ns/metadata`-style operator API).
 pub mod pinning;
+/// Phase 7.2.4: per-collection cache-affinity operator API.
+pub mod affinity;
 /// REST DTOs + handler for the multi-phase rank pipeline (R-7b)
 pub mod rank;

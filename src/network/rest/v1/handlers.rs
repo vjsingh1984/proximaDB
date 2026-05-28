@@ -54,6 +54,11 @@ pub struct AppState {
     /// `SharedServices.pin_registry` so the REST handlers and the
     /// AxisTieringManager consumer share the same Arc.
     pub pin_registry: Arc<crate::storage::collection_pinning::CollectionPinRegistry>,
+    /// Phase 7.2.4: per-collection cache-affinity registry. Set from
+    /// `SharedServices.affinity_registry` so the REST operator
+    /// endpoints and the `VectorOperationsService` data-plane
+    /// recorder share the same `Arc`.
+    pub affinity_registry: Arc<crate::cluster::cache_affinity::CacheAffinityRegistry>,
     /// PAX segment registry shared with the write path (gRPC v2, Arrow Flight).
     /// Enables Iceberg REST snapshot summaries to reflect real PAX segment stats.
     pub segment_registry: Arc<crate::catalog::SegmentRegistry>,
@@ -123,6 +128,11 @@ impl AppState {
             // REST handlers and the eventual AxisTieringManager
             // consumer share the same Arc.
             pin_registry: crate::storage::collection_pinning::new_shared(),
+            // Default: standalone affinity registry. Production wires
+            // SharedServices.affinity_registry via `with_affinity_registry`
+            // so REST handlers and the search-path recorder share the
+            // same Arc.
+            affinity_registry: crate::cluster::cache_affinity::new_shared(),
             segment_registry: Arc::new(crate::catalog::SegmentRegistry::new()),
             llm_engine,
             doc_port: None,
@@ -145,6 +155,18 @@ impl AppState {
         registry: Arc<crate::storage::collection_pinning::CollectionPinRegistry>,
     ) -> Self {
         self.pin_registry = registry;
+        self
+    }
+
+    /// Inject the process-wide cache-affinity registry (Phase 7.2.4).
+    /// Wired from `SharedServices.affinity_registry` so REST operator
+    /// endpoints and the `VectorOperationsService` recorder share
+    /// the same Arc.
+    pub fn with_affinity_registry(
+        mut self,
+        registry: Arc<crate::cluster::cache_affinity::CacheAffinityRegistry>,
+    ) -> Self {
+        self.affinity_registry = registry;
         self
     }
 
@@ -1139,6 +1161,18 @@ pub fn create_router(state: AppState) -> axum::Router {
         .route(
             "/api/v1/collections/pinning",
             get(crate::network::rest::v1::pinning::list_pins),
+        )
+        // Phase 7.2.4: per-collection cache-affinity inspect/invalidate.
+        // Operators read or drop the affinity hint for routing
+        // re-evaluation. See src/cluster/cache_affinity.rs.
+        .route(
+            "/api/v1/collections/:collection_id/affinity",
+            get(crate::network::rest::v1::affinity::get_affinity)
+                .delete(crate::network::rest::v1::affinity::delete_affinity),
+        )
+        .route(
+            "/api/v1/collections/affinity",
+            get(crate::network::rest::v1::affinity::list_affinity),
         )
         // Health check endpoints
         .route("/health", get(comprehensive_health_check))
