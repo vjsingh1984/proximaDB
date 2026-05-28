@@ -1090,6 +1090,18 @@ impl AxisHnswIndex {
         vectors.len()
     }
 
+    /// Distance metric the HNSW graph was built with. Exposed so
+    /// upstream layers (HMGI router, scorers) can convert the raw
+    /// distance values returned by `search_*` into the canonical
+    /// `SimilarityResult.normalized_score` shape that the rest of
+    /// the stack assumes (higher = better, range [0, 1] for the
+    /// common metrics).
+    pub fn distance_metric(
+        &self,
+    ) -> crate::compute::distance_computation::DistanceMetric {
+        self.config.distance_metric
+    }
+
     /// Get memory usage of the index
     pub fn memory_usage(&self) -> MemoryUsage {
         let total = self.estimate_memory_usage();

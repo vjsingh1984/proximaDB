@@ -198,13 +198,19 @@ impl HmgiQueryCoordinator {
             .await
             .ok_or_else(|| anyhow::anyhow!("Local partition not found: {}", partition))?;
 
+        // See `hmgi/router.rs::search_single_partition_impl` for the
+        // distance→similarity contract — same conversion applies here
+        // because the HNSW index returns raw distances regardless of
+        // which HMGI surface reads them.
         let search_results = index.search_simple(query_vector, top_k).await?;
+        let metric = index.distance_metric();
 
+        use crate::compute::distance_computation::engine::SimilarityResult;
         Ok(search_results
             .into_iter()
-            .map(|(id, similarity)| ScoredResult {
+            .map(|(id, raw_distance)| ScoredResult {
                 vector_id: id,
-                similarity,
+                similarity: SimilarityResult::new(raw_distance, metric).normalized_score,
                 expires_at: None,
             })
             .collect())

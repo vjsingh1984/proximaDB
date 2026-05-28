@@ -268,7 +268,20 @@ impl HmgiRouter {
         .await
     }
 
-    /// Internal implementation for single partition search
+    /// Internal implementation for single partition search.
+    ///
+    /// **Note on score units (recall validation 2026-05-28)**:
+    /// `AxisHnswIndex::search_simple` returns `(id, raw_distance)`
+    /// where the f32 is a metric-native raw *distance* value
+    /// (lower = better — cosine distance in [0, 2] for Cosine, L2
+    /// distance for Euclidean, etc.). For years this was wrapped as
+    /// `ScoredResult { similarity, .. }` verbatim, which was a
+    /// label/contract bug: downstream consumers sort `similarity`
+    /// descending expecting "higher = better", which inverted the
+    /// ranking and produced ~0% recall against the exact path.
+    /// Reconciled by converting through `SimilarityResult` here so
+    /// the value stored as `similarity` is the canonical normalized
+    /// similarity (higher = better, range [0, 1] for common metrics).
     async fn search_single_partition_impl(
         registry: Arc<super::registry::HmgiRegistry>,
         partition: HmgiPartitionKey,
@@ -281,16 +294,23 @@ impl HmgiRouter {
             .await
             .ok_or_else(|| anyhow::anyhow!("Partition not found: {}", partition))?;
 
-        // Search the index using search_simple
-        let results = index.search_simple(query_vector, k).await?;
+        // Search the index using search_simple. Raw distances come
+        // back ascending (best = lowest); the conversion below
+        // normalizes them so consumers can sort descending by
+        // `similarity` and get the closest match first.
+        let raw_distance_results = index.search_simple(query_vector, k).await?;
+        let metric = index.distance_metric();
 
-        // Convert to ScoredResult format
-        let scored_results = results
+        use crate::compute::distance_computation::engine::SimilarityResult;
+        let scored_results = raw_distance_results
             .into_iter()
-            .map(|(id, similarity)| ScoredResult {
-                vector_id: id,
-                similarity,
-                expires_at: None, // TODO: Extract from partition metadata
+            .map(|(id, raw_distance)| {
+                let normalized = SimilarityResult::new(raw_distance, metric).normalized_score;
+                ScoredResult {
+                    vector_id: id,
+                    similarity: normalized,
+                    expires_at: None, // TODO: Extract from partition metadata
+                }
             })
             .collect();
 

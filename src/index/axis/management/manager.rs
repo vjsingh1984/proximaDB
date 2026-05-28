@@ -516,7 +516,18 @@ impl AxisManager {
             .any(|index_spec| matches!(index_spec.data_type, Data::DenseVector { .. }));
 
         if has_dense_vector_index && !processed_vector.oid.is_empty() && !vec_values.is_empty() {
+            let was_enabled = self.is_hmgi_enabled(collection_id).await;
             self.ensure_hmgi_collection_enabled(collection_id).await?;
+            // Diagnostic: log only on the transition (first insert per
+            // collection) so we don't spam at 100K-vector scale.
+            if !was_enabled {
+                tracing::info!(
+                    target: "axis_diag",
+                    site = "ensure_hmgi_collection_enabled",
+                    collection_id = collection_id,
+                    "HMGI enabled for collection"
+                );
+            }
         }
 
         // Insert into global ID index if ID is present
@@ -668,6 +679,12 @@ impl AxisManager {
         let mut selected_filtering_mode: Option<AnnFilteringMode> = None;
 
         let results = if self.is_hmgi_enabled(collection_id).await && hmgi_query_safe {
+            tracing::trace!(
+                target: "axis_diag",
+                site = "axis_manager.query",
+                route = "search_hmgi",
+                "query routed through HMGI"
+            );
             self.search_hmgi(collection_id, &query, query.top_k).await?
         } else if has_filters && effective_mode == AnnFilteringMode::Inline {
             // ADR-011 Inline: thread predicate into HNSW walk (ACORN semantics).
@@ -755,13 +772,34 @@ impl AxisManager {
         algorithm: &IndexAlgorithm,
     ) -> Result<()> {
         if self.is_hmgi_enabled(collection_id).await {
+            tracing::trace!(
+                target: "axis_diag",
+                site = "insert_dense_vector_index",
+                branch = "hmgi",
+                "routing insert through HMGI"
+            );
             self.insert_hmgi(collection_id, vector.clone()).await?;
             return Ok(());
         }
 
         match algorithm {
-            IndexAlgorithm::HNSW { .. } => self.insert_into_hnsw(collection_id, vector).await,
+            IndexAlgorithm::HNSW { .. } => {
+                tracing::trace!(
+                    target: "axis_diag",
+                    site = "insert_dense_vector_index",
+                    branch = "hnsw",
+                    "routing insert through legacy HNSW"
+                );
+                self.insert_into_hnsw(collection_id, vector).await
+            }
             IndexAlgorithm::IVF { .. } | IndexAlgorithm::PQ { .. } => {
+                tracing::trace!(
+                    target: "axis_diag",
+                    site = "insert_dense_vector_index",
+                    branch = "ivf_pq",
+                    algorithm = ?algorithm,
+                    "routing insert through IVF/PQ"
+                );
                 self.insert_into_ivf(collection_id, vector).await
             }
             _ => self.insert_into_hnsw(collection_id, vector).await,
@@ -824,10 +862,10 @@ impl AxisManager {
 
                 // Get collection's distance metric from its config
                 // This ensures HNSW uses the same metric as the collection
-                let distance_metric = self
-                    .get_collection_distance_metric(collection_id)
-                    .await
-                    .unwrap_or(DistanceMetric::DotProduct); // Default to DotProduct for compatibility with FAISS/benchmarks
+                let resolved_metric =
+                    self.get_collection_distance_metric(collection_id).await;
+                let distance_metric =
+                    resolved_metric.unwrap_or(DistanceMetric::DotProduct); // Default to DotProduct for compatibility with FAISS/benchmarks
 
                 // Create HNSW config with collection's distance metric
                 let config = AxisHnswConfig {
@@ -835,6 +873,14 @@ impl AxisManager {
                     ..Default::default()
                 };
 
+                tracing::info!(
+                    target: "axis_diag",
+                    site = "insert_into_hnsw",
+                    collection_id = collection_id,
+                    resolved_metric = ?resolved_metric,
+                    using_metric = ?distance_metric,
+                    "legacy HNSW path resolved metric"
+                );
                 tracing::info!(
                     "🔗 AXIS: Creating HNSW index for collection {} with metric {:?}",
                     collection_id,
@@ -2888,8 +2934,28 @@ impl AxisManager {
             vec_values.len()
         };
 
-        // Get or create partition with default config
+        // Get or create partition with default config.
+        //
+        // **Disparity site (recall investigation 2026-05-28)**:
+        // This uses `AxisHnswConfig::default()` and never consults the
+        // collection's configured metric. That default carries
+        // `distance_metric: Cosine`, so for cosine collections the
+        // metric is correct by coincidence; for any other metric the
+        // HMGI partition would silently use Cosine. The diagnostic
+        // log here records exactly what config the partition was
+        // created with so the bench can verify.
         let config = crate::index::axis::indexes::hnsw_index::AxisHnswConfig::default();
+        tracing::info!(
+            target: "axis_diag",
+            site = "insert_hmgi",
+            collection_id = collection_id,
+            partition = ?partition_key,
+            distance_metric = ?config.distance_metric,
+            m = config.m,
+            ef_construction = config.ef_construction,
+            ef = config.ef,
+            "HMGI partition HNSW config (using AxisHnswConfig::default — does NOT consult collection metric)"
+        );
         let index = registry
             .get_or_create_partition(partition_key.clone(), config, dimension)
             .await?;
@@ -3007,6 +3073,14 @@ impl AxisManager {
 
         // Search across routed partitions
         let results = router.search_partitions(partitions, query).await?;
+
+        tracing::trace!(
+            target: "axis_diag",
+            site = "search_hmgi",
+            n_results = results.len(),
+            top1_score = ?results.first().map(|r| r.similarity),
+            "HMGI router returned scored results"
+        );
 
         Ok(results)
     }

@@ -28,7 +28,7 @@
 //!   cargo bench --bench bench_warm_path_profile
 //! ```
 
-use proximadb::compute::distance_computation::UnifiedDistanceCompute;
+use proximadb::compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute};
 use proximadb::core::search::{SearchMode, SearchParams};
 use proximadb::proto::proximadb_v1::{Collection, CollectionConfig};
 use proximadb::storage::engines::sst::SstEngine;
@@ -103,7 +103,17 @@ where
     S: Subscriber,
 {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-        if event.metadata().target() != "sst_warm_phase" {
+        let target = event.metadata().target();
+        // Diagnostic stream: AXIS decision points and HMGI config
+        // dumps. Printed to stderr verbatim with a formatted dump of
+        // the event fields. Independent of the phase-timing store.
+        if target == "axis_diag" {
+            let mut visitor = DiagVisitor::default();
+            event.record(&mut visitor);
+            eprintln!("[axis_diag] {}", visitor.into_summary());
+            return;
+        }
+        if target != "sst_warm_phase" {
             return;
         }
         let mut visitor = PhaseVisitor {
@@ -116,6 +126,45 @@ where
         {
             store.record(phase, elapsed_us);
         }
+    }
+}
+
+/// Visitor that flattens any tracing event into a sorted key=value
+/// dump. Used for axis_diag events so the bench operator can see what
+/// each decision-point logged without ad-hoc per-event parsers.
+#[derive(Default)]
+struct DiagVisitor {
+    fields: Vec<(String, String)>,
+}
+
+impl DiagVisitor {
+    fn into_summary(self) -> String {
+        let mut entries = self.fields;
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries
+            .into_iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+impl tracing::field::Visit for DiagVisitor {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        self.fields.push((field.name().to_string(), value.to_string()));
+    }
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        self.fields.push((field.name().to_string(), value.to_string()));
+    }
+    fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
+        self.fields.push((field.name().to_string(), value.to_string()));
+    }
+    fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+        self.fields.push((field.name().to_string(), value.to_string()));
+    }
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        self.fields
+            .push((field.name().to_string(), format!("{:?}", value)));
     }
 }
 
@@ -145,6 +194,17 @@ struct BenchConfig {
     /// fallback. Setup time grows by the HNSW build cost
     /// (~O(n log n) NEON distance computes for build).
     axis: bool,
+    /// Distance metric for the collection. Configurable via
+    /// `BENCH_METRIC=cosine|euclidean|dotproduct`. Default: cosine
+    /// (matches the SaaS default the product ships with).
+    ///
+    /// The bench drives the SAME metric through both the exact path
+    /// (engine's `UnifiedDistanceCompute`) and the AXIS path (via
+    /// collection config + shared_collection_cache wiring). This
+    /// makes per-metric QA validation possible — recall mismatch
+    /// then localises to a specific (metric, algorithm) pair instead
+    /// of a global "AXIS is broken" verdict.
+    metric: DistanceMetric,
 }
 
 impl BenchConfig {
@@ -161,7 +221,44 @@ impl BenchConfig {
             approx_mode: env_bool("BENCH_APPROX", false),
             vectorized: env_bool("BENCH_VECTORIZED", false),
             axis: env_bool("BENCH_AXIS", false),
+            metric: parse_metric(std::env::var("BENCH_METRIC").ok().as_deref()),
         }
+    }
+}
+
+/// Resolve `BENCH_METRIC` to a `DistanceMetric`. Defaults to Cosine
+/// to match the SaaS default. Unknown values fall back to Cosine
+/// with a stderr warning (so a typo doesn't silently change semantics).
+fn parse_metric(s: Option<&str>) -> DistanceMetric {
+    match s.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        None | Some("") | Some("cosine") => DistanceMetric::Cosine,
+        Some("euclidean") | Some("l2") => DistanceMetric::Euclidean,
+        Some("dotproduct") | Some("dot") | Some("ip") | Some("innerproduct") => {
+            DistanceMetric::DotProduct
+        }
+        Some("manhattan") | Some("l1") => DistanceMetric::Manhattan,
+        Some(other) => {
+            eprintln!(
+                "[bench warn] unknown BENCH_METRIC={:?}, falling back to Cosine",
+                other
+            );
+            DistanceMetric::Cosine
+        }
+    }
+}
+
+/// Proto enum value the collection config carries for this metric.
+/// Mirrors `proximadb-vector::distance::conversion::internal_distance_to_proto`
+/// but kept inline so the bench compiles without depending on that
+/// crate's surface directly.
+fn metric_proto_code(m: DistanceMetric) -> i32 {
+    match m {
+        DistanceMetric::Cosine => 1,
+        DistanceMetric::Euclidean => 2,
+        DistanceMetric::DotProduct => 3,
+        DistanceMetric::Hamming => 4,
+        DistanceMetric::Manhattan => 5,
+        _ => 1, // unspecified-ish; bench only exercises the common ones
     }
 }
 
@@ -197,7 +294,7 @@ struct SetupResult {
 impl SetupResult {
     async fn run(cfg: &BenchConfig) -> Self {
         let temp_dir = TempDir::new().expect("tempdir");
-        let collection = make_collection(&temp_dir, cfg.dimension);
+        let collection = make_collection(&temp_dir, cfg.dimension, cfg.metric);
         let vectors = synthetic_records(&collection.id, cfg.vector_count, cfg.dimension);
 
         // Slice B: when BENCH_AXIS is on, build the AxisManager and
@@ -206,18 +303,29 @@ impl SetupResult {
         // during `SstEngine::new_with_config`. AXIS construction is
         // expensive enough (background tasks) that we want it once
         // per bench run, not per-iteration.
+        //
+        // **Important**: AxisManager defaults to DotProduct when it
+        // can't find the collection's distance metric (see
+        // src/index/axis/management/manager.rs:830). Without a
+        // shared_collection_cache, AXIS and the exact path would
+        // use different metrics → recall measurement is meaningless.
+        // We inject a minimal cache here so AXIS reads the same
+        // Cosine metric the collection was constructed with.
         if cfg.axis {
-            // OnceLock — safe to call once per process. If a prior
-            // bench iteration set this already, the second set is a
-            // no-op and we live with whichever instance won.
-            let axis_manager = std::sync::Arc::new(
-                proximadb::index::AxisManager::new(
-                    proximadb::index::AxisConfig::default(),
-                )
-                .await
-                .expect("axis manager"),
-            );
-            proximadb::storage::engines::sst::core::set_sst_axis_manager(axis_manager);
+            let mut axis_manager_inner = proximadb::index::AxisManager::new(
+                proximadb::index::AxisConfig::default(),
+            )
+            .await
+            .expect("axis manager");
+
+            let shared_cache = std::sync::Arc::new(dashmap::DashMap::new());
+            shared_cache.insert(collection.id.clone(), std::sync::Arc::new(collection.clone()));
+            axis_manager_inner.set_shared_collection_cache(shared_cache);
+
+            // OnceLock — safe to call once per process.
+            proximadb::storage::engines::sst::core::set_sst_axis_manager(std::sync::Arc::new(
+                axis_manager_inner,
+            ));
         }
 
         let insert_start = Instant::now();
@@ -316,6 +424,7 @@ fn main() {
         cfg.vectorized
     );
     println!("  axis_hnsw:  {} (BENCH_AXIS — orchestrated path)", cfg.axis);
+    println!("  metric:     {:?} (BENCH_METRIC)", cfg.metric);
     println!();
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -345,6 +454,22 @@ fn main() {
             s.drain_and_collect();
         }
 
+        // Recall measurement pass — only meaningful when AXIS is on
+        // (otherwise both paths converge on the same direct scan and
+        // recall is trivially 1.0). 20 queries × top_k is the sample
+        // size; small enough that the ~62 ms-per-exact-query cost is
+        // bounded at ~1.5 s. Larger samples reduce variance but the
+        // mean/min/max we report stabilizes quickly.
+        let recall: Option<RecallStats> = if cfg.axis {
+            let recall_samples = 20usize;
+            println!();
+            println!("📐 Measuring recall@{} over {} queries", cfg.top_k, recall_samples);
+            let stats = measure_recall(&setup, &cfg, recall_samples).await;
+            Some(stats)
+        } else {
+            None
+        };
+
         println!();
         println!("📊 Capturing per-phase timings across {} warm queries", cfg.warm_runs);
 
@@ -356,7 +481,316 @@ fn main() {
 
         let captured = store.lock().unwrap().drain_and_collect();
         print_report(&cfg, &total_us, &captured);
+        if let Some(stats) = recall {
+            print_recall_report(&cfg, &stats);
+        }
     });
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// Recall measurement
+// ────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug)]
+struct RecallStats {
+    /// ID-overlap recall@k per query — fraction of the AXIS top_k
+    /// IDs that ALSO appear in the exact top_k. Strictest measure;
+    /// sensitive to ties (multiple records with very similar
+    /// metric values).
+    id_overlap: Vec<f64>,
+    /// Score-threshold recall@k per query — fraction of the AXIS
+    /// top_k whose true metric score is >= exact's k-th best score
+    /// (for "higher = better" metrics). Independent of how AXIS
+    /// reports score units; measures whether AXIS found candidates
+    /// that are at least as good as exact's worst top-K.
+    score_threshold: Vec<f64>,
+    /// How many of the queries returned identical top_k id sets.
+    perfect_matches: usize,
+}
+
+/// True "higher = better" score between query and record under the
+/// configured metric. Independent of how either path reports its
+/// score, so recall measurements are not corrupted by score-unit
+/// normalization disparities.
+fn true_score(metric: DistanceMetric, query: &[f32], v: &[f32]) -> f32 {
+    match metric {
+        DistanceMetric::Cosine => {
+            let mut dot = 0.0f32;
+            let mut na = 0.0f32;
+            let mut nb = 0.0f32;
+            for j in 0..query.len() {
+                dot += query[j] * v[j];
+                na += query[j] * query[j];
+                nb += v[j] * v[j];
+            }
+            if na == 0.0 || nb == 0.0 {
+                return f32::NEG_INFINITY;
+            }
+            dot / (na.sqrt() * nb.sqrt())
+        }
+        DistanceMetric::DotProduct => {
+            let mut dot = 0.0f32;
+            for j in 0..query.len() {
+                dot += query[j] * v[j];
+            }
+            dot
+        }
+        DistanceMetric::Euclidean => {
+            // L2 distance — invert so higher = more similar.
+            let mut sq = 0.0f32;
+            for j in 0..query.len() {
+                let d = query[j] - v[j];
+                sq += d * d;
+            }
+            -sq.sqrt()
+        }
+        DistanceMetric::Manhattan => {
+            let mut s = 0.0f32;
+            for j in 0..query.len() {
+                s += (query[j] - v[j]).abs();
+            }
+            -s
+        }
+        _ => {
+            // For exotic metrics, fall back to cosine — the bench
+            // surfaces this via the stderr warning in parse_metric.
+            true_score(DistanceMetric::Cosine, query, v)
+        }
+    }
+}
+
+/// For each of `n_queries` random queries, runs both the exact path
+/// (`fallback_to_direct_search`, brute force) and the AXIS HNSW path
+/// (`search_vectors_unified` orchestrated). Computes the set
+/// intersection of returned IDs and reports recall@k.
+async fn measure_recall(setup: &SetupResult, cfg: &BenchConfig, n_queries: usize) -> RecallStats {
+    let collection_id = setup.warm_collection.id.clone();
+    // search_vectors_unified resolves the storage URL via
+    // `ctx.collection_storage_path()` which appends `{collection_id}/data`
+    // to the base location. We must do the same when calling
+    // fallback_to_direct_search directly, otherwise its file discovery
+    // finds zero SST files in the bare base_location.
+    let storage_url = {
+        let probe_params = Arc::new(SearchParams {
+            vector: Some(vec![0.0; cfg.dimension]),
+            top_k: Some(1),
+            ..Default::default()
+        });
+        let probe_ctx =
+            StorageQueryContext::new(probe_params, Arc::clone(&setup.warm_collection));
+        probe_ctx
+            .collection_storage_path()
+            .expect("collection storage path resolves")
+    };
+    let distance_metric = cfg.metric;
+
+    // Capture the original records by id so we can re-derive any
+    // candidate's vector for ground-truth manual cosine. This is
+    // tiny (10K × 768 fp32 ≈ 30 MB at our bench scale).
+    use std::collections::HashMap;
+    let record_lookup: HashMap<String, Vec<f32>> = (0..cfg.vector_count)
+        .map(|i| {
+            let oid = format!("{}_{:08}", setup.warm_collection.id, i);
+            let v: Vec<f32> = (0..cfg.dimension)
+                .map(|j| pseudo_random_f32(i as u64 + 1, j))
+                .collect();
+            (oid, v)
+        })
+        .collect();
+
+    let mut id_overlap = Vec::with_capacity(n_queries);
+    let mut score_threshold = Vec::with_capacity(n_queries);
+    let mut perfect_matches = 0usize;
+
+    for q_idx in 0..n_queries {
+        // Vary the query per iteration so we don't measure recall on
+        // the same vector 20 times. Use the same pseudo-random
+        // generator as the records but with seeds that don't match
+        // any record (records use seeds 1..=count; queries use
+        // 10_000_000 + q_idx). This gives discriminative top-K
+        // results — neighbours are random scattered points, not
+        // a near-continuous sinusoid where many records tie.
+        let query_vector: Vec<f32> = (0..cfg.dimension)
+            .map(|j| pseudo_random_f32(10_000_000 + q_idx as u64, j))
+            .collect();
+
+        // Ground truth: brute force over all SST blocks. Take top_k.
+        let search_params = Arc::new(SearchParams {
+            vector: Some(query_vector.clone()),
+            top_k: Some(cfg.top_k),
+            search_mode: SearchMode::Exact,
+            ..Default::default()
+        });
+        let exact_ctx =
+            StorageQueryContext::new(search_params.clone(), Arc::clone(&setup.warm_collection));
+        let exact = setup
+            .warm_engine
+            .fallback_to_direct_search(
+                &exact_ctx,
+                &collection_id,
+                &storage_url,
+                &query_vector,
+                cfg.top_k,
+                distance_metric,
+                None,
+                true,
+                true,
+            )
+            .await
+            .expect("exact search");
+        let exact_ids: std::collections::HashSet<String> =
+            exact.iter().map(|r| r.id.clone()).collect();
+
+        // AXIS HNSW: same query, but routed through
+        // execute_orchestrated_search.
+        let axis_ctx = StorageQueryContext::new(search_params, Arc::clone(&setup.warm_collection));
+        let axis = setup
+            .warm_engine
+            .search_vectors_unified(&axis_ctx)
+            .await
+            .expect("axis search");
+        let axis_ids: std::collections::HashSet<String> =
+            axis.iter().map(|r| r.id.clone()).collect();
+
+        // Diagnostic: dump the first query's exact + axis IDs to
+        // catch ID-format mismatches early (e.g. exact returns oid
+        // strings but axis returns numeric vector_ids).
+        if q_idx == 0 {
+            // Helper: true cosine sim between query and one of our
+            // synthetic records, re-derived from the bench seed.
+            let true_cosine = |id: &str| -> f32 {
+                let v = match record_lookup.get(id) {
+                    Some(v) => v,
+                    None => return f32::NAN,
+                };
+                let mut dot = 0.0f32;
+                let mut na = 0.0f32;
+                let mut nb = 0.0f32;
+                for j in 0..cfg.dimension {
+                    dot += query_vector[j] * v[j];
+                    na += query_vector[j] * query_vector[j];
+                    nb += v[j] * v[j];
+                }
+                dot / (na.sqrt() * nb.sqrt())
+            };
+            eprintln!(
+                "[recall debug] q0 exact (top {}):  id / reported_score / true_cosine",
+                exact.len().min(5)
+            );
+            for r in exact.iter().take(5) {
+                eprintln!(
+                    "    {} reported={:.6} true_cos={:.6}",
+                    r.id,
+                    r.score,
+                    true_cosine(&r.id)
+                );
+            }
+            eprintln!(
+                "[recall debug] q0 axis  (top {}):  id / reported_score / true_cosine",
+                axis.len().min(5)
+            );
+            for r in axis.iter().take(5) {
+                eprintln!(
+                    "    {} reported={:.6} true_cos={:.6}",
+                    r.id,
+                    r.score,
+                    true_cosine(&r.id)
+                );
+            }
+        }
+
+        let intersection = exact_ids.intersection(&axis_ids).count();
+        let overlap_recall = intersection as f64 / cfg.top_k as f64;
+        id_overlap.push(overlap_recall);
+        if intersection == cfg.top_k {
+            perfect_matches += 1;
+        }
+
+        // Score-threshold recall: independent of how AXIS reports
+        // similarity. Compute the TRUE score (per the configured
+        // metric, "higher = better" normalization) for every record
+        // in both result sets. The exact path's worst (k-th) true
+        // score becomes the bar — AXIS records that meet or beat it
+        // count as recall hits.
+        let mut exact_true_scores: Vec<f32> = exact
+            .iter()
+            .filter_map(|r| record_lookup.get(&r.id).map(|v| true_score(cfg.metric, &query_vector, v)))
+            .collect();
+        exact_true_scores.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        let threshold = exact_true_scores
+            .get(cfg.top_k - 1)
+            .copied()
+            .unwrap_or(f32::NEG_INFINITY);
+        let axis_above_threshold: usize = axis
+            .iter()
+            .filter_map(|r| record_lookup.get(&r.id))
+            .map(|v| true_score(cfg.metric, &query_vector, v))
+            .filter(|s| *s >= threshold)
+            .count();
+        let threshold_recall = axis_above_threshold as f64 / cfg.top_k as f64;
+        score_threshold.push(threshold_recall);
+    }
+
+    RecallStats {
+        id_overlap,
+        score_threshold,
+        perfect_matches,
+    }
+}
+
+fn print_recall_report(cfg: &BenchConfig, stats: &RecallStats) {
+    let n = stats.id_overlap.len();
+    if n == 0 {
+        return;
+    }
+    let summarize = |xs: &[f64]| -> (f64, f64, f64) {
+        let mean = xs.iter().sum::<f64>() / xs.len() as f64;
+        let min = xs.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max = xs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        (mean, min, max)
+    };
+    let (id_mean, id_min, id_max) = summarize(&stats.id_overlap);
+    let (sc_mean, sc_min, sc_max) = summarize(&stats.score_threshold);
+
+    println!();
+    println!("================================================================================");
+    println!("   Recall@{}  (metric={:?})", cfg.top_k, cfg.metric);
+    println!("================================================================================");
+    println!();
+    println!(
+        "  ID-overlap recall (exact-vs-AXIS top-k id intersection / k):"
+    );
+    println!(
+        "      mean: {:.3}   min: {:.3}   max: {:.3}",
+        id_mean, id_min, id_max
+    );
+    println!(
+        "  Score-threshold recall (AXIS records whose true metric score >="
+    );
+    println!("      exact's k-th best score / k):");
+    println!(
+        "      mean: {:.3}   min: {:.3}   max: {:.3}",
+        sc_mean, sc_min, sc_max
+    );
+    println!(
+        "  perfect (identical id sets): {}/{} queries",
+        stats.perfect_matches, n
+    );
+    if sc_mean >= 0.95 {
+        println!("  status:  ✅ score-threshold recall in turbopuffer-class band (>= 0.95)");
+    } else if sc_mean >= 0.90 {
+        println!("  status:  ⚠️  score-threshold recall acceptable but below 95%");
+    } else {
+        println!("  status:  ❌ score-threshold recall below 90% — AXIS not finding good candidates");
+    }
+    if id_mean < sc_mean - 0.05 {
+        println!(
+            "  note:    id-overlap < score-threshold by >5% — AXIS is finding *as-good* records"
+        );
+        println!(
+            "           but not the SAME records (score ties / index ordering variance)."
+        );
+    }
 }
 
 async fn run_one_query(setup: &SetupResult, cfg: &BenchConfig) -> u64 {
@@ -501,12 +935,12 @@ fn print_dist(label: &str, samples: &[u64]) {
 // Synthetic data (mirrors e2e bench)
 // ────────────────────────────────────────────────────────────────────────
 
-fn make_collection(temp_dir: &TempDir, dim: usize) -> Collection {
+fn make_collection(temp_dir: &TempDir, dim: usize, metric: DistanceMetric) -> Collection {
     Collection {
         id: "bench_warm_profile".to_string(),
         config: Some(CollectionConfig {
             dimension: dim as u32,
-            distance_metric: Some(1), // Cosine
+            distance_metric: Some(metric_proto_code(metric)),
             ..Default::default()
         }),
         storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
@@ -515,6 +949,24 @@ fn make_collection(temp_dir: &TempDir, dim: usize) -> Collection {
         }),
         ..Default::default()
     }
+}
+
+/// Deterministic pseudo-random f32 in [-1, 1] from a `(seed, j)` pair.
+/// Uses a splitmix64-style hash so consecutive (i, j) pairs are
+/// uncorrelated — the synthetic vectors look like white-noise points
+/// instead of the smooth sinusoid the older bench used. Smooth
+/// vectors produce many near-tied cosine scores, which makes top-K
+/// non-deterministic between two correct implementations.
+fn pseudo_random_f32(seed: u64, j: usize) -> f32 {
+    let mut x = seed.wrapping_add(j as u64).wrapping_mul(0x9E3779B97F4A7C15);
+    x ^= x >> 30;
+    x = x.wrapping_mul(0xBF58476D1CE4E5B9);
+    x ^= x >> 27;
+    x = x.wrapping_mul(0x94D049BB133111EB);
+    x ^= x >> 31;
+    // Map u32 → [-1, 1)
+    let u = (x as u32) as f32 / u32::MAX as f32;
+    u * 2.0 - 1.0
 }
 
 fn synthetic_records(
@@ -530,7 +982,7 @@ fn synthetic_records(
                 modality: "vector".to_string(),
                 dim: dim as u32,
                 values: proximadb_records::EmbeddingValues::Fp32(
-                    (0..dim).map(|j| ((i + j) as f32 * 0.001).sin()).collect(),
+                    (0..dim).map(|j| pseudo_random_f32(i as u64 + 1, j)).collect(),
                 ),
                 ..Default::default()
             }],
@@ -544,5 +996,10 @@ fn synthetic_records(
 }
 
 fn synthetic_query(dim: usize) -> Vec<f32> {
-    (0..dim).map(|j| (j as f32 * 0.001).sin() + 0.01).collect()
+    // Use a fixed query seed (0) that doesn't match any record seed
+    // (records use i+1, starting at i=0 → seed=1). Combined with the
+    // splitmix64 mixing in pseudo_random_f32, this yields a query
+    // vector uncorrelated with any single record's vector — so
+    // cosine top-K is genuinely informative.
+    (0..dim).map(|j| pseudo_random_f32(0, j)).collect()
 }
