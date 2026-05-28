@@ -596,7 +596,12 @@ pub struct DimensionRange {
 
 /// Simplified enhanced row group stats for the optimized NOVA design
 impl EnhancedRowGroupStats {
-    /// Create basic enhanced stats with simplified fields (optimized design)
+    /// Create basic enhanced stats with simplified fields (optimized design).
+    ///
+    /// Ten labelled stats arguments — each maps directly to a row-group
+    /// metadata field. A builder would not improve readability for the
+    /// (few) call sites.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_basic(
         row_group_id: u32,
         vector_count: u64,

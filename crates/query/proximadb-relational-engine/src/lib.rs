@@ -343,6 +343,10 @@ impl ReaderFactory for EngineReaderFactory {
 /// evolve it independently (e.g. add bloom/zone-map metadata
 /// in Phase 3).
 pub struct InMemoryReader {
+    /// Table name for diagnostics. Read by future EXPLAIN integration;
+    /// currently constructed for observability and kept against
+    /// dead-code lint by `#[allow]`.
+    #[allow(dead_code)]
     table_name: String,
     full_schema: RelationalSchema,
     pk_columns: Vec<usize>,

@@ -10,6 +10,11 @@ use proximadb_rank_core::{
 use proximadb_rank_expr::ExprBlueprint;
 use std::sync::Arc;
 
+/// Mapping from feature/summary name to the executor slot that
+/// produces its value. Aliased to satisfy `clippy::type_complexity`
+/// across three signature sites in this module.
+pub type FeatureExecutorMap = Arc<[(Arc<str>, ExecutorIdx)]>;
+
 /// A validated profile + the factory it resolved against. Cheap to clone
 /// (Arc-shared internals); held in a [`crate::registry::ProfileRegistry`]
 /// behind an `ArcSwap` for lock-free hot-reload.
@@ -112,11 +117,7 @@ fn build_first_program_with_features(
     match_features: &[String],
     summary_features: &[String],
     qctx: &QueryContext,
-) -> RankResult<(
-    RankProgram,
-    Arc<[(Arc<str>, ExecutorIdx)]>,
-    Arc<[(Arc<str>, ExecutorIdx)]>,
-)> {
+) -> RankResult<(RankProgram, FeatureExecutorMap, FeatureExecutorMap)> {
     let mut b = RankProgram::builder();
     let score_idx = b.add(bp.compile_str(score_expr, qctx)?);
     b.set_score(score_idx);

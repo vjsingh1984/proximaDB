@@ -319,10 +319,10 @@ impl ColumnarIdIndex {
                 .bloom_filters
                 .get(idx)
                 .is_none_or(|bloom| bloom.contains(id))
+                && id >= rg_index.id_range.0.as_str()
+                && id <= rg_index.id_range.1.as_str()
             {
-                if id >= rg_index.id_range.0.as_str() && id <= rg_index.id_range.1.as_str() {
-                    candidates.push(idx);
-                }
+                candidates.push(idx);
             }
         }
 

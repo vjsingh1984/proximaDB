@@ -421,10 +421,12 @@ impl VectorBoundsPruner {
             return f32::INFINITY;
         }
         let mut acc: f32 = 0.0;
-        for i in 0..self.component_min.len() {
-            let lo = self.component_min[i];
-            let hi = self.component_max[i];
-            let q = query[i];
+        for ((&lo, &hi), &q) in self
+            .component_min
+            .iter()
+            .zip(self.component_max.iter())
+            .zip(query.iter())
+        {
             // Gap to the closest possible value in [lo, hi].
             let gap = if q < lo {
                 lo - q

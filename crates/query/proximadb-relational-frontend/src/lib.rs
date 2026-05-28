@@ -269,7 +269,7 @@ fn lower_select(
     let has_aggregate_in_projection = select
         .projection
         .iter()
-        .any(|item| projection_contains_aggregate(item));
+        .any(projection_contains_aggregate);
     let has_having = select.having.is_some();
     let needs_aggregate = has_group_by || has_aggregate_in_projection || has_having;
 
@@ -328,8 +328,8 @@ fn lower_select(
     }
 
     // 5) DISTINCT
-    if select.distinct.is_some() {
-        match select.distinct.as_ref().unwrap() {
+    if let Some(distinct) = select.distinct.as_ref() {
+        match distinct {
             Distinct::Distinct => {
                 plan = LogicalNode::Distinct {
                     input: Box::new(plan),
