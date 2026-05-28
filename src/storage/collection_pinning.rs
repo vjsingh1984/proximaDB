@@ -79,6 +79,20 @@ impl CollectionPinTarget {
             Self::Cloud => "cloud",
         }
     }
+
+    /// Map the operator-facing target onto the internal
+    /// `PerformanceTier` vocabulary used by the SST tiering engine.
+    /// Memory → Hot (memory/NVMe), NvmeSsd → Warm (SSD), Cloud → Cold
+    /// (HDD/cloud object storage). Archive isn't reachable through
+    /// pinning — operators pin to keep hot, not to deep-freeze.
+    pub fn to_performance_tier(&self) -> crate::storage::tiering::PerformanceTier {
+        use crate::storage::tiering::PerformanceTier;
+        match self {
+            Self::Memory => PerformanceTier::Hot,
+            Self::NvmeSsd => PerformanceTier::Warm,
+            Self::Cloud => PerformanceTier::Cold,
+        }
+    }
 }
 
 /// One pinned collection's state.
@@ -270,5 +284,22 @@ mod tests {
         assert_eq!(CollectionPinTarget::Memory.label(), "memory");
         assert_eq!(CollectionPinTarget::NvmeSsd.label(), "nvme_ssd");
         assert_eq!(CollectionPinTarget::Cloud.label(), "cloud");
+    }
+
+    #[test]
+    fn target_maps_to_performance_tier() {
+        use crate::storage::tiering::PerformanceTier;
+        assert_eq!(
+            CollectionPinTarget::Memory.to_performance_tier(),
+            PerformanceTier::Hot
+        );
+        assert_eq!(
+            CollectionPinTarget::NvmeSsd.to_performance_tier(),
+            PerformanceTier::Warm
+        );
+        assert_eq!(
+            CollectionPinTarget::Cloud.to_performance_tier(),
+            PerformanceTier::Cold
+        );
     }
 }

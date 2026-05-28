@@ -153,6 +153,13 @@ pub struct SstTieringIntegration {
 
     /// Start time for uptime tracking
     started_at: Option<Instant>,
+
+    /// Phase 6 data-plane wiring: optional pin registry. When set,
+    /// `determine_flush_tier` and `evaluate_collection` consult it
+    /// before applying the access-pattern policy, so operator pins
+    /// override automatic tier decisions. When unset, behaviour is
+    /// the legacy access-pattern-only path.
+    pin_registry: Option<Arc<crate::storage::collection_pinning::CollectionPinRegistry>>,
 }
 
 impl SstTieringIntegration {
@@ -173,7 +180,42 @@ impl SstTieringIntegration {
             engine,
             running: Arc::new(RwLock::new(false)),
             started_at: None,
+            pin_registry: None,
         })
+    }
+
+    /// Phase 6: attach the per-collection pin registry. When set,
+    /// flush-tier selection and migration evaluation defer to the
+    /// operator's pin instead of the access-pattern policy. Wired by
+    /// `SharedServices::new` so the same `Arc` reaches REST handlers
+    /// (control plane) and this integration (data plane).
+    pub fn with_pin_registry(
+        mut self,
+        registry: Arc<crate::storage::collection_pinning::CollectionPinRegistry>,
+    ) -> Self {
+        self.pin_registry = Some(registry);
+        self
+    }
+
+    /// True when [`Self::with_pin_registry`] supplied a registry. Used
+    /// by tests/operators to confirm the data-plane wiring.
+    pub fn pin_registry_configured(&self) -> bool {
+        self.pin_registry.is_some()
+    }
+
+    /// Builder: attach a migration executor so the background eval
+    /// loop dispatches generated `MigrationTask`s to physical byte
+    /// movement. Without this, the engine produces tasks but no bytes
+    /// move (planning-only mode — useful for dry-runs and tests).
+    ///
+    /// Pair with `TierMigrationExecutor::from_tiering_config` so the
+    /// per-tier paths come from the same config block.
+    pub fn with_executor(
+        mut self,
+        executor: Arc<crate::storage::tiering::TierMigrationExecutor>,
+    ) -> Self {
+        self.engine.set_executor(executor);
+        self
     }
 
     /// Create a new integration with default configuration
@@ -321,11 +363,18 @@ impl SstTieringIntegration {
     /// The target performance tier for the data
     pub async fn determine_flush_tier(
         &self,
-        _collection: &str,
+        collection: &str,
         _data_size: u64,
     ) -> PerformanceTier {
-        // For now, always use the default tier for new data
-        // Future: Could use predictive analytics based on collection patterns
+        // Phase 6 data plane: operator pins override the default tier.
+        // When the collection is pinned to `memory`/`nvme_ssd`/`cloud`,
+        // the flush lands on the corresponding `PerformanceTier`. When
+        // unpinned, fall back to the access-pattern-policy default.
+        if let Some(registry) = &self.pin_registry {
+            if let Some(pin) = registry.get(collection) {
+                return pin.target.to_performance_tier();
+            }
+        }
         self.config.default_tier
     }
 
@@ -358,7 +407,43 @@ impl SstTieringIntegration {
             return Ok(Vec::new());
         }
 
-        self.engine.evaluate_collection(collection).await
+        let tasks = self.engine.evaluate_collection(collection).await?;
+
+        // Phase 6 data plane: filter out migrations that would move the
+        // collection AWAY from its pinned tier. The pin is the
+        // operator's explicit intent, so the policy engine's
+        // access-pattern-driven proposal is suppressed for that
+        // collection. Migrations TOWARDS the pinned tier are kept —
+        // that's how a freshly-pinned collection actually catches up.
+        let filtered = match self
+            .pin_registry
+            .as_ref()
+            .and_then(|r| r.get(collection))
+        {
+            Some(pin) => {
+                let pinned_tier = pin.target.to_performance_tier();
+                let kept: Vec<MigrationTask> = tasks
+                    .into_iter()
+                    .filter(|task| {
+                        // Keep when the migration moves the collection
+                        // toward its pinned tier; drop otherwise.
+                        task.target_tier == pinned_tier
+                    })
+                    .collect();
+                if !kept.is_empty() {
+                    tracing::debug!(
+                        collection = %collection,
+                        pinned_tier = ?pinned_tier,
+                        retained = kept.len(),
+                        "tiering: pin-aware filtering kept migrations toward pinned tier"
+                    );
+                }
+                kept
+            }
+            None => tasks,
+        };
+
+        Ok(filtered)
     }
 
     /// Evaluate all tracked collections for migrations
@@ -562,6 +647,109 @@ mod tests {
         assert_eq!(tier, PerformanceTier::Warm);
     }
 
+    // ── Phase 6 Slice 6.4: pin-aware data plane ─────────────────────────
+
+    #[tokio::test]
+    async fn pin_registry_unconfigured_means_flush_tier_uses_config_default() {
+        // Regression: no pin registry attached → behaviour is unchanged
+        // (config.default_tier wins). Guards against the integration
+        // accidentally picking up a stale default from somewhere else.
+        let config = SstTieringConfig {
+            enabled: true,
+            default_tier: PerformanceTier::Warm,
+            ..Default::default()
+        };
+        let integration = SstTieringIntegration::new(config).unwrap();
+        assert!(!integration.pin_registry_configured());
+
+        let tier = integration.determine_flush_tier("test", 1024).await;
+        assert_eq!(tier, PerformanceTier::Warm);
+    }
+
+    #[tokio::test]
+    async fn pin_overrides_flush_tier_to_pinned_target() {
+        use crate::storage::collection_pinning::{
+            new_shared, CollectionPinTarget,
+        };
+        let config = SstTieringConfig {
+            enabled: true,
+            // Default is Warm — pin should override to Hot when the
+            // collection is pinned to memory.
+            default_tier: PerformanceTier::Warm,
+            ..Default::default()
+        };
+        let registry = new_shared();
+        registry.pin("hot-coll", CollectionPinTarget::Memory, 1);
+        let integration = SstTieringIntegration::new(config)
+            .unwrap()
+            .with_pin_registry(registry.clone());
+        assert!(integration.pin_registry_configured());
+
+        // Pinned collection → memory → Hot tier.
+        let tier = integration.determine_flush_tier("hot-coll", 1024).await;
+        assert_eq!(tier, PerformanceTier::Hot);
+
+        // Unpinned collection → fall back to config default.
+        let other = integration.determine_flush_tier("other-coll", 1024).await;
+        assert_eq!(other, PerformanceTier::Warm);
+    }
+
+    #[tokio::test]
+    async fn pin_to_cloud_routes_flush_to_cold_tier() {
+        use crate::storage::collection_pinning::{
+            new_shared, CollectionPinTarget,
+        };
+        let config = SstTieringConfig {
+            enabled: true,
+            default_tier: PerformanceTier::Warm,
+            ..Default::default()
+        };
+        let registry = new_shared();
+        registry.pin("archive-bound", CollectionPinTarget::Cloud, 1);
+        let integration = SstTieringIntegration::new(config)
+            .unwrap()
+            .with_pin_registry(registry);
+
+        let tier = integration
+            .determine_flush_tier("archive-bound", 1024)
+            .await;
+        assert_eq!(
+            tier,
+            PerformanceTier::Cold,
+            "Cloud pin target maps to Cold performance tier"
+        );
+    }
+
+    #[tokio::test]
+    async fn unpinning_collection_restores_config_default_flush_tier() {
+        use crate::storage::collection_pinning::{
+            new_shared, CollectionPinTarget,
+        };
+        let config = SstTieringConfig {
+            enabled: true,
+            default_tier: PerformanceTier::Warm,
+            ..Default::default()
+        };
+        let registry = new_shared();
+        registry.pin("coll", CollectionPinTarget::Memory, 1);
+        let integration = SstTieringIntegration::new(config)
+            .unwrap()
+            .with_pin_registry(registry.clone());
+
+        // While pinned: Hot.
+        assert_eq!(
+            integration.determine_flush_tier("coll", 1024).await,
+            PerformanceTier::Hot
+        );
+
+        // After unpin: back to config default.
+        registry.unpin("coll");
+        assert_eq!(
+            integration.determine_flush_tier("coll", 1024).await,
+            PerformanceTier::Warm
+        );
+    }
+
     #[tokio::test]
     async fn test_start_stop() {
         let config = SstTieringConfig {
@@ -625,5 +813,110 @@ mod tests {
         assert_eq!(metadata.current_tier, PerformanceTier::Warm);
         assert_eq!(metadata.access_count, 50);
         assert_eq!(metadata.size_bytes, 1024 * 1024);
+    }
+
+    // ── Tier-migration wiring contract tests ────────────────────────────
+    //
+    // These tests lock in the attachment + dispatch contract between
+    // SstEngine and SstTieringIntegration. End-to-end tests that exercise
+    // the full search/flush/compaction paths live with their respective
+    // coordinators; here we verify the smaller surface that the engine
+    // can attach an integration and that the disabled / enabled toggles
+    // gate every public hook the engine calls.
+
+    #[tokio::test]
+    async fn engine_starts_with_no_tiering_integration() {
+        use crate::storage::engines::sst::SstEngine;
+        let engine = SstEngine::new().await.unwrap();
+        assert!(
+            engine.tiering_integration().is_none(),
+            "fresh engine must report no tiering integration"
+        );
+    }
+
+    #[tokio::test]
+    async fn engine_attaches_tiering_integration_via_builder() {
+        use crate::storage::engines::sst::SstEngine;
+        let config = SstTieringConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let integration = Arc::new(SstTieringIntegration::new(config).unwrap());
+        let engine = SstEngine::new()
+            .await
+            .unwrap()
+            .with_tiering_integration(Arc::clone(&integration));
+        assert!(
+            engine.tiering_integration().is_some(),
+            "engine must expose the attached integration"
+        );
+    }
+
+    #[tokio::test]
+    async fn disabled_integration_records_no_access_events() {
+        // When `enabled=false`, the search-path hook's `record_access`
+        // call short-circuits inside the integration and never reaches
+        // the AccessTracker. This is what makes the hook a true no-op
+        // for legacy callers who haven't opted into tiering.
+        let config = SstTieringConfig::default(); // enabled=false
+        let integration = SstTieringIntegration::new(config).unwrap();
+
+        integration
+            .record_access("c1", "v1", AccessType::Read, 1024)
+            .await;
+
+        let pattern = integration
+            .engine
+            .access_tracker()
+            .get_pattern("c1", "v1")
+            .await;
+        assert!(
+            pattern.is_none(),
+            "disabled integration must skip access tracker writes entirely"
+        );
+    }
+
+    #[tokio::test]
+    async fn enabled_integration_aggregates_per_item_reads() {
+        // The search-path hook calls `record_access` once per result. A
+        // single search returning N hits must be visible as N read events
+        // on the corresponding pattern. This locks in the cadence so
+        // future heuristics (e.g. "promote after K accesses") have stable
+        // input semantics.
+        let config = SstTieringConfig {
+            enabled: true,
+            ..Default::default()
+        };
+        let integration = SstTieringIntegration::new(config).unwrap();
+
+        for _ in 0..3 {
+            integration
+                .record_access("c1", "v1", AccessType::Read, 2048)
+                .await;
+        }
+
+        let pattern = integration
+            .engine
+            .access_tracker()
+            .get_pattern("c1", "v1")
+            .await
+            .expect("pattern must exist after access events");
+        assert_eq!(pattern.access_count, 3, "each call must increment count");
+    }
+
+    #[tokio::test]
+    async fn evaluate_collection_returns_empty_when_disabled() {
+        // The compaction-path hook calls `evaluate_collection`. When the
+        // integration is disabled it must return Ok(empty) so the
+        // compaction coordinator's logging branch reports zero tasks
+        // rather than producing spurious migration logs.
+        let config = SstTieringConfig::default(); // enabled=false
+        let integration = SstTieringIntegration::new(config).unwrap();
+
+        let tasks = integration.evaluate_collection("c1").await.unwrap();
+        assert!(
+            tasks.is_empty(),
+            "disabled integration must propose no migrations"
+        );
     }
 }

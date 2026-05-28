@@ -313,6 +313,14 @@ impl SharedServices {
             crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
         );
 
+        // Phase 6: per-collection pinning registry constructed up
+        // front so REST handlers (control plane) and the SST
+        // tier-migration integration (data plane) share the same
+        // `Arc`. Operator PATCH calls land in the registry; the
+        // tier-migration integration consults it during flush and
+        // evaluate cycles, overriding policy when a pin is set.
+        let pin_registry = crate::storage::collection_pinning::new_shared();
+
         // Create WAL manager for two-stage search FIRST so the SST
         // engine can read its global manifest singleton when wiring the
         // Phase 5 freshness LSN source.
@@ -398,7 +406,12 @@ impl SharedServices {
                             // Attach the executor BEFORE start() so the
                             // background eval loop, when it wakes, has
                             // somewhere to dispatch migration tasks.
-                            let mut integration = integration.with_executor(executor);
+                            // Attach the pin registry so flush-tier and
+                            // evaluation honor operator pins (Phase 6
+                            // data plane).
+                            let mut integration = integration
+                                .with_executor(executor)
+                                .with_pin_registry(pin_registry.clone());
                             if let Err(e) = integration.start().await {
                                 warn!(
                                     "⚠️ SharedServices: tier-migration integration failed to start ({}); continuing without tiering",
@@ -1178,11 +1191,11 @@ impl SharedServices {
                 // `with_directory_cache` above so the search service can
                 // touch the cache without re-resolving SharedServices.
                 directory_cache,
-                // Phase 6: per-collection pinning registry. Empty at
-                // startup; operator PATCH calls populate it. Not yet
-                // persisted across restarts — operators re-apply pins
-                // after a process bounce.
-                pin_registry: crate::storage::collection_pinning::new_shared(),
+                // Phase 6: per-collection pinning registry.
+                // Constructed up front (line ~322) so REST handlers
+                // (control plane) and the SST tier-migration
+                // integration (data plane) hold the same `Arc`.
+                pin_registry,
                 // T2.3 / TD-066 production wiring: the shared canonical
                 // WAL appender opened earlier (Some when opt_config is
                 // provided). Held here so multi_server.rs can clone it
