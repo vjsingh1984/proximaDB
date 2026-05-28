@@ -294,6 +294,28 @@ SQL, graph traversal, vector similarity, and time-series aggregation share one q
 single query can combine `VECTOR_SEARCH`, `GRAPH_QUERY`, `DOCUMENT_QUERY`, and time-series
 functions without leaving the database.
 
+=== Continuous Serving + Continuous Discovery (CS/CD)
+
+A context database is not just something you query -- it is a system that continuously *improves*
+the unstructured data it holds. Two layers operate over one logical data foundation:
+
+* **Serving**: low-latency retrieval for online RAG, recommendation, personalization, AI memory,
+  and real-time agents.
+* **Discovery**: offline refinement -- deduplication, reclustering, re-embedding as models evolve,
+  quality/drift/bias scans, and agent-trajectory analysis.
+
+These form a flywheel: serving generates feedback and new data; discovery analyzes and improves it;
+the improvements (cleaner datasets, better embeddings, rebuilt indexes, richer metadata) flow back
+into serving by *atomically* publishing a new catalog snapshot -- serving reads the prior snapshot
+until the new data and indexes are ready, never exposing half-built state. The goal is that every
+turn of the loop makes the next turn better, without the multi-day export/reprocess/re-import
+pipelines that make most teams skip continuous discovery today.
+
+This is the half of the architecture that turns ProximaDB from a serving engine into a data
+foundation. The continuous-loop and elastic-compute work is tracked in
+link:../12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc[the Vector Lakebase alignment trajectory]
+and TD-086..TD-091.
+
 === Deployment Neutrality
 
 Object store, local disk, or hybrid. Compute can be embedded (in-process) or distributed
@@ -382,7 +404,14 @@ Establish category leadership with enterprise-grade capabilities and ecosystem a
 
 **Milestones**:
 
-* Serverless deployment mode: zero-configuration scaling
+* Continuous Discovery loop: cataloged discovery jobs (dedup, recluster, re-embed, quality/drift
+  scans) that read a pinned snapshot and republish improved data + indexes atomically into serving
+  (CS/CD flywheel; TD-086)
+* Serverless deployment mode: zero-configuration scaling via three elastic compute modes
+  (long-running / on-demand minute-billed / offline-batch) over one logical store, with a
+  resources-follow-data scheduler and engineered scale-to-zero cold start (TD-087, TD-088, TD-089)
+* External Collection: build and maintain ProximaDB-owned vector/inverted/JSON indexes over
+  external lake-resident data (Iceberg/Lance/Parquet) without copying it (TD-090, TD-091)
 * CNCF graduation or equivalent open-source ecosystem milestone
 * Published benchmarks and reference architectures across industries (fintech, healthcare, legal,
   e-commerce)

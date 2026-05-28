@@ -28,6 +28,8 @@ This roadmap implements the three-phase approach from link:../../concepts/vision
 * Phase 3: Deployment and Ecosystem Integration (Scale)
 * Phase 4: Context Database Evolution (Time-Series, Event Sourcing, Hybrid Search)
 * Phase 5: Agentic Intelligence & Research Frontier (2026 Strategy)
+* Phase 7: Competitive Platform Architecture & Storage Authority (2026+)
+* Phase 8: Continuous Data Loop & Elastic Compute (CS/CD, scale-to-zero, External Collection)
 
 
 == Status Legend
@@ -662,6 +664,42 @@ maturity justifies consolidation. The governing documents are:
 | Intent Classification | 💡 Nice to Have | LLM-based admin assistant
 | Query Generation | 💡 Nice to Have | SQL from natural language
 | Slack/Discord Bots | 💡 Nice to Have | ChatOps integration
+|===
+
+== Phase 8: Continuous Data Loop And Elastic Compute [📅 NEW 2026+]
+
+[.lead]
+_Continuous Serving + Continuous Discovery (CS/CD): turn ProximaDB from a serving engine into a data
+foundation that continuously improves its unstructured data and runs that loop economically via
+elastic compute over one logical store._
+
+[IMPORTANT]
+====
+Phase 8 internalizes the "Vector Lakebase" industry signal (Zilliz, 2026-05-26) without rebranding
+away from "The Context Database" — the Context Database category is a superset of Vector Lakebase.
+The governing document is `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc`, which contains
+the full trend analysis and the alignment scorecard. These workstreams realize the 2028 VISION
+"serverless deployment mode" milestone with a concrete mechanism.
+====
+
+=== Continuous Discovery Loop
+
+|===
+| Feature | Status | TD ID | Notes
+
+| Continuous Discovery surface + atomic republish | 📅 Phase 8 | TD-086 | `DiscoveryJob` catalog asset (dedup, recluster, re-embed, drift/quality scan, agent-trajectory analysis) reads a pinned snapshot; completion republishes new data + rebuilt indexes as a new snapshot with an atomic serving switch. Mostly composition over manifest/branch versioning + projection freshness state machine + `compute_route`; converts `src/automl/` into the offline arm of the flywheel.
+| External Collection (index-in-place over lake data) | 📅 Phase 8 | TD-090 | ProximaDB-owned vector/inverted/JSON indexes over external-resident Iceberg/Lance/Parquet data, un-copied and externally governed. Extends `FederatedRead`/`ExternalAuthoritative` from read/federate to index-in-place. Lets the discovery loop cover lake data, not just imported data.
+| Lance format interoperability | 📅 Phase 8 | TD-091 | Lance as read/import/external-index substrate alongside Iceberg/Delta/Hudi/Parquet. Gates External Collection for Lance-resident corpora.
+|===
+
+=== Elastic Compute And Scale-To-Zero Economics
+
+|===
+| Feature | Status | TD ID | Notes
+
+| Scale-to-zero cold path (binary-first two-stage + IVF pruning) | 📅 Phase 8 | TD-087 | Cold-path index profile loads a compact binary/RaBitQ-style representation first; two-stage rerank with disclosed recall envelope (`RecallProbeGate` TD-075 + predicate-aware disclosure TD-064); IVF pruning bounds bytes-touched-per-query. Makes scale-to-zero usable for large vector workloads.
+| Point-read I/O amplification (point-read-optimized lake layout) | 📅 Phase 8 | TD-088 | PAX row-aligned column-group mode + evaluate open Vortex format for point-read-heavy collections; serving (point read) and discovery (scan) over one logical copy.
+| Elastic compute modes + resources-follow-data scheduler | 📅 Phase 8 | TD-089 | `Long-running` / `OnDemand` (minute-billed) / `OfflineBatch` modes over one logical store; warm-pool scheduler attaches a pinned snapshot on request, releases on idle, metadata stays queryable with zero resident compute. Depends on TD-077 (distributed transport); gated by TD-087/TD-088 making scale-to-zero economical first.
 |===
 
 == Documentation Status
