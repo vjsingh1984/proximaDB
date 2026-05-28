@@ -354,6 +354,107 @@ impl AggregatedBatchStats {
     }
 }
 
+/// Read-side bounds pruner (TD-040). Given a row group's per-dimension
+/// vector component bounds (collected at write time via
+/// `StreamingParquetWriterStats::update_vector_bounds`), computes a
+/// lower-bound L2 distance from a query vector to ANY vector that
+/// could be in the row group. If that lower-bound already exceeds the
+/// current top-k threshold, the row group can be safely skipped — no
+/// vector inside it can score better than the threshold.
+///
+/// Construction:
+/// - From a `StreamingParquetWriterStats` instance via [`Self::from_stats`].
+/// - From explicit bounds via [`Self::from_bounds`].
+///
+/// Pruning is conservative (false-positives only — never skip a row
+/// group that contains a beating vector) because the lower-bound
+/// distance is exact: for any q and any v in the bounding box,
+/// L2(q, v)² ≥ Σ max(0, max(q[i] - max_i, min_i - q[i]))².
+#[derive(Debug, Clone, PartialEq)]
+pub struct VectorBoundsPruner {
+    component_min: Vec<f32>,
+    component_max: Vec<f32>,
+}
+
+impl VectorBoundsPruner {
+    /// Build from explicit per-dimension component bounds. Returns
+    /// `None` when bounds are empty or have mismatched dimensions —
+    /// the caller treats `None` as "no pruning available, scan the
+    /// row group anyway."
+    pub fn from_bounds(component_min: Vec<f32>, component_max: Vec<f32>) -> Option<Self> {
+        if component_min.is_empty() || component_min.len() != component_max.len() {
+            return None;
+        }
+        Some(Self {
+            component_min,
+            component_max,
+        })
+    }
+
+    /// Build from a `StreamingParquetWriterStats` instance. Returns
+    /// `None` when the stats don't carry component bounds (the row
+    /// group was written before TD-040 stats landed, or
+    /// `update_vector_bounds` was never called for it).
+    pub fn from_stats(stats: &StreamingParquetWriterStats) -> Option<Self> {
+        let comp_min = stats.vector_component_min.clone()?;
+        let comp_max = stats.vector_component_max.clone()?;
+        Self::from_bounds(comp_min, comp_max)
+    }
+
+    /// The dimensionality the pruner was built for.
+    pub fn dim(&self) -> usize {
+        self.component_min.len()
+    }
+
+    /// Lower-bound L2 distance² from `query` to the row group's
+    /// per-dimension bounding box. For each dimension, the closest
+    /// possible vector component in the box is clamped(`query[i]`,
+    /// min_i, max_i); the gap from `query[i]` to that clamp squared,
+    /// summed across dims, is the lower bound on L2².
+    ///
+    /// Returns `f32::INFINITY` if the dimension doesn't match — the
+    /// caller treats infinite lower-bound as "always skip" which
+    /// would prune a real hit, so callers must verify `query.len()
+    /// == self.dim()` before calling.
+    pub fn lower_bound_l2_squared(&self, query: &[f32]) -> f32 {
+        if query.len() != self.component_min.len() {
+            return f32::INFINITY;
+        }
+        let mut acc: f32 = 0.0;
+        for i in 0..self.component_min.len() {
+            let lo = self.component_min[i];
+            let hi = self.component_max[i];
+            let q = query[i];
+            // Gap to the closest possible value in [lo, hi].
+            let gap = if q < lo {
+                lo - q
+            } else if q > hi {
+                q - hi
+            } else {
+                0.0
+            };
+            acc += gap * gap;
+        }
+        acc
+    }
+
+    /// Returns `true` when the row group's lower-bound L2² exceeds
+    /// the supplied threshold² — i.e., no vector in the row group
+    /// can score better than the threshold under L2 distance, so the
+    /// caller can skip the whole row group.
+    ///
+    /// `threshold` is a distance (not squared). The squared check is
+    /// pure ALU work; sqrt cost is amortized by the caller passing in
+    /// an already-tracked top-k threshold.
+    pub fn should_prune_l2(&self, query: &[f32], threshold: f32) -> bool {
+        if !threshold.is_finite() {
+            return false;
+        }
+        let lb_sq = self.lower_bound_l2_squared(query);
+        lb_sq > threshold * threshold
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -482,6 +583,93 @@ mod tests {
         assert!(summary.contains("Bloom filters: 2"));
     }
 
+    // === TD-040: Vector bounds tests ===
+
+    #[test]
+    fn test_update_vector_bounds_empty() {
+        let mut stats = StreamingParquetWriterStats::new();
+        stats.update_vector_bounds(&[]);
+        // Should not crash, all bounds remain None
+        assert!(stats.vector_norm_min.is_none());
+        assert!(stats.vector_norm_max.is_none());
+    }
+
+    #[test]
+    fn test_update_vector_bounds_single_vector() {
+        let mut stats = StreamingParquetWriterStats::new();
+        stats.total_records = 0; // Start with 0, mean calculated as 5.0 / (0+1) = 5.0
+        let vectors = vec![vec![3.0, 4.0]]; // L2 norm = 5.0
+        stats.update_vector_bounds(&vectors);
+
+        assert_eq!(stats.vector_norm_min, Some(5.0));
+        assert_eq!(stats.vector_norm_max, Some(5.0));
+        // Mean = 5.0 / (0 + 1) = 5.0
+        assert!((stats.vector_norm_mean.unwrap() - 5.0).abs() < 1e-6);
+        assert_eq!(stats.vector_component_min, Some(vec![3.0, 4.0]));
+        assert_eq!(stats.vector_component_max, Some(vec![3.0, 4.0]));
+    }
+
+    #[test]
+    fn test_update_vector_bounds_multiple_vectors() {
+        let mut stats = StreamingParquetWriterStats::new();
+        stats.total_records = 0; // Start with 0 existing records
+        let vectors = vec![
+            vec![0.0, 0.0], // L2 norm = 0.0
+            vec![3.0, 4.0], // L2 norm = 5.0
+        ];
+        stats.update_vector_bounds(&vectors);
+
+        assert_eq!(stats.vector_norm_min, Some(0.0));
+        assert_eq!(stats.vector_norm_max, Some(5.0));
+        // Mean = (0.0 + 5.0) / (0 + 2) = 2.5
+        assert!((stats.vector_norm_mean.unwrap() - 2.5).abs() < 1e-6);
+        assert_eq!(stats.vector_component_min, Some(vec![0.0, 0.0]));
+        assert_eq!(stats.vector_component_max, Some(vec![3.0, 4.0]));
+    }
+
+    #[test]
+    fn test_update_vector_bounds_accumulates() {
+        let mut stats = StreamingParquetWriterStats::new();
+
+        // First batch with 1 existing record (total_records = 1)
+        stats.total_records = 1;
+        let vectors1 = vec![vec![1.0, 2.0]]; // L2 norm ≈ 2.236
+        stats.update_vector_bounds(&vectors1);
+
+        // After first call, total_records is still 1 (we don't update it in the function)
+        // But the mean is calculated as: (0.0 * 1 + 2.236) / (1 + 1) = 2.236 / 2 ≈ 1.118
+        let first_mean = stats.vector_norm_mean.unwrap();
+
+        // Second batch - increment total_records to simulate accumulation
+        stats.total_records = 2; // Now we have 2 existing records
+        let vectors2 = vec![vec![5.0, 12.0]]; // L2 norm = 13.0
+        stats.update_vector_bounds(&vectors2);
+
+        // Check that bounds are updated correctly
+        assert_eq!(stats.vector_norm_max, Some(13.0));
+        // Mean should now incorporate previous mean
+        assert!(stats.vector_norm_mean.unwrap() > first_mean);
+    }
+
+    #[test]
+    fn test_update_vector_bounds_dimension_mismatch() {
+        let mut stats = StreamingParquetWriterStats::new();
+        stats.total_records = 2;
+
+        // First batch with 2D vectors
+        let vectors1 = vec![vec![1.0, 2.0]];
+        stats.update_vector_bounds(&vectors1);
+
+        // Second batch with different dimension - should reset bounds
+        let vectors2 = vec![vec![1.0, 2.0, 3.0]]; // 3D vector
+        stats.total_records = 3;
+        stats.update_vector_bounds(&vectors2);
+
+        // After dimension mismatch, bounds should be reset for new dimension
+        assert_eq!(stats.vector_component_min.unwrap().len(), 3);
+        assert_eq!(stats.vector_component_max.unwrap().len(), 3);
+    }
+
     // === BatchWriteStats tests ===
 
     #[test]
@@ -589,5 +777,90 @@ mod tests {
         };
         agg.add_batch(&batch);
         assert_eq!(agg.min_batch_size, 50);
+    }
+
+    // ---------------- TD-040 read-side: VectorBoundsPruner ----------------
+
+    #[test]
+    fn pruner_from_bounds_rejects_mismatched_dimensions() {
+        // Length mismatch / empty → None (caller falls back to scan).
+        assert!(VectorBoundsPruner::from_bounds(vec![], vec![]).is_none());
+        assert!(VectorBoundsPruner::from_bounds(vec![0.0, 1.0], vec![2.0]).is_none());
+    }
+
+    #[test]
+    fn pruner_from_stats_returns_none_without_bounds() {
+        let stats = StreamingParquetWriterStats::default();
+        assert!(VectorBoundsPruner::from_stats(&stats).is_none());
+    }
+
+    #[test]
+    fn pruner_from_stats_round_trips_through_update_vector_bounds() {
+        let mut stats = StreamingParquetWriterStats::default();
+        stats.update_vector_bounds(&[vec![0.0, 1.0, 2.0], vec![1.0, 2.0, 3.0]]);
+        let p = VectorBoundsPruner::from_stats(&stats).expect("bounds populated");
+        assert_eq!(p.dim(), 3);
+    }
+
+    #[test]
+    fn lower_bound_l2_squared_zero_when_query_inside_box() {
+        // Query lies entirely within the box → gap=0 on every dim →
+        // lower-bound² = 0. Pruner can't prove anything; the
+        // caller must scan.
+        let p = VectorBoundsPruner::from_bounds(vec![0.0, 0.0], vec![10.0, 10.0]).unwrap();
+        let lb = p.lower_bound_l2_squared(&[5.0, 5.0]);
+        assert!(lb.abs() < 1e-6, "expected ~0, got {lb}");
+    }
+
+    #[test]
+    fn lower_bound_l2_squared_uses_per_dimension_clamp_gap() {
+        // Box is [0,10] on each of 2 dims. Query is (-3, 12) which is
+        // 3 below dim0 min, 2 above dim1 max. Lower-bound² = 9+4=13.
+        let p = VectorBoundsPruner::from_bounds(vec![0.0, 0.0], vec![10.0, 10.0]).unwrap();
+        let lb = p.lower_bound_l2_squared(&[-3.0, 12.0]);
+        assert!((lb - 13.0).abs() < 1e-5, "expected 13.0, got {lb}");
+    }
+
+    #[test]
+    fn lower_bound_l2_squared_returns_infinity_on_dim_mismatch() {
+        let p = VectorBoundsPruner::from_bounds(vec![0.0; 4], vec![1.0; 4]).unwrap();
+        assert_eq!(p.lower_bound_l2_squared(&[0.0; 2]), f32::INFINITY);
+    }
+
+    #[test]
+    fn should_prune_l2_prunes_when_lower_bound_exceeds_threshold() {
+        // Box [0,10]² with query (-3, 12) → lb² = 13, lb ≈ 3.606.
+        // Threshold of 3.0 → 3² = 9 < 13 → prune.
+        let p = VectorBoundsPruner::from_bounds(vec![0.0, 0.0], vec![10.0, 10.0]).unwrap();
+        assert!(p.should_prune_l2(&[-3.0, 12.0], 3.0));
+        // Threshold of 4.0 → 4² = 16 > 13 → don't prune.
+        assert!(!p.should_prune_l2(&[-3.0, 12.0], 4.0));
+    }
+
+    #[test]
+    fn should_prune_l2_never_prunes_with_infinite_threshold() {
+        // Infinite threshold = "no current top-k bound" — caller must
+        // scan everything to seed the heap. Pruner must NOT short-
+        // circuit even when the bounding box is far from the query.
+        let p = VectorBoundsPruner::from_bounds(vec![0.0, 0.0], vec![10.0, 10.0]).unwrap();
+        assert!(!p.should_prune_l2(&[-1000.0, -1000.0], f32::INFINITY));
+    }
+
+    #[test]
+    fn should_prune_l2_doesnt_prune_query_inside_box() {
+        // Query inside box → lb=0; any finite threshold ≥ 0 → don't
+        // prune (the row group could contain a perfect match).
+        let p = VectorBoundsPruner::from_bounds(vec![0.0, 0.0], vec![10.0, 10.0]).unwrap();
+        assert!(!p.should_prune_l2(&[5.0, 5.0], 1.0));
+        assert!(!p.should_prune_l2(&[5.0, 5.0], 0.5));
+    }
+
+    #[test]
+    fn should_prune_l2_handles_degenerate_zero_threshold() {
+        // Threshold = 0 means "only exact matches count." Anywhere the
+        // lower bound > 0, prune.
+        let p = VectorBoundsPruner::from_bounds(vec![0.0, 0.0], vec![10.0, 10.0]).unwrap();
+        assert!(p.should_prune_l2(&[-1.0, 5.0], 0.0));
+        assert!(!p.should_prune_l2(&[5.0, 5.0], 0.0));
     }
 }
