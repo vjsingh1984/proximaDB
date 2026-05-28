@@ -705,6 +705,62 @@ mod tests {
     }
 
     #[test]
+    fn build_succeeds_without_registry() {
+        // `build()` is the registry-free constructor used by callers
+        // that want the metric handles for inspection/test but don't
+        // need them registered against a Prometheus registry. Verify
+        // the call path is clean (no panic on duplicate-handle init,
+        // no missing-field errors).
+        let metrics = RankPipelineMetrics::build().unwrap();
+        // Smoke every typed setter so each underlying handle's label
+        // arity is exercised. Without a registry these emits stay
+        // local to the handles — no scrape side-effects.
+        metrics.observe_feature_latency_us("p", "first", "f", 1.0);
+        metrics.observe_phase_latency_us("p", "first", 1.0);
+        metrics.inc_phase_truncated("p", "first", "budget");
+        metrics.inc_profile_reload("p", "ok");
+        metrics.observe_feature_contribution("p", "f", 0.5);
+        metrics.set_model_cache_hit_ratio("m", 0.5);
+        metrics.set_model_cache_size_bytes(1024);
+        metrics.inc_model_evictions("m", "budget");
+        metrics.inc_model_inflight_loads();
+        metrics.dec_model_inflight_loads();
+        // Reaching here means every typed setter dispatched against
+        // a real underlying handle (no Option::None panics, no
+        // mismatched label arity).
+    }
+
+    #[test]
+    fn observe_phase_latency_us_records_per_profile_per_phase() {
+        // Direct test for observe_phase_latency_us — the orchestrator
+        // already exercises this via handle_rank_search_with_metrics,
+        // but a focused test pins the label set so a refactor of the
+        // setter shape can't break it silently.
+        let registry = Registry::new();
+        let metrics = RankPipelineMetrics::register(&registry).unwrap();
+        metrics.observe_phase_latency_us("p1", "first", 1500.0);
+        metrics.observe_phase_latency_us("p1", "first", 2500.0);
+        metrics.observe_phase_latency_us("p1", "second", 50_000.0);
+        metrics.observe_phase_latency_us("p2", "first", 1000.0);
+
+        let p1_first = metrics
+            .phase_latency_us
+            .with_label_values(&["p1", "first"])
+            .get_sample_count();
+        let p1_second = metrics
+            .phase_latency_us
+            .with_label_values(&["p1", "second"])
+            .get_sample_count();
+        let p2_first = metrics
+            .phase_latency_us
+            .with_label_values(&["p2", "first"])
+            .get_sample_count();
+        assert_eq!(p1_first, 2);
+        assert_eq!(p1_second, 1);
+        assert_eq!(p2_first, 1);
+    }
+
+    #[test]
     fn register_succeeds_on_fresh_registry() {
         let registry = Registry::new();
         let metrics = RankPipelineMetrics::register(&registry).unwrap();
