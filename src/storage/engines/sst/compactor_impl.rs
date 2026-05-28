@@ -833,7 +833,7 @@ impl SstCompactor {
                 });
             }
             CompactionSortStrategy::ByTimestamp => {
-                records.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)); // Newest first
+                records.sort_by_key(|r| std::cmp::Reverse(r.timestamp)); // Newest first
             }
             CompactionSortStrategy::ByMetadata(keys) => {
                 records.sort_by(|a, b| {

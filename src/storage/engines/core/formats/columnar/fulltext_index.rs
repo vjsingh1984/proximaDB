@@ -1222,7 +1222,7 @@ impl FullTextIndex {
             .map(|(term, pl)| (term.clone(), pl.doc_frequency))
             .collect();
 
-        terms.sort_by(|a, b| b.1.cmp(&a.1));
+        terms.sort_by_key(|t| std::cmp::Reverse(t.1));
         terms.truncate(limit);
         terms
     }

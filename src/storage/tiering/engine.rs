@@ -155,7 +155,7 @@ impl TieringPolicyEngine {
         let mut policies = self.policies.write().await;
         policies.push(policy);
         // Sort by priority (higher first)
-        policies.sort_by(|a, b| b.priority.cmp(&a.priority));
+        policies.sort_by_key(|p| std::cmp::Reverse(p.priority));
         info!("Added tiering policy, total policies: {}", policies.len());
     }
 

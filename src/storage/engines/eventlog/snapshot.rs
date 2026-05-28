@@ -307,7 +307,7 @@ impl SnapshotManager {
 
             if entity_snapshots.len() > keep_latest {
                 // Sort by sequence descending and keep latest N
-                entity_snapshots.sort_by(|a, b| b.sequence.cmp(&a.sequence));
+                entity_snapshots.sort_by_key(|s| std::cmp::Reverse(s.sequence));
                 entity_snapshots.truncate(keep_latest);
 
                 // Delete files for removed snapshots

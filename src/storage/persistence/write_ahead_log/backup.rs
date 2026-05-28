@@ -520,7 +520,7 @@ impl BackupCoordinator {
     pub async fn list_backups(&self) -> Vec<BackupMetadata> {
         let backups = self.backups.read().await;
         let mut list: Vec<_> = backups.values().cloned().collect();
-        list.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        list.sort_by_key(|b| std::cmp::Reverse(b.started_at));
         list
     }
 

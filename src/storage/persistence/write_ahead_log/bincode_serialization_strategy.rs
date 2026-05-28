@@ -643,7 +643,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         batches.extend(disk_batches);
 
         // 3. Sort by timestamp to maintain chronological order
-        batches.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        batches.sort_by_key(|b| b.timestamp);
 
         match limit {
             Some(n) => Ok(batches.into_iter().take(n).collect()),

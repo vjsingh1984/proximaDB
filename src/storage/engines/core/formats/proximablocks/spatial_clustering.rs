@@ -1029,7 +1029,7 @@ where
         .collect();
 
     // Step 5: Sort by curve position
-    clustered.sort_by(|a, b| a.0.cmp(&b.0));
+    clustered.sort_by_key(|c| c.0);
 
     // Step 6: Extract sorted blocks, entries, and codes
     let (codes, blocks, index_entries): (Vec<u64>, Vec<B>, Vec<I>) = clustered.into_iter().fold(

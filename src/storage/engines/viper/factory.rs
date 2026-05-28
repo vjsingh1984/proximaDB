@@ -787,7 +787,7 @@ impl VectorProcessor for StandardVectorProcessor {
 
         // Standard processing: sort by timestamp
         if self.config.enable_preprocessing {
-            records.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+            records.sort_by_key(|r| r.timestamp);
         }
 
         let processing_time = start_time.elapsed().as_millis() as u64;
