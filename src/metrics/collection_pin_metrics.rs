@@ -24,9 +24,7 @@
 //! scrape cadence.
 
 use lazy_static::lazy_static;
-use prometheus::{
-    CounterVec, IntGaugeVec, Opts, register_counter_vec, register_int_gauge_vec,
-};
+use prometheus::{CounterVec, IntGaugeVec, Opts, register_counter_vec, register_int_gauge_vec};
 use tracing::error;
 
 use crate::storage::collection_pinning::CollectionPinTarget;
@@ -196,9 +194,7 @@ mod tests {
     fn inc_dec_current_pin_round_trip_leaves_gauge_unchanged() {
         // Re-pin semantics: a transition memory→nvme_ssd should
         // decrement memory by 1 and increment nvme_ssd by 1.
-        let before_memory = COLLECTION_PINS_CURRENT
-            .with_label_values(&["memory"])
-            .get();
+        let before_memory = COLLECTION_PINS_CURRENT.with_label_values(&["memory"]).get();
         let before_nvme = COLLECTION_PINS_CURRENT
             .with_label_values(&["nvme_ssd"])
             .get();
@@ -208,9 +204,7 @@ mod tests {
         inc_current_pin(CollectionPinTarget::NvmeSsd);
 
         assert_eq!(
-            COLLECTION_PINS_CURRENT
-                .with_label_values(&["memory"])
-                .get(),
+            COLLECTION_PINS_CURRENT.with_label_values(&["memory"]).get(),
             before_memory,
             "memory gauge must net out to zero after balanced inc/dec"
         );
@@ -236,9 +230,7 @@ mod tests {
         reset_current_pins(7, 3, 1);
 
         assert_eq!(
-            COLLECTION_PINS_CURRENT
-                .with_label_values(&["memory"])
-                .get(),
+            COLLECTION_PINS_CURRENT.with_label_values(&["memory"]).get(),
             7
         );
         assert_eq!(
@@ -248,9 +240,7 @@ mod tests {
             3
         );
         assert_eq!(
-            COLLECTION_PINS_CURRENT
-                .with_label_values(&["cloud"])
-                .get(),
+            COLLECTION_PINS_CURRENT.with_label_values(&["cloud"]).get(),
             1
         );
     }

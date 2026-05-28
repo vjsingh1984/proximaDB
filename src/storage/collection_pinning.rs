@@ -278,9 +278,7 @@ impl CollectionPinRegistry {
             replicas,
             pinned_at_ns,
         };
-        let previous = self
-            .pinned
-            .insert(collection_id.into(), state.clone());
+        let previous = self.pinned.insert(collection_id.into(), state.clone());
         self.persist_if_configured();
 
         // Metrics: always count the pin op. For the current-pins

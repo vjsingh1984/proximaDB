@@ -1453,7 +1453,6 @@ struct CostAnalysis {
     #[allow(dead_code)]
     total_cost: f64,
     filter_cost: Option<f64>,
-    search_cost: Option<f64>,
     #[allow(dead_code)]
     index_cost: Option<f64>,
     filter_selectivity: Option<f64>,
@@ -2421,7 +2420,6 @@ impl UnifiedQueryOptimizer {
         Ok(CostAnalysis {
             total_cost,
             filter_cost,
-            search_cost,
             index_cost: None, // Could be populated from index_capabilities cache
             filter_selectivity: Some(combined_selectivity),
             filters,
