@@ -690,10 +690,10 @@ fn flatten_f64_values(values: &[Option<f64>]) -> (Vec<f64>, u32) {
 fn is_i64_sorted(values: &[Option<i64>]) -> bool {
     let mut previous = None;
     for value in values.iter().flatten() {
-        if let Some(previous) = previous {
-            if *value < previous {
-                return false;
-            }
+        if let Some(previous) = previous
+            && *value < previous
+        {
+            return false;
         }
         previous = Some(*value);
     }

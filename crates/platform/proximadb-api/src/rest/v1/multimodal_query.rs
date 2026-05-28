@@ -96,7 +96,7 @@ struct ExplainQueryRequest {
 // ── Helper ────────────────────────────────────────────────────────────────────
 
 fn json_to_proxima_values(params: Option<Vec<serde_json::Value>>) -> Option<Vec<ProximaValue>> {
-    params.map(|ps| ps.into_iter().map(|v| json_to_proxima_value(v)).collect())
+    params.map(|ps| ps.into_iter().map(json_to_proxima_value).collect())
 }
 
 fn json_to_proxima_value(value: serde_json::Value) -> ProximaValue {

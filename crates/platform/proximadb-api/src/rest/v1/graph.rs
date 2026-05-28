@@ -1068,14 +1068,12 @@ async fn query_nodes(
     Json(mut q): Json<RestNodeQuery>,
 ) -> impl IntoResponse {
     // Decode continuation token as "offset:<n>"
-    if q.offset.is_none() {
-        if let Some(token) = &q.continuation_token {
-            if let Some(rest) = token.strip_prefix("offset:") {
-                if let Ok(n) = rest.parse::<u32>() {
-                    q.offset = Some(n);
-                }
-            }
-        }
+    if q.offset.is_none()
+        && let Some(token) = &q.continuation_token
+        && let Some(rest) = token.strip_prefix("offset:")
+        && let Ok(n) = rest.parse::<u32>()
+    {
+        q.offset = Some(n);
     }
 
     let proto_query = NodeQuery {
@@ -1112,14 +1110,12 @@ async fn query_edges(
     Path(graph_id): Path<String>,
     Json(mut q): Json<RestEdgeQuery>,
 ) -> impl IntoResponse {
-    if q.offset.is_none() {
-        if let Some(token) = &q.continuation_token {
-            if let Some(rest) = token.strip_prefix("offset:") {
-                if let Ok(n) = rest.parse::<u32>() {
-                    q.offset = Some(n);
-                }
-            }
-        }
+    if q.offset.is_none()
+        && let Some(token) = &q.continuation_token
+        && let Some(rest) = token.strip_prefix("offset:")
+        && let Ok(n) = rest.parse::<u32>()
+    {
+        q.offset = Some(n);
     }
 
     let proto_query = EdgeQuery {
@@ -1188,8 +1184,8 @@ async fn execute_graph_query(
                 .map(|row| {
                     let cols: serde_json::Map<String, serde_json::Value> = row
                         .columns
-                        .iter()
-                        .map(|(k, _v)| (k.clone(), serde_json::Value::Null))
+                        .keys()
+                        .map(|k| (k.clone(), serde_json::Value::Null))
                         .collect();
                     serde_json::Value::Object(cols)
                 })

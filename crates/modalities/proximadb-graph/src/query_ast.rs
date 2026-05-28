@@ -252,7 +252,13 @@ pub enum ReadingClause {
     With(WithClause),
 }
 
-/// Updating clause as defined by Cypher write semantics
+/// Updating clause as defined by Cypher write semantics.
+///
+/// `Merge(MergeClause)` is the largest variant (combines a CREATE
+/// clause's pattern bag with an ON CREATE / ON MATCH branch); Boxing
+/// would touch every match site in the executor. Intentionally
+/// deferred per `clippy::large_enum_variant`.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UpdatingClause {
     Create(CreateClause),

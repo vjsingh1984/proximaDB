@@ -1106,6 +1106,8 @@ fn parse_edge_types(input: &str) -> ParseResult<'_, Vec<String>> {
 }
 
 /// Parse edge specification: [variable:TYPE {props}]
+#[allow(clippy::type_complexity)] // The labelled return-tuple shape IS the
+// documentation here — flattening to a type alias buries the field labels.
 fn parse_edge_spec(
     input: &str,
 ) -> ParseResult<
@@ -1141,6 +1143,7 @@ fn parse_edge_spec(
 }
 
 /// Parse full edge pattern: <-[spec]- or -[spec]-> or -[spec]-
+#[allow(clippy::type_complexity)] // Labelled tuple documents the parser shape.
 fn parse_edge_pattern_full(
     input: &str,
 ) -> ParseResult<
@@ -1900,6 +1903,7 @@ fn parse_create_node_spec(input: &str) -> ParseResult<'_, CreateNodeSpec> {
 }
 
 /// Parse CREATE edge spec
+#[allow(clippy::type_complexity)] // Labelled tuple documents the parser shape.
 fn parse_create_edge_spec(
     input: &str,
 ) -> ParseResult<
@@ -2435,7 +2439,14 @@ pub struct GraphQuery {
     pub timeout_ms: Option<u64>,
 }
 
-/// Types of graph queries
+/// Types of graph queries.
+///
+/// The MATCH variant carries a much heavier payload than the others
+/// (multiple `Pattern`/`Constraint`/`Order` lists). Boxing it would
+/// touch every constructor and pattern-match site in the parser and
+/// the executor; it's intentionally deferred until those sites have
+/// settled. See `clippy::large_enum_variant`.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum GraphQueryType {
     /// Read-only pattern match

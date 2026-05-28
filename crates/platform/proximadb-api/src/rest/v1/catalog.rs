@@ -16,7 +16,7 @@ use axum::{
     routing::{get, post},
 };
 use proximadb_proto::v1::{CollectionOperation, CollectionRequest};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tracing::{debug, info};
 
 use crate::rest::errors::{RestError, RestResult};

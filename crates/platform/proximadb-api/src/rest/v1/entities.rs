@@ -127,25 +127,25 @@ pub fn parse_search_request(value: serde_json::Value) -> Result<VectorSearchRequ
 /// Supports both the proto format `{ "collection_id": "...", "vectors": [..] }`
 /// and the simple format `{ "collection": "...", "vectors": [..] }`.
 pub fn parse_batch_request(value: serde_json::Value) -> Result<VectorBatchRequest, String> {
-    if let Some(obj) = value.as_object() {
-        if obj.contains_key("collection") {
-            let collection_id = obj
-                .get("collection")
-                .or_else(|| obj.get("collection_id"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+    if let Some(obj) = value.as_object()
+        && obj.contains_key("collection")
+    {
+        let collection_id = obj
+            .get("collection")
+            .or_else(|| obj.get("collection_id"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
-            let vectors: Vec<proximadb_proto::v1::VectorRecord> = obj
-                .get("vectors")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or_default();
+        let vectors: Vec<proximadb_proto::v1::VectorRecord> = obj
+            .get("vectors")
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+            .unwrap_or_default();
 
-            return Ok(VectorBatchRequest {
-                collection_id,
-                vectors,
-            });
-        }
+        return Ok(VectorBatchRequest {
+            collection_id,
+            vectors,
+        });
     }
     serde_json::from_value(value).map_err(|e| e.to_string())
 }
