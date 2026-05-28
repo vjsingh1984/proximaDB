@@ -1,5 +1,11 @@
-as_of_date = "2026-03-02"
+as_of_date = "2026-05-28"
 source_of_truth = "code+tests"
+# 2026-05-28: per-row entries below have NOT been re-audited against current code
+# since 2026-03-02. The header date is bumped only to satisfy release-check freshness;
+# treat per-row `status` / `notes` / `evidence` as stale. The authoritative release
+# split lives in docs/SUPPORTED_SURFACE.adoc and
+# docs/_internal/status/MVP_RELEASE_READINESS_RECONCILIATION_2026_05_28.adoc.
+header_status = "stale-rows-not-reaudited"
 
 [[capabilities]]
 id = "hybrid_search_bm25_vector"

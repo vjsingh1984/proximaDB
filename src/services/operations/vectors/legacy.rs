@@ -1533,10 +1533,25 @@ impl VectorOperationsService {
         // the directory-routed result stand. Strong-route correctness
         // is then advertised only when the manifest is wired (which is
         // the common production case via `SharedServices::new`).
+        //
+        // Log loud on miss: a missing manifest in a server-mode process is a
+        // bug (the v2 INSERT→SEARCH gap reconciled 2026-05-28 traced to this
+        // arm silently dropping delta-merge candidates). Emit a warn so the
+        // path is visible in route-health logs, but keep the Ok(None) so
+        // embedded callers that haven't called manifest::init can still read.
         let current_lsn =
             match crate::storage::persistence::write_ahead_log::manifest::get_service() {
                 Some(svc) => svc.current_lsn().await,
-                None => return Ok(None),
+                None => {
+                    tracing::warn!(
+                        target: "proximadb::services::vectors::delta_merge",
+                        collection_id = %collection_id,
+                        "WAL delta merge skipped: global manifest service is not registered. \
+                         In server mode this means freshly-written WAL records may not be \
+                         visible to search. Call `manifest::init(&wal_config)` once at startup."
+                    );
+                    return Ok(None);
+                }
             };
 
         let now_ns = std::time::SystemTime::now()
@@ -3927,17 +3942,12 @@ impl VectorOperationsService {
         collection_id: &str,
         records: &[ProximaRecord],
     ) -> Result<()> {
-        if let Err(e) = self.collection_name_validator.validate(collection_id) {
-            warn!(
-                "Collection name validation failed for '{}': {:?}",
-                collection_id, e
-            );
-            return Err(anyhow::anyhow!(
-                "Invalid collection name '{}': {}",
-                collection_id,
-                e
-            ));
-        }
+        // Collection-name pattern validation belongs at CREATE time, not on every
+        // INSERT. By the time we get here, `collection_id` is the catalog-resolved
+        // internal identifier (typically a UUIDv4) — re-running the user-facing
+        // pattern validator rejects UUIDs that happen to start with a digit and
+        // gives a non-actionable error to the caller. Reconciled 2026-05-28 for
+        // the v0.2 v2 INSERT→SEARCH gap.
 
         let collection = self.get_or_load_collection(collection_id).await?;
 

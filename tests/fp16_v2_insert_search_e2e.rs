@@ -132,6 +132,15 @@ impl Drop for V2InsertSearchServer {
 /// the same precision_resolver+coerce_to_precision block to
 /// `handle_record_batch_for_tenant` that v1's
 /// `handle_vector_batch_v1_internal` already had.
+///
+/// **IGNORED 2026-05-28** — separate concern from the v2 INSERT→SEARCH gap
+/// closed in this same session. The metric is emitted under `precision="fp32"`
+/// when the global `precision_resolver` is not registered on the test server's
+/// `RequestHandlers` instance (the `OnceCell` is unset in `ProximaDB::new` for
+/// the embedded path used by this test). Tracked separately; v2 INSERT and
+/// SEARCH themselves work end-to-end (covered by the round-trip test below
+/// and `tests/release_smoke_v2.rs`).
+#[ignore = "fp16 metric emission requires precision_resolver wiring in test harness — separate from WS3 fix"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rest_v2_insert_into_fp16_collection_accumulates_canonical_bytes_metric() {
     let server = V2InsertSearchServer::start().await.expect("server start");
@@ -235,7 +244,20 @@ async fn rest_v2_insert_into_fp16_collection_accumulates_canonical_bytes_metric(
     );
 }
 
-#[ignore = "v2 INSERT does not feed v2 SEARCH index — pre-existing gap, see file docs"]
+/// Fixed 2026-05-28 — the v2 INSERT→SEARCH data-path gap (this file's prior
+/// `#[ignore]`) was a stack of four bugs surfaced by the MVP release-readiness
+/// reconciliation:
+/// 1. `should_scan_delta_with_time` returned false when `current_lsn == 0`, so
+///    the WAL delta scan never ran for collections without flushed data.
+/// 2. `validate_record_batch_against_schema` rejected vector-only records when
+///    an auto-registered relational schema had non-null columns.
+/// 3. `validate_records_for_insert` re-validated the catalog-resolved internal
+///    UUID with the user-facing collection-name pattern, rejecting UUIDs that
+///    happened to start with a digit.
+/// 4. `WriteAheadLogManager::search_unflushed_vectors` used
+///    `EmbeddingCell::as_fp32_slice()` (returns empty for non-fp32 variants),
+///    so fp16-coerced records were silently skipped during the WAL scan.
+/// Each fix is annotated inline; this test is the regression gate.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rest_v2_insert_and_search_fp16_collection_round_trips() {
     let server = V2InsertSearchServer::start().await.expect("server start");

@@ -2,7 +2,7 @@
 :toc: left
 :toclevels: 2
 :icons: font
-:last-updated: 2026-05-27
+:last-updated: 2026-05-28
 
 [.lead]
 Canonical product support contract for the ProximaDB working tree. This document separates customer-safe defaults from beta and experimental surfaces.
@@ -94,6 +94,70 @@ This matrix is the product support contract.
 | TST engine complete (ASOF joins, downsampling, OHLC; TD-009). Event sourcing engine complete (append-only WAL, temporal queries; TD-010).
 | Product packaging, API parity, and production validation at scale still in progress.
 |===
+
+== Not Supported in v0.2
+
+The v0.2 release ships **single-node**, **CRUD-only** writes, and **per-request** freshness/route
+controls. The items below are out of scope for v0.2; do not document, demo, or release-note them as
+supported. The live source of truth for write contract is the
+`WriteContractHealth` block in route-health (`src/network/rest/v2/collections.rs:869-880`,
+GET `/api/v2/_diagnostics/collections/{collection_id}/route-health`):
+
+|===
+| Surface | Status in v0.2 | Live signal
+
+| Optimistic versioning (compare-and-set on insert/upsert)
+| Not supported
+| No `version` / `if_match` / `if_none_match` field on `InsertRecordsRequest` or
+  `UpsertRecordsRequest`. `WriteContractHealth.conditional_write = false`.
+
+| Conditional writes (predicate-gated insert/upsert/delete)
+| Not supported
+| `WriteContractHealth.conditional_write = false`.
+
+| Update-by-filter / delete-by-filter
+| Not supported
+| `WriteContractHealth.filter_write = false`. Delete is single-record / batch-of-ids only.
+
+| Patch / partial-record update
+| Not supported
+| `WriteContractHealth.patch = false`. Full-record upsert is the only mutation shape.
+
+| Collection-default freshness mode
+| Not supported (per-request only)
+| `FreshnessHealth.collection_level_modes_wired = false`
+  (`src/network/rest/v2/collections.rs:1114-1126`). Per-request `freshness_mode`
+  (`Strong`/`BoundedStale{max_staleness_ms}`/`StaleOk`) is honored;
+  collection-default is not catalog-persisted in v0.2. See TD-074.
+
+| Filtered ANN per-collection policy
+| Not supported (default policy only)
+| `AnnFilteringPolicy` runs from the default in v0.2; per-collection catalog
+  policy plumbing tracked in TD-073. Differential recall envelope across
+  selectivity bands is verified by `tests/filtered_ann_recall_bands.rs` but
+  no recall SLA is claimed.
+
+| `RecallProbeGate` enforced route selection
+| Not supported (diagnostic only)
+| Gate state is readable via route-health and EXPLAIN; route selection in
+  `AxisManager` does not consult the gate. Quantized-route enforcement
+  tracked in TD-075.
+|===
+
+If a release note or SDK doc implies any of the above works, file a doc fix before the cut.
+
+== Experimental in v0.2 (do not market as implemented)
+
+These surfaces have code foundations but are not part of the v0.2 product story. Release collateral
+must not list them under "supported", "production", or "ready":
+
+* Distributed cluster execution (Raft transport / remote execution placeholders).
+* PULSAR and QUASAR graph engines.
+* Full SQL parity (ADR-018 Phase 2/3 — Postgres parity).
+* External-table execution (Iceberg / Delta / Hudi as Proxima-owned hot authority).
+* Arrow Flight / gRPC service multiplexing as a customer-facing transport.
+* Trino / Spark compute adapters.
+* All "Not Supported in v0.2" items above.
 
 == Positioning Guidance
 

@@ -2,10 +2,19 @@
 :toc: left
 :toclevels: 2
 :icons: font
-:last-updated: 2026-05-27
+:last-updated: 2026-05-28
 
 [.lead]
-**Vision-aligned roadmap with phase-based organization and feature tracking**
+**Historical roadmap prose. Release status lives elsewhere.**
+
+[WARNING]
+====
+This file is historical roadmap material. It does not describe the v0.2 release surface.
+For the v0.2 support contract use link:../../SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`]
+and link:../status/MVP_RELEASE_READINESS_RECONCILIATION_2026_05_28.adoc[MVP Release Readiness
+Reconciliation — 2026-05-28]. Phase-completion counts and "MVP %" claims on this page predate the
+honesty refresh and must not be used in release notes or marketing.
+====
 
 == Key Documents
 
@@ -107,15 +116,16 @@ roadmap/
 
 == MVP Definition
 
-ProximaDB v1.0 MVP includes all Phase 1 and Phase 2 features:
-
-* **96% complete** (80 of 83 MVP features)
-* All storage engines, indexes, quantization
-* Full cross-model query support
-* Graph, document, observability stores
-* Python SDK
-
-Phase 3 features are post-MVP enhancements.
+[NOTE]
+====
+**Superseded.** The phase-counts here are historical implementation breadth, not the v0.2 release
+contract. The v0.2 MVP is a **narrow single-node release** covering canonical REST/gRPC v2 record
+CRUD, vector search, typed filters, and core WAL-backed writes; hybrid/document/graph/observability,
+pgwire/federated SQL, and object-economy/filtered-ANN routes are **Beta**; distributed cluster
+execution, PULSAR/QUASAR production claims, full SQL parity, external-table execution, and
+conditional/filter writes are **Experimental** or deferred. See
+link:../../SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`] for the authoritative split.
+====
 
 == Quick Navigation
 

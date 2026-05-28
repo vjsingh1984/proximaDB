@@ -9,6 +9,18 @@
 |Supersedes|—
 |===
 
+[NOTE]
+====
+**v0.2 release status: Beta — default policy only.** The Inline / PostFilter / PreFilter mechanics
+are wired (`src/index/axis/management/manager.rs:653-694`, `query_hnsw_with_predicate` at line 934),
+but the optimizer currently routes through the default `AnnFilteringPolicy` rather than a
+catalog-resolved per-collection policy. Per-collection policy plumbing is tracked in **TD-073** and
+deferred to a release after v0.2. Differential recall across selectivity bands is verified by
+`tests/filtered_ann_recall_bands.rs` for low/medium/high bands; no recall SLA is claimed in v0.2.
+See link:../../SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`] "Not Supported in v0.2"
+("Filtered ANN per-collection policy").
+====
+
 == Context
 
 ADR-002 defines the normalized filter contract and candidate set abstraction for hybrid

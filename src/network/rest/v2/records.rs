@@ -371,6 +371,11 @@ fn convert_typed_filters_to_clauses(
 ///     "validate_schema": true
 /// }
 /// ```
+/// Not supported in v0.2: optimistic versioning, conditional-write predicates,
+/// update-by-filter, delete-by-filter, and patch / partial-record update. The
+/// live contract is exposed via `WriteContractHealth` on the route-health
+/// diagnostic endpoint (`GET /api/v2/_diagnostics/collections/{id}/route-health`);
+/// see also `docs/SUPPORTED_SURFACE.adoc` "Not Supported in v0.2".
 #[derive(Debug, Deserialize)]
 pub struct InsertRecordsRequest {
     /// Records to insert

@@ -2535,7 +2535,15 @@ impl WriteAheadLogManager {
         for batch in filtered_batches {
             for vector_record in batch.vector_records.iter() {
                 let embedding = vector_record.embeddings.first();
-                let vec_values = embedding.map(|e| e.as_fp32_slice()).unwrap_or(&[]);
+                // Use `as_fp32_cow()` so non-fp32 variants (fp16/bf16/int8/etc.)
+                // are promoted to fp32 for the distance calculation. `as_fp32_slice`
+                // returns an empty slice for any non-fp32 variant, which caused
+                // fp16 collections' INSERTed records to be silently skipped here
+                // — surfaced 2026-05-28 by the v2 INSERT→SEARCH reconciliation.
+                let vec_values_cow = embedding
+                    .map(|e| e.as_fp32_cow())
+                    .unwrap_or_else(|| std::borrow::Cow::Borrowed(&[][..]));
+                let vec_values: &[f32] = vec_values_cow.as_ref();
                 let expires_at_secs = vector_record.valid_to_ns.map(|ns| ns / 1_000_000_000);
 
                 // Check if this is a tombstone (empty vector + valid_to in past)

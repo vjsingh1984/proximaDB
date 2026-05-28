@@ -2,10 +2,20 @@
 :toc: left
 :toclevels: 3
 :icons: font
-:last-updated: 2026-05-27
+:last-updated: 2026-05-28
 
 [.lead]
 **Audit-time bookkeeping index for every doc under `docs/12-design/` plus tracker-shaped docs across other roots. No code changes — this doc is the single point of reference for "what's still load-bearing, what's wired, what should be archived" as of 2026-05-26.**
+
+[NOTE]
+====
+**2026-05-28 release-cut delta**: TD-064 row below is current as of the 2026-05-27 re-audit. The
+v0.2 release-cut split for TD-064 and route-health lives in
+link:../_internal/status/MVP_RELEASE_READINESS_RECONCILIATION_2026_05_28.adoc[MVP Release Readiness
+Reconciliation — 2026-05-28]. Route-health is Beta with `stability: experimental` schema in v0.2
+(commits 1bc339161, 8f213b61d); TD-064 stays Beta with predicate-aware HNSW traversal wired but no
+recall envelope claim.
+====
 
 [IMPORTANT]
 ====

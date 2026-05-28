@@ -1,0 +1,92 @@
+= ProximaDB v0.2.0 Release Notes
+:toc: left
+:toclevels: 2
+:icons: font
+:last-updated: 2026-05-28
+
+[.lead]
+**Narrow single-node release.** v0.2 ships the canonical REST/gRPC v2 record CRUD and vector
+search path, plus diagnostic surfaces for filtered-ANN, freshness, write contract, object-economy
+route, and recall probing. Broader multimodal, federated SQL, distributed, and external-format
+surfaces remain Beta or Experimental and must not be marketed as production-ready.
+
+The authoritative split lives in link:../SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`] and
+link:../_internal/status/MVP_RELEASE_READINESS_RECONCILIATION_2026_05_28.adoc[MVP Release Readiness
+Reconciliation — 2026-05-28].
+
+== Supported in v0.2
+
+* Canonical REST/gRPC v2 record CRUD (insert, batch insert, upsert, get, delete-by-id).
+* Vector search with typed filters, schema-aware records, per-request freshness modes
+  (`Strong` / `BoundedStale{max_staleness_ms}` / `StaleOk`).
+* Core WAL-backed write path with crash recovery.
+* v1 compatibility adapters where they lower into the canonical write/search path.
+* Prometheus metrics at `/metrics/prometheus`, including per-precision canonical-bytes accounting.
+* Route-health diagnostic endpoint
+  `GET /api/v2/_diagnostics/collections/{collection_id}/route-health` (schema marked
+  `stability: experimental` — fields may change in v0.3).
+
+== Beta in v0.2
+
+These are usable but not part of the production positioning:
+
+* Hybrid retrieval (BM25 + RRF/weighted fusion).
+* Document / graph / observability stores (CRUD and query work; canonical-store WAL default
+  varies — see `MASTER_FEATURE_DASHBOARD.adoc`).
+* pgwire / federated SQL (basic DML and vector-distance syntax; ADR-018 Phase 2/3 incomplete).
+* Object-economy vector route (SST sidecar directory + cache; opt-in, no published cost SLA).
+* Filtered ANN routing (ADR-011 — Inline / PostFilter / PreFilter mechanics exist; per-collection
+  catalog policy not wired; differential recall verified across selectivity bands by
+  `tests/filtered_ann_recall_bands.rs` but no recall SLA is claimed).
+* Security runtime (JWT, API key, SSO hooks, mTLS, CRL revocation freshness).
+* Time-series / event sourcing engine foundations.
+
+== Not Supported in v0.2
+
+The route-health `WriteContractHealth` block is the live source of truth. These are accepted by
+SDKs only insofar as the field name passes deserialization; the server does not implement them:
+
+* Optimistic versioning (compare-and-set on insert/upsert).
+* Conditional writes (predicate-gated insert/upsert/delete).
+* Update-by-filter / delete-by-filter.
+* Patch / partial-record update.
+* Collection-default freshness mode (per-request only; collection-level not catalog-persisted).
+* `RecallProbeGate` enforced route selection (diagnostic only; route selection in `AxisManager`
+  does not consult the gate).
+
+== Experimental in v0.2 (do not market as implemented)
+
+* Distributed cluster execution (Raft transport / remote execution placeholders).
+* PULSAR and QUASAR graph engines.
+* Full SQL parity (ADR-018 Phase 2/3).
+* External-table execution (Iceberg / Delta / Hudi as Proxima-owned hot authority).
+* Arrow Flight / gRPC multiplexing as a customer-facing transport.
+* Trino / Spark compute adapters.
+
+== Notable Changes Since v0.1
+
+* TD-064 (Predicate-Aware Vector Search) — AXIS HNSW now evaluates predicates during traversal with
+  fallback-shortfall disclosure. Beta in v0.2.
+* TD-072 (Graph branch-id WAL gap) — REST branch-merge endpoint end-to-end functional
+  (commits 996626595, d44f5b1d7).
+* Route-health diagnostic — adds filtered-ANN, write-contract, freshness, object-economy,
+  recall-probe, pinning blocks (commits 1bc339161, 8f213b61d).
+* v2 INSERT → v2 SEARCH wiring fix — closed a pre-existing data-path gap where the global WAL
+  manifest service was unregistered at startup, causing search-time WAL delta merge to silently
+  return empty. The `fp16_v2_insert_search_e2e` integration test is no longer `#[ignore]`'d.
+* Cluster-affinity cache routing registry wired through `SharedServices` (Phase 7.2.3 — commit
+  2f770eed2).
+
+== Known Limitations
+
+See link:../SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`] "Not Supported in v0.2" and
+"Experimental in v0.2" sections for the full list.
+
+== Upgrade Notes
+
+* Configuration: no breaking changes to `config/config.toml` schema since v0.1. The unified-port
+  default remains `5678`.
+* Data directory: clean `/tmp/proximadb*` between dev runs; on-disk WAL/manifest format is unchanged
+  but recovery paths benefit from the manifest-service registration fix.
+* Clients: v1 REST/gRPC vector-shaped flows continue to work as compatibility adapters. New clients
+  should target v2 record APIs.

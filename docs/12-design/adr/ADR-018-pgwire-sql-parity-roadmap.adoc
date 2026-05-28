@@ -2,11 +2,21 @@
 :toc: left
 :toclevels: 3
 :icons: font
-:last-updated: 2026-05-25
+:last-updated: 2026-05-28
 
 == Status
 
 Accepted
+
+== v0.2 Release Status
+
+**Beta — basic DML and vector-distance syntax only.** ADR-018 Phase 1 (basic DML, DROP TABLE IF
+EXISTS, vector-distance operators) is wired. Phase 2 (SQLite parity — `ORDER BY` semantics,
+`COUNT/SUM/GROUP BY`, joins, `xcatalog.namespaces`, `pg_class`) and Phase 3 (Postgres parity) are
+**out of scope for v0.2** and must not be claimed as supported. See
+link:../../SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`] "Experimental in v0.2" and
+link:../../_internal/status/MVP_RELEASE_READINESS_RECONCILIATION_2026_05_28.adoc[MVP Release
+Readiness Reconciliation — 2026-05-28].
 
 == Context
 

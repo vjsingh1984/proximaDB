@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust benchmark release install help capability-matrix-check workspace-boundaries-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check
+.PHONY: all clean build test test-python test-rust benchmark release install help capability-matrix-check workspace-boundaries-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check release-check docs-claim-check release-smoke
 
 # Default target
 all: build test
@@ -121,6 +121,44 @@ release: clean build-server test benchmark
 	@echo "📊 Release artifacts:"
 	@ls -la target/release-server/proximadb-server 2>/dev/null || echo "Server binary not found"
 	@ls -la target/release/proximadb-server 2>/dev/null || echo "Fallback to release binary"
+
+# Release-cut gate: one command that must be green before the v0.2 release tag.
+# Sequence is fail-fast — early steps (fmt, doc-claim, proto) are cheap.
+release-check: fmt-check docs-claim-check proto-check release-smoke build-server
+	@echo "✅ release-check: all gates passed"
+
+fmt-check:
+	@echo "🎨 Checking formatting (cargo fmt --check)..."
+	cargo fmt --check
+
+# Fails if release-cut docs contain MVP-completion / production-readiness claims that
+# exceed docs/SUPPORTED_SURFACE.adoc. The matched files in _archive/ and enterprise/
+# marketing copy are intentionally excluded; everything else must reconcile.
+docs-claim-check:
+	@echo "📝 Checking release-facing docs for stale MVP/production claims..."
+	@hits=$$(grep -rnE "96% complete|full cross-model query support|production[- ]ready MVP" docs/ \
+		--exclude-dir=_archive --exclude-dir=enterprise --exclude-dir=business 2>/dev/null | \
+		grep -v "Historical\|superseded\|Superseded\|MVP_RELEASE_READINESS"); \
+	if [ -n "$$hits" ]; then \
+		echo "❌ Release-facing docs still contain stale MVP/production claims:"; \
+		echo "$$hits"; \
+		echo ""; \
+		echo "Either remove the claim, or tag the file as historical/superseded."; \
+		exit 1; \
+	fi; \
+	echo "✅ No stale MVP/production claims in release-facing docs."
+
+# Minimum smoke battery for the release cut. Each entry must be a non-ignored test
+# that exercises the canonical v2 record path or one of the diagnostic blocks
+# whose contract v0.2 commits to.
+release-smoke:
+	@echo "🚦 Running release-smoke tests..."
+	cargo test --lib route_health query_optimizer object_economy_directory \
+		vector_hints_from_search_plan_hints_preserves_ann_reason -- --test-threads=1
+	cargo test --test graph_branch_merge_integration_test -- --test-threads=1
+	cargo test --test grpc_hybrid_integration_test -- --test-threads=1
+	cargo test --test release_smoke_v2 -- --test-threads=1 --nocapture
+	@echo "✅ release-smoke green"
 
 install: build-release
 	@echo "📦 Installing ProximaDB..."

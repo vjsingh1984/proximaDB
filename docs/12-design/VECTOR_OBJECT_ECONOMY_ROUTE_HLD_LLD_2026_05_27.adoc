@@ -9,6 +9,15 @@ Scope: vector search over object storage, SST/HELIX centroid block pruning, cata
 access-method projection boundaries, cache-affinity routing, WAL freshness, EXPLAIN visibility, and
 TDD rollout.
 
+[NOTE]
+====
+**v0.2 release evidence** — Bench numbers backing the v0.2 Beta classification of this route are in
+link:../_internal/status/OBJECT_ECONOMY_BENCH_REPORT_2026_05_28.adoc[Object-Economy Bench Report
+— 2026-05-28]. The report uses the existing `benches/bench_vector_object_economy{,_e2e}.rs` —
+no new bench code was added for v0.2. No cost or recall SLA is claimed; the report locks in a
+non-regression baseline only.
+====
+
 == Purpose
 
 This document turns the object-storage vector architecture comparison into a ProximaDB

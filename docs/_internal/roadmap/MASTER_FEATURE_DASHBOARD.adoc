@@ -3,8 +3,8 @@
 :toclevels: 3
 :icons: font
 :source-highlighter: rouge
-:last-updated: 2026-05-26
-:dashboard-header-refresh: 2026-05-26
+:last-updated: 2026-05-28
+:dashboard-header-refresh: 2026-05-28
 :verified: true
 
 [.lead]
@@ -26,6 +26,15 @@ This dashboard remains useful as an implementation inventory, but several surfac
 or experimental even when code exists. Treat the maturity summary below as the current truth layer.
 
 **2026-05-26 honesty refresh**: maturity table reconciled against `docs/SUPPORTED_SURFACE.adoc` and the live TD/ADR state. Documents, Graph, Observability, Unified-query, Hybrid retrieval, Time-series, Event sourcing, Security, and Distributed cluster were downgraded from "Production Ready" to honest Beta / Experimental classifications. A new pgwire/SQL row was added at Beta to reflect ADR-018 Phase 1/2/3. Each non-Production-Ready row now cites a controlling TD-XXX or ADR-NNN in a `Caveat` column.
+
+**2026-05-28 reconciliation update**: see
+link:../status/MVP_RELEASE_READINESS_RECONCILIATION_2026_05_28.adoc[MVP Release Readiness
+Reconciliation — 2026-05-28] for the v0.2 release-cut split. The Documents row below still says the
+canonical-document-store WAL path is opt-in (accurate as of TD-065 status), but the Graph row's
+"lacks durable merge write-back" caveat was closed by the TD-072 fix (commits 996626595 + d44f5b1d7,
+2026-05-27): REST branch-merge is now end-to-end functional with `branch_id` persisted in
+`ProximaRecord`. Graph branch-merge remains Beta overall pending broader test coverage; the
+write-back gap specifically is resolved.
 
 The detailed feature-index tables further down (`<<priority-index>>` etc.) date to the March 2026 baseline and have NOT been reconciled row-by-row. They are useful as an implementation inventory but not as a support contract — use the table above + `docs/SUPPORTED_SURFACE.adoc` for that.
 
@@ -70,8 +79,8 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 
 | Graph
 | **Beta**
-| ORION node/edge CRUD, traversal, neighbors, shortest-path, adjacency projections all usable. Declarative graph query on the canonical gRPC path is still incomplete; branch-merge is present as a pure canonical-WAL orchestrator with cataloged policy metadata and a dry-run REST report endpoint, but lacks durable merge write-back.
-| ADR-012 PARTIAL (pure `merge_branches` + xCatalog policy + dry-run endpoint only; no write-back yet); TD-066 (open — ORION engine WAL parallel to canonical). PULSAR/QUASAR remain Experimental per SUPPORTED_SURFACE.
+| ORION node/edge CRUD, traversal, neighbors, shortest-path, adjacency projections all usable. Branch-merge write-back is now end-to-end functional (TD-072 resolved 2026-05-27 via `ProximaRecord.branch_id` persistence; REST endpoint exercises the canonical WAL path). Declarative graph query on the canonical gRPC path is still incomplete.
+| ADR-012 PARTIAL → write-back closed (commits 996626595 + d44f5b1d7); broader merge-policy and declarative-query work still open. TD-066 (open — ORION engine WAL parallel to canonical). PULSAR/QUASAR remain Experimental per SUPPORTED_SURFACE.
 
 | Observability
 | **Beta**

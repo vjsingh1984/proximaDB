@@ -1997,9 +1997,34 @@ impl DmlService {
         let Ok(table_schema) = catalog.get_table(&table_id).await else {
             return Ok(());
         };
+        // v2 vector record API path: when the caller provides at least one
+        // embedding cell on every record, skip relational schema validation.
+        // The v2 records/batch endpoint is the vector ingest surface, not a
+        // SQL DML surface. Relational schema constraints (`reject_unknown_columns`,
+        // missing-required-column, type strictness) reject perfectly valid
+        // vector-API batches — including ones that carry filter metadata in
+        // `props` — because the auto-registered schema is `id` + `vector`
+        // only and treats anything else as unknown. Reconciled 2026-05-28 for
+        // the v0.2 v2 INSERT→SEARCH gap.
+        let all_records_are_vector_shaped = !records.is_empty()
+            && records.iter().all(|r| !r.embeddings.is_empty());
+        if all_records_are_vector_shaped {
+            return Ok(());
+        }
+        // Determine which schema column (if any) maps to the record's canonical
+        // identifier (`oid`). Auto-registered vector-collection schemas declare
+        // either `id` or `record_id` for this — line up with the same convention
+        // used in `dml_field_mapping` below. Without this projection, REST/gRPC
+        // v2 INSERT records (whose OID lives outside `props`) fail validation
+        // with "Missing required column 'id'" even though the OID was provided.
+        let id_column_name: Option<String> = table_schema
+            .columns
+            .iter()
+            .find(|c| c.name == "id" || c.name == "record_id")
+            .map(|c| c.name.clone());
         let profile = RelationalWriteProfile::fast_lane();
         for record in records {
-            let values: HashMap<String, ProximaValue> = record
+            let mut values: HashMap<String, ProximaValue> = record
                 .props
                 .iter()
                 .filter_map(|(k, node)| {
@@ -2010,6 +2035,11 @@ impl DmlService {
                     }
                 })
                 .collect();
+            if let Some(id_col) = id_column_name.as_ref() {
+                values
+                    .entry(id_col.clone())
+                    .or_insert_with(|| ProximaValue::String(record.oid.clone()));
+            }
             CatalogRow::validate(&table_schema, values, &profile).with_context(|| {
                 format!(
                     "record '{}' violates schema '{}'",
@@ -2520,10 +2550,10 @@ impl DmlService {
         if let Ok(value) = trimmed.parse::<f64>() {
             return Ok(SqlValueLiteral::Float(value));
         }
-        if trimmed.starts_with('{') || trimmed.starts_with('[') {
-            if let Ok(json) = serde_json::from_str(trimmed) {
-                return Ok(SqlValueLiteral::Json(json));
-            }
+        if (trimmed.starts_with('{') || trimmed.starts_with('['))
+            && let Ok(json) = serde_json::from_str(trimmed)
+        {
+            return Ok(SqlValueLiteral::Json(json));
         }
 
         Ok(SqlValueLiteral::String(trimmed.to_string()))

@@ -3,6 +3,19 @@
 :toclevels: 3
 :date: 2026-05-27
 
+[NOTE]
+====
+**v0.2 release status: Beta.** Predicate-aware HNSW traversal is wired
+(`AxisManager::query_hnsw_with_predicate`, `src/index/axis/management/manager.rs:934`); the planner
+emits ADR-011 mode and selectivity; REST/gRPC surfaces predicate shortfall. **`RecallProbeGate` is
+diagnostic only in v0.2 — route selection does not consult the gate.** Quantized-route enforcement
+is deferred to TD-075. v0.2 ships without a published recall envelope by selectivity band; the
+differential test (`tests/filtered_ann_recall_bands.rs`) documents observed recall but does not
+gate the release. See link:../SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`] and
+link:../_internal/status/MVP_RELEASE_READINESS_RECONCILIATION_2026_05_28.adoc[MVP Release
+Readiness Reconciliation — 2026-05-28].
+====
+
 [source,mermaid]
 %%{init: {"theme": "neutral"}}%%
 flowchart TB
