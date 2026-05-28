@@ -1007,12 +1007,12 @@ fn build_route_health_with_object_economy_status(
 ) -> CollectionRouteHealthV2 {
     let filtered_ann = FilteredAnnHealth {
         id_predicate_supported: true,
-        // AxisMetadataLookup::get_metadata still returns None (see
-        // src/index/axis/management/filtered_search.rs:145). Non-ID
-        // metadata predicates are NOT evaluated during HNSW traversal;
-        // post-filter handles them, which is exactly the under-k risk
-        // TD-064 names. Flip this only after the metadata bridge is wired.
-        record_aware_predicates: false,
+        // AxisManager::query_hnsw_with_predicate builds a metadata map from
+        // collection_vectors and evaluates metadata predicates during HNSW
+        // traversal, then reapplies the same expression as a residual guard.
+        // The older standalone AxisMetadataLookup helper is still a placeholder
+        // and must not be used as the source of truth for this route.
+        record_aware_predicates: true,
         predicate_pushdown_infrastructure_present: true,
         predicate_pushdown_default_wired: false,
         // Genuinely wired: predicate_diagnostics::scope + take_shortfall
@@ -1021,7 +1021,7 @@ fn build_route_health_with_object_economy_status(
         // mark_predicate_shortfall, and axis_predicate_shortfall_total
         // counts every event. Verified 2026-05-28.
         post_filter_shortfall_disclosure: true,
-        td_064_status: "shortfall_wired_metadata_lookup_pending",
+        td_064_status: "record_predicate_and_shortfall_wired",
     };
     let writes = WriteContractHealth {
         insert: true,
@@ -1311,9 +1311,9 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // Route-health builder tests. These lock the contract shape so that
-    // future flips (e.g. record_aware_predicates → true) are deliberate
-    // edits to both the code and the test, not silent drifts.
+    // Route-health builder tests. These lock the contract shape so future
+    // capability flips are deliberate edits to both the code and the test,
+    // not silent drifts.
     // ------------------------------------------------------------------
 
     #[test]
@@ -1350,14 +1350,9 @@ mod tests {
             0,
         );
         assert!(h.filtered_ann.id_predicate_supported);
-        // Canary: must remain `false` until AxisMetadataLookup::get_metadata
-        // (filtered_search.rs:145) returns real ProximaRecord metadata instead
-        // of None. Flipping this without finishing the predicate-aware
-        // metadata bridge is a silent overclaim — the under-k post-filter
-        // path TD-064 names is still live.
         assert!(
-            !h.filtered_ann.record_aware_predicates,
-            "AxisMetadataLookup still returns None; flipping this requires the metadata bridge"
+            h.filtered_ann.record_aware_predicates,
+            "AxisManager query path evaluates ProximaRecord metadata during predicate traversal"
         );
         // Shortfall path is genuinely wired: predicate_diagnostics::scope in
         // REST records.rs + gRPC record_service.rs, captured shortfall set
@@ -1369,7 +1364,7 @@ mod tests {
         );
         assert_eq!(
             h.filtered_ann.td_064_status,
-            "shortfall_wired_metadata_lookup_pending"
+            "record_predicate_and_shortfall_wired"
         );
     }
 
@@ -1441,12 +1436,9 @@ mod tests {
     }
 
     #[test]
-    fn route_health_v1_degraded_reasons_are_the_expected_six() {
+    fn route_health_v1_degraded_reasons_are_the_expected_five() {
         // Snapshot of the v1 reasons set. Adding/removing a reason without
         // updating this assertion would silently change the contract.
-        // Includes FilteredAnnRecordPredicateBridgePartial until
-        // AxisMetadataLookup is wired (see filtered_search.rs:145) — when
-        // that bridge lands, this list drops to five and the test renames.
         let h = build_route_health(
             "c".to_string(),
             "sst".to_string(),
@@ -1457,7 +1449,6 @@ mod tests {
             0,
         );
         let expected = vec![
-            DegradedReason::FilteredAnnRecordPredicateBridgePartial,
             DegradedReason::ObjectEconomyLiveStatusNotReachable,
             DegradedReason::RecallProbeNotWired,
             DegradedReason::FreshnessModesNotCollectionLevel,
