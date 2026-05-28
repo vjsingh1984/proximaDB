@@ -1141,10 +1141,10 @@ physical layouts.
 | Python SDK live v2 INSERT→SEARCH integration coverage
 | P3
 | MEDIUM
-| Open
-| `tests/release_smoke_v2.rs` is the v0.2 release-gate smoke for the v2 record path but is Rust-only. The Python SDK at `clients/python/src/proximadb_sdk/protocols/rest_sync.py` (insert_records → v2 records/batch) is exercised only by mocked-HTTP unit tests in `clients/python/tests/unit/test_rest_record_ingest.py`. A regression in the SDK's insert→search round trip would not be caught by `make release-check`.
+| Resolved (partial)
+| `tests/release_smoke_v2.rs` is the v0.2 release-gate smoke for the v2 record path but is Rust-only. The Python SDK at `clients/python/src/proximadb_sdk/protocols/rest_sync.py` (insert_records → v2 records/batch) was exercised only by mocked-HTTP unit tests in `clients/python/tests/unit/test_rest_record_ingest.py`. A regression in the SDK's insert→search round trip would not have been caught by `make release-check`.
 | 1-2 days
-| Surfaced 2026-05-28 (round-2 audit). Acceptance: (1) `clients/python/tests/integration/test_v2_insert_search_e2e.py` exists, brings up an embedded server via the existing test harness, exercises insert_records + search, asserts top-k contains the inserted record; (2) the Python integration suite runs as part of `make release-check`.
+| **PARTIALLY RESOLVED 2026-05-28**: `clients/python/tests/integration/test_v2_insert_search_e2e.py` landed with two test cases — (a) live insert_records → search round trip asserting top-k contains an inserted ID, (b) missing-collection contract asserting the SDK surfaces the round-2 HTTP 404 (not the old silent success-shaped response). Both tests use the new `rest_client` fixture that prefers `PROXIMADB_TEST_SERVER_URL` and falls back to the existing `embedded_db` path. **Remaining for full closure**: wiring the Python integration suite into `make release-check` (currently runs only the Rust smokes). Track as a thin follow-up in a future Make target update.
 
 | TD-082
 | Arrow Flight INSERT vs. REST/gRPC UPSERT handler parity test
@@ -1159,10 +1159,10 @@ physical layouts.
 | Rust SDK v2 INSERT exposure (props / text_fields)
 | P3
 | MEDIUM
-| Open
-| `clients/rust/src/collection.rs:621` (`UpdateBuilder`) exposes v2 upsert only — no full INSERT with the v2 `props` / `text_fields` schema. Rust SDK users stay on v1-shape metadata dict and cannot leverage canonical record features.
+| Resolved
+| Rust SDK previously exposed v2 upsert only — no full INSERT with the v2 `text_fields` schema. (`props` was already accessible via the existing `metadata()` / `meta(k,v)` builder methods on `InsertBuilderWithId`.) Rust SDK users could not leverage canonical record TEXT-field features.
 | 2-3 days
-| Acceptance: a `ProximaRecordBuilder` paralleling the Python SDK with typed `props` / `text_fields` support; smoke test against the live REST v2 records/batch endpoint.
+| **RESOLVED 2026-05-28** — added `TextFieldInput` and `text_field(name, content)` / `text_fields(Vec<...>)` builder methods on `InsertBuilderWithId`. `ProximaRecord` gained a `text_fields: Vec<TextFieldInput>` field mirroring `src/network/rest/v2/records.rs::TextFieldInput`. Two new unit tests (`proxima_record_serializes_text_fields_in_v2_shape`, `insert_builder_chains_text_fields`) lock the contract.
 
 | TD-084
 | PostgreSQL wire v2 record features exposure
@@ -1181,4 +1181,58 @@ physical layouts.
 | Round-2 audit (2026-05-28) found multiple overclaims that survived round-1 cleanup because the round-1 `docs-claim-check` allowlisted internal marketing paths. Examples: "85-96% cost reduction", "296% performance" competitor claims, "Industry-leading" superlatives.
 | 1 day
 | Out of scope for the engineering reconciliation. Acceptance: product owner reviews and either (a) scrubs the claims, (b) cites a published evidence source, or (c) scopes the directories to internal-only audiences.
+
+| TD-086
+| Continuous Discovery surface + atomic snapshot republish (CS/CD loop)
+| P4
+| MEDIUM
+| Open
+| ProximaDB can serve (vector/hybrid/cross-model retrieval) but has no first-class *discovery* arm that operates on production vector data and feeds results back. The primitives exist in isolation — manifest/branch versioning, the projection freshness state machine (`Fresh/Updating/Stale/RebuildRequired/...`), `compute_route` selection, and `src/automl/` tuning — but there is no cataloged workflow that reads a pinned snapshot, runs offline refinement (dedup, recluster, re-embed, drift/quality scan, agent-trajectory analysis), and publishes a *new snapshot* that serving switches to atomically. This is the largest conceptual gap vs the Vector Lakebase "Continuous Serving + Continuous Discovery" thesis. See `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R1.
+| 3-6 months
+| Surfaced 2026-05-28 (Vector Lakebase trend review). Acceptance: (1) a `DiscoveryJob` catalog asset that pins a manifest snapshot of a collection; (2) job completion republishes a new snapshot (new data + rebuilt indexes/embeddings) with an *atomic* serving switch — no half-built indexes exposed; (3) discovery compute routes through existing `compute_route` (Native batch / DataFusionDistributed / Spark / Ray) declaring `authority_mode` + `freshness_sla`; (4) the republish is explainable in unified EXPLAIN. Mostly composition over existing primitives; converts `src/automl/` from tuning into the offline arm of the flywheel.
+
+| TD-087
+| Scale-to-zero cold path — binary-first two-stage retrieval + IVF pruning
+| P4
+| MEDIUM
+| Open
+| When compute scales to zero, the first query hits pure cold data in object storage. A full index (e.g. ~340 GB for 1B×768-dim HNSW) can take minutes to pull from S3, making scale-to-zero impractical for large vector workloads. `compute/quantization/unified.rs` has binary/INT8/PQ and `RecallProbeGate` (TD-075) exists, but there is no designed *cold-load ordering* that pulls a compact binary representation first, two-stage reranks, and IVF-prunes bytes-touched-per-query. See `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R2.
+| 1-2 months
+| Surfaced 2026-05-28 (Vector Lakebase trend review). Acceptance: (1) a "cold-path" index profile that persists a compact binary/RaBitQ-style representation (~1/30th size) loaded *first*; (2) two-stage search (coarse 1-bit filter → higher-fidelity rerank) with recall envelope disclosed via `RecallProbeGate` + the TD-064 predicate-aware disclosure contract; (3) IVF cluster pruning bounding bytes-touched-per-query; (4) cold-start latency benchmark from object storage. New work is the load ordering + two-stage execution path, not a new quantizer.
+
+| TD-088
+| Point-read I/O amplification over object storage (point-read-optimized lake layout)
+| P4
+| MEDIUM
+| Open
+| Vector search returns IDs but applications need full records (text, metadata, permissions, timestamps). PAX block format (ADR-010) orders column stripes and supports pruning, but is row-group/columnar-oriented; a point read from object storage drags a whole row group/stripe — the same amplification measured for Parquet (≈9.4 MB downloaded vs ≈0.07 MB for a point-read-optimized layout). No row-aligned mixed layout (the Vortex/Loon equivalent) is designed. See `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R3.
+| 1-3 months
+| Surfaced 2026-05-28 (Vector Lakebase trend review). Acceptance: (1) PAX row-aligned column-group mode so a point lookup fetches only needed fields' bytes; (2) evaluate the open Vortex format (Linux Foundation — aligns with open-format mandate) as an interoperable layout option for point-read-heavy collections, benchmarked vs PAX and Parquet for both point reads and scans; (3) serving (point read) and discovery (scan) access patterns stay over *one logical copy* — no second physical store. Pairs with TD-087 (cold path) and TD-086 (discovery scans).
+
+| TD-089
+| Elastic compute modes (long-running / on-demand / offline-batch) + resources-follow-data scheduler
+| P4
+| HIGH
+| Open
+| ProximaDB has embedded and distributed (experimental, `cluster` flag) deployment but not the three-mode elastic model with minute-level billing and warm pools. There is no warm-pool scheduler that attaches a pinned snapshot to prepared compute on request and releases on idle while catalog/metadata stay queryable with zero resident compute. This is the practical realization of the 2028 VISION "serverless deployment mode" milestone and the Vector Lakebase "resources follow the data" pillar. See `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R4.
+| 6+ months
+| Surfaced 2026-05-28 (Vector Lakebase trend review). Depends on TD-077 (distributed transport) and is gated by TD-087/TD-088 (which make scale-to-zero economical first). Acceptance: (1) `Long-running` / `OnDemand` / `OfflineBatch` compute modes over the same logical store; (2) warm-pool scheduler with attach-on-request / release-on-idle; (3) metadata queryable with no compute resident; (4) cost/latency model documented. Sequence *after* R1/R2/R3.
+
+| TD-090
+| External Collection — ProximaDB-owned indexes over external-resident data (index-in-place)
+| P4
+| MEDIUM
+| Open
+| `FederatedRead` and `ExternalAuthoritative` authority modes (`OPEN_FORMAT_CATALOG_2026_05_17.adoc`) allow reading/federating external tables, and TD-078 covers external-table federated *execution* — but neither builds and maintains ProximaDB-owned vector/inverted/JSON indexes over data left in place in an external lake (Iceberg/Lance/Parquet). The Vector Lakebase "External Collection" capability ("One Data. One Index. No duplicated storage. No dual-write pipelines.") is a distinct, high-value mode. See `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R5.
+| 2-4 months
+| Surfaced 2026-05-28 (Vector Lakebase trend review). Acceptance: (1) an authority mode (or `FederatedRead` sub-mode) where external data stays externally governed and un-copied while ProximaDB builds/maintains vector + inverted + JSON indexes routed through the same retrieval path as native data; (2) explicit index-staleness-vs-source-commit freshness behavior + repair source declared per architecture mandates; (3) lets the TD-086 discovery loop cover lake-resident data, not just imported data. Gated for Lance corpora by TD-091.
+
+| TD-091
+| Lance format interoperability (read / import / external-index substrate)
+| P4
+| LOW
+| Open
+| ProximaDB supports Iceberg/Delta/Hudi/Parquet but not Lance, a vector-native lake format treated as a primary external substrate in the Vector Lakebase ecosystem. See `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R6.
+| 3-6 weeks
+| Surfaced 2026-05-28 (Vector Lakebase trend review). Lowest priority of the six trend-review items. Acceptance: Lance as a read/import/external-index substrate alongside the existing open formats; gates TD-090 (External Collection) for Lance-resident corpora.
 |===

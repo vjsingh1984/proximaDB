@@ -611,6 +611,7 @@ impl<'a> UpdateBuilder<'a> {
                 id: self.id,
                 vector: self.vector.unwrap_or_default(),
                 props: self.metadata,
+                text_fields: Vec::new(),
                 source: None,
             }],
             validate_schema: true,
@@ -705,6 +706,31 @@ struct InsertRecord {
     id: String,
     vector: Vec<f32>,
     metadata: HashMap<String, serde_json::Value>,
+    text_fields: Vec<TextFieldInput>,
+}
+
+/// TEXT field payload mirroring the v2 REST `TextFieldInput` shape at
+/// `src/network/rest/v2/records.rs`. Each entry attaches a named TEXT
+/// payload to the record alongside the vector — used by full-text-search
+/// indexing (BM25) and rerank features. Public so the SDK builder API
+/// can take typed values instead of stringly-typed JSON. TD-083 closure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextFieldInput {
+    /// Field name. Must match a TEXT column declared on the collection schema.
+    pub name: String,
+    /// Field content. v0.2 supports plain UTF-8 strings; richer encodings
+    /// (chunks, language hints) are tracked post-v0.2.
+    pub content: String,
+}
+
+impl TextFieldInput {
+    /// Construct a new TEXT field input.
+    pub fn new(name: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            content: content.into(),
+        }
+    }
 }
 
 impl<'a> InsertBuilder<'a> {
@@ -739,6 +765,7 @@ impl<'a> InsertBuilder<'a> {
             id: id.into(),
             vector: None,
             metadata: HashMap::new(),
+            text_fields: Vec::new(),
         }
     }
 
@@ -760,6 +787,7 @@ impl<'a> InsertBuilder<'a> {
                 id,
                 vector,
                 metadata: HashMap::new(),
+                text_fields: Vec::new(),
             });
         }
 
@@ -803,6 +831,7 @@ pub struct InsertBuilderWithId<'a> {
     id: String,
     vector: Option<Vec<f32>>,
     metadata: HashMap<String, serde_json::Value>,
+    text_fields: Vec<TextFieldInput>,
 }
 
 impl<'a> InsertBuilderWithId<'a> {
@@ -828,6 +857,26 @@ impl<'a> InsertBuilderWithId<'a> {
         self
     }
 
+    /// Attach a single TEXT field to the record. v2 ProximaRecord supports
+    /// multiple named TEXT fields per record alongside the vector and props
+    /// (the REST shape lives in `src/network/rest/v2/records.rs::TextFieldInput`).
+    /// TD-083 closure — was previously inaccessible from the Rust SDK.
+    pub fn text_field(
+        mut self,
+        name: impl Into<String>,
+        content: impl Into<String>,
+    ) -> Self {
+        self.text_fields
+            .push(TextFieldInput::new(name, content));
+        self
+    }
+
+    /// Replace any previously-set TEXT fields with `text_fields`.
+    pub fn text_fields(mut self, text_fields: Vec<TextFieldInput>) -> Self {
+        self.text_fields = text_fields;
+        self
+    }
+
     /// Execute the insert (async, client mode)
     #[cfg(feature = "client")]
     pub async fn execute(mut self) -> Result<()> {
@@ -841,6 +890,7 @@ impl<'a> InsertBuilderWithId<'a> {
             id: self.id,
             vector,
             metadata: self.metadata,
+            text_fields: self.text_fields,
         });
 
         self.builder.execute_internal().await?;
@@ -967,6 +1017,11 @@ pub struct ProximaRecord {
     /// Rich record properties
     #[serde(default, alias = "metadata", skip_serializing_if = "HashMap::is_empty")]
     pub props: HashMap<String, serde_json::Value>,
+    /// TEXT field payloads attached to the record (BM25 indexing / rerank
+    /// inputs). v0.2 supports plain UTF-8 strings; richer encodings tracked
+    /// post-v0.2. See `src/network/rest/v2/records.rs::TextFieldInput`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_fields: Vec<TextFieldInput>,
     /// Original source text or external reference
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
@@ -978,6 +1033,7 @@ impl ProximaRecord {
             id: record.id,
             vector: record.vector,
             props: record.metadata,
+            text_fields: record.text_fields,
             source: None,
         }
     }
@@ -1214,6 +1270,50 @@ mod tests {
         })
         .unwrap();
         assert_eq!(serialized, json!({"id": "vec_2"}));
+    }
+
+    /// TD-083: the Rust SDK now exposes v2 TEXT field payloads. Asserts the
+    /// JSON shape lines up with the server-side `TextFieldInput` at
+    /// `src/network/rest/v2/records.rs` so a regression in either direction
+    /// shows up on the SDK side too.
+    #[test]
+    fn proxima_record_serializes_text_fields_in_v2_shape() {
+        let record = ProximaRecord {
+            id: "rec_1".to_string(),
+            vector: Vec::new(),
+            props: HashMap::new(),
+            text_fields: vec![
+                TextFieldInput::new("title", "ProximaDB"),
+                TextFieldInput::new("body", "Vector + relational storage."),
+            ],
+            source: None,
+        };
+        let serialized = serde_json::to_value(&record).unwrap();
+        assert_eq!(
+            serialized,
+            json!({
+                "id": "rec_1",
+                "text_fields": [
+                    {"name": "title", "content": "ProximaDB"},
+                    {"name": "body", "content": "Vector + relational storage."}
+                ]
+            })
+        );
+    }
+
+    /// TD-083: chained text_field builder calls accumulate. Matches the
+    /// behaviour of `meta(k, v)` for relational props.
+    #[test]
+    fn insert_builder_chains_text_fields() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let with_id = InsertBuilder::new_client(&client, "items")
+            .id("rec_1")
+            .vector(&[0.0])
+            .text_field("title", "ProximaDB")
+            .text_field("body", "Vector + relational storage.");
+        assert_eq!(with_id.text_fields.len(), 2);
+        assert_eq!(with_id.text_fields[0].name, "title");
+        assert_eq!(with_id.text_fields[1].content, "Vector + relational storage.");
     }
 
     #[test]
