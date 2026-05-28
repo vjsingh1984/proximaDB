@@ -256,9 +256,21 @@ fn capture_feature_snapshot(
     }
     let mut buf: Vec<(Arc<str>, f32)> = Vec::with_capacity(mapping.len());
     for (name, idx) in mapping.iter() {
-        let value = program
-            .last_output(*idx)
-            .unwrap_or_else(|| program.force_executor(*idx, doc, ctx));
+        // R-7c.4d follow-up: emit per-feature latency through the
+        // metrics sink when the executor actually ran (cache miss).
+        // A cache hit costs ~nothing and shouldn't pollute the
+        // histogram. NoopMetricsSink keeps the hot path zero-cost
+        // (no allocation, no atomic) when metrics aren't wired —
+        // preserves NFR-9.
+        let value = if let Some(cached) = program.last_output(*idx) {
+            cached
+        } else {
+            let t0 = std::time::Instant::now();
+            let v = program.force_executor(*idx, doc, ctx);
+            ctx.metrics
+                .record_feature_latency_ns(name, t0.elapsed().as_nanos() as u64);
+            v
+        };
         buf.push((name.clone(), value));
     }
     Some(Arc::<[(Arc<str>, f32)]>::from(buf))
@@ -326,11 +338,20 @@ impl RankPipeline {
             if let Some(b_us) = budget_us {
                 let elapsed = t0.elapsed().as_micros() as u64;
                 if elapsed >= b_us {
+                    // R-7c.4d follow-up: emit phase-truncation
+                    // through the metrics sink so dashboards can
+                    // alert on budget exhaustion. NoopMetricsSink
+                    // keeps this zero-cost when metrics aren't
+                    // wired.
+                    ctx.metrics
+                        .record_phase_truncated(PhaseId::FIRST, "budget");
                     truncated = true;
                     break;
                 }
             }
             if ctx.deadline_exceeded() {
+                ctx.metrics
+                    .record_phase_truncated(PhaseId::FIRST, "deadline");
                 truncated = true;
                 break;
             }

@@ -1112,21 +1112,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handler_with_metrics_wiring_runs_to_completion_no_crash() {
-        // R-7c.4d follow-up: when RankServices supplies a
-        // RankPipelineMetrics handle, handle_rank_search_with_metrics
-        // must route through PrometheusRankSink instead of the noop.
-        // The integration is *plumbed* (sink construction + ScoreCtx
-        // wiring), but proximadb-rank-core does not yet invoke
-        // `ctx.metrics.record_feature_latency_ns(...)` per-feature
-        // or `record_phase_truncated(...)` at first-phase truncation
-        // — that's a separate slice in rank-core's executor. So this
-        // test asserts the metrics path is harmless (no panic,
-        // response shape unchanged) rather than asserting non-zero
-        // observation counts. When rank-core adds the timer
-        // wrapping, extend this test to check
-        // `proximadb_rank_feature_latency_us{profile,phase,feature}`
-        // sample counts.
+    async fn handler_with_metrics_emits_per_feature_histogram_observations() {
+        // R-7c.4d end-to-end: with metrics wired, a single-feature
+        // profile (`docid()`) + 3 candidates must produce 3
+        // histogram observations on (profile=metrics_test,
+        // phase=first, feature=docid()) — one per
+        // capture_feature_snapshot call on the cache-miss path.
+        // (Cache hits are deliberately not timed so the histogram
+        // reflects real executor work, not memoization touches.)
         use crate::observability::rank_metrics::RankPipelineMetrics;
         let registry = ProfileRegistry::new();
         let factory = factory_with_docid();
@@ -1167,13 +1160,38 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(resp.hits.len(), 3);
-        // Sanity-check: the wiring path didn't break the response
-        // shape — match_features still populate from the profile's
-        // declared expression, identical to the noop-metrics path.
         for h in &resp.hits {
             assert_eq!(h.match_features.len(), 1);
             assert!(h.match_features.contains_key("docid()"));
         }
+
+        // Real observation assertion now that rank-core wires the
+        // per-feature timing emit. Score-expression timing is a
+        // separate concern (the score idx has no symbolic name yet);
+        // the spec's `feature=<expr>` label promise only covers
+        // declared match/summary features today.
+        let observed = prom_registry
+            .gather()
+            .into_iter()
+            .filter(|mf| mf.name() == "proximadb_rank_feature_latency_us")
+            .flat_map(|mf| mf.get_metric().to_vec())
+            .filter(|m| {
+                m.get_label().iter().any(|l| {
+                    l.name() == "profile" && l.value() == "metrics_test"
+                }) && m
+                    .get_label()
+                    .iter()
+                    .any(|l| l.name() == "phase" && l.value() == "first")
+                    && m.get_label().iter().any(|l| {
+                        l.name() == "feature" && l.value() == "docid()"
+                    })
+            })
+            .map(|m| m.get_histogram().get_sample_count())
+            .sum::<u64>();
+        assert!(
+            observed >= 3,
+            "expected ≥3 histogram observations for first-phase docid() across 3 candidates, got {observed}",
+        );
     }
 
     #[tokio::test]
