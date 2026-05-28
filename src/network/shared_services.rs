@@ -151,6 +151,22 @@ pub struct SharedServices {
     pub directory_cache: Arc<
         crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache,
     >,
+
+    /// Shared canonical WAL appender at `<data_dir>/pgwire/canonical-records.wal`.
+    ///
+    /// Opened once in `SharedServices::new` (when `opt_config` is provided so
+    /// `cfg.server.data_dir` is known) and held as a single instance so both
+    /// graph checkpoint emission (`GraphOperationsService::flush_wal`, TD-066)
+    /// and pgwire direct record writes (`multi_server.rs` pgwire setup) share
+    /// the same `next_sequence` counter and append lock. Without this
+    /// sharing, two `FramedTableWalAppender::open` calls on the same file
+    /// would each maintain independent next-sequence state, risking
+    /// duplicate sequence numbers and silent recovery corruption.
+    ///
+    /// When `opt_config` is `None` (some test paths), this is `None` and
+    /// both consumers fall back to their respective opt-out behavior
+    /// (graph: tracing-only; pgwire: opens its own appender locally).
+    pub canonical_wal_appender: Option<Arc<crate::services::FramedTableWalAppender>>,
 }
 
 impl SharedServices {
@@ -309,15 +325,16 @@ impl SharedServices {
         // delta, which is correct but more expensive.
         let freshness_lsn_source: Option<
             Arc<dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource>,
-        > = crate::storage::persistence::write_ahead_log::manifest::get_service()
-            .map(|svc| {
-                Arc::new(
-                    crate::storage::persistence::write_ahead_log::manifest::WalCursorLsnSource::new(svc),
-                )
-                    as Arc<
-                        dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource,
-                    >
-            });
+        > = crate::storage::persistence::write_ahead_log::manifest::get_service().map(|svc| {
+            Arc::new(
+                crate::storage::persistence::write_ahead_log::manifest::WalCursorLsnSource::new(
+                    svc,
+                ),
+            )
+                as Arc<
+                    dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource,
+                >
+        });
 
         // Create SST engine
         debug!("🔧 SharedServices::new - Creating SST engine...");
@@ -328,6 +345,50 @@ impl SharedServices {
             if let Some(src) = freshness_lsn_source.clone() {
                 engine = engine.with_freshness_lsn_source(src);
             }
+
+            // Attach tier-migration integration when configured. Reads
+            // the `[storage.sst_config.tiering]` block; defaults to
+            // disabled. When `enabled = true`, the engine's
+            // flush / search / compaction hooks start emitting access
+            // events, flush-tier decisions, and migration evaluations
+            // (see `src/storage/engines/sst/{search,flush}/coordinator.rs`).
+            //
+            // The integration's background evaluation loop is started
+            // here so the policy engine can autonomously evaluate
+            // pending migrations on its configured cadence.
+            if let Some(tiering_cfg) = storage_config
+                .sst_config
+                .as_ref()
+                .and_then(|sc| sc.tiering.clone())
+            {
+                if tiering_cfg.enabled {
+                    use crate::storage::engines::sst::tiering_integration::SstTieringIntegration;
+                    match SstTieringIntegration::new(tiering_cfg) {
+                        Ok(mut integration) => {
+                            if let Err(e) = integration.start().await {
+                                warn!(
+                                    "⚠️ SharedServices: tier-migration integration failed to start ({}); continuing without tiering",
+                                    e
+                                );
+                            } else {
+                                info!(
+                                    "🪜 SharedServices: SST tier-migration integration started — flush/search/compaction hooks now active"
+                                );
+                                engine = engine.with_tiering_integration(Arc::new(integration));
+                            }
+                        }
+                        Err(e) => warn!(
+                            "⚠️ SharedServices: tier-migration integration could not be constructed ({}); continuing without tiering",
+                            e
+                        ),
+                    }
+                } else {
+                    debug!(
+                        "🪜 SharedServices: SST tier-migration configured but disabled (enabled=false); hooks remain no-ops"
+                    );
+                }
+            }
+
             Arc::new(engine)
         };
         debug!("✅ SharedServices::new - SST engine created successfully");
@@ -621,6 +682,51 @@ impl SharedServices {
             "✅ SharedServices::new - Shared GraphCollectionService created (with auto-recovery)"
         );
 
+        // T2.3 / TD-066 production wiring: open the canonical WAL appender
+        // ONCE here so it can be shared between the graph checkpoint emission
+        // path (`GraphOperationsService::flush_wal`) and the pgwire direct
+        // record write path (constructed in `multi_server.rs`). Sharing the
+        // same `FramedTableWalAppender` instance is required for correctness:
+        // two independent `open()` calls on the same WAL file would each
+        // initialize their own `next_sequence: AtomicU64`, leading to
+        // duplicate sequence numbers in the persisted log and silent
+        // recovery corruption.
+        //
+        // When `opt_config` is `None` (test paths that don't supply a full
+        // Config), skip the appender entirely — graph falls back to its
+        // tracing-only behavior and pgwire (if enabled) opens its own
+        // appender locally as it did before.
+        let canonical_wal_appender: Option<Arc<crate::services::FramedTableWalAppender>> =
+            if let Some(cfg) = opt_config {
+                let wal_path = cfg
+                    .server
+                    .data_dir
+                    .join("pgwire")
+                    .join("canonical-records.wal");
+                match crate::services::FramedTableWalAppender::open(&wal_path).await {
+                    Ok(appender) => {
+                        info!(
+                            "✅ SharedServices: canonical WAL appender opened at {} (shared by graph checkpoint emission + pgwire direct writes)",
+                            wal_path.display()
+                        );
+                        Some(Arc::new(appender))
+                    }
+                    Err(e) => {
+                        warn!(
+                            "SharedServices: failed to open canonical WAL at {}: {}. Graph flush_wal will fall back to tracing-only and pgwire (if enabled) will open its own appender.",
+                            wal_path.display(),
+                            e
+                        );
+                        None
+                    }
+                }
+            } else {
+                debug!(
+                    "SharedServices: opt_config is None; skipping canonical WAL appender setup (test path?)"
+                );
+                None
+            };
+
         // Create GraphOperationsService for native graph database operations
         // IMPORTANT: Pass the shared GraphCollectionService instance
         debug!(
@@ -633,6 +739,14 @@ impl SharedServices {
             crate::graph::GraphOperationsService::new_with_collection_service(
                 graph_collection_service.clone(),
             );
+        // T2.3 / TD-066: inject the shared appender so flush_wal persists
+        // canonical checkpoints to disk.
+        if let Some(appender) = canonical_wal_appender.as_ref() {
+            graph_service_inst =
+                graph_service_inst
+                    .with_canonical_wal_appender(appender.clone()
+                        as Arc<dyn crate::services::record_store::TableWalAppender>);
+        }
         // Wire the storage root so graph engines persist under the same base path as vectors
         if let Some(first_loc) = storage_config.storage_locations.first() {
             graph_service_inst.set_base_storage_url(first_loc.url.clone());
@@ -886,7 +1000,7 @@ impl SharedServices {
         let federated_context = Arc::new(
             FederatedQueryContext::new(multimodal_storage)
                 .with_collection_port(
-                    collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
+                    collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>
                 )
                 .with_vector_operations(vector_operations_service.clone()),
         );
@@ -1000,36 +1114,38 @@ impl SharedServices {
                 // of the same DocumentService instance held by
                 // `document_service`. Powered by the bare-service DocumentPort
                 // impl in src/storage/document/service.rs (ADR-015 step 1).
-                document_port: document_service.clone()
-                    as Arc<dyn proximadb_runtime::DocumentPort>,
+                document_port: document_service.clone() as Arc<dyn proximadb_runtime::DocumentPort>,
                 // Task #76 observability slice — wrapper-as-port-host pattern
                 // (suboptimal vs ADR-015; cleanup is a follow-up session).
-                observability_port: Arc::new(
-                    crate::network::grpc::ObservabilityServiceImpl::new(
-                        observability_service.clone(),
-                    ),
-                ) as Arc<dyn proximadb_runtime::ObservabilityPort>,
+                observability_port: Arc::new(crate::network::grpc::ObservabilityServiceImpl::new(
+                    observability_service.clone(),
+                ))
+                    as Arc<dyn proximadb_runtime::ObservabilityPort>,
                 // Task #76 graph slice — same wrapper-as-port-host pattern.
                 // Uses with_adapter() so search/explain methods have the query
                 // adapter wired (matches the production wiring at
                 // src/network/multi_server.rs:415).
-                graph_port: Arc::new(
-                    crate::network::grpc::GraphServiceImpl::with_adapter(
-                        request_handlers.clone(),
-                        query_adapter.clone(),
-                    ),
-                ) as Arc<dyn proximadb_runtime::GraphPort>,
+                graph_port: Arc::new(crate::network::grpc::GraphServiceImpl::with_adapter(
+                    request_handlers.clone(),
+                    query_adapter.clone(),
+                )) as Arc<dyn proximadb_runtime::GraphPort>,
                 // T3.2 Slice 1: shared full-text index map for hybrid
                 // retrieval. Same in-process map serves REST and gRPC.
-                fulltext_indexes: Arc::new(std::sync::RwLock::new(
-                    std::collections::HashMap::new(),
-                )),
+                fulltext_indexes: Arc::new(
+                    std::sync::RwLock::new(std::collections::HashMap::new()),
+                ),
                 // Vector Object Economy Phase 4 (2-B): process-wide
                 // per-collection directory cache. The same Arc is also
                 // attached to `vector_operations_service` via
                 // `with_directory_cache` above so the search service can
                 // touch the cache without re-resolving SharedServices.
                 directory_cache,
+                // T2.3 / TD-066 production wiring: the shared canonical
+                // WAL appender opened earlier (Some when opt_config is
+                // provided). Held here so multi_server.rs can clone it
+                // for pgwire direct writes — guaranteeing both consumers
+                // share the same next_sequence counter.
+                canonical_wal_appender,
             },
             collection_service,
         ))
@@ -1049,10 +1165,7 @@ impl SharedServices {
     /// constructed a `ClusterManager` (or any other `ClusterPort` impl —
     /// see `crates/platform/proximadb-runtime/src/cluster_port.rs`).
     /// Single-node deployments leave it as `None`.
-    pub fn with_cluster_port(
-        mut self,
-        port: Arc<dyn proximadb_runtime::ClusterPort>,
-    ) -> Self {
+    pub fn with_cluster_port(mut self, port: Arc<dyn proximadb_runtime::ClusterPort>) -> Self {
         self.cluster_port = Some(port);
         self
     }

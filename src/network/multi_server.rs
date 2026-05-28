@@ -205,28 +205,57 @@ impl MultiServer {
             return Ok(None);
         }
 
+        let default_wal_path = self
+            .config
+            .data_dir
+            .join("pgwire")
+            .join("canonical-records.wal");
         let wal_path = self
             .config
             .postgres_config
             .direct_record_wal_path
             .clone()
-            .unwrap_or_else(|| {
-                self.config
-                    .data_dir
-                    .join("pgwire")
-                    .join("canonical-records.wal")
-            });
+            .unwrap_or_else(|| default_wal_path.clone());
 
-        let wal_appender = Arc::new(
-            crate::services::FramedTableWalAppender::open(&wal_path)
-                .await
-                .with_context(|| {
-                    format!(
-                        "opening pgwire direct canonical WAL at {}",
-                        wal_path.display()
-                    )
-                })?,
-        );
+        // T2.3 / TD-066 production wiring: prefer the shared canonical WAL
+        // appender held on `SharedServices` so graph checkpoint emission
+        // and pgwire direct writes share the same `next_sequence` counter
+        // (avoids duplicate-sequence corruption from two independent
+        // `FramedTableWalAppender::open` calls on the same file). Falls
+        // back to opening a local appender when (a) the pgwire path is
+        // overridden to a non-default location, or (b) `SharedServices`
+        // wasn't constructed with an appender (e.g. opt_config was None).
+        let wal_appender = if wal_path == default_wal_path {
+            if let Some(shared) = self.shared_services.canonical_wal_appender.clone() {
+                info!(
+                    "🐘 pgwire reusing shared canonical WAL appender at {} (TD-066 wiring)",
+                    wal_path.display()
+                );
+                shared
+            } else {
+                Arc::new(
+                    crate::services::FramedTableWalAppender::open(&wal_path)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "opening pgwire direct canonical WAL at {} (no shared appender in SharedServices)",
+                                wal_path.display()
+                            )
+                        })?,
+                )
+            }
+        } else {
+            Arc::new(
+                crate::services::FramedTableWalAppender::open(&wal_path)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "opening pgwire direct canonical WAL at {} (custom path; cannot share)",
+                            wal_path.display()
+                        )
+                    })?,
+            )
+        };
         let record_storage = Arc::new(crate::services::MemtableRecordStorage::new());
         let entries = wal_appender.read_entries().await.with_context(|| {
             format!(
@@ -427,12 +456,11 @@ impl MultiServer {
                 Arc::new(crate::network::grpc::StreamingServiceImpl::new());
             let security_port: Arc<dyn proximadb_runtime::SecurityPort> =
                 Arc::new(crate::network::grpc::SecurityServiceImpl::with_default_config());
-            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> = Arc::new(
-                crate::network::hybrid_search::RestHybridPortImpl::new(
+            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
+                Arc::new(crate::network::hybrid_search::RestHybridPortImpl::new(
                     self.shared_services.vector_ops_port.clone(),
                     self.shared_services.fulltext_indexes.clone(),
-                ),
-            );
+                ));
 
             // Clone ports for REST server before they are consumed by the gRPC factory
             rest_ports_opt = Some(crate::network::rest::server::RestServerPorts {
@@ -489,8 +517,7 @@ impl MultiServer {
             );
 
             // Standard grpc.health.v1.Health service for k8s/LB probes.
-            let (health_reporter, standard_health_server) =
-                tonic_health::server::health_reporter();
+            let (health_reporter, standard_health_server) = tonic_health::server::health_reporter();
             health_reporter
                 .set_service_status("", tonic_health::ServingStatus::Serving)
                 .await;
@@ -852,7 +879,8 @@ impl MultiServer {
                     services.query_adapter(),
                 ));
             // ADR-015 step 2 (DocumentPort).
-            let grpc_doc_port: Arc<dyn proximadb_runtime::DocumentPort> = doc_storage_service.clone();
+            let grpc_doc_port: Arc<dyn proximadb_runtime::DocumentPort> =
+                doc_storage_service.clone();
             let grpc_obs_port: Arc<dyn proximadb_runtime::ObservabilityPort> = Arc::new(
                 crate::network::grpc::ObservabilityServiceImpl::new(obs_service.clone()),
             );
@@ -860,12 +888,11 @@ impl MultiServer {
                 Arc::new(crate::network::grpc::StreamingServiceImpl::new());
             let grpc_security_port: Arc<dyn proximadb_runtime::SecurityPort> =
                 Arc::new(crate::network::grpc::SecurityServiceImpl::with_default_config());
-            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> = Arc::new(
-                crate::network::hybrid_search::RestHybridPortImpl::new(
+            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
+                Arc::new(crate::network::hybrid_search::RestHybridPortImpl::new(
                     self.shared_services.vector_ops_port.clone(),
                     self.shared_services.fulltext_indexes.clone(),
-                ),
-            );
+                ));
             let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
                 services.request_handlers.clone();
             let grpc_cfg = proximadb_api::grpc::builder::GrpcServiceConfig::default();
@@ -922,8 +949,7 @@ impl MultiServer {
             );
 
             // Standard grpc.health.v1.Health service for k8s/LB probes.
-            let (health_reporter, standard_health_server) =
-                tonic_health::server::health_reporter();
+            let (health_reporter, standard_health_server) = tonic_health::server::health_reporter();
             health_reporter
                 .set_service_status("", tonic_health::ServingStatus::Serving)
                 .await;
@@ -1244,12 +1270,11 @@ impl MultiServer {
                     services.request_handlers.clone(),
                     services.query_adapter(),
                 ));
-            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> = Arc::new(
-                crate::network::hybrid_search::RestHybridPortImpl::new(
+            let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
+                Arc::new(crate::network::hybrid_search::RestHybridPortImpl::new(
                     self.shared_services.vector_ops_port.clone(),
                     self.shared_services.fulltext_indexes.clone(),
-                ),
-            );
+                ));
             let api_port: Arc<dyn proximadb_runtime::ApiHandlersPort> =
                 services.request_handlers.clone();
             let grpc_cfg = proximadb_api::grpc::builder::GrpcServiceConfig::default();
@@ -1505,9 +1530,7 @@ fn build_grpc_reflection_service() -> Result<
         .register_encoded_file_descriptor_set(include_bytes!(
             "../proto/proximadb_v1_descriptor.bin"
         ))
-        .register_encoded_file_descriptor_set(include_bytes!(
-            "../proto/proximadb_descriptor.bin"
-        ))
+        .register_encoded_file_descriptor_set(include_bytes!("../proto/proximadb_descriptor.bin"))
         .build_v1()
         .context("failed to build gRPC reflection service")
 }
