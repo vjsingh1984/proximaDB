@@ -13,9 +13,9 @@ pub mod multi_tier_deduplication;
 pub mod mvcc_resolution;
 pub mod progressive_quantization;
 pub mod progressive_search_pipeline;
-pub mod rank;
 pub mod queries;
 pub mod query_preprocessing;
+pub mod rank;
 pub mod results;
 pub mod search_interface;
 pub mod smart_execution_strategy;
@@ -132,23 +132,66 @@ impl VectorFreshnessMode {
     /// Decide whether the search path should scan the WAL/memtable
     /// delta for records committed after the directory watermark.
     ///
-    /// * `StaleOk` → always false (cheapest read, may miss recent writes).
-    /// * `Strong` → true iff `current_lsn > watermark_lsn`. The directory
-    ///   already reflects everything up to `watermark_lsn`, so a scan is
-    ///   only useful when the WAL has newer entries.
-    /// * `BoundedStale { max_staleness_ms }` → today treated as Strong.
-    ///   The time-bound check (comparing wall-clock against the
-    ///   directory's `freshness_watermark_ns`) is deferred to a later
-    ///   slice — for now, bounded-stale callers get the safer
-    ///   "always scan when newer" behaviour rather than the cheaper
-    ///   "skip if recently fresh."
+    /// LSN-only variant: equivalent to
+    /// [`Self::should_scan_delta_with_time`] with `watermark_ns = 0` and
+    /// `now_ns = 0`. For `BoundedStale` this conservatively treats
+    /// the time bound as "unknown" → scan when newer. Use the
+    /// `_with_time` variant when the directory's `freshness_watermark_ns`
+    /// and wall-clock are available so `BoundedStale` can actually skip
+    /// the scan within its bound.
     ///
     /// Pure function — no I/O, no allocation, fully unit-testable.
     pub fn should_scan_delta(&self, current_lsn: u64, watermark_lsn: u64) -> bool {
+        self.should_scan_delta_with_time(current_lsn, watermark_lsn, 0, 0)
+    }
+
+    /// Decide whether to scan, with the directory's `freshness_watermark_ns`
+    /// and the current wall-clock available. Rules:
+    ///
+    /// * `StaleOk` → false (cheapest read; never scans).
+    /// * `Strong` → true iff `current_lsn > watermark_lsn`. Time inputs
+    ///   are ignored.
+    /// * `BoundedStale { max_staleness_ms }`:
+    ///   1. If `current_lsn <= watermark_lsn`, there's nothing newer to
+    ///      merge → false (regardless of bound).
+    ///   2. Else, if `watermark_ns` and `now_ns` are both positive and
+    ///      `(now_ns - watermark_ns) / 1_000_000 < max_staleness_ms`,
+    ///      the directory is fresher than the caller's bound → false
+    ///      (accept stale read).
+    ///   3. Otherwise → true (catch up via WAL scan).
+    ///
+    /// When `watermark_ns == 0` or `now_ns == 0` the bound check is
+    /// skipped — treat as "time unknown," conservatively scan. This
+    /// matches the writer's current placeholder of emitting
+    /// `freshness_watermark_ns = 0` when no real timestamp source is
+    /// wired.
+    ///
+    /// Pure function — no I/O, no allocation, fully unit-testable.
+    pub fn should_scan_delta_with_time(
+        &self,
+        current_lsn: u64,
+        watermark_lsn: u64,
+        watermark_ns: i64,
+        now_ns: i64,
+    ) -> bool {
         if matches!(self, Self::StaleOk) {
             return false;
         }
-        current_lsn > watermark_lsn
+        if current_lsn <= watermark_lsn {
+            return false;
+        }
+        if let Self::BoundedStale { max_staleness_ms } = self {
+            // Both timestamps must be valid for the bound check to be
+            // meaningful. When the writer hasn't wired a real ns source
+            // yet (watermark_ns == 0), conservatively scan.
+            if watermark_ns > 0 && now_ns >= watermark_ns {
+                let age_ms = ((now_ns - watermark_ns) / 1_000_000) as u64;
+                if age_ms < *max_staleness_ms {
+                    return false;
+                }
+            }
+        }
+        true
     }
 }
 
@@ -1349,8 +1392,7 @@ mod tests {
             VectorFreshnessMode::StaleOk,
         ] {
             let json = serde_json::to_string(&mode).expect("serialize");
-            let decoded: VectorFreshnessMode =
-                serde_json::from_str(&json).expect("deserialize");
+            let decoded: VectorFreshnessMode = serde_json::from_str(&json).expect("deserialize");
             assert_eq!(decoded, mode);
         }
     }
@@ -1380,14 +1422,88 @@ mod tests {
     }
 
     #[test]
-    fn should_scan_delta_treats_bounded_stale_like_strong_for_now() {
-        // BoundedStale time-bound check is deferred — until then it
-        // defaults to the safer Strong behaviour.
+    fn should_scan_delta_treats_bounded_stale_like_strong_when_ns_unset() {
+        // LSN-only entry point passes ns=0/0 → bound check is skipped,
+        // BoundedStale falls back to Strong's behaviour.
         let mode = VectorFreshnessMode::BoundedStale {
             max_staleness_ms: 5_000,
         };
         assert!(mode.should_scan_delta(100, 50));
         assert!(!mode.should_scan_delta(50, 50));
+    }
+
+    // ── Slice 5.10 — should_scan_delta_with_time (BoundedStale bound) ────
+
+    const MS_NS: i64 = 1_000_000;
+
+    #[test]
+    fn time_bound_stale_ok_always_skips_regardless_of_lsn_or_time() {
+        let now = 10_000 * MS_NS;
+        assert!(!VectorFreshnessMode::StaleOk
+            .should_scan_delta_with_time(100, 50, 0, now));
+        assert!(!VectorFreshnessMode::StaleOk
+            .should_scan_delta_with_time(100, 50, now - 1, now));
+    }
+
+    #[test]
+    fn time_bound_strong_ignores_time_and_uses_lsn_only() {
+        // Even when the watermark is very recent, Strong still scans
+        // when the WAL has newer LSNs.
+        let now = 10_000 * MS_NS;
+        let watermark_ns = now - 100 * MS_NS; // 100ms ago — very fresh
+        assert!(VectorFreshnessMode::Strong
+            .should_scan_delta_with_time(100, 50, watermark_ns, now));
+        // And skips when LSN already covers (independent of time).
+        assert!(!VectorFreshnessMode::Strong
+            .should_scan_delta_with_time(50, 50, watermark_ns, now));
+    }
+
+    #[test]
+    fn time_bound_bounded_stale_skips_within_bound() {
+        // Watermark 2s ago, bound 5s → within bound, skip scan.
+        let now = 10_000 * MS_NS;
+        let watermark_ns = now - 2_000 * MS_NS;
+        let mode = VectorFreshnessMode::BoundedStale {
+            max_staleness_ms: 5_000,
+        };
+        assert!(!mode.should_scan_delta_with_time(100, 50, watermark_ns, now));
+    }
+
+    #[test]
+    fn time_bound_bounded_stale_scans_beyond_bound() {
+        // Watermark 10s ago, bound 5s → beyond bound, scan.
+        let now = 10_000 * MS_NS;
+        let watermark_ns = now - 10_000 * MS_NS;
+        let mode = VectorFreshnessMode::BoundedStale {
+            max_staleness_ms: 5_000,
+        };
+        assert!(mode.should_scan_delta_with_time(100, 50, watermark_ns, now));
+    }
+
+    #[test]
+    fn time_bound_bounded_stale_skips_when_lsn_already_covers_regardless_of_age() {
+        // LSN already covers — no scan needed even if the directory is
+        // ancient. (Otherwise we'd scan an empty delta repeatedly.)
+        let now = 10_000 * MS_NS;
+        let watermark_ns = now - 1_000_000 * MS_NS; // ~16 minutes ago
+        let mode = VectorFreshnessMode::BoundedStale {
+            max_staleness_ms: 5_000,
+        };
+        assert!(!mode.should_scan_delta_with_time(50, 50, watermark_ns, now));
+    }
+
+    #[test]
+    fn time_bound_bounded_stale_with_unset_ns_falls_back_to_lsn_only() {
+        // watermark_ns == 0 means "time unknown" — conservatively scan
+        // when LSNs disagree. Matches the writer's current placeholder.
+        let mode = VectorFreshnessMode::BoundedStale {
+            max_staleness_ms: 5_000,
+        };
+        let now = 10_000 * MS_NS;
+        assert!(mode.should_scan_delta_with_time(100, 50, 0, now));
+        // And when both are 0 (lsn-only entry-point shape), still scans
+        // on LSN advance.
+        assert!(mode.should_scan_delta_with_time(100, 50, 0, 0));
     }
 
     #[test]
@@ -1399,8 +1515,7 @@ mod tests {
             ..UnifiedSearchParams::default()
         };
         let json = serde_json::to_string(&params).expect("serialize");
-        let decoded: UnifiedSearchParams =
-            serde_json::from_str(&json).expect("deserialize");
+        let decoded: UnifiedSearchParams = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(
             decoded.effective_freshness_mode(),
             VectorFreshnessMode::BoundedStale {

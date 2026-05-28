@@ -1269,6 +1269,21 @@ impl VectorOperationsService {
     /// the catalog/collection lookup — for now both writer and reader
     /// use the same placeholder `0`, so cache hits are consistent.
     pub(crate) async fn cached_directory_watermark_lsn(&self, collection_id: &str) -> Option<u64> {
+        self.cached_directory_watermark(collection_id)
+            .await
+            .map(|(lsn, _ns)| lsn)
+    }
+
+    /// Slice 5.10: return both the LSN watermark and the wall-clock
+    /// nanoseconds watermark the directory was emitted at. The `_ns`
+    /// component is needed by [`VectorFreshnessMode::should_scan_delta_with_time`]
+    /// so BoundedStale can apply its time-bound check. `None` when the
+    /// directory cache or its inputs aren't available (same fallback
+    /// path as the LSN-only helper).
+    pub(crate) async fn cached_directory_watermark(
+        &self,
+        collection_id: &str,
+    ) -> Option<(u64, i64)> {
         let cache = self.directory_cache.as_ref()?;
 
         // collection_root comes from the collection's storage assignment.
@@ -1296,7 +1311,10 @@ impl VectorOperationsService {
                 .await
             })
             .await;
-        Some(entry.directory.freshness_watermark_lsn)
+        Some((
+            entry.directory.freshness_watermark_lsn,
+            entry.directory.freshness_watermark_ns,
+        ))
     }
 
     /// Apply the WAL/memtable delta merge to a set of canonical engine
@@ -1348,10 +1366,14 @@ impl VectorOperationsService {
         }
 
         let distance_metric = crate::compute::distance_computation::DistanceMetric::Cosine;
-        let watermark = self
-            .cached_directory_watermark_lsn(collection_id)
+        // Slice 5.10: fetch both LSN and ns watermarks so BoundedStale
+        // can apply its time-bound check. When unavailable, fall back
+        // to (0, 0) — the scan helper treats ns=0 as "time unknown"
+        // and conservatively scans (LSN-only behaviour).
+        let (watermark, watermark_ns) = self
+            .cached_directory_watermark(collection_id)
             .await
-            .unwrap_or(0);
+            .unwrap_or((0, 0));
         // Read the WAL cursor independently of the scan helper so the
         // EXPLAIN payload carries the value even when no scan ran
         // (watermark already covers the cursor). Two cheap singleton
@@ -1370,6 +1392,7 @@ impl VectorOperationsService {
                 filter,
                 freshness_mode,
                 watermark,
+                watermark_ns,
             )
             .await?;
         let scanned_records = delta_outcome.as_ref().map(|d| d.len() as u64);
@@ -1449,6 +1472,7 @@ impl VectorOperationsService {
         metadata_filters: Option<&crate::core::search::FilterExpression>,
         freshness_mode: &crate::core::search::VectorFreshnessMode,
         directory_watermark_lsn: u64,
+        directory_watermark_ns: i64,
     ) -> Result<Option<Vec<crate::core::search::results::OptimizedSearchRecord>>> {
         // StaleOk short-circuits before we even ask the WAL — saves the
         // singleton lookup on the cheap-read path.
@@ -1470,7 +1494,17 @@ impl VectorOperationsService {
                 None => return Ok(None),
             };
 
-        if !freshness_mode.should_scan_delta(current_lsn, directory_watermark_lsn) {
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+
+        if !freshness_mode.should_scan_delta_with_time(
+            current_lsn,
+            directory_watermark_lsn,
+            directory_watermark_ns,
+            now_ns,
+        ) {
             return Ok(None);
         }
 

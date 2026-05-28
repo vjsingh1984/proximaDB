@@ -838,9 +838,9 @@ pub struct CollectionRouteHealthV2 {
 
 /// Filtered-ANN capability state. Reflects the current AXIS HNSW predicate
 /// path: ID filters and ProximaRecord-backed metadata predicates are both
-/// evaluated during traversal, then reapplied as a residual guard. The older
-/// standalone `make_id_predicate` helper is still ID-only, but the manager's
-/// query path uses the record-aware bridge.
+/// evaluated during traversal, then reapplied as a residual guard. See
+/// `AxisManager::query_hnsw_with_predicate` in
+/// `src/index/axis/management/manager.rs:933` for the live mechanism.
 #[derive(Debug, Serialize, PartialEq)]
 pub struct FilteredAnnHealth {
     /// ID-based filter clauses are evaluated inside the index traversal.
@@ -1030,8 +1030,9 @@ fn build_route_health_with_live_state(
         // AxisManager::query_hnsw_with_predicate builds a metadata map from
         // collection_vectors and evaluates metadata predicates during HNSW
         // traversal, then reapplies the same expression as a residual guard.
-        // The older standalone AxisMetadataLookup helper is still a placeholder
-        // and must not be used as the source of truth for this route.
+        // See src/index/axis/management/manager.rs:933 for the live path.
+        // (The dead AxisMetadataLookup scaffold that previously sat alongside
+        // it was removed; its placeholder state was a confusion source.)
         record_aware_predicates: true,
         predicate_pushdown_infrastructure_present: true,
         predicate_pushdown_default_wired: false,
