@@ -7,6 +7,7 @@ pub mod filter_pushdown_engine;
 pub mod hybrid;
 pub mod index_based_filter;
 pub mod integrated_search_optimization;
+pub mod merge;
 pub mod metadata_filter_pushdown;
 pub mod multi_tier_deduplication;
 pub mod mvcc_resolution;
