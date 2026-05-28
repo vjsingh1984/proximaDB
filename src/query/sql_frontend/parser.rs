@@ -2406,6 +2406,14 @@ impl SqlFrontendParser {
         if let Some(result) = self.try_parse_promote_props_key(sql)? {
             return Ok(Some(result));
         }
+        // Pattern: CREATE RANK PROFILE [IF NOT EXISTS] <ident> AS '<toml>'
+        if let Some(result) = try_parse_create_rank_profile(sql)? {
+            return Ok(Some(result));
+        }
+        // Pattern: DROP RANK PROFILE [IF EXISTS] <ident>
+        if let Some(result) = try_parse_drop_rank_profile(sql)? {
+            return Ok(Some(result));
+        }
 
         let statements = Parser::parse_sql(&self.dialect, sql)
             .map_err(|e| anyhow!("SQL parsing failed: {}", e))?;
@@ -3089,5 +3097,336 @@ pub fn unquote_identifier_text(value: &str) -> String {
         trimmed[1..trimmed.len() - 1].replace("\"\"", "\"")
     } else {
         trimmed.to_string()
+    }
+}
+
+// =========================================================================
+// CREATE / DROP RANK PROFILE (commit 4/5 of R-7c production wiring)
+// =========================================================================
+
+/// Match `CREATE RANK PROFILE [IF NOT EXISTS] <ident> AS '<toml-body>'`. The
+/// body is a SQL string literal (single-quoted, with `''` as an escaped single
+/// quote). Returns `Ok(None)` when the prefix doesn't match so the caller can
+/// fall through to sqlparser-rs.
+pub(crate) fn try_parse_create_rank_profile(sql: &str) -> Result<Option<DdlStatement>> {
+    let normalised = sql.trim().trim_end_matches(';').trim();
+    let upper = normalised.to_ascii_uppercase();
+    if !upper.starts_with("CREATE RANK PROFILE") {
+        return Ok(None);
+    }
+    let after_prefix = normalised["CREATE RANK PROFILE".len()..].trim_start();
+
+    let (if_not_exists, after_optional) = strip_if_not_exists(after_prefix);
+    let (name, after_name) = extract_identifier(after_optional)?;
+
+    let after_name = after_name.trim_start();
+    let after_as = match after_name
+        .get(..2)
+        .map(|s| s.eq_ignore_ascii_case("AS"))
+        .unwrap_or(false)
+        && after_name
+            .chars()
+            .nth(2)
+            .map(|c| c.is_whitespace())
+            .unwrap_or(false)
+    {
+        true => after_name[2..].trim_start(),
+        false => {
+            return Err(anyhow!(
+                "CREATE RANK PROFILE '{}': expected 'AS' before TOML body",
+                name
+            ));
+        }
+    };
+
+    let spec_toml = extract_single_quoted_literal(after_as).map_err(|e| {
+        anyhow!(
+            "CREATE RANK PROFILE '{}': expected single-quoted TOML body after AS: {}",
+            name,
+            e
+        )
+    })?;
+
+    Ok(Some(DdlStatement::CreateRankProfile {
+        name,
+        spec_toml,
+        if_not_exists,
+    }))
+}
+
+/// Match `DROP RANK PROFILE [IF EXISTS] <ident>`. Returns `Ok(None)` when the
+/// prefix doesn't match so the caller can fall through to sqlparser-rs.
+pub(crate) fn try_parse_drop_rank_profile(sql: &str) -> Result<Option<DdlStatement>> {
+    let normalised = sql.trim().trim_end_matches(';').trim();
+    let upper = normalised.to_ascii_uppercase();
+    if !upper.starts_with("DROP RANK PROFILE") {
+        return Ok(None);
+    }
+    let after_prefix = normalised["DROP RANK PROFILE".len()..].trim_start();
+    let (if_exists, after_optional) = strip_if_exists(after_prefix);
+    let (name, rest) = extract_identifier(after_optional)?;
+
+    if !rest.trim().is_empty() {
+        return Err(anyhow!(
+            "DROP RANK PROFILE '{}': unexpected trailing text: '{}'",
+            name,
+            rest.trim()
+        ));
+    }
+    Ok(Some(DdlStatement::DropRankProfile { name, if_exists }))
+}
+
+fn strip_if_not_exists(input: &str) -> (bool, &str) {
+    let upper = input.to_ascii_uppercase();
+    if upper.starts_with("IF NOT EXISTS")
+        && input
+            .chars()
+            .nth("IF NOT EXISTS".len())
+            .map(|c| c.is_whitespace())
+            .unwrap_or(false)
+    {
+        (true, input["IF NOT EXISTS".len()..].trim_start())
+    } else {
+        (false, input)
+    }
+}
+
+fn strip_if_exists(input: &str) -> (bool, &str) {
+    let upper = input.to_ascii_uppercase();
+    if upper.starts_with("IF EXISTS")
+        && input
+            .chars()
+            .nth("IF EXISTS".len())
+            .map(|c| c.is_whitespace())
+            .unwrap_or(false)
+    {
+        (true, input["IF EXISTS".len()..].trim_start())
+    } else {
+        (false, input)
+    }
+}
+
+/// Extract a SQL identifier (`name` or `"name"`) from the head of `input` and
+/// return it alongside the remainder. The unquoted identifier is returned with
+/// `"` escapes unescaped (`""` → `"`).
+fn extract_identifier(input: &str) -> Result<(String, &str)> {
+    let input = input.trim_start();
+    if input.is_empty() {
+        return Err(anyhow!("expected identifier"));
+    }
+    if input.starts_with('"') {
+        let rest = &input[1..];
+        let end = rest
+            .find('"')
+            .ok_or_else(|| anyhow!("unterminated quoted identifier"))?;
+        let name = rest[..end].replace("\"\"", "\"");
+        Ok((name, &rest[end + 1..]))
+    } else {
+        let end = input
+            .find(|c: char| c.is_whitespace())
+            .unwrap_or(input.len());
+        let name = input[..end].to_string();
+        if name.is_empty() {
+            return Err(anyhow!("expected identifier"));
+        }
+        Ok((name, &input[end..]))
+    }
+}
+
+/// Extract a single-quoted SQL string literal from the head of `input`.
+/// `''` inside the literal escapes a single quote.
+fn extract_single_quoted_literal(input: &str) -> Result<String> {
+    let input = input.trim_start();
+    if !input.starts_with('\'') {
+        return Err(anyhow!("missing opening quote"));
+    }
+    let bytes = input.as_bytes();
+    let mut i = 1; // skip opening quote
+    let mut out = String::new();
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if c == '\'' {
+            // Check for escaped single quote
+            if i + 1 < bytes.len() && bytes[i + 1] as char == '\'' {
+                out.push('\'');
+                i += 2;
+                continue;
+            }
+            // End of literal — anything after the closing quote (besides
+            // optional whitespace + trailing semicolon) is an error.
+            let trailing = input[i + 1..].trim();
+            if !trailing.is_empty() {
+                return Err(anyhow!(
+                    "unexpected text after string literal: '{}'",
+                    trailing
+                ));
+            }
+            return Ok(out);
+        }
+        out.push(c);
+        i += 1;
+    }
+    Err(anyhow!("unterminated string literal"))
+}
+
+#[cfg(test)]
+mod rank_profile_ddl_tests {
+    use super::*;
+
+    fn assert_create_profile(sql: &str, expected_name: &str, expected_toml: &str, ine: bool) {
+        let stmt = try_parse_create_rank_profile(sql).unwrap().unwrap();
+        match stmt {
+            DdlStatement::CreateRankProfile {
+                name,
+                spec_toml,
+                if_not_exists,
+            } => {
+                assert_eq!(name, expected_name);
+                assert_eq!(spec_toml, expected_toml);
+                assert_eq!(if_not_exists, ine);
+            }
+            other => panic!("expected CreateRankProfile, got {:?}", other),
+        }
+    }
+
+    fn assert_drop_profile(sql: &str, expected_name: &str, ie: bool) {
+        let stmt = try_parse_drop_rank_profile(sql).unwrap().unwrap();
+        match stmt {
+            DdlStatement::DropRankProfile { name, if_exists } => {
+                assert_eq!(name, expected_name);
+                assert_eq!(if_exists, ie);
+            }
+            other => panic!("expected DropRankProfile, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn create_rank_profile_minimal_form() {
+        assert_create_profile(
+            "CREATE RANK PROFILE basic AS '[first_phase]\nexpression = \"1.0\"'",
+            "basic",
+            "[first_phase]\nexpression = \"1.0\"",
+            false,
+        );
+    }
+
+    #[test]
+    fn create_rank_profile_with_if_not_exists() {
+        assert_create_profile(
+            "CREATE RANK PROFILE IF NOT EXISTS basic AS '[first_phase]\nexpression = \"1.0\"'",
+            "basic",
+            "[first_phase]\nexpression = \"1.0\"",
+            true,
+        );
+    }
+
+    #[test]
+    fn create_rank_profile_handles_trailing_semicolon() {
+        assert_create_profile(
+            "CREATE RANK PROFILE basic AS '[first_phase]\nexpression = \"1.0\"';",
+            "basic",
+            "[first_phase]\nexpression = \"1.0\"",
+            false,
+        );
+    }
+
+    #[test]
+    fn create_rank_profile_escapes_single_quotes_in_body() {
+        let sql = "CREATE RANK PROFILE x AS 'don''t'";
+        let stmt = try_parse_create_rank_profile(sql).unwrap().unwrap();
+        match stmt {
+            DdlStatement::CreateRankProfile { spec_toml, .. } => {
+                assert_eq!(spec_toml, "don't");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn create_rank_profile_accepts_quoted_identifier() {
+        assert_create_profile(
+            "CREATE RANK PROFILE \"My Profile\" AS 'body'",
+            "My Profile",
+            "body",
+            false,
+        );
+    }
+
+    #[test]
+    fn create_rank_profile_returns_none_for_unrelated_sql() {
+        assert!(
+            try_parse_create_rank_profile("SELECT * FROM docs")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            try_parse_create_rank_profile("CREATE TABLE t (id INT)")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn create_rank_profile_rejects_missing_as() {
+        let err = try_parse_create_rank_profile("CREATE RANK PROFILE basic 'body'").unwrap_err();
+        assert!(err.to_string().contains("expected 'AS'"));
+    }
+
+    #[test]
+    fn create_rank_profile_rejects_unterminated_string() {
+        let err =
+            try_parse_create_rank_profile("CREATE RANK PROFILE basic AS 'no closing quote")
+                .unwrap_err();
+        assert!(err.to_string().contains("unterminated"));
+    }
+
+    #[test]
+    fn drop_rank_profile_minimal_form() {
+        assert_drop_profile("DROP RANK PROFILE basic", "basic", false);
+    }
+
+    #[test]
+    fn drop_rank_profile_with_if_exists() {
+        assert_drop_profile("DROP RANK PROFILE IF EXISTS basic", "basic", true);
+    }
+
+    #[test]
+    fn drop_rank_profile_handles_trailing_semicolon() {
+        assert_drop_profile("DROP RANK PROFILE basic;", "basic", false);
+    }
+
+    #[test]
+    fn drop_rank_profile_rejects_trailing_garbage() {
+        let err = try_parse_drop_rank_profile("DROP RANK PROFILE basic EXTRA").unwrap_err();
+        assert!(err.to_string().contains("unexpected trailing text"));
+    }
+
+    #[test]
+    fn drop_rank_profile_returns_none_for_unrelated_sql() {
+        assert!(
+            try_parse_drop_rank_profile("DROP TABLE t")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn parse_ddl_routes_create_rank_profile_through_pre_parser() {
+        let parser = SqlFrontendParser::new();
+        let stmt = parser
+            .parse_ddl("CREATE RANK PROFILE basic AS '[first_phase]\nexpression = \"1.0\"'")
+            .unwrap()
+            .expect("parse should succeed");
+        assert!(matches!(stmt, DdlStatement::CreateRankProfile { .. }));
+    }
+
+    #[test]
+    fn parse_ddl_routes_drop_rank_profile_through_pre_parser() {
+        let parser = SqlFrontendParser::new();
+        let stmt = parser
+            .parse_ddl("DROP RANK PROFILE basic")
+            .unwrap()
+            .expect("parse should succeed");
+        assert!(matches!(stmt, DdlStatement::DropRankProfile { .. }));
     }
 }

@@ -107,6 +107,29 @@ pub enum DdlStatement {
         /// Additional collection-level properties.
         properties: HashMap<String, String>,
     },
+    /// `CREATE RANK PROFILE [IF NOT EXISTS] name AS '<toml>'` (ProximaDB-specific).
+    ///
+    /// Lowers to [`crate::services::RankProfileStore::install`] with the
+    /// caller-provided TOML body; the spec is re-validated + compiled into
+    /// the live `RankServices` registry before the DDL response is sent.
+    CreateRankProfile {
+        /// Profile name (catalog key).
+        name: String,
+        /// Raw TOML body of the profile spec.
+        spec_toml: String,
+        /// When `true`, silently succeeds (without bumping version) if the
+        /// profile already exists.
+        if_not_exists: bool,
+    },
+    /// `DROP RANK PROFILE [IF EXISTS] name` (ProximaDB-specific).
+    ///
+    /// Lowers to [`crate::services::RankProfileStore::remove`].
+    DropRankProfile {
+        /// Profile name to remove.
+        name: String,
+        /// When `true`, silently succeeds if the profile does not exist.
+        if_exists: bool,
+    },
 }
 
 /// Backwards-compat alias for [`DdlColumnDefinition`].
@@ -387,12 +410,47 @@ impl DdlResult {
 pub struct DdlService {
     /// Catalog manager for metadata operations
     catalog_manager: Arc<CatalogManager>,
+    /// Optional rank-profile catalog. Required for `CREATE RANK PROFILE` /
+    /// `DROP RANK PROFILE`; absent for embedded paths that never see those
+    /// statements.
+    rank_profile_store: Option<Arc<dyn crate::services::RankProfileStore>>,
+    /// Optional rank-services singleton. When present, `CREATE RANK PROFILE`
+    /// also compiles + installs the profile into the live registry so SQL
+    /// `RERANK(...)` sees it immediately without waiting for the next boot.
+    rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
 }
 
 impl DdlService {
     /// Create a new DDL service
     pub fn new(catalog_manager: Arc<CatalogManager>) -> Self {
-        Self { catalog_manager }
+        Self {
+            catalog_manager,
+            rank_profile_store: None,
+            rank_services: None,
+        }
+    }
+
+    /// Attach the rank-profile catalog. Required by `CREATE RANK PROFILE` /
+    /// `DROP RANK PROFILE`; callers that don't wire it will get a clean error
+    /// message when those statements are issued.
+    pub fn with_rank_profile_store(
+        mut self,
+        store: Arc<dyn crate::services::RankProfileStore>,
+    ) -> Self {
+        self.rank_profile_store = Some(store);
+        self
+    }
+
+    /// Attach the live `RankServices` registry. When present, every
+    /// successful `CREATE RANK PROFILE` is compiled + installed into the
+    /// in-process registry so SQL `RERANK(...)` picks up the change without
+    /// requiring a server restart.
+    pub fn with_rank_services(
+        mut self,
+        services: Arc<crate::network::rest::v1::rank::RankServices>,
+    ) -> Self {
+        self.rank_services = Some(services);
+        self
     }
 
     /// Execute a DDL statement
@@ -464,7 +522,95 @@ impl DdlService {
                 )
                 .await
             }
+            DdlStatement::CreateRankProfile {
+                name,
+                spec_toml,
+                if_not_exists,
+            } => self.create_rank_profile(&name, &spec_toml, if_not_exists).await,
+            DdlStatement::DropRankProfile { name, if_exists } => {
+                self.drop_rank_profile(&name, if_exists).await
+            }
         }
+    }
+
+    // ========================
+    // Rank Profile Operations
+    // ========================
+
+    /// Install (or replace) a rank profile in the durable catalog and the
+    /// live `RankServices` registry. Requires both
+    /// `with_rank_profile_store(...)` and `with_rank_services(...)` to have
+    /// been wired; otherwise returns a clean error so SQL clients see a
+    /// readable failure rather than a panic.
+    async fn create_rank_profile(
+        &self,
+        name: &str,
+        spec_toml: &str,
+        if_not_exists: bool,
+    ) -> Result<DdlResult> {
+        use proximadb_rank_profile::{CompiledRankProfile, dsl::parse_single};
+
+        let store = self.rank_profile_store.as_ref().ok_or_else(|| {
+            anyhow!(
+                "CREATE RANK PROFILE: rank-profile catalog is not configured on this DDL service"
+            )
+        })?;
+        let services = self.rank_services.as_ref().ok_or_else(|| {
+            anyhow!(
+                "CREATE RANK PROFILE: rank-services registry is not configured on this DDL service"
+            )
+        })?;
+
+        if if_not_exists && store.get(name).await?.is_some() {
+            return Ok(DdlResult::already_exists("RANK PROFILE", name));
+        }
+
+        // Validate + compile up-front so the operator gets a clear parse /
+        // validation error before anything is persisted to the catalog.
+        let spec = parse_single(name, spec_toml)
+            .map_err(|e| anyhow!("CREATE RANK PROFILE '{}': invalid spec: {}", name, e))?;
+        let compiled = CompiledRankProfile::compile(spec, services.blueprint_factory.clone())
+            .map_err(|e| {
+                // Record the failure for ops dashboards before bubbling up.
+                services.record_profile_reload_error(name);
+                anyhow!("CREATE RANK PROFILE '{}': compile failed: {}", name, e)
+            })?;
+
+        store
+            .install(name, spec_toml.to_string(), None, None)
+            .await
+            .map_err(|e| anyhow!("CREATE RANK PROFILE '{}': catalog write failed: {}", name, e))?;
+
+        services.install_profile(compiled);
+
+        info!(profile = %name, "Created rank profile");
+        Ok(DdlResult::success(format!("CREATE RANK PROFILE {}", name)))
+    }
+
+    /// Remove a rank profile from the durable catalog and the live
+    /// `RankServices` registry.
+    async fn drop_rank_profile(&self, name: &str, if_exists: bool) -> Result<DdlResult> {
+        let store = self.rank_profile_store.as_ref().ok_or_else(|| {
+            anyhow!("DROP RANK PROFILE: rank-profile catalog is not configured on this DDL service")
+        })?;
+
+        let removed = store
+            .remove(name)
+            .await
+            .map_err(|e| anyhow!("DROP RANK PROFILE '{}': catalog delete failed: {}", name, e))?;
+        if !removed {
+            if if_exists {
+                return Ok(DdlResult::not_found("RANK PROFILE", name));
+            }
+            return Err(anyhow!("Rank profile '{}' does not exist", name));
+        }
+
+        if let Some(services) = self.rank_services.as_ref() {
+            services.profile_registry.remove(name);
+        }
+
+        info!(profile = %name, "Dropped rank profile");
+        Ok(DdlResult::success(format!("DROP RANK PROFILE {}", name)))
     }
 
     // ========================
@@ -2238,5 +2384,229 @@ mod tests {
             schema.canonical_embedding_precision,
             proximadb_records::EmbeddingScalarType::Fp32
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // CREATE / DROP RANK PROFILE (commit 4/5 of R-7c production wiring)
+    // ─────────────────────────────────────────────────────────────────
+
+    fn rank_pipeline_for_tests() -> (
+        Arc<dyn crate::services::RankProfileStore>,
+        Arc<crate::network::rest::v1::rank::RankServices>,
+    ) {
+        use crate::core::search::hybrid::FusionStrategy;
+        use crate::network::rest::v1::rank::{
+            HybridCoordinatorAdapter, MockRangeCandidateProvider, RankServices,
+        };
+        use crate::services::record_store::TableWalAppender;
+        use crate::services::{CanonicalWalRankProfileStore, MemoryTableWalAppender};
+
+        // In-memory rank-profile store backed by `MemoryTableWalAppender` so
+        // the DDL service can install + remove profiles without a temp dir.
+        let appender: Arc<dyn TableWalAppender> = Arc::new(MemoryTableWalAppender::new());
+        let store: Arc<dyn crate::services::RankProfileStore> =
+            Arc::new(CanonicalWalRankProfileStore::new(appender));
+
+        // RankServices with a fixed-range candidate provider so the
+        // `with_rank_services` builder has a working stub to attach. The
+        // candidates aren't exercised by these DDL tests; only the registry
+        // + blueprint factory matter.
+        let candidates: Arc<dyn crate::network::rest::v1::rank::CandidateProvider> =
+            Arc::new(MockRangeCandidateProvider::default());
+        // The HybridCoordinatorAdapter isn't used here but matches the
+        // production wiring shape so the test stays close to production.
+        let _adapter = Arc::new(HybridCoordinatorAdapter::new(
+            FusionStrategy::ReciprocalRank { k: 60 },
+            Arc::new(NoopHybridBackend),
+        ));
+        let services = Arc::new(RankServices::new(candidates));
+        (store, services)
+    }
+
+    struct NoopHybridBackend;
+
+    #[async_trait::async_trait]
+    impl crate::network::rest::v1::rank::HybridSearchBackend for NoopHybridBackend {
+        async fn bm25_search(
+            &self,
+            _collection: &str,
+            _query: &str,
+        ) -> proximadb_rank_core::RankResult<
+            Vec<crate::core::search::hybrid::BM25Result>,
+        > {
+            Ok(Vec::new())
+        }
+
+        async fn vector_search(
+            &self,
+            _collection: &str,
+            _vector: &[f32],
+        ) -> proximadb_rank_core::RankResult<
+            Vec<crate::core::search::hybrid::VectorResult>,
+        > {
+            Ok(Vec::new())
+        }
+    }
+
+    const VALID_PROFILE_TOML: &str = "[first_phase]\nexpression = \"1.0\"\nheap_size = 50\n";
+    const BROKEN_PROFILE_TOML: &str =
+        "[first_phase]\nexpression = \"definitely_not_a_feature(\\\"missing\\\")\"\nheap_size = 50\n";
+
+    #[tokio::test]
+    async fn create_rank_profile_installs_into_store_and_registry() {
+        let (store, services) = rank_pipeline_for_tests();
+        let ddl = DdlService::new(Arc::new(CatalogManager::new()))
+            .with_rank_profile_store(store.clone())
+            .with_rank_services(services.clone());
+
+        let result = ddl
+            .execute(DdlStatement::CreateRankProfile {
+                name: "basic".to_string(),
+                spec_toml: VALID_PROFILE_TOML.to_string(),
+                if_not_exists: false,
+            })
+            .await
+            .expect("CREATE RANK PROFILE should succeed");
+        assert!(result.success);
+        assert_eq!(result.message, "CREATE RANK PROFILE basic");
+
+        assert!(store.get("basic").await.unwrap().is_some());
+        assert!(services.profile_registry.get("basic").is_some());
+    }
+
+    #[tokio::test]
+    async fn create_rank_profile_if_not_exists_is_idempotent() {
+        let (store, services) = rank_pipeline_for_tests();
+        let ddl = DdlService::new(Arc::new(CatalogManager::new()))
+            .with_rank_profile_store(store.clone())
+            .with_rank_services(services.clone());
+
+        ddl.execute(DdlStatement::CreateRankProfile {
+            name: "idempotent".to_string(),
+            spec_toml: VALID_PROFILE_TOML.to_string(),
+            if_not_exists: false,
+        })
+        .await
+        .unwrap();
+        let first = store.get("idempotent").await.unwrap().unwrap();
+
+        let result = ddl
+            .execute(DdlStatement::CreateRankProfile {
+                name: "idempotent".to_string(),
+                spec_toml: VALID_PROFILE_TOML.to_string(),
+                if_not_exists: true,
+            })
+            .await
+            .expect("IF NOT EXISTS should not error on existing");
+        assert!(result.success);
+        assert_eq!(result.affected_count, 0);
+
+        let second = store.get("idempotent").await.unwrap().unwrap();
+        assert_eq!(
+            first.version, second.version,
+            "IF NOT EXISTS must not bump version when the profile already exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn create_rank_profile_rejects_uncompilable_spec_without_persisting() {
+        let (store, services) = rank_pipeline_for_tests();
+        let ddl = DdlService::new(Arc::new(CatalogManager::new()))
+            .with_rank_profile_store(store.clone())
+            .with_rank_services(services.clone());
+
+        let err = ddl
+            .execute(DdlStatement::CreateRankProfile {
+                name: "broken".to_string(),
+                spec_toml: BROKEN_PROFILE_TOML.to_string(),
+                if_not_exists: false,
+            })
+            .await
+            .expect_err("CREATE RANK PROFILE with unresolvable feature must fail");
+        assert!(err.to_string().contains("compile failed"));
+
+        // Catalog must NOT contain a partial install.
+        assert!(
+            store.get("broken").await.unwrap().is_none(),
+            "uncompilable profile must not be written to the catalog"
+        );
+        assert!(services.profile_registry.get("broken").is_none());
+    }
+
+    #[tokio::test]
+    async fn create_rank_profile_without_store_returns_clean_error() {
+        let ddl = DdlService::new(Arc::new(CatalogManager::new()));
+        let err = ddl
+            .execute(DdlStatement::CreateRankProfile {
+                name: "x".to_string(),
+                spec_toml: VALID_PROFILE_TOML.to_string(),
+                if_not_exists: false,
+            })
+            .await
+            .expect_err("DDL service without rank store should reject the statement");
+        assert!(err.to_string().contains("not configured"));
+    }
+
+    #[tokio::test]
+    async fn drop_rank_profile_removes_from_store_and_registry() {
+        let (store, services) = rank_pipeline_for_tests();
+        let ddl = DdlService::new(Arc::new(CatalogManager::new()))
+            .with_rank_profile_store(store.clone())
+            .with_rank_services(services.clone());
+
+        ddl.execute(DdlStatement::CreateRankProfile {
+            name: "doomed".to_string(),
+            spec_toml: VALID_PROFILE_TOML.to_string(),
+            if_not_exists: false,
+        })
+        .await
+        .unwrap();
+
+        let result = ddl
+            .execute(DdlStatement::DropRankProfile {
+                name: "doomed".to_string(),
+                if_exists: false,
+            })
+            .await
+            .unwrap();
+        assert!(result.success);
+        assert_eq!(result.message, "DROP RANK PROFILE doomed");
+        assert!(store.get("doomed").await.unwrap().is_none());
+        assert!(services.profile_registry.get("doomed").is_none());
+    }
+
+    #[tokio::test]
+    async fn drop_rank_profile_if_exists_is_noop_for_missing() {
+        let (store, services) = rank_pipeline_for_tests();
+        let ddl = DdlService::new(Arc::new(CatalogManager::new()))
+            .with_rank_profile_store(store)
+            .with_rank_services(services);
+
+        let result = ddl
+            .execute(DdlStatement::DropRankProfile {
+                name: "ghost".to_string(),
+                if_exists: true,
+            })
+            .await
+            .expect("IF EXISTS must not error on missing profile");
+        assert!(result.success);
+        assert_eq!(result.affected_count, 0);
+    }
+
+    #[tokio::test]
+    async fn drop_rank_profile_without_if_exists_errors_for_missing() {
+        let (store, services) = rank_pipeline_for_tests();
+        let ddl = DdlService::new(Arc::new(CatalogManager::new()))
+            .with_rank_profile_store(store)
+            .with_rank_services(services);
+
+        let err = ddl
+            .execute(DdlStatement::DropRankProfile {
+                name: "ghost".to_string(),
+                if_exists: false,
+            })
+            .await
+            .expect_err("DROP without IF EXISTS must fail for missing profile");
+        assert!(err.to_string().contains("does not exist"));
     }
 }
