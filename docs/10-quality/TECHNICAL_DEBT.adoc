@@ -1132,10 +1132,10 @@ physical layouts.
 | Catalog default-bootstrap in embedded test harnesses (precision_resolver wiring)
 | P3
 | MEDIUM
-| Open
-| `src/database.rs:159` wires `precision_resolver` into `RequestHandlers` only when `catalog_manager.default_catalog()` succeeds. In embedded test harnesses that don't register a default catalog (the pattern in `tests/fp16_v2_insert_search_e2e.rs` and `tests/release_smoke_v2.rs`), the resolver stays unwired and fp16 collections silently accumulate the canonical_bytes Prometheus metric under `precision="fp32"`. Production wires it correctly; the gap is test-harness-only.
+| Resolved
+| Two coupled bugs surfaced during diagnosis. (1) `SharedServices::new` created a "default" native catalog but never called `set_default_catalog("default")`, so `catalog_manager.default_catalog()` always returned `Err` and `database.rs:159` warned that the precision_resolver was unwired — silently in **production too**, not just the embedded test harness. (2) Even after fixing the resolver wiring and confirming coercion correctly produced fp16 cells, the WAL-level metric emitter labelled by the internal UUID returned from `resolve_collection_id_internal`, while operators and the regression test scrape by the user-facing collection name.
 | 2-3 days
-| Surfaced 2026-05-28 (round-2 audit) when `rest_v2_insert_into_fp16_collection_accumulates_canonical_bytes_metric` failed after the WS3 fixes; the test is `#[ignore]`'d with a pointer to this TD. Acceptance: (1) `ProximaDB::new` registers a default catalog OR test harness fixtures call `set_precision_resolver` explicitly; (2) the metric test is unignored and green; (3) regression covered by `release-smoke`.
+| **RESOLVED 2026-05-28** by commit `32cea5b85`: (a) `SharedServices::new` explicitly designates "default" as the catalog manager's default after the native-catalog create call; (b) `UnifiedHandlers::coerce_records_to_canonical_precision` emits the per-precision `canonical_bytes` metric using the handler-side collection_id; the WAL-side emission stays for non-handler writers but uses the internal UUID. The fp16 metric regression test is no longer `#[ignore]`'d (`tests/fp16_v2_insert_search_e2e.rs::rest_v2_insert_into_fp16_collection_accumulates_canonical_bytes_metric` — green).
 
 | TD-081
 | Python SDK live v2 INSERT→SEARCH integration coverage
@@ -1150,10 +1150,10 @@ physical layouts.
 | Arrow Flight INSERT vs. REST/gRPC UPSERT handler parity test
 | P3
 | MEDIUM
-| Open
-| Round-2 audit (2026-05-28) found that `handle_record_insert_batch_for_tenant` was missing the precision-coercion block that `handle_record_batch_for_tenant` already applied — Arrow Flight INSERT into an fp16 collection would land fp32 records. Fix landed this session, but no test asserts the two handlers remain behaviourally equivalent under identical input. Another precision/validation block could regress one path silently.
+| Resolved
+| Round-2 audit (2026-05-28) found that `handle_record_insert_batch_for_tenant` was missing the precision-coercion block that `handle_record_batch_for_tenant` already applied — Arrow Flight INSERT into an fp16 collection would land fp32 records. The initial round-2 fix (commit `a446b3964`) duplicated the coercion block in both handlers, which kept the parity surface fragile (another future block could regress one path silently).
 | 1 day
-| Acceptance: a unit/integration test feeds the same `RichRecordBatchRequest` to both handlers and asserts identical written records (precision, props, tenant_id projection). Add to `make release-check`.
+| **RESOLVED 2026-05-28** by commit `32cea5b85`: extracted the v2 precision-coercion block into `UnifiedHandlers::coerce_records_to_canonical_precision` and routed both handlers through it. Parity is now enforced by code-sharing rather than by a test that could later be deleted, deleting the entire class of "one handler regressed but the other didn't" bug.
 
 | TD-083
 | Rust SDK v2 INSERT exposure (props / text_fields)
