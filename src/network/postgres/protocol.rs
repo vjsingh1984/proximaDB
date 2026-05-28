@@ -403,6 +403,31 @@ impl PostgresProtocol {
         self
     }
 
+    /// Attach the rank-pipeline catalog + live registry to the current
+    /// `DdlService` so `CREATE RANK PROFILE` / `DROP RANK PROFILE` SQL
+    /// statements lower into the same `RankServices` REST and gRPC share.
+    ///
+    /// Call this after `with_catalog_manager` / `with_direct_catalog_manager`
+    /// / `with_catalog_services` / `with_direct_catalog_services`. If no
+    /// `DdlService` is present (no catalog manager attached), this is a
+    /// no-op — pgwire DDL is gated by the existence of `ddl_service`
+    /// anyway, so a catalog-less handler stays catalog-less.
+    pub fn with_rank_pipeline(
+        mut self,
+        services: Arc<crate::network::rest::v1::rank::RankServices>,
+        store: Arc<dyn crate::services::RankProfileStore>,
+    ) -> Self {
+        let Some(catalog_manager) = self.catalog_manager.clone() else {
+            return self;
+        };
+        self.ddl_service = Some(Arc::new(
+            DdlService::new(catalog_manager)
+                .with_rank_profile_store(store)
+                .with_rank_services(services),
+        ));
+        self
+    }
+
     /// Run the protocol loop
     pub async fn run(&mut self) -> Result<()> {
         // Handle startup

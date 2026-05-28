@@ -80,8 +80,22 @@ pub struct PostgresServer {
     observability_service: Option<Arc<ObservabilityService>>,
     /// Optional canonical record/WAL writer for relational pgwire DML.
     direct_write_services: Option<DirectPgwireWriteServices>,
+    /// Optional rank-pipeline singleton + durable catalog (R-7c.3
+    /// production wiring). When `Some`, every per-connection DDL service
+    /// is built with `with_rank_profile_store` + `with_rank_services` so
+    /// SQL `CREATE RANK PROFILE` / `DROP RANK PROFILE` reach the same
+    /// `RankServices` instance the REST / gRPC / Arrow Flight paths share.
+    rank_pipeline: Option<PgwireRankPipeline>,
     /// Whether the server is running
     running: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Bundle of the rank-pipeline handles pgwire threads into every
+/// `DdlService` it constructs. Cloning is cheap (two `Arc`s).
+#[derive(Clone)]
+pub struct PgwireRankPipeline {
+    pub services: Arc<crate::network::rest::v1::rank::RankServices>,
+    pub store: Arc<dyn crate::services::RankProfileStore>,
 }
 
 impl PostgresServer {
@@ -105,8 +119,22 @@ impl PostgresServer {
             graph_service,
             observability_service,
             direct_write_services: None,
+            rank_pipeline: None,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Attach the process-wide rank-pipeline so each per-connection
+    /// `DdlService` is built with the rank-profile catalog + live
+    /// registry wired in. Production callers pass
+    /// `SharedServices.rank_services` + `SharedServices.rank_profile_store`.
+    pub fn with_rank_pipeline(
+        mut self,
+        services: Arc<crate::network::rest::v1::rank::RankServices>,
+        store: Arc<dyn crate::services::RankProfileStore>,
+    ) -> Self {
+        self.rank_pipeline = Some(PgwireRankPipeline { services, store });
+        self
     }
 
     /// Enable direct canonical record/WAL writes for catalog-routed relational
@@ -147,6 +175,7 @@ impl PostgresServer {
                     let graph_service = self.graph_service.clone();
                     let observability_service = self.observability_service.clone();
                     let direct_write_services = self.direct_write_services.clone();
+                    let rank_pipeline = self.rank_pipeline.clone();
 
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_connection(
@@ -160,6 +189,7 @@ impl PostgresServer {
                             graph_service,
                             observability_service,
                             direct_write_services,
+                            rank_pipeline,
                         )
                         .await
                         {
@@ -195,6 +225,7 @@ impl PostgresServer {
         graph_service: Option<Arc<GraphService>>,
         observability_service: Option<Arc<ObservabilityService>>,
         direct_write_services: Option<DirectPgwireWriteServices>,
+        rank_pipeline: Option<PgwireRankPipeline>,
     ) -> Result<()> {
         // Create session
         let session = session_manager.create_session(addr).await?;
@@ -219,6 +250,9 @@ impl PostgresServer {
         } else {
             protocol.with_catalog_manager(catalog_manager)
         };
+        if let Some(pipeline) = rank_pipeline {
+            protocol = protocol.with_rank_pipeline(pipeline.services, pipeline.store);
+        }
 
         // Run protocol loop
         match protocol.run().await {

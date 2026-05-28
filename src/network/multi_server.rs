@@ -691,6 +691,8 @@ impl MultiServer {
             let document_service = Some(services.document_service.clone());
             let graph_service = Some(services.graph_service.clone());
             let observability_service = Some(services.observability_service.clone());
+            let rank_services = services.rank_services.clone();
+            let rank_profile_store = services.rank_profile_store.clone();
             let direct_write_services = self.build_direct_pgwire_write_services().await?;
 
             let postgres_handle = tokio::spawn(async move {
@@ -707,6 +709,7 @@ impl MultiServer {
                 if let Some(direct_write_services) = direct_write_services {
                     server = server.with_direct_write_services(direct_write_services);
                 }
+                server = server.with_rank_pipeline(rank_services, rank_profile_store);
                 if let Err(e) = server.start().await {
                     tracing::error!("❌ PostgreSQL Server error: {}", e);
                 }
@@ -1043,6 +1046,10 @@ impl MultiServer {
                 if let Some(direct_write_services) = direct_write_services {
                     server = server.with_direct_write_services(direct_write_services);
                 }
+                server = server.with_rank_pipeline(
+                    services.rank_services.clone(),
+                    services.rank_profile_store.clone(),
+                );
 
                 if let Err(e) = server.start().await {
                     tracing::error!("❌ PostgreSQL Server error: {}", e);
