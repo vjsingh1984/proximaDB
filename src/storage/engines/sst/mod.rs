@@ -267,7 +267,7 @@ pub use compactor_impl::{CompactionSortStrategy, SstCompactor, ZeroCopyCompactio
 pub use readers::UnifiedSstableReader;
 
 // Additional exports for unified reader (SstableHeader is already defined below)
-pub use writer::SstableWriter;
+pub use writer::{SstableWriteOutcome, SstableWriter};
 
 // Re-export SstRecord for test compatibility (deprecated - see blocks.rs)
 pub use blocks::SstRecord;

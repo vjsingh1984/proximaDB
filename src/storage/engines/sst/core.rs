@@ -278,6 +278,42 @@ pub struct SstEngine {
             std::collections::HashMap<String, super::pca_manager::EnhancedPCAModel>,
         >,
     >,
+
+    /// **Vector Object Economy Directory Cache** (Optional, Phase 4)
+    ///
+    /// Process-wide per-collection cache populated by the read-side and
+    /// invalidated by the writer/compactor. When `Some`, the SST engine's
+    /// flush implementation emits a directory entry after each
+    /// successful atomic commit and calls `cache.invalidate(collection_id)`
+    /// so the next reader sees the new file.
+    ///
+    /// When `None` (default), directory emission is skipped entirely —
+    /// no path derivation, no fallback inference. Pre-existing call
+    /// sites are unaffected until they opt in via
+    /// [`Self::with_directory_cache`].
+    directory_cache: Option<
+        Arc<
+            crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache,
+        >,
+    >,
+
+    /// **Tiering Integration** (Optional)
+    ///
+    /// Drives access-pattern → tier-migration decisions for SST segments.
+    /// When `Some`, the engine:
+    /// - Calls `record_access()` from the search path so the policy engine
+    ///   sees hot vs cold collections
+    /// - Calls `determine_flush_tier()` so newly-flushed segments land in
+    ///   the right tier from the start
+    /// - Calls `evaluate_collection()` from the compaction path so merged
+    ///   segments can be re-tiered based on the post-compaction set
+    ///
+    /// When `None` (default), all these calls become no-ops — preserving
+    /// the legacy "everything is hot" behavior until an operator opts in
+    /// via [`Self::with_tiering_integration`] and config enables it.
+    tiering_integration: Option<
+        Arc<crate::storage::engines::sst::tiering_integration::SstTieringIntegration>,
+    >,
 }
 
 impl SstEngine {
@@ -381,7 +417,68 @@ impl SstEngine {
             orchestrator,
             axis_manager,
             pca_model_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
+            directory_cache: None,
+            tiering_integration: None,
         })
+    }
+
+    /// Attach a tiering integration so flush / search / compaction hooks
+    /// drive tier migration. When unset (default), all tiering hooks are
+    /// no-ops — preserving the legacy single-tier behavior.
+    ///
+    /// Returns `self` for builder-style chaining. The integration is
+    /// expected to be wrapped in `Arc` so the engine can share it across
+    /// flush / search / compaction call sites without cloning state.
+    pub fn with_tiering_integration(
+        mut self,
+        integration: Arc<crate::storage::engines::sst::tiering_integration::SstTieringIntegration>,
+    ) -> Self {
+        self.tiering_integration = Some(integration);
+        self
+    }
+
+    /// Borrow the attached tiering integration, if any. Used by flush /
+    /// search / compaction paths to dispatch hooks without panicking when
+    /// tiering isn't configured.
+    pub fn tiering_integration(
+        &self,
+    ) -> Option<&Arc<crate::storage::engines::sst::tiering_integration::SstTieringIntegration>>
+    {
+        self.tiering_integration.as_ref()
+    }
+
+    /// Attach the Vector Object Economy per-collection directory cache.
+    /// Called by `SharedServices::new` so the engine's flush path can
+    /// emit directory updates and invalidate the read-side cache after
+    /// each successful atomic commit. When unset (default), directory
+    /// emission is skipped.
+    pub fn with_directory_cache(
+        mut self,
+        cache: Arc<
+            crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache,
+        >,
+    ) -> Self {
+        self.directory_cache = Some(cache);
+        self
+    }
+
+    /// True when [`Self::with_directory_cache`] has supplied a cache.
+    /// Regression-tested so the default (no emission) cannot silently
+    /// flip to "always emit."
+    pub fn directory_cache_configured(&self) -> bool {
+        self.directory_cache.is_some()
+    }
+
+    /// Borrow the configured cache, if any. Used by the flush
+    /// implementation to construct hooks at the call site.
+    pub(crate) fn directory_cache_ref(
+        &self,
+    ) -> Option<
+        &Arc<
+            crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache,
+        >,
+    > {
+        self.directory_cache.as_ref()
     }
 
     /// Initialize quantization engines (storage-aware and fallback)

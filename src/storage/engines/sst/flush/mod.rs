@@ -264,6 +264,14 @@ impl SstEngine {
         // Count entries for writing
         let entries_written = sorted_vectors.len() as u64;
 
+        // Captured outcome from the underlying writer when ProximaBlocks
+        // format is used. None for ArrowBlock writes (which don't expose
+        // index metadata yet — directory emission stays off for that
+        // branch until ArrowBlockWriter grows an equivalent outcome).
+        let mut write_outcome: Option<
+            crate::storage::engines::sst::writer::SstableWriteOutcome,
+        > = None;
+
         match block_format {
             BlockFormat::ArrowBlock => {
                 // Use ArrowBlockWriter for Arrow IPC format
@@ -349,7 +357,7 @@ impl SstEngine {
                     }
                 }
 
-                writer
+                let outcome = writer
                     .write_sorted_proxima_records(
                         sorted_vectors.into_iter().map(|(_, record)| record),
                         entries_written as usize,
@@ -358,6 +366,7 @@ impl SstEngine {
                     .context("Failed to write vectors to SSTable")?;
 
                 tracing::debug!("SSTable write operation completed");
+                write_outcome = Some(outcome);
             }
         }
 
@@ -389,6 +398,63 @@ impl SstEngine {
             bytes = bytes_written,
             "SST flush atomic commit done"
         );
+
+        // Vector Object Economy directory emission (Phase 4, option 1-B).
+        // Emit at the final URL — staging is irrelevant once the atomic
+        // commit succeeded. Skipped entirely when:
+        //   * The engine was constructed without `with_directory_cache`.
+        //   * The block format doesn't carry index metadata (ArrowBlock).
+        //   * The flush carries no collection_id (defensive — validation
+        //     already rejected this case, but keep the guard explicit).
+        // Conservative defaults: storage_epoch=0, freshness_lsn=0,
+        // authority_mode=RebuildableProjection until WAL/manifest sources
+        // are plumbed. Emit failures log and continue — directory is a
+        // rebuildable projection and must not fail the flush.
+        if let (Some(cache), Some(outcome), Some(collection_id)) = (
+            self.directory_cache_ref(),
+            write_outcome.as_ref(),
+            params.collection_id.as_ref(),
+        ) {
+            use crate::storage::engines::sst::object_economy_directory::SstableWriterDirectoryHooks;
+            use proximadb_catalog::CatalogAuthorityMode;
+
+            let hooks = SstableWriterDirectoryHooks {
+                cache: cache.clone(),
+                collection_id: collection_id.clone(),
+                collection_root: storage_url.to_string(),
+                storage_epoch: 0,
+                authority_mode: CatalogAuthorityMode::RebuildableProjection,
+                freshness_lsn: 0,
+                level: 0,
+            };
+            let final_file_url = format!("{}/{}", atomic_op.final_url, filename);
+            let fs_handle = self.filesystem().get_filesystem(&final_file_url)?;
+            if let Err(err) = hooks
+                .emit_after_flush(
+                    &*fs_handle,
+                    &final_file_url,
+                    &final_file_url,
+                    outcome.file_size_bytes,
+                    outcome.block_index_offset,
+                    outcome.block_index_size,
+                    &outcome.index_entries,
+                )
+                .await
+            {
+                tracing::warn!(
+                    "SST Flush: directory emission failed for {} ({}); read-side \
+                     route will degrade to embedded-index path until next flush rebuilds",
+                    final_file_url,
+                    err
+                );
+            } else {
+                tracing::debug!(
+                    "SST Flush: emitted object-economy directory entry for {} (collection={})",
+                    final_file_url,
+                    collection_id
+                );
+            }
+        }
 
         // Check if compaction should be triggered
         let should_trigger_compaction = self.should_trigger_compaction(storage_url).await?;

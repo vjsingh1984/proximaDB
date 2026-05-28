@@ -268,9 +268,23 @@ impl SharedServices {
         );
         debug!("✅ SharedServices::new - VIPER engine created successfully");
 
+        // Vector Object Economy Phase 4 (1-B + 2-B): construct the
+        // process-wide per-collection directory cache up front so both
+        // the SST engine (producer side — emits directory updates after
+        // atomic commit) and the vector operations service (consumer
+        // side — loads cached directories during search) hold the same
+        // `Arc`.
+        let directory_cache = Arc::new(
+            crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
+        );
+
         // Create SST engine
         debug!("🔧 SharedServices::new - Creating SST engine...");
-        let sst_engine = Arc::new(crate::storage::engines::sst::SstEngine::new().await?);
+        let sst_engine = Arc::new(
+            crate::storage::engines::sst::SstEngine::new()
+                .await?
+                .with_directory_cache(directory_cache.clone()),
+        );
         debug!("✅ SharedServices::new - SST engine created successfully");
 
         // Clone SST engine reference for DocumentService (used later for DocumentStrategy)
@@ -394,13 +408,9 @@ impl SharedServices {
             }
         }
 
-        // Vector Object Economy Phase 4 (2-B): construct the process-wide
-        // per-collection directory cache before the vector service so the
-        // service holds the same Arc the SharedServices field will expose.
-        let directory_cache = Arc::new(
-            crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
-        );
-
+        // `directory_cache` constructed earlier (before SstEngine) so the
+        // engine, the vector ops service, and the SharedServices public
+        // field all share the same `Arc`.
         let vector_operations_service = Arc::new(
             VectorOperationsService::new(
                 sst_engine,
