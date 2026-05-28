@@ -52,6 +52,19 @@ pub const METRIC_PHASE_TRUNCATED_TOTAL: &str = "proximadb_rank_phase_truncated_t
 /// by outcome (spec §4.10: `outcome ∈ {ok, error}`). Counter.
 pub const METRIC_PROFILE_RELOAD_TOTAL: &str = "proximadb_rank_profile_reload_total";
 
+/// `proximadb_rank_feature_contribution{profile,feature}` —
+/// distribution of per-doc feature output values across requests
+/// (spec §4.10). The spec defines this as "distribution of
+/// contribution values"; true *contribution to final score* needs
+/// the score expression's weighted-sum structure (architectural),
+/// so today we emit the feature's raw output value as the
+/// distribution. That gives ops a "what does this feature
+/// typically output" signal — the closest proxy without parsing
+/// the score expression. A future slice can tighten this by
+/// multiplying the feature value by its expression-tree weight
+/// before observing.
+pub const METRIC_FEATURE_CONTRIBUTION: &str = "proximadb_rank_feature_contribution";
+
 // ---------------------------------------------------------------------------
 // Label keys
 // ---------------------------------------------------------------------------
@@ -79,7 +92,18 @@ pub struct RankPipelineMetrics {
     phase_latency_us: HistogramVec,
     phase_truncated_total: CounterVec,
     profile_reload_total: CounterVec,
+    feature_contribution: HistogramVec,
 }
+
+/// Bounded histogram buckets for per-feature contribution values.
+/// Covers the typical range: similarity scores (0..1), BM25 raw
+/// scores (~0..30), and aggregate weighted scores up to ~100. The
+/// `-1.0` lower edge is intentional — cosine-similarity features
+/// can be negative if vectors point in opposite directions and we
+/// want the histogram to capture that signal rather than clip it.
+const FEATURE_CONTRIBUTION_BUCKETS: &[f64] = &[
+    -1.0, -0.5, -0.1, 0.0, 0.1, 0.25, 0.5, 0.75, 1.0, 2.0, 5.0, 10.0, 25.0, 50.0, 100.0,
+];
 
 impl RankPipelineMetrics {
     /// Construct + register every metric in this family against
@@ -91,6 +115,7 @@ impl RankPipelineMetrics {
         registry.register(Box::new(metrics.phase_latency_us.clone()))?;
         registry.register(Box::new(metrics.phase_truncated_total.clone()))?;
         registry.register(Box::new(metrics.profile_reload_total.clone()))?;
+        registry.register(Box::new(metrics.feature_contribution.clone()))?;
         Ok(metrics)
     }
 
@@ -128,6 +153,15 @@ impl RankPipelineMetrics {
                     "Number of rank profile installs / hot-reloads, by outcome",
                 ),
                 &[LABEL_PROFILE, LABEL_OUTCOME],
+            )?,
+            feature_contribution: HistogramVec::new(
+                HistogramOpts::new(
+                    METRIC_FEATURE_CONTRIBUTION,
+                    "Distribution of per-doc feature output values \
+                     (proxy for contribution to score; see spec §4.10)",
+                )
+                .buckets(FEATURE_CONTRIBUTION_BUCKETS.to_vec()),
+                &[LABEL_PROFILE, LABEL_FEATURE],
             )?,
         })
     }
@@ -175,6 +209,16 @@ impl RankPipelineMetrics {
         self.profile_reload_total
             .with_label_values(&[profile, outcome])
             .inc();
+    }
+
+    /// Record a per-doc feature output value (spec §4.10's
+    /// `rank_feature_contribution`). The value is the raw feature
+    /// output today (proxy for contribution); a future slice can
+    /// tighten by multiplying through the expression-tree weight.
+    pub fn observe_feature_contribution(&self, profile: &str, feature: &str, value: f32) {
+        self.feature_contribution
+            .with_label_values(&[profile, feature])
+            .observe(value as f64);
     }
 
     /// Convenience: convert a `PhaseId` integer to its canonical
@@ -241,6 +285,11 @@ impl proximadb_rank_core::RankMetricsSink for PrometheusRankSink {
         self.metrics
             .inc_phase_truncated(&self.profile, phase_label, reason);
     }
+
+    fn record_feature_contribution(&self, feature: &str, value: f32) {
+        self.metrics
+            .observe_feature_contribution(&self.profile, feature, value);
+    }
 }
 
 #[cfg(test)]
@@ -263,6 +312,58 @@ mod tests {
             METRIC_PROFILE_RELOAD_TOTAL,
             "proximadb_rank_profile_reload_total"
         );
+        assert_eq!(
+            METRIC_FEATURE_CONTRIBUTION,
+            "proximadb_rank_feature_contribution"
+        );
+    }
+
+    #[test]
+    fn observe_feature_contribution_records_per_profile_per_feature() {
+        // Verify the histogram partitions correctly so dashboards
+        // can compare distributions across profiles + features.
+        let registry = Registry::new();
+        let metrics = RankPipelineMetrics::register(&registry).unwrap();
+        metrics.observe_feature_contribution("p1", "bm25(body)", 12.5);
+        metrics.observe_feature_contribution("p1", "bm25(body)", 7.3);
+        metrics.observe_feature_contribution("p1", "closeness(emb)", 0.87);
+        metrics.observe_feature_contribution("p2", "bm25(body)", 1.0);
+
+        let p1_bm25 = metrics
+            .feature_contribution
+            .with_label_values(&["p1", "bm25(body)"])
+            .get_sample_count();
+        assert_eq!(p1_bm25, 2);
+        let p1_close = metrics
+            .feature_contribution
+            .with_label_values(&["p1", "closeness(emb)"])
+            .get_sample_count();
+        assert_eq!(p1_close, 1);
+        let p2_bm25 = metrics
+            .feature_contribution
+            .with_label_values(&["p2", "bm25(body)"])
+            .get_sample_count();
+        assert_eq!(p2_bm25, 1);
+    }
+
+    #[test]
+    fn prometheus_sink_record_feature_contribution_threads_profile() {
+        // The trait method only sees `(feature, value)`. The sink's
+        // captured `profile` must be folded in so the histogram
+        // matches the spec's `{profile, feature}` label set.
+        use proximadb_kernel::PhaseId;
+        use proximadb_rank_core::RankMetricsSink;
+
+        let registry = Registry::new();
+        let metrics = Arc::new(RankPipelineMetrics::register(&registry).unwrap());
+        let sink = PrometheusRankSink::new(metrics.clone(), "ranker_v3", PhaseId::FIRST);
+        sink.record_feature_contribution("docid()", 42.0);
+
+        let observed = metrics
+            .feature_contribution
+            .with_label_values(&["ranker_v3", "docid()"])
+            .get_sample_count();
+        assert_eq!(observed, 1);
     }
 
     #[test]

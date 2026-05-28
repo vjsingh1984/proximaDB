@@ -271,6 +271,16 @@ fn capture_feature_snapshot(
                 .record_feature_latency_ns(name, t0.elapsed().as_nanos() as u64);
             v
         };
+        // R-7c.4d follow-up: emit per-doc feature-value
+        // observation (spec §4.10 `rank_feature_contribution`).
+        // Emits on both cache-hit and cache-miss paths because
+        // each candidate row contributes one observation
+        // regardless of whether the executor ran or returned a
+        // memoized value — what we're measuring is the
+        // distribution across docs, not the executor's work
+        // count. Trait default is no-op so NoopMetricsSink stays
+        // zero-cost.
+        ctx.metrics.record_feature_contribution(name, value);
         buf.push((name.clone(), value));
     }
     Some(Arc::<[(Arc<str>, f32)]>::from(buf))

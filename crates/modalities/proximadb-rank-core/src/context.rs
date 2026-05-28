@@ -155,6 +155,12 @@ pub trait ModelCache: Send + Sync {
 pub trait RankMetricsSink: Send + Sync {
     fn record_feature_latency_ns(&self, feature: &str, ns: u64);
     fn record_phase_truncated(&self, phase: proximadb_kernel::PhaseId, reason: &str);
+    /// Record a feature's per-doc output value (spec §4.10
+    /// `rank_feature_contribution`). The pipeline emits this from
+    /// `capture_feature_snapshot` after force_executor returns.
+    /// Default no-op so existing sink impls don't need to be
+    /// updated. NoopMetricsSink stays zero-cost.
+    fn record_feature_contribution(&self, _feature: &str, _value: f32) {}
 }
 
 // ---------------------------------------------------------------------------
