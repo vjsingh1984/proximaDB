@@ -807,6 +807,12 @@ impl DataAnalysis {
         Self::from_i64_values(&i64_values)
     }
 
+    /// Analyze F64 values (as bit patterns)
+    pub fn from_f64_values(values: &[f64]) -> Self {
+        let i64_values: Vec<i64> = values.iter().map(|&v| v.to_bits() as i64).collect();
+        Self::from_i64_values(&i64_values)
+    }
+
     /// Check if data is highly sparse (>70% zeros)
     pub fn is_sparse(&self) -> bool {
         self.zero_ratio > 0.70

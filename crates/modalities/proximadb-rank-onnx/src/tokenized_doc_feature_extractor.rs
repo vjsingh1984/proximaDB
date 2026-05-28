@@ -34,11 +34,7 @@ pub trait TokenizedDocFeatureExtractor: Send + Sync {
     /// `qctx` carries per-request state — specifically `query_text`
     /// for the BertPair extractor (R-5b.1.3). Extractors that don't
     /// need the query (e.g. Noop fixtures) ignore it.
-    fn extract_batch(
-        &self,
-        docs: &[DocHandle],
-        qctx: &QueryContext,
-    ) -> RankResult<TokenizedBatch>;
+    fn extract_batch(&self, docs: &[DocHandle], qctx: &QueryContext) -> RankResult<TokenizedBatch>;
 }
 
 /// Test/null fixture — emits a `TokenizedBatch` with one zero-row per
@@ -82,21 +78,14 @@ pub struct FnTokenizedDocFeatureExtractor {
 impl FnTokenizedDocFeatureExtractor {
     pub fn new<F>(f: F) -> Self
     where
-        F: Fn(&[DocHandle], &QueryContext) -> RankResult<TokenizedBatch>
-            + Send
-            + Sync
-            + 'static,
+        F: Fn(&[DocHandle], &QueryContext) -> RankResult<TokenizedBatch> + Send + Sync + 'static,
     {
         Self { f: Box::new(f) }
     }
 }
 
 impl TokenizedDocFeatureExtractor for FnTokenizedDocFeatureExtractor {
-    fn extract_batch(
-        &self,
-        docs: &[DocHandle],
-        qctx: &QueryContext,
-    ) -> RankResult<TokenizedBatch> {
+    fn extract_batch(&self, docs: &[DocHandle], qctx: &QueryContext) -> RankResult<TokenizedBatch> {
         (self.f)(docs, qctx)
     }
 }
@@ -109,7 +98,10 @@ mod tests {
     fn noop_extractor_returns_one_zero_row_per_doc() {
         let e = NoopTokenizedDocFeatureExtractor::default();
         let b = e
-            .extract_batch(&[DocHandle(1), DocHandle(2), DocHandle(3)], &QueryContext::default())
+            .extract_batch(
+                &[DocHandle(1), DocHandle(2), DocHandle(3)],
+                &QueryContext::default(),
+            )
             .unwrap();
         assert_eq!(b.batch_size(), 3);
         assert_eq!(b.seq_len(), 1);
@@ -125,7 +117,9 @@ mod tests {
     #[test]
     fn noop_extractor_honors_configured_seq_len() {
         let e = NoopTokenizedDocFeatureExtractor { seq_len: 8 };
-        let b = e.extract_batch(&[DocHandle(42)], &QueryContext::default()).unwrap();
+        let b = e
+            .extract_batch(&[DocHandle(42)], &QueryContext::default())
+            .unwrap();
         assert_eq!(b.seq_len(), 8);
         assert_eq!(b.input_ids[0].len(), 8);
     }

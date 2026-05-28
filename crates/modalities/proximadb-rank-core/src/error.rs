@@ -28,9 +28,7 @@ pub enum RankError {
     #[error("expression type error: {0}")]
     ExpressionType(String),
 
-    #[error(
-        "phase budget exceeded: {phase:?} after {elapsed_us}us (budget {budget_us}us)"
-    )]
+    #[error("phase budget exceeded: {phase:?} after {elapsed_us}us (budget {budget_us}us)")]
     PhaseBudgetExceeded {
         phase: PhaseId,
         elapsed_us: u64,

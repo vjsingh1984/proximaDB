@@ -188,7 +188,9 @@ impl QueueClient {
             // supplied archive adapter (for cross-scheme deployments
             // like PVC queue + ADLS archive) or fall back to the
             // queue root's fs (same-scheme deployments).
-            let archive_fs = archive_fs_override.clone().unwrap_or_else(|| client.fs.clone());
+            let archive_fs = archive_fs_override
+                .clone()
+                .unwrap_or_else(|| client.fs.clone());
             let archive_root = crate::object_tier::resolve_archive_root(&archive_url)?;
             archive_fs.create_dir_all(&archive_root).await?;
             let uploader = ObjectTierUploader::new(

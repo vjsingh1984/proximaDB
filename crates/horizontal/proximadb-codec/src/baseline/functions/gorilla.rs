@@ -463,6 +463,20 @@ mod tests {
     }
 
     #[test]
+    fn test_gorilla_f64_roundtrip() -> Result<()> {
+        let values: Vec<f64> = (0..32).map(|i| -10_000.0 + (i as f64 * 0.125)).collect();
+
+        let encoded = encode_f64(&values)?;
+        let decoded = decode_f64(&encoded, values.len())?;
+
+        assert_eq!(values.len(), decoded.len());
+        for (orig, dec) in values.iter().zip(decoded.iter()) {
+            assert_eq!(orig.to_bits(), dec.to_bits());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_gorilla_i32_roundtrip() -> Result<()> {
         let values: Vec<i32> = (0..32).map(|i| 100 + i).collect();
 

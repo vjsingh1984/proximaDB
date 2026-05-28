@@ -41,7 +41,11 @@ impl ExprBlueprint {
     /// through the Blueprint trait. R-4's profile compiler can use this
     /// for the `first_phase.expression` short-circuit form (the profile
     /// already carries the expression string).
-    pub fn compile_str(&self, expr: &str, qctx: &QueryContext) -> RankResult<Box<dyn FeatureExecutor>> {
+    pub fn compile_str(
+        &self,
+        expr: &str,
+        qctx: &QueryContext,
+    ) -> RankResult<Box<dyn FeatureExecutor>> {
         let ast = parse(expr)?;
         let (code, subs) = lower(&ast, &self.factory, qctx)?;
         Ok(Box::new(ExprExecutor::new(code, subs)))
@@ -176,12 +180,7 @@ mod tests {
         let mut ctx = ScoreCtx::new(&q, &arena, &a, &c, &m, &met);
         struct NullLookup;
         impl FeatureLookup for NullLookup {
-            fn force(
-                &mut self,
-                _idx: ExecutorIdx,
-                _doc: DocHandle,
-                _c: &mut ScoreCtx<'_>,
-            ) -> f32 {
+            fn force(&mut self, _idx: ExecutorIdx, _doc: DocHandle, _c: &mut ScoreCtx<'_>) -> f32 {
                 0.0
             }
         }
@@ -328,12 +327,7 @@ mod tests {
         let mut ctx = ScoreCtx::new(&q, &arena, &attrs, &nc, &m, &met);
         struct NullLookup;
         impl FeatureLookup for NullLookup {
-            fn force(
-                &mut self,
-                _idx: ExecutorIdx,
-                _doc: DocHandle,
-                _c: &mut ScoreCtx<'_>,
-            ) -> f32 {
+            fn force(&mut self, _idx: ExecutorIdx, _doc: DocHandle, _c: &mut ScoreCtx<'_>) -> f32 {
                 0.0
             }
         }

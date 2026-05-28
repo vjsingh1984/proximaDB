@@ -120,13 +120,7 @@ impl LowerCtx<'_> {
         }
     }
 
-    fn lower_bin(
-        &mut self,
-        op: BinOp,
-        l: &Ast,
-        r: &Ast,
-        current: u16,
-    ) -> RankResult<u16> {
+    fn lower_bin(&mut self, op: BinOp, l: &Ast, r: &Ast, current: u16) -> RankResult<u16> {
         let s1 = self.lower(l, current)?;
         let s2 = self.lower(r, current + 1)?;
         self.emit(match op {
@@ -168,12 +162,7 @@ impl LowerCtx<'_> {
         Ok(s_cond.max(s_then).max(s_else))
     }
 
-    fn lower_call(
-        &mut self,
-        name: &str,
-        args: &[Ast],
-        current: u16,
-    ) -> RankResult<u16> {
+    fn lower_call(&mut self, name: &str, args: &[Ast], current: u16) -> RankResult<u16> {
         if let Some(kind) = lookup_builtin(name) {
             return self.lower_builtin(kind, name, args, current);
         }
@@ -265,7 +254,7 @@ fn literal_args_for_feature(name: &str, args: &[Ast]) -> RankResult<PhaseConfig>
             other => {
                 return Err(RankError::ExpressionType(format!(
                     "feature {name}(...) arg {i}: expected string or number literal, got non-trivial expression ({other:?})"
-                )))
+                )));
             }
         }
     }

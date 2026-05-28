@@ -205,8 +205,8 @@ mod tests {
         NoopAttributeAccess, NoopCandidateData, NoopMetricsSink, NoopModelCache, QueryContext,
         ScoreCtx,
     };
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Executor that counts how many times its `execute` runs.
     struct CountingExecutor {

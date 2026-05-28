@@ -255,9 +255,18 @@ mod tests {
     fn probe_returns_nonzero_latencies_for_all_three_pairs() {
         // Use a tiny dim so the test is instant under load.
         let caps = EmbeddingPrecisionProbe::probe_with_dim(64);
-        assert!(caps.f32_f32_matmul_ns > 0, "f32_f32 latency must be measured");
-        assert!(caps.f16_f32_matmul_ns > 0, "f16_f32 latency must be measured");
-        assert!(caps.f16_f16_matmul_ns > 0, "f16_f16 latency must be measured");
+        assert!(
+            caps.f32_f32_matmul_ns > 0,
+            "f32_f32 latency must be measured"
+        );
+        assert!(
+            caps.f16_f32_matmul_ns > 0,
+            "f16_f32 latency must be measured"
+        );
+        assert!(
+            caps.f16_f16_matmul_ns > 0,
+            "f16_f16 latency must be measured"
+        );
         assert_eq!(caps.probe_dim, 64);
         // bf16 detection is conservatively off until PR 11+.
         assert!(!caps.bf16_supported);

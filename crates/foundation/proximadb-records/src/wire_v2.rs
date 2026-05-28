@@ -149,7 +149,7 @@ impl From<&ProximaRecord> for ProximaRecordV2 {
             origin: r.origin.clone(),
             actor: r.actor.clone(),
             method: r.method.clone(),
-            memory_type: r.memory_type.clone(),
+            memory_type: r.memory_type,
             props: r.props.clone(),
             refs: r.refs.clone(),
             edge: r.edge.clone(),
@@ -338,8 +338,7 @@ mod tests {
         };
         let v2 = ProximaRecordV2::from(&original);
         let bytes = bincode::serialize(&v2).expect("serialize v2");
-        let decoded: ProximaRecordV2 =
-            bincode::deserialize(&bytes).expect("deserialize v2");
+        let decoded: ProximaRecordV2 = bincode::deserialize(&bytes).expect("deserialize v2");
         let recovered: ProximaRecord = decoded.into();
         assert_eq!(recovered.branch_id.as_deref(), Some("feature-x"));
     }
@@ -360,8 +359,7 @@ mod tests {
             ..ProximaRecord::default()
         };
         let bytes = bincode::serialize(&original).expect("serialize v1");
-        let recovered: ProximaRecord =
-            bincode::deserialize(&bytes).expect("deserialize v1");
+        let recovered: ProximaRecord = bincode::deserialize(&bytes).expect("deserialize v1");
         assert_eq!(recovered.branch_id.as_deref(), Some("dev"));
     }
 
@@ -375,8 +373,7 @@ mod tests {
         };
         let v2 = ProximaRecordV2::from(&original);
         let bytes = bincode::serialize(&v2).expect("serialize v2");
-        let decoded: ProximaRecordV2 =
-            bincode::deserialize(&bytes).expect("deserialize v2");
+        let decoded: ProximaRecordV2 = bincode::deserialize(&bytes).expect("deserialize v2");
         let recovered: ProximaRecord = decoded.into();
         assert_eq!(recovered.branch_id, None);
     }

@@ -98,11 +98,7 @@ pub struct PhaseOutcome {
 /// call out. R-1 has no concrete impl; tests use the inline `IdentityGlobalScorer`.
 #[async_trait::async_trait]
 pub trait GlobalScorer: Send + Sync {
-    async fn score(
-        &self,
-        hits: Vec<ScoredHit>,
-        topk: usize,
-    ) -> RankResult<Vec<ScoredHit>>;
+    async fn score(&self, hits: Vec<ScoredHit>, topk: usize) -> RankResult<Vec<ScoredHit>>;
 }
 
 /// Identity global scorer — returns hits unchanged (truncated to topk).
@@ -136,11 +132,7 @@ pub trait SecondPhaseScorer: Send + Sync {
     /// tokenization. Scorers that don't need any context (the
     /// pre-encoded-feature float path, the simple rescorer fixtures)
     /// ignore it.
-    fn rescore(
-        &self,
-        hits: Vec<ScoredHit>,
-        qctx: &QueryContext,
-    ) -> RankResult<Vec<ScoredHit>>;
+    fn rescore(&self, hits: Vec<ScoredHit>, qctx: &QueryContext) -> RankResult<Vec<ScoredHit>>;
 }
 
 /// Pass-through second-phase scorer — returns hits unchanged but tagged
@@ -149,11 +141,7 @@ pub trait SecondPhaseScorer: Send + Sync {
 pub struct PassthroughSecondPhaseScorer;
 
 impl SecondPhaseScorer for PassthroughSecondPhaseScorer {
-    fn rescore(
-        &self,
-        hits: Vec<ScoredHit>,
-        _qctx: &QueryContext,
-    ) -> RankResult<Vec<ScoredHit>> {
+    fn rescore(&self, hits: Vec<ScoredHit>, _qctx: &QueryContext) -> RankResult<Vec<ScoredHit>> {
         Ok(hits
             .into_iter()
             .map(|h| ScoredHit {
@@ -172,11 +160,7 @@ pub struct ConstantMultiplierSecondPhaseScorer {
 }
 
 impl SecondPhaseScorer for ConstantMultiplierSecondPhaseScorer {
-    fn rescore(
-        &self,
-        hits: Vec<ScoredHit>,
-        _qctx: &QueryContext,
-    ) -> RankResult<Vec<ScoredHit>> {
+    fn rescore(&self, hits: Vec<ScoredHit>, _qctx: &QueryContext) -> RankResult<Vec<ScoredHit>> {
         Ok(hits
             .into_iter()
             .map(|h| ScoredHit {
@@ -190,12 +174,12 @@ impl SecondPhaseScorer for ConstantMultiplierSecondPhaseScorer {
 
 #[async_trait::async_trait]
 impl GlobalScorer for IdentityGlobalScorer {
-    async fn score(
-        &self,
-        mut hits: Vec<ScoredHit>,
-        topk: usize,
-    ) -> RankResult<Vec<ScoredHit>> {
-        hits.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    async fn score(&self, mut hits: Vec<ScoredHit>, topk: usize) -> RankResult<Vec<ScoredHit>> {
+        hits.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         hits.truncate(topk);
         Ok(hits)
     }
@@ -322,22 +306,14 @@ impl RankPipeline {
             // The hot-path `last_output(idx)` is a flag + indexed read —
             // no work happens when match_features is empty, so the
             // existing zero-features fast path stays unchanged.
-            let features = capture_feature_snapshot(
-                &self.match_features,
-                doc,
-                &mut self.first,
-                ctx,
-            );
+            let features =
+                capture_feature_snapshot(&self.match_features, doc, &mut self.first, ctx);
             // R-7c.5b: same walk for summary_features. Independent of
             // match_features — a profile may declare one, both, or
             // neither. Both Arcs default to None when the corresponding
             // mapping is empty (NFR-9: zero cost when unused).
-            let summary = capture_feature_snapshot(
-                &self.summary_features,
-                doc,
-                &mut self.first,
-                ctx,
-            );
+            let summary =
+                capture_feature_snapshot(&self.summary_features, doc, &mut self.first, ctx);
             hits.push(ScoredHit {
                 doc,
                 score,
@@ -353,8 +329,7 @@ impl RankPipeline {
                     // alert on budget exhaustion. NoopMetricsSink
                     // keeps this zero-cost when metrics aren't
                     // wired.
-                    ctx.metrics
-                        .record_phase_truncated(PhaseId::FIRST, "budget");
+                    ctx.metrics.record_phase_truncated(PhaseId::FIRST, "budget");
                     truncated = true;
                     break;
                 }
@@ -549,7 +524,11 @@ mod tests {
             NoopMetricsSink,
         );
         let mut ctx = make_ctx(&q, &arena, &a, &c, &m, &met);
-        let candidates: Vec<DocHandle> = (0..50).collect::<Vec<u32>>().into_iter().map(DocHandle).collect();
+        let candidates: Vec<DocHandle> = (0..50)
+            .collect::<Vec<u32>>()
+            .into_iter()
+            .map(DocHandle)
+            .collect();
         let outcome = pipe.run_first_phase(&candidates, &mut ctx).unwrap();
         assert!(outcome.truncated, "budget exceeded must set truncated=true");
         assert!(
@@ -573,7 +552,11 @@ mod tests {
         );
         let past = Instant::now() - std::time::Duration::from_millis(1);
         let mut ctx = make_ctx(&q, &arena, &a, &c, &m, &met).with_deadline(past);
-        let candidates: Vec<DocHandle> = (0..10).collect::<Vec<u32>>().into_iter().map(DocHandle).collect();
+        let candidates: Vec<DocHandle> = (0..10)
+            .collect::<Vec<u32>>()
+            .into_iter()
+            .map(DocHandle)
+            .collect();
         let outcome = pipe.run_first_phase(&candidates, &mut ctx).unwrap();
         assert!(outcome.truncated);
     }
@@ -686,7 +669,11 @@ mod tests {
         );
         let inp = outcome(&[(1, 1.0), (2, 2.0), (3, 3.0)], false);
         let out = pipe
-            .run_second_phase(inp.clone(), &PassthroughSecondPhaseScorer, &QueryContext::default())
+            .run_second_phase(
+                inp.clone(),
+                &PassthroughSecondPhaseScorer,
+                &QueryContext::default(),
+            )
             .unwrap();
         assert_eq!(out.hits.len(), 3);
         // PhaseId remains FIRST because the scorer never ran.
@@ -705,7 +692,9 @@ mod tests {
         let pipe = pipeline_with_second_phase(10, 3);
         let inp = outcome(&[(5, 5.0), (4, 4.0), (3, 3.0), (2, 2.0), (1, 1.0)], false);
         let scorer = ConstantMultiplierSecondPhaseScorer { factor: 0.1 };
-        let out = pipe.run_second_phase(inp, &scorer, &QueryContext::default()).unwrap();
+        let out = pipe
+            .run_second_phase(inp, &scorer, &QueryContext::default())
+            .unwrap();
         assert_eq!(out.hits.len(), 5);
         assert_eq!(out.hits[0].doc, DocHandle(2));
         assert_eq!(out.hits[0].score, 2.0);
@@ -816,9 +805,7 @@ mod tests {
         }
     }
 
-    fn pipeline_with_match_features(
-        features: Vec<(&'static str, f32)>,
-    ) -> RankPipeline {
+    fn pipeline_with_match_features(features: Vec<(&'static str, f32)>) -> RankPipeline {
         use crate::types::ExecutorIdx;
         let mut b = RankProgram::builder();
         let score_idx = b.add(Box::new(DocIdExecutor));
@@ -995,9 +982,7 @@ mod tests {
             NoopMetricsSink,
         );
         let mut ctx = make_ctx(&q, &arena, &a, &c, &m, &met);
-        let out = pipe
-            .run_first_phase(&[DocHandle(3)], &mut ctx)
-            .unwrap();
+        let out = pipe.run_first_phase(&[DocHandle(3)], &mut ctx).unwrap();
         let h = &out.hits[0];
         let f = h.features.as_ref().unwrap();
         let s = h.summary.as_ref().unwrap();
@@ -1049,7 +1034,9 @@ mod tests {
             features: Some(inp_features.clone()),
             summary: None,
         }];
-        let passthrough = PassthroughSecondPhaseScorer.rescore(hits.clone(), &QueryContext::default()).unwrap();
+        let passthrough = PassthroughSecondPhaseScorer
+            .rescore(hits.clone(), &QueryContext::default())
+            .unwrap();
         assert!(passthrough[0].features.as_ref().is_some());
         assert!(Arc::ptr_eq(
             passthrough[0].features.as_ref().unwrap(),

@@ -154,10 +154,8 @@ impl BertPairTokenizingDocFeatureExtractor {
         // crate's `SharedTokenizer` for token-count chunking, which
         // wants per-call defaults. Per-extractor cloning isolates the
         // padding/truncation config to the rerank path.
-        let configured = configure_tokenizer_for_pair_encoding(
-            tokenizer.as_ref().clone(),
-            max_seq_len,
-        );
+        let configured =
+            configure_tokenizer_for_pair_encoding(tokenizer.as_ref().clone(), max_seq_len);
         Self {
             tokenizer: Arc::new(configured),
             doc_text_source,
@@ -178,7 +176,9 @@ fn configure_tokenizer_for_pair_encoding(
     max_seq_len: usize,
 ) -> tokenizers::Tokenizer {
     use tokenizers::tokenizer::{PaddingDirection, PaddingParams, PaddingStrategy};
-    use tokenizers::utils::truncation::{TruncationDirection, TruncationParams, TruncationStrategy};
+    use tokenizers::utils::truncation::{
+        TruncationDirection, TruncationParams, TruncationStrategy,
+    };
 
     tokenizer.with_padding(Some(PaddingParams {
         strategy: PaddingStrategy::Fixed(max_seq_len),
@@ -203,11 +203,7 @@ fn configure_tokenizer_for_pair_encoding(
 }
 
 impl TokenizedDocFeatureExtractor for BertPairTokenizingDocFeatureExtractor {
-    fn extract_batch(
-        &self,
-        docs: &[DocHandle],
-        qctx: &QueryContext,
-    ) -> RankResult<TokenizedBatch> {
+    fn extract_batch(&self, docs: &[DocHandle], qctx: &QueryContext) -> RankResult<TokenizedBatch> {
         if docs.is_empty() {
             return Ok(TokenizedBatch::default());
         }
@@ -225,23 +221,20 @@ impl TokenizedDocFeatureExtractor for BertPairTokenizingDocFeatureExtractor {
         // just reflects an empty document.
         let mut pairs: Vec<(String, String)> = Vec::with_capacity(docs.len());
         for &doc in docs {
-            let text = self
-                .doc_text_source
-                .doc_text(doc)?
-                .unwrap_or_default();
+            let text = self.doc_text_source.doc_text(doc)?.unwrap_or_default();
             pairs.push((query.to_string(), text));
         }
 
         // Build the EncodeInput::Dual list. `tokenizers::encode_batch`
         // accepts owned strings via the `Into<EncodeInput>` impl on
         // `(String, String)`.
-        let encodings = self
-            .tokenizer
-            .encode_batch(pairs, true)
-            .map_err(|e| RankError::ModelInference {
-                model_id: "bert_pair_extractor".into(),
-                reason: format!("tokenizer.encode_batch: {e}"),
-            })?;
+        let encodings =
+            self.tokenizer
+                .encode_batch(pairs, true)
+                .map_err(|e| RankError::ModelInference {
+                    model_id: "bert_pair_extractor".into(),
+                    reason: format!("tokenizer.encode_batch: {e}"),
+                })?;
 
         // Pad / truncate each encoding to `max_seq_len`. Building the
         // batch by hand here (rather than calling
@@ -394,10 +387,7 @@ mod tests {
         let mut s = HashMapDocTextSource::new();
         s.insert(DocHandle(1), "first");
         s.insert(DocHandle(1), "second");
-        assert_eq!(
-            s.doc_text(DocHandle(1)).unwrap().as_deref(),
-            Some("second")
-        );
+        assert_eq!(s.doc_text(DocHandle(1)).unwrap().as_deref(), Some("second"));
         assert_eq!(s.len(), 1);
     }
 
@@ -439,11 +429,16 @@ mod tests {
 
     #[test]
     fn extractor_produces_rectangular_batch_at_max_seq_len() {
-        let (e, qctx) = extractor_with("alpha beta", 6, false, &[
-            (1, "doc one"),
-            (2, "doc two"),
-            (3, "doc three with extra tokens to truncate"),
-        ]);
+        let (e, qctx) = extractor_with(
+            "alpha beta",
+            6,
+            false,
+            &[
+                (1, "doc one"),
+                (2, "doc two"),
+                (3, "doc three with extra tokens to truncate"),
+            ],
+        );
         let b = e
             .extract_batch(&[DocHandle(1), DocHandle(2), DocHandle(3)], &qctx)
             .unwrap();
@@ -579,7 +574,7 @@ mod tests {
             10,
             false,
             &[
-                (1, "doc"),                              // shorter than max
+                (1, "doc"),                               // shorter than max
                 (2, "alpha beta gamma delta alpha beta"), // longer than max
                 (3, ""),                                  // empty doc
             ],
@@ -606,12 +601,7 @@ mod tests {
         // R-5b.1.4: with Fixed padding configured, the attention_mask
         // distinguishes real tokens (1) from padding (0). A short
         // doc + short query → most positions should be padding (0).
-        let (e, qctx) = extractor_with(
-            "alpha",
-            10,
-            false,
-            &[(1, "doc")],
-        );
+        let (e, qctx) = extractor_with("alpha", 10, false, &[(1, "doc")]);
         let b = e.extract_batch(&[DocHandle(1)], &qctx).unwrap();
         let mask = &b.attention_mask[0];
         let real = mask.iter().filter(|&&x| x == 1).count();

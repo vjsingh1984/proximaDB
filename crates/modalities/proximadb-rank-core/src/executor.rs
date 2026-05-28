@@ -88,12 +88,7 @@ mod tests {
     /// the requested idx. Lets us test executor behavior in isolation.
     pub(crate) struct ConstLookup(pub f32);
     impl FeatureLookup for ConstLookup {
-        fn force(
-            &mut self,
-            _idx: ExecutorIdx,
-            _doc: DocHandle,
-            _ctx: &mut ScoreCtx<'_>,
-        ) -> f32 {
+        fn force(&mut self, _idx: ExecutorIdx, _doc: DocHandle, _ctx: &mut ScoreCtx<'_>) -> f32 {
             self.0
         }
     }

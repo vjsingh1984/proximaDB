@@ -37,11 +37,7 @@ impl OnnxSecondPhaseScorer {
 }
 
 impl SecondPhaseScorer for OnnxSecondPhaseScorer {
-    fn rescore(
-        &self,
-        hits: Vec<ScoredHit>,
-        _qctx: &QueryContext,
-    ) -> RankResult<Vec<ScoredHit>> {
+    fn rescore(&self, hits: Vec<ScoredHit>, _qctx: &QueryContext) -> RankResult<Vec<ScoredHit>> {
         // The float-input pipeline pays no attention to qctx — the
         // pre-encoded feature rows already incorporate query state
         // upstream of this rescore. The tokenized twin
@@ -147,7 +143,9 @@ mod tests {
     fn rescore_tags_phase_id_second() {
         let mock = Arc::new(MockScorerSession::constant(descriptor("m", 32), 0.5));
         let s = make_scorer(mock, Arc::new(NoopDocFeatureExtractor));
-        let out = s.rescore(vec![hit(1, 1.0), hit(2, 2.0)], &QueryContext::default()).unwrap();
+        let out = s
+            .rescore(vec![hit(1, 1.0), hit(2, 2.0)], &QueryContext::default())
+            .unwrap();
         for h in &out {
             assert_eq!(h.phase, PhaseId::SECOND);
         }
@@ -160,12 +158,16 @@ mod tests {
         }));
         // Extractor returns the doc id as the row value so we can
         // verify per-doc score mapping.
-        let extractor =
-            Arc::new(FnDocFeatureExtractor::new(|d: DocHandle| Ok(vec![d.0 as f32])));
+        let extractor = Arc::new(FnDocFeatureExtractor::new(|d: DocHandle| {
+            Ok(vec![d.0 as f32])
+        }));
         let s = make_scorer(mock.clone(), extractor);
 
         let out = s
-            .rescore(vec![hit(7, 0.9), hit(3, 0.8), hit(42, 0.7)], &QueryContext::default())
+            .rescore(
+                vec![hit(7, 0.9), hit(3, 0.8), hit(42, 0.7)],
+                &QueryContext::default(),
+            )
             .unwrap();
         assert_eq!(out.len(), 3);
         assert_eq!(out[0].doc, DocHandle(7));

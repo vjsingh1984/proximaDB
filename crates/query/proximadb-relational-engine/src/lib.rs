@@ -36,20 +36,14 @@ use parking_lot::RwLock;
 use proximadb_data_model::ProximaValue;
 use proximadb_relational_algebra::TableId;
 use proximadb_relational_executor::{ExecError, ReaderFactory};
-use proximadb_relational_reader::{
-    ReaderCapabilities, ReaderError, RelationalReader, ScanContext,
-};
-use proximadb_relational_types::{
-    Expr, NoFunctions, RelationalRow, RelationalSchema,
-};
+use proximadb_relational_reader::{ReaderCapabilities, ReaderError, RelationalReader, ScanContext};
+use proximadb_relational_types::{Expr, NoFunctions, RelationalRow, RelationalSchema};
 use std::collections::HashMap;
 use std::sync::Arc;
 use thiserror::Error;
 
 pub mod transaction;
-pub use transaction::{
-    PkKey, Transaction, TransactionBuffer, TableWrites, TxReaderFactory,
-};
+pub use transaction::{PkKey, TableWrites, Transaction, TransactionBuffer, TxReaderFactory};
 
 // =========================================================================
 // Errors
@@ -116,11 +110,7 @@ pub trait RelationalWriter: Send + Sync {
     /// Insert one or more rows. Each row must match the table's
     /// schema arity (mismatched rows return `RowArity` without
     /// inserting any). Returns the count of inserted rows.
-    fn insert_rows(
-        &self,
-        table: &str,
-        rows: Vec<RelationalRow>,
-    ) -> Result<usize, EngineError>;
+    fn insert_rows(&self, table: &str, rows: Vec<RelationalRow>) -> Result<usize, EngineError>;
 
     /// Replace the row matching `key` (in the table's PK
     /// ordinals) with `new_row`. Returns `true` if a matching
@@ -134,8 +124,7 @@ pub trait RelationalWriter: Send + Sync {
 
     /// Delete the row matching `key`. Returns `true` if a
     /// matching row was found and removed.
-    fn delete_by_pk(&self, table: &str, key: &[ProximaValue])
-        -> Result<bool, EngineError>;
+    fn delete_by_pk(&self, table: &str, key: &[ProximaValue]) -> Result<bool, EngineError>;
 }
 
 // =========================================================================
@@ -230,11 +219,7 @@ impl RelationalWriter for InMemoryRelationalEngine {
         Ok(())
     }
 
-    fn insert_rows(
-        &self,
-        table: &str,
-        rows: Vec<RelationalRow>,
-    ) -> Result<usize, EngineError> {
+    fn insert_rows(&self, table: &str, rows: Vec<RelationalRow>) -> Result<usize, EngineError> {
         let mut tables = self.tables.write();
         let state = tables
             .get_mut(table)
@@ -287,11 +272,7 @@ impl RelationalWriter for InMemoryRelationalEngine {
         })
     }
 
-    fn delete_by_pk(
-        &self,
-        table: &str,
-        key: &[ProximaValue],
-    ) -> Result<bool, EngineError> {
+    fn delete_by_pk(&self, table: &str, key: &[ProximaValue]) -> Result<bool, EngineError> {
         let mut tables = self.tables.write();
         let state = tables
             .get_mut(table)
@@ -335,19 +316,14 @@ impl EngineReaderFactory {
 }
 
 impl ReaderFactory for EngineReaderFactory {
-    fn open_reader(
-        &self,
-        table: &TableId,
-    ) -> Result<Box<dyn RelationalReader>, ExecError> {
+    fn open_reader(&self, table: &TableId) -> Result<Box<dyn RelationalReader>, ExecError> {
         let name = &table.name;
         let snapshot = self
             .engine
             .tables
             .read()
             .get(name)
-            .ok_or_else(|| {
-                ExecError::from(EngineError::TableNotFound(name.clone()))
-            })?
+            .ok_or_else(|| ExecError::from(EngineError::TableNotFound(name.clone())))?
             .clone();
         Ok(Box::new(InMemoryReader::new(
             name.clone(),
@@ -404,7 +380,10 @@ impl InMemoryReader {
         projection: &Option<Vec<String>>,
     ) -> Result<(RelationalSchema, Vec<usize>), ReaderError> {
         let Some(names) = projection else {
-            return Ok(((self.full_schema.clone()), (0..self.full_schema.len()).collect()));
+            return Ok((
+                (self.full_schema.clone()),
+                (0..self.full_schema.len()).collect(),
+            ));
         };
         let mut cols = Vec::with_capacity(names.len());
         let mut indices = Vec::with_capacity(names.len());
@@ -442,8 +421,7 @@ impl RelationalReader for InMemoryReader {
     }
 
     async fn open(&mut self, ctx: &ScanContext) -> Result<(), ReaderError> {
-        let (output_schema, projection_indices) =
-            self.resolve_projection(&ctx.projection)?;
+        let (output_schema, projection_indices) = self.resolve_projection(&ctx.projection)?;
         if let Some(pred) = &ctx.predicate {
             pred.type_check(&self.full_schema)
                 .map_err(ReaderError::PredicateEval)?;
@@ -490,10 +468,7 @@ impl RelationalReader for InMemoryReader {
         }
     }
 
-    async fn lookup_pk(
-        &self,
-        key: &[ProximaValue],
-    ) -> Result<Option<RelationalRow>, ReaderError> {
+    async fn lookup_pk(&self, key: &[ProximaValue]) -> Result<Option<RelationalRow>, ReaderError> {
         if self.pk_columns.is_empty() {
             return Err(ReaderError::PkLookupUnsupported);
         }
@@ -531,9 +506,7 @@ mod tests {
     use super::*;
     use proximadb_data_model::ProximaType;
     use proximadb_relational_algebra::{LogicalNode, TableId};
-    use proximadb_relational_executor::{
-        ExecutionContext, build_executor, collect,
-    };
+    use proximadb_relational_executor::{ExecutionContext, build_executor, collect};
     use proximadb_relational_planner::{Planner, StaticCapabilities};
     use proximadb_relational_reader::ReaderCapabilities as RC;
     use proximadb_relational_types::ColumnInfo;
@@ -714,10 +687,7 @@ mod tests {
             .create_table("users", users_schema(), vec![0])
             .unwrap();
         let err = engine
-            .delete_by_pk(
-                "users",
-                &[ProximaValue::Int64(1), ProximaValue::Int64(2)],
-            )
+            .delete_by_pk("users", &[ProximaValue::Int64(1), ProximaValue::Int64(2)])
             .unwrap_err();
         assert!(matches!(err, EngineError::PkArity { .. }));
     }
@@ -852,9 +822,7 @@ mod tests {
         });
         let physical = planner.plan(logical).unwrap();
         let factory = EngineReaderFactory::new(engine.clone());
-        let mut exec =
-            build_executor(physical, &factory, &ExecutionContext::default())
-                .unwrap();
+        let mut exec = build_executor(physical, &factory, &ExecutionContext::default()).unwrap();
         exec.open().await.unwrap();
         let rows = collect(&mut *exec).await.unwrap();
         assert_eq!(rows.len(), 1, "PK lookup must return exactly one row");
@@ -885,20 +853,16 @@ mod tests {
             }
         }
         let catalog = EngineCatalog(engine.clone());
-        let logical = proximadb_relational_frontend::lower_sql(
-            "SELECT COUNT(*) FROM users",
-            &catalog,
-        )
-        .unwrap();
+        let logical =
+            proximadb_relational_frontend::lower_sql("SELECT COUNT(*) FROM users", &catalog)
+                .unwrap();
         let planner = Planner::new(StaticCapabilities {
             caps: RC::full(),
             pk_columns: vec![0],
         });
         let physical = planner.plan(logical).unwrap();
         let factory = EngineReaderFactory::new(engine.clone());
-        let mut exec =
-            build_executor(physical, &factory, &ExecutionContext::default())
-                .unwrap();
+        let mut exec = build_executor(physical, &factory, &ExecutionContext::default()).unwrap();
         exec.open().await.unwrap();
         let rows = collect(&mut *exec).await.unwrap();
         assert_eq!(rows.len(), 1);

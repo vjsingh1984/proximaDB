@@ -65,7 +65,10 @@ pub enum ExprError {
     ColumnOrdinalOutOfRange { ordinal: usize, row_len: usize },
 
     #[error("unknown column {name:?} (schema has {available_count} columns)")]
-    UnknownColumn { name: String, available_count: usize },
+    UnknownColumn {
+        name: String,
+        available_count: usize,
+    },
 
     #[error("type mismatch: expected {expected:?}, got {actual:?} at {context}")]
     TypeMismatch {
@@ -173,10 +176,11 @@ impl RelationalSchema {
     /// if the name doesn't exist in this schema.
     pub fn resolve_column(&self, name: &str) -> Result<ColumnRef, ExprError> {
         let (ordinal, info) =
-            self.column_by_name(name).ok_or_else(|| ExprError::UnknownColumn {
-                name: name.to_string(),
-                available_count: self.columns.len(),
-            })?;
+            self.column_by_name(name)
+                .ok_or_else(|| ExprError::UnknownColumn {
+                    name: name.to_string(),
+                    available_count: self.columns.len(),
+                })?;
         Ok(ColumnRef {
             name: info.name.clone(),
             ordinal,
@@ -332,10 +336,7 @@ pub enum Expr {
     /// Explicit cast. Failure mode: `UnsupportedCast` for casts that
     /// have no defined rule (e.g. `CAST(json AS int)` for
     /// non-numeric JSON values).
-    Cast {
-        expr: Box<Expr>,
-        ty: ProximaType,
-    },
+    Cast { expr: Box<Expr>, ty: ProximaType },
 
     /// Binary operator.
     BinaryOp {
@@ -345,18 +346,12 @@ pub enum Expr {
     },
 
     /// Unary operator.
-    UnaryOp {
-        op: UnaryOp,
-        expr: Box<Expr>,
-    },
+    UnaryOp { op: UnaryOp, expr: Box<Expr> },
 
     /// `expr IS NULL` (or `IS NOT NULL` when `not = true`). Note
     /// this is the ONLY way to test a value for NULL — `expr = NULL`
     /// always returns NULL.
-    IsNull {
-        expr: Box<Expr>,
-        not: bool,
-    },
+    IsNull { expr: Box<Expr>, not: bool },
 
     /// `expr BETWEEN low AND high` (or `NOT BETWEEN`).
     Between {
@@ -394,10 +389,7 @@ pub enum Expr {
     Coalesce(Vec<Expr>),
 
     /// `NULLIF(a, b)` — returns NULL if `a = b`, else `a`.
-    NullIf {
-        left: Box<Expr>,
-        right: Box<Expr>,
-    },
+    NullIf { left: Box<Expr>, right: Box<Expr> },
 
     /// `f(args)` for user-defined or builtin functions. Resolution
     /// happens via a [`FunctionRegistry`] supplied by the executor;
@@ -648,7 +640,7 @@ pub fn proxima_value_type(v: &ProximaValue) -> Option<ProximaType> {
         ULID(_) => ProximaType::ULID,
         Json(_) => ProximaType::Json,
         Jsonb(_) => ProximaType::Jsonb,
-        Array(_) => return None,  // element type not recoverable here
+        Array(_) => return None, // element type not recoverable here
         Map(_) => return None,
         Struct(_) => return None,
         DenseVector(_) | SparseVector { .. } | BinaryVector(_) => return None,
@@ -669,13 +661,14 @@ impl Expr {
         funcs: &F,
     ) -> Result<ProximaValue, ExprError> {
         match self {
-            Expr::Column(col) => row
-                .get(col.ordinal)
-                .cloned()
-                .ok_or(ExprError::ColumnOrdinalOutOfRange {
-                    ordinal: col.ordinal,
-                    row_len: row.len(),
-                }),
+            Expr::Column(col) => {
+                row.get(col.ordinal)
+                    .cloned()
+                    .ok_or(ExprError::ColumnOrdinalOutOfRange {
+                        ordinal: col.ordinal,
+                        row_len: row.len(),
+                    })
+            }
             Expr::Literal { value, .. } => Ok(value.clone()),
             Expr::Cast { expr, ty } => {
                 let v = expr.eval(row, funcs)?;
@@ -1037,10 +1030,7 @@ fn values_equal(l: &ProximaValue, r: &ProximaValue) -> Result<bool, ExprError> {
 
 /// SQL ordering (returns `Ordering`, callers map to bool for <,<=,>,>=).
 /// Same caller contract as `values_equal`: NULL handling is upstream.
-fn compare_ord(
-    l: &ProximaValue,
-    r: &ProximaValue,
-) -> Result<std::cmp::Ordering, ExprError> {
+fn compare_ord(l: &ProximaValue, r: &ProximaValue) -> Result<std::cmp::Ordering, ExprError> {
     use ProximaValue::*;
     Ok(match (l, r) {
         (Boolean(a), Boolean(b)) => a.cmp(b),
@@ -1065,9 +1055,7 @@ fn compare_ord(
             // Mixed numeric types: widen to f64 and compare.
             // Mirrors `values_equal`'s widening path.
             if let (Some(lf), Some(rf)) = (try_to_f64(l), try_to_f64(r)) {
-                return Ok(lf
-                    .partial_cmp(&rf)
-                    .unwrap_or(std::cmp::Ordering::Equal));
+                return Ok(lf.partial_cmp(&rf).unwrap_or(std::cmp::Ordering::Equal));
             }
             return Err(ExprError::OperatorNotDefined {
                 op: "compare".into(),
@@ -1179,18 +1167,24 @@ pub fn cast_value(v: &ProximaValue, target: &ProximaType) -> Result<ProximaValue
         (PV::Int16(n), PT::Int32) => PV::Int32(*n as i32),
         (PV::Int16(n), PT::Int64) => PV::Int64(*n as i64),
         (PV::Int32(n), PT::Int64) => PV::Int64(*n as i64),
-        (PV::Int16(n), PT::Int8) => PV::Int8(i8::try_from(*n).map_err(|_| ExprError::ArithmeticOverflow)?),
+        (PV::Int16(n), PT::Int8) => {
+            PV::Int8(i8::try_from(*n).map_err(|_| ExprError::ArithmeticOverflow)?)
+        }
         (PV::Int32(n), PT::Int16) => {
             PV::Int16(i16::try_from(*n).map_err(|_| ExprError::ArithmeticOverflow)?)
         }
-        (PV::Int32(n), PT::Int8) => PV::Int8(i8::try_from(*n).map_err(|_| ExprError::ArithmeticOverflow)?),
+        (PV::Int32(n), PT::Int8) => {
+            PV::Int8(i8::try_from(*n).map_err(|_| ExprError::ArithmeticOverflow)?)
+        }
         (PV::Int64(n), PT::Int32) => {
             PV::Int32(i32::try_from(*n).map_err(|_| ExprError::ArithmeticOverflow)?)
         }
         (PV::Int64(n), PT::Int16) => {
             PV::Int16(i16::try_from(*n).map_err(|_| ExprError::ArithmeticOverflow)?)
         }
-        (PV::Int64(n), PT::Int8) => PV::Int8(i8::try_from(*n).map_err(|_| ExprError::ArithmeticOverflow)?),
+        (PV::Int64(n), PT::Int8) => {
+            PV::Int8(i8::try_from(*n).map_err(|_| ExprError::ArithmeticOverflow)?)
+        }
         // Int → Float
         (PV::Int32(n), PT::Float64) => PV::Float64(*n as f64),
         (PV::Int64(n), PT::Float64) => PV::Float64(*n as f64),
@@ -1200,20 +1194,18 @@ pub fn cast_value(v: &ProximaValue, target: &ProximaType) -> Result<ProximaValue
         (PV::Float32(f), PT::Float64) => PV::Float64(*f as f64),
         (PV::Float64(f), PT::Float32) => PV::Float32(*f as f32),
         // String conversions
-        (PV::String(s), PT::Int64) => PV::Int64(
-            s.parse::<i64>()
-                .map_err(|_| ExprError::UnsupportedCast {
-                    from: PT::String,
-                    to: PT::Int64,
-                })?,
-        ),
-        (PV::String(s), PT::Float64) => PV::Float64(
-            s.parse::<f64>()
-                .map_err(|_| ExprError::UnsupportedCast {
-                    from: PT::String,
-                    to: PT::Float64,
-                })?,
-        ),
+        (PV::String(s), PT::Int64) => {
+            PV::Int64(s.parse::<i64>().map_err(|_| ExprError::UnsupportedCast {
+                from: PT::String,
+                to: PT::Int64,
+            })?)
+        }
+        (PV::String(s), PT::Float64) => {
+            PV::Float64(s.parse::<f64>().map_err(|_| ExprError::UnsupportedCast {
+                from: PT::String,
+                to: PT::Float64,
+            })?)
+        }
         (PV::String(s), PT::Boolean) => PV::Boolean(matches!(
             s.to_ascii_lowercase().as_str(),
             "true" | "t" | "1" | "yes" | "y"
@@ -1410,10 +1402,22 @@ mod tests {
         let f = || Expr::literal(ProximaValue::Boolean(false));
         let n = || Expr::null(ProximaType::Boolean);
         let cases = [
-            (Expr::bin(BinaryOp::And, t(), t()), ProximaValue::Boolean(true)),
-            (Expr::bin(BinaryOp::And, t(), f()), ProximaValue::Boolean(false)),
-            (Expr::bin(BinaryOp::And, f(), n()), ProximaValue::Boolean(false)),
-            (Expr::bin(BinaryOp::And, n(), f()), ProximaValue::Boolean(false)),
+            (
+                Expr::bin(BinaryOp::And, t(), t()),
+                ProximaValue::Boolean(true),
+            ),
+            (
+                Expr::bin(BinaryOp::And, t(), f()),
+                ProximaValue::Boolean(false),
+            ),
+            (
+                Expr::bin(BinaryOp::And, f(), n()),
+                ProximaValue::Boolean(false),
+            ),
+            (
+                Expr::bin(BinaryOp::And, n(), f()),
+                ProximaValue::Boolean(false),
+            ),
             (Expr::bin(BinaryOp::And, t(), n()), ProximaValue::Null),
             (Expr::bin(BinaryOp::And, n(), t()), ProximaValue::Null),
             (Expr::bin(BinaryOp::And, n(), n()), ProximaValue::Null),
@@ -1429,11 +1433,20 @@ mod tests {
         let f = || Expr::literal(ProximaValue::Boolean(false));
         let n = || Expr::null(ProximaType::Boolean);
         let cases = [
-            (Expr::bin(BinaryOp::Or, t(), n()), ProximaValue::Boolean(true)),
-            (Expr::bin(BinaryOp::Or, n(), t()), ProximaValue::Boolean(true)),
+            (
+                Expr::bin(BinaryOp::Or, t(), n()),
+                ProximaValue::Boolean(true),
+            ),
+            (
+                Expr::bin(BinaryOp::Or, n(), t()),
+                ProximaValue::Boolean(true),
+            ),
             (Expr::bin(BinaryOp::Or, f(), n()), ProximaValue::Null),
             (Expr::bin(BinaryOp::Or, n(), f()), ProximaValue::Null),
-            (Expr::bin(BinaryOp::Or, f(), f()), ProximaValue::Boolean(false)),
+            (
+                Expr::bin(BinaryOp::Or, f(), f()),
+                ProximaValue::Boolean(false),
+            ),
             (Expr::bin(BinaryOp::Or, n(), n()), ProximaValue::Null),
         ];
         for (e, expected) in cases {
@@ -1449,7 +1462,10 @@ mod tests {
             ProximaValue::Boolean(false)
         );
         let e = Expr::unary(UnaryOp::Not, Expr::null(ProximaType::Boolean));
-        assert_eq!(e.eval(&Vec::new(), &NoFunctions).unwrap(), ProximaValue::Null);
+        assert_eq!(
+            e.eval(&Vec::new(), &NoFunctions).unwrap(),
+            ProximaValue::Null
+        );
     }
 
     // --- Comparison ------------------------------------------------------
@@ -1461,7 +1477,10 @@ mod tests {
             Expr::literal(ProximaValue::Int64(1)),
             Expr::null(ProximaType::Int64),
         );
-        assert_eq!(e.eval(&Vec::new(), &NoFunctions).unwrap(), ProximaValue::Null);
+        assert_eq!(
+            e.eval(&Vec::new(), &NoFunctions).unwrap(),
+            ProximaValue::Null
+        );
     }
 
     #[test]
@@ -1574,7 +1593,10 @@ mod tests {
             ],
             not: false,
         };
-        assert_eq!(e.eval(&Vec::new(), &NoFunctions).unwrap(), ProximaValue::Null);
+        assert_eq!(
+            e.eval(&Vec::new(), &NoFunctions).unwrap(),
+            ProximaValue::Null
+        );
     }
 
     #[test]
@@ -1658,7 +1680,10 @@ mod tests {
             )],
             otherwise: None,
         };
-        assert_eq!(e.eval(&Vec::new(), &NoFunctions).unwrap(), ProximaValue::Null);
+        assert_eq!(
+            e.eval(&Vec::new(), &NoFunctions).unwrap(),
+            ProximaValue::Null
+        );
     }
 
     #[test]
@@ -1681,7 +1706,10 @@ mod tests {
             Expr::null(ProximaType::Int64),
             Expr::null(ProximaType::Int64),
         ]);
-        assert_eq!(e.eval(&Vec::new(), &NoFunctions).unwrap(), ProximaValue::Null);
+        assert_eq!(
+            e.eval(&Vec::new(), &NoFunctions).unwrap(),
+            ProximaValue::Null
+        );
     }
 
     #[test]
@@ -1690,7 +1718,10 @@ mod tests {
             left: Box::new(Expr::literal(ProximaValue::Int64(5))),
             right: Box::new(Expr::literal(ProximaValue::Int64(5))),
         };
-        assert_eq!(e.eval(&Vec::new(), &NoFunctions).unwrap(), ProximaValue::Null);
+        assert_eq!(
+            e.eval(&Vec::new(), &NoFunctions).unwrap(),
+            ProximaValue::Null
+        );
     }
 
     #[test]
@@ -1729,8 +1760,7 @@ mod tests {
     fn cast_string_to_int_works_and_fails() {
         let v = cast_value(&ProximaValue::String("42".into()), &ProximaType::Int64).unwrap();
         assert_eq!(v, ProximaValue::Int64(42));
-        let e =
-            cast_value(&ProximaValue::String("abc".into()), &ProximaType::Int64).unwrap_err();
+        let e = cast_value(&ProximaValue::String("abc".into()), &ProximaType::Int64).unwrap_err();
         assert!(matches!(e, ExprError::UnsupportedCast { .. }));
     }
 
@@ -1902,12 +1932,14 @@ mod tests {
 
         // Row (id=10, name="alice", active=NULL) → true
         assert_eq!(
-            pred.eval(&row(10, Some("alice"), None), &NoFunctions).unwrap(),
+            pred.eval(&row(10, Some("alice"), None), &NoFunctions)
+                .unwrap(),
             ProximaValue::Boolean(true)
         );
         // Row (id=3, name="alice", active=true) → false (id > 5 fails)
         assert_eq!(
-            pred.eval(&row(3, Some("alice"), Some(true)), &NoFunctions).unwrap(),
+            pred.eval(&row(3, Some("alice"), Some(true)), &NoFunctions)
+                .unwrap(),
             ProximaValue::Boolean(false)
         );
         // Row (id=10, name=NULL, active=NULL) → NULL (then short-circuits

@@ -164,9 +164,7 @@ fn apply_proto_enum_workarounds(request: &mut CollectionRequest, raw: &serde_jso
         let int = if let Some(s) = prec_value.as_str() {
             // Normalise: strip prefix, lowercase.
             let key = s.to_ascii_lowercase();
-            let stripped = key
-                .strip_prefix("embedding_precision_")
-                .unwrap_or(&key);
+            let stripped = key.strip_prefix("embedding_precision_").unwrap_or(&key);
             match stripped {
                 "unspecified" => 0,
                 "fp32" => 1,

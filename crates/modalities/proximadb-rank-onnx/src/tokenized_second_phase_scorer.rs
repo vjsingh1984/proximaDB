@@ -49,11 +49,7 @@ impl OnnxTokenizedSecondPhaseScorer {
 }
 
 impl SecondPhaseScorer for OnnxTokenizedSecondPhaseScorer {
-    fn rescore(
-        &self,
-        hits: Vec<ScoredHit>,
-        qctx: &QueryContext,
-    ) -> RankResult<Vec<ScoredHit>> {
+    fn rescore(&self, hits: Vec<ScoredHit>, qctx: &QueryContext) -> RankResult<Vec<ScoredHit>> {
         if hits.is_empty() {
             return Ok(Vec::new());
         }
@@ -136,14 +132,17 @@ mod tests {
         let extractor: Arc<dyn TokenizedDocFeatureExtractor> =
             Arc::new(NoopTokenizedDocFeatureExtractor::default());
         let scorer = make_scorer(session, extractor);
-        let out = scorer.rescore(Vec::new(), &QueryContext::default()).unwrap();
+        let out = scorer
+            .rescore(Vec::new(), &QueryContext::default())
+            .unwrap();
         assert!(out.is_empty());
     }
 
     #[test]
     fn rescore_runs_extractor_then_session_and_tags_phase_id_second() {
-        let session: Arc<dyn TokenizedScorerSession> =
-            Arc::new(MockTokenizedScorerSession::constant(descriptor("r", 32), 0.75));
+        let session: Arc<dyn TokenizedScorerSession> = Arc::new(
+            MockTokenizedScorerSession::constant(descriptor("r", 32), 0.75),
+        );
         let extractor: Arc<dyn TokenizedDocFeatureExtractor> =
             Arc::new(NoopTokenizedDocFeatureExtractor::default());
         let scorer = make_scorer(session, extractor);
@@ -161,12 +160,14 @@ mod tests {
     fn rescore_preserves_doc_order_from_input_hits() {
         // The input hit order should match the output hit order even
         // when chunk boundaries shuffle the underlying inference calls.
-        let session: Arc<dyn TokenizedScorerSession> =
-            Arc::new(MockTokenizedScorerSession::new(descriptor("echo", 2), |b| {
+        let session: Arc<dyn TokenizedScorerSession> = Arc::new(MockTokenizedScorerSession::new(
+            descriptor("echo", 2),
+            |b| {
                 // Score = first token id (already validated to be one
                 // i64 per row by validate_rectangular).
                 b.input_ids.iter().map(|r| r[0] as f32).collect()
-            }));
+            },
+        ));
         let extractor: Arc<dyn TokenizedDocFeatureExtractor> =
             Arc::new(FnTokenizedDocFeatureExtractor::new(|docs, _qctx| {
                 Ok(TokenizedBatch::new(
@@ -198,8 +199,9 @@ mod tests {
         let features: Arc<[(Arc<str>, f32)]> =
             Arc::from(vec![(Arc::<str>::from("bm25(title)"), 11.5_f32)]);
 
-        let session: Arc<dyn TokenizedScorerSession> =
-            Arc::new(MockTokenizedScorerSession::constant(descriptor("r", 32), 0.5));
+        let session: Arc<dyn TokenizedScorerSession> = Arc::new(
+            MockTokenizedScorerSession::constant(descriptor("r", 32), 0.5),
+        );
         let extractor: Arc<dyn TokenizedDocFeatureExtractor> =
             Arc::new(NoopTokenizedDocFeatureExtractor::default());
         let scorer = make_scorer(session, extractor);

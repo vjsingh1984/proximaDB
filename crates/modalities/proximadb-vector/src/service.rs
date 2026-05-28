@@ -9,7 +9,7 @@ use proximadb_data_model::ProximaValue;
 use proximadb_kernel::error::{ProximaDBError, QueryError};
 use proximadb_records::{ProximaRecord, ProximaTreeNode};
 use proximadb_vector_query::{
-    DistanceMetric as ContractDistanceMetric, VectorQueryService, VectorQueryRequest,
+    DistanceMetric as ContractDistanceMetric, VectorQueryRequest, VectorQueryService,
     VectorSearchResult,
 };
 use std::collections::HashMap;

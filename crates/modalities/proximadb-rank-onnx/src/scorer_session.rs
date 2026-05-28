@@ -88,7 +88,8 @@ impl ScorerSession for MockScorerSession {
 
     fn score(&self, rows: &[Vec<f32>]) -> RankResult<Vec<f32>> {
         self.call_count.fetch_add(1, Ordering::SeqCst);
-        self.rows_seen.fetch_add(rows.len() as u64, Ordering::SeqCst);
+        self.rows_seen
+            .fetch_add(rows.len() as u64, Ordering::SeqCst);
         let scores = (self.scoring_fn)(rows);
         debug_assert_eq!(
             scores.len(),
@@ -156,9 +157,7 @@ mod tests {
 
     #[test]
     fn mock_with_custom_closure() {
-        let s = MockScorerSession::new(d(), |rows| {
-            rows.iter().map(|r| r[0] * 2.0).collect()
-        });
+        let s = MockScorerSession::new(d(), |rows| rows.iter().map(|r| r[0] * 2.0).collect());
         let out = s.score(&[vec![1.0], vec![5.0], vec![10.0]]).unwrap();
         assert_eq!(out, vec![2.0, 10.0, 20.0]);
     }

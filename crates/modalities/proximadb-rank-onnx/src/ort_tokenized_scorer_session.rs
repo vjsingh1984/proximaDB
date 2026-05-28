@@ -118,13 +118,11 @@ impl TokenizedScorerSession for OrtTokenizedScorerSession {
         // owned ndarray::Array, so we materialize each one here.
         let input_ids_flat: Vec<i64> = flatten_i64(&batch.input_ids);
         let attention_mask_flat: Vec<i64> = flatten_i64(&batch.attention_mask);
-        let input_ids_arr =
-            ndarray::Array2::from_shape_vec((batch_size, seq_len), input_ids_flat).map_err(
-                |e| RankError::ModelInference {
-                    model_id: self.descriptor.key.to_string(),
-                    reason: format!("input_ids shape error: {e}"),
-                },
-            )?;
+        let input_ids_arr = ndarray::Array2::from_shape_vec((batch_size, seq_len), input_ids_flat)
+            .map_err(|e| RankError::ModelInference {
+                model_id: self.descriptor.key.to_string(),
+                reason: format!("input_ids shape error: {e}"),
+            })?;
         let attention_mask_arr =
             ndarray::Array2::from_shape_vec((batch_size, seq_len), attention_mask_flat).map_err(
                 |e| RankError::ModelInference {
@@ -147,26 +145,29 @@ impl TokenizedScorerSession for OrtTokenizedScorerSession {
         };
 
         // Wrap each ndarray in an ort Value.
-        let input_ids_value =
-            ort::value::Value::from_array(input_ids_arr).map_err(|e| RankError::ModelInference {
+        let input_ids_value = ort::value::Value::from_array(input_ids_arr).map_err(|e| {
+            RankError::ModelInference {
                 model_id: self.descriptor.key.to_string(),
                 reason: format!("Value::from_array(input_ids): {e}"),
-            })?;
-        let attention_mask_value = ort::value::Value::from_array(attention_mask_arr).map_err(
-            |e| RankError::ModelInference {
-                model_id: self.descriptor.key.to_string(),
-                reason: format!("Value::from_array(attention_mask): {e}"),
-            },
-        )?;
-        let token_type_ids_value = match token_type_ids_arr {
-            Some(arr) => Some(ort::value::Value::from_array(arr).map_err(|e| {
+            }
+        })?;
+        let attention_mask_value =
+            ort::value::Value::from_array(attention_mask_arr).map_err(|e| {
                 RankError::ModelInference {
                     model_id: self.descriptor.key.to_string(),
-                    reason: format!("Value::from_array(token_type_ids): {e}"),
+                    reason: format!("Value::from_array(attention_mask): {e}"),
                 }
-            })?),
-            None => None,
-        };
+            })?;
+        let token_type_ids_value =
+            match token_type_ids_arr {
+                Some(arr) => Some(ort::value::Value::from_array(arr).map_err(|e| {
+                    RankError::ModelInference {
+                        model_id: self.descriptor.key.to_string(),
+                        reason: format!("Value::from_array(token_type_ids): {e}"),
+                    }
+                })?),
+                None => None,
+            };
 
         // Build ort inputs from the descriptor's slot names.
         let input_ids_name = self.descriptor.input_spec[0].name.clone();
@@ -196,12 +197,13 @@ impl TokenizedScorerSession for OrtTokenizedScorerSession {
 
         // First output slot = score tensor. Extract column 0 if rank-2.
         let output_name = self.descriptor.output_spec[0].name.clone();
-        let tensor = outputs
-            .get(output_name.as_str())
-            .ok_or_else(|| RankError::ModelInference {
-                model_id: self.descriptor.key.to_string(),
-                reason: format!("output slot {output_name:?} missing from session.run result"),
-            })?;
+        let tensor =
+            outputs
+                .get(output_name.as_str())
+                .ok_or_else(|| RankError::ModelInference {
+                    model_id: self.descriptor.key.to_string(),
+                    reason: format!("output slot {output_name:?} missing from session.run result"),
+                })?;
         let array = tensor
             .try_extract_array::<f32>()
             .map_err(|e| RankError::ModelInference {
@@ -212,12 +214,12 @@ impl TokenizedScorerSession for OrtTokenizedScorerSession {
         let scores: Vec<f32> = if array.ndim() == 1 {
             array.iter().copied().collect()
         } else {
-            let view2 =
-                array.view().into_dimensionality::<ndarray::Ix2>().map_err(|e| {
-                    RankError::ModelInference {
-                        model_id: self.descriptor.key.to_string(),
-                        reason: format!("output ndim != 2 cannot reshape: {e}"),
-                    }
+            let view2 = array
+                .view()
+                .into_dimensionality::<ndarray::Ix2>()
+                .map_err(|e| RankError::ModelInference {
+                    model_id: self.descriptor.key.to_string(),
+                    reason: format!("output ndim != 2 cannot reshape: {e}"),
                 })?;
             (0..batch_size).map(|i| view2[(i, 0)]).collect()
         };

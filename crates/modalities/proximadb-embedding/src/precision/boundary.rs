@@ -80,13 +80,25 @@ pub fn project_to_canonical(
     match (&output, canonical) {
         // === Identity shortcuts — skip the fp32 round-trip ===
         (EmbeddingOutput::Fp32(_), EmbeddingScalarType::Fp32) => {
-            if let EmbeddingOutput::Fp32(v) = output { EmbeddingValues::Fp32(v) } else { unreachable!() }
+            if let EmbeddingOutput::Fp32(v) = output {
+                EmbeddingValues::Fp32(v)
+            } else {
+                unreachable!()
+            }
         }
         (EmbeddingOutput::Fp16(_), EmbeddingScalarType::Fp16) => {
-            if let EmbeddingOutput::Fp16(v) = output { EmbeddingValues::Fp16(v) } else { unreachable!() }
+            if let EmbeddingOutput::Fp16(v) = output {
+                EmbeddingValues::Fp16(v)
+            } else {
+                unreachable!()
+            }
         }
         (EmbeddingOutput::Bf16(_), EmbeddingScalarType::Bf16) => {
-            if let EmbeddingOutput::Bf16(v) = output { EmbeddingValues::Bf16(v) } else { unreachable!() }
+            if let EmbeddingOutput::Bf16(v) = output {
+                EmbeddingValues::Bf16(v)
+            } else {
+                unreachable!()
+            }
         }
         // === Everything else: promote to fp32, then narrow to canonical ===
         _ => EmbeddingValues::from_fp32_lossy(&output.to_fp32(), canonical),
@@ -309,10 +321,7 @@ mod tests {
             EmbeddingOutput::Fp32(src.clone()),
             EmbeddingScalarType::Fp32,
         );
-        let fp16 = project_to_canonical(
-            EmbeddingOutput::Fp32(src),
-            EmbeddingScalarType::Fp16,
-        );
+        let fp16 = project_to_canonical(EmbeddingOutput::Fp32(src), EmbeddingScalarType::Fp16);
         let fp32_bytes = match fp32 {
             EmbeddingValues::Fp32(v) => v.len() * std::mem::size_of::<f32>(),
             _ => unreachable!(),
@@ -322,7 +331,8 @@ mod tests {
             _ => unreachable!(),
         };
         assert_eq!(
-            fp32_bytes, fp16_bytes * 2,
+            fp32_bytes,
+            fp16_bytes * 2,
             "fp16 storage must be exactly half of fp32 (LLD §Motivation)"
         );
     }

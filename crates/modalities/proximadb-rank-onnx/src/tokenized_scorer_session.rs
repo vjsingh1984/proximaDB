@@ -285,30 +285,21 @@ mod tests {
 
     #[test]
     fn batch_validate_rectangular_rejects_attention_mask_row_count_mismatch() {
-        let b = TokenizedBatch::new(
-            vec![vec![1, 2, 3], vec![4, 5, 6]],
-            vec![vec![1, 1, 1]],
-        );
+        let b = TokenizedBatch::new(vec![vec![1, 2, 3], vec![4, 5, 6]], vec![vec![1, 1, 1]]);
         let err = b.validate_rectangular().unwrap_err();
         assert!(err.contains("attention_mask has 1 rows but input_ids has 2"));
     }
 
     #[test]
     fn batch_validate_rectangular_rejects_attention_mask_width_mismatch() {
-        let b = TokenizedBatch::new(
-            vec![vec![1, 2, 3]],
-            vec![vec![1, 1]],
-        );
+        let b = TokenizedBatch::new(vec![vec![1, 2, 3]], vec![vec![1, 1]]);
         let err = b.validate_rectangular().unwrap_err();
         assert!(err.contains("attention_mask row 0"));
     }
 
     #[test]
     fn batch_validate_rectangular_checks_token_type_ids_when_present() {
-        let mut b = TokenizedBatch::new(
-            vec![vec![1, 2, 3]],
-            vec![vec![1, 1, 1]],
-        );
+        let mut b = TokenizedBatch::new(vec![vec![1, 2, 3]], vec![vec![1, 1, 1]]);
         b.token_type_ids = Some(vec![vec![0, 0]]); // wrong width
         let err = b.validate_rectangular().unwrap_err();
         assert!(err.contains("token_type_ids row 0"));

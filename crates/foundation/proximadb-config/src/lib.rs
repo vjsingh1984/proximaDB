@@ -1065,9 +1065,7 @@ fn parse_bool_flag(raw: &str, env_name: &str) -> anyhow::Result<bool> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "true" | "1" | "yes" | "on" => Ok(true),
         "false" | "0" | "no" | "off" => Ok(false),
-        other => anyhow::bail!(
-            "{env_name} must be true|false|1|0|yes|no|on|off, got {other:?}"
-        ),
+        other => anyhow::bail!("{env_name} must be true|false|1|0|yes|no|on|off, got {other:?}"),
     }
 }
 
@@ -1316,7 +1314,9 @@ mod tests {
 
     #[test]
     fn parse_bool_flag_accepts_canonical_true_forms() {
-        for raw in ["true", "TRUE", "True", "1", "yes", "YES", "on", "ON", " true "] {
+        for raw in [
+            "true", "TRUE", "True", "1", "yes", "YES", "on", "ON", " true ",
+        ] {
             assert_eq!(
                 parse_bool_flag(raw, "X").unwrap(),
                 true,

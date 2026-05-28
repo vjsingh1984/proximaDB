@@ -23,8 +23,8 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 
 use crate::config::EmbedRoute;
-use proximadb_records::EmbeddingScalarType;
 use crate::{EmbeddingError, Result};
+use proximadb_records::EmbeddingScalarType;
 
 pub struct ModelRegistry {
     bge_small: OnceLock<Arc<bge::BgeModel>>,
@@ -196,7 +196,10 @@ mod tests {
             element_count: 1024,
             batch_count: 1,
         };
-        assert!(!same.was_converted(), "fp32→fp32 must not be flagged as a conversion");
+        assert!(
+            !same.was_converted(),
+            "fp32→fp32 must not be flagged as a conversion"
+        );
 
         let narrowed = BatchConversionSummary {
             from: EmbeddingScalarType::Fp32,

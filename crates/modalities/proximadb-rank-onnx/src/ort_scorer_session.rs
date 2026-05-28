@@ -154,12 +154,13 @@ impl ScorerSession for OrtScorerSession {
                 model_id: self.descriptor.key.to_string(),
                 reason: "descriptor.output_spec is empty — OrtScorerSession needs at least one named output".into(),
             })?;
-        let tensor = outputs
-            .get(output_name.as_str())
-            .ok_or_else(|| RankError::ModelInference {
-                model_id: self.descriptor.key.to_string(),
-                reason: format!("output slot {output_name:?} missing from session.run result"),
-            })?;
+        let tensor =
+            outputs
+                .get(output_name.as_str())
+                .ok_or_else(|| RankError::ModelInference {
+                    model_id: self.descriptor.key.to_string(),
+                    reason: format!("output slot {output_name:?} missing from session.run result"),
+                })?;
         let array = tensor
             .try_extract_array::<f32>()
             .map_err(|e| RankError::ModelInference {
@@ -171,22 +172,19 @@ impl ScorerSession for OrtScorerSession {
         let scores = if array.ndim() == 1 {
             array.iter().copied().collect::<Vec<f32>>()
         } else {
-            let view2 = array.view().into_dimensionality::<ndarray::Ix2>().map_err(|e| {
-                RankError::ModelInference {
+            let view2 = array
+                .view()
+                .into_dimensionality::<ndarray::Ix2>()
+                .map_err(|e| RankError::ModelInference {
                     model_id: self.descriptor.key.to_string(),
                     reason: format!("output ndim != 2 cannot reshape: {e}"),
-                }
-            })?;
+                })?;
             (0..batch).map(|i| view2[(i, 0)]).collect()
         };
         if scores.len() != batch {
             return Err(RankError::ModelInference {
                 model_id: self.descriptor.key.to_string(),
-                reason: format!(
-                    "output produced {} scores for {} rows",
-                    scores.len(),
-                    batch
-                ),
+                reason: format!("output produced {} scores for {} rows", scores.len(), batch),
             });
         }
         Ok(scores)

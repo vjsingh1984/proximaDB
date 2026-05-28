@@ -171,8 +171,7 @@ mod tests {
 
     fn make_input(n: usize, seq_len: usize) -> TokenizedBatchInput {
         let docs: Vec<DocHandle> = (0..n as u32).map(DocHandle).collect();
-        let input_ids: Vec<Vec<i64>> =
-            (0..n).map(|i| vec![i as i64; seq_len]).collect();
+        let input_ids: Vec<Vec<i64>> = (0..n).map(|i| vec![i as i64; seq_len]).collect();
         let attention_mask: Vec<Vec<i64>> = (0..n).map(|_| vec![1; seq_len]).collect();
         TokenizedBatchInput::new(docs, TokenizedBatch::new(input_ids, attention_mask))
     }
@@ -222,10 +221,7 @@ mod tests {
     fn rejects_mismatched_docs_and_batch_size() {
         let mock = Arc::new(MockTokenizedScorerSession::zeros(descriptor("r", 32)));
         let scorer = OnnxTokenizedBatchedScorer::new(mock);
-        let bad = TokenizedBatchInput::new(
-            vec![DocHandle(0)],
-            TokenizedBatch::default(),
-        );
+        let bad = TokenizedBatchInput::new(vec![DocHandle(0)], TokenizedBatch::default());
         match scorer.score_batch(bad) {
             Err(RankError::ModelInference { reason, .. }) => {
                 assert!(reason.contains("docs.len()=1"));
@@ -280,10 +276,7 @@ mod tests {
 
     #[test]
     fn slice_omits_token_type_ids_when_parent_omits() {
-        let parent = TokenizedBatch::new(
-            vec![vec![1], vec![2]],
-            vec![vec![1], vec![1]],
-        );
+        let parent = TokenizedBatch::new(vec![vec![1], vec![2]], vec![vec![1], vec![1]]);
         let slice = slice_tokenized_batch(&parent, 0, 1);
         assert!(slice.token_type_ids.is_none());
     }

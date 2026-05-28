@@ -207,9 +207,7 @@ pub fn measure_recall(
     let mut per_query = Vec::with_capacity(reference.len());
     for ref_result in reference {
         // Match candidate result by query_id (order may differ).
-        let cand_result = candidate
-            .iter()
-            .find(|c| c.query_id == ref_result.query_id);
+        let cand_result = candidate.iter().find(|c| c.query_id == ref_result.query_id);
         let recall = match cand_result {
             Some(c) => recall_at_k_clipped(&ref_result.neighbors, &c.neighbors, k),
             None => 0.0, // candidate didn't answer this query → 0 recall
@@ -335,19 +333,16 @@ mod tests {
 
     #[test]
     fn recall_at_k_zero_is_error() {
-        assert_eq!(recall_at_k(&[1, 2, 3], &[1, 2, 3], 0), Err(RecallError::KZero));
+        assert_eq!(
+            recall_at_k(&[1, 2, 3], &[1, 2, 3], 0),
+            Err(RecallError::KZero)
+        );
     }
 
     #[test]
     fn recall_at_k_exceeds_truth_is_error() {
         let err = recall_at_k(&[1, 2], &[1, 2, 3], 3).unwrap_err();
-        assert_eq!(
-            err,
-            RecallError::KExceedsTruth {
-                k: 3,
-                truth_len: 2
-            }
-        );
+        assert_eq!(err, RecallError::KExceedsTruth { k: 3, truth_len: 2 });
     }
 
     #[test]
@@ -454,8 +449,7 @@ mod tests {
             query_id: 0,
             neighbors: vec![1, 2, 3, 4, 5],
         }];
-        let row =
-            measure_recall(&dataset, DistanceMetric::L2, 5, &reference, &candidate).unwrap();
+        let row = measure_recall(&dataset, DistanceMetric::L2, 5, &reference, &candidate).unwrap();
         assert_eq!(row.mean_recall, 0.5, "1.0 + 0.0 averaged across 2 queries");
         assert_eq!(row.min_recall, 0.0);
     }
@@ -491,9 +485,7 @@ mod tests {
                 },
             ],
         };
-        let cos = report
-            .row("synthetic", DistanceMetric::Cosine, 10)
-            .unwrap();
+        let cos = report.row("synthetic", DistanceMetric::Cosine, 10).unwrap();
         assert!((cos.mean_recall - 0.993).abs() < 1e-6);
         assert!(report.row("synthetic", DistanceMetric::L2, 10).is_none());
     }

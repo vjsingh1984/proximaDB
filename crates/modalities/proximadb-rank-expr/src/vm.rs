@@ -329,6 +329,9 @@ mod tests {
         let mut ctx = ScoreCtx::new(&q, &arena, &attrs, &c, &m, &met);
         let mut lk = NullLookup;
         // 3*2 + 4 = 10
-        assert_eq!(execute(&code, &mut subs, DocHandle(0), &mut lk, &mut ctx), 10.0);
+        assert_eq!(
+            execute(&code, &mut subs, DocHandle(0), &mut lk, &mut ctx),
+            10.0
+        );
     }
 }

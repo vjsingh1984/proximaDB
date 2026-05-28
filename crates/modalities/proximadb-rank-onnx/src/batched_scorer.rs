@@ -146,7 +146,10 @@ mod tests {
         // dyn-trait Arc for the cache. Trick: install the session via
         // its dyn-trait Arc; keep a separate strong ref to the same Arc
         // via downcast-friendly construction.
-        let mock = Arc::new(MockScorerSession::zeros(descriptor("rerank", max_batch_size)));
+        let mock = Arc::new(MockScorerSession::zeros(descriptor(
+            "rerank",
+            max_batch_size,
+        )));
         let dyn_session: Arc<dyn ScorerSession> = mock.clone();
         let token = cache.install(dyn_session);
         (token, mock)
@@ -193,9 +196,7 @@ mod tests {
         });
         let (token, mock) = install_session_returning_count(&cache, 32);
         let scorer = OnnxBatchedScorer::new(token);
-        let out = scorer
-            .score_batch(BatchInput::new(vec![], vec![]))
-            .unwrap();
+        let out = scorer.score_batch(BatchInput::new(vec![], vec![])).unwrap();
         assert!(out.scores.is_empty());
         assert_eq!(mock.call_count(), 0, "no input → no inference calls");
     }
@@ -228,15 +229,17 @@ mod tests {
         }));
         let token = cache.install(echo);
         let scorer = OnnxBatchedScorer::new(token);
-        let docs = vec![DocHandle(10), DocHandle(20), DocHandle(30), DocHandle(40), DocHandle(50)];
-        let rows = vec![
-            vec![1.5],
-            vec![2.5],
-            vec![3.5],
-            vec![4.5],
-            vec![5.5],
+        let docs = vec![
+            DocHandle(10),
+            DocHandle(20),
+            DocHandle(30),
+            DocHandle(40),
+            DocHandle(50),
         ];
-        let out = scorer.score_batch(BatchInput::new(docs.clone(), rows)).unwrap();
+        let rows = vec![vec![1.5], vec![2.5], vec![3.5], vec![4.5], vec![5.5]];
+        let out = scorer
+            .score_batch(BatchInput::new(docs.clone(), rows))
+            .unwrap();
         for (i, (doc, score)) in out.scores.iter().enumerate() {
             assert_eq!(*doc, docs[i]);
             assert!((score - (i as f32 + 1.0 + 0.5)).abs() < 1e-5);

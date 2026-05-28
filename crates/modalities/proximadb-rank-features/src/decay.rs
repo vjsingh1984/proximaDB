@@ -46,9 +46,7 @@ impl Blueprint for DecayBlueprint {
             })?
             .parse::<f64>()
             .map_err(|_| {
-                RankError::InvalidProfile(
-                    "decay(...) half_life must be a positive number".into(),
-                )
+                RankError::InvalidProfile("decay(...) half_life must be a positive number".into())
             })?;
         if !(half_life.is_finite() && half_life > 0.0) {
             return Err(RankError::InvalidProfile(format!(

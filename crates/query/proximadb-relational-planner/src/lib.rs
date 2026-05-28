@@ -41,8 +41,8 @@
 
 use proximadb_data_model::{ProximaType, ProximaValue};
 use proximadb_relational_algebra::{
-    AggregateExpr, AlgebraError, JoinKind, JoinSide, JoinStrategy, LogicalNode,
-    NamedAggregate, NamedExpr, SortKey, TableId,
+    AggregateExpr, AlgebraError, JoinKind, JoinSide, JoinStrategy, LogicalNode, NamedAggregate,
+    NamedExpr, SortKey, TableId,
 };
 use proximadb_relational_reader::ReaderCapabilities;
 use proximadb_relational_types::{
@@ -684,10 +684,7 @@ fn is_equi_join_predicate(expr: &Expr) -> bool {
 /// Predicate pushdown — `Filter(Scan)` becomes
 /// `Scan{predicate}` when the adapter declares
 /// `push_predicate = true`. Walks the tree bottom-up.
-pub fn push_predicates<R: CapabilityResolver>(
-    plan: PhysicalPlan,
-    resolver: &R,
-) -> PhysicalPlan {
+pub fn push_predicates<R: CapabilityResolver>(plan: PhysicalPlan, resolver: &R) -> PhysicalPlan {
     match plan {
         PhysicalPlan::Filter { input, predicate } => {
             let input = push_predicates(*input, resolver);
@@ -706,13 +703,11 @@ pub fn push_predicates<R: CapabilityResolver>(
                     // Try PK-lookup rewrite first when applicable.
                     let pk_cols = resolver.primary_key(&table);
                     let pk_lookup_supported = caps.pk_lookup;
-                    let combined =
-                        combine_predicates(existing.clone(), Some(predicate.clone()));
+                    let combined = combine_predicates(existing.clone(), Some(predicate.clone()));
                     if pk_lookup_supported
                         && !pk_cols.is_empty()
                         && matches!(access, ScanAccess::FullScan)
-                        && let Some(key) =
-                            try_pk_lookup(&combined, &pk_cols, &output_schema)
+                        && let Some(key) = try_pk_lookup(&combined, &pk_cols, &output_schema)
                     {
                         return PhysicalPlan::Scan {
                             table,
@@ -1177,9 +1172,7 @@ fn push_projections_inner(
                             combined.push(c.clone());
                         }
                     }
-                    if combined.is_empty()
-                        || combined.len() == output_schema.len()
-                    {
+                    if combined.is_empty() || combined.len() == output_schema.len() {
                         // No narrowing possible.
                         None
                     } else {
@@ -1192,11 +1185,7 @@ fn push_projections_inner(
                 Some(cols) => RelationalSchema::new(
                     cols.iter()
                         .filter_map(|n| {
-                            output_schema
-                                .columns
-                                .iter()
-                                .find(|c| &c.name == n)
-                                .cloned()
+                            output_schema.columns.iter().find(|c| &c.name == n).cloned()
                         })
                         .collect(),
                 ),
@@ -1577,7 +1566,11 @@ mod tests {
             ty: ProximaType::Int64,
             nullable: false,
         };
-        let e = Expr::bin(BinaryOp::Plus, Expr::column(col), Expr::literal(ProximaValue::Int64(1)));
+        let e = Expr::bin(
+            BinaryOp::Plus,
+            Expr::column(col),
+            Expr::literal(ProximaValue::Int64(1)),
+        );
         let folded = fold_expr(e);
         assert!(matches!(folded, Expr::BinaryOp { .. }));
     }
@@ -1663,7 +1656,11 @@ mod tests {
             left: Box::new(users),
             right: Box::new(orders),
             kind: JoinKind::Inner,
-            on: Some(Expr::bin(BinaryOp::Eq, Expr::column(u_id), Expr::column(o_uid))),
+            on: Some(Expr::bin(
+                BinaryOp::Eq,
+                Expr::column(u_id),
+                Expr::column(o_uid),
+            )),
             strategy: JoinStrategy::Auto,
         };
         let physical = lower_to_physical(logical);
@@ -1957,9 +1954,7 @@ mod tests {
                                     assert_eq!(c.name, "age");
                                     assert_eq!(c.ordinal, 2); // full-schema ordinal
                                 }
-                                other => panic!(
-                                    "expected Column on left, got {other:?}"
-                                ),
+                                other => panic!("expected Column on left, got {other:?}"),
                             },
                             other => panic!("expected BinaryOp, got {other:?}"),
                         }

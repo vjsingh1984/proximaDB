@@ -229,9 +229,15 @@ impl CollectionEmbeddingChoice {
             Self::Small => EmbedRoute::BgeSmall,
             Self::Regular => EmbedRoute::BgeLarge,
             Self::Large => EmbedRoute::BgeM3,
-            Self::OpenAi { model } => EmbedRoute::OpenAi { model: model.clone() },
-            Self::Cohere { model } => EmbedRoute::Cohere { model: model.clone() },
-            Self::AzureOpenAi { model } => EmbedRoute::AzureOpenAi { model: model.clone() },
+            Self::OpenAi { model } => EmbedRoute::OpenAi {
+                model: model.clone(),
+            },
+            Self::Cohere { model } => EmbedRoute::Cohere {
+                model: model.clone(),
+            },
+            Self::AzureOpenAi { model } => EmbedRoute::AzureOpenAi {
+                model: model.clone(),
+            },
             Self::Byo {
                 url,
                 auth,
@@ -293,10 +299,7 @@ pub fn tier_allows_route(tier: Tier, route: &EmbedRoute) -> bool {
 /// returned route. Use [`validate_collection_route`] at the
 /// create-collection API to reject choices outside the tier's allow
 /// list BEFORE the collection metadata is persisted.
-pub fn resolve_collection_route(
-    explicit: Option<EmbedRoute>,
-    tier: Tier,
-) -> EmbedRoute {
+pub fn resolve_collection_route(explicit: Option<EmbedRoute>, tier: Tier) -> EmbedRoute {
     explicit.unwrap_or_else(|| tier_default_route(tier))
 }
 
@@ -686,13 +689,15 @@ mod collection_route_tests {
     #[test]
     fn validate_accepts_in_tier_choice() {
         assert!(validate_collection_route(Tier::Pro, &EmbedRoute::BgeLarge).is_ok());
-        assert!(validate_collection_route(
-            Tier::Enterprise,
-            &EmbedRoute::OpenAi {
-                model: OpenAiModel::TextEmbed3Small
-            }
-        )
-        .is_ok());
+        assert!(
+            validate_collection_route(
+                Tier::Enterprise,
+                &EmbedRoute::OpenAi {
+                    model: OpenAiModel::TextEmbed3Small
+                }
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -720,10 +725,7 @@ mod collection_route_tests {
             CollectionEmbeddingChoice::Regular.route(),
             EmbedRoute::BgeLarge
         );
-        assert_eq!(
-            CollectionEmbeddingChoice::Large.route(),
-            EmbedRoute::BgeM3
-        );
+        assert_eq!(CollectionEmbeddingChoice::Large.route(), EmbedRoute::BgeM3);
         assert_eq!(
             CollectionEmbeddingChoice::OpenAi {
                 model: OpenAiModel::TextEmbed3Small
@@ -776,9 +778,18 @@ mod collection_route_tests {
     fn native_precision_in_process_bge_is_fp32_until_session_loads() {
         // In-process BGE routes default to fp32 before the ONNX session
         // declares a different staged weight precision.
-        assert_eq!(EmbedRoute::BgeSmall.native_precision(), EmbeddingScalarType::Fp32);
-        assert_eq!(EmbedRoute::BgeLarge.native_precision(), EmbeddingScalarType::Fp32);
-        assert_eq!(EmbedRoute::BgeM3.native_precision(), EmbeddingScalarType::Fp32);
+        assert_eq!(
+            EmbedRoute::BgeSmall.native_precision(),
+            EmbeddingScalarType::Fp32
+        );
+        assert_eq!(
+            EmbedRoute::BgeLarge.native_precision(),
+            EmbeddingScalarType::Fp32
+        );
+        assert_eq!(
+            EmbedRoute::BgeM3.native_precision(),
+            EmbeddingScalarType::Fp32
+        );
     }
 
     #[test]

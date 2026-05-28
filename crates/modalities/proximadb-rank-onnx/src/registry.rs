@@ -150,25 +150,35 @@ mod tests {
         let s1 = reg.register(desc("a", "v1", None)).await.unwrap();
         let s2 = reg.register(desc("b", "v1", None)).await.unwrap();
         let s3 = reg.register(desc("a", "v2", None)).await.unwrap();
-        assert!(s1 < s2 && s2 < s3, "seq monotonically increases: {s1}, {s2}, {s3}");
+        assert!(
+            s1 < s2 && s2 < s3,
+            "seq monotonically increases: {s1}, {s2}, {s3}"
+        );
     }
 
     #[tokio::test]
     async fn get_unknown_returns_none() {
         let reg = InMemoryModelRegistry::new();
-        assert!(reg
-            .get(&ModelKey::new("ghost", "v1"))
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            reg.get(&ModelKey::new("ghost", "v1"))
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
     async fn list_filters_by_tenant() {
         let reg = InMemoryModelRegistry::new();
-        reg.register(desc("m1", "v1", Some("tenant-a"))).await.unwrap();
-        reg.register(desc("m2", "v1", Some("tenant-a"))).await.unwrap();
-        reg.register(desc("m3", "v1", Some("tenant-b"))).await.unwrap();
+        reg.register(desc("m1", "v1", Some("tenant-a")))
+            .await
+            .unwrap();
+        reg.register(desc("m2", "v1", Some("tenant-a")))
+            .await
+            .unwrap();
+        reg.register(desc("m3", "v1", Some("tenant-b")))
+            .await
+            .unwrap();
         reg.register(desc("m4", "v1", None)).await.unwrap();
         let a = reg.list(Some("tenant-a")).await.unwrap();
         assert_eq!(a.len(), 2);
@@ -183,11 +193,12 @@ mod tests {
         let reg = InMemoryModelRegistry::new();
         reg.register(desc("rerank", "v1", None)).await.unwrap();
         reg.delete(&ModelKey::new("rerank", "v1")).await.unwrap();
-        assert!(reg
-            .get(&ModelKey::new("rerank", "v1"))
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            reg.get(&ModelKey::new("rerank", "v1"))
+                .await
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]

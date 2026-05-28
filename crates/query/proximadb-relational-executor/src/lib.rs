@@ -32,9 +32,7 @@ use proximadb_relational_algebra::{
 use proximadb_relational_planner::{
     AggregateStrategy, DistinctStrategy, PhysicalPlan, ScanAccess, SortStrategy,
 };
-use proximadb_relational_reader::{
-    ReadSnapshot, ReaderError, RelationalReader, ScanContext,
-};
+use proximadb_relational_reader::{ReadSnapshot, ReaderError, RelationalReader, ScanContext};
 use proximadb_relational_types::{
     BinaryOp, Expr, ExprError, NoFunctions, RelationalRow, RelationalSchema,
 };
@@ -97,8 +95,7 @@ impl Default for ExecutionContext {
 /// [`open_reader`] once per `Scan` in the plan; the returned
 /// reader is owned by the resulting [`ScanExec`].
 pub trait ReaderFactory: Send + Sync {
-    fn open_reader(&self, table: &TableId)
-        -> Result<Box<dyn RelationalReader>, ExecError>;
+    fn open_reader(&self, table: &TableId) -> Result<Box<dyn RelationalReader>, ExecError>;
 }
 
 // =========================================================================
@@ -117,9 +114,7 @@ pub trait ExecNode: Send {
 
 /// Helper to drain an opened executor to a `Vec`. Convenient in
 /// tests and at the top of a query handler.
-pub async fn collect<E: ExecNode + ?Sized>(
-    node: &mut E,
-) -> Result<Vec<RelationalRow>, ExecError> {
+pub async fn collect<E: ExecNode + ?Sized>(node: &mut E) -> Result<Vec<RelationalRow>, ExecError> {
     let mut out = Vec::new();
     while let Some(row) = node.next_row().await? {
         out.push(row);
@@ -173,9 +168,7 @@ pub fn build_executor<F: ReaderFactory>(
             let l = build_executor(*left, factory, ctx)?;
             let r = build_executor(*right, factory, ctx)?;
             match strategy {
-                JoinStrategy::Hash { .. } => {
-                    Box::new(HashJoinExec::new(l, r, kind, on)?)
-                }
+                JoinStrategy::Hash { .. } => Box::new(HashJoinExec::new(l, r, kind, on)?),
                 _ => Box::new(NestedLoopJoinExec::new(l, r, kind, on)),
             }
         }
@@ -191,9 +184,9 @@ pub fn build_executor<F: ReaderFactory>(
                 AggregateStrategy::Streaming => {
                     Box::new(StreamingAggregateExec::new(child, aggregates, having))
                 }
-                AggregateStrategy::Hash | AggregateStrategy::Sorted => Box::new(
-                    HashAggregateExec::new(child, group_by, aggregates, having),
-                ),
+                AggregateStrategy::Hash | AggregateStrategy::Sorted => {
+                    Box::new(HashAggregateExec::new(child, group_by, aggregates, having))
+                }
             }
         }
         PhysicalPlan::Sort {
@@ -212,10 +205,7 @@ pub fn build_executor<F: ReaderFactory>(
             let child = build_executor(*input, factory, ctx)?;
             Box::new(LimitExec::new(child, limit, offset))
         }
-        PhysicalPlan::Distinct {
-            input,
-            strategy: _,
-        } => {
+        PhysicalPlan::Distinct { input, strategy: _ } => {
             let child = build_executor(*input, factory, ctx)?;
             Box::new(DistinctExec::new(child))
         }
@@ -330,13 +320,12 @@ impl ExecNode for ScanExec {
                         let full = self.reader.schema();
                         let mut out = Vec::with_capacity(names.len());
                         for name in names {
-                            let (idx, _) =
-                                full.column_by_name(name).ok_or_else(|| {
-                                    ExecError::Internal(format!(
-                                        "projection column `{}` not in reader schema",
-                                        name
-                                    ))
-                                })?;
+                            let (idx, _) = full.column_by_name(name).ok_or_else(|| {
+                                ExecError::Internal(format!(
+                                    "projection column `{}` not in reader schema",
+                                    name
+                                ))
+                            })?;
                             out.push(row[idx].clone());
                         }
                         out
@@ -854,8 +843,8 @@ fn compare_keys(
 }
 
 fn compare_values(a: &ProximaValue, b: &ProximaValue) -> std::cmp::Ordering {
-    use std::cmp::Ordering;
     use ProximaValue as V;
+    use std::cmp::Ordering;
     match (a, b) {
         (V::Boolean(x), V::Boolean(y)) => x.cmp(y),
         (V::Int8(x), V::Int8(y)) => x.cmp(y),
@@ -957,7 +946,9 @@ impl NestedLoopJoinExec {
         left: &RelationalRow,
         right: &RelationalRow,
     ) -> Result<bool, ExecError> {
-        let Some(pred) = &self.on else { return Ok(true) };
+        let Some(pred) = &self.on else {
+            return Ok(true);
+        };
         let mut combined = Vec::with_capacity(left.len() + right.len());
         combined.extend_from_slice(left);
         combined.extend_from_slice(right);
@@ -1036,8 +1027,7 @@ impl ExecNode for NestedLoopJoinExec {
                         | JoinKind::Right
                         | JoinKind::Full
                         | JoinKind::Cross => {
-                            let mut out =
-                                Vec::with_capacity(left.len() + right.len());
+                            let mut out = Vec::with_capacity(left.len() + right.len());
                             out.extend_from_slice(&left);
                             out.extend_from_slice(right);
                             return Ok(Some(out));
@@ -1146,9 +1136,7 @@ impl HashJoinExec {
         let left_width = left.schema().len();
         let eq_pairs = match &on {
             Some(p) => decompose_equi_join(p, left_width).ok_or_else(|| {
-                ExecError::Internal(
-                    "HashJoinExec received non-equi predicate".into(),
-                )
+                ExecError::Internal("HashJoinExec received non-equi predicate".into())
             })?,
             None => Vec::new(),
         };
@@ -1174,8 +1162,11 @@ impl HashJoinExec {
         while let Some(r) = self.right.next_row().await? {
             // Right side keys: take the RIGHT column ordinals
             // (.1 in each pair).
-            let key_vals: Vec<ProximaValue> =
-                self.eq_pairs.iter().map(|(_l, r_idx)| r[*r_idx].clone()).collect();
+            let key_vals: Vec<ProximaValue> = self
+                .eq_pairs
+                .iter()
+                .map(|(_l, r_idx)| r[*r_idx].clone())
+                .collect();
             let key = GroupKey::from_values(&key_vals)?;
             table.entry(key).or_default().push(r);
         }
@@ -1236,8 +1227,11 @@ impl ExecNode for HashJoinExec {
                 return Ok(None);
             };
             // Compute probe key from left row.
-            let key_vals: Vec<ProximaValue> =
-                self.eq_pairs.iter().map(|(l_idx, _r)| l[*l_idx].clone()).collect();
+            let key_vals: Vec<ProximaValue> = self
+                .eq_pairs
+                .iter()
+                .map(|(l_idx, _r)| l[*l_idx].clone())
+                .collect();
             let key = GroupKey::from_values(&key_vals)?;
             let matches = self
                 .build_table
@@ -1313,18 +1307,16 @@ fn decompose_equi_join(expr: &Expr, left_width: usize) -> Option<Vec<(usize, usi
     decompose_equi_into(expr, left_width, &mut out).then_some(out)
 }
 
-fn decompose_equi_into(
-    expr: &Expr,
-    left_width: usize,
-    out: &mut Vec<(usize, usize)>,
-) -> bool {
+fn decompose_equi_into(expr: &Expr, left_width: usize, out: &mut Vec<(usize, usize)>) -> bool {
     match expr {
         Expr::BinaryOp {
             op: BinaryOp::And,
             left,
             right,
-        } => decompose_equi_into(left, left_width, out)
-            && decompose_equi_into(right, left_width, out),
+        } => {
+            decompose_equi_into(left, left_width, out)
+                && decompose_equi_into(right, left_width, out)
+        }
         Expr::BinaryOp {
             op: BinaryOp::Eq,
             left,
@@ -1404,8 +1396,11 @@ impl ExecNode for StreamingAggregateExec {
             return Ok(None);
         }
         self.emitted = true;
-        let mut accs: Vec<Accumulator> =
-            self.aggregates.iter().map(|a| Accumulator::new(&a.agg)).collect();
+        let mut accs: Vec<Accumulator> = self
+            .aggregates
+            .iter()
+            .map(|a| Accumulator::new(&a.agg))
+            .collect();
         while let Some(row) = self.child.next_row().await? {
             for (acc, named) in accs.iter_mut().zip(self.aggregates.iter()) {
                 acc.accumulate(&named.agg, &row)?;
@@ -1479,8 +1474,7 @@ impl HashAggregateExec {
         if self.groups.is_some() {
             return Ok(());
         }
-        let mut table: HashMap<GroupKey, (Vec<ProximaValue>, Vec<Accumulator>)> =
-            HashMap::new();
+        let mut table: HashMap<GroupKey, (Vec<ProximaValue>, Vec<Accumulator>)> = HashMap::new();
         // Stable iteration order for output is not strictly
         // required by SQL but is nice to keep tests
         // deterministic. We rebuild the entries Vec from
@@ -1501,7 +1495,9 @@ impl HashAggregateExec {
                         .map(|a| Accumulator::new(&a.agg))
                         .collect();
                     insertion_order.push(key.clone());
-                    table.entry(key.clone()).or_insert((group_vals.clone(), accs))
+                    table
+                        .entry(key.clone())
+                        .or_insert((group_vals.clone(), accs))
                 }
             };
             for (acc, named) in entry.1.iter_mut().zip(self.aggregates.iter()) {
@@ -1592,31 +1588,46 @@ impl Accumulator {
             AggregateExpr::Count { arg, distinct } => Accumulator::Count {
                 skip_null: arg.is_some(),
                 n: 0,
-                distinct: if *distinct { Some(HashSet::new()) } else { None },
+                distinct: if *distinct {
+                    Some(HashSet::new())
+                } else {
+                    None
+                },
             },
             AggregateExpr::Sum { distinct, .. } => Accumulator::Sum {
                 running: None,
-                distinct: if *distinct { Some(HashSet::new()) } else { None },
+                distinct: if *distinct {
+                    Some(HashSet::new())
+                } else {
+                    None
+                },
             },
             AggregateExpr::Avg { distinct, .. } => Accumulator::Avg {
                 running_sum: 0.0,
                 n: 0,
-                distinct: if *distinct { Some(HashSet::new()) } else { None },
+                distinct: if *distinct {
+                    Some(HashSet::new())
+                } else {
+                    None
+                },
             },
             AggregateExpr::Min { .. } => Accumulator::Min { current: None },
             AggregateExpr::Max { .. } => Accumulator::Max { current: None },
             AggregateExpr::StringAgg { .. } => Accumulator::Min { current: None }, // placeholder
-            AggregateExpr::Custom { .. } => Accumulator::Min { current: None }, // placeholder
+            AggregateExpr::Custom { .. } => Accumulator::Min { current: None },    // placeholder
         }
     }
 
-    fn accumulate(
-        &mut self,
-        agg: &AggregateExpr,
-        row: &RelationalRow,
-    ) -> Result<(), ExecError> {
+    fn accumulate(&mut self, agg: &AggregateExpr, row: &RelationalRow) -> Result<(), ExecError> {
         match (self, agg) {
-            (Accumulator::Count { skip_null, n, distinct }, AggregateExpr::Count { arg, .. }) => {
+            (
+                Accumulator::Count {
+                    skip_null,
+                    n,
+                    distinct,
+                },
+                AggregateExpr::Count { arg, .. },
+            ) => {
                 let v = match arg {
                     None => ProximaValue::Boolean(true),
                     Some(e) => e.eval(row, &NoFunctions)?,
@@ -1649,7 +1660,14 @@ impl Accumulator {
                 *running = Some(running.unwrap_or(0.0) + n);
                 Ok(())
             }
-            (Accumulator::Avg { running_sum, n, distinct }, AggregateExpr::Avg { arg, .. }) => {
+            (
+                Accumulator::Avg {
+                    running_sum,
+                    n,
+                    distinct,
+                },
+                AggregateExpr::Avg { arg, .. },
+            ) => {
                 let v = arg.eval(row, &NoFunctions)?;
                 if matches!(v, ProximaValue::Null) {
                     return Ok(());
@@ -1867,9 +1885,7 @@ fn infer_value_type(v: &ProximaValue) -> ProximaType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_relational_algebra::{
-        AggregateExpr as AggExpr, NamedAggregate, NamedExpr,
-    };
+    use proximadb_relational_algebra::{AggregateExpr as AggExpr, NamedAggregate, NamedExpr};
     use proximadb_relational_planner::{
         AggregateStrategy, DistinctStrategy, PhysicalPlan, ScanAccess, SortStrategy,
     };
@@ -1904,10 +1920,7 @@ mod tests {
     }
 
     impl ReaderFactory for VecReaderFactory {
-        fn open_reader(
-            &self,
-            table: &TableId,
-        ) -> Result<Box<dyn RelationalReader>, ExecError> {
+        fn open_reader(&self, table: &TableId) -> Result<Box<dyn RelationalReader>, ExecError> {
             let lock = self.sources.lock().unwrap();
             let (schema, rows, pk) = lock
                 .get(&table.name)
@@ -2069,8 +2082,7 @@ mod tests {
             vec![ProximaValue::Int64(1)],
             vec![ProximaValue::Int64(2)],
         ];
-        let schema =
-            RelationalSchema::new(vec![ColumnInfo::new("x", ProximaType::Int64, false)]);
+        let schema = RelationalSchema::new(vec![ColumnInfo::new("x", ProximaType::Int64, false)]);
         f.register("t", schema.clone(), rows, vec![]);
         let plan = PhysicalPlan::Distinct {
             input: Box::new(PhysicalPlan::Scan {
@@ -2343,11 +2355,8 @@ mod tests {
         // row containing just the name, not the full (id, name, age)
         // row that lookup_pk returns. The narrowed output_schema mirrors
         // what the planner would produce after pushdown.
-        let narrowed = RelationalSchema::new(vec![ColumnInfo::new(
-            "name",
-            ProximaType::String,
-            true,
-        )]);
+        let narrowed =
+            RelationalSchema::new(vec![ColumnInfo::new("name", ProximaType::String, true)]);
         let plan = PhysicalPlan::Scan {
             table: TableId::new("users"),
             output_schema: narrowed,
@@ -2372,11 +2381,7 @@ mod tests {
 
     #[tokio::test]
     async fn values_yields_inline_rows() {
-        let schema = RelationalSchema::new(vec![ColumnInfo::new(
-            "x",
-            ProximaType::Int64,
-            false,
-        )]);
+        let schema = RelationalSchema::new(vec![ColumnInfo::new("x", ProximaType::Int64, false)]);
         let plan = PhysicalPlan::Values {
             rows: vec![
                 vec![Expr::literal(ProximaValue::Int64(1))],
@@ -2398,11 +2403,7 @@ mod tests {
 
     #[tokio::test]
     async fn union_all_concatenates_children() {
-        let schema = RelationalSchema::new(vec![ColumnInfo::new(
-            "x",
-            ProximaType::Int64,
-            false,
-        )]);
+        let schema = RelationalSchema::new(vec![ColumnInfo::new("x", ProximaType::Int64, false)]);
         let plan = PhysicalPlan::Union {
             inputs: vec![
                 PhysicalPlan::Values {
@@ -2426,11 +2427,7 @@ mod tests {
 
     #[tokio::test]
     async fn union_distinct_dedupes_across_children() {
-        let schema = RelationalSchema::new(vec![ColumnInfo::new(
-            "x",
-            ProximaType::Int64,
-            false,
-        )]);
+        let schema = RelationalSchema::new(vec![ColumnInfo::new("x", ProximaType::Int64, false)]);
         let plan = PhysicalPlan::Union {
             inputs: vec![
                 PhysicalPlan::Values {

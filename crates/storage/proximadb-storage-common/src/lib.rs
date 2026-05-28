@@ -161,12 +161,23 @@ pub use unified_cache_config::{
     UnifiedCacheConfig, UnifiedEvictionPolicy, WorkloadType,
 };
 pub use wal_entry::{
-    CanonicalOperation, CanonicalWalEntry, CdcLogicalView, CdcOperation, CdcRecordEvent, EdgeRef,
-    OpenTableFormat as CanonicalOpenTableFormat, ProjectionDirective, ProjectionFreshness,
-    ProjectionRebuilder, RecoveryResult, SnapshotManifest,
+    CanonicalOperation,
+    CanonicalWalEntry,
+    CdcLogicalView,
+    CdcOperation,
+    CdcRecordEvent,
+    EdgeRef,
+    OpenTableFormat as CanonicalOpenTableFormat,
+    ProjectionDirective,
+    ProjectionFreshness,
+    ProjectionRebuilder,
+    RecoveryResult,
+    SnapshotManifest,
     // T3.1 Slices 3 + 4 — branch / merge primitives for ADR-012 orchestration.
-    filter_wal_by_branch_lsn, find_merge_base_lsn,
-    latest_checkpoint, recover_from_canonical_wal,
+    filter_wal_by_branch_lsn,
+    find_merge_base_lsn,
+    latest_checkpoint,
+    recover_from_canonical_wal,
 };
 pub use writer_statistics::{AggregatedBatchStats, BatchWriteStats, StreamingParquetWriterStats};
 pub use zero_copy_traits::{

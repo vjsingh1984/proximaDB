@@ -40,7 +40,7 @@
 
 use proximadb_data_model::{ProximaType, ProximaValue};
 use proximadb_relational_types::{
-    cast_value, ColumnInfo, ColumnRef, Expr, ExprError, RelationalRow, RelationalSchema,
+    ColumnInfo, ColumnRef, Expr, ExprError, RelationalRow, RelationalSchema, cast_value,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -69,7 +69,9 @@ pub enum AlgebraError {
     #[error("Project outputs contain duplicate name {name:?}")]
     DuplicateProjectName { name: String },
 
-    #[error("Union inputs must have matching schemas; differ at column {ordinal} ({left:?} vs {right:?})")]
+    #[error(
+        "Union inputs must have matching schemas; differ at column {ordinal} ({left:?} vs {right:?})"
+    )]
     UnionSchemaMismatch {
         ordinal: usize,
         left: ProximaType,
@@ -77,7 +79,10 @@ pub enum AlgebraError {
     },
 
     #[error("Union inputs must have the same column count ({left_count} vs {right_count})")]
-    UnionArityMismatch { left_count: usize, right_count: usize },
+    UnionArityMismatch {
+        left_count: usize,
+        right_count: usize,
+    },
 
     #[error("Values row {row_index} has {actual_len} columns but declared schema has {schema_len}")]
     ValuesArityMismatch {
@@ -391,10 +396,7 @@ pub enum SubqueryExpr {
         result_ty: ProximaType,
     },
     /// `EXISTS (subquery)` / `NOT EXISTS`.
-    Exists {
-        sub: Box<LogicalNode>,
-        not: bool,
-    },
+    Exists { sub: Box<LogicalNode>, not: bool },
     /// `value IN (SELECT one_column FROM …)`. The inner query must
     /// produce exactly one column.
     In {
@@ -496,14 +498,9 @@ pub enum LogicalNode {
         offset: u64,
     },
     /// `SELECT DISTINCT`.
-    Distinct {
-        input: Box<LogicalNode>,
-    },
+    Distinct { input: Box<LogicalNode> },
     /// `UNION [ALL]`. All inputs must produce matching schemas.
-    Union {
-        inputs: Vec<LogicalNode>,
-        all: bool,
-    },
+    Union { inputs: Vec<LogicalNode>, all: bool },
     /// `VALUES (...), (...), ...` — inline literal rows.
     Values {
         rows: Vec<Vec<Expr>>,
@@ -645,12 +642,10 @@ impl LogicalNode {
                 if let Some(cols) = projected_columns {
                     for c in cols {
                         if c.ordinal >= table_schema.len() {
-                            return Err(AlgebraError::Expr(
-                                ExprError::ColumnOrdinalOutOfRange {
-                                    ordinal: c.ordinal,
-                                    row_len: table_schema.len(),
-                                },
-                            ));
+                            return Err(AlgebraError::Expr(ExprError::ColumnOrdinalOutOfRange {
+                                ordinal: c.ordinal,
+                                row_len: table_schema.len(),
+                            }));
                         }
                     }
                 }
@@ -678,8 +673,7 @@ impl LogicalNode {
             LogicalNode::Project { input, outputs } => {
                 input.validate()?;
                 let schema = input.output_schema();
-                let mut seen: std::collections::HashSet<&str> =
-                    std::collections::HashSet::new();
+                let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
                 for out in outputs {
                     if !seen.insert(out.name.as_str()) {
                         return Err(AlgebraError::DuplicateProjectName {
@@ -729,8 +723,7 @@ impl LogicalNode {
             } => {
                 input.validate()?;
                 let in_schema = input.output_schema();
-                let mut names: std::collections::HashSet<&str> =
-                    std::collections::HashSet::new();
+                let mut names: std::collections::HashSet<&str> = std::collections::HashSet::new();
                 for g in group_by {
                     if !names.insert(g.name.as_str()) {
                         return Err(AlgebraError::DuplicateProjectName {
@@ -827,9 +820,7 @@ impl LogicalNode {
                 }
                 Ok(())
             }
-            LogicalNode::CteBind {
-                body, usages, ..
-            } => {
+            LogicalNode::CteBind { body, usages, .. } => {
                 body.validate()?;
                 usages.validate()?;
                 Ok(())
@@ -921,18 +912,14 @@ fn walk_inner<F: FnMut(&LogicalNode) -> bool>(node: &LogicalNode, visit: &mut F)
             walk_inner(usages, visit);
         }
         // Leaves: no children.
-        LogicalNode::Scan { .. } | LogicalNode::Values { .. } | LogicalNode::CteRef { .. } => {
-        }
+        LogicalNode::Scan { .. } | LogicalNode::Values { .. } | LogicalNode::CteRef { .. } => {}
     }
 }
 
 /// Bottom-up transformer. `f` receives each node (children already
 /// transformed) and may return a replacement. Used for planner
 /// rewrites like predicate pushdown and projection inlining.
-pub fn transform<F: FnMut(LogicalNode) -> LogicalNode>(
-    node: LogicalNode,
-    mut f: F,
-) -> LogicalNode {
+pub fn transform<F: FnMut(LogicalNode) -> LogicalNode>(node: LogicalNode, mut f: F) -> LogicalNode {
     transform_inner(node, &mut f)
 }
 
@@ -993,16 +980,14 @@ fn transform_inner<F: FnMut(LogicalNode) -> LogicalNode>(
             inputs: inputs.into_iter().map(|i| transform_inner(i, f)).collect(),
             all,
         },
-        LogicalNode::CteBind {
-            name,
-            body,
-            usages,
-        } => LogicalNode::CteBind {
+        LogicalNode::CteBind { name, body, usages } => LogicalNode::CteBind {
             name,
             body: Box::new(transform_inner(*body, f)),
             usages: Box::new(transform_inner(*usages, f)),
         },
-        leaf @ (LogicalNode::Scan { .. } | LogicalNode::Values { .. } | LogicalNode::CteRef { .. }) => leaf,
+        leaf @ (LogicalNode::Scan { .. }
+        | LogicalNode::Values { .. }
+        | LogicalNode::CteRef { .. }) => leaf,
     };
     f(rewritten)
 }
@@ -1537,9 +1522,7 @@ mod tests {
             offset: 0,
         };
         let rewritten = transform(n, |node| match node {
-            LogicalNode::Limit {
-                input, offset, ..
-            } => LogicalNode::Limit {
+            LogicalNode::Limit { input, offset, .. } => LogicalNode::Limit {
                 input,
                 limit: Some(99),
                 offset,
@@ -1547,7 +1530,9 @@ mod tests {
             other => other,
         });
         match rewritten {
-            LogicalNode::Limit { limit: Some(99), .. } => {}
+            LogicalNode::Limit {
+                limit: Some(99), ..
+            } => {}
             other => panic!("expected Limit(99), got {other:?}"),
         }
     }

@@ -11,11 +11,12 @@ use anyhow::Result;
 
 /// Generic type conversion trait for wire format serialization
 ///
-/// Converts application types (f32, i32, i64) to wire representation types
+/// Converts application types (f32, f64, i32, i64) to wire representation types
 /// suitable for bitpacking and encoding operations.
 ///
 /// # Wire Format Types
 /// - `f32 → i32` via `to_bits()` for lossless bit-level encoding
+/// - `f64 → i64` via `to_bits()` for lossless bit-level encoding
 /// - `i32 → i32` direct pass-through (identity conversion)
 /// - `i64 → i64` direct pass-through (identity conversion)
 pub trait ToWireFormat: Copy {
@@ -40,6 +41,20 @@ impl ToWireFormat for f32 {
     #[inline]
     fn from_wire(wire: i32) -> f32 {
         f32::from_bits(wire as u32)
+    }
+}
+
+impl ToWireFormat for f64 {
+    type WireType = i64;
+
+    #[inline]
+    fn to_wire(&self) -> i64 {
+        self.to_bits() as i64
+    }
+
+    #[inline]
+    fn from_wire(wire: i64) -> f64 {
+        f64::from_bits(wire as u64)
     }
 }
 
@@ -207,6 +222,14 @@ mod tests {
         let wire = value.to_wire();
         let roundtrip = f32::from_wire(wire);
         assert_eq!(value, roundtrip);
+    }
+
+    #[test]
+    fn test_to_wire_format_f64() {
+        let value = -12345.6789f64;
+        let wire = value.to_wire();
+        let roundtrip = f64::from_wire(wire);
+        assert_eq!(value.to_bits(), roundtrip.to_bits());
     }
 
     #[test]

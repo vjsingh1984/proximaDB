@@ -270,10 +270,7 @@ pub trait RelationalReader: Send {
     /// The key arity must match the schema's primary-key column
     /// count; the adapter validates and returns
     /// [`ReaderError::PkArityMismatch`] otherwise.
-    async fn lookup_pk(
-        &self,
-        key: &[ProximaValue],
-    ) -> Result<Option<RelationalRow>, ReaderError>;
+    async fn lookup_pk(&self, key: &[ProximaValue]) -> Result<Option<RelationalRow>, ReaderError>;
 
     /// Release any resources. Idempotent; safe to call even if
     /// `open` was never called.
@@ -321,11 +318,7 @@ impl VecReader {
     /// ordinals (within `schema`) that form the primary key.
     /// Pass an empty Vec if the table has no PK (PK lookups will
     /// then return `PkLookupUnsupported`).
-    pub fn new(
-        schema: RelationalSchema,
-        rows: Vec<RelationalRow>,
-        pk_columns: Vec<usize>,
-    ) -> Self {
+    pub fn new(schema: RelationalSchema, rows: Vec<RelationalRow>, pk_columns: Vec<usize>) -> Self {
         Self {
             full_schema: schema,
             rows,
@@ -379,8 +372,7 @@ impl RelationalReader for VecReader {
     }
 
     async fn open(&mut self, ctx: &ScanContext) -> Result<(), ReaderError> {
-        let (output_schema, projection_indices) =
-            self.resolve_projection(&ctx.projection)?;
+        let (output_schema, projection_indices) = self.resolve_projection(&ctx.projection)?;
         // Type-check the predicate against the FULL schema (the
         // predicate may reference unprojected columns even when
         // projection is narrower).
@@ -436,10 +428,7 @@ impl RelationalReader for VecReader {
         }
     }
 
-    async fn lookup_pk(
-        &self,
-        key: &[ProximaValue],
-    ) -> Result<Option<RelationalRow>, ReaderError> {
+    async fn lookup_pk(&self, key: &[ProximaValue]) -> Result<Option<RelationalRow>, ReaderError> {
         if self.pk_columns.is_empty() {
             return Err(ReaderError::PkLookupUnsupported);
         }
@@ -747,7 +736,11 @@ mod tests {
     #[tokio::test]
     async fn vec_reader_pk_lookup_finds_row() {
         let r = users_reader();
-        let row = r.lookup_pk(&[ProximaValue::Int64(2)]).await.unwrap().unwrap();
+        let row = r
+            .lookup_pk(&[ProximaValue::Int64(2)])
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(row[1], ProximaValue::String("bob".into()));
     }
 

@@ -174,9 +174,7 @@ impl<'a> Parser<'a> {
     fn parse_atom(&mut self, depth: usize) -> Result<Ast, RankError> {
         self.skip_ws();
         match self.peek() {
-            None => Err(RankError::ExpressionParse(
-                "unexpected end of input".into(),
-            )),
+            None => Err(RankError::ExpressionParse("unexpected end of input".into())),
             Some(b'(') => {
                 self.bump();
                 let inner = self.parse_expr(depth + 1)?;
@@ -205,7 +203,9 @@ impl<'a> Parser<'a> {
         while let Some(b) = self.peek() {
             if b == quote {
                 let s = std::str::from_utf8(&self.src[start..self.pos])
-                    .map_err(|e| RankError::ExpressionParse(format!("invalid utf-8 in string: {e}")))?
+                    .map_err(|e| {
+                        RankError::ExpressionParse(format!("invalid utf-8 in string: {e}"))
+                    })?
                     .to_string();
                 self.bump();
                 return Ok(Ast::Str(s));
@@ -253,9 +253,7 @@ impl<'a> Parser<'a> {
                 }
             }
             if self.pos == exp_start {
-                return Err(RankError::ExpressionParse(
-                    "exponent has no digits".into(),
-                ));
+                return Err(RankError::ExpressionParse("exponent has no digits".into()));
             }
         }
         let text = std::str::from_utf8(&self.src[start..self.pos])
@@ -293,7 +291,7 @@ impl<'a> Parser<'a> {
                         return Err(RankError::ExpressionParse(format!(
                             "expected ',' or ')' in argument list at position {}",
                             self.pos
-                        )))
+                        )));
                     }
                 }
             }
@@ -329,7 +327,7 @@ impl<'a> Parser<'a> {
                 return Err(RankError::ExpressionParse(format!(
                     "expected identifier at position {}",
                     self.pos
-                )))
+                )));
             }
         };
         while let Some(b) = self.peek() {
@@ -608,7 +606,10 @@ mod tests {
         }
         let e = parse(&s).unwrap_err();
         assert!(
-            matches!(e, RankError::DependencyTooDeep { .. } | RankError::ExpressionParse(_)),
+            matches!(
+                e,
+                RankError::DependencyTooDeep { .. } | RankError::ExpressionParse(_)
+            ),
             "got: {e:?}"
         );
     }

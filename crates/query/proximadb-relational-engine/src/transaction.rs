@@ -32,12 +32,8 @@ use parking_lot::RwLock;
 use proximadb_data_model::ProximaValue;
 use proximadb_relational_algebra::TableId;
 use proximadb_relational_executor::{ExecError, ReaderFactory};
-use proximadb_relational_reader::{
-    ReaderCapabilities, ReaderError, RelationalReader, ScanContext,
-};
-use proximadb_relational_types::{
-    Expr, NoFunctions, RelationalRow, RelationalSchema,
-};
+use proximadb_relational_reader::{ReaderCapabilities, ReaderError, RelationalReader, ScanContext};
+use proximadb_relational_types::{Expr, NoFunctions, RelationalRow, RelationalSchema};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -115,9 +111,9 @@ pub struct TransactionBuffer {
 
 impl TransactionBuffer {
     pub fn is_empty(&self) -> bool {
-        self.tables.values().all(|t| {
-            t.inserts.is_empty() && t.updates.is_empty() && t.deletes.is_empty()
-        })
+        self.tables
+            .values()
+            .all(|t| t.inserts.is_empty() && t.updates.is_empty() && t.deletes.is_empty())
     }
 }
 
@@ -156,11 +152,7 @@ impl Transaction {
 
     /// Insert rows. Writes go to the buffer; engine is not
     /// touched until commit.
-    pub fn insert(
-        &self,
-        table: &str,
-        rows: Vec<RelationalRow>,
-    ) -> Result<usize, EngineError> {
+    pub fn insert(&self, table: &str, rows: Vec<RelationalRow>) -> Result<usize, EngineError> {
         self.ensure_active()?;
         // Validate row arity against the engine's current schema.
         let schema = self
@@ -228,11 +220,7 @@ impl Transaction {
     }
 
     /// Delete a row by PK. Buffered.
-    pub fn delete_by_pk(
-        &self,
-        table: &str,
-        key: &[ProximaValue],
-    ) -> Result<(), EngineError> {
+    pub fn delete_by_pk(&self, table: &str, key: &[ProximaValue]) -> Result<(), EngineError> {
         self.ensure_active()?;
         let pk = self
             .engine
@@ -275,9 +263,7 @@ impl Transaction {
         {
             let mut finished = self.finished.write();
             if *finished {
-                return Err(EngineError::Internal(
-                    "transaction already finished".into(),
-                ));
+                return Err(EngineError::Internal("transaction already finished".into()));
             }
             *finished = true;
         }
@@ -333,11 +319,7 @@ impl Transaction {
     /// schema to choose the right ProximaValue variants for
     /// integers (we collapsed everything to i128 during
     /// canonicalisation).
-    fn materialise_pk(
-        &self,
-        table: &str,
-        key: &PkKey,
-    ) -> Result<Vec<ProximaValue>, EngineError> {
+    fn materialise_pk(&self, table: &str, key: &PkKey) -> Result<Vec<ProximaValue>, EngineError> {
         let schema = self
             .engine
             .schema_of(table)
@@ -372,9 +354,7 @@ fn component_to_value(
         (KeyComponent::Int(x), T::UInt16) => Ok(ProximaValue::UInt16(*x as u16)),
         (KeyComponent::Int(x), T::UInt32) => Ok(ProximaValue::UInt32(*x as u32)),
         (KeyComponent::Int(x), T::UInt64) => Ok(ProximaValue::UInt64(*x as u64)),
-        (KeyComponent::Float(bits), T::Float64) => {
-            Ok(ProximaValue::Float64(f64::from_bits(*bits)))
-        }
+        (KeyComponent::Float(bits), T::Float64) => Ok(ProximaValue::Float64(f64::from_bits(*bits))),
         (KeyComponent::Float(bits), T::Float32) => {
             Ok(ProximaValue::Float32(f64::from_bits(*bits) as f32))
         }
@@ -402,35 +382,32 @@ pub struct TxReaderFactory {
 }
 
 impl ReaderFactory for TxReaderFactory {
-    fn open_reader(
-        &self,
-        table: &TableId,
-    ) -> Result<Box<dyn RelationalReader>, ExecError> {
+    fn open_reader(&self, table: &TableId) -> Result<Box<dyn RelationalReader>, ExecError> {
         let name = &table.name;
         // Snapshot engine state.
         let (schema, pk_cols, mut rows) = {
             let snapshot = self.tx.engine.tables.read();
-            let state = snapshot.get(name).ok_or_else(|| {
-                ExecError::from(EngineError::TableNotFound(name.clone()))
-            })?;
-            (state.schema.clone(), state.pk_columns.clone(), state.rows.clone())
+            let state = snapshot
+                .get(name)
+                .ok_or_else(|| ExecError::from(EngineError::TableNotFound(name.clone())))?;
+            (
+                state.schema.clone(),
+                state.pk_columns.clone(),
+                state.rows.clone(),
+            )
         };
         // Apply this transaction's pending writes for the table.
         let writes = self.tx.buffer.read();
         if let Some(t) = writes.tables.get(name) {
             // Deletes.
             for key in &t.deletes {
-                if let Some(pos) =
-                    find_row_by_pkkey(&rows, &pk_cols, key)
-                {
+                if let Some(pos) = find_row_by_pkkey(&rows, &pk_cols, key) {
                     rows.remove(pos);
                 }
             }
             // Updates.
             for (key, new_row) in &t.updates {
-                if let Some(pos) =
-                    find_row_by_pkkey(&rows, &pk_cols, key)
-                {
+                if let Some(pos) = find_row_by_pkkey(&rows, &pk_cols, key) {
                     rows[pos] = new_row.clone();
                 } else {
                     // No matching committed row — treat as insert
@@ -445,14 +422,12 @@ impl ReaderFactory for TxReaderFactory {
     }
 }
 
-fn find_row_by_pkkey(
-    rows: &[RelationalRow],
-    pk_cols: &[usize],
-    key: &PkKey,
-) -> Option<usize> {
+fn find_row_by_pkkey(rows: &[RelationalRow], pk_cols: &[usize], key: &PkKey) -> Option<usize> {
     rows.iter().position(|row| {
-        let row_key: Vec<KeyComponent> =
-            pk_cols.iter().map(|&i| value_to_component(&row[i])).collect();
+        let row_key: Vec<KeyComponent> = pk_cols
+            .iter()
+            .map(|&i| value_to_component(&row[i]))
+            .collect();
         PkKey(row_key) == *key
     })
 }
@@ -477,11 +452,7 @@ struct OpenState {
 }
 
 impl TxReader {
-    fn new(
-        schema: RelationalSchema,
-        pk_columns: Vec<usize>,
-        rows: Vec<RelationalRow>,
-    ) -> Self {
+    fn new(schema: RelationalSchema, pk_columns: Vec<usize>, rows: Vec<RelationalRow>) -> Self {
         Self {
             full_schema: schema,
             pk_columns,
@@ -532,8 +503,7 @@ impl RelationalReader for TxReader {
     }
 
     async fn open(&mut self, ctx: &ScanContext) -> Result<(), ReaderError> {
-        let (output_schema, projection_indices) =
-            self.resolve_projection(&ctx.projection)?;
+        let (output_schema, projection_indices) = self.resolve_projection(&ctx.projection)?;
         if let Some(pred) = &ctx.predicate {
             pred.type_check(&self.full_schema)
                 .map_err(ReaderError::PredicateEval)?;
@@ -580,10 +550,7 @@ impl RelationalReader for TxReader {
         }
     }
 
-    async fn lookup_pk(
-        &self,
-        key: &[ProximaValue],
-    ) -> Result<Option<RelationalRow>, ReaderError> {
+    async fn lookup_pk(&self, key: &[ProximaValue]) -> Result<Option<RelationalRow>, ReaderError> {
         if self.pk_columns.is_empty() {
             return Err(ReaderError::PkLookupUnsupported);
         }
@@ -622,12 +589,8 @@ mod tests {
     use crate::{InMemoryRelationalEngine, RelationalWriter};
     use proximadb_data_model::ProximaType;
     use proximadb_relational_algebra::TableId;
-    use proximadb_relational_executor::{
-        ExecutionContext, build_executor, collect,
-    };
-    use proximadb_relational_planner::{
-        PhysicalPlan, ScanAccess,
-    };
+    use proximadb_relational_executor::{ExecutionContext, build_executor, collect};
+    use proximadb_relational_planner::{PhysicalPlan, ScanAccess};
     use proximadb_relational_types::{ColumnInfo, RelationalSchema};
 
     fn users_schema() -> RelationalSchema {
@@ -638,26 +601,18 @@ mod tests {
     }
 
     fn user_row(id: i64, name: &str) -> RelationalRow {
-        vec![
-            ProximaValue::Int64(id),
-            ProximaValue::String(name.into()),
-        ]
+        vec![ProximaValue::Int64(id), ProximaValue::String(name.into())]
     }
 
     fn engine_with_users() -> Arc<InMemoryRelationalEngine> {
         let e = InMemoryRelationalEngine::new();
         e.create_table("users", users_schema(), vec![0]).unwrap();
-        e.insert_rows(
-            "users",
-            vec![user_row(1, "alice"), user_row(2, "bob")],
-        )
-        .unwrap();
+        e.insert_rows("users", vec![user_row(1, "alice"), user_row(2, "bob")])
+            .unwrap();
         e
     }
 
-    async fn scan_all(
-        factory: &TxReaderFactory,
-    ) -> Vec<RelationalRow> {
+    async fn scan_all(factory: &TxReaderFactory) -> Vec<RelationalRow> {
         let plan = PhysicalPlan::Scan {
             table: TableId::new("users"),
             output_schema: users_schema(),
@@ -666,8 +621,7 @@ mod tests {
             limit: None,
             access: ScanAccess::FullScan,
         };
-        let mut exec =
-            build_executor(plan, factory, &ExecutionContext::default()).unwrap();
+        let mut exec = build_executor(plan, factory, &ExecutionContext::default()).unwrap();
         exec.open().await.unwrap();
         collect(&mut *exec).await.unwrap()
     }
@@ -826,9 +780,7 @@ mod tests {
     async fn unknown_table_errors() {
         let engine = engine_with_users();
         let tx = Transaction::begin(engine.clone());
-        let err = tx
-            .insert("nope", vec![user_row(1, "alice")])
-            .unwrap_err();
+        let err = tx.insert("nope", vec![user_row(1, "alice")]).unwrap_err();
         assert!(matches!(err, EngineError::TableNotFound(_)));
     }
 }

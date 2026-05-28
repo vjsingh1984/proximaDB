@@ -176,9 +176,7 @@ pub fn accel_description(provider: EpKind) -> &'static str {
         }
         EpKind::Rocm => "AMD ROCm/HIP EP — requires ROCm runtime on host",
         EpKind::MiGraphX => "AMD MIGraphX EP — graph-optimized inference on top of ROCm",
-        EpKind::OpenVino => {
-            "Intel OpenVINO EP — targets CPU/iGPU/VPU; requires OpenVINO runtime"
-        }
+        EpKind::OpenVino => "Intel OpenVINO EP — targets CPU/iGPU/VPU; requires OpenVINO runtime",
         EpKind::OneDnn => "Intel oneDNN CPU EP — Intel-tuned matmul kernels on x86_64",
         EpKind::DirectMl => "Microsoft DirectML EP — cross-vendor GPU on D3D12 (Windows)",
         EpKind::XnnPack => "XNNPACK EP — quantized inference, edge/ARM tuned",
@@ -593,7 +591,11 @@ fn register_provider(
                 Ok(builder)
             }
             #[cfg(not(feature = "tensorrt"))]
-            Err(feature_missing_msg("tensorrt", "tensorrt", "NVIDIA TensorRT"))
+            Err(feature_missing_msg(
+                "tensorrt",
+                "tensorrt",
+                "NVIDIA TensorRT",
+            ))
         }
         EpKind::Rocm => {
             #[cfg(feature = "rocm")]
@@ -615,7 +617,11 @@ fn register_provider(
                 Ok(builder)
             }
             #[cfg(not(feature = "migraphx"))]
-            Err(feature_missing_msg("migraphx", "migraphx", "AMD MIGraphX runtime"))
+            Err(feature_missing_msg(
+                "migraphx",
+                "migraphx",
+                "AMD MIGraphX runtime",
+            ))
         }
         EpKind::OpenVino => {
             #[cfg(feature = "openvino")]
@@ -626,7 +632,11 @@ fn register_provider(
                 Ok(builder)
             }
             #[cfg(not(feature = "openvino"))]
-            Err(feature_missing_msg("openvino", "openvino", "Intel OpenVINO runtime"))
+            Err(feature_missing_msg(
+                "openvino",
+                "openvino",
+                "Intel OpenVINO runtime",
+            ))
         }
         EpKind::OneDnn => {
             #[cfg(feature = "onednn")]
@@ -648,7 +658,11 @@ fn register_provider(
                 Ok(builder)
             }
             #[cfg(not(feature = "directml"))]
-            Err(feature_missing_msg("directml", "directml", "Windows + D3D12"))
+            Err(feature_missing_msg(
+                "directml",
+                "directml",
+                "Windows + D3D12",
+            ))
         }
         EpKind::XnnPack => {
             #[cfg(feature = "xnnpack")]
@@ -670,7 +684,11 @@ fn register_provider(
                 Ok(builder)
             }
             #[cfg(not(feature = "webgpu"))]
-            Err(feature_missing_msg("webgpu", "webgpu", "any with WebGPU runtime"))
+            Err(feature_missing_msg(
+                "webgpu",
+                "webgpu",
+                "any with WebGPU runtime",
+            ))
         }
     }
 }

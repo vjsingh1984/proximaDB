@@ -276,9 +276,15 @@ mod tests {
         };
         let bytes = sv.encode_to_vec();
         // tag=1 field=primary (float): wire type 5 (fixed32), tag byte = 0x0D
-        assert_eq!(bytes[0], 0x0D, "ScoreVector tag 1 (primary) must encode as wire byte 0x0D");
+        assert_eq!(
+            bytes[0], 0x0D,
+            "ScoreVector tag 1 (primary) must encode as wire byte 0x0D"
+        );
         // After 4 fixed32 bytes, tag=2 field=phase (varint): wire type 0, tag byte = 0x10
-        assert_eq!(bytes[5], 0x10, "ScoreVector tag 2 (phase) must encode as wire byte 0x10");
+        assert_eq!(
+            bytes[5], 0x10,
+            "ScoreVector tag 2 (phase) must encode as wire byte 0x10"
+        );
     }
 
     #[test]

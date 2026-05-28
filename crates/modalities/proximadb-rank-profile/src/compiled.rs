@@ -4,8 +4,8 @@
 use crate::spec::RankProfileSpec;
 use crate::validator::validate;
 use proximadb_rank_core::{
-    BlueprintFactory, ExecutorIdx, PhaseBudget, QueryContext, RankError, RankPipeline,
-    RankProgram, RankResult,
+    BlueprintFactory, ExecutorIdx, PhaseBudget, QueryContext, RankError, RankPipeline, RankProgram,
+    RankResult,
 };
 use proximadb_rank_expr::ExprBlueprint;
 use std::sync::Arc;
@@ -52,17 +52,18 @@ impl CompiledRankProfile {
         // so memoization across overlapping sub-expressions works
         // (a match_feature that names the same bm25(...) the score
         // uses runs once per doc, not twice).
-        let (first, match_features, summary_features) =
-            build_first_program_with_features(
-                &bp,
-                &first_spec.expression,
-                &self.spec.match_features,
-                &self.spec.summary_features,
-                qctx,
-            )?;
+        let (first, match_features, summary_features) = build_first_program_with_features(
+            &bp,
+            &first_spec.expression,
+            &self.spec.match_features,
+            &self.spec.summary_features,
+            qctx,
+        )?;
 
         let second = match &self.spec.second_phase {
-            Some(p) => Some(single_executor_program(bp.compile_str(&p.expression, qctx)?)?),
+            Some(p) => Some(single_executor_program(
+                bp.compile_str(&p.expression, qctx)?,
+            )?),
             None => None,
         };
 
@@ -120,8 +121,7 @@ fn build_first_program_with_features(
     let score_idx = b.add(bp.compile_str(score_expr, qctx)?);
     b.set_score(score_idx);
 
-    let mut resolved_match: Vec<(Arc<str>, ExecutorIdx)> =
-        Vec::with_capacity(match_features.len());
+    let mut resolved_match: Vec<(Arc<str>, ExecutorIdx)> = Vec::with_capacity(match_features.len());
     for expr in match_features {
         let idx = b.add(bp.compile_str(expr, qctx)?);
         resolved_match.push((Arc::<str>::from(expr.as_str()), idx));

@@ -180,7 +180,11 @@ mod tests {
         for h in handles {
             h.await.unwrap();
         }
-        assert_eq!(reg.len(), 1, "concurrent installs must collapse to one entry");
+        assert_eq!(
+            reg.len(),
+            1,
+            "concurrent installs must collapse to one entry"
+        );
         assert!(reg.get("shared").is_some());
     }
 }

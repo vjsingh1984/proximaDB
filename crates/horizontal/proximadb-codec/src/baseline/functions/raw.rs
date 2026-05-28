@@ -61,6 +61,42 @@ pub fn decode_f32(data: &[u8]) -> Result<Vec<f32>> {
     Ok(values)
 }
 
+/// Encode f64 values as raw bytes (no transformation)
+pub fn encode_f64(values: &[f64]) -> Result<Vec<u8>> {
+    if values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut bytes = Vec::with_capacity(values.len() * 8);
+    for &val in values {
+        bytes.extend_from_slice(&val.to_le_bytes());
+    }
+
+    Ok(bytes)
+}
+
+/// Decode f64 values from raw bytes
+pub fn decode_f64(data: &[u8]) -> Result<Vec<f64>> {
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    if !data.len().is_multiple_of(8) {
+        return Err(anyhow::anyhow!(
+            "Invalid raw bytes length for f64: {} (must be multiple of 8)",
+            data.len()
+        ));
+    }
+
+    let mut values = Vec::with_capacity(data.len() / 8);
+    for chunk in data.chunks_exact(8) {
+        let bytes: [u8; 8] = chunk.try_into()?;
+        values.push(f64::from_le_bytes(bytes));
+    }
+
+    Ok(values)
+}
+
 /// Encode i64 values as raw bytes (no transformation)
 pub fn encode_i64(values: &[i64]) -> Result<Vec<u8>> {
     if values.is_empty() {
@@ -166,6 +202,19 @@ mod tests {
         let decoded = decode_i64(&encoded).unwrap();
 
         assert_eq!(values, decoded);
+        assert_eq!(encoded.len(), values.len() * 8);
+    }
+
+    #[test]
+    fn test_raw_f64_roundtrip() {
+        let values = vec![0.1f64, 0.2, -0.3, f64::INFINITY, f64::NEG_INFINITY];
+        let encoded = encode_f64(&values).unwrap();
+        let decoded = decode_f64(&encoded).unwrap();
+
+        assert_eq!(values.len(), decoded.len());
+        for (orig, dec) in values.iter().zip(decoded.iter()) {
+            assert_eq!(orig.to_bits(), dec.to_bits());
+        }
         assert_eq!(encoded.len(), values.len() * 8);
     }
 

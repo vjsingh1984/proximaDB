@@ -134,10 +134,11 @@ pub struct EdgeShape {
 /// `#[repr(u8)]`. INT-2.5b pre-step: lock the 1-byte tag before flipping
 /// `EmbeddingCell.values` to `EmbeddingValues` so the cell's bincode shape
 /// stays minimal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[repr(u8)]
 pub enum EmbeddingScalarType {
     /// IEEE-754 f32, 4 bytes per element. Today's universal default.
+    #[default]
     Fp32 = 0x01,
     /// IEEE-754 f16 (half-precision), 2 bytes per element.
     Fp16 = 0x02,
@@ -214,12 +215,6 @@ impl EmbeddingScalarType {
     /// Whether this precision is lossy relative to the f32 source.
     pub fn is_lossy(self) -> bool {
         matches!(self, Self::Int8Scalar | Self::UInt8Scalar)
-    }
-}
-
-impl Default for EmbeddingScalarType {
-    fn default() -> Self {
-        Self::Fp32
     }
 }
 
@@ -1126,12 +1121,8 @@ mod tests {
 
     #[test]
     fn test_embedding_cell_fields() {
-        let cell = EmbeddingCell::new_fp32(
-            "text-embedding-3-small",
-            "text",
-            3,
-            vec![0.1, 0.2, 0.3],
-        );
+        let cell =
+            EmbeddingCell::new_fp32("text-embedding-3-small", "text", 3, vec![0.1, 0.2, 0.3]);
         assert_eq!(cell.dim, 3);
         assert_eq!(cell.values.len(), 3);
 
@@ -1319,8 +1310,7 @@ mod tests {
     #[test]
     fn coerce_to_precision_is_noop_when_target_matches() {
         let original = vec![1.0_f32, 2.0, 3.0, 4.0];
-        let mut cell =
-            EmbeddingCell::new_fp32("m", "dense_vector", 4, original.clone());
+        let mut cell = EmbeddingCell::new_fp32("m", "dense_vector", 4, original.clone());
         cell.coerce_to_precision(EmbeddingScalarType::Fp32);
         assert_eq!(cell.values, EmbeddingValues::Fp32(original));
         assert_eq!(cell.precision, EmbeddingScalarType::Fp32);
@@ -1401,9 +1391,11 @@ mod tests {
             EmbeddingValues::Fp32(v.clone()).as_fp32_slice(),
             Some(v.as_slice())
         );
-        assert!(EmbeddingValues::from_fp32_lossy(&v, EmbeddingScalarType::Fp16)
-            .as_fp32_slice()
-            .is_none());
+        assert!(
+            EmbeddingValues::from_fp32_lossy(&v, EmbeddingScalarType::Fp16)
+                .as_fp32_slice()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1532,10 +1524,7 @@ mod tests {
             precision_epoch: None,
         };
         let bytes = bincode::serialize(&cell).unwrap();
-        let hex: String = bytes
-            .iter()
-            .map(|b| format!("\\x{:02x}", b))
-            .collect();
+        let hex: String = bytes.iter().map(|b| format!("\\x{:02x}", b)).collect();
 
         // INT-2.5b lock: bytes captured 2026-05-23 on the
         // pre-field-flip layout. Field order:

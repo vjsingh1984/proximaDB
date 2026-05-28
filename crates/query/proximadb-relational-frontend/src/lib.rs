@@ -29,18 +29,16 @@
 
 use proximadb_data_model::{ProximaType, ProximaValue};
 use proximadb_relational_algebra::{
-    AggregateExpr, JoinKind, JoinStrategy, LogicalNode, NamedAggregate, NamedExpr,
-    SortKey, TableId,
+    AggregateExpr, JoinKind, JoinStrategy, LogicalNode, NamedAggregate, NamedExpr, SortKey, TableId,
 };
 use proximadb_relational_types::{
     BinaryOp, ColumnInfo, ColumnRef, Expr, RelationalSchema, UnaryOp,
 };
 use sqlparser::ast::{
-    BinaryOperator, Distinct, Expr as SqlExpr, FunctionArg, FunctionArgExpr,
-    FunctionArguments, GroupByExpr, JoinConstraint, JoinOperator, LimitClause, ObjectName,
-    OrderByKind, Query as SqlQuery, Select as SqlSelect, SelectItem, SetExpr, SetOperator,
-    SetQuantifier, Statement, TableFactor, UnaryOperator, Value as SqlValue,
-    ValueWithSpan,
+    BinaryOperator, Distinct, Expr as SqlExpr, FunctionArg, FunctionArgExpr, FunctionArguments,
+    GroupByExpr, JoinConstraint, JoinOperator, LimitClause, ObjectName, OrderByKind,
+    Query as SqlQuery, Select as SqlSelect, SelectItem, SetExpr, SetOperator, SetQuantifier,
+    Statement, TableFactor, UnaryOperator, Value as SqlValue, ValueWithSpan,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
@@ -114,10 +112,7 @@ impl CatalogLookup for InMemoryCatalog {
 
 /// Parse one SQL statement and lower it to a [`LogicalNode`].
 /// Errors if the input has zero or multiple statements.
-pub fn lower_sql(
-    sql: &str,
-    catalog: &dyn CatalogLookup,
-) -> Result<LogicalNode, FrontendError> {
+pub fn lower_sql(sql: &str, catalog: &dyn CatalogLookup) -> Result<LogicalNode, FrontendError> {
     let statements = Parser::parse_sql(&GenericDialect {}, sql)
         .map_err(|e| FrontendError::Parse(e.to_string()))?;
     if statements.len() != 1 {
@@ -180,10 +175,7 @@ fn lower_set_expr(
             right,
         } => {
             if !matches!(op, SetOperator::Union) {
-                return Err(FrontendError::Unsupported(format!(
-                    "set operator {:?}",
-                    op
-                )));
+                return Err(FrontendError::Unsupported(format!("set operator {:?}", op)));
             }
             let l = lower_set_expr(left, catalog)?;
             let r = lower_set_expr(right, catalog)?;
@@ -298,11 +290,8 @@ fn lower_select(
             })
             .collect::<Result<_, _>>()?;
         // 4b) Project + aggregate extraction.
-        let (post_agg_outputs, aggregates) = lower_projection_with_aggregates(
-            &select.projection,
-            &scope,
-            group_by.len(),
-        )?;
+        let (post_agg_outputs, aggregates) =
+            lower_projection_with_aggregates(&select.projection, &scope, group_by.len())?;
         // 4c) HAVING — for MVP we only support HAVING
         //     expressions that reference group_by columns. Bare
         //     aggregates inside HAVING are Phase 3 (would need a
@@ -315,8 +304,7 @@ fn lower_select(
                 ));
             }
             Some(expr) => {
-                let post_agg_scope =
-                    post_aggregate_scope(&group_by, &aggregates);
+                let post_agg_scope = post_aggregate_scope(&group_by, &aggregates);
                 Some(lower_expr(expr, &post_agg_scope)?)
             }
             None => None,
@@ -513,8 +501,8 @@ fn lower_projection_items(
         match item {
             SelectItem::UnnamedExpr(e) => {
                 let expr = lower_expr(e, scope)?;
-                let name = projection_alias_for_expr(e)
-                    .unwrap_or_else(|| auto_column_name(out.len()));
+                let name =
+                    projection_alias_for_expr(e).unwrap_or_else(|| auto_column_name(out.len()));
                 out.push(NamedExpr { name, expr });
             }
             SelectItem::ExprWithAlias { expr, alias } => {
@@ -556,7 +544,11 @@ fn lower_expr(expr: &SqlExpr, scope: &Scope) -> Result<Expr, FrontendError> {
         SqlExpr::CompoundIdentifier(parts) => {
             if parts.len() < 2 {
                 return Err(FrontendError::ColumnNotFound(
-                    parts.iter().map(|i| i.value.clone()).collect::<Vec<_>>().join("."),
+                    parts
+                        .iter()
+                        .map(|i| i.value.clone())
+                        .collect::<Vec<_>>()
+                        .join("."),
                 ));
             }
             let table = &parts[0].value;
@@ -662,10 +654,7 @@ fn lower_binary_op(op: &BinaryOperator) -> Result<BinaryOp, FrontendError> {
         BinaryOperator::Or => BinaryOp::Or,
         BinaryOperator::StringConcat => BinaryOp::Concat,
         other => {
-            return Err(FrontendError::Unsupported(format!(
-                "binary op {:?}",
-                other
-            )));
+            return Err(FrontendError::Unsupported(format!("binary op {:?}", other)));
         }
     })
 }
@@ -679,10 +668,7 @@ fn lower_unary_op(op: &UnaryOperator) -> Result<Option<UnaryOp>, FrontendError> 
         UnaryOperator::Minus => Some(UnaryOp::Neg),
         UnaryOperator::Plus => None, // identity
         other => {
-            return Err(FrontendError::Unsupported(format!(
-                "unary op {:?}",
-                other
-            )));
+            return Err(FrontendError::Unsupported(format!("unary op {:?}", other)));
         }
     })
 }
@@ -731,9 +717,7 @@ fn lower_projection_with_aggregates(
     for item in items {
         let (sql_expr, alias) = match item {
             SelectItem::UnnamedExpr(e) => (e.clone(), None),
-            SelectItem::ExprWithAlias { expr, alias } => {
-                (expr.clone(), Some(alias.value.clone()))
-            }
+            SelectItem::ExprWithAlias { expr, alias } => (expr.clone(), Some(alias.value.clone())),
             SelectItem::Wildcard(_) => {
                 for col in scope.all_columns() {
                     outputs.push(NamedExpr {
@@ -751,8 +735,7 @@ fn lower_projection_with_aggregates(
             SqlExpr::Function(f) if is_aggregate_function_name(&f.name) => {
                 let agg = lower_aggregate_call(f, scope)?;
                 let slot = group_count + aggregates.len();
-                let name =
-                    alias.unwrap_or_else(|| f.name.to_string().to_lowercase());
+                let name = alias.unwrap_or_else(|| f.name.to_string().to_lowercase());
                 let result_ty = agg.result_type();
                 aggregates.push(NamedAggregate {
                     name: name.clone(),
@@ -788,10 +771,7 @@ fn lower_projection_with_aggregates(
 /// Aggregate node: group_by columns first (in declared order),
 /// followed by aggregate-result slots. Used to lower HAVING
 /// expressions over the post-aggregate schema.
-fn post_aggregate_scope(
-    group_by: &[NamedExpr],
-    aggregates: &[NamedAggregate],
-) -> Scope {
+fn post_aggregate_scope(group_by: &[NamedExpr], aggregates: &[NamedAggregate]) -> Scope {
     let mut columns = Vec::with_capacity(group_by.len() + aggregates.len());
     let mut ordinal = 0;
     for g in group_by {
@@ -829,7 +809,10 @@ fn lower_aggregate_call(
     // Detect DISTINCT and the argument(s).
     let (args, distinct) = match &f.args {
         FunctionArguments::List(list) => {
-            let distinct = matches!(list.duplicate_treatment, Some(sqlparser::ast::DuplicateTreatment::Distinct));
+            let distinct = matches!(
+                list.duplicate_treatment,
+                Some(sqlparser::ast::DuplicateTreatment::Distinct)
+            );
             let args = list
                 .args
                 .iter()
@@ -839,9 +822,9 @@ fn lower_aggregate_call(
                     }
                     FunctionArg::Unnamed(FunctionArgExpr::Wildcard) => Ok(None),
                     FunctionArg::Unnamed(FunctionArgExpr::QualifiedWildcard(_)) => Ok(None),
-                    FunctionArg::Named { .. } | FunctionArg::ExprNamed { .. } => Err(
-                        FrontendError::Unsupported("named function arg".into()),
-                    ),
+                    FunctionArg::Named { .. } | FunctionArg::ExprNamed { .. } => {
+                        Err(FrontendError::Unsupported("named function arg".into()))
+                    }
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             (args, distinct)
@@ -887,15 +870,27 @@ fn lower_aggregate_call(
                 arg: e.clone(),
                 distinct,
             },
-            _ => return Err(FrontendError::Unsupported("AVG with wrong arg count".into())),
+            _ => {
+                return Err(FrontendError::Unsupported(
+                    "AVG with wrong arg count".into(),
+                ));
+            }
         },
         "MIN" => match args.as_slice() {
             [Some(e)] => AggregateExpr::Min { arg: e.clone() },
-            _ => return Err(FrontendError::Unsupported("MIN with wrong arg count".into())),
+            _ => {
+                return Err(FrontendError::Unsupported(
+                    "MIN with wrong arg count".into(),
+                ));
+            }
         },
         "MAX" => match args.as_slice() {
             [Some(e)] => AggregateExpr::Max { arg: e.clone() },
-            _ => return Err(FrontendError::Unsupported("MAX with wrong arg count".into())),
+            _ => {
+                return Err(FrontendError::Unsupported(
+                    "MAX with wrong arg count".into(),
+                ));
+            }
         },
         other => {
             return Err(FrontendError::Unsupported(format!(
@@ -956,13 +951,12 @@ fn apply_limit(plan: LogicalNode, lc: &LimitClause) -> Result<LogicalNode, Front
                 Some(SqlExpr::Value(ValueWithSpan {
                     value: SqlValue::Number(s, _),
                     ..
-                })) => Some(s.parse::<u64>().map_err(|e| {
-                    FrontendError::InvalidLiteral(format!("LIMIT: {e}"))
-                })?),
+                })) => Some(
+                    s.parse::<u64>()
+                        .map_err(|e| FrontendError::InvalidLiteral(format!("LIMIT: {e}")))?,
+                ),
                 Some(_) => {
-                    return Err(FrontendError::Unsupported(
-                        "LIMIT with non-literal".into(),
-                    ));
+                    return Err(FrontendError::Unsupported("LIMIT with non-literal".into()));
                 }
                 None => None,
             };
@@ -971,13 +965,11 @@ fn apply_limit(plan: LogicalNode, lc: &LimitClause) -> Result<LogicalNode, Front
                     SqlExpr::Value(ValueWithSpan {
                         value: SqlValue::Number(s, _),
                         ..
-                    }) => s.parse::<u64>().map_err(|e| {
-                        FrontendError::InvalidLiteral(format!("OFFSET: {e}"))
-                    })?,
+                    }) => s
+                        .parse::<u64>()
+                        .map_err(|e| FrontendError::InvalidLiteral(format!("OFFSET: {e}")))?,
                     _ => {
-                        return Err(FrontendError::Unsupported(
-                            "OFFSET with non-literal".into(),
-                        ));
+                        return Err(FrontendError::Unsupported("OFFSET with non-literal".into()));
                     }
                 },
                 None => 0,
@@ -1131,11 +1123,7 @@ impl Scope {
         }
     }
 
-    fn resolve_qualified(
-        &self,
-        table: &str,
-        column: &str,
-    ) -> Result<ColumnRef, FrontendError> {
+    fn resolve_qualified(&self, table: &str, column: &str) -> Result<ColumnRef, FrontendError> {
         self.columns
             .iter()
             .find(|c| c.table == table && c.column.name == column)
@@ -1148,7 +1136,6 @@ impl Scope {
             .ok_or_else(|| FrontendError::ColumnNotFound(format!("{table}.{column}")))
     }
 }
-
 
 // =========================================================================
 // Tests
@@ -1204,8 +1191,17 @@ mod tests {
         // Project(Filter(Scan))
         match plan {
             LogicalNode::Project { input, .. } => match *input {
-                LogicalNode::Filter { input: _, predicate } => {
-                    assert!(matches!(predicate, Expr::BinaryOp { op: BinaryOp::Gt, .. }));
+                LogicalNode::Filter {
+                    input: _,
+                    predicate,
+                } => {
+                    assert!(matches!(
+                        predicate,
+                        Expr::BinaryOp {
+                            op: BinaryOp::Gt,
+                            ..
+                        }
+                    ));
                 }
                 other => panic!("expected Filter, got {other:?}"),
             },
@@ -1279,8 +1275,7 @@ mod tests {
 
     #[test]
     fn select_with_inner_join() {
-        let plan =
-            lower("SELECT users.id FROM users INNER JOIN orders ON users.id = orders.uid");
+        let plan = lower("SELECT users.id FROM users INNER JOIN orders ON users.id = orders.uid");
         match plan {
             LogicalNode::Project { input, .. } => match *input {
                 LogicalNode::Join { kind, .. } => {
@@ -1354,8 +1349,7 @@ mod tests {
 
     #[test]
     fn dml_is_rejected() {
-        let err = lower_sql("INSERT INTO users VALUES (1, 'x', 30)", &catalog())
-            .unwrap_err();
+        let err = lower_sql("INSERT INTO users VALUES (1, 'x', 30)", &catalog()).unwrap_err();
         assert!(matches!(err, FrontendError::Unsupported(_)));
     }
 

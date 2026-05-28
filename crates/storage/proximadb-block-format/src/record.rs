@@ -272,10 +272,7 @@ impl FlatRow {
         for (i, val) in self.user_columns.into_iter().enumerate() {
             if let Some(key) = user_column_keys.get(i) {
                 if let Some(v) = val {
-                    props.insert(
-                        key.clone(),
-                        proximadb_records::ProximaTreeNode::Value(v),
-                    );
+                    props.insert(key.clone(), proximadb_records::ProximaTreeNode::Value(v));
                 }
             }
         }

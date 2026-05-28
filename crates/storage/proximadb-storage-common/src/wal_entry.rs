@@ -490,10 +490,7 @@ pub fn find_merge_base_lsn(
 
 /// Helper: smallest sequence number among `RecordUpsert` entries
 /// belonging to `branch_id`. Returns `None` if no such entries exist.
-fn first_lsn_for_branch(
-    entries: &[CanonicalWalEntry],
-    branch_id: &str,
-) -> Option<u64> {
+fn first_lsn_for_branch(entries: &[CanonicalWalEntry], branch_id: &str) -> Option<u64> {
     entries
         .iter()
         .filter_map(|entry| match &entry.operation {
