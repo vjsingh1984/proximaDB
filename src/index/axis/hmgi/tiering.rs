@@ -309,7 +309,7 @@ impl HmgiTierPolicy {
             }
             InfrastructureTier::CloudStandard { .. } => {
                 let rate = pattern.hot_access_rate as f32;
-                ((100.0 - rate) / 100.0).max(0.0).min(1.0)
+                ((100.0 - rate) / 100.0).clamp(0.0, 1.0)
             }
             _ => 0.5,
         }

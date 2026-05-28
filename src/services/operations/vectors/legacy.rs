@@ -1168,7 +1168,7 @@ impl VectorOperationsService {
             // Security validation for metadata fields
             metadata_validator: MetadataValidator::default(),
             collection_name_validator: CollectionNameValidator::default(),
-            pseudo_query_generator: Arc::new(DefaultPseudoQueryGenerator::default()),
+            pseudo_query_generator: Arc::new(DefaultPseudoQueryGenerator),
             insert_only_locks: Arc::new(dashmap::DashMap::new()),
             directory_cache: None,
             affinity_registry: None,

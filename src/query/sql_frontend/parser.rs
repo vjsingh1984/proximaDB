@@ -3214,8 +3214,7 @@ fn extract_identifier(input: &str) -> Result<(String, &str)> {
     if input.is_empty() {
         return Err(anyhow!("expected identifier"));
     }
-    if input.starts_with('"') {
-        let rest = &input[1..];
+    if let Some(rest) = input.strip_prefix('"') {
         let end = rest
             .find('"')
             .ok_or_else(|| anyhow!("unterminated quoted identifier"))?;

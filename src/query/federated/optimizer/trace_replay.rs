@@ -87,7 +87,7 @@ pub fn replay(inputs: &ReplayInputs<'_>, candidate: &Arc<dyn PlanInferencer>) ->
     let agrees_route = inference.index_route == trace.index_route;
     let agrees = agrees_strategy && agrees_route;
 
-    let observed_quality = compute_observed_quality(trace, &inputs);
+    let observed_quality = compute_observed_quality(trace, inputs);
     let quality_delta = observed_quality.map(|q| q - inference.confidence.clamp(0.0, 1.0));
 
     ReplayOutcome {

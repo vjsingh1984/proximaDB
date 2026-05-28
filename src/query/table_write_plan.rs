@@ -691,7 +691,7 @@ impl TableWriteRouter {
             CatalogPhysicalFormat::Iceberg
                 | CatalogPhysicalFormat::Delta
                 | CatalogPhysicalFormat::Hudi
-        ) && !primary_layout(target).is_some_and(|layout| !layout.lossy_type_mappings.is_empty())
+        ) && primary_layout(target).is_none_or(|layout| layout.lossy_type_mappings.is_empty())
     }
 
     fn required_guards(&self, context: &RoutingContext<'_>) -> Vec<ExecutionGuard> {

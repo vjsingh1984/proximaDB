@@ -186,7 +186,7 @@ impl ArrowProtoCodec {
             .context("Missing 'id' or 'oid' column")?;
 
         if let Some(array) = id_array.as_any().downcast_ref::<StringArray>() {
-            return Ok((0..batch.num_rows())
+            return (0..batch.num_rows())
                 .map(|row| {
                     if array.is_null(row) {
                         Err(anyhow::anyhow!("Record id is null at row {}", row))
@@ -194,11 +194,11 @@ impl ArrowProtoCodec {
                         Ok(array.value(row).to_string())
                     }
                 })
-                .collect::<Result<Vec<_>>>()?);
+                .collect::<Result<Vec<_>>>();
         }
 
         if let Some(array) = id_array.as_any().downcast_ref::<LargeStringArray>() {
-            return Ok((0..batch.num_rows())
+            return (0..batch.num_rows())
                 .map(|row| {
                     if array.is_null(row) {
                         Err(anyhow::anyhow!("Record id is null at row {}", row))
@@ -206,7 +206,7 @@ impl ArrowProtoCodec {
                         Ok(array.value(row).to_string())
                     }
                 })
-                .collect::<Result<Vec<_>>>()?);
+                .collect::<Result<Vec<_>>>();
         }
 
         Err(anyhow::anyhow!("'id'/'oid' column is not Utf8/LargeUtf8"))
@@ -361,9 +361,9 @@ impl ArrowProtoCodec {
         let Some(array) = batch.column_by_name(column) else {
             return Ok(vec![None; batch.num_rows()]);
         };
-        Ok((0..batch.num_rows())
+        (0..batch.num_rows())
             .map(|row| Self::optional_string_value(array, column, row))
-            .collect::<Result<Vec<_>>>()?)
+            .collect::<Result<Vec<_>>>()
     }
 
     fn optional_string_value(array: &ArrayRef, column: &str, row: usize) -> Result<Option<String>> {
@@ -783,7 +783,7 @@ impl ArrowProtoCodec {
                 .unwrap_or(&[]);
             vector_values.extend_from_slice(vals);
             if vals.len() < dimension {
-                vector_values.extend(std::iter::repeat(0.0f32).take(dimension - vals.len()));
+                vector_values.extend(std::iter::repeat_n(0.0f32, dimension - vals.len()));
             }
         }
         let flat_array = Arc::new(Float32Array::from(vector_values)) as ArrayRef;

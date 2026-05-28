@@ -362,8 +362,7 @@ fn atomic_write_json(path: &Path, payload: &PersistedRegistry) -> std::io::Resul
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let serialized = serde_json::to_vec_pretty(payload)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let serialized = serde_json::to_vec_pretty(payload).map_err(std::io::Error::other)?;
     let tmp = path.with_extension("json.tmp");
     std::fs::write(&tmp, serialized)?;
     std::fs::rename(&tmp, path)

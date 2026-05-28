@@ -142,7 +142,7 @@ impl GraphQueryExecutor {
         use futures::stream::{self, StreamExt};
 
         let results = self.execute(plan, context).await?;
-        let stream = stream::iter(results.into_iter())
+        let stream = stream::iter(results)
             .chunks(batch_size)
             .map(move |batch| self.convert_to_arrow(&batch, true));
 

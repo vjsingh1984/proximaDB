@@ -681,7 +681,7 @@ impl ProximaFlightService {
         }
 
         let dim = result.route.dimension() as u32;
-        for (slot, vector) in to_embed.iter().zip(result.vectors.into_iter()) {
+        for (slot, vector) in to_embed.iter().zip(result.vectors) {
             records[*slot].embeddings.push(EmbeddingCell {
                 model_id: "native".to_string(),
                 modality: "dense_vector".to_string(),
@@ -770,7 +770,7 @@ impl ProximaFlightService {
         // Approach B (true async via WAL pending_embed flag + background drainer)
         // is wired by adding a header-driven branch here; the WAL field and
         // catalog nullable variant are already in place.
-        Self::embed_text_only_records(&mut records, tenant_id.as_deref()).await?;
+        Self::embed_text_only_records(&mut records, tenant_id).await?;
 
         info!(
             collection_id = %collection_id,

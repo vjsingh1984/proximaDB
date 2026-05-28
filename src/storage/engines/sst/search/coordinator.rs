@@ -85,7 +85,7 @@ impl SearchCoordinator {
             let collection_id = ctx.collection_id();
             let vec_bytes = ctx
                 .query_vector()
-                .map(|v| (v.len() * std::mem::size_of::<f32>()) as u64)
+                .map(|v| std::mem::size_of_val(v) as u64)
                 .unwrap_or(0);
             for record in &optimized_results {
                 tiering

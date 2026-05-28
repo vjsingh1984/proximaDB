@@ -735,7 +735,7 @@ async fn phase4_full_precision(
             vector_id: Some(record.oid.clone()),
             score,
             similarity: Some(*distance),
-            vector: Some(Arc::new(record_vector(&record).to_vec())),
+            vector: Some(Arc::new(record_vector(record).to_vec())),
             metadata: crate::core::search::sql_value_filter::proxima_tree_to_value_map(
                 &record.props,
             ),

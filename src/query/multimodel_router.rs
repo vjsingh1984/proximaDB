@@ -144,7 +144,7 @@ fn extract_option_value(sql: &str, key: &str) -> Option<String> {
     let value = after_key[equals_pos + 1..].trim_start();
     let trimmed = value.trim_start_matches(['"', '\'']);
     let end = trimmed
-        .find(|ch: char| matches!(ch, '\'' | '"' | ';' | ',' | ')' | ' '))
+        .find(['\'', '"', ';', ',', ')', ' '])
         .unwrap_or(trimmed.len());
     let candidate = trimmed[..end].trim();
     if candidate.is_empty() {

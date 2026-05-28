@@ -296,15 +296,15 @@ impl ComputeBridge {
 
     /// Check if an execution step can be converted to a ComputePlan node
     fn is_convertible_to_compute_plan(&self, step: &ExecutionStep) -> bool {
-        match step {
-            ExecutionStep::VectorSearch { .. } => true,
-            ExecutionStep::MetadataFilter { .. } => true,
-            ExecutionStep::CombinedFilterSearch { .. } => true,
-            ExecutionStep::IndexLookup { .. } => true,
-            ExecutionStep::BloomFilterCheck { .. } => true,
-            ExecutionStep::VectorQuery { .. } => true,
-            _ => false,
-        }
+        matches!(
+            step,
+            ExecutionStep::VectorSearch { .. }
+                | ExecutionStep::MetadataFilter { .. }
+                | ExecutionStep::CombinedFilterSearch { .. }
+                | ExecutionStep::IndexLookup { .. }
+                | ExecutionStep::BloomFilterCheck { .. }
+                | ExecutionStep::VectorQuery { .. }
+        )
     }
 
     /// Execute through the compute scheduler

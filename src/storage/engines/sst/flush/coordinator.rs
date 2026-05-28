@@ -113,7 +113,7 @@ impl FlushCoordinator {
             self.engine.tiering_integration(),
             params.collection_id.as_ref(),
         ) {
-            let bytes_written = result.bytes_written.unwrap_or(0) as u64;
+            let bytes_written = result.bytes_written.unwrap_or(0);
             tiering
                 .record_access(
                     coll.as_str(),

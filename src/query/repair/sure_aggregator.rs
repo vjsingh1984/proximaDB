@@ -134,7 +134,7 @@ pub fn aggregate(
     let mut all_support_confs: Vec<f64> = Vec::new();
     let mut variances: Vec<f64> = Vec::new();
 
-    for (_claim_id, agg) in &per_claim {
+    for agg in per_claim.values() {
         if agg.has_support {
             covered += 1;
             all_support_confs.extend(agg.supporting_confidences.iter().copied());

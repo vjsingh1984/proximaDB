@@ -506,7 +506,7 @@ impl RaptorReader {
             drop(vector_slices);
 
             for ((id, vector), similarity_result) in
-                candidates.into_iter().zip(sim_results.into_iter())
+                candidates.into_iter().zip(sim_results)
             {
                 results.push(
                     OptimizedSearchRecord::new(id, similarity_result.normalized_score)

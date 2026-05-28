@@ -217,8 +217,8 @@ impl ZOrderEncoder {
     pub fn new(dimensions: usize, bits_per_dim: usize) -> Self {
         // Clamp to valid Z-order range instead of panicking. Config layer already enforces
         // ≤64 for most callers, but the post-delete compaction path may pass raw vector dim.
-        let dimensions = dimensions.min(64).max(1);
-        let bits_per_dim = bits_per_dim.min(16).max(1);
+        let dimensions = dimensions.clamp(1, 64);
+        let bits_per_dim = bits_per_dim.clamp(1, 16);
 
         // Auto-select code type based on required bits
         let code_type = CodeType::select(dimensions, bits_per_dim);
