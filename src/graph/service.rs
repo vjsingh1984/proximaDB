@@ -131,6 +131,12 @@ pub struct GraphOperationsService {
     graphs: Arc<DashMap<String, Arc<crate::graph::engines::GraphEngineImpl>>>,
     /// Optional canonical record store for durable graph node/edge records.
     canonical_record_store: Option<Arc<dyn RecordStore>>,
+    /// Optional canonical WAL appender. When present, `flush_wal` persists
+    /// a `CanonicalOperation::Checkpoint(SnapshotManifest)` entry to the
+    /// canonical WAL before the engine-local WAL is flushed (TD-066 /
+    /// ADR-020 — canonical WAL as durability authority).
+    canonical_wal_appender:
+        Option<Arc<dyn crate::services::record_store::TableWalAppender>>,
     /// Rebuildable adjacency projections over canonical edge records, keyed by graph id.
     adjacency_projections: Arc<DashMap<String, Arc<InMemoryGraphAdjacencyProjection>>>,
     /// Monotonic edge-mutation epoch per graph, used to invalidate CSR/topology projections.
@@ -184,6 +190,7 @@ impl GraphOperationsService {
             collection_service,
             graphs: Arc::new(DashMap::new()),
             canonical_record_store: None,
+            canonical_wal_appender: None,
             adjacency_projections: Arc::new(DashMap::new()),
             edge_epochs: Arc::new(DashMap::new()),
             csr_rebuild_epochs: Arc::new(DashMap::new()),
@@ -263,6 +270,7 @@ impl GraphOperationsService {
             collection_service,
             graphs: Arc::new(DashMap::new()),
             canonical_record_store: None,
+            canonical_wal_appender: None,
             adjacency_projections: Arc::new(DashMap::new()),
             edge_epochs: Arc::new(DashMap::new()),
             csr_rebuild_epochs: Arc::new(DashMap::new()),
@@ -324,6 +332,23 @@ impl GraphOperationsService {
     /// Graph engines and adjacency/CSR structures remain projection consumers.
     pub fn with_canonical_record_store(mut self, record_store: Arc<dyn RecordStore>) -> Self {
         self.canonical_record_store = Some(record_store);
+        self
+    }
+
+    /// Inject the canonical WAL appender that `flush_wal` uses to persist
+    /// `CanonicalOperation::Checkpoint(SnapshotManifest)` entries.
+    ///
+    /// When unset (the default), `flush_wal` emits the canonical-checkpoint
+    /// tracing line as before and skips the disk append — preserving today's
+    /// behavior for callers that haven't yet wired the appender. Once set,
+    /// the canonical WAL becomes the durability authority per ADR-020:
+    /// recovery uses the checkpoint LSN to scope replay, and the engine
+    /// WAL is a compatibility projection buffer (TD-066).
+    pub fn with_canonical_wal_appender(
+        mut self,
+        appender: Arc<dyn crate::services::record_store::TableWalAppender>,
+    ) -> Self {
+        self.canonical_wal_appender = Some(appender);
         self
     }
 
@@ -940,15 +965,53 @@ impl GraphOperationsService {
             }),
             None,
         );
-        // In-process canonical checkpoint: log for observability.
-        // Full persistence of the canonical WAL to disk is handled by the
-        // storage layer when it is wired up (TD-066 full implementation).
-        tracing::debug!(
-            graph_id,
-            checkpoint_lsn,
-            is_checkpoint = canonical_entry.is_checkpoint(),
-            "canonical WAL checkpoint written before engine WAL flush"
-        );
+
+        // TD-066: persist the checkpoint to the canonical WAL when an
+        // appender is injected. The WAL re-assigns its own sequence number
+        // on append; the engine's `checkpoint_lsn` is preserved inside the
+        // `SnapshotManifest.sequence_number` field for cross-reference.
+        // When no appender is injected (default), fall back to the prior
+        // tracing-only behavior so callers don't get surprised.
+        if let Some(appender) = self.canonical_wal_appender.as_ref() {
+            let tenant_id = canonical_entry.tenant_id.clone();
+            match appender
+                .append_operations(vec![canonical_entry.operation.clone()], tenant_id)
+                .await
+            {
+                Ok(written) => {
+                    let written_seq =
+                        written.first().map(|e| e.sequence_number).unwrap_or(0);
+                    tracing::debug!(
+                        graph_id,
+                        checkpoint_lsn,
+                        wal_seq = written_seq,
+                        "canonical WAL checkpoint persisted before engine WAL flush"
+                    );
+                }
+                Err(err) => {
+                    tracing::error!(
+                        graph_id,
+                        checkpoint_lsn,
+                        error = %err,
+                        "failed to persist canonical WAL checkpoint; engine flush will proceed but recovery cannot use this checkpoint"
+                    );
+                    return Err(ProximaDBError::Internal(format!(
+                        "canonical WAL checkpoint append failed: {}",
+                        err
+                    )));
+                }
+            }
+        } else {
+            // In-process canonical checkpoint: log for observability.
+            // Production wiring of the canonical WAL appender is a follow-up
+            // slice; until then this preserves the prior behavior.
+            tracing::debug!(
+                graph_id,
+                checkpoint_lsn,
+                is_checkpoint = canonical_entry.is_checkpoint(),
+                "canonical WAL checkpoint written before engine WAL flush (in-process only — no appender injected)"
+            );
+        }
 
         // Step 2 — flush the engine-specific WAL as a compatibility buffer.
         if let Some(engine) = self.graphs.get(graph_id) {
