@@ -29,9 +29,7 @@ use proximadb_data_model::{ProximaType, ProximaValue};
 use proximadb_relational_engine::{
     EngineReaderFactory, InMemoryRelationalEngine, RelationalWriter,
 };
-use proximadb_relational_executor::{
-    ExecutionContext, build_executor, collect,
-};
+use proximadb_relational_executor::{ExecutionContext, build_executor, collect};
 use proximadb_relational_frontend::{CatalogLookup, lower_sql};
 use proximadb_relational_planner::{Planner, StaticCapabilities};
 use proximadb_relational_reader::ReaderCapabilities;
@@ -102,16 +100,31 @@ pub struct PipelineResult {
 ///
 /// Returns:
 ///
-/// - `None` — feature flag off, OR the SQL didn't lower cleanly
+/// - `None` — SQL didn't lower cleanly
 ///   (the caller should fall through to the legacy SQL path).
 /// - `Some(Ok(result))` — pipeline executed; caller should emit
 ///   the result to the pgwire client.
 /// - `Some(Err(msg))` — pipeline reached execution and failed;
 ///   caller should report a pgwire `ERROR` to the client.
+///
+/// ADR-018 Phase 2: New pipeline is enabled by default for SELECT queries
+/// that can be lowered by the relational frontend. This provides proper
+/// multi-column ORDER BY support and other relational features.
+/// Set PROXIMADB_NEW_RELATIONAL_PIPELINE=0 to disable and force legacy path.
 pub async fn try_run_select(sql: &str) -> Option<Result<PipelineResult, String>> {
-    if std::env::var("PROXIMADB_NEW_RELATIONAL_PIPELINE").is_err() {
+    // ADR-018 Phase 2: Allow opting out with explicit "0" value
+    if std::env::var("PROXIMADB_NEW_RELATIONAL_PIPELINE")
+        .ok()
+        .as_deref()
+        == Some("0")
+    {
+        tracing::debug!(
+            target: "proximadb::pgwire::new_pipeline",
+            "PROXIMADB_NEW_RELATIONAL_PIPELINE=0; skipping new pipeline"
+        );
         return None;
     }
+
     let engine = GLOBAL_ENGINE.clone();
     let catalog = EngineCatalog(engine.clone());
     // Lowering failure → fall through to legacy.
@@ -137,15 +150,15 @@ async fn execute_logical(
         caps: ReaderCapabilities::full(),
         pk_columns: Vec::new(),
     });
-    let physical = planner
-        .plan(logical)
-        .map_err(|e| format!("plan: {e}"))?;
+    let physical = planner.plan(logical).map_err(|e| format!("plan: {e}"))?;
     let factory = EngineReaderFactory::new(engine);
     let mut exec = build_executor(physical, &factory, &ExecutionContext::default())
         .map_err(|e| format!("build_executor: {e}"))?;
     exec.open().await.map_err(|e| format!("open: {e}"))?;
     let schema = exec.schema().clone();
-    let rows = collect(&mut *exec).await.map_err(|e| format!("scan: {e}"))?;
+    let rows = collect(&mut *exec)
+        .await
+        .map_err(|e| format!("scan: {e}"))?;
     Ok(PipelineResult { schema, rows })
 }
 
@@ -218,8 +231,22 @@ pub fn text_encode(v: &ProximaValue) -> Option<String> {
         V::Time(t, _) | V::Timestamp(t, _) | V::TimestampTz(t, _) => t.to_string(),
         V::Uuid(u) | V::ULID(u) => format!(
             "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7],
-            u[8], u[9], u[10], u[11], u[12], u[13], u[14], u[15]
+            u[0],
+            u[1],
+            u[2],
+            u[3],
+            u[4],
+            u[5],
+            u[6],
+            u[7],
+            u[8],
+            u[9],
+            u[10],
+            u[11],
+            u[12],
+            u[13],
+            u[14],
+            u[15]
         ),
         V::Json(j) | V::Jsonb(j) => j.to_string(),
         other => format!("{other:?}"),

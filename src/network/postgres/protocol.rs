@@ -1800,28 +1800,36 @@ impl PostgresProtocol {
         }
         let segment_upper = segment.to_ascii_uppercase();
         // 1. Strip optional NULLS clause from the end.
-        let (without_nulls, nulls_first) = if let Some(stripped_upper) =
-            segment_upper.strip_suffix(" NULLS FIRST")
-        {
-            (segment[..stripped_upper.len()].trim().to_string(), Some(true))
-        } else if let Some(stripped_upper) = segment_upper.strip_suffix(" NULLS LAST") {
-            (segment[..stripped_upper.len()].trim().to_string(), Some(false))
-        } else {
-            (segment.to_string(), None)
-        };
+        let (without_nulls, nulls_first) =
+            if let Some(stripped_upper) = segment_upper.strip_suffix(" NULLS FIRST") {
+                (
+                    segment[..stripped_upper.len()].trim().to_string(),
+                    Some(true),
+                )
+            } else if let Some(stripped_upper) = segment_upper.strip_suffix(" NULLS LAST") {
+                (
+                    segment[..stripped_upper.len()].trim().to_string(),
+                    Some(false),
+                )
+            } else {
+                (segment.to_string(), None)
+            };
         // 2. Strip optional ASC/DESC from the (post-NULLS) end.
         let without_nulls_upper = without_nulls.to_ascii_uppercase();
-        let (col_str, desc) = if let Some(stripped_upper) = without_nulls_upper.strip_suffix(" DESC")
-        {
-            (without_nulls[..stripped_upper.len()].trim().to_string(), true)
-        } else if let Some(stripped_upper) = without_nulls_upper.strip_suffix(" ASC") {
-            (
-                without_nulls[..stripped_upper.len()].trim().to_string(),
-                false,
-            )
-        } else {
-            (without_nulls, false)
-        };
+        let (col_str, desc) =
+            if let Some(stripped_upper) = without_nulls_upper.strip_suffix(" DESC") {
+                (
+                    without_nulls[..stripped_upper.len()].trim().to_string(),
+                    true,
+                )
+            } else if let Some(stripped_upper) = without_nulls_upper.strip_suffix(" ASC") {
+                (
+                    without_nulls[..stripped_upper.len()].trim().to_string(),
+                    false,
+                )
+            } else {
+                (without_nulls, false)
+            };
         // 3. Apply Postgres NULL-placement default if not explicit:
         // ASC → NULLS LAST, DESC → NULLS FIRST.
         let nulls_first = nulls_first.unwrap_or(desc);
@@ -5162,10 +5170,8 @@ mod tests {
 
     #[test]
     fn order_by_single_column_default_asc_nulls_last() {
-        let keys = PostgresProtocol::extract_select_order_by(
-            "SELECT * FROM t ORDER BY name",
-        )
-        .expect("single-col ORDER BY must parse");
+        let keys = PostgresProtocol::extract_select_order_by("SELECT * FROM t ORDER BY name")
+            .expect("single-col ORDER BY must parse");
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].column, "name");
         assert!(!keys[0].desc);
@@ -5175,10 +5181,8 @@ mod tests {
 
     #[test]
     fn order_by_explicit_desc_default_nulls_first() {
-        let keys = PostgresProtocol::extract_select_order_by(
-            "SELECT * FROM t ORDER BY score DESC",
-        )
-        .unwrap();
+        let keys = PostgresProtocol::extract_select_order_by("SELECT * FROM t ORDER BY score DESC")
+            .unwrap();
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].column, "score");
         assert!(keys[0].desc);
@@ -5238,29 +5242,25 @@ mod tests {
 
     #[test]
     fn order_by_terminates_at_limit() {
-        let keys = PostgresProtocol::extract_select_order_by(
-            "SELECT * FROM t ORDER BY name LIMIT 10",
-        )
-        .unwrap();
+        let keys =
+            PostgresProtocol::extract_select_order_by("SELECT * FROM t ORDER BY name LIMIT 10")
+                .unwrap();
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].column, "name");
     }
 
     #[test]
     fn order_by_terminates_at_offset() {
-        let keys = PostgresProtocol::extract_select_order_by(
-            "SELECT * FROM t ORDER BY name OFFSET 5",
-        )
-        .unwrap();
+        let keys =
+            PostgresProtocol::extract_select_order_by("SELECT * FROM t ORDER BY name OFFSET 5")
+                .unwrap();
         assert_eq!(keys.len(), 1);
         assert_eq!(keys[0].column, "name");
     }
 
     #[test]
     fn order_by_no_clause_returns_none() {
-        assert!(
-            PostgresProtocol::extract_select_order_by("SELECT * FROM t").is_none(),
-        );
+        assert!(PostgresProtocol::extract_select_order_by("SELECT * FROM t").is_none(),);
     }
 
     #[test]

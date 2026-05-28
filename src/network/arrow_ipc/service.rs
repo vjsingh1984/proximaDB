@@ -1337,20 +1337,15 @@ impl FlightService for ProximaFlightService {
                     Some(serde_json::Value::String(s)) => {
                         use crate::proto::proximadb_v1::EmbeddingPrecision;
                         let key = s.to_ascii_lowercase();
-                        let stripped =
-                            key.strip_prefix("embedding_precision_").unwrap_or(&key);
+                        let stripped = key.strip_prefix("embedding_precision_").unwrap_or(&key);
                         match stripped {
                             "unspecified" => Some(EmbeddingPrecision::Unspecified as i32),
-                            "fp32" | "f32" | "float32" => {
-                                Some(EmbeddingPrecision::Fp32 as i32)
-                            }
+                            "fp32" | "f32" | "float32" => Some(EmbeddingPrecision::Fp32 as i32),
                             "fp16" | "f16" | "float16" | "half" => {
                                 Some(EmbeddingPrecision::Fp16 as i32)
                             }
                             "bf16" | "bfloat16" => Some(EmbeddingPrecision::Bf16 as i32),
-                            "int8" | "i8" | "int8_scalar" => {
-                                Some(EmbeddingPrecision::Int8 as i32)
-                            }
+                            "int8" | "i8" | "int8_scalar" => Some(EmbeddingPrecision::Int8 as i32),
                             "uint8" | "u8" | "uint8_scalar" => {
                                 Some(EmbeddingPrecision::Uint8 as i32)
                             }
@@ -2067,13 +2062,9 @@ impl FlightService for ProximaFlightService {
                             "rank_features_export: rank profile not found: {name}"
                         )),
                         RankError::InvalidProfile(msg) => {
-                            TonicStatus::invalid_argument(format!(
-                                "rank_features_export: {msg}"
-                            ))
+                            TonicStatus::invalid_argument(format!("rank_features_export: {msg}"))
                         }
-                        other => TonicStatus::internal(format!(
-                            "rank_features_export: {other}"
-                        )),
+                        other => TonicStatus::internal(format!("rank_features_export: {other}")),
                     }
                 })?;
                 let result = arrow_flight::Result {

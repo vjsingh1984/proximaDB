@@ -231,8 +231,15 @@ pub async fn handle_rank_search(
     factory: Arc<BlueprintFactory>,
     second_phase_scorer: Option<Arc<dyn SecondPhaseScorer>>,
 ) -> RankResult<RankSearchResponse> {
-    handle_rank_search_with_metrics(req, registry, candidates, factory, second_phase_scorer, None)
-        .await
+    handle_rank_search_with_metrics(
+        req,
+        registry,
+        candidates,
+        factory,
+        second_phase_scorer,
+        None,
+    )
+    .await
 }
 
 /// Like [`handle_rank_search`] but with an optional metrics handle
@@ -269,10 +276,7 @@ pub async fn handle_rank_search_with_metrics(
         // R-5b.1.3: seed `query_text` from the request so the
         // tokenized cross-encoder extractor reads it per-request via
         // the QueryContext rather than from interior mutability.
-        query_text: req
-            .query_text
-            .as_deref()
-            .map(std::sync::Arc::<str>::from),
+        query_text: req.query_text.as_deref().map(std::sync::Arc::<str>::from),
         ..Default::default()
     };
 
@@ -305,7 +309,7 @@ pub async fn handle_rank_search_with_metrics(
         .get(profile_name)
         .ok_or_else(|| RankError::ProfileNotFound(profile_name.to_string()))?;
     let _ = factory; // The compiled profile already carries its own factory;
-                     // the parameter exists for future extension.
+    // the parameter exists for future extension.
 
     // Global scorer: cross-modal reranker if the profile asked for it.
     // Selected BEFORE spawn_blocking because it crosses the async boundary.
@@ -316,7 +320,9 @@ pub async fn handle_rank_search_with_metrics(
         .map(|g| g.strategy == "cross_modal")
         .unwrap_or(false)
     {
-        Some(Arc::new(CrossModalGlobalScorer::new(default_rerank_config())))
+        Some(Arc::new(CrossModalGlobalScorer::new(
+            default_rerank_config(),
+        )))
     } else {
         None
     };
@@ -343,9 +349,7 @@ pub async fn handle_rank_search_with_metrics(
     let compiled_for_block = compiled.clone();
     let candidate_docs_for_block = candidate_docs.clone();
     let scorer_for_block = second_phase_scorer.clone();
-    let metrics_for_block = metrics
-        .clone()
-        .map(|m| (m, compiled.spec.name.clone()));
+    let metrics_for_block = metrics.clone().map(|m| (m, compiled.spec.name.clone()));
     let phase_outcome: PhaseOutcome = tokio::task::spawn_blocking(move || {
         let metrics_ref = metrics_for_block
             .as_ref()
@@ -438,9 +442,8 @@ fn run_phases_blocking(
     // the spec's `{profile, phase, feature}` label set. Without a
     // handle, keep NoopMetricsSink so the NFR-9 zero-cost-when-
     // unused contract holds.
-    let prom_sink: Option<crate::observability::rank_metrics::PrometheusRankSink> = metrics
-        .as_ref()
-        .map(|(m, profile)| {
+    let prom_sink: Option<crate::observability::rank_metrics::PrometheusRankSink> =
+        metrics.as_ref().map(|(m, profile)| {
             crate::observability::rank_metrics::PrometheusRankSink::new(
                 m.clone(),
                 *profile,
@@ -471,11 +474,7 @@ fn run_phases_blocking(
         let phase_label = crate::observability::rank_metrics::RankPipelineMetrics::phase_label_for(
             PhaseId::FIRST.0,
         );
-        m.observe_phase_latency_us(
-            profile,
-            phase_label,
-            first_outcome.elapsed_us as f64,
-        );
+        m.observe_phase_latency_us(profile, phase_label, first_outcome.elapsed_us as f64);
     }
 
     match second_phase_scorer {
@@ -495,9 +494,10 @@ fn run_phases_blocking(
             if let Some((m, profile)) = metrics.as_ref() {
                 let elapsed_ns = t0.elapsed().as_nanos() as u64;
                 let elapsed_us = elapsed_ns as f64 / 1_000.0;
-                let phase_label = crate::observability::rank_metrics::RankPipelineMetrics::phase_label_for(
-                    PhaseId::SECOND.0,
-                );
+                let phase_label =
+                    crate::observability::rank_metrics::RankPipelineMetrics::phase_label_for(
+                        PhaseId::SECOND.0,
+                    );
                 m.observe_feature_latency_us(profile, phase_label, "second_phase", elapsed_us);
                 // Per-phase wall-clock latency for second phase
                 // (spec §4.10 schema). Same elapsed value as
@@ -1147,9 +1147,7 @@ mod tests {
         // `record_profile_reload_error` bumps the error variant.
         use crate::observability::rank_metrics::RankPipelineMetrics;
         let prom_registry = prometheus::Registry::new();
-        let metrics = Arc::new(
-            RankPipelineMetrics::register(&prom_registry).unwrap(),
-        );
+        let metrics = Arc::new(RankPipelineMetrics::register(&prom_registry).unwrap());
         let candidates: Arc<dyn CandidateProvider> =
             Arc::new(MockRangeCandidateProvider::default());
         let services = RankServices::new(candidates).with_metrics(metrics.clone());
@@ -1306,9 +1304,7 @@ mod tests {
         registry.install(compiled);
 
         let prom_registry = prometheus::Registry::new();
-        let metrics = std::sync::Arc::new(
-            RankPipelineMetrics::register(&prom_registry).unwrap(),
-        );
+        let metrics = std::sync::Arc::new(RankPipelineMetrics::register(&prom_registry).unwrap());
 
         let candidates = FixedCandidates(vec![DocHandle(1), DocHandle(2), DocHandle(3)]);
         let req = RankSearchRequest {
@@ -1346,15 +1342,15 @@ mod tests {
             .filter(|mf| mf.name() == "proximadb_rank_feature_latency_us")
             .flat_map(|mf| mf.get_metric().to_vec())
             .filter(|m| {
-                m.get_label().iter().any(|l| {
-                    l.name() == "profile" && l.value() == "metrics_test"
-                }) && m
-                    .get_label()
+                m.get_label()
                     .iter()
-                    .any(|l| l.name() == "phase" && l.value() == "first")
-                    && m.get_label().iter().any(|l| {
-                        l.name() == "feature" && l.value() == "docid()"
-                    })
+                    .any(|l| l.name() == "profile" && l.value() == "metrics_test")
+                    && m.get_label()
+                        .iter()
+                        .any(|l| l.name() == "phase" && l.value() == "first")
+                    && m.get_label()
+                        .iter()
+                        .any(|l| l.name() == "feature" && l.value() == "docid()")
             })
             .map(|m| m.get_histogram().get_sample_count())
             .sum::<u64>();
@@ -1395,9 +1391,7 @@ mod tests {
         registry.install(compiled);
 
         let prom_registry = prometheus::Registry::new();
-        let metrics = std::sync::Arc::new(
-            RankPipelineMetrics::register(&prom_registry).unwrap(),
-        );
+        let metrics = std::sync::Arc::new(RankPipelineMetrics::register(&prom_registry).unwrap());
         let scorer: Arc<dyn SecondPhaseScorer> =
             Arc::new(proximadb_rank_core::PassthroughSecondPhaseScorer);
 
@@ -1428,15 +1422,15 @@ mod tests {
             .filter(|mf| mf.name() == "proximadb_rank_feature_latency_us")
             .flat_map(|mf| mf.get_metric().to_vec())
             .filter(|m| {
-                m.get_label().iter().any(|l| {
-                    l.name() == "profile" && l.value() == "metrics_test_2p"
-                }) && m
-                    .get_label()
+                m.get_label()
                     .iter()
-                    .any(|l| l.name() == "phase" && l.value() == "second")
-                    && m.get_label().iter().any(|l| {
-                        l.name() == "feature" && l.value() == "second_phase"
-                    })
+                    .any(|l| l.name() == "profile" && l.value() == "metrics_test_2p")
+                    && m.get_label()
+                        .iter()
+                        .any(|l| l.name() == "phase" && l.value() == "second")
+                    && m.get_label()
+                        .iter()
+                        .any(|l| l.name() == "feature" && l.value() == "second_phase")
             })
             .map(|m| m.get_histogram().get_sample_count())
             .sum::<u64>();
@@ -1820,8 +1814,7 @@ mod tests {
         use proximadb_rank_core::PassthroughSecondPhaseScorer;
         let services = RankServices::new(Arc::new(MockRangeCandidateProvider::default()));
         assert!(services.second_phase_scorer("nope").is_none());
-        services
-            .register_second_phase_scorer("p1", Arc::new(PassthroughSecondPhaseScorer));
+        services.register_second_phase_scorer("p1", Arc::new(PassthroughSecondPhaseScorer));
         assert!(services.second_phase_scorer("p1").is_some());
         assert!(services.second_phase_scorer("nope").is_none());
     }
@@ -1832,8 +1825,7 @@ mod tests {
             ConstantMultiplierSecondPhaseScorer, PassthroughSecondPhaseScorer,
         };
         let services = RankServices::new(Arc::new(MockRangeCandidateProvider::default()));
-        services
-            .register_second_phase_scorer("p", Arc::new(PassthroughSecondPhaseScorer));
+        services.register_second_phase_scorer("p", Arc::new(PassthroughSecondPhaseScorer));
         services.register_second_phase_scorer(
             "p",
             Arc::new(ConstantMultiplierSecondPhaseScorer { factor: 2.0 }),
@@ -1951,10 +1943,8 @@ mod tests {
         // CandidateBatch.original_ids so the response round-trips them
         // exactly. This works for both numeric and arbitrary-string ids.
         let backend = Arc::new(MockHybridBackend::new(vec!["42", "7", "99"]));
-        let adapter = HybridCoordinatorAdapter::new(
-            FusionStrategy::ReciprocalRank { k: 60 },
-            backend,
-        );
+        let adapter =
+            HybridCoordinatorAdapter::new(FusionStrategy::ReciprocalRank { k: 60 }, backend);
         let req = rank_req("docs", vec![0.5], 10);
         let batch = adapter.candidates(&req).await.unwrap();
         let map = batch.original_ids.expect("adapter must emit original_ids");
@@ -1970,10 +1960,8 @@ mod tests {
         // R-7c.3.2: arbitrary-string backend ids no longer get dropped.
         // All four candidate ids survive the adapter into original_ids.
         let backend = Arc::new(MockHybridBackend::new(vec!["1", "abc", "2", "def"]));
-        let adapter = HybridCoordinatorAdapter::new(
-            FusionStrategy::ReciprocalRank { k: 60 },
-            backend,
-        );
+        let adapter =
+            HybridCoordinatorAdapter::new(FusionStrategy::ReciprocalRank { k: 60 }, backend);
         let req = rank_req("docs", vec![0.5], 10);
         let batch = adapter.candidates(&req).await.unwrap();
         assert_eq!(batch.docs.len(), 4);
@@ -1993,21 +1981,13 @@ mod tests {
         struct BrokenBackend;
         #[async_trait::async_trait]
         impl HybridSearchBackend for BrokenBackend {
-            async fn bm25_search(
-                &self,
-                _c: &str,
-                _q: &str,
-            ) -> RankResult<Vec<BM25Result>> {
+            async fn bm25_search(&self, _c: &str, _q: &str) -> RankResult<Vec<BM25Result>> {
                 Err(RankError::ModelInference {
                     model_id: "bm25".into(),
                     reason: "service unavailable".into(),
                 })
             }
-            async fn vector_search(
-                &self,
-                _c: &str,
-                _v: &[f32],
-            ) -> RankResult<Vec<VectorResult>> {
+            async fn vector_search(&self, _c: &str, _v: &[f32]) -> RankResult<Vec<VectorResult>> {
                 Ok(Vec::new())
             }
         }
@@ -2031,10 +2011,8 @@ mod tests {
         // CandidateProvider; verify the dispatcher gets the adapter's
         // output rather than the mock-range fallback.
         let backend = Arc::new(MockHybridBackend::new(vec!["1", "2", "3", "4", "5"]));
-        let adapter = HybridCoordinatorAdapter::new(
-            FusionStrategy::ReciprocalRank { k: 60 },
-            backend,
-        );
+        let adapter =
+            HybridCoordinatorAdapter::new(FusionStrategy::ReciprocalRank { k: 60 }, backend);
         let services = RankServices::new(Arc::new(adapter));
         // Profile-free path: candidates pass through as-is with score=0.
         let req = rank_req("docs", vec![0.1, 0.2], 3);
@@ -2072,11 +2050,7 @@ mod tests {
         }
         #[async_trait::async_trait]
         impl HybridSearchBackend for CapturingBackend {
-            async fn bm25_search(
-                &self,
-                _c: &str,
-                query: &str,
-            ) -> RankResult<Vec<BM25Result>> {
+            async fn bm25_search(&self, _c: &str, query: &str) -> RankResult<Vec<BM25Result>> {
                 *self.last_bm25_query.lock().unwrap() = Some(query.to_string());
                 Ok(vec![BM25Result {
                     doc_id: "1".into(),
@@ -2085,11 +2059,7 @@ mod tests {
                     metadata: HashMap::new(),
                 }])
             }
-            async fn vector_search(
-                &self,
-                _c: &str,
-                _v: &[f32],
-            ) -> RankResult<Vec<VectorResult>> {
+            async fn vector_search(&self, _c: &str, _v: &[f32]) -> RankResult<Vec<VectorResult>> {
                 Ok(vec![VectorResult {
                     doc_id: "1".into(),
                     score: 0.8,
@@ -2121,19 +2091,11 @@ mod tests {
         }
         #[async_trait::async_trait]
         impl HybridSearchBackend for CapturingBackend {
-            async fn bm25_search(
-                &self,
-                _c: &str,
-                query: &str,
-            ) -> RankResult<Vec<BM25Result>> {
+            async fn bm25_search(&self, _c: &str, query: &str) -> RankResult<Vec<BM25Result>> {
                 *self.last_bm25_query.lock().unwrap() = Some(query.to_string());
                 Ok(Vec::new())
             }
-            async fn vector_search(
-                &self,
-                _c: &str,
-                _v: &[f32],
-            ) -> RankResult<Vec<VectorResult>> {
+            async fn vector_search(&self, _c: &str, _v: &[f32]) -> RankResult<Vec<VectorResult>> {
                 Ok(Vec::new())
             }
         }
@@ -2210,10 +2172,7 @@ mod tests {
         struct StringIdProvider(Vec<&'static str>);
         #[async_trait::async_trait]
         impl CandidateProvider for StringIdProvider {
-            async fn candidates(
-                &self,
-                _request: &RankSearchRequest,
-            ) -> RankResult<CandidateBatch> {
+            async fn candidates(&self, _request: &RankSearchRequest) -> RankResult<CandidateBatch> {
                 Ok(CandidateBatch::from_string_ids(self.0.clone()))
             }
         }

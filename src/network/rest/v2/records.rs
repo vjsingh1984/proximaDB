@@ -1419,11 +1419,19 @@ pub async fn search_with_typed_filters(
         filters,
     };
 
-    match state
-        .request_handlers
-        .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
-        .await
-    {
+    // TD-064: wrap the search in a predicate-diagnostics scope so any
+    // AxisManager-deep shortfall surfaces here without needing every
+    // intermediate service/proto type to carry a predicate_shortfall field.
+    let search_outcome = crate::observability::predicate_diagnostics::scope(async {
+        state
+            .request_handlers
+            .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
+            .await
+    })
+    .await;
+    let predicate_shortfall = crate::observability::predicate_diagnostics::take_shortfall();
+
+    match search_outcome {
         Ok(resp) => {
             let latency_ms = start_time.elapsed().as_millis() as u64;
 
@@ -1536,8 +1544,7 @@ pub async fn search_with_typed_filters(
                     candidate_count: results.len() as u32,
                     rerank_count: results.len() as u32,
                     repair_count: 0,
-                    sure_signals:
-                        crate::observability::search_plan_trace::SureSignals::default(),
+                    sure_signals: crate::observability::search_plan_trace::SureSignals::default(),
                     cache_result,
                     failure_class: None,
                     // bytes_per_vector: the trace builder needs this
@@ -1546,6 +1553,11 @@ pub async fn search_with_typed_filters(
                     // builder skips the derivation and leaves
                     // actual_scan_gb at 0.0.
                     bytes_per_vector: 0.0,
+                    // TD-064: shortfall pulled from the task-local
+                    // diagnostics bus established above. `None` when
+                    // no AxisManager-level shortfall was recorded
+                    // during this search.
+                    predicate_shortfall: predicate_shortfall.clone(),
                 },
             );
 
@@ -1582,18 +1594,17 @@ pub async fn search_with_typed_filters(
             // explain (route_explain::build over the populated trace).
             let debug_requested = request.debug.unwrap_or(false);
             let (trace_field, explain_field) = if debug_requested {
-                let explain =
-                    crate::observability::route_explain::build(
-                        &crate::observability::route_explain::ExplainInputs {
-                            trace: &trace,
-                            // collection_gb not yet plumbed from the
-                            // catalog; pass 0.0 and accept the
-                            // scan-fraction-zero fallback until
-                            // collection-size hydration lands.
-                            corpus_gb: 0.0,
-                            recall_probe_open: None,
-                        },
-                    );
+                let explain = crate::observability::route_explain::build(
+                    &crate::observability::route_explain::ExplainInputs {
+                        trace: &trace,
+                        // collection_gb not yet plumbed from the
+                        // catalog; pass 0.0 and accept the
+                        // scan-fraction-zero fallback until
+                        // collection-size hydration lands.
+                        corpus_gb: 0.0,
+                        recall_probe_open: None,
+                    },
+                );
                 (Some(trace.clone()), Some(explain))
             } else {
                 (None, None)

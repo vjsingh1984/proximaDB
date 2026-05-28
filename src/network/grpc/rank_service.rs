@@ -29,9 +29,8 @@ use proximadb_proto::ranking as proto_ranking;
 use proximadb_rank_core::RankError;
 
 use crate::network::rest::v1::rank::{
-    handle_rank_search_with_metrics, PhaseOverride, RankOverrides, RankSearchRequest,
-    RankSearchResponse,
-    RankServices, ScoredHitDto, ScoreVectorDto,
+    PhaseOverride, RankOverrides, RankSearchRequest, RankSearchResponse, RankServices,
+    ScoreVectorDto, ScoredHitDto, handle_rank_search_with_metrics,
 };
 
 /// gRPC handler bundling the per-process `RankServices` singleton.
@@ -150,7 +149,11 @@ fn rest_to_proto_score_vector(sv: ScoreVectorDto) -> proto_ranking::ScoreVector 
     proto_ranking::ScoreVector {
         primary: sv.primary,
         phase: sv.phase as u32,
-        components: sv.components.into_iter().map(kernel_to_proto_component).collect(),
+        components: sv
+            .components
+            .into_iter()
+            .map(kernel_to_proto_component)
+            .collect(),
     }
 }
 
@@ -395,7 +398,10 @@ mod tests {
         f
     }
 
-    fn rank_services_with_profile(name: &str, candidates: Arc<dyn CandidateProvider>) -> Arc<RankServices> {
+    fn rank_services_with_profile(
+        name: &str,
+        candidates: Arc<dyn CandidateProvider>,
+    ) -> Arc<RankServices> {
         let factory = factory_with_docid();
         let registry = ProfileRegistry::new();
         let mut spec = RankProfileSpec::new(name);
@@ -419,8 +425,11 @@ mod tests {
 
     #[tokio::test]
     async fn grpc_handler_with_no_profile_returns_retrieval_only() {
-        let candidates: Arc<dyn CandidateProvider> =
-            Arc::new(FixedCandidates(vec![DocHandle(1), DocHandle(2), DocHandle(3)]));
+        let candidates: Arc<dyn CandidateProvider> = Arc::new(FixedCandidates(vec![
+            DocHandle(1),
+            DocHandle(2),
+            DocHandle(3),
+        ]));
         let services = Arc::new(RankServices::new(candidates));
         let handler = RankServiceImpl::new(services);
         let req = tonic::Request::new(proto_ranking::RankSearchRequest {
@@ -467,8 +476,7 @@ mod tests {
 
     #[tokio::test]
     async fn grpc_handler_with_unknown_profile_returns_not_found_status() {
-        let candidates: Arc<dyn CandidateProvider> =
-            Arc::new(FixedCandidates(vec![DocHandle(1)]));
+        let candidates: Arc<dyn CandidateProvider> = Arc::new(FixedCandidates(vec![DocHandle(1)]));
         let services = Arc::new(RankServices::new(candidates));
         let handler = RankServiceImpl::new(services);
         let req = tonic::Request::new(proto_ranking::RankSearchRequest {
@@ -608,11 +616,8 @@ mod tests {
         use prost::Message;
         let candidates: Arc<dyn CandidateProvider> =
             Arc::new(FixedCandidates(vec![DocHandle(5), DocHandle(9)]));
-        let services = rank_services_with_summary_features_profile(
-            "sf",
-            vec!["docid()"],
-            candidates,
-        );
+        let services =
+            rank_services_with_summary_features_profile("sf", vec!["docid()"], candidates);
         let handler = RankServiceImpl::new(services);
         let req = tonic::Request::new(proto_ranking::RankSearchRequest {
             collection: "docs".into(),
@@ -646,11 +651,7 @@ mod tests {
         use prost::Message;
         let candidates: Arc<dyn CandidateProvider> =
             Arc::new(FixedCandidates(vec![DocHandle(3), DocHandle(8)]));
-        let services = rank_services_with_match_features_profile(
-            "mf",
-            vec!["docid()"],
-            candidates,
-        );
+        let services = rank_services_with_match_features_profile("mf", vec!["docid()"], candidates);
         let handler = RankServiceImpl::new(services);
         let req = tonic::Request::new(proto_ranking::RankSearchRequest {
             collection: "docs".into(),
@@ -661,8 +662,8 @@ mod tests {
             rank_overrides: None,
         });
         let resp = handler.rank_search(req).await.unwrap().into_inner();
-        let back = proto_ranking::RankSearchResponse::decode(resp.encode_to_vec().as_slice())
-            .unwrap();
+        let back =
+            proto_ranking::RankSearchResponse::decode(resp.encode_to_vec().as_slice()).unwrap();
         assert_eq!(back.hits.len(), 2);
         for h in &back.hits {
             assert_eq!(h.match_features.len(), 1);

@@ -218,13 +218,19 @@ fn map_header_to_port_credential(
     auth_header: &str,
 ) -> Result<proximadb_runtime::PortAuthCredential, (StatusCode, Json<AuthErrorResponse>)> {
     if let Some(token) = auth_header.strip_prefix("Bearer ") {
-        return Ok(proximadb_runtime::PortAuthCredential::Jwt(token.to_string()));
+        return Ok(proximadb_runtime::PortAuthCredential::Jwt(
+            token.to_string(),
+        ));
     }
     if let Some(key) = auth_header.strip_prefix("API-Key ") {
-        return Ok(proximadb_runtime::PortAuthCredential::ApiKey(key.to_string()));
+        return Ok(proximadb_runtime::PortAuthCredential::ApiKey(
+            key.to_string(),
+        ));
     }
     if let Some(key) = auth_header.strip_prefix("Api-Key ") {
-        return Ok(proximadb_runtime::PortAuthCredential::ApiKey(key.to_string()));
+        return Ok(proximadb_runtime::PortAuthCredential::ApiKey(
+            key.to_string(),
+        ));
     }
     Ok(proximadb_runtime::PortAuthCredential::ApiKey(
         auth_header.to_string(),

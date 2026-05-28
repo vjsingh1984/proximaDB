@@ -832,6 +832,7 @@ pub struct CollectionRouteHealthV2 {
     pub freshness: FreshnessHealth,
     pub object_economy: ObjectEconomyHealth,
     pub recall_probe: RecallProbeHealth,
+    pub pinning: PinningHealth,
 
     pub degraded_reasons: Vec<DegradedReason>,
 }
@@ -910,6 +911,37 @@ pub struct SearchFreshnessModes {
     /// silently degrading to Strong). True since commit e34a06225 wired
     /// `freshness_watermark_ns` through `scan_wal_delta_if_needed`.
     pub bounded_stale_time_bound_check: bool,
+}
+
+/// Collection pinning state (Phase 6 control surface). Reflects whether
+/// an operator has explicitly pinned this collection to a storage tier via
+/// `CollectionPinRegistry`. Absence of a pin means the access-pattern
+/// tiering policy decides placement — there's nothing wrong about that;
+/// it's just the default path.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct PinningHealth {
+    /// Whether the pinning registry is reachable from `AppState` for this
+    /// deployment. Always `true` today — `AppState.pin_registry` defaults
+    /// to a fresh empty registry when `SharedServices` doesn't inject one.
+    pub registry_in_app_state: bool,
+    /// Current pin state for this collection. `None` when the operator has
+    /// not pinned it — the tiering policy decides placement on its own.
+    pub pin: Option<PinDetails>,
+}
+
+/// Operator-set pin override on a single collection. Mirrors the `PinState`
+/// in `src/storage/collection_pinning.rs` but uses a stable string label
+/// for the target so the JSON contract doesn't track the internal enum
+/// discriminant directly.
+#[derive(Debug, Serialize, PartialEq, Eq)]
+pub struct PinDetails {
+    /// Stable lowercase label: "memory" | "nvme_ssd" | "cloud".
+    pub target: &'static str,
+    /// Number of replicas the operator requested. `1` = no replication.
+    pub replicas: u32,
+    /// Wall-clock nanoseconds when the pin was last applied. Lets
+    /// dashboards render "pinned X minutes ago" without re-querying.
+    pub pinned_at_ns: i64,
 }
 
 /// Object-economy directory state. The directory format and sidecar live in
@@ -1024,6 +1056,7 @@ fn build_route_health(
         index_size_bytes,
         None,
         RecallProbeLiveState::Unwired,
+        None,
     )
 }
 
@@ -1048,6 +1081,7 @@ fn build_route_health_with_live_state(
     index_size_bytes: u64,
     cached_object_economy_status: Option<&'static str>,
     recall_probe_state: RecallProbeLiveState,
+    pin_state: Option<crate::storage::collection_pinning::PinState>,
 ) -> CollectionRouteHealthV2 {
     let filtered_ann = FilteredAnnHealth {
         id_predicate_supported: true,
@@ -1136,6 +1170,15 @@ fn build_route_health_with_live_state(
         },
     };
 
+    let pinning = PinningHealth {
+        registry_in_app_state: true,
+        pin: pin_state.map(|ps| PinDetails {
+            target: ps.target.label(),
+            replicas: ps.replicas,
+            pinned_at_ns: ps.pinned_at_ns,
+        }),
+    };
+
     let degraded_reasons = compute_degraded_reasons(
         &filtered_ann,
         &writes,
@@ -1159,6 +1202,7 @@ fn build_route_health_with_live_state(
         freshness,
         object_economy,
         recall_probe,
+        pinning,
         degraded_reasons,
     }
 }
@@ -1253,6 +1297,8 @@ pub async fn get_collection_route_health_v2(
         None => RecallProbeLiveState::Unwired,
     };
 
+    let pin_state = state.pin_registry.get(&collection_id);
+
     Ok(Json(build_route_health_with_live_state(
         collection_id,
         engine_str,
@@ -1263,6 +1309,7 @@ pub async fn get_collection_route_health_v2(
         non_negative_stat(stats.index_size_bytes),
         cached_object_economy_status,
         recall_probe_state,
+        pin_state,
     )))
 }
 
@@ -1487,7 +1534,11 @@ mod tests {
         assert!(h.freshness.search_request_modes.strong);
         assert!(h.freshness.search_request_modes.bounded_stale);
         assert!(h.freshness.search_request_modes.stale_ok);
-        assert!(h.freshness.search_request_modes.bounded_stale_time_bound_check);
+        assert!(
+            h.freshness
+                .search_request_modes
+                .bounded_stale_time_bound_check
+        );
         // Collection-default modes still not stored on the catalog —
         // separate slice. The reason stays in degraded_reasons.
         assert!(!h.freshness.collection_level_modes_wired);
@@ -1597,6 +1648,7 @@ mod tests {
                 "freshness",
                 "index_size_bytes",
                 "object_economy",
+                "pinning",
                 "recall_probe",
                 "record_count",
                 "schema_version",
@@ -1619,6 +1671,7 @@ mod tests {
             0,
             Some("loaded"),
             RecallProbeLiveState::Unwired,
+            None,
         );
 
         assert!(h.object_economy.live_status_in_app_state);
@@ -1645,6 +1698,7 @@ mod tests {
             0,
             Some("missing"),
             RecallProbeLiveState::Unwired,
+            None,
         );
 
         assert!(h.object_economy.live_status_in_app_state);
@@ -1703,6 +1757,7 @@ mod tests {
             0,
             None,
             RecallProbeLiveState::Wired { gate_open: true },
+            None,
         );
         assert!(h.recall_probe.live_state_in_app_state);
         assert_eq!(h.recall_probe.gate_open, Some(true));
@@ -1717,6 +1772,57 @@ mod tests {
         );
     }
 
+    // ------------------------------------------------------------------
+    // Pinning state — Phase 6 CollectionPinRegistry surfaced via AppState.
+    // The registry is always reachable (defaults to empty in
+    // AppState::new); the per-collection pin is Some only when an
+    // operator has explicitly pinned the collection.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn route_health_pinning_reports_no_pin_by_default() {
+        let h = build_route_health(
+            "c".to_string(),
+            "sst".to_string(),
+            8,
+            "cosine".to_string(),
+            0,
+            0,
+            0,
+        );
+        assert!(h.pinning.registry_in_app_state);
+        assert_eq!(h.pinning.pin, None);
+    }
+
+    #[test]
+    fn route_health_pinning_renders_pin_details_when_set() {
+        use crate::storage::collection_pinning::{CollectionPinTarget, PinState};
+        let pin = PinState {
+            target: CollectionPinTarget::NvmeSsd,
+            replicas: 3,
+            pinned_at_ns: 1_700_000_000_000_000_000,
+        };
+        let h = build_route_health_with_live_state(
+            "c".to_string(),
+            "sst".to_string(),
+            8,
+            "cosine".to_string(),
+            0,
+            0,
+            0,
+            None,
+            RecallProbeLiveState::Unwired,
+            Some(pin),
+        );
+        assert!(h.pinning.registry_in_app_state);
+        let details = h.pinning.pin.as_ref().expect("pin should be Some");
+        // Use the stable lowercase label, not the enum variant name,
+        // so the JSON contract doesn't track internal renames.
+        assert_eq!(details.target, "nvme_ssd");
+        assert_eq!(details.replicas, 3);
+        assert_eq!(details.pinned_at_ns, 1_700_000_000_000_000_000);
+    }
+
     #[test]
     fn route_health_recall_probe_wired_reports_gate_open_false() {
         let h = build_route_health_with_live_state(
@@ -1729,6 +1835,7 @@ mod tests {
             0,
             None,
             RecallProbeLiveState::Wired { gate_open: false },
+            None,
         );
         assert!(h.recall_probe.live_state_in_app_state);
         assert_eq!(h.recall_probe.gate_open, Some(false));

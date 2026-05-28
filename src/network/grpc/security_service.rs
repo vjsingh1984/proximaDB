@@ -633,11 +633,9 @@ impl proximadb_runtime::SecurityPort for SecurityServiceImpl {
 
 /// Lossy projection of root-crate `UnifiedUserContext` →
 /// port-level `PortUserContext` (ADR-016).
-fn project_unified_to_port_context(
-    ctx: UnifiedUserContext,
-) -> proximadb_runtime::PortUserContext {
-    let effective_permissions_json = serde_json::to_string(&ctx.effective_permissions)
-        .unwrap_or_else(|_| "[]".to_string());
+fn project_unified_to_port_context(ctx: UnifiedUserContext) -> proximadb_runtime::PortUserContext {
+    let effective_permissions_json =
+        serde_json::to_string(&ctx.effective_permissions).unwrap_or_else(|_| "[]".to_string());
     let auth_method = match ctx.auth_method {
         UnifiedAuthMethod::SSO { .. } => "sso".to_string(),
         UnifiedAuthMethod::JWT => "jwt".to_string(),
@@ -782,8 +780,7 @@ mod tests {
                 (UnifiedAuthMethod::Internal, "internal"),
             ];
             for (am, expected) in cases {
-                let p =
-                    project_unified_to_port_context(ctx(None, &[], "", am, HashSet::new()));
+                let p = project_unified_to_port_context(ctx(None, &[], "", am, HashSet::new()));
                 assert_eq!(p.auth_method, expected);
             }
         }

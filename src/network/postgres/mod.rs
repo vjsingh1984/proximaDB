@@ -31,8 +31,8 @@ use self::session::SessionManager;
 use crate::catalog::CatalogManager;
 use crate::graph::GraphService;
 use crate::observability::ObservabilityService;
-use crate::services::VectorOperationsService;
 use crate::services::TableWalAppender;
+use crate::services::VectorOperationsService;
 use crate::storage::document::DocumentService;
 use proximadb_records::RecordStorage;
 

@@ -326,11 +326,7 @@ impl SharedServices {
         // without opt_config use the in-memory constructor.
         let pin_registry = match opt_config {
             Some(cfg) => {
-                let registry_path = cfg
-                    .server
-                    .data_dir
-                    .join("pinning")
-                    .join("registry.json");
+                let registry_path = cfg.server.data_dir.join("pinning").join("registry.json");
                 info!(
                     "📌 SharedServices: pin registry persistence enabled at {}",
                     registry_path.display()

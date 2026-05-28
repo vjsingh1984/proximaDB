@@ -50,13 +50,13 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use arrow_array::{
-    ArrayRef, Float32Array, Float64Array, RecordBatch, StringArray, UInt32Array, UInt8Array,
+    ArrayRef, Float32Array, Float64Array, RecordBatch, StringArray, UInt8Array, UInt32Array,
 };
 use arrow_ipc::writer::StreamWriter;
 use arrow_schema::{DataType, Field, Schema};
 
 use crate::network::rest::v1::rank::{
-    handle_rank_search_with_metrics, RankSearchRequest, RankSearchResponse, RankServices,
+    RankSearchRequest, RankSearchResponse, RankServices, handle_rank_search_with_metrics,
 };
 use proximadb_rank_core::RankError;
 use proximadb_rank_profile::CompiledRankProfile;
@@ -116,10 +116,12 @@ pub async fn export_rank_features_to_arrow_ipc(
     )
     .await?;
 
-    let batch = build_record_batch(response, &match_column_names, &summary_column_names)
-        .map_err(|e| RankError::ModelInference {
-            model_id: "rank_features_export:arrow_build".into(),
-            reason: e,
+    let batch =
+        build_record_batch(response, &match_column_names, &summary_column_names).map_err(|e| {
+            RankError::ModelInference {
+                model_id: "rank_features_export:arrow_build".into(),
+                reason: e,
+            }
         })?;
     encode_ipc_stream(&batch).map_err(|e| RankError::ModelInference {
         model_id: "rank_features_export:ipc_encode".into(),
@@ -167,11 +169,13 @@ fn build_record_batch(
     let n = response.hits.len();
 
     let id_col: ArrayRef = Arc::new(StringArray::from(
-        response.hits.iter().map(|h| h.id.as_str()).collect::<Vec<_>>(),
+        response
+            .hits
+            .iter()
+            .map(|h| h.id.as_str())
+            .collect::<Vec<_>>(),
     ));
-    let rank_col: ArrayRef = Arc::new(UInt32Array::from(
-        (0u32..n as u32).collect::<Vec<u32>>(),
-    ));
+    let rank_col: ArrayRef = Arc::new(UInt32Array::from((0u32..n as u32).collect::<Vec<u32>>()));
     let score_col: ArrayRef = Arc::new(Float32Array::from(
         response.hits.iter().map(|h| h.score).collect::<Vec<_>>(),
     ));
@@ -219,7 +223,11 @@ fn build_record_batch(
         fields.push(Field::new(name, DataType::Float64, true));
     }
     for name in summary_column_names {
-        fields.push(Field::new(summary_column_name(name), DataType::Float64, true));
+        fields.push(Field::new(
+            summary_column_name(name),
+            DataType::Float64,
+            true,
+        ));
     }
     let schema = Arc::new(Schema::new(fields));
 
@@ -252,7 +260,7 @@ fn _unused_btreemap_marker(_: BTreeMap<String, ()>) {}
 mod tests {
     use super::*;
     use crate::network::rest::v1::rank::{
-        CandidateBatch, CandidateProvider, ScoredHitDto, ScoreVectorDto,
+        CandidateBatch, CandidateProvider, ScoreVectorDto, ScoredHitDto,
     };
     use arrow_array::Array;
     use arrow_array::cast::AsArray;
@@ -317,10 +325,7 @@ mod tests {
 
     #[test]
     fn build_batch_with_no_features_emits_4_column_schema() {
-        let r = resp(vec![
-            dto("a", 0.9, 0, &[]),
-            dto("b", 0.7, 0, &[]),
-        ]);
+        let r = resp(vec![dto("a", 0.9, 0, &[]), dto("b", 0.7, 0, &[])]);
         let batch = build_record_batch(r, &[], &[]).unwrap();
         let s = batch.schema();
         assert_eq!(s.fields().len(), 4);
@@ -339,9 +344,12 @@ mod tests {
             0,
             &[("bm25(title)", 12.0), ("closeness(embedding)", 0.91)],
         )]);
-        let batch =
-            build_record_batch(r, &["bm25(title)".into(), "closeness(embedding)".into()], &[])
-                .unwrap();
+        let batch = build_record_batch(
+            r,
+            &["bm25(title)".into(), "closeness(embedding)".into()],
+            &[],
+        )
+        .unwrap();
         let s = batch.schema();
         assert_eq!(s.fields().len(), 6);
         assert_eq!(s.field(4).name(), "bm25(title)");
@@ -352,10 +360,7 @@ mod tests {
     fn build_batch_emits_null_for_missing_feature_on_a_row() {
         // Row "a" has feature X, row "b" doesn't. Column X for row "b"
         // must encode as null rather than reshape the schema.
-        let r = resp(vec![
-            dto("a", 0.9, 0, &[("X", 1.5)]),
-            dto("b", 0.7, 0, &[]),
-        ]);
+        let r = resp(vec![dto("a", 0.9, 0, &[("X", 1.5)]), dto("b", 0.7, 0, &[])]);
         let batch = build_record_batch(r, &["X".into()], &[]).unwrap();
         let col = batch.column(4);
         let arr = col.as_primitive::<arrow_array::types::Float64Type>();
@@ -489,7 +494,9 @@ mod tests {
         }))
         .unwrap();
 
-        let ipc = export_rank_features_to_arrow_ipc(&services, &body).await.unwrap();
+        let ipc = export_rank_features_to_arrow_ipc(&services, &body)
+            .await
+            .unwrap();
         let mut reader = StreamReader::try_new(ipc.as_slice(), None).unwrap();
         let batch = reader.next().unwrap().unwrap();
         assert_eq!(batch.num_rows(), 2);
@@ -528,7 +535,9 @@ mod tests {
             "k": 2,
         }))
         .unwrap();
-        let ipc = export_rank_features_to_arrow_ipc(&services, &body).await.unwrap();
+        let ipc = export_rank_features_to_arrow_ipc(&services, &body)
+            .await
+            .unwrap();
         let mut reader = StreamReader::try_new(ipc.as_slice(), None).unwrap();
         let batch = reader.next().unwrap().unwrap();
         assert_eq!(batch.num_columns(), 4); // id/rank/score/phase only
@@ -537,10 +546,12 @@ mod tests {
 
     #[tokio::test]
     async fn export_with_bad_body_returns_invalid_profile_error() {
-        let candidates: Arc<dyn CandidateProvider> =
-            Arc::new(FixedCandidates(vec![DocHandle(1)]));
+        let candidates: Arc<dyn CandidateProvider> = Arc::new(FixedCandidates(vec![DocHandle(1)]));
         let services = Arc::new(RankServices::new(candidates));
-        let err = export_rank_features_to_arrow_ipc(&services, b"not json").await.err().unwrap();
+        let err = export_rank_features_to_arrow_ipc(&services, b"not json")
+            .await
+            .err()
+            .unwrap();
         match err {
             RankError::InvalidProfile(msg) => {
                 assert!(msg.contains("rank_features_export"));
@@ -551,8 +562,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_with_unknown_profile_propagates_profile_not_found() {
-        let candidates: Arc<dyn CandidateProvider> =
-            Arc::new(FixedCandidates(vec![DocHandle(1)]));
+        let candidates: Arc<dyn CandidateProvider> = Arc::new(FixedCandidates(vec![DocHandle(1)]));
         let services = Arc::new(RankServices::new(candidates));
         let body = serde_json::to_vec(&serde_json::json!({
             "collection": "docs",
@@ -561,7 +571,10 @@ mod tests {
             "rank_profile": "ghost",
         }))
         .unwrap();
-        let err = export_rank_features_to_arrow_ipc(&services, &body).await.err().unwrap();
+        let err = export_rank_features_to_arrow_ipc(&services, &body)
+            .await
+            .err()
+            .unwrap();
         match err {
             RankError::ProfileNotFound(name) => assert_eq!(name, "ghost"),
             other => panic!("expected ProfileNotFound, got {other:?}"),
@@ -623,12 +636,9 @@ mod tests {
             &[("bm25", 12.0)],
             &[("snippet", 0.5), ("freshness", 0.9)],
         )]);
-        let batch = build_record_batch(
-            r,
-            &["bm25".into()],
-            &["snippet".into(), "freshness".into()],
-        )
-        .unwrap();
+        let batch =
+            build_record_batch(r, &["bm25".into()], &["snippet".into(), "freshness".into()])
+                .unwrap();
         let s = batch.schema();
         assert_eq!(s.fields().len(), 7); // 4 fixed + 1 match + 2 summary
         assert_eq!(s.field(4).name(), "bm25");
@@ -695,12 +705,8 @@ mod tests {
             &[("bm25(title)", 3.0)],
             &[("bm25(title)", 9.0)],
         )]);
-        let batch = build_record_batch(
-            r,
-            &["bm25(title)".into()],
-            &["bm25(title)".into()],
-        )
-        .unwrap();
+        let batch =
+            build_record_batch(r, &["bm25(title)".into()], &["bm25(title)".into()]).unwrap();
         let s = batch.schema();
         assert_eq!(s.field(4).name(), "bm25(title)");
         assert_eq!(s.field(5).name(), "sf_bm25(title)");
@@ -753,7 +759,9 @@ mod tests {
             "rank_profile": "both",
         }))
         .unwrap();
-        let ipc = export_rank_features_to_arrow_ipc(&services, &body).await.unwrap();
+        let ipc = export_rank_features_to_arrow_ipc(&services, &body)
+            .await
+            .unwrap();
         let mut reader = StreamReader::try_new(ipc.as_slice(), None).unwrap();
         let batch = reader.next().unwrap().unwrap();
         // id/rank/score/phase + 1 match + 1 summary = 6 columns

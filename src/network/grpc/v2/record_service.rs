@@ -979,23 +979,52 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             filters: grpc_filters_to_rich(&req.filters)?,
         };
 
-        match self
-            .request_handlers
-            .handle_record_search_for_tenant(search_request, tenant_id.as_deref())
-            .await
-        {
+        // TD-064: scope the search in a predicate-diagnostics context so
+        // any AxisManager-deep shortfall is captured here.
+        let search_outcome = crate::observability::predicate_diagnostics::scope(async {
+            self.request_handlers
+                .handle_record_search_for_tenant(search_request, tenant_id.as_deref())
+                .await
+        })
+        .await;
+        let predicate_shortfall = crate::observability::predicate_diagnostics::take_shortfall();
+
+        match search_outcome {
             Ok(resp) => {
                 let include_vector = req.include_vector;
 
                 let results = self.convert_search_results(&resp, include_vector);
                 let total_found = resp.total_found;
 
+                // TD-064: surface shortfall as search_stats keys for clients
+                // that don't have a separate EXPLAIN channel. Keys are
+                // namespaced so they coexist with future stats fields.
+                let mut search_stats: HashMap<String, String> = HashMap::new();
+                if let Some(sf) = predicate_shortfall {
+                    search_stats.insert(
+                        "predicate_shortfall.requested_k".to_string(),
+                        sf.requested_k.to_string(),
+                    );
+                    search_stats.insert(
+                        "predicate_shortfall.returned_k".to_string(),
+                        sf.returned_k.to_string(),
+                    );
+                    search_stats.insert(
+                        "predicate_shortfall.oversample_pool".to_string(),
+                        sf.oversample_pool.to_string(),
+                    );
+                    search_stats.insert(
+                        "predicate_shortfall.ann_filtering_mode".to_string(),
+                        sf.ann_filtering_mode,
+                    );
+                }
+
                 Ok(Response::new(TypedSearchResponse {
                     results,
                     total_found,
                     search_time_us: 0, // Would need timing
                     collection_id: Some(req.collection_id),
-                    search_stats: HashMap::new(),
+                    search_stats,
                 }))
             }
             Err(e) => {
