@@ -424,6 +424,88 @@ impl UnifiedHandlers {
         }
     }
 
+    /// Coerce every embedding cell on every record to the collection's
+    /// canonical precision (resolved via xCatalog) **in place**.
+    ///
+    /// This is the single shared implementation of the v2 precision-coercion
+    /// contract. Both `handle_record_batch_for_tenant` (upsert path, used by
+    /// REST `/api/v2/.../records/batch`, gRPC v2, REST v3 docs) and
+    /// `handle_record_insert_batch_for_tenant` (insert-only path, used by
+    /// Arrow Flight `do_put`) must call this method so the two handlers
+    /// cannot silently diverge again. The first divergence — Arrow Flight
+    /// keeping records at fp32 input precision for fp16 collections — was
+    /// closed in the 2026-05-28 round-2 reconciliation (commit `a446b3964`)
+    /// and tracked as TD-082. Folding the duplicate into a shared helper is
+    /// the TD-082 closure: parity is now enforced by code-sharing, not by a
+    /// test that could later be deleted.
+    ///
+    /// Behaviour:
+    /// * No-op when the resolver isn't wired (embedded test harness without
+    ///   a default catalog — TD-080).
+    /// * No-op when the resolved target precision is `Fp32` — input was
+    ///   already canonical fp32 off the wire.
+    /// * On resolver error, log a `warn` and keep records at input precision
+    ///   (matches the pre-helper behaviour; cataloging mismatches surface
+    ///   via the per-precision canonical_bytes metric).
+    async fn coerce_records_to_canonical_precision(
+        &self,
+        records: &mut [proximadb_records::ProximaRecord],
+        collection_id: &str,
+    ) {
+        if let Some(resolver) = self.precision_resolver.get() {
+            let table_id = Self::collection_to_table_identifier(collection_id);
+            match resolver.resolve(&table_id).await {
+                Ok(target_precision)
+                    if target_precision != proximadb_records::EmbeddingScalarType::Fp32 =>
+                {
+                    for record in records.iter_mut() {
+                        for cell in &mut record.embeddings {
+                            cell.coerce_to_precision(target_precision);
+                        }
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(
+                        collection = %collection_id,
+                        error = %e,
+                        "v2 record batch: precision resolver lookup failed; \
+                         records will land at their input precision"
+                    );
+                }
+            }
+        }
+        // Emit the per-precision canonical_bytes metric using the user-facing
+        // `collection_id` the handler received. The WAL writer's own emitter
+        // (mod.rs:2145, bincode_serialization_strategy.rs:235) labels by the
+        // internal UUID after `resolve_collection_id_internal`, which makes
+        // dashboards harder to read and breaks the regression test that
+        // scrapes by user-facing name. Keep the WAL emitter for non-handler
+        // paths (queue drainer, bulk loader) where only the UUID is known;
+        // for the handler-driven v2 record path this emission carries the
+        // authoritative label and the WAL-side emission is a no-op duplicate
+        // operators can dedupe by label cardinality. TD-080 closure.
+        if let Some(pm) = crate::observability::precision_metrics::metrics() {
+            let mut per_precision: std::collections::HashMap<
+                proximadb_records::EmbeddingScalarType,
+                i64,
+            > = std::collections::HashMap::new();
+            for record in records.iter() {
+                for cell in &record.embeddings {
+                    *per_precision.entry(cell.precision).or_insert(0) +=
+                        cell.values_byte_size() as i64;
+                }
+            }
+            for (precision, delta) in per_precision {
+                pm.add_canonical_bytes(
+                    collection_id,
+                    crate::observability::precision_metrics::precision_label(precision),
+                    delta,
+                );
+            }
+        }
+    }
+
     /// Set hybrid runtime configuration (thread-safe; callable post-initialization)
     pub fn set_hybrid_runtime(&self, cfg: crate::core::config::HybridRuntimeConfig) {
         if let Ok(mut guard) = self.hybrid_runtime.write() {
@@ -942,40 +1024,13 @@ impl UnifiedHandlers {
             ));
         }
 
-        // Coerce embeddings to the collection's canonical precision before
-        // handing the batch to the WAL writer. Mirrors the v1 vector batch
-        // handler (handle_vector_batch_v1_internal). Without this, records
-        // arriving over v2 records/batch keep their input precision (fp32
-        // off the wire) and the per-precision canonical_bytes metric
-        // accumulates under "fp32" even for fp16 collections — observed
-        // 2026-05-26 via fp16_v2_insert_search_e2e. The fix puts v2 on
-        // the same precision-coercion contract as v1.
+        // Coerce embeddings to the collection's canonical precision. Single
+        // source of truth lives in `coerce_records_to_canonical_precision`
+        // so the Arrow Flight insert-only handler cannot drift out of sync
+        // again (TD-082 closure).
         let mut records = request.records;
-        if let Some(resolver) = self.precision_resolver.get() {
-            let table_id = Self::collection_to_table_identifier(&request.collection_id);
-            match resolver.resolve(&table_id).await {
-                Ok(target_precision)
-                    if target_precision != proximadb_records::EmbeddingScalarType::Fp32 =>
-                {
-                    for record in &mut records {
-                        for cell in &mut record.embeddings {
-                            cell.coerce_to_precision(target_precision);
-                        }
-                    }
-                }
-                Ok(_) => {
-                    // Fp32 — no coercion needed.
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        collection = %request.collection_id,
-                        error = %e,
-                        "v2 record batch: precision resolver lookup failed; \
-                         records will land at their input precision"
-                    );
-                }
-            }
-        }
+        self.coerce_records_to_canonical_precision(&mut records, &request.collection_id)
+            .await;
 
         match self
             .vector_operations_service
@@ -1044,37 +1099,14 @@ impl UnifiedHandlers {
                 "WAL_LANE_REJECTED".to_string(),
             ));
         }
-        // v0.2 release-readiness audit round 2: this insert-only handler
-        // (used by Arrow Flight INSERT path, `arrow_ipc/service.rs:834`)
-        // was missing the precision-coercion block that
-        // `handle_record_batch_for_tenant` already applies. Without it,
-        // an Arrow Flight INSERT into an fp16 collection lands fp32
-        // records — divergent from REST/gRPC v2 behaviour. Keep the two
-        // handlers behaviourally aligned.
+        // Coerce embeddings to the collection's canonical precision. Calls
+        // the same shared helper as `handle_record_batch_for_tenant` so
+        // Arrow Flight INSERT (this handler) and REST/gRPC v2 UPSERT
+        // (the other handler) cannot diverge on precision handling.
+        // TD-082 closure — see `coerce_records_to_canonical_precision`.
         let mut records = request.records;
-        if let Some(resolver) = self.precision_resolver.get() {
-            let table_id = Self::collection_to_table_identifier(&request.collection_id);
-            match resolver.resolve(&table_id).await {
-                Ok(target_precision)
-                    if target_precision != proximadb_records::EmbeddingScalarType::Fp32 =>
-                {
-                    for record in &mut records {
-                        for cell in &mut record.embeddings {
-                            cell.coerce_to_precision(target_precision);
-                        }
-                    }
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    tracing::warn!(
-                        collection = %request.collection_id,
-                        error = %e,
-                        "v2 record insert-only batch: precision resolver lookup failed; \
-                         records will land at their input precision"
-                    );
-                }
-            }
-        }
+        self.coerce_records_to_canonical_precision(&mut records, &request.collection_id)
+            .await;
         match self
             .vector_operations_service
             .insert_records_only_with_tenant_context(

@@ -133,14 +133,14 @@ impl Drop for V2InsertSearchServer {
 /// `handle_record_batch_for_tenant` that v1's
 /// `handle_vector_batch_v1_internal` already had.
 ///
-/// **IGNORED 2026-05-28** — separate concern from the v2 INSERT→SEARCH gap
-/// closed in this same session. The metric is emitted under `precision="fp32"`
-/// when the global `precision_resolver` is not registered on the test server's
-/// `RequestHandlers` instance (the `OnceCell` is unset in `ProximaDB::new` for
-/// the embedded path used by this test). Tracked separately; v2 INSERT and
-/// SEARCH themselves work end-to-end (covered by the round-trip test below
-/// and `tests/release_smoke_v2.rs`).
-#[ignore = "fp16 metric emission requires precision_resolver wiring in test harness — separate from WS3 fix"]
+/// **RE-ENABLED 2026-05-28 (TD-080 closure)** — this test was briefly
+/// `#[ignore]`'d during the round-1 reconciliation because the embedded
+/// `ProximaDB::new` path didn't register a default catalog, so
+/// `precision_resolver` never wired and fp16 records emitted canonical_bytes
+/// under `precision="fp32"`. Fixed in `SharedServices::new` by explicitly
+/// calling `catalog_manager.set_default_catalog("default")` after creating
+/// the native catalog; the resolver now wires in both test harnesses and
+/// production. Reconciliation: TD-080 in `docs/10-quality/TECHNICAL_DEBT.adoc`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rest_v2_insert_into_fp16_collection_accumulates_canonical_bytes_metric() {
     let server = V2InsertSearchServer::start().await.expect("server start");

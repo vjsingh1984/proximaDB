@@ -177,6 +177,24 @@ pub struct SharedServices {
     /// activity, not just routing decisions.
     pub affinity_registry: Arc<crate::cluster::cache_affinity::CacheAffinityRegistry>,
 
+    /// Process-wide primary-pod registry (Slice 2 of
+    /// `docs/12-design/TENANT_COLLECTION_POD_AFFINITY_2026_05_27.adoc`).
+    /// Records the durable (tenant_id, collection_id) → primary pod
+    /// binding that the gateway's write router consults on every
+    /// write. Complementary to `affinity_registry`:
+    ///
+    /// | | `affinity_registry` (read) | `primary_pod_registry` (write) |
+    /// |---|---|---|
+    /// | Authority | in-memory hint, TTL-decayed | durable JSON sidecar today; xCatalog later |
+    /// | Stickiness | soft preference | hard binding (writes MUST route here) |
+    /// | Granularity | collection | tenant + collection |
+    /// | Trigger | observed read traffic | explicit control-plane decision |
+    ///
+    /// Wired here in Slice 2; subsequent slices add the REST operator
+    /// API (Slice 3), the gateway write-router consultation (Slice 4),
+    /// and the xCatalog backing (Slice 5).
+    pub primary_pod_registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+
     /// Shared canonical WAL appender at `<data_dir>/pgwire/canonical-records.wal`.
     ///
     /// Opened once in `SharedServices::new` (when `opt_config` is provided so
@@ -271,6 +289,33 @@ impl SharedServices {
                 .create_native_catalog("default", &storage_config.metadata_url)
                 .await
                 .context("Failed to initialize default xCatalog backend")?;
+        }
+        // TD-080 (2026-05-28 round 2): explicitly designate the "default"
+        // catalog as the manager's default so `catalog_manager.default_catalog()`
+        // returns Ok at boot. Without this, `ProximaDB::new` at `database.rs:159`
+        // never wires `precision_resolver` into RequestHandlers, and fp16
+        // collections emit canonical_bytes under `precision="fp32"` even
+        // for direct REST/gRPC INSERT. The bug surfaced in test harnesses
+        // (the metric test stayed #[ignore]'d) but was also latent in
+        // production — every startup logged the degraded-boot warning at
+        // `database.rs:188`. `set_default_catalog` is idempotent; the
+        // explicit fallback to "default" matches the create call above.
+        let catalogs_now = catalog_manager.list_catalogs().await;
+        if let Some(first) = catalogs_now.first() {
+            let target = if catalogs_now.iter().any(|n| n == "default") {
+                "default".to_string()
+            } else {
+                first.clone()
+            };
+            if let Err(e) = catalog_manager.set_default_catalog(&target).await {
+                tracing::warn!(
+                    error = %e,
+                    target = %target,
+                    "SharedServices: failed to designate default catalog; \
+                     precision_resolver and downstream catalog-driven paths \
+                     will fall back to degraded behaviour"
+                );
+            }
         }
 
         let collection_service = Arc::new(
@@ -380,6 +425,29 @@ impl SharedServices {
         // entries older than that are treated as cold.
         let affinity_registry = crate::cluster::cache_affinity::new_shared();
         info!("🧭 SharedServices: cache-affinity registry ready (TTL 60s)");
+
+        // Slice 2 of tenant-pod-affinity: per-(tenant, collection)
+        // primary-pod registry. Unlike cache_affinity above, this is
+        // durable — writes MUST route to the bound pod for WAL
+        // memtable consistency (see the 3-stage search at
+        // `src/services/operations/vectors/legacy.rs:2827-2858`).
+        // Persistence path is `<data_dir>/primary_pods/registry.json`
+        // when opt_config is provided; tests / embedded paths fall
+        // back to the in-memory constructor. Subsequent slices will
+        // add the REST endpoint, the gateway router consultation,
+        // and the xCatalog backing (deferred from this slice to keep
+        // merge surface small while Phase 7 settles).
+        let primary_pod_registry = match opt_config {
+            Some(cfg) => {
+                let registry_path = cfg.server.data_dir.join("primary_pods").join("registry.json");
+                info!(
+                    "📍 SharedServices: primary-pod registry persistence enabled at {}",
+                    registry_path.display()
+                );
+                crate::cluster::primary_pod_registry::new_shared_at(registry_path)
+            }
+            None => crate::cluster::primary_pod_registry::new_shared(),
+        };
 
         // Create WAL manager for two-stage search FIRST so the SST
         // engine can read its global manifest singleton when wiring the
@@ -1286,6 +1354,12 @@ impl SharedServices {
                 // inspection and future cluster-mode RoutingService
                 // attach.
                 affinity_registry,
+                // Slice 2 of tenant-pod-affinity: primary-pod
+                // registry. Constructed up front (alongside the
+                // pin / affinity registries) so subsequent slices —
+                // REST API, gateway write router, xCatalog backing
+                // — all hold the same `Arc`.
+                primary_pod_registry,
                 // T2.3 / TD-066 production wiring: the shared canonical
                 // WAL appender opened earlier (Some when opt_config is
                 // provided). Held here so multi_server.rs can clone it

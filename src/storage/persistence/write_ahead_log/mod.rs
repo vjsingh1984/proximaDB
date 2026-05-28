@@ -1704,29 +1704,25 @@ impl WriteAheadLogManager {
     /// Returns cached recovery manager if available
     /// Use get_recovery_manager() to create/cache if not exists
     pub fn recovery_manager(&self) -> Option<Arc<RecoveryManager>> {
-        eprintln!("🔍 DEBUG: recovery_manager() called (returns cached value only)");
-
         // Use try_read to avoid blocking - recovery manager is set once at startup
         match self.recovery_manager_cache.try_read() {
             Ok(cache) => {
                 if cache.is_some() {
-                    eprintln!("✅ DEBUG: recovery_manager_cache has cached manager");
+                    trace!("WAL recovery manager cache hit");
                     cache.as_ref().map(|rm| Arc::new(rm.clone()))
                 } else {
-                    eprintln!(
-                        "⚠️ DEBUG: recovery_manager_cache is None - caller should use get_recovery_manager()"
-                    );
+                    trace!("WAL recovery manager cache empty");
                     None
                 }
             }
             Err(_) => {
-                eprintln!("⚠️ DEBUG: Can't acquire read lock, trying blocking read");
+                debug!("WAL recovery manager cache read lock busy; falling back to blocking read");
                 // If we can't acquire read lock, try blocking read
                 let cache = self.recovery_manager_cache.blocking_read();
                 if cache.is_some() {
                     cache.as_ref().map(|rm| Arc::new(rm.clone()))
                 } else {
-                    eprintln!("⚠️ DEBUG: blocking_read also returned None");
+                    trace!("WAL recovery manager cache still empty after blocking read");
                     None
                 }
             }
@@ -2146,6 +2142,17 @@ impl WriteAheadLogManager {
             // which the strategy-level path bypasses, so the metric
             // needs its own increment here to stay accurate across
             // both routes.
+            //
+            // Note (TD-080): for v2 record writes that go through
+            // `UnifiedHandlers::coerce_records_to_canonical_precision`,
+            // the canonical label-set is already emitted at the handler
+            // boundary using the user-facing collection name. This block
+            // continues to fire so non-handler writers (queue drainer,
+            // bulk loader) get coverage too, but it labels by the
+            // internal `collection_id` (typically a UUID). Operators
+            // dashboarding on `proximadb_embedding_precision_canonical_bytes`
+            // should prefer the handler-emitted series; the WAL-emitted
+            // series is a secondary signal during incident triage.
             if let Some(pm) = crate::observability::precision_metrics::metrics() {
                 let mut per_precision: std::collections::HashMap<
                     proximadb_records::EmbeddingScalarType,
@@ -2334,13 +2341,13 @@ impl WriteAheadLogManager {
                     match provider.get_collection(&collection_id).await {
                         Ok(Some(collection)) => {
                             if let Some(assignment) = collection.storage_assignment {
-                                eprintln!(
-                                    "✅ DEBUG: Found storage assignment: {}",
+                                debug!(
+                                    "Found storage assignment for WAL persistence: {}",
                                     assignment.base_location
                                 );
                                 assignment.base_location.clone()
                             } else {
-                                eprintln!("⚠️ DEBUG: No storage_assignment in collection");
+                                debug!("No storage assignment in collection; using WAL fallback");
                                 self.config
                                     .multi_disk
                                     .data_directories
@@ -2350,7 +2357,7 @@ impl WriteAheadLogManager {
                             }
                         }
                         _ => {
-                            eprintln!("⚠️ DEBUG: Collection lookup failed, using fallback");
+                            debug!("Collection lookup failed for WAL persistence; using fallback");
                             self.config
                                 .multi_disk
                                 .data_directories
@@ -3161,35 +3168,29 @@ impl WriteAheadLogManager {
     /// This allows external code to register storage engines before recovery
     /// IMPORTANT: Returns cached instance to ensure engine registration persists
     pub async fn get_recovery_manager(&self) -> Result<RecoveryManager> {
-        eprintln!("🔍 DEBUG: get_recovery_manager() called");
-
         // Check if we already have a cached instance
         {
             let cache = self.recovery_manager_cache.read().await;
             if let Some(ref manager) = *cache {
-                eprintln!("♻️ DEBUG: Returning cached RecoveryManager");
-                debug!("♻️ Returning cached RecoveryManager instance");
+                debug!("Returning cached RecoveryManager instance");
                 return Ok(manager.clone());
             }
-            eprintln!("🆕 DEBUG: No cached manager, creating new one");
+            trace!("No cached RecoveryManager; creating new instance");
         }
 
         // Create new instance if not cached
-        eprintln!("🔨 DEBUG: Creating RecoveryManager with metadata provider");
-        debug!("🆕 Creating new RecoveryManager instance with metadata provider");
+        debug!("Creating new RecoveryManager instance with metadata provider");
 
         // Create filesystem factory for recovery
-        eprintln!("🔨 DEBUG: Creating FilesystemFactory for recovery");
         let filesystem_config =
             crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config)
                 .await?,
         );
-        eprintln!("✅ DEBUG: FilesystemFactory created");
+        trace!("FilesystemFactory created for WAL recovery");
 
         // Create RecoveryManager instance with metadata provider
-        eprintln!("🔨 DEBUG: Creating RecoveryManager instance");
         let recovery_manager = RecoveryManager::new(
             self.config.clone(),
             self.shared_wal_behavior
@@ -3198,17 +3199,15 @@ impl WriteAheadLogManager {
             filesystem,
             self.metadata_provider.clone(),
         );
-        eprintln!("✅ DEBUG: RecoveryManager created successfully");
+        trace!("RecoveryManager created successfully");
 
         // Cache for future use
         {
             let mut cache = self.recovery_manager_cache.write().await;
             *cache = Some(recovery_manager.clone());
-            eprintln!("💾 DEBUG: Cached RecoveryManager for future use");
-            debug!("💾 Cached RecoveryManager instance for reuse");
+            debug!("Cached RecoveryManager instance for reuse");
         }
 
-        eprintln!("✅ DEBUG: get_recovery_manager() returning new manager");
         Ok(recovery_manager)
     }
 
