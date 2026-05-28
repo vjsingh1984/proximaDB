@@ -347,6 +347,13 @@ impl SstEngine {
 
         let mut all_candidates = Vec::new();
 
+        // Phase 7.2 warm-path profiling: emit per-phase elapsed
+        // timings under the dedicated `sst_warm_phase` target so a
+        // bench-side tracing layer can aggregate without touching
+        // unrelated logs. These calls cost one `Instant::now()` per
+        // phase boundary — negligible at search granularity.
+        let discovery_start = std::time::Instant::now();
+
         // Discover SSTable files for this collection with optional centroid pruning
         // When SearchMode is Approximate, uses centroid-based IVF-style optimization
         tracing::debug!(storage_url = %storage_url, "Discovering SSTable files");
@@ -361,6 +368,14 @@ impl SstEngine {
                 prune_config, // [AGENT_FIX] Pass prune config down
             )
             .await?;
+        let discovery_us = discovery_start.elapsed().as_micros() as u64;
+        tracing::info!(
+            target: "sst_warm_phase",
+            phase = "discovery",
+            elapsed_us = discovery_us,
+            file_count = sstable_files.len(),
+            "phase done"
+        );
         tracing::debug!(
             "[SST] Discovered {} SSTable files (search_mode={:?})",
             sstable_files.len(),
@@ -378,6 +393,7 @@ impl SstEngine {
 
         // Search each SSTable file with block-level pruning
         // Uses Z-order spatial codes and centroid distances for intelligent block selection
+        let scan_start = std::time::Instant::now();
         let block_prune = &ctx.search_params.block_prune;
         for (file_idx, sstable_path) in sstable_files.iter().enumerate() {
             trace!(
@@ -482,7 +498,19 @@ impl SstEngine {
             }
         }
 
+        let scan_us = scan_start.elapsed().as_micros() as u64;
+        let candidate_count_before_merge = all_candidates.len();
+        tracing::info!(
+            target: "sst_warm_phase",
+            phase = "per_file_scan",
+            elapsed_us = scan_us,
+            file_count = sstable_files.len(),
+            candidate_count = candidate_count_before_merge,
+            "phase done"
+        );
+
         // Use bounded priority queue for efficient top-k selection
+        let merge_start = std::time::Instant::now();
         let mut priority_queue = BoundedPriorityQueue::new(k);
 
         // Insert all candidates into bounded queue
@@ -492,10 +520,26 @@ impl SstEngine {
 
         // Get sorted results from bounded queue
         let mut all_candidates = priority_queue.into_sorted_vec();
+        let merge_us = merge_start.elapsed().as_micros() as u64;
+        tracing::info!(
+            target: "sst_warm_phase",
+            phase = "topk_merge",
+            elapsed_us = merge_us,
+            candidate_count = candidate_count_before_merge,
+            "phase done"
+        );
         tracing::debug!(candidate_count = all_candidates.len(), "Before filtering");
 
         // Filter results based on include flags
+        let filter_start = std::time::Instant::now();
         self.filter_search_results(&mut all_candidates, include_vectors, include_metadata);
+        let filter_us = filter_start.elapsed().as_micros() as u64;
+        tracing::info!(
+            target: "sst_warm_phase",
+            phase = "result_filter",
+            elapsed_us = filter_us,
+            "phase done"
+        );
         tracing::debug!(filtered_count = all_candidates.len(), "After filtering");
 
         info!(
