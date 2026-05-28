@@ -204,6 +204,26 @@ pub struct VectorObjectEconomyExplain {
     pub overfetch_bytes: u64,
     pub wal_delta_searched: bool,
     pub rejected_route_reasons: Vec<String>,
+    // ── Phase 5 Slice 5.5 — delta-merge observability ───────────────────
+    /// Number of WAL/memtable delta records scanned for the query when
+    /// the strong/bounded-stale route required a delta merge. `None`
+    /// when no scan ran (StaleOk, or watermark already covered the WAL).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wal_delta_records_scanned: Option<u64>,
+    /// Bytes read from WAL/memtable during the delta scan. `None` when
+    /// no scan ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wal_delta_bytes: Option<u64>,
+    /// Effective freshness mode chosen for this query, mirroring
+    /// [`VectorFreshnessMode::explain_label`]. Stays separate from the
+    /// existing `freshness_mode` (which is the projection-side label).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness_mode_used: Option<String>,
+    /// Current WAL cursor observed at query plan time. Compared
+    /// against `freshness_watermark_lsn` to decide whether a delta
+    /// scan was needed. `None` when no source was wired.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_lsn_at_query: Option<u64>,
 }
 
 impl VectorObjectEconomyExplain {
@@ -232,6 +252,34 @@ impl VectorObjectEconomyExplain {
 
     pub fn with_selected_files(mut self, selected_files: usize) -> Self {
         self.selected_files = selected_files;
+        self
+    }
+
+    /// Record the result of a WAL/memtable delta scan for this query
+    /// (Phase 5 Slice 5.5). Populates the four delta-merge observability
+    /// fields in a single call so the service path doesn't have to
+    /// touch them individually.
+    ///
+    /// * `mode` — the freshness mode the service honored.
+    /// * `current_lsn` — WAL cursor read at query plan time.
+    /// * `scanned_records` / `scanned_bytes` — `None` when no scan ran
+    ///   (StaleOk, or watermark already covered the WAL); `Some(0)` if
+    ///   the scan ran but returned nothing.
+    pub fn record_wal_delta_scan(
+        mut self,
+        mode: &crate::core::search::VectorFreshnessMode,
+        current_lsn: u64,
+        scanned_records: Option<u64>,
+        scanned_bytes: Option<u64>,
+    ) -> Self {
+        self.freshness_mode_used = Some(mode.explain_label().to_string());
+        self.current_lsn_at_query = Some(current_lsn);
+        self.wal_delta_records_scanned = scanned_records;
+        self.wal_delta_bytes = scanned_bytes;
+        // `wal_delta_searched` is the existing bool field; flip it
+        // whenever any scan-related metric is populated so callers
+        // reading just the bool still see the right state.
+        self.wal_delta_searched = scanned_records.is_some();
         self
     }
 
@@ -2235,6 +2283,66 @@ mod tests {
         assert_eq!(explain.estimated_remote_bytes, 128 * 1024);
         assert_eq!(explain.overfetch_bytes, 4096);
         assert_eq!(explain.cache_status, "cold");
+    }
+
+    #[test]
+    fn vector_object_economy_explain_records_wal_delta_scan_metadata() {
+        use crate::core::search::VectorFreshnessMode;
+
+        let explain = VectorObjectEconomyExplain::default().record_wal_delta_scan(
+            &VectorFreshnessMode::Strong,
+            /*current_lsn*/ 250,
+            /*scanned_records*/ Some(7),
+            /*scanned_bytes*/ Some(4096),
+        );
+
+        assert_eq!(explain.freshness_mode_used.as_deref(), Some("strong"));
+        assert_eq!(explain.current_lsn_at_query, Some(250));
+        assert_eq!(explain.wal_delta_records_scanned, Some(7));
+        assert_eq!(explain.wal_delta_bytes, Some(4096));
+        assert!(explain.wal_delta_searched, "bool flips when scan ran");
+    }
+
+    #[test]
+    fn vector_object_economy_explain_skipped_scan_leaves_metrics_none() {
+        use crate::core::search::VectorFreshnessMode;
+
+        let explain = VectorObjectEconomyExplain::default().record_wal_delta_scan(
+            &VectorFreshnessMode::StaleOk,
+            /*current_lsn*/ 250,
+            /*scanned_records*/ None,
+            /*scanned_bytes*/ None,
+        );
+
+        assert_eq!(explain.freshness_mode_used.as_deref(), Some("stale_ok"));
+        assert_eq!(explain.current_lsn_at_query, Some(250));
+        assert!(explain.wal_delta_records_scanned.is_none());
+        assert!(explain.wal_delta_bytes.is_none());
+        assert!(!explain.wal_delta_searched);
+    }
+
+    #[test]
+    fn vector_object_economy_explain_delta_fields_round_trip_through_json() {
+        use crate::core::search::VectorFreshnessMode;
+
+        let explain = VectorObjectEconomyExplain::default()
+            .record_wal_delta_scan(
+                &VectorFreshnessMode::BoundedStale {
+                    max_staleness_ms: 5_000,
+                },
+                42,
+                Some(3),
+                Some(128),
+            );
+        let json = serde_json::to_string(&explain).expect("serialize");
+        let decoded: VectorObjectEconomyExplain =
+            serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(decoded.freshness_mode_used.as_deref(), Some("bounded_stale"));
+        assert_eq!(decoded.current_lsn_at_query, Some(42));
+        assert_eq!(decoded.wal_delta_records_scanned, Some(3));
+        assert_eq!(decoded.wal_delta_bytes, Some(128));
+        assert!(decoded.wal_delta_searched);
     }
 
     #[test]
