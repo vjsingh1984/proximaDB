@@ -245,10 +245,8 @@ impl OrionGraphEngine {
         base_url: String,
         enable_wal: bool,
     ) -> Result<Self> {
-        Self::with_persistence_for_graph_and_canonical_wal(
-            graph_id, base_url, enable_wal, None,
-        )
-        .await
+        Self::with_persistence_for_graph_and_canonical_wal(graph_id, base_url, enable_wal, None)
+            .await
     }
 
     /// Create ORION engine with persistence AND a shared canonical WAL
@@ -491,14 +489,28 @@ impl OrionGraphEngine {
             // WAL checkpoint. If a shared canonical WAL path is wired
             // through, log the latest checkpoint LSN for this graph so
             // operators can confirm the durability authority's state.
-            // Recovery BEHAVIOR is unchanged in Part 1 — Part 2 will use
-            // this LSN to scope engine WAL replay.
-            let canonical_checkpoint_lsn = persistence.canonical_checkpoint_lsn().await;
+            // Recovery BEHAVIOR is unchanged in Part 1 — Part 2 (Option A
+            // of the LSN-correlation design) will use this LSN to scope
+            // engine WAL replay.
+            let checkpoint_with_ts = persistence.canonical_checkpoint_with_timestamp().await;
+            let (canonical_checkpoint_lsn, checkpoint_ts_ms) = match checkpoint_with_ts {
+                Some((lsn, ts)) => (Some(lsn), Some(ts)),
+                None => (None, None),
+            };
             tracing::info!(
                 graph_id = persistence.graph_id(),
                 canonical_checkpoint_lsn = ?canonical_checkpoint_lsn,
                 "ORION recovery: canonical checkpoint scan (read-side observability; \
                  recovery behavior unchanged — TD-066 (c) Part 1)"
+            );
+            // TD-066 (c) Part 2 Option E: emit metrics so operators can
+            // detect "is canonical emission + production wiring healthy?"
+            // without depending on log scraping. See
+            // `docs/12-design/TD_066_PART2_LSN_CORRELATION_DESIGN_2026_05_28.adoc`.
+            crate::metrics::td066_metrics::record_recovery_checkpoint_observation(
+                persistence.graph_id(),
+                canonical_checkpoint_lsn,
+                checkpoint_ts_ms,
             );
 
             // Step 1: Load latest snapshot (if available)

@@ -188,6 +188,11 @@ pub mod exporters;
 pub mod query_service;
 pub mod schema;
 pub mod store;
+/// TD-064 predicate-aware vector search shortfall counters.
+pub mod td064_metrics;
+/// TD-066 canonical-WAL-authority recovery observability (Option E from
+/// `docs/12-design/TD_066_PART2_LSN_CORRELATION_DESIGN_2026_05_28.adoc`).
+pub mod td066_metrics;
 pub mod updater;
 
 #[cfg(test)]

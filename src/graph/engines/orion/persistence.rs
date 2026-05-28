@@ -331,16 +331,57 @@ impl OrionPersistence {
             .iter()
             .filter_map(|entry| match &entry.operation {
                 proximadb_storage_common::CanonicalOperation::Checkpoint(manifest)
-                    if manifest
-                        .collection_ids
-                        .iter()
-                        .any(|id| id == graph_id) =>
+                    if manifest.collection_ids.iter().any(|id| id == graph_id) =>
                 {
                     Some(manifest.sequence_number)
                 }
                 _ => None,
             })
             .max()
+    }
+
+    /// Companion to [`Self::canonical_checkpoint_lsn`] that also returns
+    /// the manifest's `timestamp_ms` for the same matching Checkpoint.
+    /// `OrionGraphEngine::recover` uses this to feed the
+    /// `orion_recovery_canonical_checkpoint_age_seconds` gauge per the
+    /// TD-066 (c) Part 2 design Option E (`docs/12-design/TD_066_PART2_LSN_CORRELATION_DESIGN_2026_05_28.adoc`).
+    ///
+    /// Returns `None` under the same conditions as
+    /// `canonical_checkpoint_lsn`; returns `Some((lsn, timestamp_ms))`
+    /// for the Checkpoint with the maximum `sequence_number` whose
+    /// `collection_ids` contains this graph.
+    pub async fn canonical_checkpoint_with_timestamp(&self) -> Option<(u64, u64)> {
+        let path = self.canonical_wal_path.as_ref()?;
+        if !tokio::fs::try_exists(path).await.unwrap_or(false) {
+            return None;
+        }
+        let entries =
+            match crate::services::FramedTableWalAppender::read_entries_from_path(path).await {
+                Ok(entries) => entries,
+                Err(err) => {
+                    tracing::warn!(
+                        graph_id = %self.graph_id,
+                        canonical_wal_path = %path.display(),
+                        error = %err,
+                        "ORION canonical_checkpoint_with_timestamp: failed to read canonical WAL; \
+                         returning None and falling back to engine-WAL-only recovery"
+                    );
+                    return None;
+                }
+            };
+
+        let graph_id = self.graph_id.as_str();
+        entries
+            .iter()
+            .filter_map(|entry| match &entry.operation {
+                proximadb_storage_common::CanonicalOperation::Checkpoint(manifest)
+                    if manifest.collection_ids.iter().any(|id| id == graph_id) =>
+                {
+                    Some((manifest.sequence_number, manifest.timestamp_ms))
+                }
+                _ => None,
+            })
+            .max_by_key(|(lsn, _)| *lsn)
     }
 
     /// Save a snapshot of the engine state
