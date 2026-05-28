@@ -66,6 +66,11 @@ pub struct SearchPlanHints {
     pub recall_estimates: Option<Vec<f32>>,
     /// ADR-011 ANN filtering mode chosen by the planner ("PreFilter", "Inline", "PostFilter").
     pub ann_filtering_mode: Option<String>,
+    /// Estimated fraction of records matching the scalar filter used to choose
+    /// `ann_filtering_mode`.
+    pub ann_filtering_selectivity: Option<f64>,
+    /// Source of the selectivity estimate, when known.
+    pub ann_filtering_selectivity_source: Option<String>,
     /// Phase 5: Vector Object Economy route metadata populated when the
     /// strong-route delta merge runs. `None` when the request didn't
     /// require a delta merge (`StaleOk`, or watermark up to date), or

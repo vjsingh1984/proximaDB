@@ -68,7 +68,7 @@ use crate::query::query_optimizer::{
 
 // Import from sibling submodules
 use super::config::{SearchPlanHints, UnifiedSearchConfig};
-use super::hybrid::{build_axis_hybrid_query, build_axis_hybrid_query_with_mode};
+use super::hybrid::{build_axis_hybrid_query, build_axis_hybrid_query_with_policy};
 use super::search::executor::proto_results_to_vector_records;
 use super::search::pipeline::default_progressive_stages;
 use super::validation::{
@@ -1299,6 +1299,127 @@ impl VectorOperationsService {
         Some(entry.directory.freshness_watermark_lsn)
     }
 
+    /// Apply the WAL/memtable delta merge to a set of canonical engine
+    /// results and build the structured EXPLAIN payload for the route.
+    ///
+    /// Single source of truth for the Phase 5 strong-route work: both
+    /// the legacy `execute_search_internal` path and the v1
+    /// `unified_search_v1` path call this so they apply the same merge
+    /// semantics and produce identical EXPLAIN events. Returns:
+    ///
+    /// * `merged_results` — engine results combined with the delta
+    ///   (delta wins on OID collision, tombstones suppress, top-k
+    ///   truncation applied) when the request's freshness mode
+    ///   required a scan. Otherwise the engine results unchanged.
+    /// * `Option<VectorObjectEconomyExplain>` — populated only when the
+    ///   freshness mode required a delta scan. Carries
+    ///   `current_lsn_at_query`, `freshness_watermark_lsn`,
+    ///   `wal_delta_searched`, and `wal_delta_records_scanned` so the
+    ///   hints-aware caller (and tracing layer) can audit the route.
+    ///
+    /// Emits a `tracing::info!` event at target
+    /// `proximadb.vector_route.explain` for operator visibility. The
+    /// caller MAY also surface the explain in a hints payload by
+    /// reading the returned `Option`.
+    pub(crate) async fn apply_delta_merge_with_explain(
+        &self,
+        collection_id: &str,
+        query_vector: &[f32],
+        filter: Option<&FilterExpression>,
+        top_k: usize,
+        freshness_mode: &crate::core::search::VectorFreshnessMode,
+        optimized_results: Vec<crate::core::search::results::OptimizedSearchRecord>,
+    ) -> Result<(
+        Vec<crate::core::search::results::OptimizedSearchRecord>,
+        Option<crate::query::explain::VectorObjectEconomyExplain>,
+    )> {
+        if !freshness_mode.requires_delta_merge() {
+            // StaleOk path: emit a minimal trace event so operators can
+            // confirm the merge was skipped intentionally, then return
+            // engine results unchanged. No explain payload because
+            // there's nothing to audit.
+            tracing::debug!(
+                target = "proximadb.vector_route.explain",
+                collection_id = %collection_id,
+                freshness_mode = "stale_ok",
+                "VectorObjectEconomy stale_ok route — WAL delta scan skipped"
+            );
+            return Ok((optimized_results, None));
+        }
+
+        let distance_metric = crate::compute::distance_computation::DistanceMetric::Cosine;
+        let watermark = self
+            .cached_directory_watermark_lsn(collection_id)
+            .await
+            .unwrap_or(0);
+        // Read the WAL cursor independently of the scan helper so the
+        // EXPLAIN payload carries the value even when no scan ran
+        // (watermark already covers the cursor). Two cheap singleton
+        // calls in exchange for operator visibility.
+        let current_lsn =
+            match crate::storage::persistence::write_ahead_log::manifest::get_service() {
+                Some(svc) => svc.current_lsn().await,
+                None => 0,
+            };
+        let delta_outcome = self
+            .scan_wal_delta_if_needed(
+                collection_id,
+                query_vector,
+                top_k,
+                distance_metric,
+                filter,
+                freshness_mode,
+                watermark,
+            )
+            .await?;
+        let scanned_records = delta_outcome.as_ref().map(|d| d.len() as u64);
+        let (final_results, merge_input_directory) = match delta_outcome {
+            Some(delta) => {
+                let input_directory = optimized_results.len();
+                (
+                    crate::core::search::merge::merge_delta_with_directory_results(
+                        delta,
+                        optimized_results,
+                        top_k,
+                    ),
+                    Some(input_directory),
+                )
+            }
+            None => (optimized_results, None),
+        };
+
+        let explain = crate::query::explain::VectorObjectEconomyExplain {
+            route_kind: "vector_object_economy".to_string(),
+            authority_mode: "projection_over_canonical_records".to_string(),
+            freshness_mode: freshness_mode.explain_label().to_string(),
+            freshness_watermark_lsn: Some(watermark),
+            policy_boundary: "proxima_internal_policy".to_string(),
+            cache_status: "unknown".to_string(),
+            ..Default::default()
+        }
+        .record_wal_delta_scan(
+            freshness_mode,
+            current_lsn,
+            scanned_records,
+            /* scanned_bytes — not yet measured */ None,
+        );
+        tracing::info!(
+            target = "proximadb.vector_route.explain",
+            collection_id = %collection_id,
+            route_kind = %explain.route_kind,
+            freshness_mode = %explain.freshness_mode_used.as_deref().unwrap_or("unknown"),
+            current_lsn = explain.current_lsn_at_query.unwrap_or(0),
+            watermark_lsn = explain.freshness_watermark_lsn.unwrap_or(0),
+            wal_delta_searched = explain.wal_delta_searched,
+            wal_delta_records_scanned = explain.wal_delta_records_scanned.unwrap_or(0),
+            merge_input_directory_records = merge_input_directory.unwrap_or(0),
+            merge_output_records = final_results.len(),
+            "VectorObjectEconomy strong-route query"
+        );
+
+        Ok((final_results, Some(explain)))
+    }
+
     /// Scan the WAL/memtable delta for records committed after the
     /// directory's freshness watermark, when the request's freshness
     /// mode requires it.
@@ -2064,7 +2185,10 @@ impl VectorOperationsService {
         None
     }
 
-    /// Unified search that returns v1 proto results at the source
+    /// Unified search that returns v1 proto results at the source.
+    /// Thin wrapper around `unified_search_v1_inner` that discards the
+    /// Phase 5 EXPLAIN payload. Callers that need the explain (the
+    /// hints-aware sibling) use `_inner` directly.
     pub async fn unified_search_v1(
         &self,
         collection_id: &str,
@@ -2073,6 +2197,28 @@ impl VectorOperationsService {
         filter: Option<FilterExpression>,
         config: Option<UnifiedSearchConfig>,
     ) -> Result<Vec<crate::proto::proximadb_v1::SearchResult>> {
+        let (results, _explain) = self
+            .unified_search_v1_inner(collection_id, query_vector, k, filter, config)
+            .await?;
+        Ok(results)
+    }
+
+    /// Shared implementation for the v1 path and its hints-aware
+    /// sibling. Returns the v1 result envelope plus the Phase 5
+    /// VectorObjectEconomyExplain populated by the shared delta-merge
+    /// helper. The explain is `None` for cache hits and for StaleOk
+    /// requests (no merge ran, nothing to audit).
+    async fn unified_search_v1_inner(
+        &self,
+        collection_id: &str,
+        query_vector: Vec<f32>,
+        k: usize,
+        filter: Option<FilterExpression>,
+        config: Option<UnifiedSearchConfig>,
+    ) -> Result<(
+        Vec<crate::proto::proximadb_v1::SearchResult>,
+        Option<crate::query::explain::VectorObjectEconomyExplain>,
+    )> {
         let config = config.clone();
 
         // Reuse the same cache key as legacy and convert on hit
@@ -2084,7 +2230,7 @@ impl VectorOperationsService {
             filter_str.as_deref(),
         );
         if let Some(cached_v1) = self.query_cache.get_if_fresh_v1(&cache_key, 300).await {
-            return Ok(cached_v1);
+            return Ok((cached_v1, None));
         }
 
         let progressive_enabled = config.as_ref().is_some_and(|c| c.progressive_search);
@@ -2113,6 +2259,17 @@ impl VectorOperationsService {
             .map(|c| c.search_mode.clone())
             .unwrap_or_default();
 
+        // Phase 5: pull the request's freshness mode (default = Strong)
+        // so the v1 path applies the same delta-merge semantics as the
+        // legacy path. Keep clones of query_vector + filter for the
+        // delta scan since execute_unified_plan takes ownership.
+        let freshness_mode = config
+            .as_ref()
+            .and_then(|c| c.freshness_mode.clone())
+            .unwrap_or_default();
+        let delta_query_vector = query_vector.clone();
+        let delta_filter = filter.clone();
+
         let query_vector_clone = query_vector.clone();
         let query_vectors = vec![query_vector_clone];
         let context = UnifiedQueryContext {
@@ -2139,16 +2296,31 @@ impl VectorOperationsService {
             )
             .await?;
 
-        // Build v1 results from the optimized records
+        // Phase 5: shared delta-merge helper applies the WAL/memtable
+        // merge when the request's freshness mode requires it. The
+        // helper emits the EXPLAIN tracing event and returns the
+        // structured explain for hints-aware callers.
+        let (merged_results, explain) = self
+            .apply_delta_merge_with_explain(
+                collection_id,
+                &delta_query_vector,
+                delta_filter.as_ref(),
+                k,
+                &freshness_mode,
+                optimized_results,
+            )
+            .await?;
+
+        // Build v1 results from the merged records
         let v1_results =
-            vec![self.optimized_results_to_proto_v1(optimized_results, collection_id, true)];
+            vec![self.optimized_results_to_proto_v1(merged_results, collection_id, true)];
 
         // Cache v1 (via legacy conversion) for reuse
         self.query_cache
             .cache_with_dependencies_v1(cache_key, v1_results.clone(), Vec::new())
             .await;
 
-        Ok(v1_results)
+        Ok((v1_results, explain))
     }
 
     /// Native variant: returns optimized native records for internal callers.
@@ -2423,6 +2595,7 @@ impl VectorOperationsService {
         let collection = self.get_or_load_collection(collection_id).await?;
         let search_params = crate::query::query_optimizer::SearchParams {
             top_k: Some(k),
+            filter_expression: filter.clone(),
             ..Default::default()
         };
         let query_vectors = vec![query_vector.clone()];
@@ -2438,6 +2611,8 @@ impl VectorOperationsService {
         };
         if let Ok(plan) = self.query_optimizer.optimize_query(explain_context).await {
             hints.ann_filtering_mode = plan.ann_filtering_mode.clone();
+            hints.ann_filtering_selectivity = plan.ann_filtering_selectivity;
+            hints.ann_filtering_selectivity_source = plan.ann_filtering_selectivity_source.clone();
         }
 
         // Execute the search
@@ -2589,106 +2764,21 @@ impl VectorOperationsService {
             )
             .await?;
 
-        // Phase 5 Slices 5.6 + 5.7 + 5.8: merge WAL/memtable delta with
-        // engine (directory-routed) results when the request's
-        // freshness mode requires it, and emit a structured EXPLAIN
-        // event so operators can audit route decisions in production
-        // logs without subscribing to a request-side hints surface.
-        //
-        // The watermark is loaded from the cached per-collection
-        // object-economy directory. When the cache or its inputs are
-        // unavailable, `cached_directory_watermark_lsn` returns None
-        // and we fall back to `0` — a safe over-approximation that
-        // triggers the scan unconditionally (more work, never less
-        // correctness).
-        let merged_results = if freshness_mode.requires_delta_merge() {
-            let distance_metric = crate::compute::distance_computation::DistanceMetric::Cosine;
-            let watermark = self
-                .cached_directory_watermark_lsn(collection_id)
-                .await
-                .unwrap_or(0);
-            // Read the WAL cursor independently of the helper so the
-            // EXPLAIN payload carries the value even when no scan ran
-            // (e.g. watermark already covers the cursor). The helper
-            // re-reads it; that's two cheap singleton calls in
-            // exchange for the operator visibility.
-            let current_lsn =
-                match crate::storage::persistence::write_ahead_log::manifest::get_service() {
-                    Some(svc) => svc.current_lsn().await,
-                    None => 0,
-                };
-            let delta_outcome = self
-                .scan_wal_delta_if_needed(
-                    collection_id,
-                    &delta_query_vector,
-                    top_k,
-                    distance_metric,
-                    delta_filter.as_ref(),
-                    &freshness_mode,
-                    watermark,
-                )
-                .await?;
-            let scanned_records = delta_outcome.as_ref().map(|d| d.len() as u64);
-            let (final_results, merge_input_directory) = match delta_outcome {
-                Some(delta) => {
-                    let input_directory = optimized_results.len();
-                    (
-                        crate::core::search::merge::merge_delta_with_directory_results(
-                            delta,
-                            optimized_results,
-                            top_k,
-                        ),
-                        Some(input_directory),
-                    )
-                }
-                None => (optimized_results, None),
-            };
-
-            // EXPLAIN emission: tracing event tagged with the per-query
-            // route metadata. Operators can grep / structured-log this
-            // to verify the strong-route is skipping the WAL scan when
-            // the directory is fresh, or to debug staleness incidents.
-            let explain = crate::query::explain::VectorObjectEconomyExplain {
-                route_kind: "vector_object_economy".to_string(),
-                authority_mode: "projection_over_canonical_records".to_string(),
-                freshness_mode: freshness_mode.explain_label().to_string(),
-                freshness_watermark_lsn: Some(watermark),
-                policy_boundary: "proxima_internal_policy".to_string(),
-                cache_status: "unknown".to_string(),
-                ..Default::default()
-            }
-            .record_wal_delta_scan(
+        // Phase 5: route through the shared delta-merge helper. Returns
+        // merged canonical results plus an optional explain payload.
+        // The explain is discarded on this path (it's already emitted
+        // via tracing inside the helper); the hints-aware sibling
+        // method captures it programmatically.
+        let (merged_results, _explain) = self
+            .apply_delta_merge_with_explain(
+                collection_id,
+                &delta_query_vector,
+                delta_filter.as_ref(),
+                top_k,
                 &freshness_mode,
-                current_lsn,
-                scanned_records,
-                /*scanned_bytes — not yet measured here */ None,
-            );
-            tracing::info!(
-                target = "proximadb.vector_route.explain",
-                collection_id = %collection_id,
-                route_kind = %explain.route_kind,
-                freshness_mode = %explain.freshness_mode_used.as_deref().unwrap_or("unknown"),
-                current_lsn = explain.current_lsn_at_query.unwrap_or(0),
-                watermark_lsn = explain.freshness_watermark_lsn.unwrap_or(0),
-                wal_delta_searched = explain.wal_delta_searched,
-                wal_delta_records_scanned = explain.wal_delta_records_scanned.unwrap_or(0),
-                merge_input_directory_records = merge_input_directory.unwrap_or(0),
-                merge_output_records = final_results.len(),
-                "VectorObjectEconomy strong-route query"
-            );
-
-            final_results
-        } else {
-            // StaleOk path: still emit a minimal trace event so the
-            // operator can see the route was skipped intentionally.
-            tracing::debug!(
-                target = "proximadb.vector_route.explain",
-                collection_id = %collection_id,
-                freshness_mode = "stale_ok",
-                "VectorObjectEconomy stale_ok route — WAL delta scan skipped"
-            );
-            optimized_results
-        };
+                optimized_results,
+            )
+            .await?;
 
         // Prefer v1 build/cache even though this method returns legacy
         let v1_results = vec![self.optimized_results_to_proto_v1(
@@ -2751,6 +2841,7 @@ impl VectorOperationsService {
         let collection = self.get_or_load_collection(collection_id).await?;
         let search_params = crate::query::query_optimizer::SearchParams {
             top_k: Some(k),
+            filter_expression: filter.clone(),
             ..Default::default()
         };
         let query_vectors = vec![query_vector.clone()];
@@ -2766,12 +2857,18 @@ impl VectorOperationsService {
         };
         if let Ok(plan) = self.query_optimizer.optimize_query(explain_context).await {
             hints.ann_filtering_mode = plan.ann_filtering_mode.clone();
+            hints.ann_filtering_selectivity = plan.ann_filtering_selectivity;
+            hints.ann_filtering_selectivity_source = plan.ann_filtering_selectivity_source.clone();
         }
 
-        // Run v1 unified search
-        let results = self
-            .unified_search_v1(collection_id, query_vector, k, filter, config)
+        // Run v1 unified search via the inner helper so the Phase 5
+        // VectorObjectEconomyExplain payload reaches the hints surface.
+        // For StaleOk requests and cache hits the explain is None,
+        // matching the helper's documented contract.
+        let (results, explain) = self
+            .unified_search_v1_inner(collection_id, query_vector, k, filter, config)
             .await?;
+        hints.vector_object_economy = explain;
         Ok((results, hints))
     }
 
@@ -2798,6 +2895,7 @@ impl VectorOperationsService {
             }
             _ => crate::index::axis::management::manager::AnnFilteringMode::PostFilter,
         };
+        let ann_filtering_selectivity = plan.ann_filtering_selectivity;
 
         let mut results: Vec<crate::core::search::results::OptimizedSearchRecord> = Vec::new();
         let mut intermediate_results: Option<
@@ -2848,6 +2946,7 @@ impl VectorOperationsService {
                             filter.clone(),
                             search_mode.clone(),
                             ann_mode,
+                            ann_filtering_selectivity,
                         )
                         .await?;
                 }
@@ -2898,6 +2997,7 @@ impl VectorOperationsService {
                             filter.clone(),
                             search_mode.clone(),
                             ann_mode,
+                            ann_filtering_selectivity,
                         )
                         .await?;
 
@@ -3034,6 +3134,7 @@ impl VectorOperationsService {
         filter: Option<FilterExpression>,
         search_mode: crate::core::search::SearchMode,
         ann_filtering_mode: crate::index::axis::management::manager::AnnFilteringMode,
+        ann_filtering_selectivity: Option<f64>,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         debug!(
             "TWO-STAGE search: collection={}, method={:?}, filter={}",
@@ -3119,10 +3220,12 @@ impl VectorOperationsService {
             "🔍 Stage 2: Searching AXIS HNSW index for {}",
             collection_id
         );
-        let axis_optimized_results = match build_axis_hybrid_query_with_mode(
+        let axis_optimized_results = match build_axis_hybrid_query_with_policy(
             collection_id,
             &axis_search_params,
             ann_filtering_mode,
+            ann_filtering_selectivity.map(|_| proximadb_catalog::AnnFilteringPolicy::default()),
+            ann_filtering_selectivity,
         ) {
             Ok(hybrid_query) => match self.axis_index_manager.query(hybrid_query).await {
                 Ok(result) => {
