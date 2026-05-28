@@ -1,8 +1,8 @@
-= Design Doc Status Index — 2026-05-26 Bookkeeping Audit
+= Design Doc Status Index — 2026-05-27 Bookkeeping Audit
 :toc: left
 :toclevels: 3
 :icons: font
-:last-updated: 2026-05-26
+:last-updated: 2026-05-27
 
 [.lead]
 **Audit-time bookkeeping index for every doc under `docs/12-design/` plus tracker-shaped docs across other roots. No code changes — this doc is the single point of reference for "what's still load-bearing, what's wired, what should be archived" as of 2026-05-26.**
@@ -24,7 +24,7 @@ This audit complements (does not replace) `link:DOCUMENTATION_CONSOLIDATION_AND_
 ** **N/A** — convention/index doc, no code expected.
 * **Cluster** — semantic grouping for consolidation review (see <<consolidation-clusters>>).
 
-== docs/12-design top-level (21 files)
+== docs/12-design top-level (23 files)
 
 [cols="3,1,1,1,3", options="header"]
 |===
@@ -155,9 +155,21 @@ This audit complements (does not replace) `link:DOCUMENTATION_CONSOLIDATION_AND_
 | N/A
 | Support
 | Technical API/projection companion to the product support contract at `docs/SUPPORTED_SURFACE.adoc`.
+
+| TD_064_PREDICATE_AWARE_VECTOR_SEARCH_DESIGN_2026_05_27.adoc
+| Active
+| PARTIAL
+| Search
+| TD-064 active blueprint. ADR-011 policy and HNSW predicate primitive exist, but metadata predicates are still being wired into record-aware candidate generation and EXPLAIN fallback disclosure.
+
+| VECTOR_OBJECT_ECONOMY_ROUTE_HLD_LLD_2026_05_27.adoc
+| Active
+| WIRED
+| Storage
+| Object-storage vector economics blueprint. SST/HELIX centroid block pruning, cache-affinity routing, cataloged vector access-method projections. Governs vector route optimization for cloud-cost competition.
 |===
 
-== docs/12-design/adr (20 ADRs)
+== docs/12-design/adr (21 ADRs)
 
 All ADRs are **Accepted**. Wiring breakdown:
 
@@ -175,7 +187,7 @@ All ADRs are **Accepted**. Wiring breakdown:
 | 008 | OLTP Catalog Backends | WIRED | `crates/control/proximadb-catalog/` → `OltpCatalog` | 6 files active.
 | 009 | ProximaRecord Surfaces | WIRED | `ProximaRecord` (321 files) | Foundational stacked durability.
 | 010 | PAX Block Format | WIRED | `crates/storage/proximadb-storage-common/src/pax_block.rs` | 13 tests; wired to VIPER/NOVA.
-| 011 | Filtered ANN Routing | WIRED | `AnnFilteringPolicy` catalog entry | Selectivity-driven; FAVOR paper.
+| 011 | Filtered ANN Routing | **PARTIAL** | `AnnFilteringPolicy` catalog entry + AXIS `search_with_predicate` | Selectivity policy and HNSW primitive exist; full record-aware metadata predicate bridge, PreFilter candidate-set generation, and EXPLAIN degradation disclosure remain TD-064 work.
 | 012 | Graph Branch Merge | **PARTIAL** | `__proxima_branch_id` in `system_columns.rs` | Field exists; merge-conflict enforcement nascent.
 | 013 | Protocol Type Coercion | WIRED | `ProtocolTypeCoercionNote` in `proximadb-catalog` | Matrix complete; EXPLAIN annotated.
 | 014 | Vector Query 2-Shape | WIRED | `VectorOpsPort` + `VectorQueryService` | Intentional dual contract — NOT a convergence target.
@@ -187,7 +199,7 @@ All ADRs are **Accepted**. Wiring breakdown:
 | 020 | Canonical WAL Authority Model | WIRED (T2.2 default-enable landed; T2.3+ deferred) | `Cargo.toml:464` default features include `canonical-document-store`; per-TD decisions in ADR govern TD-065/066/067/068 | **Landed 2026-05-26**: Tier 2 of pre-release plan. TD-065 Resolved via default-enable; TD-066/067/068 resolved-by-decision with implementation deferred to follow-up sessions per the ADR's per-TD remediation. Recovery semantics now uniform across modalities (single contract).
 |===
 
-**ADR wiring summary (after Tier 2 landings 2026-05-26)**: 20 ADRs total — 18 fully WIRED, 2 PARTIAL (012 graph-branch-merge logic absent; 018 pgwire/SQL Phase 2/3 pending). Added ADR-020 (canonical WAL authority model) this session. Earlier re-audit upgraded ADR-007 + ADR-019 from PARTIAL → WIRED. No Proposed, Rejected, or Superseded ADRs.
+**ADR wiring summary (after TD-064 re-audit 2026-05-27)**: 21 ADRs total — 17 fully WIRED, 3 PARTIAL (011 filtered-ANN metadata predicate bridge incomplete; 012 graph-branch-merge logic absent; 018 pgwire/SQL Phase 2/3 pending), 1 Tier-2 deferred (020 canonical WAL authority default-enabled; per-callsite cleanup deferred per ADR decision). Earlier re-audit upgraded ADR-007 + ADR-019 from PARTIAL → WIRED. No Proposed, Rejected, or Superseded ADRs.
 
 [[consolidation-clusters]]
 == Consolidation clusters
