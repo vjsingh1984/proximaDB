@@ -877,6 +877,11 @@ name = "streaming_search_bench"
 harness = false
 path = "benches/streaming_search_bench.rs"
 
+[[bench]]
+name = "bench_vector_object_economy"
+harness = false
+path = "benches/bench_vector_object_economy.rs"
+
 # ============================================================================
 # BUILD OPTIMIZATION STRATEGY
 # ============================================================================
