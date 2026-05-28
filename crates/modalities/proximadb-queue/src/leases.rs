@@ -95,20 +95,20 @@ pub async fn try_acquire(
     let now = now_unix_nanos();
 
     // Step 1: existing lease check.
-    if let Ok(bytes) = fs.read(&path).await {
-        if !bytes.is_empty() {
-            match serde_json::from_slice::<LeaseMeta>(&bytes) {
-                Ok(existing)
-                    if existing.holder_id != holder_id && existing.expires_at_unix_nanos > now =>
-                {
-                    return Err(QueueError::LeaseConflict {
-                        topic: topic.to_string(),
-                        partition,
-                        holder: existing.holder_id,
-                    });
-                }
-                _ => {} // missing / corrupt / expired / our own — proceed.
+    if let Ok(bytes) = fs.read(&path).await
+        && !bytes.is_empty()
+    {
+        match serde_json::from_slice::<LeaseMeta>(&bytes) {
+            Ok(existing)
+                if existing.holder_id != holder_id && existing.expires_at_unix_nanos > now =>
+            {
+                return Err(QueueError::LeaseConflict {
+                    topic: topic.to_string(),
+                    partition,
+                    holder: existing.holder_id,
+                });
             }
+            _ => {} // missing / corrupt / expired / our own — proceed.
         }
     }
 

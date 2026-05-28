@@ -37,7 +37,6 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use crate::QueueClient;
-use crate::error::QueueError;
 use crate::fs::QueueFs;
 
 const SEGMENT_EXT: &str = "qseg";

@@ -234,11 +234,11 @@ async fn replay_partition(
             max_offset = Some(max_offset.map_or(frame_offset, |m| m.max(frame_offset)));
 
             // Skip if already acked by the consumer group.
-            if let Some(c) = committed {
-                if frame_offset <= c {
-                    skipped += 1;
-                    continue;
-                }
+            if let Some(c) = committed
+                && frame_offset <= c
+            {
+                skipped += 1;
+                continue;
             }
 
             // Re-enqueue with the frame-recorded offset so MessageId is

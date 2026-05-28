@@ -42,6 +42,11 @@ pub(crate) struct ConsumerInner {
 
 struct RenewerHandle {
     _shutdown_tx: oneshot::Sender<()>,
+    /// Background task handle held so the task is owned by this struct
+    /// even if `await`ing it is not strictly required at every drop
+    /// site. Marked `#[allow(dead_code)]` because the read side is
+    /// implicit (handle ownership keeps the renewer alive).
+    #[allow(dead_code)]
     join: JoinHandle<()>,
 }
 
@@ -207,10 +212,10 @@ impl Consumer {
             }
             if let Some(entry) = self.inner.in_flight.iter().next() {
                 let (topic, partition) = entry.key().clone();
-                if let Some(state) = self.inner.client.topic_state(&topic).await {
-                    if let Some(part) = state.memory.get(partition as usize).cloned() {
-                        let _ = tokio::time::timeout_at(deadline, part.notify.notified()).await;
-                    }
+                if let Some(state) = self.inner.client.topic_state(&topic).await
+                    && let Some(part) = state.memory.get(partition as usize).cloned()
+                {
+                    let _ = tokio::time::timeout_at(deadline, part.notify.notified()).await;
                 }
             } else {
                 return Ok(out);

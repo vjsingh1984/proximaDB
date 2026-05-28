@@ -72,6 +72,13 @@ impl PartitionMemory {
 
     /// Try to enqueue a message. Returns the assigned offset on success or
     /// `Err(QueueFull)` when the ring buffer cannot accept it.
+    /// Returns the queued entry on success or the original `Message`
+    /// (which is the large variant) on backpressure rejection so the
+    /// caller can retry or spill without reconstructing it. Clippy
+    /// `result_large_err` is silenced because the `Err` payload IS the
+    /// retry payload — moving it into a `Box` would force every retry
+    /// site to unbox just to re-enqueue.
+    #[allow(clippy::result_large_err)]
     pub fn try_enqueue(
         self: &Arc<Self>,
         message: Message,
@@ -108,6 +115,10 @@ impl PartitionMemory {
     /// by the producer path now that `PartitionDiskWriter` owns offset
     /// assignment). Bypasses the memory-tier's internal counter so the
     /// disk frame's offset is the source of truth across restart.
+    ///
+    /// Same `result_large_err` rationale as `try_enqueue` — the `Err`
+    /// payload IS the retry payload.
+    #[allow(clippy::result_large_err)]
     pub fn enqueue_with_offset(
         self: &Arc<Self>,
         message: Message,

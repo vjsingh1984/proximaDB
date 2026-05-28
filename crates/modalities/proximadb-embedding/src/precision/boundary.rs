@@ -55,7 +55,12 @@ impl EmbeddingOutput {
 
     /// Materialize this output as an owned `Vec<f32>`. fp32 inputs reuse
     /// their storage; fp16/bf16 inputs allocate a new buffer.
-    fn to_fp32(self) -> Vec<f32> {
+    ///
+    /// Renamed from `to_fp32` to satisfy `clippy::wrong_self_convention`
+    /// — `to_*` methods conventionally take `&self`, but this consumes
+    /// the receiver so it reuses the inner `Vec<f32>` allocation in the
+    /// Fp32 branch.
+    fn into_fp32(self) -> Vec<f32> {
         match self {
             Self::Fp32(v) => v,
             Self::Fp16(v) => v.iter().map(|x| x.to_f32()).collect(),
@@ -101,7 +106,7 @@ pub fn project_to_canonical(
             }
         }
         // === Everything else: promote to fp32, then narrow to canonical ===
-        _ => EmbeddingValues::from_fp32_lossy(&output.to_fp32(), canonical),
+        _ => EmbeddingValues::from_fp32_lossy(&output.into_fp32(), canonical),
     }
 }
 
