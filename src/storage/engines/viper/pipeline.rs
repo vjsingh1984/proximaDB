@@ -2136,7 +2136,7 @@ impl ParquetFlusher {
         // For Mixed mode, use the default algorithm as the base compression
         let base_algorithm = match &self.config.compression_algorithm {
             ViperCompressionConfig::Uniform(algo) => *algo,
-            ViperCompressionConfig::Mixed { default, .. } => default.clone(),
+            ViperCompressionConfig::Mixed { default, .. } => *default,
         };
 
         let compression = match base_algorithm {

@@ -278,10 +278,7 @@ impl DistributedPartitionLocator {
             if self.is_partition_local(&partition).await {
                 local.push(partition);
             } else if let Some(node_id) = self.locate_partition(&partition).await {
-                remote
-                    .entry(node_id)
-                    .or_insert_with(Vec::new)
-                    .push(partition);
+                remote.entry(node_id).or_default().push(partition);
             }
         }
 

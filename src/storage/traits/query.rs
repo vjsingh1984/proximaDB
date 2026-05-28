@@ -465,7 +465,7 @@ impl StorageQueryContext {
 
     /// Get storage strategy (pre-computed).
     pub fn storage_strategy(&self) -> StorageEngineStrategy {
-        self.metadata.storage_strategy.clone()
+        self.metadata.storage_strategy
     }
 
     /// Get performance tier hint (pre-computed).

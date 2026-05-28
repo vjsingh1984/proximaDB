@@ -396,7 +396,7 @@ fn sources_for_statement(statement: &UQLStatement) -> Vec<DataSource> {
             .components
             .keys()
             .map(|model| DataSource {
-                model: model.clone(),
+                model: *model,
                 collection: format!("{:?}", model).to_lowercase(),
                 alias: None,
             })

@@ -735,8 +735,7 @@ fn proxima_record_to_get_response(
     let vector = if include_vector {
         record
             .embeddings
-            .iter()
-            .next()
+            .first()
             .map(|embedding| embedding.values.to_fp32_owned())
             .unwrap_or_default()
     } else {

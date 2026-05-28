@@ -749,7 +749,7 @@ impl ProgressiveSearchExecutor {
             representations.push(QuantizedRepresentation {
                 level_id: level.level_id.clone(),
                 data,
-                quant_type: level.quantization_type.clone(),
+                quant_type: level.quantization_type,
             });
         }
 

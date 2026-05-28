@@ -963,7 +963,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             &request,
             "search",
             &request.get_ref().collection_id,
-            request.get_ref().top_k.max(0) as usize,
+            request.get_ref().top_k as usize,
             Some(prost::Message::encoded_len(request.get_ref()) as u64),
         )?;
         let req = request.into_inner();
@@ -1054,7 +1054,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             &request,
             "search",
             &request.get_ref().collection_id,
-            request.get_ref().top_k.max(0) as usize,
+            request.get_ref().top_k as usize,
             Some(prost::Message::encoded_len(request.get_ref()) as u64),
         )?;
         let req = request.into_inner();
