@@ -209,6 +209,8 @@ pub mod transaction_coordinator;
 
 // Core modules
 pub mod engine;
+// Vector Object Economy Phase 6: per-collection pinning control surface
+pub mod collection_pinning;
 // Unified memtable system
 pub mod memtable;
 pub mod metadata;
@@ -413,7 +415,6 @@ pub use schema::{
     // Bloom filter consolidation (WS1)
     BloomConsolidator,
     CachedHeader,
-    HeaderCacheStats,
     CachingHeaderLoader,
     CentroidNode,
     // CentroidTree for O(log n) vector pruning (WS1)
@@ -429,6 +430,7 @@ pub use schema::{
     // Enhanced header cache with CentroidTree integration
     EnhancedCachedHeader,
     EvolutionValidation,
+    HeaderCacheStats,
     HeaderLoader,
     HeaderLoaderRegistry,
     InMemorySchemaRegistry,

@@ -17,11 +17,14 @@ pub mod handlers;
 pub mod hybrid;
 /// Iceberg REST Catalog server (v1 spec) — Spark/Trino/DuckDB/PyIceberg compatible
 pub mod iceberg_rest_catalog;
-/// REST DTOs + handler for the multi-phase rank pipeline (R-7b)
-pub mod rank;
 /// REST handlers for unified multi-model query execution
 pub mod multimodal_query;
 /// REST handlers for Natural Language query translation (AV-SQL)
 pub mod nl;
 /// REST handlers for observability queries (logs, metrics, traces)
 pub mod observability;
+/// Phase 6: per-collection pinning control surface (turbopuffer
+/// `/v1/namespaces/:ns/metadata`-style operator API).
+pub mod pinning;
+/// REST DTOs + handler for the multi-phase rank pipeline (R-7b)
+pub mod rank;

@@ -152,6 +152,15 @@ pub struct SharedServices {
         crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache,
     >,
 
+    /// Process-wide per-collection pinning registry (Phase 6 control
+    /// surface). Operators PATCH `/api/v1/collections/:id/pin` to
+    /// record an explicit tier override; the `AxisTieringManager`
+    /// consumer reads this registry during its evaluation loop and
+    /// overrides its access-pattern policy when an operator pin is
+    /// present. See `src/storage/collection_pinning.rs` for the
+    /// control-plane / data-plane separation.
+    pub pin_registry: Arc<crate::storage::collection_pinning::CollectionPinRegistry>,
+
     /// Shared canonical WAL appender at `<data_dir>/pgwire/canonical-records.wal`.
     ///
     /// Opened once in `SharedServices::new` (when `opt_config` is provided so
@@ -1169,6 +1178,11 @@ impl SharedServices {
                 // `with_directory_cache` above so the search service can
                 // touch the cache without re-resolving SharedServices.
                 directory_cache,
+                // Phase 6: per-collection pinning registry. Empty at
+                // startup; operator PATCH calls populate it. Not yet
+                // persisted across restarts — operators re-apply pins
+                // after a process bounce.
+                pin_registry: crate::storage::collection_pinning::new_shared(),
                 // T2.3 / TD-066 production wiring: the shared canonical
                 // WAL appender opened earlier (Some when opt_config is
                 // provided). Held here so multi_server.rs can clone it

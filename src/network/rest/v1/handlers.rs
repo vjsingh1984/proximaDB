@@ -50,6 +50,10 @@ pub struct AppState {
     pub fulltext_indexes: Option<FullTextIndexMap>,
     /// Catalog manager for external catalog integration
     pub catalog_manager: Arc<crate::catalog::CatalogManager>,
+    /// Phase 6: per-collection pinning registry. Set from
+    /// `SharedServices.pin_registry` so the REST handlers and the
+    /// AxisTieringManager consumer share the same Arc.
+    pub pin_registry: Arc<crate::storage::collection_pinning::CollectionPinRegistry>,
     /// PAX segment registry shared with the write path (gRPC v2, Arrow Flight).
     /// Enables Iceberg REST snapshot summaries to reflect real PAX segment stats.
     pub segment_registry: Arc<crate::catalog::SegmentRegistry>,
@@ -114,6 +118,11 @@ impl AppState {
                 std::collections::HashMap::new(),
             ))),
             catalog_manager: Arc::new(crate::catalog::CatalogManager::new()),
+            // Default: standalone pin registry. Production wires
+            // SharedServices.pin_registry via `with_pin_registry` so
+            // REST handlers and the eventual AxisTieringManager
+            // consumer share the same Arc.
+            pin_registry: crate::storage::collection_pinning::new_shared(),
             segment_registry: Arc::new(crate::catalog::SegmentRegistry::new()),
             llm_engine,
             doc_port: None,
@@ -125,6 +134,18 @@ impl AppState {
             rank_services: None,
             recall_probe_gate: None,
         }
+    }
+
+    /// Inject the process-wide pin registry (Phase 6 control surface).
+    /// Wired from `SharedServices.pin_registry` in production so REST
+    /// handlers and the eventual `AxisTieringManager` consumer share
+    /// the same Arc.
+    pub fn with_pin_registry(
+        mut self,
+        registry: Arc<crate::storage::collection_pinning::CollectionPinRegistry>,
+    ) -> Self {
+        self.pin_registry = registry;
+        self
     }
 
     /// Inject the shared full-text index map (T3.2 Slice 1b).
@@ -1105,6 +1126,19 @@ pub fn create_router(state: AppState) -> axum::Router {
                     .await
                     .map(Json)
             }),
+        )
+        // Phase 6: per-collection pinning control surface.
+        // Operators PATCH a collection's pin state; the AxisTieringManager
+        // honors the override on its next evaluation. See
+        // src/storage/collection_pinning.rs for the control/data plane split.
+        .route(
+            "/api/v1/collections/:collection_id/pin",
+            axum::routing::patch(crate::network::rest::v1::pinning::patch_pin)
+                .get(crate::network::rest::v1::pinning::get_pin),
+        )
+        .route(
+            "/api/v1/collections/pinning",
+            get(crate::network::rest::v1::pinning::list_pins),
         )
         // Health check endpoints
         .route("/health", get(comprehensive_health_check))
