@@ -126,9 +126,6 @@ pub struct CostAnalysisMetrics {
     pub break_even_operations: u64,
 }
 
-/// Backwards-compat alias for [`ZeroCopyAccessPatternMetrics`].
-pub type AccessPatternMetrics = ZeroCopyAccessPatternMetrics;
-
 /// Access pattern analysis metrics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ZeroCopyAccessPatternMetrics {
@@ -814,9 +811,6 @@ impl Default for MetricsCollector {
         Self::new()
     }
 }
-
-/// Backwards-compat alias for [`ZeroCopyTrendAnalysis`].
-pub type TrendAnalysis = ZeroCopyTrendAnalysis;
 
 /// Trend analysis results
 #[derive(Debug, Clone, Default)]

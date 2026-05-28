@@ -378,9 +378,6 @@ pub struct EventRouter {
     stats: RwLock<CdcRouterStats>,
 }
 
-/// Backwards-compat alias for [`CdcRouterStats`].
-pub type RouterStats = CdcRouterStats;
-
 /// Statistics for routing
 #[derive(Debug, Clone, Default)]
 pub struct CdcRouterStats {

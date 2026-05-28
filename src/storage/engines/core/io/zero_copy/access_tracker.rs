@@ -28,9 +28,6 @@ pub struct ZeroCopyAccessEvent {
     pub result_type: String,
 }
 
-/// Backwards-compat alias for [`ZeroCopyAccessStats`].
-pub type AccessStats = ZeroCopyAccessStats;
-
 /// Access pattern statistics for a file
 #[derive(Debug, Clone, Serialize)]
 pub struct ZeroCopyAccessStats {
@@ -94,9 +91,6 @@ pub struct CollectionAccessPattern {
     #[allow(dead_code)]
     pub last_activity: Instant,
 }
-
-/// Backwards-compat alias for [`ZeroCopyAccessPrediction`].
-pub type AccessPrediction = ZeroCopyAccessPrediction;
 
 /// Access pattern predictor
 #[derive(Debug, Clone)]

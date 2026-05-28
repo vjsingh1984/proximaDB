@@ -5078,6 +5078,10 @@ impl ProximaDataBlock {
         // Decoder will be created per dimension/group as needed
 
         // ===== DECODE EACH DIMENSION FIELD =====
+        // `dim_idx` indexes the inner per-vector slot (`vectors[vec_idx][dim_idx]`)
+        // not the outer iterator, so the standard enumerate-on-collection idiom
+        // doesn't apply here.
+        #[allow(clippy::needless_range_loop)]
         for dim_idx in 0..dimension {
             // Read compression marker for this dimension
             let mut compression_marker = [0u8; 1];
@@ -5500,6 +5504,10 @@ impl ProximaDataBlock {
         // Parse uncompressed block data
         let mut block_cursor = Cursor::new(&uncompressed_block);
 
+        // `dim_idx` indexes the inner per-vector slot (`vectors[row_idx][dim_idx]`)
+        // not the outer iterator, so the standard enumerate-on-collection idiom
+        // doesn't apply here.
+        #[allow(clippy::needless_range_loop)]
         for dim_idx in 0..dimension {
             // Read dimension size
             let mut dim_size_bytes = [0u8; 4];

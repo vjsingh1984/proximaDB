@@ -82,9 +82,6 @@ pub struct IOSavings {
     pub io_operations_saved: u32,
 }
 
-/// Backwards-compat alias for [`ZeroCopyExecutionPlan`].
-pub type ExecutionPlan = ZeroCopyExecutionPlan;
-
 /// Detailed execution plan for the chosen strategy
 #[derive(Debug, Clone)]
 pub struct ZeroCopyExecutionPlan {

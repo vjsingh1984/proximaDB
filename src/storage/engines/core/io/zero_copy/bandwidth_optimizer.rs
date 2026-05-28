@@ -102,9 +102,6 @@ impl Ord for OptimizedRange {
     }
 }
 
-/// Backwards-compat alias for [`BandwidthAccessPrediction`].
-pub type AccessPrediction = BandwidthAccessPrediction;
-
 /// Access prediction for future file access
 #[derive(Debug, Clone)]
 pub struct BandwidthAccessPrediction {

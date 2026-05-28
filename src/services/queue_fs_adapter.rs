@@ -51,6 +51,10 @@ pub struct FactoryQueueFs {
 }
 
 impl FactoryQueueFs {
+    // Returns `Arc<dyn QueueFs>` directly because every caller stores the
+    // adapter behind a trait object; exposing the concrete type would force
+    // every call site to add a redundant `.as_queue_fs()` cast.
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(factory: Arc<FilesystemFactory>, root_url: impl Into<String>) -> Arc<dyn QueueFs> {
         let mut root_url: String = root_url.into();
         while root_url.ends_with('/') {
