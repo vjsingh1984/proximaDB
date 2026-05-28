@@ -1064,4 +1064,67 @@ physical layouts.
 | Slice 2 of T3.1 (commit `1dca6ea7b`) annotated `crates/foundation/proximadb-records/src/lib.rs:848` with `#[serde(skip, default)]` to keep the V1 bincode wire format stable. The canonical WAL uses `rmp_serde::to_vec_named` (`src/services/canonical_wal.rs:225`), which is schema-tolerant by itself — but `#[serde(skip)]` drops `branch_id` from the serialization regardless of encoder. Result: every record read back via `FramedTableWalAppender::read_entries_from_path` had `branch_id: None`, so `merge_branches` could not identify branch entries and returned `None`. The REST endpoint `POST /api/v1/collections/:collection/branches/:branch/merge` was therefore non-functional for any real-world data; the 6 unit tests in `src/graph/merge.rs` only passed because they construct `CanonicalWalEntry` via struct literals (bypassing the WAL roundtrip).
 | Done
 | **RESOLVED 2026-05-27** by commit `996626595`: flipped `#[serde(skip, default)]` → `#[serde(default)]` on `branch_id`. Considered 3 fix options: A = switch WAL to `ProximaRecordV2` (~35 RecordUpsert constructor sites); B = move `branch_id` onto `CanonicalWalEntry` (16 + 7 + 2 sites); **C (chosen) = unskip the attribute (1 line)**. Option C is safe because (1) no production code bincode-serializes `ProximaRecord` directly — only tests do; (2) the canonical WAL encoder is named-field schema-tolerant; (3) no production data with `branch_id = Some(...)` exists on disk yet — the canonical WAL has been silently dropping the field since Slice 2 landed, so there is nothing to migrate. Added 3 regression tests in `proximadb-records/src/lib.rs#mod tests` (rmp-named roundtrip, bincode roundtrip, default-on-missing) and flipped the existing `branch_id_is_dropped_by_v1_bincode_path_serde_skip` test in `wire_v2.rs` to assert the new contract. The 5 Slice 8 integration tests are no longer `#[ignore]`-d and all pass (`cargo test --test graph_branch_merge_integration_test`: 5 passed). Cleaner-layering Option B is available as a future refactor; it doesn't block anything.
+
+| TD-073
+| Filtered ANN `AnnFilteringPolicy` per-collection catalog persistence (ADR-011)
+| P3
+| MEDIUM
+| Open
+| Optimizer (`src/index/axis/management/manager.rs:653-694`) routes filtered ANN through a default `AnnFilteringPolicy` instance. ADR-011 contract says per-collection policy (low/medium/high-selectivity preferences, recall floor, pushdown candidate cap) should be cataloged. Without it, operators cannot tune per workload; recall envelope is policy-uniform across collections.
+| 3-5 days
+| Deferred from v0.2 MVP cut (2026-05-28). Acceptance: (1) `AnnFilteringPolicy` field on collection metadata in xCatalog; (2) optimizer resolves catalog policy → falls back to default; (3) DDL surface (REST `PATCH /api/v2/collections/:id`) updates it; (4) route-health surfaces `policy_source: "catalog"|"default"`. v0.2 ships Beta with differential recall coverage via `tests/filtered_ann_recall_bands.rs` only.
+
+| TD-074
+| Collection-default freshness mode not catalog-wired
+| P3
+| MEDIUM
+| Open
+| `VectorFreshnessMode` (`src/core/search/mod.rs:95-105`) is honored per-request only. `FreshnessHealth.collection_level_modes_wired = false` (`src/network/rest/v2/collections.rs:1114-1126`). Operators cannot set per-collection default; clients must pass `freshness_mode` on every search request or accept `Strong`.
+| 2-3 days
+| Deferred from v0.2 MVP cut (2026-05-28). Acceptance: (1) `default_freshness_mode: Option<VectorFreshnessMode>` on collection metadata; (2) search-plan time resolution falls back to collection default before `Strong`; (3) route-health flips `collection_level_modes_wired` to `true`; (4) DDL surface accepts the field. v0.2 documents per-request-only in `docs/SUPPORTED_SURFACE.adoc` "Not Supported in v0.2".
+
+| TD-075
+| `RecallProbeGate` route-selection enforcement
+| P3
+| MEDIUM
+| Open
+| `src/catalog/recall_probe.rs` exposes gate state (PASS / WARN / FAIL streaks) and EXPLAIN can read it, but `AxisManager` quantized-route selection does not consult the gate. Recall regressions surface only diagnostically.
+| 3-5 days
+| Deferred from v0.2 MVP cut (2026-05-28). Acceptance: (1) `RecallProbeGate::should_route_quantized()` (or equivalent) called at quantized-route entry in `AxisManager`; (2) FAIL streak → fallback to non-quantized route + degraded-route reason in EXPLAIN; (3) regression test (gate FAIL forces fallback). v0.2 ships gate as diagnostic only.
+
+| TD-076
+| pgwire / SQL parity Phase 2/3 (ADR-018)
+| P3
+| MEDIUM
+| Open
+| ADR-018 Phase 1 (basic DML + vector-distance syntax) wired. Phase 2 (`ORDER BY` semantics, `COUNT/SUM/GROUP BY`, joins, `xcatalog.namespaces`, `pg_class`) and Phase 3 (Postgres parity) gap. Server returns explicit "not yet supported" for several SQL shapes; live-server probe (2026-05-25) found crashes on aggregates and joins.
+| 3-6 months
+| Deferred from v0.2 MVP cut (2026-05-28). v0.2 ships pgwire as Beta with Phase 1 scope only. See ADR-018 for the phased contract.
+
+| TD-077
+| Distributed cluster execution — remote transport / failover
+| P3
+| HIGH
+| Open
+| `src/cluster/` (5,491 LOC) has Raft internals, shard planning, and routing foundations but RPC transport and remote execution contain placeholder/partial implementations. Feature-gated behind `cluster` flag. Not a like-for-like distributed-DB replacement in v0.2.
+| 6+ months
+| Deferred from v0.2 MVP cut (2026-05-28). v0.2 ships distributed cluster as Experimental. Acceptance for graduation: real transport benchmark, deterministic failover test suite, EXPLAIN route includes remote-shard fragment identity.
+
+| TD-078
+| External-table federated execution (Iceberg / Delta / Hudi as hot authority)
+| P3
+| MEDIUM
+| Open
+| External-format adapters exist as interoperability modes (publications, imports, federated reads) but not as Proxima-owned hot authority with full ACID + ANN + RLS. Multiple code paths return explicit "not yet supported" / "not wired" for federated relational, external table, subquery vector source.
+| 2-4 months
+| Deferred from v0.2 MVP cut (2026-05-28). v0.2 ships these as Experimental external-authority modes per `OPEN_FORMAT_CATALOG_2026_05_17.adoc`. Acceptance: explicit authority-mode catalog field + federated route-health + EXPLAIN write-plan disclosure of external-authority decisions.
+
+| TD-079
+| Root `proximadb` crate accumulated clippy lint backlog
+| P4
+| LOW
+| Partial — first wave landed (2026-05-28); ~190 errors remain
+| `cargo clippy --workspace --lib --bins -- -D warnings` is now CLEAN across all 50+ non-root workspace crates and the workspace `cargo fmt --all -- --check` exits 0. The root `proximadb` crate still surfaces accumulated lint debt (CLAUDE.md `src/lib.rs:22-31` explicitly downgrades these to `#![warn(…)]` and `CI uses RUSTFLAGS: '-A warnings'`). First wave of session-15 cleanup landed in 13 commits ending at `486096c96`, covering ~57 errors workspace-wide + ~55 in the root crate. Remaining lint counts (categorized from a workspace pass): collapsible_if ~30, unnecessary_sort_by ~20, manual_checked_ops ~20, doc_lazy_continuation ~15, unwrap_used/expect_used/panic ~21 (these need real Result-handling refactors, not just allows), derivable_impls ~11, plus a long tail of one-off lints (~70 mixed: needless_borrow, useless_conversion, clone_on_copy, large_enum_variant, dead_code, …).
+| 8-12 hours dedicated cleanup PR
+| **First wave landed 2026-05-28** across `7db1d804e` → `486096c96` (13 commits, ~55 source files): all foundation + horizontal + storage + modality + query + control + platform crates clippy-clean under `-D warnings`; root-crate sweep covered `rank.rs`, `filterable_metadata.rs`, `dml/mod.rs`, `viper/pipeline.rs`, `schema/document/mod.rs`, `database.rs`, `tenant_tier.rs`, and an 11-file `sort_by_key` sweep. **Acceptance for closing**: `cargo clippy -p proximadb --lib --bins -- -D warnings` exits 0 (or each remaining lint has an audited `#[allow(...)]` with an inline justification). Schedule as a focused multi-day PR per CLAUDE.md "the main codebase has accumulated lint warnings that should be addressed in a dedicated cleanup PR". The categorized counts above let the cleanup PR slice by lint type (each batch reviewable on its own).
 |===
