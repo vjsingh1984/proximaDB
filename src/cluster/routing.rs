@@ -32,6 +32,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
+use super::cache_affinity::CacheAffinityRegistry;
 use super::node_registry::{NodeHealth, NodeInfo, NodeRole};
 use super::shard::{PartitionConfig, PartitionStrategy, ShardId};
 use crate::catalog::tenant_tier::Tier;
@@ -453,6 +454,13 @@ pub struct RoutingService {
     stats: Arc<RwLock<RoutingStats>>,
     /// TTL for partition config cache entries
     partition_config_ttl: Duration,
+    /// Optional cache-affinity registry — when present and the
+    /// configuration has `locality_aware` enabled, the router
+    /// records each successful read decision and biases subsequent
+    /// reads toward whichever node most recently served the
+    /// collection. None means affinity tracking is off (the default
+    /// when no registry has been wired in).
+    affinity_registry: Option<Arc<CacheAffinityRegistry>>,
 }
 
 #[derive(Default)]
@@ -489,6 +497,7 @@ impl RoutingService {
             rr_counter: Arc::new(AtomicU64::new(0)),
             stats: Arc::new(RwLock::new(RoutingStats::default())),
             partition_config_ttl: Self::DEFAULT_PARTITION_CONFIG_TTL,
+            affinity_registry: None,
         })
     }
 
@@ -500,7 +509,69 @@ impl RoutingService {
             rr_counter: Arc::new(AtomicU64::new(0)),
             stats: Arc::new(RwLock::new(RoutingStats::default())),
             partition_config_ttl: ttl,
+            affinity_registry: None,
         })
+    }
+
+    /// Attach a cache-affinity registry. When set, the router will:
+    ///
+    /// * record each successful read against the chosen node so that
+    ///   subsequent reads for the same collection prefer the warm
+    ///   node;
+    /// * consult the registry when picking from a set of healthy
+    ///   read candidates — if the affinity-preferred node is among
+    ///   them and the request is a read, it wins over the default
+    ///   load-balancing policy.
+    ///
+    /// Writes / admin operations are never biased by affinity (they
+    /// must always go to the primary). The bias is also gated on
+    /// `RoutingConfig::locality_aware`; setting locality_aware=false
+    /// keeps affinity recording on (cheap) but skips the read bias.
+    pub fn with_affinity_registry(mut self, registry: Arc<CacheAffinityRegistry>) -> Self {
+        self.affinity_registry = Some(registry);
+        self
+    }
+
+    /// Returns the affinity-preferred node id for a collection, when
+    /// the registry has a fresh entry. None when no registry is
+    /// wired, no entry exists, or the entry has expired.
+    ///
+    /// Useful for external load balancers that want to consult the
+    /// per-node affinity hint before issuing an upstream request.
+    pub fn preferred_node_for(&self, collection_id: &str) -> Option<String> {
+        self.affinity_registry
+            .as_ref()
+            .and_then(|reg| reg.preferred_node(collection_id))
+    }
+
+    /// Visibility helper for operator dashboards and tests.
+    pub fn affinity_registry(&self) -> Option<&Arc<CacheAffinityRegistry>> {
+        self.affinity_registry.as_ref()
+    }
+
+    /// Internal: returns the affinity-preferred node id when locality
+    /// bias is active. Returns `None` when affinity is off, the
+    /// registry has no fresh entry, or the operation is a write/admin
+    /// (which must always go to primary).
+    fn affinity_hint(&self, collection_id: &str, operation: OperationType) -> Option<String> {
+        if !self.config.locality_aware {
+            return None;
+        }
+        if !matches!(operation, OperationType::Read) {
+            return None;
+        }
+        self.affinity_registry
+            .as_ref()
+            .and_then(|reg| reg.preferred_node(collection_id))
+    }
+
+    /// Internal: record that this routing service just dispatched a
+    /// query for `collection_id` to `node_id`. Cheap no-op when no
+    /// registry is wired.
+    fn record_affinity(&self, collection_id: &str, node_id: &str) {
+        if let Some(reg) = &self.affinity_registry {
+            reg.record_query(collection_id, node_id);
+        }
     }
 
     /// Route a request to an appropriate node
@@ -519,15 +590,21 @@ impl RoutingService {
         // Determine shard for this request
         let shard_id = self.compute_shard_id(collection_id, vector_id).await?;
 
+        // Cache-affinity hint (None for writes/admin and when no registry is wired)
+        let affinity = self.affinity_hint(collection_id, operation);
+        let affinity_ref = affinity.as_deref();
+
         // Get route for the shard
         let (route, target_node) = {
             let state = self.state.read().await;
             let route = state.routing_table.get(&shard_id).cloned();
             let target_node = match &route {
-                Some(r) if r.available => self.select_node(r, operation, &state.nodes)?,
+                Some(r) if r.available => {
+                    self.select_node(r, operation, &state.nodes, affinity_ref)?
+                }
                 _ => {
                     // No specific route, use any available node
-                    self.select_any_node_from(operation, &state.nodes)?
+                    self.select_any_node_from(operation, &state.nodes, affinity_ref)?
                 }
             };
             (route, target_node)
@@ -549,6 +626,13 @@ impl RoutingService {
             }
             stats.total_latency_us += start.elapsed().as_micros() as u64;
         }
+
+        // Record affinity for subsequent reads. We record on every
+        // route (not only on read) because a write that pinned a
+        // collection to a primary still gives subsequent reads a
+        // valid warm-cache hint. `record_affinity` is a cheap no-op
+        // when no registry is wired.
+        self.record_affinity(collection_id, &target_node.node_id);
 
         Ok(RouteDecision {
             target_node,
@@ -680,15 +764,20 @@ impl RoutingService {
             )
             .await?;
 
+        let affinity = self.affinity_hint(collection_id, operation);
+        let affinity_ref = affinity.as_deref();
+
         // Get route for the shard
         let (route, target_node) = {
             let state = self.state.read().await;
             let route = state.routing_table.get(&shard_id).cloned();
             let target_node = match &route {
-                Some(r) if r.available => self.select_node(r, operation, &state.nodes)?,
+                Some(r) if r.available => {
+                    self.select_node(r, operation, &state.nodes, affinity_ref)?
+                }
                 _ => {
                     // No specific route, use any available node
-                    self.select_any_node_from(operation, &state.nodes)?
+                    self.select_any_node_from(operation, &state.nodes, affinity_ref)?
                 }
             };
             (route, target_node)
@@ -710,6 +799,8 @@ impl RoutingService {
             }
             stats.total_latency_us += start.elapsed().as_micros() as u64;
         }
+
+        self.record_affinity(collection_id, &target_node.node_id);
 
         Ok(RouteDecision {
             target_node,
@@ -1002,6 +1093,12 @@ impl RoutingService {
     ) -> Result<Vec<RouteDecision>> {
         let start = Instant::now();
 
+        // Cache-affinity hint applies across every shard pick.
+        // Scatter-gather operations still benefit when the same node
+        // owns the warm caches for the collection.
+        let affinity = self.affinity_hint(collection_id, operation);
+        let affinity_ref = affinity.as_deref();
+
         // Get all shards for this collection from routing table
         let state = self.state.read().await;
         let collection_prefix = format!("{}_", collection_id);
@@ -1023,10 +1120,11 @@ impl RoutingService {
             // if we had access to the shard metadata. For now, we include all shards.
             // In production, the ShardManager would be consulted for metadata bounds.
 
-            let target_node = match self.select_node(route, operation, &state.nodes) {
-                Ok(node) => node,
-                Err(_) => continue, // Skip shards with no available nodes
-            };
+            let target_node =
+                match self.select_node(route, operation, &state.nodes, affinity_ref) {
+                    Ok(node) => node,
+                    Err(_) => continue, // Skip shards with no available nodes
+                };
 
             let is_primary = target_node.node_id == route.primary;
 
@@ -1054,12 +1152,20 @@ impl RoutingService {
         Ok(decisions)
     }
 
-    /// Select a node based on operation type and load balancing
+    /// Select a node based on operation type and load balancing.
+    ///
+    /// `affinity_node` is the cache-affinity hint computed for read
+    /// operations. When present and the operation is a Read, the
+    /// hint takes precedence over the default load-balancing
+    /// strategy *if* the hinted node is among the healthy
+    /// candidates (primary + replicas). Writes/Admin ignore the
+    /// hint and always target the primary.
     fn select_node(
         &self,
         route: &ShardRoute,
         operation: OperationType,
         nodes: &HashMap<String, RoutableNode>,
+        affinity_node: Option<&str>,
     ) -> Result<NodeInfo> {
         match operation {
             OperationType::Write | OperationType::Admin => {
@@ -1071,15 +1177,30 @@ impl RoutingService {
                     .ok_or_else(|| anyhow::anyhow!("Primary node unavailable"))
             }
             OperationType::Read => {
+                // Affinity short-circuit: if the hinted node is in
+                // (primary, replicas) and is healthy, use it.
+                if let Some(hint) = affinity_node {
+                    let candidates: Vec<&String> = std::iter::once(&route.primary)
+                        .chain(route.replicas.iter())
+                        .collect();
+                    if candidates.iter().any(|c| c.as_str() == hint)
+                        && let Some(n) = nodes.get(hint)
+                        && n.info.health == NodeHealth::Healthy
+                    {
+                        return Ok(n.info.clone());
+                    }
+                }
+
                 if self.config.enable_read_replicas && !route.replicas.is_empty() {
                     // Try to use a replica
-                    self.select_from_nodes(&route.replicas, nodes).or_else(|_| {
-                        // Fall back to primary
-                        nodes
-                            .get(&route.primary)
-                            .map(|n| n.info.clone())
-                            .ok_or_else(|| anyhow::anyhow!("No nodes available"))
-                    })
+                    self.select_from_nodes(&route.replicas, nodes, affinity_node)
+                        .or_else(|_| {
+                            // Fall back to primary
+                            nodes
+                                .get(&route.primary)
+                                .map(|n| n.info.clone())
+                                .ok_or_else(|| anyhow::anyhow!("No nodes available"))
+                        })
                 } else {
                     // Use primary
                     nodes
@@ -1091,12 +1212,26 @@ impl RoutingService {
         }
     }
 
-    /// Select a node from a list using load balancing
+    /// Select a node from a list using load balancing.
+    ///
+    /// `affinity_node`, when present and present-and-healthy among
+    /// `node_ids`, wins over the configured strategy. This is the
+    /// load-bearing path for cache-affinity bias in replica reads.
     fn select_from_nodes(
         &self,
         node_ids: &[String],
         nodes: &HashMap<String, RoutableNode>,
+        affinity_node: Option<&str>,
     ) -> Result<NodeInfo> {
+        // Affinity short-circuit before LB strategy.
+        if let Some(hint) = affinity_node
+            && node_ids.iter().any(|id| id.as_str() == hint)
+            && let Some(n) = nodes.get(hint)
+            && n.info.health == NodeHealth::Healthy
+        {
+            return Ok(n.info.clone());
+        }
+
         let healthy_nodes: Vec<_> = node_ids
             .iter()
             .filter_map(|id| nodes.get(id))
@@ -1161,14 +1296,30 @@ impl RoutingService {
     #[cfg(test)]
     async fn select_any_node(&self, operation: OperationType) -> Result<NodeInfo> {
         let state = self.state.read().await;
-        self.select_any_node_from(operation, &state.nodes)
+        self.select_any_node_from(operation, &state.nodes, None)
     }
 
     fn select_any_node_from(
         &self,
         operation: OperationType,
         nodes: &HashMap<String, RoutableNode>,
+        affinity_node: Option<&str>,
     ) -> Result<NodeInfo> {
+        // Affinity short-circuit applies when there is no shard
+        // route — useful when the routing table is sparsely
+        // populated but the registry still knows where the
+        // collection has been served before.
+        if let Some(hint) = affinity_node
+            && let Some(n) = nodes.get(hint)
+            && n.info.health == NodeHealth::Healthy
+            && match operation {
+                OperationType::Admin => n.info.role == NodeRole::Leader,
+                _ => true,
+            }
+        {
+            return Ok(n.info.clone());
+        }
+
         let healthy_nodes: Vec<_> = nodes
             .values()
             .filter(|n| n.info.health == NodeHealth::Healthy)
@@ -1689,5 +1840,182 @@ mod tests {
 
         // Without partition config, both should use hash-based routing
         // (they may or may not be the same depending on hash)
+    }
+
+    // =========================================================================
+    // Cache-Affinity Integration Tests (Phase 7.2 — Slice 7.2.2)
+    // =========================================================================
+
+    fn healthy_node(id: &str) -> NodeInfo {
+        NodeInfo {
+            node_id: id.to_string(),
+            address: format!("127.0.0.1:0/{}", id),
+            health: NodeHealth::Healthy,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn affinity_registry_is_optional_and_off_by_default() {
+        let service = RoutingService::new(RoutingConfig::default()).unwrap();
+        assert!(service.affinity_registry().is_none());
+        assert!(service.preferred_node_for("anything").is_none());
+    }
+
+    #[tokio::test]
+    async fn route_records_affinity_when_registry_is_attached() {
+        let reg = crate::cluster::cache_affinity::new_shared();
+        let service =
+            RoutingService::new(RoutingConfig::default())
+                .unwrap()
+                .with_affinity_registry(reg.clone());
+
+        service
+            .register_node(healthy_node("node-1"), 100)
+            .await
+            .unwrap();
+
+        let decision = service
+            .route("coll-x", OperationType::Read, Some("vec-1"))
+            .await
+            .unwrap();
+        assert_eq!(decision.target_node.node_id, "node-1");
+
+        // Affinity must now point at the node we just used.
+        assert_eq!(service.preferred_node_for("coll-x").as_deref(), Some("node-1"));
+    }
+
+    #[tokio::test]
+    async fn affinity_biases_read_among_replicas() {
+        // Two healthy replicas; affinity says use the second one.
+        let reg = crate::cluster::cache_affinity::new_shared();
+        let service =
+            RoutingService::new(RoutingConfig::default())
+                .unwrap()
+                .with_affinity_registry(reg.clone());
+
+        service.register_node(healthy_node("primary"), 100).await.unwrap();
+        service.register_node(healthy_node("replica-a"), 100).await.unwrap();
+        service.register_node(healthy_node("replica-b"), 100).await.unwrap();
+
+        let shard_id = service
+            .compute_shard_id("coll-y", Some("vec-1"))
+            .await
+            .unwrap();
+        service
+            .update_route(
+                shard_id.clone(),
+                ShardRoute {
+                    primary: "primary".to_string(),
+                    replicas: vec!["replica-a".to_string(), "replica-b".to_string()],
+                    available: true,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Seed affinity manually so we don't depend on prior route().
+        reg.record_query("coll-y", "replica-b");
+
+        // 10 consecutive reads should all go to replica-b — round-robin
+        // would otherwise alternate or hit replica-a first.
+        for _ in 0..10 {
+            let d = service
+                .route("coll-y", OperationType::Read, Some("vec-1"))
+                .await
+                .unwrap();
+            assert_eq!(d.target_node.node_id, "replica-b");
+        }
+    }
+
+    #[tokio::test]
+    async fn affinity_is_skipped_when_locality_aware_is_off() {
+        let reg = crate::cluster::cache_affinity::new_shared();
+        let mut cfg = RoutingConfig::default();
+        cfg.locality_aware = false; // explicitly disable bias
+        let service = RoutingService::new(cfg).unwrap().with_affinity_registry(reg.clone());
+
+        service.register_node(healthy_node("node-1"), 100).await.unwrap();
+        service.register_node(healthy_node("node-2"), 100).await.unwrap();
+
+        // Seed affinity for node-2, but locality_aware=false should
+        // skip the bias entirely. preferred_node_for still returns
+        // the registry entry (it's a read-only query of the data
+        // structure), but routing decisions ignore it.
+        reg.record_query("coll-z", "node-2");
+        assert_eq!(service.preferred_node_for("coll-z").as_deref(), Some("node-2"));
+
+        // Without a shard route the router round-robins through
+        // healthy nodes. We can't deterministically check which
+        // node wins without affinity, but we can check that
+        // affinity_hint returns None when locality_aware=false.
+        let hint = service.affinity_hint("coll-z", OperationType::Read);
+        assert!(hint.is_none());
+    }
+
+    #[tokio::test]
+    async fn writes_ignore_affinity_and_target_primary() {
+        let reg = crate::cluster::cache_affinity::new_shared();
+        let service =
+            RoutingService::new(RoutingConfig::default())
+                .unwrap()
+                .with_affinity_registry(reg.clone());
+
+        service.register_node(healthy_node("primary"), 100).await.unwrap();
+        service.register_node(healthy_node("replica-a"), 100).await.unwrap();
+
+        let shard_id = service
+            .compute_shard_id("coll-w", Some("vec-1"))
+            .await
+            .unwrap();
+        service
+            .update_route(
+                shard_id.clone(),
+                ShardRoute {
+                    primary: "primary".to_string(),
+                    replicas: vec!["replica-a".to_string()],
+                    available: true,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Affinity says replica-a; writes must still hit primary.
+        reg.record_query("coll-w", "replica-a");
+
+        let decision = service
+            .route("coll-w", OperationType::Write, Some("vec-1"))
+            .await
+            .unwrap();
+        assert_eq!(decision.target_node.node_id, "primary");
+        assert!(decision.is_primary);
+    }
+
+    #[tokio::test]
+    async fn expired_affinity_falls_back_to_default_strategy() {
+        // Short TTL so the entry expires before the next route call.
+        let reg = Arc::new(
+            crate::cluster::cache_affinity::CacheAffinityRegistry::with_ttl(
+                std::time::Duration::from_millis(10),
+            ),
+        );
+        let service =
+            RoutingService::new(RoutingConfig::default())
+                .unwrap()
+                .with_affinity_registry(reg.clone());
+
+        service.register_node(healthy_node("node-1"), 100).await.unwrap();
+
+        reg.record_query("coll-exp", "ghost-node-that-does-not-exist");
+        std::thread::sleep(std::time::Duration::from_millis(30));
+
+        // With the entry expired, the router should not even try to
+        // resolve "ghost-node" — it falls back to whichever healthy
+        // node is available (only node-1 here).
+        let decision = service
+            .route("coll-exp", OperationType::Read, Some("vec-1"))
+            .await
+            .unwrap();
+        assert_eq!(decision.target_node.node_id, "node-1");
     }
 }

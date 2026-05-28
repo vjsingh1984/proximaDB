@@ -48,6 +48,7 @@
 //! └─────────────────────────────────────────────────────────┘
 //! ```
 
+pub mod cache_affinity;
 pub mod consensus;
 pub mod distributed_ops;
 pub mod metadata_service;
@@ -65,6 +66,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
+pub use cache_affinity::{AffinityEntry, CacheAffinityRegistry};
 pub use consensus::{ConsensusConfig, ConsensusState, RaftConsensus};
 /// Backwards-compat alias for the per-shard SearchResult re-exported from distributed_ops.
 pub use distributed_ops::ShardSearchResult as SearchResult;
