@@ -975,7 +975,7 @@ physical layouts.
 | 6-8 weeks
 | Active blueprint: `docs/12-design/TD_064_PREDICATE_AWARE_VECTOR_SEARCH_DESIGN_2026_05_27.adoc`. Extend ADR-011 `VectorTopK` planning to state PreFilter, Inline predicate-aware ANN, or PostFilter fallback. Push tenant/RLS and typed predicates into candidate generation where supported. `EXPLAIN` must disclose recall/failure risk for fallback plans. Coordinates with Phase C in the overhaul spec.
 
-**Status 2026-05-27 (slices 1-3 landed)**:
+**Status 2026-05-27 (slices 1-5 landed)**:
 
 * Foundation: `FilterableHnswMetadata` schema + shared `FilterableMetadataCache` helper in `src/index/axis/filterable_metadata.rs`. <50-byte per-record overhead target.
 * `AxisVectorIndex` trait extended with `add_with_metadata`, `search_with_predicate(tenant, time_range, rls_tags)`, `supports_predicate_search`, `configure_filterable_fields`. All four AXIS-native indexes (HNSW, IVF, Annoy, LSH) implement them — HNSW with native skip-through traversal, IVF/Annoy/LSH with oversample-and-postfilter.
@@ -983,14 +983,15 @@ physical layouts.
 * `AxisManager` insert paths (HNSW direct, IVF trained-path, IVF cold-start bulk-add, HMGI partitions) all call `add_with_metadata` so cached metadata is populated as records flow in. IVF cold-start hydrates metadata from `collection_vectors` to close the gap.
 * `AxisManagerQueryResult.predicate_shortfall: Option<PredicateShortfall>` populated by inline path when post-filter trimming drops survivors below `top_k`. Prometheus counters `axis_predicate_shortfall_total` + `axis_predicate_shortfall_missing_sum` for operator dashboards.
 * `SearchPlanTrace.predicate_shortfall: Option<PredicateShortfall>` + `mark_predicate_shortfall(...)` helper. `TraceBuilderInputs.predicate_shortfall` carries it into the assembled trace; `failure_class = PermissionThin` set when populated.
-* 9 new TD-064 tests (218 AXIS tests pass).
+* Task-local `predicate_diagnostics` bus (`src/observability/predicate_diagnostics.rs`) — `scope`/`record_shortfall`/`take_shortfall`. REST + gRPC handlers wrap search in `scope`, read at trace-build / response-construction time. Lets AxisManager-deep shortfall reach the gateway without forcing intermediate service / proto types to carry the field.
+* ADR-011 `AnnFilteringPolicy::routing_mode()` wired into `AxisManager.query`. `AxisHybridQuery` carries optional `ann_filtering_policy` + `estimated_selectivity`; when both are present, the catalog policy decides PreFilter / Inline / PostFilter. `AxisManagerQueryResult.selected_filtering_mode` surfaces the chosen mode. PostFilter uses `policy.effective_top_k_for_post_filter()` for oversample sizing; shortfall is tagged with the effective mode label.
+* Non-AXIS orphan index modules (`src/index/{hnsw,ivf,diskann,sparse_hnsw}` + `tests/index/`) deleted — confirmed zero production users in the audit. ~4600 LOC removed.
 
 **Remaining work**:
 
-* Plumb `AxisManagerQueryResult.predicate_shortfall` through `services/operations/vectors` and `RichSearchResponse` so REST/gRPC handlers can populate `TraceBuilderInputs.predicate_shortfall` (currently always `None` at the handler).
+* Plumb `AxisManagerQueryResult.predicate_shortfall` through `services/operations/vectors` and `RichSearchResponse` so REST/gRPC handlers can populate `TraceBuilderInputs.predicate_shortfall` (currently the task-local bus carries it; threading the field through service types is an alternative if the bus pattern becomes brittle).
 * IVF inline predicate pushdown (replace oversample-and-postfilter with nprobe-time predicate evaluation) — TD-064 Phase 3.
-* PreFilter / route-selection mode wiring through `ADR-011 AnnFilteringPolicy::routing_mode()` rather than the current `AnnFilteringMode::Inline` switch.
-* Non-AXIS index deletion (`src/index/{hnsw,ivf,diskann,sparse_hnsw}` orphans — see `docs/12-design/NON_AXIS_INDEX_MIGRATION_AUDIT_2026_05_27.adoc`).
+* Selectivity source + projection-freshness + rejected-route-reason diagnostics on `AxisManagerQueryResult` — extends the route disclosure surface beyond just `selected_filtering_mode`.
 
 | TD-065
 | Document Service In-Memory Map As Temporary Durable Source
@@ -1005,10 +1006,10 @@ physical layouts.
 | ORION WAL As Parallel Durable Graph Truth
 | P5
 | HIGH
-| Open
+| Partial (emission landed; recovery + production wiring remain)
 | `OrionGraphEngine::flush_wal()` and `OrionPersistence::save_snapshot()` write graph facts to ORION's own WAL and snapshot files (`src/graph/engines/orion/persistence.rs`). `GraphOperationsService::flush_wal()` dispatches to ORION/PULSAR/QUASAR engine WALs. These engine WALs are a parallel durable authority alongside the canonical `RecordUpsert` WAL entries; recovery from the engine WAL alone would miss the canonical record semantics (tenant/RLS, versioning, provenance). The convergence spec states ORION WAL should be demoted to a compatibility projection recovery path.
-| 3-5 weeks
-| Make `flush_wal()` write a `CanonicalOperation::Checkpoint` entry to the canonical WAL first, then allow the engine WAL as a short-lived performance buffer only. Recovery must use the canonical WAL as authority; ORION engine WAL replay becomes a best-effort fast-path that is validated against canonical records. Coordinates with `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` Phase 3 remaining item.
+| 3-5 weeks (≈1/3 landed)
+| **EMISSION HALF RESOLVED 2026-05-27** by commit `b36a24b17`: added `canonical_wal_appender: Option<Arc<dyn TableWalAppender>>` injection on `GraphOperationsService` (mirrors the `canonical_record_store` pattern) plus `with_canonical_wal_appender` builder. `flush_wal` now persists a `CanonicalOperation::Checkpoint(SnapshotManifest { sequence_number, timestamp_ms, collection_ids, projection_freshness })` to the canonical WAL via `FramedTableWalAppender::append_operations` before the engine WAL flush, returning `ProximaDBError::Internal` if the append fails so callers see the lost durability guarantee. Verified by 3 cycles in `tests/graph_canonical_checkpoint_test.rs` (basic emission, monotonic WAL sequences across repeated flushes, no-op when appender is None). **Remaining work to close TD-066:** (a) production wiring — thread the existing `FramedTableWalAppender` from `SharedServices` into `GraphOperationsService::new()` so production deployments get the persistence by default; (b) recovery hook — add `recover_from_canonical_wal` for ORION that reads the latest Checkpoint and scopes engine-WAL replay to entries after the checkpoint LSN; (c) engine WAL truncation by canonical LSN. Coordinates with `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` Phase 3.
 
 | TD-067
 | Projection Keys Use Facade Document ID Instead Of Canonical OID
