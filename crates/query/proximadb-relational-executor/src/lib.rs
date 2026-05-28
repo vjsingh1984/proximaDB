@@ -1051,13 +1051,11 @@ impl ExecNode for NestedLoopJoinExec {
             let was_matched = self.current_left_matched;
             self.current_left = None;
             match self.kind {
-                JoinKind::Left | JoinKind::Full => {
-                    if !was_matched {
-                        let mut out = Vec::with_capacity(left.len() + right_width);
-                        out.extend_from_slice(&left);
-                        out.extend(std::iter::repeat(ProximaValue::Null).take(right_width));
-                        return Ok(Some(out));
-                    }
+                JoinKind::Left | JoinKind::Full if !was_matched => {
+                    let mut out = Vec::with_capacity(left.len() + right_width);
+                    out.extend_from_slice(&left);
+                    out.extend(std::iter::repeat_n(ProximaValue::Null, right_width));
+                    return Ok(Some(out));
                 }
                 JoinKind::Right => {
                     // Right join is normally rewritten to LEFT
@@ -1066,10 +1064,8 @@ impl ExecNode for NestedLoopJoinExec {
                     // here. Full right-outer semantics will be
                     // handled by the swap rewrite in Phase 3.
                 }
-                JoinKind::Anti => {
-                    if !was_matched {
-                        return Ok(Some(left));
-                    }
+                JoinKind::Anti if !was_matched => {
+                    return Ok(Some(left));
                 }
                 _ => {}
             }
@@ -1258,7 +1254,7 @@ impl ExecNode for HashJoinExec {
                     if matches.is_empty() {
                         let mut out = Vec::with_capacity(l.len() + right_width);
                         out.extend(l);
-                        out.extend(std::iter::repeat(ProximaValue::Null).take(right_width));
+                        out.extend(std::iter::repeat_n(ProximaValue::Null, right_width));
                         return Ok(Some(out));
                     }
                     self.probe_left = Some(l);
@@ -1792,6 +1788,10 @@ enum KeyComponent {
     Timestamp(i64, u8),
     TimestampTz(i64, u8),
     Uuid([u8; 16]),
+    // Matches the variant name on `ProximaValue::ULID` in the
+    // foundation `proximadb-data-model` crate. Keeping the same
+    // casing here avoids a cross-crate rename.
+    #[allow(clippy::upper_case_acronyms)]
     ULID([u8; 16]),
 }
 

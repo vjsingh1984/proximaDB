@@ -103,6 +103,12 @@ impl CompressionStatsProfile {
     }
 
     /// Build a stats record for a measured pilot codec that is not yet a `ProximaScheme`.
+    ///
+    /// Eight call-site arguments is over clippy's default seven, but each one
+    /// is semantically distinct (profile + compression + layout + selected
+    /// scheme + reconstruction guarantee + size triple), so a builder
+    /// wouldn't improve readability for the small number of call sites.
+    #[allow(clippy::too_many_arguments)]
     pub fn from_measured_codec(
         profile_id: impl Into<String>,
         compression_profile: CompressionProfile,

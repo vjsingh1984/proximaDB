@@ -1276,21 +1276,20 @@ impl StrategyRegistry {
         let strategy = self.get_strategy(context.domain);
         let mut scheme = strategy.select(analysis, context);
 
-        if !analysis.is_constant() {
-            if let Some(ordering_scheme) = ordering_preferred_scheme(analysis, context, hints) {
-                if ordering_scheme != scheme {
-                    rejected_candidates.push(RejectedCodecCandidate {
-                        scheme: scheme.clone(),
-                        reason: RejectionReason::LayoutMismatch,
-                        expected_ratio: Some(estimate_compression_ratio(
-                            &scheme,
-                            analysis,
-                            context.data_type,
-                        )),
-                    });
-                    scheme = ordering_scheme;
-                }
-            }
+        if !analysis.is_constant()
+            && let Some(ordering_scheme) = ordering_preferred_scheme(analysis, context, hints)
+            && ordering_scheme != scheme
+        {
+            rejected_candidates.push(RejectedCodecCandidate {
+                scheme: scheme.clone(),
+                reason: RejectionReason::LayoutMismatch,
+                expected_ratio: Some(estimate_compression_ratio(
+                    &scheme,
+                    analysis,
+                    context.data_type,
+                )),
+            });
+            scheme = ordering_scheme;
         }
 
         if profile.loss_policy == LossPolicy::ExactOnly && scheme.is_lossy(context.data_type) {
@@ -1323,19 +1322,18 @@ impl StrategyRegistry {
         }
 
         let mut expected_ratio = estimate_compression_ratio(&scheme, analysis, context.data_type);
-        if let Some(target_ratio) = profile.target_compression_ratio {
-            if target_ratio > 1.0
-                && expected_ratio < target_ratio
-                && !matches!(scheme, ProximaScheme::Raw)
-            {
-                rejected_candidates.push(RejectedCodecCandidate {
-                    scheme: scheme.clone(),
-                    reason: RejectionReason::CompressionTargetMiss,
-                    expected_ratio: Some(expected_ratio),
-                });
-                scheme = ProximaScheme::Raw;
-                expected_ratio = 1.0;
-            }
+        if let Some(target_ratio) = profile.target_compression_ratio
+            && target_ratio > 1.0
+            && expected_ratio < target_ratio
+            && !matches!(scheme, ProximaScheme::Raw)
+        {
+            rejected_candidates.push(RejectedCodecCandidate {
+                scheme: scheme.clone(),
+                reason: RejectionReason::CompressionTargetMiss,
+                expected_ratio: Some(expected_ratio),
+            });
+            scheme = ProximaScheme::Raw;
+            expected_ratio = 1.0;
         }
 
         CodecDecision {

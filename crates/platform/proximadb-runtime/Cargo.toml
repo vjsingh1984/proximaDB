@@ -28,3 +28,12 @@ sysinfo = "0.30"
 thiserror.workspace = true
 tokio = { version = "1.37", features = ["full"] }
 tracing = "0.1"
+
+[features]
+default = []
+# Distributed cluster bootstrap support. When enabled, exposes the
+# `ClusterServerConfig` re-export and the cluster-related fields on
+# `MultiServerConfig`. The root `proximadb` crate forwards its own
+# `cluster` feature here. Without this, `#[cfg(feature = "cluster")]`
+# in `bootstrap_config.rs` would unexpected-cfg-condition-value lint.
+cluster = []
