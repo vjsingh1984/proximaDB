@@ -644,6 +644,7 @@ impl RestServer {
         catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
         queue_client: Option<Arc<proximadb_queue::QueueClient>>,
         fulltext_indexes: Option<crate::network::rest::v1::handlers::FullTextIndexMap>,
+        recall_probe_gate: Option<Arc<crate::catalog::RecallProbeGate>>,
     ) -> Router {
         let mut base_state = AppState::new(
             request_handlers,
@@ -668,6 +669,11 @@ impl RestServer {
         // component returns 0 results.
         if let Some(indexes) = fulltext_indexes.clone() {
             base_state = base_state.with_fulltext_indexes(indexes);
+        }
+        // TD-064 / LLD §5: share the recall-probe gate so v2 route-health
+        // can resolve per-scope `gate_open` state without re-constructing.
+        if let Some(gate) = recall_probe_gate {
+            base_state = base_state.with_recall_probe_gate(gate);
         }
         let state = if let Some(p) = ports {
             let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);

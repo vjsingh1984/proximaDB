@@ -167,6 +167,16 @@ pub struct SharedServices {
     /// both consumers fall back to their respective opt-out behavior
     /// (graph: tracing-only; pgwire: opens its own appender locally).
     pub canonical_wal_appender: Option<Arc<crate::services::FramedTableWalAppender>>,
+
+    /// Process-wide recall-probe gate (TD-064 / LLD §5). The gate enables
+    /// the quantized candidate route only after the recall-probe set passes
+    /// the tenant's target for three consecutive builds; a single failure
+    /// resets the streak. Held here so REST/gRPC handlers can read
+    /// per-collection state via `is_open(ProbeScope)` without re-constructing
+    /// the state machine — and so the planned Phase 5 stats refresher has a
+    /// single registry to persist from. The gate was test-only prior to
+    /// being slotted here; this is the first production wiring.
+    pub recall_probe_gate: Arc<crate::catalog::RecallProbeGate>,
 }
 
 impl SharedServices {
@@ -1165,6 +1175,11 @@ impl SharedServices {
                 // for pgwire direct writes — guaranteeing both consumers
                 // share the same next_sequence counter.
                 canonical_wal_appender,
+                // TD-064 / LLD §5: per-collection recall-probe gate. Empty
+                // at startup; populated as the stats refresher / search path
+                // observe probe outcomes. Route-health surfaces per-scope
+                // state for operator visibility.
+                recall_probe_gate: Arc::new(crate::catalog::RecallProbeGate::new()),
             },
             collection_service,
         ))

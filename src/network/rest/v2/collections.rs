@@ -908,6 +908,13 @@ pub struct RecallProbeHealth {
     pub implementation_present: bool,
     pub wired_to_query_path: bool,
     pub live_state_in_app_state: bool,
+    /// Per-scope (tenant + collection) gate-open state when the gate is
+    /// reachable from `AppState`. `None` when the gate isn't wired into
+    /// `AppState` for this deployment, or when the scope has never been
+    /// observed (default-closed). The value is taken from
+    /// `RecallProbeGate::is_open` at request time and reflects the most
+    /// recent probe outcome held in memory.
+    pub gate_open: Option<bool>,
     pub notes: &'static str,
 }
 
@@ -983,7 +990,7 @@ fn build_route_health(
     storage_size_bytes: u64,
     index_size_bytes: u64,
 ) -> CollectionRouteHealthV2 {
-    build_route_health_with_object_economy_status(
+    build_route_health_with_live_state(
         collection_id,
         engine,
         dimension,
@@ -992,10 +999,22 @@ fn build_route_health(
         storage_size_bytes,
         index_size_bytes,
         None,
+        RecallProbeLiveState::Unwired,
     )
 }
 
-fn build_route_health_with_object_economy_status(
+/// Per-scope recall-probe state resolved at handler time. `Unwired` means
+/// the gate isn't reachable from `AppState` for this deployment, so the
+/// route-health response reports `live_state_in_app_state: false` and
+/// `gate_open: None`. `Wired { gate_open }` flips `live_state_in_app_state`
+/// to true and exposes the actual gate state for the requested scope.
+#[derive(Debug, Clone, Copy)]
+enum RecallProbeLiveState {
+    Unwired,
+    Wired { gate_open: bool },
+}
+
+fn build_route_health_with_live_state(
     collection_id: String,
     engine: String,
     dimension: u32,
@@ -1004,6 +1023,7 @@ fn build_route_health_with_object_economy_status(
     storage_size_bytes: u64,
     index_size_bytes: u64,
     cached_object_economy_status: Option<&'static str>,
+    recall_probe_state: RecallProbeLiveState,
 ) -> CollectionRouteHealthV2 {
     let filtered_ann = FilteredAnnHealth {
         id_predicate_supported: true,
@@ -1062,12 +1082,26 @@ fn build_route_health_with_object_economy_status(
             "Vector object-economy directory is currently SST-specific."
         },
     };
+    let (recall_probe_in_app_state, recall_probe_gate_open) = match recall_probe_state {
+        RecallProbeLiveState::Unwired => (false, None),
+        RecallProbeLiveState::Wired { gate_open } => (true, Some(gate_open)),
+    };
     let recall_probe = RecallProbeHealth {
         implementation_present: true,
+        // Search code does not yet consult `RecallProbeGate::is_open` when
+        // choosing the quantized vs full-precision route — that wiring is
+        // its own follow-up. This route only proves the gate is reachable.
         wired_to_query_path: false,
-        live_state_in_app_state: false,
-        notes: "RecallProbeGate state machine exists; query-path wiring and \
-                AppState exposure are deferred (see catalog/recall_probe.rs).",
+        live_state_in_app_state: recall_probe_in_app_state,
+        gate_open: recall_probe_gate_open,
+        notes: if recall_probe_in_app_state {
+            "RecallProbeGate is reachable from AppState; gate_open reflects \
+             the most recent probe outcome for this (tenant, collection) \
+             scope. Search-path consultation is a separate follow-up."
+        } else {
+            "RecallProbeGate state machine exists in catalog/recall_probe.rs \
+             but is not wired into AppState for this deployment."
+        },
     };
 
     let degraded_reasons = compute_degraded_reasons(
@@ -1176,7 +1210,18 @@ pub async fn get_collection_route_health_v2(
         None
     };
 
-    Ok(Json(build_route_health_with_object_economy_status(
+    let recall_probe_state = match &state.recall_probe_gate {
+        Some(gate) => {
+            let scope =
+                crate::catalog::ProbeScope::new(tenant.tenant_id.clone(), collection_id.clone());
+            RecallProbeLiveState::Wired {
+                gate_open: gate.is_open(&scope).await,
+            }
+        }
+        None => RecallProbeLiveState::Unwired,
+    };
+
+    Ok(Json(build_route_health_with_live_state(
         collection_id,
         engine_str,
         config.dimension,
@@ -1185,6 +1230,7 @@ pub async fn get_collection_route_health_v2(
         non_negative_stat(stats.data_size_bytes),
         non_negative_stat(stats.index_size_bytes),
         cached_object_economy_status,
+        recall_probe_state,
     )))
 }
 
@@ -1500,7 +1546,7 @@ mod tests {
 
     #[test]
     fn route_health_object_economy_reports_cached_loaded_status() {
-        let h = build_route_health_with_object_economy_status(
+        let h = build_route_health_with_live_state(
             "c".to_string(),
             "sst".to_string(),
             8,
@@ -1509,6 +1555,7 @@ mod tests {
             0,
             0,
             Some("loaded"),
+            RecallProbeLiveState::Unwired,
         );
 
         assert!(h.object_economy.live_status_in_app_state);
@@ -1525,7 +1572,7 @@ mod tests {
 
     #[test]
     fn route_health_object_economy_reports_cached_degraded_status() {
-        let h = build_route_health_with_object_economy_status(
+        let h = build_route_health_with_live_state(
             "c".to_string(),
             "sst".to_string(),
             8,
@@ -1534,6 +1581,7 @@ mod tests {
             0,
             0,
             Some("missing"),
+            RecallProbeLiveState::Unwired,
         );
 
         assert!(h.object_economy.live_status_in_app_state);
@@ -1546,6 +1594,81 @@ mod tests {
             h.degraded_reasons
                 .contains(&DegradedReason::ObjectEconomyDirectoryDegraded)
         );
+    }
+
+    // ------------------------------------------------------------------
+    // RecallProbeLiveState branch coverage — exercises both the Unwired
+    // path (default, no AppState slot) and the Wired path (gate reachable
+    // from AppState, per-scope `gate_open` resolved). `wired_to_query_path`
+    // intentionally stays `false` in both branches because no search code
+    // consults the gate yet — that's a separate follow-up, and flipping
+    // wired_to_query_path here would silently overclaim.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn route_health_recall_probe_unwired_reports_none_gate_open() {
+        let h = build_route_health(
+            "c".to_string(),
+            "sst".to_string(),
+            8,
+            "cosine".to_string(),
+            0,
+            0,
+            0,
+        );
+        assert!(!h.recall_probe.live_state_in_app_state);
+        assert_eq!(h.recall_probe.gate_open, None);
+        // wired_to_query_path stays false until search code consults the gate.
+        assert!(!h.recall_probe.wired_to_query_path);
+        assert!(
+            h.degraded_reasons
+                .contains(&DegradedReason::RecallProbeNotWired),
+            "RecallProbeNotWired must remain in the v1 set until the search \
+             path consults the gate, regardless of AppState wiring"
+        );
+    }
+
+    #[test]
+    fn route_health_recall_probe_wired_reports_gate_open_true() {
+        let h = build_route_health_with_live_state(
+            "c".to_string(),
+            "sst".to_string(),
+            8,
+            "cosine".to_string(),
+            0,
+            0,
+            0,
+            None,
+            RecallProbeLiveState::Wired { gate_open: true },
+        );
+        assert!(h.recall_probe.live_state_in_app_state);
+        assert_eq!(h.recall_probe.gate_open, Some(true));
+        // Critical: AppState wiring alone does NOT flip wired_to_query_path.
+        // Search code must call gate.is_open before that flips.
+        assert!(!h.recall_probe.wired_to_query_path);
+        assert!(
+            h.degraded_reasons
+                .contains(&DegradedReason::RecallProbeNotWired),
+            "AppState reachability is necessary but not sufficient for the \
+             gate to be considered fully wired"
+        );
+    }
+
+    #[test]
+    fn route_health_recall_probe_wired_reports_gate_open_false() {
+        let h = build_route_health_with_live_state(
+            "c".to_string(),
+            "sst".to_string(),
+            8,
+            "cosine".to_string(),
+            0,
+            0,
+            0,
+            None,
+            RecallProbeLiveState::Wired { gate_open: false },
+        );
+        assert!(h.recall_probe.live_state_in_app_state);
+        assert_eq!(h.recall_probe.gate_open, Some(false));
     }
 
     // ------------------------------------------------------------------
@@ -1600,6 +1723,7 @@ mod tests {
             implementation_present: true,
             wired_to_query_path: true,
             live_state_in_app_state: true,
+            gate_open: Some(true),
             notes: "",
         }
     }
@@ -1785,6 +1909,7 @@ mod tests {
             implementation_present: false,
             wired_to_query_path: false,
             live_state_in_app_state: false,
+            gate_open: None,
             notes: "",
         };
         let reasons = compute_degraded_reasons(&fa, &writes, &freshness, &oe, &rp);

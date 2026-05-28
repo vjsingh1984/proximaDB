@@ -83,6 +83,15 @@ pub struct AppState {
     /// `src/network/rest/v1/rank.rs` and
     /// `roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md`.
     pub rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+
+    /// Optional recall-probe gate (TD-064 / LLD §5). When `Some`, the v2
+    /// route-health endpoint reports per-scope `gate_open` state and flips
+    /// `recall_probe.live_state_in_app_state: true`. Production wires this
+    /// from `SharedServices.recall_probe_gate` via `with_recall_probe_gate`
+    /// in `src/network/multi_server.rs`. Search-path consultation
+    /// (`wired_to_query_path: true`) is a separate follow-up; this slot
+    /// only proves the gate is reachable from request handlers.
+    pub recall_probe_gate: Option<Arc<crate::catalog::RecallProbeGate>>,
 }
 
 impl AppState {
@@ -114,6 +123,7 @@ impl AppState {
             api_handlers: None,
             queue_client: None,
             rank_services: None,
+            recall_probe_gate: None,
         }
     }
 
@@ -158,6 +168,16 @@ impl AppState {
     /// Inject the shared xCatalog manager from the server composition root.
     pub fn with_catalog_manager(mut self, manager: Arc<crate::catalog::CatalogManager>) -> Self {
         self.catalog_manager = manager;
+        self
+    }
+
+    /// Inject the shared recall-probe gate from `SharedServices`. When set,
+    /// `/api/v2/_diagnostics/collections/:id/route-health` resolves
+    /// per-scope gate state and reports `recall_probe.gate_open` +
+    /// `recall_probe.live_state_in_app_state: true`. Search-path
+    /// consultation (`wired_to_query_path: true`) is separate.
+    pub fn with_recall_probe_gate(mut self, gate: Arc<crate::catalog::RecallProbeGate>) -> Self {
+        self.recall_probe_gate = Some(gate);
         self
     }
 
@@ -298,11 +318,11 @@ pub async fn merge_graph_branch_inner(
     let report =
         crate::graph::merge::merge_branches(&collection_entries, branch, &request.target_branch)
             .ok_or_else(|| {
-            ApiError::NotFound(format!(
-                "no mergeable branch entries found for collection '{}' source '{}' target '{}'",
-                collection, branch, request.target_branch
-            ))
-        })?;
+                ApiError::NotFound(format!(
+                    "no mergeable branch entries found for collection '{}' source '{}' target '{}'",
+                    collection, branch, request.target_branch
+                ))
+            })?;
 
     // If not dry-run, write the merged records to WAL
     let write_back_result = if !request.dry_run {

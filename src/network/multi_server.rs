@@ -849,6 +849,7 @@ impl MultiServer {
                 Some(services.catalog_manager.clone()),
                 self.queue_client.clone(),
                 Some(services.fulltext_indexes.clone()),
+                Some(services.recall_probe_gate.clone()),
             );
 
             info!(
