@@ -29,7 +29,7 @@ pub enum ProbeOutcome {
 
 /// Per-collection probe state. Tracks the consecutive-pass streak and the
 /// resulting gate state so the runtime can read a single field per request.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProbeState {
     /// Consecutive passes observed at the most recent build. Resets to
     /// zero on any failure. Caps at `passes_required` — additional passes
@@ -41,17 +41,6 @@ pub struct ProbeState {
     pub total_observations: u64,
     /// Total number of failures observed (for observability).
     pub total_failures: u64,
-}
-
-impl Default for ProbeState {
-    fn default() -> Self {
-        Self {
-            consecutive_passes: 0,
-            gate_open: false,
-            total_observations: 0,
-            total_failures: 0,
-        }
-    }
 }
 
 /// Tunable knobs.

@@ -90,10 +90,11 @@ pub enum SearchMode {
 /// * [`VectorFreshnessMode::StaleOk`] — skip the WAL delta entirely.
 ///   Cheapest read, may miss recent writes. EXPLAIN must surface this
 ///   choice plus the directory watermark so callers can audit.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum VectorFreshnessMode {
     /// Default: WAL/memtable delta is always merged.
+    #[default]
     Strong,
     /// Accept directory state up to `max_staleness_ms` old before merging.
     BoundedStale {
@@ -102,12 +103,6 @@ pub enum VectorFreshnessMode {
     },
     /// Skip the WAL delta read entirely.
     StaleOk,
-}
-
-impl Default for VectorFreshnessMode {
-    fn default() -> Self {
-        Self::Strong
-    }
 }
 
 impl VectorFreshnessMode {
@@ -177,7 +172,19 @@ impl VectorFreshnessMode {
         if matches!(self, Self::StaleOk) {
             return false;
         }
-        if current_lsn <= watermark_lsn {
+        // When `current_lsn == 0` the global manifest's LSN allocator has not
+        // been advanced. This happens when the WAL writer path adds records
+        // to the memtable without going through `manifest::append_*` (the
+        // current v2 INSERT path in `write_vector_batch_native_arc_with_mode`).
+        // In that case LSN-based gating would silently hide unflushed records
+        // from search: `0 <= watermark_lsn` is true for any watermark, so the
+        // delta scan would be skipped even when memtable has data.
+        //
+        // Treat `current_lsn == 0` as "tracking unavailable" and fall through
+        // to scan — the memtable lookup is cheap when empty. Only short-circuit
+        // when we have evidence the watermark already covers the WAL.
+        // Reconciled 2026-05-28 with the v2 INSERT→SEARCH gap.
+        if current_lsn > 0 && current_lsn <= watermark_lsn {
             return false;
         }
         if let Self::BoundedStale { max_staleness_ms } = self {
@@ -1419,6 +1426,23 @@ mod tests {
     fn should_scan_delta_triggers_strong_when_wal_has_newer_records() {
         assert!(VectorFreshnessMode::Strong.should_scan_delta(/*now*/ 100, /*wm*/ 50));
         assert!(VectorFreshnessMode::Strong.should_scan_delta(/*now*/ 1, /*wm*/ 0));
+    }
+
+    #[test]
+    fn should_scan_delta_scans_strong_when_lsn_tracking_is_zero() {
+        // Reconciled 2026-05-28: when `current_lsn == 0` the global manifest
+        // LSN allocator hasn't been advanced (e.g. v2 INSERT path skips the
+        // manifest::append_* call). Returning false here would silently
+        // hide memtable records from search. Strong/BoundedStale must scan;
+        // StaleOk continues to skip.
+        assert!(VectorFreshnessMode::Strong.should_scan_delta(/*now*/ 0, /*wm*/ 0));
+        assert!(
+            VectorFreshnessMode::BoundedStale {
+                max_staleness_ms: 5_000,
+            }
+            .should_scan_delta(0, 0)
+        );
+        assert!(!VectorFreshnessMode::StaleOk.should_scan_delta(0, 0));
     }
 
     #[test]

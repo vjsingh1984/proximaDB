@@ -80,32 +80,22 @@ pub enum WriteDurabilityRequirement {
 }
 
 /// Isolation profile requested by the write.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WriteIsolationRequirement {
+    #[default]
     ReadCommitted,
     Snapshot,
     Serializable,
 }
 
-impl Default for WriteIsolationRequirement {
-    fn default() -> Self {
-        Self::ReadCommitted
-    }
-}
-
 /// Freshness expectation for projections populated as part of the write.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ProjectionFreshnessRequirement {
+    #[default]
     None,
     BestEffort,
     ReadYourWrites,
     Synchronous,
-}
-
-impl Default for ProjectionFreshnessRequirement {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 /// Guard that must be satisfied by the executor selected for a write lane.

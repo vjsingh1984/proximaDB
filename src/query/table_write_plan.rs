@@ -48,18 +48,13 @@ impl LogicalTableRef {
 }
 
 /// Snapshot, branch, or freshness reference pinned for a read.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub enum SnapshotRef {
+    #[default]
     Latest,
     SnapshotId(String),
     Branch(String),
     TimestampNs(i64),
-}
-
-impl Default for SnapshotRef {
-    fn default() -> Self {
-        Self::Latest
-    }
 }
 
 /// External/open format referenced by a read or write plan.
@@ -96,33 +91,23 @@ pub enum WriteMode {
 }
 
 /// Conflict behavior for key collisions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum ConflictPolicy {
+    #[default]
     Error,
     Ignore,
     Upsert,
     Merge,
 }
 
-impl Default for ConflictPolicy {
-    fn default() -> Self {
-        Self::Error
-    }
-}
-
 /// Distribution preference requested by the SQL/frontend planner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum DistributionMode {
+    #[default]
     Auto,
     LocalOnly,
     PseudoDistributed,
     Distributed,
-}
-
-impl Default for DistributionMode {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 /// Logical copy/write plan for INSERT SELECT, INSERT OVERWRITE, CTAS, and MERGE.

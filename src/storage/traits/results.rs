@@ -140,7 +140,7 @@ impl Default for StorageCompactionResult {
 }
 
 /// Engine statistics for monitoring and observability.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct EngineStatistics {
     /// Engine name and version
     pub engine_name: String,
@@ -167,23 +167,6 @@ pub struct EngineStatistics {
 
     /// Engine-specific metrics
     pub engine_specific: HashMap<String, serde_json::Value>,
-}
-
-impl Default for EngineStatistics {
-    fn default() -> Self {
-        Self {
-            engine_name: String::new(),
-            engine_version: String::new(),
-            total_storage_bytes: 0,
-            memory_usage_bytes: 0,
-            collection_count: 0,
-            last_flush: None,
-            last_compaction: None,
-            pending_flushes: 0,
-            pending_compactions: 0,
-            engine_specific: HashMap::new(),
-        }
-    }
 }
 
 /// Engine health status for monitoring.

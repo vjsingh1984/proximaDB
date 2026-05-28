@@ -224,7 +224,7 @@ impl Default for ParallelismConfig {
 ///
 /// Encodes decisions for using object economy metadata
 /// for cost-aware routing and tier-specific optimization.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ObjectEconomyAction {
     /// Whether object economy routing is enabled
     pub enabled: bool,
@@ -240,18 +240,6 @@ pub struct ObjectEconomyAction {
     /// [`ObjectEconomyQuantizationCeiling`](crate::catalog::tenant_tier::ObjectEconomyQuantizationCeiling),
     /// which caps the *maximum* precision a tier is allowed to request.
     pub quantization_floor: Option<QuantizationStage>,
-}
-
-impl Default for ObjectEconomyAction {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            use_centroid_routing: false,
-            use_zorder_pruning: false,
-            max_blocks_to_scan: None,
-            quantization_floor: None,
-        }
-    }
 }
 
 impl fmt::Display for ObjectEconomyAction {

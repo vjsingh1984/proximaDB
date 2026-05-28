@@ -602,11 +602,12 @@ mod tests {
 use proximadb_records::EmbeddingScalarType;
 
 /// Status of a PQ codebook in the precision-migration lifecycle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum CodebookStatus {
     /// Built from the current canonical precision. Safe for derived
     /// ranking. Default for any newly trained codebook.
+    #[default]
     Fresh,
     /// Canonical precision changed since training. Safe for lossy
     /// candidate generation when callers rerank against canonical;
@@ -620,12 +621,6 @@ pub enum CodebookStatus {
     /// computing new centroids. The job swaps back to `Fresh` (with a
     /// fresh `built_at_epoch` + `built_from_precision`) on success.
     Retraining,
-}
-
-impl Default for CodebookStatus {
-    fn default() -> Self {
-        Self::Fresh
-    }
 }
 
 impl CodebookStatus {
