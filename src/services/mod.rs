@@ -178,6 +178,7 @@ pub mod events;
 pub mod graph_collection;
 pub mod operations;
 pub mod queue_fs_adapter;
+pub mod rank_profile_store;
 pub mod record_memtable;
 pub mod record_store;
 pub mod schema;
@@ -204,6 +205,9 @@ pub use embedding_drainer::{
 pub use events::EventLog;
 pub use graph_collection::GraphCollectionService;
 pub use operations::VectorOps;
+pub use rank_profile_store::{
+    CanonicalWalRankProfileStore, RANK_PROFILES_COLLECTION_ID, RankProfileStore, StoredRankProfile,
+};
 pub use record_memtable::MemtableRecordStorage;
 pub use record_store::{
     CatalogRoutingTableRecordStore, DirectWalTableRecordStore, RecordStorageTableRecordStore,
