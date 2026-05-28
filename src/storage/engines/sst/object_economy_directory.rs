@@ -613,6 +613,93 @@ impl VectorObjectEconomyDirectoryCache {
     }
 }
 
+/// Constructor-injected dependencies for emitting object-economy
+/// directory updates from the SST writer/compactor.
+///
+/// Conservative-by-design: every input the emit path needs is supplied
+/// up front by the caller (typically the flush coordinator). There is no
+/// path-derived `collection_root`, no wall-clock `storage_epoch`, no
+/// implicit `authority_mode`. When a `SstableWriter` is constructed
+/// without these hooks it skips directory emission entirely — existing
+/// call sites are unaffected until they opt in.
+///
+/// Concurrency contract: the caller MUST serialize `emit_after_flush`
+/// calls per `collection_id`. Concurrent writers racing on the same
+/// collection's read-modify-write cycle can lose updates. The natural
+/// lock-holder is the flush coordinator, which already serializes
+/// flushes per collection. This struct does not introduce its own
+/// locking — keeping it pure makes it cheap to wrap in a higher-level
+/// coordinator without double-locking.
+#[derive(Debug, Clone)]
+pub struct SstableWriterDirectoryHooks {
+    pub cache: Arc<VectorObjectEconomyDirectoryCache>,
+    pub collection_id: String,
+    pub collection_root: String,
+    pub storage_epoch: u64,
+    pub authority_mode: CatalogAuthorityMode,
+    /// Freshness LSN that this flush advances the directory's watermark
+    /// to. When the WAL cursor isn't plumbed yet, callers pass `0` and
+    /// readers requesting strong-freshness routes will treat the
+    /// projection as fully stale until a real cursor lands.
+    pub freshness_lsn: u64,
+    /// LSM level of the output file. Stored on the file entry so the
+    /// planner can route reads by level (cold L1+ vs warm L0).
+    pub level: u8,
+}
+
+impl SstableWriterDirectoryHooks {
+    /// Persist a new (or replacement) file entry for this flush and
+    /// invalidate the read-side cache so the next reader picks up the
+    /// change.
+    ///
+    /// Idempotent at the file_id level — calling twice with the same
+    /// `file_id` replaces the entry in place rather than duplicating.
+    /// Different `file_id`s accumulate.
+    pub async fn emit_after_flush(
+        &self,
+        fs: &dyn crate::storage::persistence::filesystem::FileSystem,
+        file_id: &str,
+        object_url: &str,
+        file_size_bytes: u64,
+        block_index_offset: u64,
+        block_index_size: u32,
+        index_entries: &[IndexEntry],
+    ) -> Result<()> {
+        let file_entry = ObjectEconomyFileEntry::from_index_entries(
+            file_id,
+            object_url,
+            self.level,
+            file_size_bytes,
+            block_index_offset,
+            block_index_size,
+            index_entries,
+        )?;
+
+        let store = VectorObjectEconomyDirectoryStore::new(
+            fs,
+            self.collection_id.as_str(),
+            self.collection_root.as_str(),
+            self.storage_epoch,
+            self.authority_mode,
+        );
+
+        let freshness_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+
+        store
+            .upsert_and_persist(file_entry, self.freshness_lsn, freshness_ns)
+            .await?;
+
+        // Drop the read-side cached handle so the next reader allocates a
+        // fresh OnceCell and reloads from the freshly-written sidecar.
+        self.cache.invalidate(&self.collection_id);
+
+        Ok(())
+    }
+}
+
 /// Loader-closure helper for [`CachedDirectoryHandle::get_or_load`].
 ///
 /// Construct a [`VectorObjectEconomyDirectoryStore`] from the supplied
@@ -1505,5 +1592,199 @@ mod tests {
         // Loaded is non-degraded but still has a stable reason so EXPLAIN
         // can opt in to verbose tracing if needed.
         assert!(!DirectoryLoadStatus::Loaded.is_degraded());
+    }
+
+    // ── SstableWriterDirectoryHooks tests (TDD) ───────────────────────────
+    //
+    // The writer-side counterpart of the cache: after a successful SST
+    // flush, hooks.emit_after_flush updates the per-collection sidecar
+    // and invalidates the read-side cache so subsequent readers see the
+    // new file. The hooks are constructor-injected (no path derivation,
+    // no fallback magic) — when unset, the writer skips emission entirely.
+
+    fn sample_index_entries(base_block: u32) -> Vec<IndexEntry> {
+        vec![index_entry(base_block, 100), index_entry(base_block + 1, 300)]
+    }
+
+    fn hooks_with_fresh_cache(
+        collection_id: &str,
+        storage_epoch: u64,
+    ) -> (SstableWriterDirectoryHooks, Arc<VectorObjectEconomyDirectoryCache>) {
+        let cache = Arc::new(VectorObjectEconomyDirectoryCache::new());
+        let hooks = SstableWriterDirectoryHooks {
+            cache: cache.clone(),
+            collection_id: collection_id.to_string(),
+            collection_root: "s3://bucket/coll".to_string(),
+            storage_epoch,
+            authority_mode: CatalogAuthorityMode::RebuildableProjection,
+            freshness_lsn: 100,
+            level: 0,
+        };
+        (hooks, cache)
+    }
+
+    #[tokio::test]
+    async fn emit_after_flush_persists_directory_entry_for_new_file() {
+        let fs = InMemoryFs::default();
+        let (hooks, _cache) = hooks_with_fresh_cache("coll", 7);
+
+        hooks
+            .emit_after_flush(
+                &fs,
+                "l0_0001",
+                "s3://bucket/coll/data/level0/l0_0001.sst",
+                4096,
+                512,
+                64,
+                &sample_index_entries(0),
+            )
+            .await
+            .expect("emit");
+
+        // Confirm a fresh store load picks up the entry.
+        let store = VectorObjectEconomyDirectoryStore::new(
+            &fs,
+            "coll",
+            "s3://bucket/coll",
+            7,
+            CatalogAuthorityMode::RebuildableProjection,
+        );
+        let dir = store.load_or_empty().await;
+        assert_eq!(dir.files.len(), 1);
+        assert_eq!(dir.files[0].file_id, "l0_0001");
+        assert_eq!(dir.freshness_watermark_lsn, 100);
+    }
+
+    #[tokio::test]
+    async fn emit_after_flush_is_idempotent_for_same_file_id() {
+        let fs = InMemoryFs::default();
+        let (hooks, _cache) = hooks_with_fresh_cache("coll", 7);
+
+        // Emit twice for the same file_id (e.g., retry after transient error).
+        for _ in 0..2 {
+            hooks
+                .emit_after_flush(
+                    &fs,
+                    "l0_0001",
+                    "s3://bucket/coll/data/level0/l0_0001.sst",
+                    4096,
+                    512,
+                    64,
+                    &sample_index_entries(0),
+                )
+                .await
+                .expect("emit");
+        }
+
+        let store = VectorObjectEconomyDirectoryStore::new(
+            &fs,
+            "coll",
+            "s3://bucket/coll",
+            7,
+            CatalogAuthorityMode::RebuildableProjection,
+        );
+        let dir = store.load_or_empty().await;
+        assert_eq!(dir.files.len(), 1, "same file_id must not duplicate");
+    }
+
+    #[tokio::test]
+    async fn emit_after_flush_accumulates_distinct_file_ids() {
+        let fs = InMemoryFs::default();
+        let (hooks, _cache) = hooks_with_fresh_cache("coll", 7);
+
+        hooks
+            .emit_after_flush(
+                &fs,
+                "l0_0001",
+                "s3://bucket/coll/data/level0/l0_0001.sst",
+                4096,
+                512,
+                64,
+                &sample_index_entries(0),
+            )
+            .await
+            .expect("emit 1");
+        hooks
+            .emit_after_flush(
+                &fs,
+                "l0_0002",
+                "s3://bucket/coll/data/level0/l0_0002.sst",
+                4096,
+                512,
+                64,
+                &sample_index_entries(10),
+            )
+            .await
+            .expect("emit 2");
+
+        let store = VectorObjectEconomyDirectoryStore::new(
+            &fs,
+            "coll",
+            "s3://bucket/coll",
+            7,
+            CatalogAuthorityMode::RebuildableProjection,
+        );
+        let dir = store.load_or_empty().await;
+        assert_eq!(dir.files.len(), 2);
+        let ids: Vec<&str> = dir.files.iter().map(|f| f.file_id.as_str()).collect();
+        assert!(ids.contains(&"l0_0001"));
+        assert!(ids.contains(&"l0_0002"));
+    }
+
+    #[tokio::test]
+    async fn emit_after_flush_invalidates_read_side_cache() {
+        let fs = InMemoryFs::default();
+        let (hooks, cache) = hooks_with_fresh_cache("coll", 7);
+
+        // Warm the read-side cache with an empty directory (sidecar absent).
+        let pre_handle = cache.handle_for("coll");
+        let pre_entry = pre_handle
+            .get_or_load(|| async {
+                load_directory_for(
+                    &fs,
+                    "coll",
+                    "s3://bucket/coll",
+                    7,
+                    CatalogAuthorityMode::RebuildableProjection,
+                )
+                .await
+            })
+            .await;
+        assert_eq!(pre_entry.status, DirectoryLoadStatus::Missing);
+
+        // Writer-side emit must invalidate the warmed handle.
+        hooks
+            .emit_after_flush(
+                &fs,
+                "l0_0001",
+                "s3://bucket/coll/data/level0/l0_0001.sst",
+                4096,
+                512,
+                64,
+                &sample_index_entries(0),
+            )
+            .await
+            .expect("emit");
+
+        // Fresh handle after invalidation → reload returns Loaded.
+        let post_handle = cache.handle_for("coll");
+        assert!(
+            !Arc::ptr_eq(&pre_handle, &post_handle),
+            "invalidate must replace the handle"
+        );
+        let post_entry = post_handle
+            .get_or_load(|| async {
+                load_directory_for(
+                    &fs,
+                    "coll",
+                    "s3://bucket/coll",
+                    7,
+                    CatalogAuthorityMode::RebuildableProjection,
+                )
+                .await
+            })
+            .await;
+        assert_eq!(post_entry.status, DirectoryLoadStatus::Loaded);
+        assert_eq!(post_entry.directory.files.len(), 1);
     }
 }
