@@ -300,14 +300,11 @@ impl DeploymentManager {
                     );
                 }
             }
-            Environment::Development => {
-                // Development-specific validations
-                if self.config.service.resources.memory_limit_mb > 8192 {
-                    warn!(
-                        "High memory allocation for development: {} MB",
-                        self.config.service.resources.memory_limit_mb
-                    );
-                }
+            Environment::Development if self.config.service.resources.memory_limit_mb > 8192 => {
+                warn!(
+                    "High memory allocation for development: {} MB",
+                    self.config.service.resources.memory_limit_mb
+                );
             }
             _ => {}
         }

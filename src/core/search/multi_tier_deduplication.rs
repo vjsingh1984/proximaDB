@@ -263,18 +263,17 @@ impl MultiTierDeduplicator {
                 }
             }
 
-            if !self.requires_ordering {
-                if let Some(k) = self.target_k {
-                    if self.id_to_latest.len() + self.results_without_id.len() >= k {
-                        self.early_termination_possible = true;
-                        tracing::info!(
-                            "Early termination: reached {} unique results (target k={})",
-                            self.id_to_latest.len() + self.results_without_id.len(),
-                            k
-                        );
-                        return;
-                    }
-                }
+            if !self.requires_ordering
+                && let Some(k) = self.target_k
+                && self.id_to_latest.len() + self.results_without_id.len() >= k
+            {
+                self.early_termination_possible = true;
+                tracing::info!(
+                    "Early termination: reached {} unique results (target k={})",
+                    self.id_to_latest.len() + self.results_without_id.len(),
+                    k
+                );
+                return;
             }
         }
     }

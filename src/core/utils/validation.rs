@@ -271,21 +271,17 @@ pub fn validate_score(score: f32, metric_type: &str) -> Result<()> {
     }
 
     match metric_type.to_lowercase().as_str() {
-        "cosine" | "cosine_similarity" => {
-            if !(-1.0..=1.0).contains(&score) {
-                bail!(
-                    "Cosine similarity score must be in range [-1, 1], got: {}",
-                    score
-                );
-            }
+        "cosine" | "cosine_similarity" if !(-1.0..=1.0).contains(&score) => {
+            bail!(
+                "Cosine similarity score must be in range [-1, 1], got: {}",
+                score
+            );
         }
-        "euclidean" | "l2" | "manhattan" | "hamming" => {
-            if score < 0.0 {
-                bail!("Distance score must be non-negative, got: {}", score);
-            }
+        "euclidean" | "l2" | "manhattan" | "hamming" if score < 0.0 => {
+            bail!("Distance score must be non-negative, got: {}", score);
         }
         _ => {
-            // Unknown metric, just check for finite
+            // Unknown metric (or in-range), just check for finite
         }
     }
 

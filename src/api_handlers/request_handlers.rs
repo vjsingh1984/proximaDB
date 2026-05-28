@@ -890,10 +890,10 @@ impl UnifiedHandlers {
             .await?;
         if result.success {
             let n = result.vector_ids.len() as i64;
-            if n > 0 {
-                if let Some(dml_svc) = self.get_dml_service() {
-                    dml_svc.bump_row_count_stats(&collection_name, -n).await;
-                }
+            if n > 0
+                && let Some(dml_svc) = self.get_dml_service()
+            {
+                dml_svc.bump_row_count_stats(&collection_name, -n).await;
             }
         }
         Ok(result)
@@ -920,16 +920,15 @@ impl UnifiedHandlers {
         };
 
         let collection_name = request.collection_id.clone();
-        if let Some(dml_svc) = self.get_dml_service() {
-            if let Err(e) = dml_svc
+        if let Some(dml_svc) = self.get_dml_service()
+            && let Err(e) = dml_svc
                 .validate_record_batch_against_schema(&collection_name, &request.records)
                 .await
-            {
-                return Ok(BatchOperationResult::failure(
-                    format!("Schema validation failed: {}", e),
-                    "SCHEMA_VALIDATION_FAILED".to_string(),
-                ));
-            }
+        {
+            return Ok(BatchOperationResult::failure(
+                format!("Schema validation failed: {}", e),
+                "SCHEMA_VALIDATION_FAILED".to_string(),
+            ));
         }
         if let Err(e) = enforce_wal_lane_for_record_batch(
             &collection_name,
@@ -1024,16 +1023,15 @@ impl UnifiedHandlers {
         };
 
         let collection_name = request.collection_id.clone();
-        if let Some(dml_svc) = self.get_dml_service() {
-            if let Err(e) = dml_svc
+        if let Some(dml_svc) = self.get_dml_service()
+            && let Err(e) = dml_svc
                 .validate_record_batch_against_schema(&collection_name, &request.records)
                 .await
-            {
-                return Ok(BatchOperationResult::failure(
-                    format!("Schema validation failed: {}", e),
-                    "SCHEMA_VALIDATION_FAILED".to_string(),
-                ));
-            }
+        {
+            return Ok(BatchOperationResult::failure(
+                format!("Schema validation failed: {}", e),
+                "SCHEMA_VALIDATION_FAILED".to_string(),
+            ));
         }
         if let Err(e) = enforce_wal_lane_for_record_batch(
             &collection_name,

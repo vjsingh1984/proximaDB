@@ -155,10 +155,11 @@ impl super::GraphOperationsService {
 
         let is_endpoint_bound = query.from_node_id.is_some() || query.to_node_id.is_some();
 
-        if is_endpoint_bound && self.has_fresh_orion_csr(graph_id) {
-            if let Some(csr_results) = self.query_edges_from_fresh_csr(engine.as_ref(), &query)? {
-                results = csr_results;
-            }
+        if is_endpoint_bound
+            && self.has_fresh_orion_csr(graph_id)
+            && let Some(csr_results) = self.query_edges_from_fresh_csr(engine.as_ref(), &query)?
+        {
+            results = csr_results;
         }
 
         if is_endpoint_bound && results.is_empty() {
@@ -172,11 +173,11 @@ impl super::GraphOperationsService {
                         if seen.contains(edge_oid) {
                             continue;
                         }
-                        if let Some(edge_id) = edge_oid.strip_prefix(&edge_prefix) {
-                            if let Ok(Some(edge)) = engine.get_edge(&edge_id.to_string()) {
-                                seen.insert(edge_oid.clone());
-                                results.push(edge);
-                            }
+                        if let Some(edge_id) = edge_oid.strip_prefix(&edge_prefix)
+                            && let Ok(Some(edge)) = engine.get_edge(&edge_id.to_string())
+                        {
+                            seen.insert(edge_oid.clone());
+                            results.push(edge);
                         }
                     }
                 }
@@ -190,11 +191,11 @@ impl super::GraphOperationsService {
                         if seen.contains(edge_oid) {
                             continue;
                         }
-                        if let Some(edge_id) = edge_oid.strip_prefix(&edge_prefix) {
-                            if let Ok(Some(edge)) = engine.get_edge(&edge_id.to_string()) {
-                                seen.insert(edge_oid.clone());
-                                results.push(edge);
-                            }
+                        if let Some(edge_id) = edge_oid.strip_prefix(&edge_prefix)
+                            && let Ok(Some(edge)) = engine.get_edge(&edge_id.to_string())
+                        {
+                            seen.insert(edge_oid.clone());
+                            results.push(edge);
                         }
                     }
                 }

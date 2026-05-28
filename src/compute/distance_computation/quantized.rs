@@ -1114,15 +1114,13 @@ impl QuantizedDistanceCalculator {
     fn evict_pq_cache_entries(&self, cache: &mut PQDistanceCache) {
         // Implement cache eviction based on configured policy
         match self.config.cache_config.eviction_policy {
-            CacheEvictionPolicy::LRU => {
+            CacheEvictionPolicy::LRU if cache.tables.len() > 100 => {
                 // Remove oldest entries first
                 // This is simplified - would need proper LRU tracking
-                if cache.tables.len() > 100 {
-                    let keys_to_remove: Vec<u64> = cache.tables.keys().take(10).cloned().collect();
-                    for key in keys_to_remove {
-                        if let Some(table) = cache.tables.remove(&key) {
-                            cache.memory_usage_bytes -= table.estimated_size();
-                        }
+                let keys_to_remove: Vec<u64> = cache.tables.keys().take(10).cloned().collect();
+                for key in keys_to_remove {
+                    if let Some(table) = cache.tables.remove(&key) {
+                        cache.memory_usage_bytes -= table.estimated_size();
                     }
                 }
             }
