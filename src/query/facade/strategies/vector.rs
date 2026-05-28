@@ -129,9 +129,11 @@ impl VectorSearchStrategy {
             .into_iter()
             .enumerate()
             .map(|(i, r)| {
-                let mut record = ProximaRecord::default();
-                record.oid = r.id;
-                record.created_at_ns = r.timestamp.map(|ms| ms * 1_000_000).unwrap_or(0);
+                let mut record = ProximaRecord {
+                    oid: r.id,
+                    created_at_ns: r.timestamp.map(|ms| ms * 1_000_000).unwrap_or(0),
+                    ..Default::default()
+                };
                 // Convert SqlValue metadata to ProximaTree props
                 for (key, sql_val) in r.metadata {
                     if let Some(pv) = sql_value_to_proxima_value(sql_val) {

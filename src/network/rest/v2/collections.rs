@@ -1037,6 +1037,7 @@ fn compute_degraded_reasons(
 /// Kept pure so it can be unit-tested without spinning up `AppState`.
 /// The `engine` and `distance_metric` strings are the same labels the
 /// existing `get_collection_v2` handler returns, so contracts stay aligned.
+#[cfg(test)]
 fn build_route_health(
     collection_id: String,
     engine: String,
@@ -1794,9 +1795,7 @@ mod tests {
             "missing"
         );
         assert_eq!(
-            object_economy_status_label(&DirectoryLoadStatus::Corrupt(
-                "bad header".to_string()
-            )),
+            object_economy_status_label(&DirectoryLoadStatus::Corrupt("bad header".to_string())),
             "corrupt"
         );
         assert_eq!(

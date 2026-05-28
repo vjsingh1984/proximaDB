@@ -1414,10 +1414,6 @@ impl PostgresProtocol {
         }
     }
 
-    fn extract_explain_inner_query(query: &str) -> Result<&str> {
-        Self::extract_explain_with_analyze(query).map(|(_, inner)| inner)
-    }
-
     /// Parse an EXPLAIN [ANALYZE] statement, returning `(is_analyze, inner_dml_sql)`.
     /// `EXPLAIN ANALYZE` and `EXPLAIN (ANALYZE)` both set `is_analyze = true`.
     fn extract_explain_with_analyze(query: &str) -> Result<(bool, &str)> {

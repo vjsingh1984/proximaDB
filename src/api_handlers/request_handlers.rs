@@ -2158,10 +2158,11 @@ impl UnifiedHandlers {
         let start_time = std::time::Instant::now();
 
         // EXPLAIN detection: route EXPLAIN [ANALYZE] <DML> through DmlService before any other path.
-        if let Some((is_analyze, inner_query)) = Self::parse_explain_kind(query.trim()) {
-            if let Some(dml_svc) = self.get_dml_service() {
-                let parser = crate::query::sql_frontend::SqlFrontendParser::new();
-                match parser.parse_dml(inner_query) {
+        if let Some((is_analyze, inner_query)) = Self::parse_explain_kind(query.trim())
+            && let Some(dml_svc) = self.get_dml_service()
+        {
+            let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+            match parser.parse_dml(inner_query) {
                     Ok(Some(statement)) => {
                         let explain_result = if is_analyze {
                             dml_svc.explain_analyze_table_write(statement).await
@@ -2203,7 +2204,6 @@ impl UnifiedHandlers {
                         return Err(anyhow::anyhow!("EXPLAIN parse error: {}", e));
                     }
                 }
-            }
             // DmlService not wired — fall through to legacy path so EXPLAIN degrades gracefully.
         }
 
@@ -2418,13 +2418,6 @@ impl UnifiedHandlers {
 }
 
 impl UnifiedHandlers {
-    /// Return the inner DML query if the SQL starts with EXPLAIN, stripping the directive prefix.
-    /// Handles `EXPLAIN`, `EXPLAIN (FORMAT JSON)`, `EXPLAIN (FORMAT TEXT)`, etc.
-    /// Returns `None` if the query does not begin with `EXPLAIN`.
-    fn strip_explain_prefix(query: &str) -> Option<&str> {
-        Self::parse_explain_kind(query).map(|(_, inner)| inner)
-    }
-
     /// Parse an EXPLAIN statement into `(is_analyze, inner_dml)`.
     /// Handles `EXPLAIN ANALYZE <dml>`, `EXPLAIN (ANALYZE) <dml>`, and plain `EXPLAIN <dml>`.
     fn parse_explain_kind(query: &str) -> Option<(bool, &str)> {

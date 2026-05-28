@@ -53,9 +53,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
-use crate::security::validation::{
-    CollectionNameValidator, MetadataValidationConfig, MetadataValidator,
-};
+use crate::security::validation::{MetadataValidationConfig, MetadataValidator};
 use crate::storage::traits::UnifiedStorageEngine;
 
 use crate::compute::quantization::types::UnifiedQuantizationLevel;
@@ -506,9 +504,6 @@ pub struct VectorOperationsService {
     /// Security validation for metadata fields
     /// Validates metadata for SQL injection and data integrity
     metadata_validator: MetadataValidator,
-
-    /// Collection name validator for security
-    collection_name_validator: CollectionNameValidator,
 
     /// Ingestion-time pseudo-query enrichment for auditable retrieval.
     pseudo_query_generator: Arc<dyn PseudoQueryGenerator>,
@@ -1167,7 +1162,6 @@ impl VectorOperationsService {
 
             // Security validation for metadata fields
             metadata_validator: MetadataValidator::default(),
-            collection_name_validator: CollectionNameValidator::default(),
             pseudo_query_generator: Arc::new(DefaultPseudoQueryGenerator),
             insert_only_locks: Arc::new(dashmap::DashMap::new()),
             directory_cache: None,
@@ -1292,29 +1286,6 @@ impl VectorOperationsService {
             .get_handle(collection_id)?
             .get_cached()
             .map(|entry| entry.status.clone())
-    }
-
-    /// Load the per-collection object-economy directory via the cache
-    /// and return its `freshness_watermark_lsn`. Returns `None` when
-    /// any of the inputs the loader needs is unavailable — the caller
-    /// should treat that as "watermark unknown" and fall back to the
-    /// safe over-approximation (`0`, which forces always-scan).
-    ///
-    /// Phase 5 Slice 5.7: this replaces the hard-coded `0` placeholder
-    /// in `execute_search_internal`. With a real watermark, the strong
-    /// route only scans the WAL when the directory is actually behind
-    /// the committed LSN.
-    ///
-    /// Conservative-by-design: the four loader inputs (filesystem,
-    /// collection_root, storage_epoch, authority_mode) come from
-    /// engine state + collection metadata. When the writer eventually
-    /// emits a real `storage_epoch`, this helper will pick it up via
-    /// the catalog/collection lookup — for now both writer and reader
-    /// use the same placeholder `0`, so cache hits are consistent.
-    pub(crate) async fn cached_directory_watermark_lsn(&self, collection_id: &str) -> Option<u64> {
-        self.cached_directory_watermark(collection_id)
-            .await
-            .map(|(lsn, _ns)| lsn)
     }
 
     /// Slice 5.10: return both the LSN watermark and the wall-clock

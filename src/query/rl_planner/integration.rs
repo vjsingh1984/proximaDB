@@ -47,7 +47,7 @@ impl RLPlannerIntegration {
     /// object economy directory is not available.
     fn extract_object_economy_features(
         &self,
-        context: &UnifiedQueryContext<'_>,
+        _context: &UnifiedQueryContext<'_>,
     ) -> ObjectEconomyFeatures {
         // TODO: Extract from context.object_economy_directory when available
         // For now, return disabled features
