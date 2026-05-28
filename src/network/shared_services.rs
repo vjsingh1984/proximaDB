@@ -133,6 +133,24 @@ pub struct SharedServices {
     /// and gRPC `HybridSearchServiceImpl` return mocks; this field
     /// gives both paths a shared backing.
     pub fulltext_indexes: crate::network::hybrid_search::HybridFullTextIndexMap,
+
+    /// Process-wide cache of per-collection Vector Object Economy
+    /// directories. Search paths fetch a [`CachedDirectoryHandle`] via
+    /// `directory_cache.handle_for(collection_id)` and then `get_or_load`
+    /// against a loader closure (typically wrapping
+    /// [`load_directory_for`](crate::storage::engines::sst::object_economy_directory::load_directory_for)).
+    /// First reader per collection pays the cost of loading the sidecar;
+    /// subsequent readers reuse the cached `Arc<CachedDirectoryEntry>`.
+    ///
+    /// Writer/compactor will call
+    /// [`VectorObjectEconomyDirectoryCache::invalidate`](crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::invalidate)
+    /// after `upsert_and_persist` lands a new directory version so the
+    /// next reader picks up the change. That wiring is the next step
+    /// after this slot exists — see the VECTOR_OBJECT_ECONOMY_ROUTE
+    /// design doc.
+    pub directory_cache: Arc<
+        crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache,
+    >,
 }
 
 impl SharedServices {
@@ -964,6 +982,13 @@ impl SharedServices {
                 fulltext_indexes: Arc::new(std::sync::RwLock::new(
                     std::collections::HashMap::new(),
                 )),
+                // Vector Object Economy Phase 4 (2-B): process-wide
+                // per-collection directory cache. Empty at startup; first
+                // search per collection populates it. Invalidated by the
+                // writer/compactor when a new directory version lands.
+                directory_cache: Arc::new(
+                    crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
+                ),
             },
             collection_service,
         ))

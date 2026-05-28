@@ -613,6 +613,52 @@ impl VectorObjectEconomyDirectoryCache {
     }
 }
 
+/// Loader-closure helper for [`CachedDirectoryHandle::get_or_load`].
+///
+/// Construct a [`VectorObjectEconomyDirectoryStore`] from the supplied
+/// references and run `load_with_status`, yielding the
+/// `(directory, status)` tuple the cache expects.
+///
+/// Callers wrap this in a closure when populating the cache. Typical
+/// shape from the search path:
+///
+/// ```ignore
+/// let entry = cache
+///     .handle_for(collection_id)
+///     .get_or_load(|| async {
+///         load_directory_for(
+///             &*fs,
+///             collection_id,
+///             &collection_root,
+///             storage_epoch,
+///             authority_mode,
+///         )
+///         .await
+///     })
+///     .await;
+/// ```
+///
+/// Keeping this as a free function (instead of an `into_loader` method on
+/// the store) avoids dragging the store's `'a` lifetime through the
+/// `OnceCell`-held future — the closure captures the inputs and constructs
+/// the store inside its own async block.
+pub async fn load_directory_for(
+    fs: &dyn crate::storage::persistence::filesystem::FileSystem,
+    collection_id: &str,
+    collection_root: &str,
+    storage_epoch: u64,
+    authority_mode: CatalogAuthorityMode,
+) -> (VectorObjectEconomyDirectory, DirectoryLoadStatus) {
+    let store = VectorObjectEconomyDirectoryStore::new(
+        fs,
+        collection_id,
+        collection_root,
+        storage_epoch,
+        authority_mode,
+    );
+    store.load_with_status().await
+}
+
 fn infer_vector_dimension(blocks: &[ObjectEconomyBlockEntry]) -> Result<Option<u32>> {
     let mut dimension = None;
     for block in blocks {
@@ -1382,6 +1428,57 @@ mod tests {
     fn directory_cache_invalidate_missing_collection_is_no_op() {
         let cache = VectorObjectEconomyDirectoryCache::new();
         assert!(!cache.invalidate("never-touched"));
+    }
+
+    #[tokio::test]
+    async fn load_directory_for_closure_pattern_works_with_cache() {
+        // End-to-end: cache + loader closure backed by an in-memory FileSystem
+        // is the integration pattern the search path will follow.
+        let fs = Arc::new(InMemoryFs::default());
+        let cache = VectorObjectEconomyDirectoryCache::new();
+
+        // Seed a real sidecar so the loader returns Loaded, not Missing.
+        let store = VectorObjectEconomyDirectoryStore::new(
+            &*fs,
+            "coll",
+            "s3://bucket/coll",
+            12,
+            CatalogAuthorityMode::ProximaAuthoritative,
+        );
+        let mut directory = store.load_or_empty().await;
+        directory.upsert_file(sample_file("l0_0001", 0, 0));
+        store.store(&directory).await.expect("seed sidecar");
+
+        // First cache miss: the loader closure runs once and populates the
+        // OnceCell.
+        let fs_for_closure = fs.clone();
+        let entry = cache
+            .handle_for("coll")
+            .get_or_load(|| async move {
+                load_directory_for(
+                    &*fs_for_closure,
+                    "coll",
+                    "s3://bucket/coll",
+                    12,
+                    CatalogAuthorityMode::ProximaAuthoritative,
+                )
+                .await
+            })
+            .await;
+
+        assert_eq!(entry.status, DirectoryLoadStatus::Loaded);
+        assert_eq!(entry.directory.files.len(), 1);
+        assert_eq!(entry.directory.storage_epoch, 12);
+
+        // Second read returns the same cached Arc — closure does not fire
+        // again. We confirm by passing a panicking loader.
+        let entry_again = cache
+            .handle_for("coll")
+            .get_or_load(|| async {
+                panic!("loader should not fire on cached read")
+            })
+            .await;
+        assert!(Arc::ptr_eq(&entry, &entry_again));
     }
 
     #[test]
