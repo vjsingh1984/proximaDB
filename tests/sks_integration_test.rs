@@ -30,11 +30,13 @@ mod sks_integration_tests {
         // Create mock storage engine
         let storage_engine = create_mock_storage_engine();
 
-        // Create relations store
-        let relations_store = Arc::new(InMemoryRelationsStore::new(storage_engine.clone()));
+        // Create relations store (CsrRelationsStore is in-memory; the
+        // older signature took a storage_engine arg but the canonical
+        // type is zero-arg — entity_store_legacy uses RwLock<HashMap>).
+        let relations_store = Arc::new(InMemoryRelationsStore::new());
 
-        // Create provenance registry
-        let provenance_registry = Arc::new(InMemoryProvenanceRegistry::new(storage_engine.clone()));
+        // Create provenance registry (also zero-arg now).
+        let provenance_registry = Arc::new(InMemoryProvenanceRegistry::new());
 
         // Create entity store
         Arc::new(ProximaEntityStore::new(
