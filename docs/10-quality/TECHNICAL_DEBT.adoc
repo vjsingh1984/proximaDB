@@ -1168,10 +1168,10 @@ physical layouts.
 | PostgreSQL wire v2 record features exposure
 | P3
 | MEDIUM
-| Open
-| `src/network/postgres/protocol.rs` converts Arrow data to `ProximaRecord` internally but does not expose v2 `props` / `text_fields` typed-field insert via SQL. pgvector users are confined to v1-shape SQL.
+| Resolved
+| Round-2 audit (2026-05-28) flagged pgwire as not exposing v2 `props` / `text_fields` typed-field insert. The TD-084 scoping survey found that the gap was narrower than originally framed: (1) **props already works** — any non-reserved column in pgwire INSERT lands as a typed `ProximaValue` in `ProximaRecord.props` via the catalog `to_proxima_record()` path at `crates/control/proximadb-catalog/src/relational.rs:272`; (2) **text_fields is REST sugar** — the v2 REST handler at `src/network/rest/v2/records.rs::insert_records` folds `text_fields[]` into `props["name"] = String(content)` before the canonical write. The canonical `ProximaRecord` has no separate text_fields field. So pgwire INSERT into a `VARCHAR` column is functionally equivalent to REST text_fields.
 | 3-5 days
-| ADR-018 Phase 2/3 territory; acceptance: documented SQL syntax for typed-field insert (e.g. `PROPS '{...}'::jsonb`) and a pgwire integration test covering the path.
+| **RESOLVED 2026-05-28** by documentation + cross-protocol contract test. (a) New `docs/03-api-reference/postgres.adoc` documents the v0.2 supported pgwire SQL surface, the v2 record-typed INSERT pattern (`INSERT INTO t (id, title, price, ...) VALUES (...)`), the cross-protocol contract (rows reachable via REST v2 record fetch), and the explicit "Not Supported in v0.2" list pointing at ADR-018 Phase 2/3 trackers (TD-076 etc.). (b) New `tests/pgwire_insert_props_e2e.rs` test `pgwire_insert_typed_columns_persist_to_v2_record_props` boots an in-process server, CREATE TABLE + INSERT INTO over the real wire protocol with mixed-type columns (VARCHAR / FLOAT / BIGINT / BOOLEAN), then verifies the row is reachable via REST v2 (`GET /api/v2/collections/{tbl}/records/{id}`). PASSED on a fresh release build. ADR-018 Phase 2/3 (`ORDER BY`, aggregates, joins, system tables, prepared-statement parameterisation) remain Beta and continue under TD-076.
 
 | TD-085
 | Marketing copy in `docs/_internal/enterprise/` and `docs/_internal/business/` overclaims
