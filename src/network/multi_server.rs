@@ -850,6 +850,8 @@ impl MultiServer {
                 self.queue_client.clone(),
                 Some(services.fulltext_indexes.clone()),
                 Some(services.recall_probe_gate.clone()),
+                Some(services.rank_services.clone()),
+                Some(services.rank_profile_store.clone()),
             );
 
             info!(

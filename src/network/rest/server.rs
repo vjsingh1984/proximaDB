@@ -645,6 +645,8 @@ impl RestServer {
         queue_client: Option<Arc<proximadb_queue::QueueClient>>,
         fulltext_indexes: Option<crate::network::rest::v1::handlers::FullTextIndexMap>,
         recall_probe_gate: Option<Arc<crate::catalog::RecallProbeGate>>,
+        rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+        rank_profile_store: Option<Arc<dyn crate::services::RankProfileStore>>,
     ) -> Router {
         let mut base_state = AppState::new(
             request_handlers,
@@ -674,6 +676,16 @@ impl RestServer {
         // can resolve per-scope `gate_open` state without re-constructing.
         if let Some(gate) = recall_probe_gate {
             base_state = base_state.with_recall_probe_gate(gate);
+        }
+        // R-7c.3 production wiring: share the rank-pipeline singleton + the
+        // durable rank-profile catalog so the REST `/api/v1/rank/search` route
+        // and the new `/api/v1/rank/profiles` install endpoints reach the same
+        // process-wide `RankServices` that pgwire SQL `RERANK(...)` uses.
+        if let Some(services) = rank_services {
+            base_state = base_state.with_rank_services(services);
+        }
+        if let Some(store) = rank_profile_store {
+            base_state = base_state.with_rank_profile_store(store);
         }
         let state = if let Some(p) = ports {
             let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);

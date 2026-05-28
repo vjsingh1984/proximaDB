@@ -93,6 +93,13 @@ pub struct AppState {
     /// `roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md`.
     pub rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
 
+    /// Optional durable rank-profile catalog (R-7c.3 production wiring).
+    /// When `Some`, the `/api/v1/rank/profiles` REST routes can install,
+    /// fetch, and remove profiles end-to-end. When `None`, those routes
+    /// return 503. Should always be wired alongside `rank_services` so
+    /// installs reach both the catalog and the live registry.
+    pub rank_profile_store: Option<Arc<dyn crate::services::RankProfileStore>>,
+
     /// Optional recall-probe gate (TD-064 / LLD §5). When `Some`, the v2
     /// route-health endpoint reports per-scope `gate_open` state and flips
     /// `recall_probe.live_state_in_app_state: true`. Production wires this
@@ -142,6 +149,7 @@ impl AppState {
             api_handlers: None,
             queue_client: None,
             rank_services: None,
+            rank_profile_store: None,
             recall_probe_gate: None,
         }
     }
@@ -191,6 +199,17 @@ impl AppState {
         services: Arc<crate::network::rest::v1::rank::RankServices>,
     ) -> Self {
         self.rank_services = Some(services);
+        self
+    }
+
+    /// Inject the durable rank-profile catalog so the REST install / fetch /
+    /// remove endpoints can persist DDL-style operations through the canonical
+    /// WAL. Production wires this from `SharedServices.rank_profile_store`.
+    pub fn with_rank_profile_store(
+        mut self,
+        store: Arc<dyn crate::services::RankProfileStore>,
+    ) -> Self {
+        self.rank_profile_store = Some(store);
         self
     }
 

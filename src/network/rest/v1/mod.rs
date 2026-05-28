@@ -32,3 +32,5 @@ pub mod affinity;
 pub mod rank;
 /// Production `HybridSearchBackend` impl backing `RankServices` retrieval (R-7c.2)
 pub mod rank_backend;
+/// REST endpoints for the durable rank-profile catalog (R-7c.3 commit 5/5)
+pub mod rank_profile;
