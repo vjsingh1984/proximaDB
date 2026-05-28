@@ -178,6 +178,14 @@ impl SstEngine {
                         axis_duration,
                         axis_results.results.len()
                     );
+                    tracing::info!(
+                        target: "axis_diag",
+                        site = "execute_orchestrated_search.result",
+                        n_results = axis_results.results.len(),
+                        top1_id = axis_results.results.first().map(|r| r.vector_id.as_str()).unwrap_or(""),
+                        top1_raw_similarity = ?axis_results.results.first().map(|r| r.similarity),
+                        "AXIS query returned — values are raw ScoredResult.similarity, no further normalization is applied before returning to caller"
+                    );
 
                     // Convert AXIS results to OptimizedSearchRecord
                     let results: Vec<OptimizedSearchRecord> = axis_results
@@ -942,7 +950,7 @@ impl SstEngine {
             }
 
             // Compute raw distance
-            let raw_distance = distance_computer.distance(query_vector, &*embedding.as_fp32_cow());
+            let raw_distance = distance_computer.distance(query_vector, &embedding.as_fp32_cow());
 
             // Use SimilarityResult to get normalized_score (higher = more similar)
             // This ensures consistency with the rest of the codebase and BoundedPriorityQueue

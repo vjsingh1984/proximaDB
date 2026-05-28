@@ -6,7 +6,7 @@
 //! - Row group information
 //! - Cluster metadata for vector search
 //! - Column statistics for query optimization
-//
+//!
 //! **TD-DRY-METADATA**: Shared helpers in `core::metadata_serializer` available.
 
 use anyhow::Result;

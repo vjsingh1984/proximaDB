@@ -26,6 +26,7 @@
 //! - `graph/service/traversal.rs` — BFS/DFS/traversal operations
 //! - `graph/service/analytics.rs` — Analytics and aggregation
 //! - `graph/service/batch.rs` — Batch operations
+//!
 //! See docs/10-quality/TECHNICAL_DEBT.adoc for tracking.
 //!
 //! ## Architecture Overview
@@ -948,6 +949,7 @@ impl GraphOperationsService {
     /// # Returns
     /// * `Ok(())` if flush succeeds or graph not found
     /// * `Err` if flush fails
+    ///
     /// Flush WAL for the given graph.
     ///
     /// # Canonical-first ordering (TD-066 / Phase 3 convergence)

@@ -1855,10 +1855,10 @@ impl VectorOperationsService {
         // is grep-able in logs + SDK responses per LLD §"Feature Flag
         // and Rolling Deploy". When the flag is on, the catalog policy
         // (PR 6a IngestMismatchPolicy) governs ingest behavior instead.
-        if !cached_precision_config().schema_v2_enabled {
-            if let Err(e) = validate_records_for_schema_v1(records.iter()) {
-                return Err(anyhow::anyhow!(e));
-            }
+        if !cached_precision_config().schema_v2_enabled
+            && let Err(e) = validate_records_for_schema_v1(records.iter())
+        {
+            return Err(anyhow::anyhow!(e));
         }
 
         self.insert_batch_internal(collection_id, records).await

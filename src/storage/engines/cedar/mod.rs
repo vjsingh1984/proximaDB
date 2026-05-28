@@ -166,10 +166,7 @@ impl RecordStore for CedarEngine {
         }
 
         if let Some((collection_id, document_id)) = target {
-            return self
-                .delete_document(&collection_id, &document_id)
-                .await
-                .map_err(Into::into);
+            return self.delete_document(&collection_id, &document_id).await;
         }
 
         Ok(false)

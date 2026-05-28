@@ -15,6 +15,7 @@ use crate::storage::persistence::write_ahead_log::BatchId;
 /// This allows distinguishing between:
 /// - Uninitialized: u64::MAX (default)
 /// - Successful operation with zero results: 0
+///
 /// Backwards-compat alias for [`StorageFlushResult`].
 pub type FlushResult = StorageFlushResult;
 
@@ -82,6 +83,7 @@ impl Default for StorageFlushResult {
 /// This allows distinguishing between:
 /// - Uninitialized: u64::MAX (default)
 /// - Successful operation with zero results: 0
+///
 /// Backwards-compat alias for [`StorageCompactionResult`].
 pub type CompactionResult = StorageCompactionResult;
 

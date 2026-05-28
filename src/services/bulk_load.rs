@@ -114,8 +114,8 @@ impl BulkLoader {
     /// identical to the per-record insert path; the LSM-bypass
     /// performance win lands when 2F-b refactors each storage engine
     /// to expose its SST-writer step. Until then, every batch costs
-    /// (N records × per-record WAL fsync) instead of (1 segment write
-    /// + 1 fsync) — but the inference-layer batching savings (21× per
+    /// (N records × per-record WAL fsync) instead of (1 segment write +
+    /// 1 fsync) — but the inference-layer batching savings (21× per
     /// record vs sync, see queue README) are already realized.
     ///
     /// `records` are sorted in-place by oid when `sort_hint` is

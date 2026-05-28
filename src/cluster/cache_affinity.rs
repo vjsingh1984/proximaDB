@@ -108,10 +108,10 @@ impl CacheAffinityRegistry {
     /// Record that `node_id` served a query for `collection_id`.
     /// Updates last-seen + increments query count. If the recorded
     /// node differs from the current affinity holder, the new node
-    /// takes over (last-write-wins) and the query count restarts at
-    /// 1. This is the right behaviour for the multi-node case where
-    /// a different node's copy of the registry will reflect its own
-    /// recent activity.
+    /// takes over (last-write-wins) and the query count restarts
+    /// at one. This is the right behaviour for the multi-node case
+    /// where a different node's copy of the registry will reflect
+    /// its own recent activity.
     pub fn record_query(&self, collection_id: impl Into<String>, node_id: impl Into<String>) {
         let collection_id = collection_id.into();
         let node_id = node_id.into();

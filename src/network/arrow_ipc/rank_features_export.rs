@@ -141,8 +141,8 @@ pub async fn export_rank_features_to_arrow_ipc(
 pub fn profile_feature_column_names(
     profile: Arc<CompiledRankProfile>,
 ) -> (Vec<String>, Vec<String>) {
-    let match_cols = profile.spec.match_features.iter().cloned().collect();
-    let summary_cols = profile.spec.summary_features.iter().cloned().collect();
+    let match_cols = profile.spec.match_features.to_vec();
+    let summary_cols = profile.spec.summary_features.to_vec();
     (match_cols, summary_cols)
 }
 

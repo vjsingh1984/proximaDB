@@ -356,7 +356,7 @@ impl PipelineExecutor {
         let mut vector_values = Vec::with_capacity(records.len() * vector_dim);
         for record in records {
             if let Some(embedding) = record.embeddings.first() {
-                vector_values.extend_from_slice(&*embedding.as_fp32_cow());
+                vector_values.extend_from_slice(&embedding.as_fp32_cow());
             } else {
                 vector_values.extend(std::iter::repeat_n(0.0, vector_dim));
             }

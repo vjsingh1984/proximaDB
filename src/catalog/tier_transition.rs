@@ -200,10 +200,10 @@ fn tier_rank(t: Tier) -> u8 {
 ///   - tier_dir == Up   → Upgrade
 ///   - tier_dir == Down → Downgrade
 ///   - tier_dir == Flat:
-///       all-flat → NoChange
-///       any axis Up + no Down → Upgrade
-///       any axis Down + no Up → Downgrade
-///       mixed → Lateral
+///     all-flat → NoChange
+///     any axis Up + no Down → Upgrade
+///     any axis Down + no Up → Downgrade
+///     mixed → Lateral
 fn classify(
     tier_dir: AxisDirection,
     scan_dir: AxisDirection,
