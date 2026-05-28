@@ -25,12 +25,10 @@
 //! Total per-family cardinality is single-digit thousands worst case.
 
 use lazy_static::lazy_static;
-use prometheus::{
-    CounterVec, GaugeVec, Opts, register_counter_vec, register_gauge_vec,
-};
+use prometheus::{CounterVec, GaugeVec, Opts, register_counter_vec, register_gauge_vec};
 use proximadb_catalog::collection_dr_policy::ObjectProvider;
 use proximadb_catalog::dr_reconciler::{
-    BlockReason, DriftReason, DrMetrics, IdleReason, PolicyLabels, ReconcileOutcome,
+    BlockReason, DrMetrics, DriftReason, IdleReason, PolicyLabels, ReconcileOutcome,
     ShardPauseReason, TickOutcome,
 };
 use tracing::error;
@@ -165,7 +163,10 @@ impl DrMetrics for PrometheusDrMetrics {
 
     fn observe_lag(&self, labels: &PolicyLabels, lag_seconds: u32) {
         DR_PROVIDER_LAG_SECONDS
-            .with_label_values(&[provider_label(labels.provider), labels.region_pair_id.as_str()])
+            .with_label_values(&[
+                provider_label(labels.provider),
+                labels.region_pair_id.as_str(),
+            ])
             .set(lag_seconds as f64);
     }
 }
@@ -247,12 +248,12 @@ fn shard_pause_reason_label(r: ShardPauseReason) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_catalog::StoragePoolClass;
+    use proximadb_catalog::collection_dr_policy::CollectionDrPolicy;
     use proximadb_catalog::collection_dr_policy::{
         DrBillingBinding, DrHealth, DrPlacement, DrReplicationBehavior, DrState,
     };
-    use proximadb_catalog::collection_dr_policy::CollectionDrPolicy;
     use proximadb_catalog::dr_reconciler::PolicyLabels;
-    use proximadb_catalog::StoragePoolClass;
 
     fn sample_labels() -> PolicyLabels {
         let p = CollectionDrPolicy {
@@ -356,9 +357,8 @@ mod tests {
         let l = sample_labels();
         let ticks_before = ticks_count("business", "aws_s3", "repaired_drift");
         let drift_before = drift_count("aws_s3", "rule_missing");
-        let outcome = TickOutcome::Reconciled(ReconcileOutcome::RepairedDrift(
-            DriftReason::RuleMissing,
-        ));
+        let outcome =
+            TickOutcome::Reconciled(ReconcileOutcome::RepairedDrift(DriftReason::RuleMissing));
         m.observe_tick(&l, &outcome);
         let ticks_after = ticks_count("business", "aws_s3", "repaired_drift");
         let drift_after = drift_count("aws_s3", "rule_missing");
@@ -371,8 +371,7 @@ mod tests {
         let m = PrometheusDrMetrics::new();
         let l = sample_labels();
         let before = error_count("aws_s3", "transient");
-        let outcome =
-            TickOutcome::Reconciled(ReconcileOutcome::AdapterTransient("blip".into()));
+        let outcome = TickOutcome::Reconciled(ReconcileOutcome::AdapterTransient("blip".into()));
         m.observe_tick(&l, &outcome);
         let after = error_count("aws_s3", "transient");
         assert!((after - before - 1.0).abs() < f64::EPSILON);
@@ -412,17 +411,11 @@ mod tests {
         let m = PrometheusDrMetrics::new();
         let l = sample_labels();
         m.observe_lag(&l, 73);
-        assert_eq!(
-            lag_gauge_value("aws_s3", "aws:us-east-1:us-west-2"),
-            73.0,
-        );
+        assert_eq!(lag_gauge_value("aws_s3", "aws:us-east-1:us-west-2"), 73.0,);
         // Subsequent observations overwrite — this is a gauge, not
         // a counter, so the "last observed value" semantics apply.
         m.observe_lag(&l, 5);
-        assert_eq!(
-            lag_gauge_value("aws_s3", "aws:us-east-1:us-west-2"),
-            5.0,
-        );
+        assert_eq!(lag_gauge_value("aws_s3", "aws:us-east-1:us-west-2"), 5.0,);
     }
 
     #[test]
@@ -441,8 +434,7 @@ mod tests {
         let ticks_before = ticks_count("business", "aws_s3", "idle_healthy");
         let drift_before = drift_count("aws_s3", "rule_missing");
         let err_before = error_count("aws_s3", "transient");
-        let outcome =
-            TickOutcome::Reconciled(ReconcileOutcome::Idle(IdleReason::HealthyActive));
+        let outcome = TickOutcome::Reconciled(ReconcileOutcome::Idle(IdleReason::HealthyActive));
         m.observe_tick(&l, &outcome);
         let ticks_after = ticks_count("business", "aws_s3", "idle_healthy");
         let drift_after = drift_count("aws_s3", "rule_missing");

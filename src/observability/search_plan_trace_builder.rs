@@ -13,7 +13,7 @@
 
 use crate::core::service_types::IndexStats;
 use crate::observability::search_plan_trace::{
-    CacheResult, FailureClass, SearchPlanTrace, SureSignals,
+    CacheResult, FailureClass, PredicateShortfall, SearchPlanTrace, SureSignals,
 };
 use crate::query::federated::optimizer::plan_builder::PlanOutput;
 
@@ -49,11 +49,23 @@ pub struct TraceBuilderInputs<'a> {
     /// `index_stats.vectors_scanned` into `actual_scan_gb`. `0.0` skips the
     /// conversion (the trace `actual_scan_gb` stays 0).
     pub bytes_per_vector: f64,
+    /// TD-064: Predicate-aware recall shortfall recorded by the executor when
+    /// a post-filter / oversample path returned fewer matches than the
+    /// requested `top_k`. `None` on the happy path. When `Some`, the builder
+    /// also forces `failure_class = PermissionThin`.
+    pub predicate_shortfall: Option<PredicateShortfall>,
 }
 
 /// Build a fully populated `SearchPlanTrace` from the inputs.
 pub fn build(inputs: TraceBuilderInputs<'_>) -> SearchPlanTrace {
     let actual_scan_gb = derive_actual_scan_gb(&inputs.index_stats, inputs.bytes_per_vector);
+    // TD-064: when a predicate shortfall is recorded, ensure failure_class
+    // reflects it so a single field check can drive alerts.
+    let failure_class = if inputs.predicate_shortfall.is_some() {
+        Some(FailureClass::PermissionThin)
+    } else {
+        inputs.failure_class
+    };
     SearchPlanTrace {
         trace_id: inputs.trace_id,
         tenant_id: inputs.tenant_id,
@@ -75,7 +87,8 @@ pub fn build(inputs: TraceBuilderInputs<'_>) -> SearchPlanTrace {
         latency_ms: inputs.latency_ms,
         recall_probe_score: None,
         utility_score_avg: None,
-        failure_class: inputs.failure_class,
+        failure_class,
+        predicate_shortfall: inputs.predicate_shortfall,
     }
 }
 
@@ -120,7 +133,23 @@ mod tests {
             cache_result: CacheResult::Miss,
             failure_class: None,
             bytes_per_vector: 0.0,
+            predicate_shortfall: None,
         }
+    }
+
+    #[test]
+    fn predicate_shortfall_forces_permission_thin_failure_class() {
+        let p = plan();
+        let mut i = inputs(&p);
+        i.predicate_shortfall = Some(PredicateShortfall {
+            requested_k: 10,
+            returned_k: 3,
+            oversample_pool: 20,
+            ann_filtering_mode: "post_filter".into(),
+        });
+        let t = build(i);
+        assert_eq!(t.failure_class, Some(FailureClass::PermissionThin));
+        assert!(t.predicate_shortfall.is_some());
     }
 
     #[test]

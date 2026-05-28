@@ -470,12 +470,13 @@ mod tests {
         let value = conv
             .get_metric()
             .iter()
-            .find(|m| {
-                m.get_label().iter().any(|l| l.value() == "ingest_boundary")
-            })
+            .find(|m| m.get_label().iter().any(|l| l.value() == "ingest_boundary"))
             .map(|m| m.get_counter().value())
             .expect("matching label set present");
-        assert!((value - 7.0).abs() < f64::EPSILON, "expected 7, got {value}");
+        assert!(
+            (value - 7.0).abs() < f64::EPSILON,
+            "expected 7, got {value}"
+        );
     }
 
     #[test]
@@ -610,8 +611,16 @@ mod tests {
         };
 
         assert_eq!(value("col_a", "fp32"), 6144, "two deltas must sum");
-        assert_eq!(value("col_a", "fp16"), 1024, "different precision label tracks separately");
-        assert_eq!(value("col_b", "fp32"), 512, "different collection label tracks separately");
+        assert_eq!(
+            value("col_a", "fp16"),
+            1024,
+            "different precision label tracks separately"
+        );
+        assert_eq!(
+            value("col_b", "fp32"),
+            512,
+            "different collection label tracks separately"
+        );
     }
 
     #[test]

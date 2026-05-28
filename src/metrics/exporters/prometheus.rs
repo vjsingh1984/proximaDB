@@ -3,7 +3,7 @@
 //! Exports ProximaDB metrics in Prometheus text format (version 0.0.4).
 //! All metrics are prefixed with `proximadb_` to avoid naming collisions.
 
-use super::{MetricsExporter, MetricsExportSnapshot};
+use super::{MetricsExportSnapshot, MetricsExporter};
 use anyhow::Result;
 use std::fmt::Write;
 

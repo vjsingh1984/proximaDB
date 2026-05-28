@@ -91,7 +91,10 @@ impl AlertingService {
         // Send notifications
         self.notifications.send(&alert).await?;
 
-        info!("ObservabilityAlert fired: {} - {}", alert.name, alert.message);
+        info!(
+            "ObservabilityAlert fired: {} - {}",
+            alert.name, alert.message
+        );
 
         Ok(())
     }
@@ -112,7 +115,10 @@ impl AlertingService {
             active.acknowledged = true;
             active.acknowledged_by = Some(user.to_string());
             active.acknowledged_at = Some(chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
-            info!("ObservabilityAlert acknowledged by {}: {}", user, active.alert.name);
+            info!(
+                "ObservabilityAlert acknowledged by {}: {}",
+                user, active.alert.name
+            );
         }
         Ok(())
     }

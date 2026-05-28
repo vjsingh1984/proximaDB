@@ -72,8 +72,18 @@ pub mod ingestion;
 /// Metering event builder — converts SearchPlanTrace → operator metering
 /// event JSON shape so the data plane and operator pipelines can't drift.
 pub mod metering_event;
+/// Embedding-precision metrics — Prometheus gauges/counters per
+/// EMBEDDING_PRECISION_LLD_2026_05_22 §"Observability (Q11)" (PR 7b).
+pub mod precision_metrics;
+/// TD-064 predicate diagnostics bus — task-local channel that carries
+/// recall-shortfall events from AxisManager-deep search paths to the
+/// REST/gRPC handler that builds the SearchPlanTrace.
+pub mod predicate_diagnostics;
 /// Query engine for logs, metrics, and traces with PromQL support.
 pub mod query;
+/// Rank-pipeline metrics — Prometheus histograms/counters per
+/// RANKING_FRAMEWORK_SPEC NFR-8 (R-7c.4d follow-up).
+pub mod rank_metrics;
 /// Route explain builder — human-readable explanation derived from a
 /// populated SearchPlanTrace for the LLD §1 debug=true response.
 pub mod route_explain;
@@ -84,6 +94,9 @@ pub mod search_plan_trace;
 pub mod search_plan_trace_builder;
 /// Time-partitioned storage for observability data with WAL durability.
 pub mod storage;
+/// Tenant Prometheus label resolver — bundles tenant_id → bounded
+/// label resolution with the LLD's cardinality-safety guardrail.
+pub mod tenant_label;
 /// Trace batcher — bundles N populated traces into one POST payload
 /// for the async billing sink (digest-keyed dedup + fingerprint-aware).
 pub mod trace_batcher;
@@ -100,15 +113,6 @@ pub mod trace_sampling;
 /// Workload mix detector — aggregates fingerprint counts into a typed
 /// summary for tier-recommendation hints and cache-warm targeting.
 pub mod workload_mix;
-/// Tenant Prometheus label resolver — bundles tenant_id → bounded
-/// label resolution with the LLD's cardinality-safety guardrail.
-pub mod tenant_label;
-/// Embedding-precision metrics — Prometheus gauges/counters per
-/// EMBEDDING_PRECISION_LLD_2026_05_22 §"Observability (Q11)" (PR 7b).
-pub mod precision_metrics;
-/// Rank-pipeline metrics — Prometheus histograms/counters per
-/// RANKING_FRAMEWORK_SPEC NFR-8 (R-7c.4d follow-up).
-pub mod rank_metrics;
 
 use std::collections::HashMap;
 use std::sync::Arc;

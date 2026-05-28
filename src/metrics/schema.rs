@@ -896,7 +896,8 @@ mod tests {
         assert!(json_string.contains("\"avg_search_latency_us\":1500.25"));
 
         // Deserialize from JSON
-        let deserialized_result: Result<SchemaCollectionMetrics, _> = serde_json::from_str(&json_string);
+        let deserialized_result: Result<SchemaCollectionMetrics, _> =
+            serde_json::from_str(&json_string);
         assert!(
             deserialized_result.is_ok(),
             "Deserialization should succeed"

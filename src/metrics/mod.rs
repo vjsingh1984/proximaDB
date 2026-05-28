@@ -193,6 +193,12 @@ pub mod td064_metrics;
 /// TD-066 canonical-WAL-authority recovery observability (Option E from
 /// `docs/12-design/TD_066_PART2_LSN_CORRELATION_DESIGN_2026_05_28.adoc`).
 pub mod td066_metrics;
+/// Collection pin-registry observability — currently-pinned gauge per
+/// target tier + pin/unpin operation counters.
+pub mod collection_pin_metrics;
+/// Tier-migration pipeline observability — counters + bytes + duration
+/// histogram + in-flight gauge for `TierMigrationExecutor` operations.
+pub mod tier_migration_metrics;
 pub mod updater;
 
 #[cfg(test)]

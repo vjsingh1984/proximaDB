@@ -1,6 +1,6 @@
 //! JSON format metrics exporter
 
-use super::{MetricsExporter, MetricsExportSnapshot};
+use super::{MetricsExportSnapshot, MetricsExporter};
 use anyhow::Result;
 use serde_json;
 

@@ -182,6 +182,32 @@ pub struct SearchPlanTrace {
     /// Failure classification — `None` on the happy path.
     #[serde(default)]
     pub failure_class: Option<FailureClass>,
+
+    /// TD-064: Predicate-aware shortfall when a post-filter / oversample path
+    /// returned fewer matches than the client requested. `None` on the happy
+    /// path. `failure_class` is also set to `PermissionThin` when populated.
+    #[serde(default)]
+    pub predicate_shortfall: Option<PredicateShortfall>,
+}
+
+/// TD-064: Diagnostic block describing a predicate-aware recall shortfall.
+///
+/// Emitted when ANN returned a candidate pool, the metadata filter trimmed
+/// it, and the survivor count is below `requested_k`. Clients should treat
+/// this as a correctness signal — either re-issue with `PreFilter` mode,
+/// widen the filter, or accept the disclosed shortfall.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PredicateShortfall {
+    /// The `top_k` value the caller asked for.
+    pub requested_k: u32,
+    /// The number of results actually returned after predicate filtering.
+    pub returned_k: u32,
+    /// Pool size considered before the predicate (oversample budget).
+    pub oversample_pool: u32,
+    /// AnnFilteringMode that produced this shortfall (`post_filter`,
+    /// `inline`, or `pre_filter`). Free-form string so callers can encode
+    /// catalog `AnnFilteringMode` variants without coupling.
+    pub ann_filtering_mode: String,
 }
 
 impl SearchPlanTrace {
@@ -210,7 +236,32 @@ impl SearchPlanTrace {
             recall_probe_score: None,
             utility_score_avg: None,
             failure_class: None,
+            predicate_shortfall: None,
         }
+    }
+
+    /// TD-064: Record a predicate-aware shortfall on this trace.
+    ///
+    /// Sets both `predicate_shortfall` and `failure_class = PermissionThin`
+    /// so a single field check or the structured block can drive operator
+    /// alerts and client warnings. No-op when `returned_k >= requested_k`.
+    pub fn mark_predicate_shortfall(
+        &mut self,
+        requested_k: u32,
+        returned_k: u32,
+        oversample_pool: u32,
+        ann_filtering_mode: impl Into<String>,
+    ) {
+        if returned_k >= requested_k {
+            return;
+        }
+        self.predicate_shortfall = Some(PredicateShortfall {
+            requested_k,
+            returned_k,
+            oversample_pool,
+            ann_filtering_mode: ann_filtering_mode.into(),
+        });
+        self.failure_class = Some(FailureClass::PermissionThin);
     }
 }
 
@@ -271,5 +322,25 @@ mod tests {
         assert_eq!(s.disagreement, 0.0);
         assert_eq!(s.conflict, 0.0);
         assert_eq!(s.retrieval_uncertainty, 0.0);
+    }
+
+    #[test]
+    fn mark_predicate_shortfall_populates_failure_class() {
+        let mut t = SearchPlanTrace::new("t".into(), "ten".into(), "c".into());
+        t.mark_predicate_shortfall(10, 3, 20, "post_filter");
+        assert_eq!(t.failure_class, Some(FailureClass::PermissionThin));
+        let shortfall = t.predicate_shortfall.expect("shortfall set");
+        assert_eq!(shortfall.requested_k, 10);
+        assert_eq!(shortfall.returned_k, 3);
+        assert_eq!(shortfall.oversample_pool, 20);
+        assert_eq!(shortfall.ann_filtering_mode, "post_filter");
+    }
+
+    #[test]
+    fn mark_predicate_shortfall_no_op_when_returned_meets_requested() {
+        let mut t = SearchPlanTrace::new("t".into(), "ten".into(), "c".into());
+        t.mark_predicate_shortfall(10, 10, 20, "inline");
+        assert!(t.predicate_shortfall.is_none());
+        assert!(t.failure_class.is_none());
     }
 }

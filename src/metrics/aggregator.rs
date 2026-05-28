@@ -155,7 +155,11 @@ impl MetricsAggregationEngine {
     }
 
     /// Generate trend analysis
-    pub fn analyze_trends(&self, collection_id: &str, metric_name: &str) -> Result<MetricsTrendAnalysis> {
+    pub fn analyze_trends(
+        &self,
+        collection_id: &str,
+        metric_name: &str,
+    ) -> Result<MetricsTrendAnalysis> {
         let data_points = self
             .time_series
             .get(metric_name)

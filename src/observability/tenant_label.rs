@@ -25,7 +25,7 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::tenant_tier::{Tier, TenantTierRecord};
+use crate::catalog::tenant_tier::{TenantTierRecord, Tier};
 
 /// Resolver that takes a `TenantTierRecord` and exposes
 /// cardinality-safe labels.

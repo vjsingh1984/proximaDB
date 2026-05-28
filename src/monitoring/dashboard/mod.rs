@@ -200,7 +200,9 @@ pub struct HealthResponse {
 }
 
 /// Dashboard home page
-async fn dashboard_home(State(state): State<DashboardServerState>) -> Result<Html<String>, StatusCode> {
+async fn dashboard_home(
+    State(state): State<DashboardServerState>,
+) -> Result<Html<String>, StatusCode> {
     let metrics = state.metrics_collector.current_metrics().await;
     let summary = state.metrics_collector.metrics_summary().await;
 
@@ -381,13 +383,17 @@ async fn api_metrics_endpoint(
 }
 
 /// Alerts endpoint
-async fn alerts_endpoint(State(state): State<DashboardServerState>) -> Json<Vec<crate::metrics::Alert>> {
+async fn alerts_endpoint(
+    State(state): State<DashboardServerState>,
+) -> Json<Vec<crate::metrics::Alert>> {
     let alerts = state.metrics_collector.active_alerts().await;
     Json(alerts)
 }
 
 /// Alerts page
-async fn alerts_page(State(state): State<DashboardServerState>) -> Result<Html<String>, StatusCode> {
+async fn alerts_page(
+    State(state): State<DashboardServerState>,
+) -> Result<Html<String>, StatusCode> {
     let alerts = state.metrics_collector.active_alerts().await;
 
     let alerts_html = if alerts.is_empty() {

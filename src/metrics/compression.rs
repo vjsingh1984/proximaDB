@@ -296,7 +296,10 @@ impl CompressionMetricsTracker {
     }
 
     /// Generate compression recommendations based on metrics
-    pub fn get_recommendations(&self, collection_id: &str) -> Vec<MetricsCompressionRecommendation> {
+    pub fn get_recommendations(
+        &self,
+        collection_id: &str,
+    ) -> Vec<MetricsCompressionRecommendation> {
         let mut recommendations = Vec::new();
 
         if let Some(metrics) = self.get_metrics(collection_id) {
