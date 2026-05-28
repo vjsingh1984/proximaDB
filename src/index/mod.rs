@@ -76,17 +76,15 @@
 
 pub mod axis;
 pub mod config;
-pub mod diskann;
 /// Enhanced Dense Retrieval with late interaction.
 pub mod edr;
 /// Geo-spatial indexing (geohash-based).
 pub mod geo;
-/// HNSW filtered search implementation.
-pub mod hnsw;
-/// IVF filtered search implementation.
-pub mod ivf;
-/// Sparse vector HNSW index for text and feature-based applications.
-pub mod sparse_hnsw;
+
+// Note: `src/index/{hnsw,ivf,diskann,sparse_hnsw}` were removed 2026-05-27.
+// They were orphan duplicates of AXIS-native indexes — see
+// `docs/12-design/NON_AXIS_INDEX_MIGRATION_AUDIT_2026_05_27.adoc`.
+// The canonical implementations live in `src/index/axis/indexes/`.
 
 // Re-export main types for easier access
 pub use axis::{AxisConfig, AxisManager};
