@@ -156,12 +156,10 @@ async fn pgwire_create_table_with_canonical_embedding_precision_fp16() {
 
     // Connect via tokio-postgres. `connect` returns the client and a
     // future that drives the connection — spawn it onto the runtime.
-    let (client, connection) = tokio_postgres::connect(
-        &server.pg_connection_string(),
-        tokio_postgres::NoTls,
-    )
-    .await
-    .expect("tokio-postgres connect");
+    let (client, connection) =
+        tokio_postgres::connect(&server.pg_connection_string(), tokio_postgres::NoTls)
+            .await
+            .expect("tokio-postgres connect");
 
     tokio::spawn(async move {
         if let Err(e) = connection.await {

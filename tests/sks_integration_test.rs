@@ -14,9 +14,9 @@ mod sks_integration_tests {
     use proximadb::proto::proximadb_v1::{
         EmbeddingVersion, Entity, Modality, Provenance, Relation, TypedField, TypedMetadata,
     };
-    use proximadb::storage::entity_store::{EntityStore, ProximaEntityStore};
-    use proximadb::storage::entity_store::InMemoryProvenanceRegistry;
     use proximadb::storage::entity_store::CsrRelationsStore as InMemoryRelationsStore;
+    use proximadb::storage::entity_store::InMemoryProvenanceRegistry;
+    use proximadb::storage::entity_store::{EntityStore, ProximaEntityStore};
     use proximadb::storage::traits::StorageEngineStrategy;
     use proximadb::storage::traits::{
         CompactionParameters, CompactionResult, FlushParameters, FlushResult,

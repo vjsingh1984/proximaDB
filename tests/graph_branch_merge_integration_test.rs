@@ -28,7 +28,7 @@ use proximadb_records::{LabelSet, ProximaRecord};
 use proximadb_storage_common::{CanonicalOperation, CanonicalWalEntry};
 use std::path::PathBuf;
 use tempfile::TempDir;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 
 const COLLECTION: &str = "col";
 const BRANCH_A: &str = "a";
@@ -99,16 +99,10 @@ async fn merge_and_read_back(
     usize, // count of newly written merge entries
 )> {
     let pre = FramedTableWalAppender::read_entries_from_path(wal_path).await?;
-    let report = merge_branches(&pre, BRANCH_A, BRANCH_B)
-        .expect("seed produced mergeable branches");
+    let report =
+        merge_branches(&pre, BRANCH_A, BRANCH_B).expect("seed produced mergeable branches");
     let result = write_back_merge(
-        &pre,
-        &report,
-        wal_path,
-        COLLECTION,
-        BRANCH_A,
-        BRANCH_B,
-        None,
+        &pre, &report, wal_path, COLLECTION, BRANCH_A, BRANCH_B, None,
     )
     .await?
     .expect("write_back_merge should return Some when seed has mutations");
@@ -158,7 +152,10 @@ async fn full_branch_merge_cycle_lww_picks_later_branch_via_wal_roundtrip() -> R
     append_and_drop(&wal_path, vec![upsert_with_record(right)]).await?;
 
     let (pre, post, written) = merge_and_read_back(&wal_path).await?;
-    assert_eq!(written, 1, "single shared OID should produce one merge entry");
+    assert_eq!(
+        written, 1,
+        "single shared OID should produce one merge entry"
+    );
 
     assert_merge_entries(&post, pre.len(), written, |op| match op {
         CanonicalOperation::RecordUpsert { record, .. } => {
@@ -190,7 +187,10 @@ async fn full_branch_merge_cycle_tombstone_for_both_deleted_via_wal_roundtrip() 
     sleep(Duration::from_millis(8)).await;
     append_and_drop(
         &wal_path,
-        vec![upsert_with_record(tombstone_record("shared", Some(BRANCH_A)))],
+        vec![upsert_with_record(tombstone_record(
+            "shared",
+            Some(BRANCH_A),
+        ))],
     )
     .await?;
     sleep(Duration::from_millis(8)).await;
@@ -204,7 +204,9 @@ async fn full_branch_merge_cycle_tombstone_for_both_deleted_via_wal_roundtrip() 
     assert_eq!(written, 1, "tombstone resolution should produce one entry");
 
     assert_merge_entries(&post, pre.len(), written, |op| match op {
-        CanonicalOperation::RecordDelete { collection_id, oid, .. } => {
+        CanonicalOperation::RecordDelete {
+            collection_id, oid, ..
+        } => {
             assert_eq!(collection_id, COLLECTION);
             assert_eq!(oid, "shared");
         }
@@ -243,7 +245,12 @@ async fn full_branch_merge_cycle_unions_labels_via_wal_roundtrip() -> Result<()>
             assert_eq!(record.oid, "shared");
             assert_eq!(record.origin.as_deref(), Some(EXPECTED_ORIGIN));
             let labels: Vec<&str> = record.labels.iter().map(|s| s.as_str()).collect();
-            assert_eq!(labels.len(), 3, "union should be {{base,left,right}}; got {:?}", labels);
+            assert_eq!(
+                labels.len(),
+                3,
+                "union should be {{base,left,right}}; got {:?}",
+                labels
+            );
             assert!(labels.contains(&"base"));
             assert!(labels.contains(&"left"));
             assert!(labels.contains(&"right"));
@@ -283,7 +290,10 @@ async fn full_branch_merge_cycle_preserves_unilateral_mutations_via_wal_roundtri
     });
 
     oids_seen.sort();
-    assert_eq!(oids_seen, vec!["left-only".to_string(), "right-only".to_string()]);
+    assert_eq!(
+        oids_seen,
+        vec!["left-only".to_string(), "right-only".to_string()]
+    );
 
     Ok(())
 }

@@ -19,8 +19,7 @@
 use std::sync::Arc;
 
 use proximadb::catalog::{
-    CorpusVersionRegistry, FileSystemCorpusVersionStore,
-    corpus_version::CorpusVersionStore,
+    CorpusVersionRegistry, FileSystemCorpusVersionStore, corpus_version::CorpusVersionStore,
 };
 use tempfile::TempDir;
 
@@ -35,8 +34,7 @@ async fn bumps_survive_drop_and_reload_cycle() {
 
     // First "process life": bump a few versions.
     {
-        let store: Arc<dyn CorpusVersionStore> =
-            Arc::new(FileSystemCorpusVersionStore::new(&path));
+        let store: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path));
         let reg = CorpusVersionRegistry::with_store(store);
         reg.bump("tenant-a", "kb").await; // → 2
         reg.bump("tenant-a", "kb").await; // → 3
@@ -46,11 +44,13 @@ async fn bumps_survive_drop_and_reload_cycle() {
 
     // Second "process life": rebuild from the same path.
     {
-        let store: Arc<dyn CorpusVersionStore> =
-            Arc::new(FileSystemCorpusVersionStore::new(&path));
+        let store: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path));
         let reg = CorpusVersionRegistry::with_store(store);
         let loaded = reg.hydrate_from_store().await;
-        assert_eq!(loaded, 2, "two distinct (tenant, collection) pairs persisted");
+        assert_eq!(
+            loaded, 2,
+            "two distinct (tenant, collection) pairs persisted"
+        );
         // The versions match what life #1 left.
         assert_eq!(reg.current("tenant-a", "kb").await, 3);
         assert_eq!(reg.current("tenant-b", "logs").await, 2);
@@ -66,8 +66,7 @@ async fn monotonicity_holds_across_restart() {
 
     // Life 1: bump to 5.
     {
-        let store: Arc<dyn CorpusVersionStore> =
-            Arc::new(FileSystemCorpusVersionStore::new(&path));
+        let store: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path));
         let reg = CorpusVersionRegistry::with_store(store);
         for _ in 0..4 {
             reg.bump("tenant-a", "kb").await;
@@ -77,8 +76,7 @@ async fn monotonicity_holds_across_restart() {
 
     // Life 2: hydrate, then bump once more.
     {
-        let store: Arc<dyn CorpusVersionStore> =
-            Arc::new(FileSystemCorpusVersionStore::new(&path));
+        let store: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path));
         let reg = CorpusVersionRegistry::with_store(store);
         reg.hydrate_from_store().await;
         // Pre-bump: we see the value life #1 left.
@@ -97,8 +95,7 @@ async fn cross_tenant_isolation_holds_across_restart() {
 
     // Life 1: distinct values for two tenants on the same collection.
     {
-        let store: Arc<dyn CorpusVersionStore> =
-            Arc::new(FileSystemCorpusVersionStore::new(&path));
+        let store: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path));
         let reg = CorpusVersionRegistry::with_store(store);
         for _ in 0..4 {
             reg.bump("tenant-a", "kb").await;
@@ -112,8 +109,7 @@ async fn cross_tenant_isolation_holds_across_restart() {
 
     // Life 2: hydrate; each tenant retains its independent version.
     {
-        let store: Arc<dyn CorpusVersionStore> =
-            Arc::new(FileSystemCorpusVersionStore::new(&path));
+        let store: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path));
         let reg = CorpusVersionRegistry::with_store(store);
         reg.hydrate_from_store().await;
         assert_eq!(reg.current("tenant-a", "kb").await, 5);
@@ -132,8 +128,7 @@ async fn cross_collection_isolation_holds_across_restart() {
 
     // Life 1: same tenant, two collections, distinct versions.
     {
-        let store: Arc<dyn CorpusVersionStore> =
-            Arc::new(FileSystemCorpusVersionStore::new(&path));
+        let store: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path));
         let reg = CorpusVersionRegistry::with_store(store);
         reg.bump("tenant-a", "kb-1").await;
         reg.bump("tenant-a", "kb-1").await;
@@ -142,8 +137,7 @@ async fn cross_collection_isolation_holds_across_restart() {
 
     // Life 2: each collection's version restored independently.
     {
-        let store: Arc<dyn CorpusVersionStore> =
-            Arc::new(FileSystemCorpusVersionStore::new(&path));
+        let store: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path));
         let reg = CorpusVersionRegistry::with_store(store);
         reg.hydrate_from_store().await;
         assert_eq!(reg.current("tenant-a", "kb-1").await, 3);
@@ -169,8 +163,7 @@ async fn fresh_path_starts_empty_does_not_pollute_old_runs() {
     }
 
     // path_b is a fresh path; a registry pointed at it sees nothing.
-    let store_b: Arc<dyn CorpusVersionStore> =
-        Arc::new(FileSystemCorpusVersionStore::new(&path_b));
+    let store_b: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path_b));
     let reg_b = CorpusVersionRegistry::with_store(store_b);
     let loaded = reg_b.hydrate_from_store().await;
     assert_eq!(loaded, 0, "fresh path has no pre-existing rows");
@@ -184,8 +177,7 @@ async fn corruption_during_restart_falls_back_to_empty_without_panic() {
 
     // Life 1: persist some rows.
     {
-        let store: Arc<dyn CorpusVersionStore> =
-            Arc::new(FileSystemCorpusVersionStore::new(&path));
+        let store: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path));
         let reg = CorpusVersionRegistry::with_store(store);
         reg.bump("tenant-a", "kb").await;
         reg.bump("tenant-b", "logs").await;
@@ -195,8 +187,7 @@ async fn corruption_during_restart_falls_back_to_empty_without_panic() {
     tokio::fs::write(&path, b"{ not valid json").await.unwrap();
 
     // Life 2: hydrate must not panic and must report 0 loaded.
-    let store: Arc<dyn CorpusVersionStore> =
-        Arc::new(FileSystemCorpusVersionStore::new(&path));
+    let store: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path));
     let reg = CorpusVersionRegistry::with_store(store);
     let loaded = reg.hydrate_from_store().await;
     assert_eq!(loaded, 0, "corruption treated as empty load");
@@ -206,8 +197,7 @@ async fn corruption_during_restart_falls_back_to_empty_without_panic() {
 
     // Life 3 sees the recovered state from the fresh persist.
     drop(reg);
-    let store2: Arc<dyn CorpusVersionStore> =
-        Arc::new(FileSystemCorpusVersionStore::new(&path));
+    let store2: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path));
     let reg2 = CorpusVersionRegistry::with_store(store2);
     let loaded = reg2.hydrate_from_store().await;
     assert_eq!(loaded, 1, "life 2's bump persisted");
@@ -228,8 +218,7 @@ async fn unrelated_collection_versions_unchanged_after_targeted_bump() {
 
     // Life 1: seed three collections.
     {
-        let store: Arc<dyn CorpusVersionStore> =
-            Arc::new(FileSystemCorpusVersionStore::new(&path));
+        let store: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path));
         let reg = CorpusVersionRegistry::with_store(store);
         // Set explicit versions for clarity.
         reg.set("tenant-a", "kb", 10).await;
@@ -239,8 +228,7 @@ async fn unrelated_collection_versions_unchanged_after_targeted_bump() {
 
     // Life 2: hydrate, bump ONE pair, persist.
     {
-        let store: Arc<dyn CorpusVersionStore> =
-            Arc::new(FileSystemCorpusVersionStore::new(&path));
+        let store: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path));
         let reg = CorpusVersionRegistry::with_store(store);
         reg.hydrate_from_store().await;
         reg.bump("tenant-a", "kb").await; // 10 → 11
@@ -248,8 +236,7 @@ async fn unrelated_collection_versions_unchanged_after_targeted_bump() {
 
     // Life 3: hydrate again, verify only the bumped pair changed.
     {
-        let store: Arc<dyn CorpusVersionStore> =
-            Arc::new(FileSystemCorpusVersionStore::new(&path));
+        let store: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path));
         let reg = CorpusVersionRegistry::with_store(store);
         reg.hydrate_from_store().await;
         assert_eq!(reg.current("tenant-a", "kb").await, 11, "bumped");
@@ -265,8 +252,7 @@ async fn many_bumps_persist_correctly_in_one_life() {
     let path = dir.path().join("corpus.json");
 
     {
-        let store: Arc<dyn CorpusVersionStore> =
-            Arc::new(FileSystemCorpusVersionStore::new(&path));
+        let store: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path));
         let reg = CorpusVersionRegistry::with_store(store);
         for _ in 0..100 {
             reg.bump("tenant-a", "kb").await;
@@ -275,8 +261,7 @@ async fn many_bumps_persist_correctly_in_one_life() {
     }
 
     {
-        let store: Arc<dyn CorpusVersionStore> =
-            Arc::new(FileSystemCorpusVersionStore::new(&path));
+        let store: Arc<dyn CorpusVersionStore> = Arc::new(FileSystemCorpusVersionStore::new(&path));
         let reg = CorpusVersionRegistry::with_store(store);
         reg.hydrate_from_store().await;
         assert_eq!(reg.current("tenant-a", "kb").await, 101);

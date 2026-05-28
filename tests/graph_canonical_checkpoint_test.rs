@@ -15,8 +15,8 @@
 
 use anyhow::Result;
 use proximadb::graph::service::GraphOperationsService;
-use proximadb::services::record_store::TableWalAppender;
 use proximadb::services::FramedTableWalAppender;
+use proximadb::services::record_store::TableWalAppender;
 use proximadb_storage_common::{CanonicalOperation, CanonicalWalEntry};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -96,8 +96,7 @@ async fn flush_wal_emits_one_checkpoint_per_call_with_monotonic_seq() -> Result<
 
     let appender: Arc<dyn TableWalAppender> =
         Arc::new(FramedTableWalAppender::open(&wal_path).await?);
-    let service = GraphOperationsService::new()
-        .with_canonical_wal_appender(appender);
+    let service = GraphOperationsService::new().with_canonical_wal_appender(appender);
 
     // Three successive flushes.
     for _ in 0..3 {

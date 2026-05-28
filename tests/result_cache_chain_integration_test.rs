@@ -67,7 +67,9 @@ fn policy_table() -> PerCategoryPolicy {
 
 async fn warm(learner: &MismatchCostLearner, tenant: &str, category: &str, cost: f64, n: usize) {
     for _ in 0..n {
-        learner.observe(MismatchRegion::new(tenant, category), cost).await;
+        learner
+            .observe(MismatchRegion::new(tenant, category), cost)
+            .await;
     }
 }
 
@@ -77,7 +79,10 @@ async fn warm(learner: &MismatchCostLearner, tenant: &str, category: &str, cost:
 #[tokio::test]
 async fn code_query_serves_when_warm_low_cost() {
     let q = "fn parse_args(argv: &[String]) -> Result<(), Error> { ... }";
-    let inputs = ClassifierInputs { query_text: q, freshness_hint: None };
+    let inputs = ClassifierInputs {
+        query_text: q,
+        freshness_hint: None,
+    };
     let category = classify(&inputs);
     assert_eq!(category, Category::Code);
 
@@ -106,7 +111,10 @@ async fn code_query_serves_when_warm_low_cost() {
 #[tokio::test]
 async fn conversational_query_serves_at_lower_similarity_than_code_would() {
     let q = "what is rust";
-    let inputs = ClassifierInputs { query_text: q, freshness_hint: None };
+    let inputs = ClassifierInputs {
+        query_text: q,
+        freshness_hint: None,
+    };
     let category = classify(&inputs);
     assert_eq!(category, Category::Conversational);
 
@@ -127,7 +135,10 @@ async fn conversational_query_serves_at_lower_similarity_than_code_would() {
             age: Duration::from_secs(60),
         })
         .await;
-    assert!(d.is_serve(), "0.80 should serve under conversational policy");
+    assert!(
+        d.is_serve(),
+        "0.80 should serve under conversational policy"
+    );
 
     // Same 0.80 against code threshold (0.92) would reject — pin this
     // by running with category overridden to 'code'.
@@ -139,7 +150,10 @@ async fn conversational_query_serves_at_lower_similarity_than_code_would() {
             age: Duration::from_secs(60),
         })
         .await;
-    assert!(!d_code.is_serve(), "0.80 should not serve under code policy");
+    assert!(
+        !d_code.is_serve(),
+        "0.80 should not serve under code policy"
+    );
 }
 
 /// Strict freshness → Volatile classification → tight 0.95 threshold
@@ -178,7 +192,10 @@ async fn strict_freshness_routes_to_volatile_and_rejects_old_entries() {
 #[tokio::test]
 async fn cold_mismatch_region_rejects_first_lookup() {
     let q = "fn parse(arg) {}";
-    let inputs = ClassifierInputs { query_text: q, freshness_hint: None };
+    let inputs = ClassifierInputs {
+        query_text: q,
+        freshness_hint: None,
+    };
     let category = classify(&inputs);
     assert_eq!(category, Category::Code);
 
@@ -207,7 +224,10 @@ async fn cold_mismatch_region_rejects_first_lookup() {
 #[tokio::test]
 async fn cross_tenant_mismatch_isolation_preserved_through_the_chain() {
     let q = "fn parse() {}";
-    let inputs = ClassifierInputs { query_text: q, freshness_hint: None };
+    let inputs = ClassifierInputs {
+        query_text: q,
+        freshness_hint: None,
+    };
     let category = classify(&inputs);
     assert_eq!(category, Category::Code);
 
@@ -249,7 +269,10 @@ async fn unknown_category_routes_through_safe_default() {
     // moderate-length text without code markers, conversational
     // prefixes, volatile keywords, or jargon. Lands on Unknown.
     let q = "describe recent observations from production";
-    let inputs = ClassifierInputs { query_text: q, freshness_hint: None };
+    let inputs = ClassifierInputs {
+        query_text: q,
+        freshness_hint: None,
+    };
     let category = classify(&inputs);
     // Don't assert exact category; downstream behavior is what we
     // care about — the gate must not panic.

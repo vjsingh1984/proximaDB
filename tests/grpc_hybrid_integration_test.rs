@@ -21,9 +21,9 @@ use anyhow::Result;
 use proximadb_api::grpc::v1::hybrid::HybridSearchServiceImpl;
 use proximadb_proto::v1::hybrid_search_service_client::HybridSearchServiceClient;
 use proximadb_proto::v1::{
-    fusion_strategy_params, FusionStrategy, FusionStrategyInfo, FusionStrategyParams,
-    HybridFusionSearchRequest, HybridFusionSearchResponse, HybridSearchResult,
-    ListFusionStrategiesRequest, ListFusionStrategiesResponse, WeightedLinearParams,
+    FusionStrategy, FusionStrategyInfo, FusionStrategyParams, HybridFusionSearchRequest,
+    HybridFusionSearchResponse, HybridSearchResult, ListFusionStrategiesRequest,
+    ListFusionStrategiesResponse, WeightedLinearParams, fusion_strategy_params,
 };
 use proximadb_runtime::HybridPort;
 use std::collections::HashMap;

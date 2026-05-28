@@ -169,7 +169,10 @@ async fn nova_ingest_sorted_segment_short_circuits_empty_batch() {
     // No data files should have been created.
     let data_dir = temp.path().join("empty_collection").join("data");
     assert!(
-        !data_dir.exists() || std::fs::read_dir(&data_dir).map(|d| d.count() == 0).unwrap_or(true),
+        !data_dir.exists()
+            || std::fs::read_dir(&data_dir)
+                .map(|d| d.count() == 0)
+                .unwrap_or(true),
         "empty batch must not create any files",
     );
 }

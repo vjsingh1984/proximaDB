@@ -542,7 +542,11 @@ async fn test_isolated_sst_concurrent_read_operations() -> Result<()> {
                     model_id: "default".to_string(),
                     modality: "vector".to_string(),
                     dim: 3,
-                    values: proximadb_records::EmbeddingValues::Fp32(vec![(i * 2) as f32, (i * 2 + 1) as f32, (i * 2 + 2) as f32]),
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![
+                        (i * 2) as f32,
+                        (i * 2 + 1) as f32,
+                        (i * 2 + 2) as f32,
+                    ]),
                     ..Default::default()
                 }],
                 props,

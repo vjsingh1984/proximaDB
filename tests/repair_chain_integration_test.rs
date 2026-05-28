@@ -13,15 +13,15 @@
 // verifier output. This test pins the full chain across each
 // RepairAction branch.
 
+use proximadb::core::service_types::IndexStats;
 use proximadb::observability::search_plan_trace::{
     CacheResult, FailureClass, FilterStrategy, IndexRoute, SearchPlanTrace,
     SureSignals as TraceSureSignals,
 };
-use proximadb::core::service_types::IndexStats;
+use proximadb::query::repair::decision::{DecisionThresholds, decide};
 use proximadb::query::repair::{
     PairVerification, RelationLabel, RepairAction, RepairBudget, aggregate,
 };
-use proximadb::query::repair::decision::{DecisionThresholds, decide};
 
 fn pair(claim: u32, evidence: u32, label: RelationLabel, conf: f64) -> PairVerification {
     PairVerification {
@@ -55,6 +55,7 @@ fn trace_template() -> SearchPlanTrace {
         recall_probe_score: None,
         utility_score_avg: None,
         failure_class: None,
+        predicate_shortfall: None,
     }
 }
 
@@ -194,15 +195,11 @@ fn module_to_trace_signals_conversion_preserves_fields() {
     // All five fields round-trip via the From impl (the aggregator
     // clamps to [0,1] so conversion is lossless within precision).
     assert!((trace_signals.coverage - module_signals.coverage).abs() < 1e-9);
-    assert!(
-        (trace_signals.relation_strength - module_signals.relation_strength).abs() < 1e-9
-    );
+    assert!((trace_signals.relation_strength - module_signals.relation_strength).abs() < 1e-9);
     assert!((trace_signals.disagreement - module_signals.disagreement).abs() < 1e-9);
     assert!((trace_signals.conflict - module_signals.conflict).abs() < 1e-9);
     assert!(
-        (trace_signals.retrieval_uncertainty - module_signals.retrieval_uncertainty)
-            .abs()
-            < 1e-9
+        (trace_signals.retrieval_uncertainty - module_signals.retrieval_uncertainty).abs() < 1e-9
     );
 }
 

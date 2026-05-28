@@ -24,7 +24,9 @@ use proximadb::query::federated::optimizer::cached_plan_builder::{
 };
 use proximadb::query::federated::optimizer::plan_builder::PlanBuilderInputs;
 use proximadb::query::federated::optimizer::selectivity::FieldStatistics;
-use proximadb::query::federated::optimizer::{Predicate, PredicateOp, PredicateSelectivityPolicy, PredicateValue};
+use proximadb::query::federated::optimizer::{
+    Predicate, PredicateOp, PredicateSelectivityPolicy, PredicateValue,
+};
 
 fn predicate(col: &str, val: &str) -> Predicate {
     Predicate {
@@ -89,21 +91,15 @@ async fn schema_bump_via_coordinator_invalidates_cache() {
     assert!(hit.cache_hit, "warm-up second call should hit");
 
     // Invalidate via the coordinator (the production path the gateway uses).
-    let coord = CacheInvalidationCoordinator::empty()
-        .with_plan_cache(cache.clone());
-    let summary = coord
-        .invalidate_collection("tenant-a", "kb", &[])
-        .await;
+    let coord = CacheInvalidationCoordinator::empty().with_plan_cache(cache.clone());
+    let summary = coord.invalidate_collection("tenant-a", "kb", &[]).await;
     assert_eq!(
         summary.plan_cache_entries, 1,
         "coordinator should report one dropped entry"
     );
 
     let after = build_for_search_cached_with_collection(&cache, &inputs, "kb").await;
-    assert!(
-        !after.cache_hit,
-        "post-invalidation call must miss again"
-    );
+    assert!(!after.cache_hit, "post-invalidation call must miss again");
 }
 
 #[tokio::test]
@@ -148,7 +144,10 @@ async fn cross_tenant_traces_keep_distinct_cache_entries() {
     // Same shape under a different tenant must miss — the cache is
     // tenant-scoped.
     let rb = build_for_search_cached_with_collection(&cache, &inputs_b, "kb").await;
-    assert!(!rb.cache_hit, "tenant-b must miss even though tenant-a populated");
+    assert!(
+        !rb.cache_hit,
+        "tenant-b must miss even though tenant-a populated"
+    );
 }
 
 #[tokio::test]
@@ -222,9 +221,7 @@ async fn invalidation_summary_total_reflects_cache_contribution() {
     let coord = CacheInvalidationCoordinator::empty()
         .with_plan_cache(plan_cache)
         .with_batch_group(batch_group);
-    let summary = coord
-        .invalidate_collection("tenant-a", "kb", &[])
-        .await;
+    let summary = coord.invalidate_collection("tenant-a", "kb", &[]).await;
     // Two plan-cache entries; no batch groups attached to this
     // collection in the test.
     assert_eq!(summary.plan_cache_entries, 2);

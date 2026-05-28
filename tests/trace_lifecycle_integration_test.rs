@@ -20,9 +20,7 @@ use std::time::Duration;
 use proximadb::observability::trace_retention::{
     RetentionDecision, RetentionInputs, TraceRetentionPolicy,
 };
-use proximadb::observability::trace_sampling::{
-    SamplingInputs, TraceSamplingPolicy,
-};
+use proximadb::observability::trace_sampling::{SamplingInputs, TraceSamplingPolicy};
 
 fn days(n: u64) -> Duration {
     Duration::from_secs(n * 86_400)
@@ -44,7 +42,10 @@ async fn business_trace_sampled_kept_then_pruned_at_window() {
             force_sample: false,
         })
         .await;
-    assert!(sampling_decision.is_sample(), "business tier samples at 100%");
+    assert!(
+        sampling_decision.is_sample(),
+        "business tier samples at 100%"
+    );
 
     // Stage 2: retention at 10 days — kept.
     let d_mid = retention.decide(&RetentionInputs {
@@ -96,14 +97,16 @@ async fn free_tier_sampling_and_retention_compose_correctly() {
     );
 
     // Day 8 — past free's 7-day window, pruned.
-    assert!(retention
-        .decide(&RetentionInputs {
-            tier_label: "free",
-            age: days(8),
-            current_bytes: 0,
-            record_bytes: 0,
-        })
-        .is_prune());
+    assert!(
+        retention
+            .decide(&RetentionInputs {
+                tier_label: "free",
+                age: days(8),
+                current_bytes: 0,
+                record_bytes: 0,
+            })
+            .is_prune()
+    );
 }
 
 /// Enterprise tier samples at 100% and retains for 90 days. A trace

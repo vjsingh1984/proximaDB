@@ -14,7 +14,7 @@
 
 use std::sync::Arc;
 
-use proximadb::catalog::tenant_tier::{FeatureFlags, Tier, TenantTierRecord};
+use proximadb::catalog::tenant_tier::{FeatureFlags, TenantTierRecord, Tier};
 use proximadb::catalog::tier_transition::{
     AxisDirection, TransitionClass, detect as detect_transition,
 };
@@ -90,12 +90,12 @@ async fn upgrade_emits_event_and_invalidates_warm_cache() {
     assert_eq!(event.scan_budget_gb.direction, AxisDirection::Up);
 
     // Stage 3: flush the caches that held the old budget.
-    let coord = CacheInvalidationCoordinator::empty()
-        .with_plan_cache(cache.clone());
-    let summary = coord
-        .invalidate_collection("tenant-a", "kb", &[])
-        .await;
-    assert!(summary.plan_cache_entries >= 1, "should have dropped at least one entry");
+    let coord = CacheInvalidationCoordinator::empty().with_plan_cache(cache.clone());
+    let summary = coord.invalidate_collection("tenant-a", "kb", &[]).await;
+    assert!(
+        summary.plan_cache_entries >= 1,
+        "should have dropped at least one entry"
+    );
 
     // Stage 4: next planner call (still against community-shape inputs)
     // misses because the cache was flushed.
@@ -143,11 +143,8 @@ async fn downgrade_emits_event_and_invalidates_too() {
     };
     let _ = build_for_search_cached_with_collection(&cache, &inputs, "kb").await;
 
-    let coord = CacheInvalidationCoordinator::empty()
-        .with_plan_cache(cache.clone());
-    let summary = coord
-        .invalidate_collection("tenant-a", "kb", &[])
-        .await;
+    let coord = CacheInvalidationCoordinator::empty().with_plan_cache(cache.clone());
+    let summary = coord.invalidate_collection("tenant-a", "kb", &[]).await;
     assert_eq!(summary.plan_cache_entries, 1);
 }
 
@@ -186,11 +183,8 @@ async fn no_change_emits_event_but_invalidation_is_an_optional_step() {
     // surfaces what happened — one entry dropped because the
     // coordinator doesn't ask whether the event was NoChange; that's
     // a caller-side decision.
-    let coord = CacheInvalidationCoordinator::empty()
-        .with_plan_cache(cache.clone());
-    let summary = coord
-        .invalidate_collection("tenant-a", "kb", &[])
-        .await;
+    let coord = CacheInvalidationCoordinator::empty().with_plan_cache(cache.clone());
+    let summary = coord.invalidate_collection("tenant-a", "kb", &[]).await;
     assert_eq!(summary.plan_cache_entries, 1);
 }
 
@@ -228,11 +222,8 @@ async fn cross_tenant_transition_does_not_flush_other_tenants() {
     let _event = detect_transition(&tier_a, &after);
 
     // Invalidate only tenant-a's entries.
-    let coord = CacheInvalidationCoordinator::empty()
-        .with_plan_cache(cache.clone());
-    let summary = coord
-        .invalidate_collection("tenant-a", "kb", &[])
-        .await;
+    let coord = CacheInvalidationCoordinator::empty().with_plan_cache(cache.clone());
+    let summary = coord.invalidate_collection("tenant-a", "kb", &[]).await;
     // Only one entry dropped (the tenant-a one); tenant-b survives.
     assert_eq!(summary.plan_cache_entries, 1);
 
@@ -251,7 +242,10 @@ async fn cross_tenant_transition_does_not_flush_other_tenants() {
         corpus_version: 1,
     };
     let r = build_for_search_cached_with_collection(&cache, &inputs_b, "kb").await;
-    assert!(r.cache_hit, "tenant-b's cache survived the tenant-a invalidation");
+    assert!(
+        r.cache_hit,
+        "tenant-b's cache survived the tenant-a invalidation"
+    );
 }
 
 #[tokio::test]

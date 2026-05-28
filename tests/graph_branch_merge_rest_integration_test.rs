@@ -25,16 +25,14 @@ use axum::http::{Request, StatusCode};
 use axum::routing::post;
 use axum::{Json, Router};
 use proximadb::errors::ApiResult;
-use proximadb::network::rest::handlers::{
-    merge_graph_branch_inner, GraphBranchMergeRequest,
-};
+use proximadb::network::rest::handlers::{GraphBranchMergeRequest, merge_graph_branch_inner};
 use proximadb::services::FramedTableWalAppender;
 use proximadb::services::record_store::TableWalAppender;
 use proximadb_records::ProximaRecord;
 use proximadb_storage_common::CanonicalOperation;
 use std::path::PathBuf;
 use tempfile::TempDir;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tower::ServiceExt; // for `oneshot`
 
 type JsonResponse<T> = axum::Json<T>;
@@ -92,10 +90,7 @@ fn upsert_op(oid: &str, branch: Option<&str>) -> CanonicalOperation {
 
 /// Append `ops` to the canonical WAL and drop the appender so the next
 /// reader sees a fully flushed file.
-async fn append_and_drop(
-    wal_path: &PathBuf,
-    ops: Vec<CanonicalOperation>,
-) -> Result<()> {
+async fn append_and_drop(wal_path: &PathBuf, ops: Vec<CanonicalOperation>) -> Result<()> {
     let appender = FramedTableWalAppender::open(wal_path).await?;
     appender.append_operations(ops, None).await?;
     drop(appender);
@@ -142,8 +137,7 @@ async fn merge_endpoint_dry_run_returns_report_without_writing() -> Result<()> {
     let wal_path = wal_path_for(&data_dir);
     seed_two_branch_conflict(&wal_path).await?;
 
-    let entries_before =
-        FramedTableWalAppender::read_entries_from_path(&wal_path).await?;
+    let entries_before = FramedTableWalAppender::read_entries_from_path(&wal_path).await?;
 
     let app = router_for_test(data_dir.clone());
     let (status, body) = post_json(
@@ -153,7 +147,12 @@ async fn merge_endpoint_dry_run_returns_report_without_writing() -> Result<()> {
     )
     .await?;
 
-    assert_eq!(status, StatusCode::OK, "dry-run should return 200; body: {}", body);
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "dry-run should return 200; body: {}",
+        body
+    );
     assert_eq!(body["dry_run"], serde_json::Value::Bool(true));
     assert_eq!(body["source_branch"], "a");
     assert_eq!(body["target_branch"], "b");
@@ -166,8 +165,7 @@ async fn merge_endpoint_dry_run_returns_report_without_writing() -> Result<()> {
         body["write_back"]
     );
 
-    let entries_after =
-        FramedTableWalAppender::read_entries_from_path(&wal_path).await?;
+    let entries_after = FramedTableWalAppender::read_entries_from_path(&wal_path).await?;
     assert_eq!(
         entries_after.len(),
         entries_before.len(),
@@ -182,14 +180,12 @@ async fn merge_endpoint_dry_run_returns_report_without_writing() -> Result<()> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn merge_endpoint_commit_writes_through_and_returns_write_back_block(
-) -> Result<()> {
+async fn merge_endpoint_commit_writes_through_and_returns_write_back_block() -> Result<()> {
     let (_tmp, data_dir) = fresh_data_dir()?;
     let wal_path = wal_path_for(&data_dir);
     seed_two_branch_conflict(&wal_path).await?;
 
-    let entries_before =
-        FramedTableWalAppender::read_entries_from_path(&wal_path).await?;
+    let entries_before = FramedTableWalAppender::read_entries_from_path(&wal_path).await?;
 
     let app = router_for_test(data_dir.clone());
     let (status, body) = post_json(
@@ -199,7 +195,12 @@ async fn merge_endpoint_commit_writes_through_and_returns_write_back_block(
     )
     .await?;
 
-    assert_eq!(status, StatusCode::OK, "commit should return 200; body: {}", body);
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "commit should return 200; body: {}",
+        body
+    );
     assert_eq!(body["dry_run"], serde_json::Value::Bool(false));
 
     let write_back = &body["write_back"];
@@ -215,8 +216,7 @@ async fn merge_endpoint_commit_writes_through_and_returns_write_back_block(
     assert!(write_back["first_lsn"].is_number());
     assert!(write_back["last_lsn"].is_number());
 
-    let entries_after =
-        FramedTableWalAppender::read_entries_from_path(&wal_path).await?;
+    let entries_after = FramedTableWalAppender::read_entries_from_path(&wal_path).await?;
     assert_eq!(
         entries_after.len(),
         entries_before.len() + (entries_written as usize),
@@ -301,8 +301,7 @@ async fn merge_endpoint_returns_400_for_empty_target_branch() -> Result<()> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn merge_endpoint_returns_404_when_no_branch_entries_for_collection(
-) -> Result<()> {
+async fn merge_endpoint_returns_404_when_no_branch_entries_for_collection() -> Result<()> {
     let (_tmp, data_dir) = fresh_data_dir()?;
     let wal_path = wal_path_for(&data_dir);
     // Seed a record on the WRONG collection so the filter strips it.

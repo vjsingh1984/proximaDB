@@ -22,20 +22,22 @@
 
 use std::time::Duration;
 
-use proximadb::catalog::tenant_tier::{Tier, TenantTierRecord};
+use proximadb::catalog::tenant_tier::{TenantTierRecord, Tier};
 use proximadb::core::service_types::IndexStats;
 use proximadb::observability::metering_event::{MeteringInputs, build_kru};
 use proximadb::observability::search_plan_trace::{
     CacheResult, FilterStrategy, IndexRoute, SearchPlanTrace, SureSignals,
 };
-use proximadb::observability::search_plan_trace_builder::{TraceBuilderInputs, build as build_trace};
+use proximadb::observability::search_plan_trace_builder::{
+    TraceBuilderInputs, build as build_trace,
+};
 use proximadb::observability::trace_batcher::{TraceBatchInput, build_batch};
 use proximadb::observability::trace_digest::{DigestInputs, digest_hex};
 use proximadb::observability::trace_fingerprint::{TraceShape, fingerprint_hex};
+use proximadb::query::federated::optimizer::PredicateSelectivityPolicy;
 use proximadb::query::federated::optimizer::filter_strategy::PlanInputs;
 use proximadb::query::federated::optimizer::plan_builder::{PlanBuilderInputs, build_for_search};
 use proximadb::query::federated::optimizer::selectivity::FieldStatistics;
-use proximadb::query::federated::optimizer::PredicateSelectivityPolicy;
 
 /// One end-to-end pass — every stage of the pipeline runs against a
 /// realistic query shape. The test asserts cross-stage invariants:
@@ -86,6 +88,7 @@ fn full_pipeline_composes_for_a_single_trace() {
         cache_result: CacheResult::Miss,
         failure_class: None,
         bytes_per_vector: 1024.0,
+        predicate_shortfall: None,
     });
     // The trace's plan must round-trip from PlanOutput.
     assert_eq!(trace.filter_strategy, plan.filter_strategy);
@@ -184,6 +187,7 @@ fn batch_of_identical_shapes_collapses_fingerprint_but_keeps_idempotency_distinc
             cache_result: CacheResult::Miss,
             failure_class: None,
             bytes_per_vector: 0.0,
+            predicate_shortfall: None,
         })
     };
 
@@ -259,6 +263,7 @@ fn cross_tenant_traces_share_fingerprint_but_have_distinct_idempotency_keys() {
             cache_result: CacheResult::Miss,
             failure_class: None,
             bytes_per_vector: 0.0,
+            predicate_shortfall: None,
         })
     };
 
@@ -336,6 +341,7 @@ fn non_default_plan_choice_propagates_through_the_pipeline() {
         cache_result: CacheResult::Miss,
         failure_class: None,
         bytes_per_vector: 0.0,
+        predicate_shortfall: None,
     });
     assert_eq!(trace.index_route, IndexRoute::QuantizedGraphThenExact);
 

@@ -4,7 +4,6 @@
 // a careful redesign of the mock strategies. Tracked separately from the
 // 2026-05-22 nomenclature refactor.
 #![cfg(any())]
-
 /*
  * Copyright 2025 Vijaykumar Singh
  *

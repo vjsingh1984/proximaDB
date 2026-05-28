@@ -41,10 +41,7 @@ fn fresh_layout() -> Result<(TempDir, PathBuf, PathBuf)> {
 
 /// Seed the canonical WAL with `entries`, then drop the appender so the
 /// file is flushed before the next reader sees it.
-async fn seed_canonical_wal(
-    wal_path: &PathBuf,
-    operations: Vec<CanonicalOperation>,
-) -> Result<()> {
+async fn seed_canonical_wal(wal_path: &PathBuf, operations: Vec<CanonicalOperation>) -> Result<()> {
     let appender = FramedTableWalAppender::open(wal_path).await?;
     appender.append_operations(operations, None).await?;
     drop(appender);
@@ -68,12 +65,8 @@ fn checkpoint_op(sequence_number: u64, collection_ids: Vec<&str>) -> CanonicalOp
 async fn canonical_checkpoint_lsn_returns_none_when_no_wal_path() -> Result<()> {
     let (_tmp, base, _wal) = fresh_layout()?;
     let base_url = format!("file://{}", base.display());
-    let engine = OrionGraphEngine::with_persistence_for_graph(
-        "graph-a".to_string(),
-        base_url,
-        true,
-    )
-    .await?;
+    let engine =
+        OrionGraphEngine::with_persistence_for_graph("graph-a".to_string(), base_url, true).await?;
 
     let lsn = engine
         .persistence()

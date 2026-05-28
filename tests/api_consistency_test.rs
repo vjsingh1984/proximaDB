@@ -191,6 +191,7 @@ mod api_consistency_tests {
                 text_columns: vec![],
                 text_storage_configs: vec![],
                 enable_dual_use_embeddings: None,
+                canonical_embedding_precision: None,
             }),
             query_params: Default::default(),
             options: Default::default(),

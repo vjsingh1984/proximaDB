@@ -136,7 +136,11 @@ async fn rust_sdk_create_collection_with_fp16_precision_round_trips() {
         .send()
         .await
         .expect("REST GET");
-    assert!(resp.status().is_success(), "REST GET failed: {}", resp.status());
+    assert!(
+        resp.status().is_success(),
+        "REST GET failed: {}",
+        resp.status()
+    );
     let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
 
     let cfg = body

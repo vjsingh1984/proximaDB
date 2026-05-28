@@ -118,9 +118,7 @@ fn fp16_records_increment_canonical_bytes_metric_at_flush() {
     let data_path = temp_dir.path().join("fp16_metric_test");
     std::fs::create_dir_all(&data_path).expect("create data dir");
 
-    let mut config = EmbeddedConfig::for_low_memory(
-        data_path.to_string_lossy().to_string(),
-    );
+    let mut config = EmbeddedConfig::for_low_memory(data_path.to_string_lossy().to_string());
     config.enable_wal = true;
     let db = EmbeddedProximaDB::new(config).expect("create db");
 

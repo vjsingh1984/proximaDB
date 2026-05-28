@@ -242,7 +242,9 @@ async fn rest_create_fp16_collection_round_trips_canonical_precision() {
     );
     let precision = precision.unwrap();
     let matches_fp16 = match precision {
-        serde_json::Value::String(s) => s == "EMBEDDING_PRECISION_FP16" || s == "FP16" || s == "Fp16",
+        serde_json::Value::String(s) => {
+            s == "EMBEDDING_PRECISION_FP16" || s == "FP16" || s == "Fp16"
+        }
         serde_json::Value::Number(n) => n.as_i64() == Some(2),
         _ => false,
     };
@@ -348,8 +350,9 @@ async fn rest_insert_into_fp16_collection_increments_canonical_bytes_metric() {
     // canonical fp16 at write time.
     let vectors: Vec<serde_json::Value> = (0..num_records)
         .map(|i| {
-            let v: Vec<f32> =
-                (0..dim).map(|j| (i as f32) * 0.1 + (j as f32) * 0.01).collect();
+            let v: Vec<f32> = (0..dim)
+                .map(|j| (i as f32) * 0.1 + (j as f32) * 0.01)
+                .collect();
             serde_json::json!({
                 "id": format!("rec-{:03}", i),
                 "vector": v,
@@ -385,10 +388,7 @@ async fn rest_insert_into_fp16_collection_increments_canonical_bytes_metric() {
         .send()
         .await
         .expect("scrape");
-    assert!(
-        metrics_resp.status().is_success(),
-        "metrics scrape failed"
-    );
+    assert!(metrics_resp.status().is_success(), "metrics scrape failed");
     let scrape = metrics_resp.text().await.expect("body");
 
     // Expected: num_records × dim × bytes_per_element(fp16)
@@ -456,9 +456,7 @@ async fn grpc_create_fp16_collection_persists_canonical_precision() {
         .await
         .expect("grpc CreateCollection");
     let collection = response.into_inner();
-    let returned_cfg = collection
-        .config
-        .expect("returned Collection has config");
+    let returned_cfg = collection.config.expect("returned Collection has config");
     assert_eq!(
         returned_cfg.canonical_embedding_precision,
         Some(proximadb::proto::proximadb_v1::EmbeddingPrecision::Fp16 as i32),

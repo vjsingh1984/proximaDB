@@ -36,9 +36,7 @@ use proximadb::query::federated::optimizer::plan_v2_inference::{
     LinearV1FallbackInferencer, PlanInference, PlanInferencer,
 };
 use proximadb::query::federated::optimizer::plan_v2_training::{DimBucket, PlanFeatures};
-use proximadb::query::federated::optimizer::trace_replay::{
-    ReplayInputs, replay, summarize,
-};
+use proximadb::query::federated::optimizer::trace_replay::{ReplayInputs, replay, summarize};
 
 fn trace(
     trace_id: &str,
@@ -70,6 +68,7 @@ fn trace(
         recall_probe_score: None,
         utility_score_avg: None,
         failure_class: None,
+        predicate_shortfall: None,
     }
 }
 
@@ -96,11 +95,7 @@ impl PlanInferencer for FixedInferencer {
     }
 }
 
-fn fixed(
-    strategy: FilterStrategy,
-    route: IndexRoute,
-    confidence: f64,
-) -> Arc<dyn PlanInferencer> {
+fn fixed(strategy: FilterStrategy, route: IndexRoute, confidence: f64) -> Arc<dyn PlanInferencer> {
     Arc::new(FixedInferencer {
         strategy,
         route,
@@ -171,14 +166,10 @@ fn full_offline_evaluation_pipeline_composes() {
         .collect();
     let calibration = score_calibration(&samples);
     assert_eq!(calibration.sample_count, 100);
-    assert!(
-        calibration.brier_score.is_finite(),
-        "Brier must be finite"
-    );
+    assert!(calibration.brier_score.is_finite(), "Brier must be finite");
 
     // Stage 4: workload mix over the trace fingerprints.
-    let mut counts: std::collections::HashMap<String, u64> =
-        std::collections::HashMap::new();
+    let mut counts: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
     for t in &traces {
         let shape = TraceShape::from_trace(t, 1.0);
         let fp = fingerprint_hex(&shape);
@@ -256,7 +247,10 @@ fn disagreement_pipeline_still_composes_to_actionable_output() {
         .collect();
 
     let summary = summarize(&outcomes);
-    assert_eq!(summary.agree_count, 0, "candidate disagrees with all traces");
+    assert_eq!(
+        summary.agree_count, 0,
+        "candidate disagrees with all traces"
+    );
     assert_eq!(summary.agree_rate, 0.0);
 
     // Calibration still produces a usable report.
@@ -300,9 +294,9 @@ fn v1_fallback_replay_against_itself_agrees() {
         recall_probe_score: None,
         utility_score_avg: None,
         failure_class: None,
+        predicate_shortfall: None,
     };
-    let inferencer: Arc<dyn PlanInferencer> =
-        Arc::new(LinearV1FallbackInferencer::fail_safe());
+    let inferencer: Arc<dyn PlanInferencer> = Arc::new(LinearV1FallbackInferencer::fail_safe());
     let o = replay(
         &ReplayInputs {
             trace: &t,

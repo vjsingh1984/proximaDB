@@ -65,6 +65,7 @@ fn make_record(id: &str, vector: Vec<f32>, props: ProximaTree) -> ProximaRecord 
         },
         sequence: None,
         labels: LabelSet::new(),
+        branch_id: None,
     }
 }
 

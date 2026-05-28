@@ -192,9 +192,9 @@ async fn flight_create_collection_with_canonical_embedding_precision_fp16() {
                  actual body shape: {body}"
             )
         });
-    let precision = cfg
-        .get("canonical_embedding_precision")
-        .expect("collection.config has canonical_embedding_precision after flight create_collection");
+    let precision = cfg.get("canonical_embedding_precision").expect(
+        "collection.config has canonical_embedding_precision after flight create_collection",
+    );
 
     let matches_fp16 = match precision {
         serde_json::Value::String(s) => {
