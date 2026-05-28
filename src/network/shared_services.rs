@@ -161,6 +161,22 @@ pub struct SharedServices {
     /// control-plane / data-plane separation.
     pub pin_registry: Arc<crate::storage::collection_pinning::CollectionPinRegistry>,
 
+    /// Process-wide cache-affinity registry (Phase 7.2). Tracks
+    /// per-collection "which node most recently served queries" so
+    /// that reads can be biased to whichever node owns the warm
+    /// cache. Mirrors turbopuffer's published cache-affinity model
+    /// ("subsequent queries route to the same query node for cache
+    /// locality").
+    ///
+    /// The registry is process-wide and useful even in single-node
+    /// deploys — it gives the operator API a place to inspect "which
+    /// collections this node has been serving" and gives a future
+    /// multi-node `RoutingService` an attach point via
+    /// `with_affinity_registry`. The recording call lives in the
+    /// data-plane search path so the registry reflects actual
+    /// activity, not just routing decisions.
+    pub affinity_registry: Arc<crate::cluster::cache_affinity::CacheAffinityRegistry>,
+
     /// Shared canonical WAL appender at `<data_dir>/pgwire/canonical-records.wal`.
     ///
     /// Opened once in `SharedServices::new` (when `opt_config` is provided so
@@ -335,6 +351,14 @@ impl SharedServices {
             }
             None => crate::storage::collection_pinning::new_shared(),
         };
+
+        // Phase 7.2: per-collection cache-affinity registry. In-memory
+        // only (no persistence) — entries naturally re-populate from
+        // the first query after a restart, so a stale persisted entry
+        // would be more confusing than helpful. TTL defaults to 60s;
+        // entries older than that are treated as cold.
+        let affinity_registry = crate::cluster::cache_affinity::new_shared();
+        info!("🧭 SharedServices: cache-affinity registry ready (TTL 60s)");
 
         // Create WAL manager for two-stage search FIRST so the SST
         // engine can read its global manifest singleton when wiring the
@@ -566,7 +590,11 @@ impl SharedServices {
                 collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
             )
             .with_orchestrator(Some(orchestrator.clone()))
-            .with_directory_cache(directory_cache.clone()),
+            .with_directory_cache(directory_cache.clone())
+            // Phase 7.2: thread the same affinity registry held by
+            // the SharedServices field so search-path recordings and
+            // operator inspection share state.
+            .with_affinity_registry(affinity_registry.clone()),
         );
 
         info!(
@@ -1211,6 +1239,11 @@ impl SharedServices {
                 // (control plane) and the SST tier-migration
                 // integration (data plane) hold the same `Arc`.
                 pin_registry,
+                // Phase 7.2: cache-affinity registry. Populated by
+                // the unified search path; consumed by operator
+                // inspection and future cluster-mode RoutingService
+                // attach.
+                affinity_registry,
                 // T2.3 / TD-066 production wiring: the shared canonical
                 // WAL appender opened earlier (Some when opt_config is
                 // provided). Held here so multi_server.rs can clone it

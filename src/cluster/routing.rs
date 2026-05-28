@@ -1994,11 +1994,9 @@ mod tests {
     #[tokio::test]
     async fn expired_affinity_falls_back_to_default_strategy() {
         // Short TTL so the entry expires before the next route call.
-        let reg = Arc::new(
-            crate::cluster::cache_affinity::CacheAffinityRegistry::with_ttl(
-                std::time::Duration::from_millis(10),
-            ),
-        );
+        let reg = Arc::new(super::CacheAffinityRegistry::with_ttl(
+            std::time::Duration::from_millis(10),
+        ));
         let service =
             RoutingService::new(RoutingConfig::default())
                 .unwrap()

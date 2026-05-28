@@ -528,6 +528,17 @@ pub struct VectorOperationsService {
     directory_cache: Option<
         Arc<crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache>,
     >,
+
+    /// Phase 7.2 cache-affinity registry. `None` until wired by
+    /// `SharedServices::new` via `with_affinity_registry`. When set,
+    /// every successful unified search invocation calls
+    /// `record_query(collection_id, local_node_id)` so the registry
+    /// reflects observed activity. The local node id is `"self"` in
+    /// single-node deploys (the only node the registry will ever
+    /// see); a future cluster path will plumb the actual node id
+    /// through.
+    affinity_registry:
+        Option<Arc<crate::cluster::cache_affinity::CacheAffinityRegistry>>,
 }
 
 impl VectorOperationsService {
@@ -1162,6 +1173,7 @@ impl VectorOperationsService {
             pseudo_query_generator: Arc::new(DefaultPseudoQueryGenerator::default()),
             insert_only_locks: Arc::new(dashmap::DashMap::new()),
             directory_cache: None,
+            affinity_registry: None,
         }
     }
 
@@ -1195,6 +1207,39 @@ impl VectorOperationsService {
     ) -> Self {
         self.directory_cache = Some(cache);
         self
+    }
+
+    /// Wire the process-wide cache-affinity registry (Phase 7.2).
+    /// When wired, the unified search path calls `record_query`
+    /// after each successful read so the registry reflects which
+    /// node owns the warm cache for a given collection.
+    pub fn with_affinity_registry(
+        mut self,
+        registry: Arc<crate::cluster::cache_affinity::CacheAffinityRegistry>,
+    ) -> Self {
+        self.affinity_registry = Some(registry);
+        self
+    }
+
+    /// Local-node id used when recording cache-affinity entries. In
+    /// single-node deploys this is always `"self"`; in future
+    /// cluster mode it will be plumbed from `ClusterConfig::node_id`.
+    /// Kept as a single helper so the call sites stay terse and the
+    /// future plumbing change touches one function.
+    #[inline]
+    fn local_node_id_for_affinity(&self) -> &'static str {
+        "self"
+    }
+
+    /// Record a search-path query against the affinity registry, if
+    /// one is wired. Cheap no-op otherwise. Called by the unified
+    /// search entry points after a successful response so the
+    /// registry only reflects requests we actually served.
+    #[inline]
+    pub(super) fn record_search_affinity(&self, collection_id: &str) {
+        if let Some(reg) = &self.affinity_registry {
+            reg.record_query(collection_id, self.local_node_id_for_affinity());
+        }
     }
 
     /// Smoke-test seam for the object-economy directory cache.
@@ -2069,6 +2114,8 @@ impl VectorOperationsService {
                 "✅ Cache hit for unified search in collection {}",
                 collection_id
             );
+            // Phase 7.2: record affinity on cache hit (warm path).
+            self.record_search_affinity(collection_id);
             return Ok(cached);
         }
 
@@ -2126,6 +2173,13 @@ impl VectorOperationsService {
         } else {
             results
         };
+
+        // Phase 7.2: record that this node served a query for the
+        // collection. Cheap no-op when no registry is wired. We
+        // record only on a successful response so a failed search
+        // (auth denied, validation rejected, engine error) does not
+        // pollute the affinity hint.
+        self.record_search_affinity(collection_id);
 
         Ok(validated_results)
     }
@@ -2264,6 +2318,10 @@ impl VectorOperationsService {
             filter_str.as_deref(),
         );
         if let Some(cached_v1) = self.query_cache.get_if_fresh_v1(&cache_key, 300).await {
+            // Phase 7.2: a process-local cache hit is the strongest
+            // possible signal that this node owns the warm path for
+            // the collection — record affinity here too.
+            self.record_search_affinity(collection_id);
             return Ok((cached_v1, None));
         }
 
@@ -2353,6 +2411,9 @@ impl VectorOperationsService {
         self.query_cache
             .cache_with_dependencies_v1(cache_key, v1_results.clone(), Vec::new())
             .await;
+
+        // Phase 7.2: record affinity on a successful v1 search.
+        self.record_search_affinity(collection_id);
 
         Ok((v1_results, explain))
     }
