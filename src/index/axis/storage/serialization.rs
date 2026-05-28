@@ -19,6 +19,7 @@
 //! Provides efficient serialization and deserialization for all AXIS index types
 //! with support for incremental updates and delta management.
 
+use crate::index::axis::filterable_metadata::FilterableHnswMetadata;
 use crate::index::axis::{AxisHnswConfig, AxisHnswIndex, UnifiedIvfConfig, UnifiedIvfIndex};
 use bincode;
 use serde::{Deserialize, Serialize};
@@ -528,7 +529,25 @@ pub struct SerializableCollectionConfig {
     pub quantization_method: Option<u8>,
 }
 
-/// Complete serializable HNSW state
+/// V1 HNSW state — pre-TD-064 snapshot layout, no filterable metadata.
+///
+/// Used only for backward-compatible deserialization of legacy snapshots.
+/// New writes always produce `SerializableHnswState` (v2).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableHnswStateV1 {
+    pub version: u32,
+    pub config: SerializableHnswConfig,
+    pub collection_config: SerializableCollectionConfig,
+    pub id_mapping: SerializableIdMapping,
+    pub layers: Vec<((usize, usize), Vec<usize>)>,
+    pub max_layer: usize,
+    pub entry_point: Option<usize>,
+    pub vectors: Vec<SerializableVector>,
+    pub quantized_vectors: Vec<(String, Vec<u8>)>,
+    pub dimension: usize,
+}
+
+/// Complete serializable HNSW state (v2 — current).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableHnswState {
     /// Version for forward compatibility
@@ -551,11 +570,35 @@ pub struct SerializableHnswState {
     pub quantized_vectors: Vec<(String, Vec<u8>)>,
     /// Dimension (for validation)
     pub dimension: usize,
+    /// TD-064: Filterable metadata cached per external_id for predicate-aware
+    /// search. Empty when the index hasn't observed any `add_with_metadata`.
+    pub filterable_metadata: Vec<(String, FilterableHnswMetadata)>,
 }
 
 impl SerializableHnswState {
-    /// Current serialization format version; older versions are backward-compatible
-    pub const CURRENT_VERSION: u32 = 1;
+    /// Current serialization format version.
+    ///
+    /// * v1 — vectors + graph + id mapping (legacy)
+    /// * v2 — adds `filterable_metadata` (TD-064 predicate-aware search)
+    pub const CURRENT_VERSION: u32 = 2;
+}
+
+impl From<SerializableHnswStateV1> for SerializableHnswState {
+    fn from(v1: SerializableHnswStateV1) -> Self {
+        Self {
+            version: SerializableHnswState::CURRENT_VERSION,
+            config: v1.config,
+            collection_config: v1.collection_config,
+            id_mapping: v1.id_mapping,
+            layers: v1.layers,
+            max_layer: v1.max_layer,
+            entry_point: v1.entry_point,
+            vectors: v1.vectors,
+            quantized_vectors: v1.quantized_vectors,
+            dimension: v1.dimension,
+            filterable_metadata: Vec::new(),
+        }
+    }
 }
 
 /// Extension trait for HNSW serialization
@@ -614,6 +657,9 @@ impl SerializableIndex for AxisHnswIndex {
         // 7. Serialize quantized vectors
         let quantized_vectors = self.serialize_quantized_vectors();
 
+        // 8. TD-064: serialize cached filterable metadata
+        let filterable_metadata = self.serialize_filterable_metadata();
+
         // Create complete state
         let state = SerializableHnswState {
             version: SerializableHnswState::CURRENT_VERSION,
@@ -626,6 +672,7 @@ impl SerializableIndex for AxisHnswIndex {
             vectors,
             quantized_vectors,
             dimension,
+            filterable_metadata,
         };
 
         // Serialize with bincode
@@ -644,13 +691,31 @@ impl SerializableIndex for AxisHnswIndex {
 
 /// Extension trait for HNSW deserialization
 impl AxisHnswIndex {
-    /// Deserialize HNSW index from bytes
+    /// Deserialize HNSW index from bytes.
+    ///
+    /// Tries the current (v2) layout first; falls back to v1 when the
+    /// snapshot predates TD-064 (no `filterable_metadata` field), upgrading
+    /// in-memory to v2 with empty cached metadata.
     pub fn deserialize_internal(data: &[u8], config: &AxisHnswConfig) -> Result<Self> {
         info!("Starting HNSW deserialize_internal: {} bytes", data.len());
 
-        // Deserialize the state
-        let state: SerializableHnswState =
-            bincode::deserialize(data).map_err(SerializationError::Bincode)?;
+        // Try v2 first
+        let state: SerializableHnswState = match bincode::deserialize::<SerializableHnswState>(data)
+        {
+            Ok(state) => state,
+            Err(v2_err) => {
+                // Fall back to v1 (no filterable_metadata field)
+                match bincode::deserialize::<SerializableHnswStateV1>(data) {
+                    Ok(v1) => {
+                        warn!(
+                            "HNSW snapshot is v1; upgrading in-memory to v2 with empty filterable metadata"
+                        );
+                        SerializableHnswState::from(v1)
+                    }
+                    Err(_) => return Err(SerializationError::Bincode(v2_err)),
+                }
+            }
+        };
 
         // Validate version
         if state.version > SerializableHnswState::CURRENT_VERSION {
@@ -667,6 +732,7 @@ impl AxisHnswIndex {
 
         // Capture counts before moving
         let vector_count = state.id_mapping.external_to_internal.len();
+        let metadata_count = state.filterable_metadata.len();
 
         // Restore the index state using public reconstruction method
         if let Err(e) = index.restore_from_state(
@@ -683,6 +749,14 @@ impl AxisHnswIndex {
                 e
             ))));
         }
+
+        // TD-064: restore filterable metadata cache (no-op for upgraded v1 snapshots).
+        index.restore_filterable_metadata(state.filterable_metadata);
+
+        info!(
+            "HNSW deserialize: restored {} filterable metadata entries",
+            metadata_count
+        );
 
         info!(
             "HNSW deserialize_internal complete: {} vectors restored",

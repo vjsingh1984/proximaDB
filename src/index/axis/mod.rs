@@ -79,6 +79,9 @@ pub mod integration;
 pub mod management; // Management and orchestration
 pub mod storage; // Storage and serialization // Integration with other systems
 
+// TD-064: Filterable metadata for predicate-aware HNSW
+pub mod filterable_metadata;
+
 // Shared utilities and types
 pub mod avro_analysis;
 /// Cluster manager for IVF-based index partitioning.

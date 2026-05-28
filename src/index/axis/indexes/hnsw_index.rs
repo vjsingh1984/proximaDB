@@ -35,6 +35,9 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 // ZeroOverheadVector used for 75-96% memory savings vs VectorRecord
 use crate::index::axis::eventlog::{ExtractionMode, IndexEvent};
+use crate::index::axis::filterable_metadata::{
+    FilterableFieldsConfig, FilterableHnswMetadata, FilterableMetadataCache,
+};
 use crate::index::axis::index_factory::{AxisVectorIndex, IndexStats};
 use crate::index::axis::types::IndexAlgorithm;
 use crate::index::axis::utils::{AtomicStats, ConcurrentIdMapping, memory, validation};
@@ -189,6 +192,10 @@ pub struct AxisHnswIndex {
     /// NEW: Quantized vector storage for dual representation support
     /// Maps external_id -> quantized_vector for QUANTIZED_ONLY and BOTH modes
     quantized_vectors: Arc<DashMap<String, Vec<u8>>>,
+
+    /// TD-064: Shared filterable-metadata cache (AXIS-provided).
+    /// Holds compact <50-byte-per-record metadata for predicate-aware traversal.
+    filterable_metadata: FilterableMetadataCache,
 }
 
 impl AxisHnswIndex {
@@ -254,6 +261,9 @@ impl AxisHnswIndex {
             // EventLog-based vector consumption (no queue consumer needed)
             extraction_mode,
             quantized_vectors: Arc::new(DashMap::new()),
+
+            // TD-064: shared filterable metadata cache; populated via add_with_metadata
+            filterable_metadata: FilterableMetadataCache::new(),
         })
     }
 
@@ -545,14 +555,20 @@ impl AxisHnswIndex {
         result
     }
 
-    /// Public predicate-aware search API (Phase C, spec §7 VectorTopK.predicate).
+    /// Closure-based predicate-aware search (Phase C, spec §7 VectorTopK.predicate).
     ///
-    /// The `predicate` receives the **external string id** of each candidate and
-    /// returns `true` if the record should be included in results.
+    /// Lower-level API: the caller supplies a `Fn(&str) -> bool` predicate that
+    /// receives the **external string id** of each candidate. Used by the AXIS
+    /// filtered-search bridge and unit tests.
+    ///
+    /// The structured (TD-064) entry point lives on the `AxisVectorIndex` trait
+    /// as `search_with_predicate(query, k, tenant, time_range, rls_tags)` and
+    /// uses cached filterable metadata for predicate evaluation. That trait
+    /// method delegates to this method after building an internal closure.
     ///
     /// Internally delegates to `search_layer_predicate` at layer 0 so the
     /// NaviX skip-through heuristic applies throughout the bottom traversal.
-    pub async fn search_with_predicate<P>(
+    pub async fn search_with_predicate_fn<P>(
         &self,
         query: &[f32],
         k: usize,
@@ -898,6 +914,9 @@ impl AxisVectorIndex for AxisHnswIndex {
         }
         self.id_mapping.remove_by_external(id);
 
+        // TD-064: drop cached filterable metadata for this id
+        self.filterable_metadata.remove(id);
+
         // Update entry point if necessary
         {
             let mut entry_point_lock = self
@@ -915,6 +934,55 @@ impl AxisVectorIndex for AxisHnswIndex {
         // USING UTILS: Record successful operation
         self.stats
             .record_success(start.elapsed().as_micros() as u64);
+        Ok(())
+    }
+
+    async fn add_with_metadata(
+        &self,
+        id: String,
+        vector_data: Vec<f32>,
+        metadata: &FilterableHnswMetadata,
+    ) -> Result<()> {
+        // TD-064: cache metadata first so a concurrent predicate-aware search
+        // observing this id can already evaluate the filter; then add to graph.
+        self.filterable_metadata
+            .insert(id.clone(), metadata.clone());
+        self.add(id, vector_data).await
+    }
+
+    async fn search_with_predicate(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        tenant_id: Option<&str>,
+        time_range_ns: Option<(i64, i64)>,
+        rls_tags: Option<&[String]>,
+    ) -> Result<Vec<(String, f32)>> {
+        // TD-064: HNSW skip-through traversal over cached filterable metadata.
+        //
+        // When the cache is empty the index has not yet observed any
+        // add_with_metadata; fall back to plain ANN. Callers requiring
+        // correctness under filters must surface the degradation in EXPLAIN
+        // (handled at AxisManager layer).
+        if self.filterable_metadata.is_empty() {
+            return self.search(query, top_k, None).await;
+        }
+
+        let predicate =
+            self.filterable_metadata
+                .build_predicate(tenant_id, time_range_ns, rls_tags);
+        self.search_with_predicate_fn(query, top_k, predicate).await
+    }
+
+    fn supports_predicate_search(&self) -> bool {
+        // True once any metadata has been cached; before first add_with_metadata
+        // call the index behaves as a plain ANN and the trait method falls
+        // back to standard search.
+        !self.filterable_metadata.is_empty()
+    }
+
+    fn configure_filterable_fields(&self, config: &FilterableFieldsConfig) -> Result<()> {
+        self.filterable_metadata.configure_fields(config);
         Ok(())
     }
 
@@ -1344,6 +1412,16 @@ impl AxisHnswIndex {
                 data: view.raw().as_bytes().to_vec(),
             })
             .collect()
+    }
+
+    /// TD-064: Serialize cached filterable metadata for snapshot persistence.
+    pub fn serialize_filterable_metadata(&self) -> Vec<(String, FilterableHnswMetadata)> {
+        self.filterable_metadata.snapshot()
+    }
+
+    /// TD-064: Restore filterable metadata cache after snapshot load.
+    pub fn restore_filterable_metadata(&self, entries: Vec<(String, FilterableHnswMetadata)>) {
+        self.filterable_metadata.restore(entries);
     }
 
     /// Serialize quantized vectors
@@ -1809,7 +1887,7 @@ mod tests {
         let query = vec![1.0f32, 0.0, 0.0, 0.0];
         let unfiltered = index.search(&query, 3, None).await.unwrap();
         let filtered = index
-            .search_with_predicate(&query, 3, |_id| true)
+            .search_with_predicate_fn(&query, 3, |_id| true)
             .await
             .unwrap();
 
@@ -1846,7 +1924,7 @@ mod tests {
 
         let query = vec![1.0f32, 0.0, 0.0, 0.0];
         let results = index
-            .search_with_predicate(&query, 2, |id| id != "v0")
+            .search_with_predicate_fn(&query, 2, |id| id != "v0")
             .await
             .unwrap();
 
@@ -1854,6 +1932,125 @@ mod tests {
         assert!(
             results.iter().all(|(id, _)| id != "v0"),
             "excluded id must not appear: got {:?}",
+            results
+        );
+    }
+
+    /// TD-064: add_with_metadata caches per-record metadata so the structured
+    /// trait method can enforce tenant isolation without consulting any
+    /// external lookup. Cross-tenant records must be excluded.
+    #[tokio::test]
+    async fn test_predicate_search_isolates_by_tenant() {
+        use crate::index::axis::filterable_metadata::FilterableHnswMetadata;
+        use crate::index::axis::index_factory::AxisVectorIndex;
+
+        let _ = proximadb_hardware::hardware_capabilities();
+        let cfg = AxisHnswConfig {
+            ef: 200,
+            ..AxisHnswConfig::default()
+        };
+        let index = AxisHnswIndex::new(cfg, 4).expect("create index");
+
+        // Add 4 vectors split across two tenants. Vectors are deliberately
+        // close in vector space so post-filter would have shrunk results
+        // — predicate-aware search must keep recall while enforcing tenant.
+        let make_meta = |tenant: &str| {
+            let mut m = FilterableHnswMetadata::default();
+            m.tenant_id = Some(tenant.to_string());
+            m
+        };
+
+        index
+            .add_with_metadata("a1".into(), vec![1.0, 0.0, 0.0, 0.0], &make_meta("acme"))
+            .await
+            .unwrap();
+        index
+            .add_with_metadata("a2".into(), vec![0.9, 0.1, 0.0, 0.0], &make_meta("acme"))
+            .await
+            .unwrap();
+        index
+            .add_with_metadata("b1".into(), vec![0.8, 0.2, 0.0, 0.0], &make_meta("beta"))
+            .await
+            .unwrap();
+        index
+            .add_with_metadata("b2".into(), vec![0.7, 0.3, 0.0, 0.0], &make_meta("beta"))
+            .await
+            .unwrap();
+
+        assert!(
+            index.supports_predicate_search(),
+            "index must report predicate support once metadata is cached"
+        );
+
+        // Query as tenant "acme" — only a1, a2 may appear.
+        let query = vec![1.0f32, 0.0, 0.0, 0.0];
+        let results = index
+            .search_with_predicate(&query, 4, Some("acme"), None, None)
+            .await
+            .unwrap();
+        assert!(
+            !results.is_empty(),
+            "predicate-aware search must return results for matching tenant"
+        );
+        assert!(
+            results.iter().all(|(id, _)| id.starts_with('a')),
+            "cross-tenant ids must not appear in tenant 'acme' query: got {:?}",
+            results
+        );
+
+        // Query as tenant "beta" — only b1, b2 may appear.
+        let results_beta = index
+            .search_with_predicate(&query, 4, Some("beta"), None, None)
+            .await
+            .unwrap();
+        assert!(
+            !results_beta.is_empty(),
+            "predicate-aware search must return results for tenant 'beta'"
+        );
+        assert!(
+            results_beta.iter().all(|(id, _)| id.starts_with('b')),
+            "cross-tenant ids must not appear in tenant 'beta' query: got {:?}",
+            results_beta
+        );
+    }
+
+    /// TD-064: When the cache has no metadata for an id and the caller has
+    /// supplied a tenant predicate, the record must be excluded (fail-closed).
+    #[tokio::test]
+    async fn test_predicate_search_fails_closed_for_unindexed_metadata() {
+        use crate::index::axis::filterable_metadata::FilterableHnswMetadata;
+        use crate::index::axis::index_factory::AxisVectorIndex;
+
+        let _ = proximadb_hardware::hardware_capabilities();
+        let cfg = AxisHnswConfig {
+            ef: 200,
+            ..AxisHnswConfig::default()
+        };
+        let index = AxisHnswIndex::new(cfg, 4).expect("create index");
+
+        // Mix: one vector inserted WITH metadata (tenant "acme"), one WITHOUT.
+        let mut meta = FilterableHnswMetadata::default();
+        meta.tenant_id = Some("acme".into());
+        index
+            .add_with_metadata("a1".into(), vec![1.0, 0.0, 0.0, 0.0], &meta)
+            .await
+            .unwrap();
+        index
+            .add("legacy".into(), vec![0.9, 0.1, 0.0, 0.0])
+            .await
+            .unwrap();
+
+        let query = vec![1.0f32, 0.0, 0.0, 0.0];
+        let results = index
+            .search_with_predicate(&query, 4, Some("acme"), None, None)
+            .await
+            .unwrap();
+
+        // "legacy" must be excluded — no cached metadata + tenant predicate
+        // ⇒ fail-closed.
+        assert!(
+            results.iter().all(|(id, _)| id != "legacy"),
+            "unindexed-metadata record must be excluded under tenant predicate: got {:?}",
             results
         );
     }

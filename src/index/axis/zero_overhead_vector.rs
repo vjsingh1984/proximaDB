@@ -465,7 +465,8 @@ mod tests {
         assert_eq!(pq4_config.vector_size_bytes(), 192);
 
         // Binary: 384 / 8 = 48 bytes (96.9% reduction)
-        let binary_config = ZeroOverheadCollectionConfig::quantized(384, QuantizationMethod::Binary);
+        let binary_config =
+            ZeroOverheadCollectionConfig::quantized(384, QuantizationMethod::Binary);
         assert_eq!(binary_config.vector_size_bytes(), 48);
     }
 }

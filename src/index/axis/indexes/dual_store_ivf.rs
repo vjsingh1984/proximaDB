@@ -645,6 +645,11 @@ pub struct UnifiedIvfIndex {
     /// NEW: Quantized vector storage for dual representation support
     /// Maps external_id -> quantized_vector for QUANTIZED_ONLY and BOTH modes
     quantized_vectors: Arc<DashMap<String, Vec<u8>>>,
+
+    /// TD-064: Shared filterable-metadata cache (AXIS-provided).
+    /// Populated via `add_with_metadata` and consulted by the structured
+    /// `search_with_predicate` trait override for early pruning.
+    filterable_metadata: crate::index::axis::filterable_metadata::FilterableMetadataCache,
 }
 
 impl UnifiedIvfIndex {
@@ -1030,7 +1035,8 @@ impl UnifiedIvfIndex {
 
             async fn metrics(
                 &self,
-            ) -> crate::infrastructure::concurrent_structures::ConcurrentMetricsSnapshot {
+            ) -> crate::infrastructure::concurrent_structures::ConcurrentMetricsSnapshot
+            {
                 Default::default()
             }
 
@@ -1076,6 +1082,10 @@ impl UnifiedIvfIndex {
             // NEW: Queue-based vector consumption - handled externally
             preferred_extraction_mode,
             quantized_vectors: Arc::new(DashMap::new()),
+
+            // TD-064: shared filterable-metadata cache
+            filterable_metadata:
+                crate::index::axis::filterable_metadata::FilterableMetadataCache::new(),
         })
     }
 
@@ -1731,7 +1741,60 @@ impl crate::index::axis::index_factory::AxisVectorIndex for UnifiedIvfIndex {
         // Note: We don't remove from posting lists here as that would require
         // scanning all clusters. This will be handled during compaction.
 
+        // TD-064: drop cached filterable metadata for this id.
+        self.filterable_metadata.remove(id);
+
         self.vector_count.fetch_sub(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    async fn add_with_metadata(
+        &self,
+        id: String,
+        vector_data: Vec<f32>,
+        metadata: &crate::index::axis::filterable_metadata::FilterableHnswMetadata,
+    ) -> Result<()> {
+        self.filterable_metadata
+            .insert(id.clone(), metadata.clone());
+        self.add(id, vector_data).await
+    }
+
+    async fn search_with_predicate(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        tenant_id: Option<&str>,
+        time_range_ns: Option<(i64, i64)>,
+        rls_tags: Option<&[String]>,
+    ) -> Result<Vec<(String, f32)>> {
+        // TD-064: IVF does not yet route predicates through nprobe traversal;
+        // we oversample by 2× and post-filter against the cached metadata.
+        // ADR-011 inline mode for IVF is tracked under TD-064 phase 3.
+        if self.filterable_metadata.is_empty() {
+            return self.search(query, top_k, None).await;
+        }
+
+        let oversample_k = top_k.saturating_mul(2).max(top_k);
+        let predicate =
+            self.filterable_metadata
+                .build_predicate(tenant_id, time_range_ns, rls_tags);
+        let raw = self.search(query, oversample_k, None).await?;
+        Ok(raw
+            .into_iter()
+            .filter(|(id, _)| predicate(id))
+            .take(top_k)
+            .collect())
+    }
+
+    fn supports_predicate_search(&self) -> bool {
+        !self.filterable_metadata.is_empty()
+    }
+
+    fn configure_filterable_fields(
+        &self,
+        config: &crate::index::axis::filterable_metadata::FilterableFieldsConfig,
+    ) -> Result<()> {
+        self.filterable_metadata.configure_fields(config);
         Ok(())
     }
 

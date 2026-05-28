@@ -114,7 +114,10 @@ pub struct IndexStrategyBuilder {
 
 impl IndexStrategyBuilder {
     /// Create a new strategy builder from collection statistics and observed query patterns
-    pub fn new(collection_stats: AxisStrategyCollectionStatistics, query_patterns: QueryPatterns) -> Self {
+    pub fn new(
+        collection_stats: AxisStrategyCollectionStatistics,
+        query_patterns: QueryPatterns,
+    ) -> Self {
         Self {
             collection_stats,
             query_patterns,

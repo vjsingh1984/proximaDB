@@ -635,15 +635,70 @@ impl AxisManager {
         // HNSW: O(log N) search - best for search latency
         // IVF: O(√N) search - acceptable if insert-optimized
         let has_filters = !query.metadata_filters.is_empty() || !query.id_filters.is_empty();
+        // TD-064: track shortfall across paths (only inline path produces it
+        // today; pre-filter exact never undercounts and post-filter is not
+        // wired here yet).
+        let mut predicate_shortfall: Option<
+            crate::observability::search_plan_trace::PredicateShortfall,
+        > = None;
+
+        // TD-064 / ADR-011: when the caller supplied both a filtering policy
+        // and a selectivity estimate, the catalog policy drives the mode
+        // selection. Otherwise we fall back to the legacy
+        // `query.ann_filtering_mode` hint.
+        //
+        // Backward compat: policy-driven routing is only taken when the
+        // caller opts in via a non-None policy. Legacy callers that set
+        // only `ann_filtering_mode` keep the historical behavior where
+        // PostFilter / PreFilter / unspecified all fall through to the
+        // exact-filtered scan; only `Inline` was historically wired into
+        // the HNSW predicate path. This avoids regressing tests and
+        // production paths that depended on that mapping.
+        let policy_driven_mode: Option<AnnFilteringMode> = match (
+            query.ann_filtering_policy.as_ref(),
+            query.estimated_selectivity,
+        ) {
+            (Some(policy), Some(selectivity)) => {
+                Some(ann_mode_from_catalog(policy.routing_mode(selectivity)))
+            }
+            _ => None,
+        };
+        let effective_mode: AnnFilteringMode =
+            policy_driven_mode.unwrap_or(query.ann_filtering_mode);
+        let mut selected_filtering_mode: Option<AnnFilteringMode> = None;
+
         let results = if self.is_hmgi_enabled(collection_id).await && hmgi_query_safe {
             self.search_hmgi(collection_id, &query, query.top_k).await?
-        } else if has_filters && query.ann_filtering_mode == AnnFilteringMode::Inline {
+        } else if has_filters && effective_mode == AnnFilteringMode::Inline {
             // ADR-011 Inline: thread predicate into HNSW walk (ACORN semantics).
-            // build_id_predicate_from_filters converts AxisMetadataFilter list to a Fn(&str)->bool.
-            // Non-ID fields pass through (ACORN skip semantics); post-filter handles the rest.
-            self.query_hnsw_with_predicate(collection_id, &query)
-                .await?
+            // query_hnsw_with_predicate evaluates ID filters and record-backed
+            // metadata predicates during traversal, then reapplies a residual
+            // guard before returning top-k.
+            selected_filtering_mode = Some(AnnFilteringMode::Inline);
+            let (results, shortfall) = self
+                .query_hnsw_with_predicate(collection_id, &query, AnnFilteringMode::Inline)
+                .await?;
+            predicate_shortfall = shortfall;
+            results
+        } else if has_filters && policy_driven_mode == Some(AnnFilteringMode::PostFilter) {
+            // ADR-011 PostFilter (policy-driven only): ANN first then
+            // filter, with policy-driven oversample. We reuse the inline
+            // path's traversal but pass `PostFilter` so the oversample
+            // factor uses `AnnFilteringPolicy::effective_top_k_for_post_filter`
+            // and the shortfall is tagged with the correct mode label.
+            // Legacy callers that set `ann_filtering_mode = PostFilter`
+            // without a policy fall through to the exact path below — this
+            // preserves historical behavior.
+            selected_filtering_mode = Some(AnnFilteringMode::PostFilter);
+            let (results, shortfall) = self
+                .query_hnsw_with_predicate(collection_id, &query, AnnFilteringMode::PostFilter)
+                .await?;
+            predicate_shortfall = shortfall;
+            results
         } else if has_filters {
+            // ADR-011 PreFilter: evaluate scalar predicates first, then exact
+            // vector scoring over the candidate set.
+            selected_filtering_mode = Some(AnnFilteringMode::PreFilter);
             self.execute_exact_filtered_query(collection_id, &query)
                 .await?
         } else {
@@ -683,6 +738,8 @@ impl AxisManager {
             results: active_results,
             strategy_used: search_strategy,
             execution_time_ms: start.elapsed().as_millis() as u64,
+            predicate_shortfall,
+            selected_filtering_mode,
         })
     }
 
@@ -800,10 +857,23 @@ impl AxisManager {
             }
         }
 
-        // Insert into the index using the AxisVectorIndex trait
+        // Insert into the index using the AxisVectorIndex trait.
+        //
+        // TD-064: extract filterable metadata and use `add_with_metadata` so
+        // the index caches its own policy-bearing fields (tenant_id, RLS tags,
+        // created_at_ns, expires_at_ns). Typed-attr extraction is gated on
+        // a collection-level `FilterableFieldsConfig` once that lands; for
+        // now the default config still extracts the core fields.
         let indexes = self.hnsw_indexes.read().await;
         if let Some(index) = indexes.get(collection_id) {
-            index.add(vector.oid.clone(), vec_values).await?;
+            let filterable_metadata =
+                crate::index::axis::filterable_metadata::extract_filterable_metadata(
+                    vector,
+                    &crate::index::axis::filterable_metadata::FilterableFieldsConfig::default(),
+                );
+            index
+                .add_with_metadata(vector.oid.clone(), vec_values, &filterable_metadata)
+                .await?;
         }
 
         Ok(())
@@ -842,65 +912,123 @@ impl AxisManager {
 
     /// ADR-011 Inline mode: HNSW traversal with predicate closure (ACORN semantics).
     ///
-    /// Builds an `id`-based predicate from `metadata_filters` using
-    /// `make_id_predicate`. Non-id-field expressions pass through (ACORN
-    /// skip-through): they are not evaluated in the walk but are applied as a
-    /// post-filter on the raw walk results to avoid returning false positives.
+    /// Builds a record-aware predicate for inline HNSW traversal.
+    ///
+    /// ID filters are evaluated directly. Metadata filters are evaluated against
+    /// the current in-memory ProximaRecord projection while the record/PAX lookup
+    /// bridge is still being wired. Missing metadata fails closed, and the same
+    /// predicate is applied again as a residual guard before returning results.
+    ///
+    /// TD-064: Returns `(results, Option<PredicateShortfall>)` so the caller
+    /// can surface recall-shortfall disclosure on `SearchPlanTrace`. The
+    /// shortfall is populated only when post-filter trimming drops the
+    /// survivor count below `query.top_k`.
+    ///
+    /// `effective_mode` is the catalog-policy-derived mode the caller
+    /// selected (Inline or PostFilter). It controls oversample sizing
+    /// — PostFilter uses
+    /// `AnnFilteringPolicy::effective_top_k_for_post_filter(top_k)` when
+    /// a policy is present on the query; Inline uses a 2× default. The
+    /// mode is also tagged onto the shortfall record so EXPLAIN can
+    /// distinguish which path produced the shortfall.
     async fn query_hnsw_with_predicate(
         &self,
         collection_id: &str,
         query: &AxisHybridQuery,
-    ) -> Result<Vec<ScoredResult>> {
-        use crate::core::search::{ComparisonOperator, FilterExpression};
-        use crate::index::axis::management::filtered_search::make_id_predicate;
-
-        let indexes = self.hnsw_indexes.read().await;
-        let Some(index) = indexes.get(collection_id) else {
-            return Ok(Vec::new());
+        effective_mode: AnnFilteringMode,
+    ) -> Result<(
+        Vec<ScoredResult>,
+        Option<crate::observability::search_plan_trace::PredicateShortfall>,
+    )> {
+        let index = {
+            let indexes = self.hnsw_indexes.read().await;
+            let Some(index) = indexes.get(collection_id).cloned() else {
+                return Ok((Vec::new(), None));
+            };
+            index
         };
         let Some(VectorQuery::Dense { vector, .. }) = &query.vector_query else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), None));
         };
 
-        // Convert AxisMetadataFilter list → FilterExpression for make_id_predicate
-        let filter_expr = if query.metadata_filters.is_empty() && query.id_filters.len() == 1 {
-            FilterExpression::Comparison {
-                field: "id".to_string(),
-                operator: ComparisonOperator::Equals,
-                value: serde_json::Value::String(query.id_filters[0].clone()),
-            }
-        } else if !query.id_filters.is_empty() {
-            FilterExpression::Comparison {
-                field: "id".to_string(),
-                operator: ComparisonOperator::In,
-                value: serde_json::Value::Array(
-                    query
-                        .id_filters
-                        .iter()
-                        .map(|id| serde_json::Value::String(id.clone()))
-                        .collect(),
-                ),
-            }
+        let metadata_expression = if query.metadata_filters.is_empty() {
+            None
         } else {
-            // Metadata-only filter: pass-through predicate for HNSW walk.
-            // ACORN semantics: non-id clauses are not evaluated during traversal;
-            // results are post-filtered below before returning to the caller.
-            FilterExpression::And(vec![])
+            Some(self.metadata_filters_to_expression(&query.metadata_filters))
         };
 
-        let predicate = make_id_predicate(filter_expr);
-        // Oversample by 2× to absorb post-filter recall loss (ADR-011 §4.3).
-        let oversample_k = query.top_k.saturating_mul(2).max(query.top_k);
+        let metadata_by_id = if metadata_expression.is_some() {
+            let collection_vectors = self.collection_vectors.read().await;
+            Arc::new(
+                collection_vectors
+                    .get(collection_id)
+                    .map(|records| {
+                        records
+                            .iter()
+                            .map(|(id, record)| (id.clone(), self.record_filter_metadata(record)))
+                            .collect::<HashMap<_, _>>()
+                    })
+                    .unwrap_or_default(),
+            )
+        } else {
+            Arc::new(HashMap::new())
+        };
+
+        let predicate_id_filters = query.id_filters.clone();
+        let predicate_metadata = Arc::clone(&metadata_by_id);
+        let predicate_expression = metadata_expression.clone();
+        let predicate = move |id: &str| -> bool {
+            if !predicate_id_filters.is_empty()
+                && !predicate_id_filters
+                    .iter()
+                    .any(|filter_id| filter_id.as_str() == id)
+            {
+                return false;
+            }
+
+            let Some(expr) = &predicate_expression else {
+                return true;
+            };
+            let Some(metadata) = predicate_metadata.get(id) else {
+                return false;
+            };
+
+            crate::core::search::json_comparison::evaluate_filter(expr, metadata)
+        };
+
+        // TD-064 / ADR-011 §4.3: oversample to absorb post-filter recall loss.
+        // PostFilter uses the catalog policy's effective_top_k_for_post_filter
+        // (default 2×) when a policy is present; Inline keeps the 2× default
+        // regardless. Either way we apply max(top_k) so we never request
+        // FEWER candidates than the caller asked for.
+        let oversample_k = match (effective_mode, query.ann_filtering_policy.as_ref()) {
+            (AnnFilteringMode::PostFilter, Some(policy)) => {
+                policy.effective_top_k_for_post_filter(query.top_k)
+            }
+            _ => query.top_k.saturating_mul(2),
+        }
+        .max(query.top_k);
+
         let raw = index
-            .search_with_predicate(vector, oversample_k, predicate)
+            .search_with_predicate_fn(vector, oversample_k, predicate)
             .await?;
 
-        // Post-filter: apply metadata_filters to raw results.
-        // For the current implementation metadata field values are not available
-        // from the ID alone, so this is a pass-through. When field-level secondary
-        // index support lands this will be replaced by a real lookup.
-        let results = raw
+        let results: Vec<ScoredResult> = raw
             .into_iter()
+            .filter(|(id, _)| {
+                if !query.id_filters.is_empty() && !query.id_filters.contains(id) {
+                    return false;
+                }
+
+                let Some(expr) = &metadata_expression else {
+                    return true;
+                };
+                let Some(metadata) = metadata_by_id.get(id) else {
+                    return false;
+                };
+
+                crate::core::search::json_comparison::evaluate_filter(expr, metadata)
+            })
             .take(query.top_k)
             .map(|(id, score)| {
                 let expires_at = self.lookup_record_expiration(collection_id, &id);
@@ -912,7 +1040,51 @@ impl AxisManager {
             })
             .collect();
 
-        Ok(results)
+        // TD-064: record shortfall when post-filter trimmed below top_k.
+        // Four observability channels (the trace field is the canonical
+        // gateway-facing one; the rest are for operators / cross-layer
+        // wiring):
+        //   - Prometheus counter (operator dashboards)
+        //   - structured tracing event (SIEM/log pipelines)
+        //   - task-local diagnostics bus (REST/gRPC handler reads at
+        //     trace-build time without intermediate layers having to
+        //     declare a predicate_shortfall field)
+        //   - PredicateShortfall on the returned tuple (direct callers /
+        //     unit tests / future end-to-end plumbs)
+        let mode_label: &'static str = match effective_mode {
+            AnnFilteringMode::Inline => "inline",
+            AnnFilteringMode::PostFilter => "post_filter",
+            AnnFilteringMode::PreFilter => "pre_filter",
+        };
+        let shortfall = if results.len() < query.top_k {
+            crate::metrics::td064_metrics::record_shortfall(
+                collection_id,
+                mode_label,
+                query.top_k as u32,
+                results.len() as u32,
+            );
+            tracing::warn!(
+                target: "axis.predicate_shortfall",
+                collection_id = %collection_id,
+                ann_filtering_mode = mode_label,
+                requested_k = query.top_k,
+                returned_k = results.len(),
+                oversample_pool = oversample_k,
+                "TD-064: predicate-aware ANN returned fewer matches than requested top_k"
+            );
+            let sf = crate::observability::search_plan_trace::PredicateShortfall {
+                requested_k: query.top_k as u32,
+                returned_k: results.len() as u32,
+                oversample_pool: oversample_k as u32,
+                ann_filtering_mode: mode_label.to_string(),
+            };
+            crate::observability::predicate_diagnostics::record_shortfall(sf.clone());
+            Some(sf)
+        } else {
+            None
+        };
+
+        Ok((results, shortfall))
     }
 
     /// Insert a vector into the IVF index for a collection (DEFAULT for incremental workloads)
@@ -951,11 +1123,20 @@ impl AxisManager {
         };
 
         if index_exists_and_trained {
-            // Index is trained, add vector directly
+            // Index is trained, add vector directly.
+            //
+            // TD-064: insert via the AxisVectorIndex trait so the index
+            // also caches filterable metadata for predicate-aware search.
+            use crate::index::axis::index_factory::AxisVectorIndex;
             let indexes = self.ivf_indexes.read().await;
             if let Some(index) = indexes.get(collection_id) {
                 let idx = index.read().await;
-                idx.add_vector(vector.oid.clone(), vec_values.clone(), None)
+                let filterable_metadata =
+                    crate::index::axis::filterable_metadata::extract_filterable_metadata(
+                        vector,
+                        &crate::index::axis::filterable_metadata::FilterableFieldsConfig::default(),
+                    );
+                idx.add_with_metadata(vector.oid.clone(), vec_values.clone(), &filterable_metadata)
                     .await?;
             }
             return Ok(());
@@ -1028,10 +1209,40 @@ impl AxisManager {
                     n_clusters
                 );
 
-                // Add all buffered vectors to the trained index
+                // Add all buffered vectors to the trained index.
+                //
+                // TD-064: cold-start cache hydration. collection_vectors holds
+                // the canonical ProximaRecord; extract filterable metadata per
+                // id so the first batch of vectors isn't excluded by
+                // fail-closed predicate evaluation. Records that aren't found
+                // in collection_vectors fall back to add() (metadata gap is
+                // contained to those rows).
+                use crate::index::axis::index_factory::AxisVectorIndex;
+                let collection_vectors_snapshot = self.collection_vectors.read().await;
+                let fields_config =
+                    crate::index::axis::filterable_metadata::FilterableFieldsConfig::default();
                 for (id, vec) in &training_vectors {
-                    index.add_vector(id.clone(), vec.clone(), None).await?;
+                    let metadata = collection_vectors_snapshot
+                        .get(collection_id)
+                        .and_then(|records| records.get(id))
+                        .map(|record| {
+                            crate::index::axis::filterable_metadata::extract_filterable_metadata(
+                                record,
+                                &fields_config,
+                            )
+                        });
+                    match metadata {
+                        Some(meta) => {
+                            index
+                                .add_with_metadata(id.clone(), vec.clone(), &meta)
+                                .await?;
+                        }
+                        None => {
+                            index.add_vector(id.clone(), vec.clone(), None).await?;
+                        }
+                    }
                 }
+                drop(collection_vectors_snapshot);
 
                 tracing::info!(
                     "✅ AXIS: Added {} vectors to IVF index for collection {}",
@@ -2039,6 +2250,11 @@ pub struct IndexCollectionStats {
 }
 
 /// ADR-011 ANN filtering mode for HNSW traversal routing.
+///
+/// Mirror of `proximadb_catalog::AnnFilteringMode`. Kept locally to avoid
+/// taking the catalog crate into low-level AXIS types; the conversion goes
+/// through [`ann_mode_from_catalog`] when the caller supplies a catalog
+/// `AnnFilteringPolicy`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AnnFilteringMode {
     /// Filter candidates before HNSW traversal (< 5% selectivity).
@@ -2048,6 +2264,16 @@ pub enum AnnFilteringMode {
     /// Run full HNSW search then post-filter results (> 50% selectivity).
     #[default]
     PostFilter,
+}
+
+/// Convert a catalog `AnnFilteringMode` (driven by
+/// `AnnFilteringPolicy::routing_mode`) into the local manager-facing mode.
+fn ann_mode_from_catalog(mode: proximadb_catalog::AnnFilteringMode) -> AnnFilteringMode {
+    match mode {
+        proximadb_catalog::AnnFilteringMode::PreFilter => AnnFilteringMode::PreFilter,
+        proximadb_catalog::AnnFilteringMode::Inline => AnnFilteringMode::Inline,
+        proximadb_catalog::AnnFilteringMode::PostFilter => AnnFilteringMode::PostFilter,
+    }
 }
 
 /// Backwards-compat alias for [`AxisHybridQuery`].
@@ -2068,8 +2294,20 @@ pub struct AxisHybridQuery {
     pub top_k: usize,
     /// Whether to include MVCC-expired records in results.
     pub include_expired: bool,
-    /// ADR-011 ANN filtering mode; drives routing in the AXIS manager query path.
+    /// ADR-011 ANN filtering mode; drives routing in the AXIS manager query
+    /// path when `ann_filtering_policy` is `None`. When the policy is set
+    /// alongside `estimated_selectivity`, the policy-driven mode takes
+    /// precedence — `routing_mode(selectivity)` decides PreFilter / Inline /
+    /// PostFilter and `ann_filtering_mode` is treated as a legacy hint only.
     pub ann_filtering_mode: AnnFilteringMode,
+    /// TD-064 / ADR-011: Optional catalog filtering policy. When present
+    /// together with `estimated_selectivity`, drives selection of the
+    /// effective `AnnFilteringMode` instead of the hard-coded
+    /// `ann_filtering_mode` switch.
+    pub ann_filtering_policy: Option<proximadb_catalog::AnnFilteringPolicy>,
+    /// TD-064 / ADR-011: Pre-computed selectivity estimate from
+    /// `FilterDiagnostics` or a sampler. Feeds `AnnFilteringPolicy::routing_mode`.
+    pub estimated_selectivity: Option<f64>,
 }
 
 /// Vector query types
@@ -2152,6 +2390,16 @@ pub struct AxisManagerQueryResult {
     pub strategy_used: IndexSelectionStrategy,
     /// Total execution time in milliseconds.
     pub execution_time_ms: u64,
+    /// TD-064: Predicate-aware shortfall — `Some(...)` when post-filter
+    /// trimming dropped the survivor count below the requested `top_k`.
+    /// Gateways/REST handlers should surface this on
+    /// `SearchPlanTrace.predicate_shortfall` for EXPLAIN disclosure.
+    pub predicate_shortfall: Option<crate::observability::search_plan_trace::PredicateShortfall>,
+    /// TD-064 / ADR-011: The filtering mode that actually executed.
+    /// May differ from `AxisHybridQuery.ann_filtering_mode` when policy-based
+    /// routing was active (`ann_filtering_policy` + `estimated_selectivity`).
+    /// `None` when the query had no filters and the unfiltered ANN path ran.
+    pub selected_filtering_mode: Option<AnnFilteringMode>,
 }
 
 /// Scored result with MVCC support
@@ -2651,7 +2899,15 @@ impl AxisManager {
 
         use crate::index::axis::index_factory::AxisVectorIndex;
         if !record.oid.is_empty() && !vec_values.is_empty() {
-            index.add(record.oid.clone(), vec_values).await?;
+            // TD-064: cache filterable metadata on the HMGI partition's index.
+            let filterable_metadata =
+                crate::index::axis::filterable_metadata::extract_filterable_metadata(
+                    &record,
+                    &crate::index::axis::filterable_metadata::FilterableFieldsConfig::default(),
+                );
+            index
+                .add_with_metadata(record.oid.clone(), vec_values, &filterable_metadata)
+                .await?;
         }
 
         tracing::debug!(
@@ -2829,8 +3085,18 @@ impl AxisManager {
             if let Some(record_vector) = record_vector
                 && !record.oid.is_empty()
             {
+                // TD-064: cache filterable metadata on the HMGI partition's index.
+                let filterable_metadata =
+                    crate::index::axis::filterable_metadata::extract_filterable_metadata(
+                        &record,
+                        &crate::index::axis::filterable_metadata::FilterableFieldsConfig::default(),
+                    );
                 _index
-                    .add(record.oid.clone(), record_vector.to_vec())
+                    .add_with_metadata(
+                        record.oid.clone(),
+                        record_vector.to_vec(),
+                        &filterable_metadata,
+                    )
                     .await?;
             }
             migrated += 1;
@@ -2917,5 +3183,95 @@ impl AxisManager {
     /// Get modality detector (for testing/diagnostics)
     pub fn hmgi_detector(&self) -> Option<&Arc<ModalityDetector>> {
         self.hmgi_detector.as_ref()
+    }
+}
+
+#[cfg(test)]
+mod adr011_routing_tests {
+    //! TD-064 / ADR-011: policy-driven routing-mode selection. These tests
+    //! exercise the small pure-fn surface (catalog policy → local mode)
+    //! without spinning up a full AxisManager — that's the right
+    //! granularity for the routing contract.
+    use super::*;
+    use proximadb_catalog::AnnFilteringPolicy;
+
+    #[test]
+    fn catalog_pre_filter_maps_to_local_pre_filter() {
+        let catalog = proximadb_catalog::AnnFilteringMode::PreFilter;
+        assert_eq!(ann_mode_from_catalog(catalog), AnnFilteringMode::PreFilter);
+    }
+
+    #[test]
+    fn catalog_inline_maps_to_local_inline() {
+        let catalog = proximadb_catalog::AnnFilteringMode::Inline;
+        assert_eq!(ann_mode_from_catalog(catalog), AnnFilteringMode::Inline);
+    }
+
+    #[test]
+    fn catalog_post_filter_maps_to_local_post_filter() {
+        let catalog = proximadb_catalog::AnnFilteringMode::PostFilter;
+        assert_eq!(ann_mode_from_catalog(catalog), AnnFilteringMode::PostFilter);
+    }
+
+    /// Defaults: <5% selectivity → PreFilter, 5–50% → Inline, >50% → PostFilter.
+    #[test]
+    fn default_policy_routes_by_selectivity_bands() {
+        let policy = AnnFilteringPolicy::default();
+        assert_eq!(
+            ann_mode_from_catalog(policy.routing_mode(0.01)),
+            AnnFilteringMode::PreFilter,
+            "1% selectivity must hit PreFilter band"
+        );
+        assert_eq!(
+            ann_mode_from_catalog(policy.routing_mode(0.20)),
+            AnnFilteringMode::Inline,
+            "20% selectivity must hit Inline band"
+        );
+        assert_eq!(
+            ann_mode_from_catalog(policy.routing_mode(0.80)),
+            AnnFilteringMode::PostFilter,
+            "80% selectivity must hit PostFilter band"
+        );
+    }
+
+    /// `force_mode` overrides selectivity — used by integration tests
+    /// and emergency operator overrides.
+    #[test]
+    fn force_mode_overrides_selectivity() {
+        let mut policy = AnnFilteringPolicy::default();
+        policy.force_mode = Some(proximadb_catalog::AnnFilteringMode::Inline);
+        // Selectivity that would normally route to PreFilter.
+        assert_eq!(
+            ann_mode_from_catalog(policy.routing_mode(0.001)),
+            AnnFilteringMode::Inline,
+            "force_mode must win over the selectivity band"
+        );
+    }
+
+    /// PostFilter oversample uses `effective_top_k_for_post_filter` from
+    /// the policy — default 2× of top_k. This is what
+    /// `query_hnsw_with_predicate` consults when the caller routes
+    /// PostFilter through the inline traversal.
+    #[test]
+    fn post_filter_oversample_uses_policy_factor() {
+        let mut policy = AnnFilteringPolicy::default();
+        policy.post_filter_oversample_factor = 3.0;
+        let top_k = 10;
+        assert_eq!(
+            policy.effective_top_k_for_post_filter(top_k),
+            30,
+            "policy oversample factor must drive PostFilter request size"
+        );
+    }
+
+    /// The `AxisHybridQuery` shape carries policy + selectivity so the
+    /// caller can request policy-driven routing without inventing a side
+    /// channel. Defaults preserve legacy behavior (no policy + no
+    /// selectivity → caller's `ann_filtering_mode` is honored).
+    #[test]
+    fn default_query_has_no_policy_and_no_selectivity() {
+        let q = AxisHybridQuery::default();
+        assert!(q.ann_filtering_policy.is_none());
+        assert!(q.estimated_selectivity.is_none());
     }
 }
