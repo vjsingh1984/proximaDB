@@ -402,16 +402,16 @@ impl CollectionService {
         // lookup. Deleting a collection definitionally invalidates
         // any cached plans for it. Only fires when we have a tenant
         // context — anonymous deletions can't be keyed.
-        if let Some(tenant_ctx) = tenant_context {
-            if response.success {
-                let version = crate::catalog::CorpusVersionRegistry::global()
-                    .bump(&tenant_ctx.tenant_id, collection_name)
-                    .await;
-                debug!(
-                    "🔄 corpus_version bumped after delete: tenant={} collection={} version={}",
-                    tenant_ctx.tenant_id, collection_name, version
-                );
-            }
+        if let Some(tenant_ctx) = tenant_context
+            && response.success
+        {
+            let version = crate::catalog::CorpusVersionRegistry::global()
+                .bump(&tenant_ctx.tenant_id, collection_name)
+                .await;
+            debug!(
+                "🔄 corpus_version bumped after delete: tenant={} collection={} version={}",
+                tenant_ctx.tenant_id, collection_name, version
+            );
         }
 
         Ok(response)

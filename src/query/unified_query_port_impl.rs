@@ -666,14 +666,14 @@ impl UnifiedQueryPort for UnifiedQueryPortImpl {
         let storage_authority = self
             .explain_storage_authority_from_catalog(collection.as_deref(), &query)
             .await?;
-        if let Some(storage_authority) = storage_authority {
-            if let serde_json::Value::Object(ref mut object) = value {
-                object.insert(
-                    "storage_authority".to_string(),
-                    serde_json::to_value(storage_authority)
-                        .context("failed to serialize storage authority")?,
-                );
-            }
+        if let Some(storage_authority) = storage_authority
+            && let serde_json::Value::Object(ref mut object) = value
+        {
+            object.insert(
+                "storage_authority".to_string(),
+                serde_json::to_value(storage_authority)
+                    .context("failed to serialize storage authority")?,
+            );
         }
         Ok(value)
     }

@@ -234,16 +234,15 @@ impl HmgiMigrationEngine {
         // Check if migration is already in progress
         {
             let active = self.active_migrations.read().await;
-            if let Some(state) = active.get(&partition_key.to_string()) {
-                if state.phase != HmgiMigrationPhase::Completed
-                    && state.phase != HmgiMigrationPhase::Failed
-                {
-                    return Err(anyhow::anyhow!(
-                        "Migration already in progress: {} (phase: {:?})",
-                        partition_key,
-                        state.phase
-                    ));
-                }
+            if let Some(state) = active.get(&partition_key.to_string())
+                && state.phase != HmgiMigrationPhase::Completed
+                && state.phase != HmgiMigrationPhase::Failed
+            {
+                return Err(anyhow::anyhow!(
+                    "Migration already in progress: {} (phase: {:?})",
+                    partition_key,
+                    state.phase
+                ));
             }
 
             let active_count = active

@@ -220,12 +220,13 @@ impl PlanCache {
     /// entry.
     pub async fn put(&self, key: PlanCacheKey, plan: PlanOutput, corpus_version: u64) {
         let mut g = self.inner.write().await;
-        if g.map.len() >= self.config.max_entries && !g.map.contains_key(&key) {
-            if let Some(victim) = g.lru.first().cloned() {
-                g.lru.remove(0);
-                g.map.remove(&victim);
-                g.stats.total_evictions += 1;
-            }
+        if g.map.len() >= self.config.max_entries
+            && !g.map.contains_key(&key)
+            && let Some(victim) = g.lru.first().cloned()
+        {
+            g.lru.remove(0);
+            g.map.remove(&victim);
+            g.stats.total_evictions += 1;
         }
         // Drop any existing LRU entry for this key (it's about to move).
         g.lru.retain(|k| k != &key);

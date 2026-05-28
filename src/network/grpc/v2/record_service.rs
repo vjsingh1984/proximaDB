@@ -721,10 +721,10 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             .await
         {
             Ok(result) => {
-                if let Some(registry) = &self.segment_registry {
-                    if !pax_records.is_empty() {
-                        Self::spawn_pax_write(registry.clone(), collection_id, pax_records);
-                    }
+                if let Some(registry) = &self.segment_registry
+                    && !pax_records.is_empty()
+                {
+                    Self::spawn_pax_write(registry.clone(), collection_id, pax_records);
                 }
                 Ok(Response::new(Self::batch_result_to_response(
                     result,
@@ -792,10 +792,10 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             .await
         {
             Ok(result) => {
-                if let Some(registry) = &self.segment_registry {
-                    if !pax_records.is_empty() {
-                        Self::spawn_pax_write(registry.clone(), collection_id, pax_records);
-                    }
+                if let Some(registry) = &self.segment_registry
+                    && !pax_records.is_empty()
+                {
+                    Self::spawn_pax_write(registry.clone(), collection_id, pax_records);
                 }
                 Ok(Response::new(Self::batch_result_to_response(
                     result,

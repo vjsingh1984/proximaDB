@@ -959,32 +959,30 @@ impl VectorOperationsService {
             .collection_port
             .get_collection(&collection_id, None)
             .await
+            && let Some(cfg) = collection.config.as_ref()
+            && let Some(precision_value) = cfg.canonical_embedding_precision
         {
-            if let Some(cfg) = collection.config.as_ref() {
-                if let Some(precision_value) = cfg.canonical_embedding_precision {
-                    use crate::proto::proximadb_v1::EmbeddingPrecision;
-                    let target = match EmbeddingPrecision::try_from(precision_value) {
-                        Ok(EmbeddingPrecision::Fp16) => {
-                            Some(proximadb_records::EmbeddingScalarType::Fp16)
-                        }
-                        Ok(EmbeddingPrecision::Bf16) => {
-                            Some(proximadb_records::EmbeddingScalarType::Bf16)
-                        }
-                        Ok(EmbeddingPrecision::Int8) => {
-                            Some(proximadb_records::EmbeddingScalarType::Int8Scalar)
-                        }
-                        Ok(EmbeddingPrecision::Uint8) => {
-                            Some(proximadb_records::EmbeddingScalarType::UInt8Scalar)
-                        }
-                        // Unspecified / Fp32 — leave records as fp32.
-                        _ => None,
-                    };
-                    if let Some(target) = target {
-                        for record in &mut native_vectors {
-                            for cell in &mut record.embeddings {
-                                cell.coerce_to_precision(target);
-                            }
-                        }
+            use crate::proto::proximadb_v1::EmbeddingPrecision;
+            let target = match EmbeddingPrecision::try_from(precision_value) {
+                Ok(EmbeddingPrecision::Fp16) => {
+                    Some(proximadb_records::EmbeddingScalarType::Fp16)
+                }
+                Ok(EmbeddingPrecision::Bf16) => {
+                    Some(proximadb_records::EmbeddingScalarType::Bf16)
+                }
+                Ok(EmbeddingPrecision::Int8) => {
+                    Some(proximadb_records::EmbeddingScalarType::Int8Scalar)
+                }
+                Ok(EmbeddingPrecision::Uint8) => {
+                    Some(proximadb_records::EmbeddingScalarType::UInt8Scalar)
+                }
+                // Unspecified / Fp32 — leave records as fp32.
+                _ => None,
+            };
+            if let Some(target) = target {
+                for record in &mut native_vectors {
+                    for cell in &mut record.embeddings {
+                        cell.coerce_to_precision(target);
                     }
                 }
             }

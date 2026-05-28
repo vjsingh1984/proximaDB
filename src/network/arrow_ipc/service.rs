@@ -2430,12 +2430,11 @@ impl ProximaFlightService {
             .await
             .map_err(|e| TonicStatus::internal(format!("Stream error: {}", e)))?
         {
-            if !data.app_metadata.is_empty() {
-                if let Ok(config) = serde_json::from_slice::<serde_json::Value>(&data.app_metadata)
-                {
-                    debug!("Received search config: {:?}", config);
-                    continue;
-                }
+            if !data.app_metadata.is_empty()
+                && let Ok(config) = serde_json::from_slice::<serde_json::Value>(&data.app_metadata)
+            {
+                debug!("Received search config: {:?}", config);
+                continue;
             }
             flight_messages.push(data);
         }

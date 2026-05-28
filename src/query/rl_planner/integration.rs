@@ -277,10 +277,10 @@ impl RLPlannerIntegration {
                 // effective precision to at least the requested floor. The
                 // mapping rules are documented on
                 // `apply_quantization_floor_to_method`.
-                if action.object_economy.enabled {
-                    if let Some(floor) = action.object_economy.quantization_floor {
-                        apply_quantization_floor_to_method(execution_method, floor);
-                    }
+                if action.object_economy.enabled
+                    && let Some(floor) = action.object_economy.quantization_floor
+                {
+                    apply_quantization_floor_to_method(execution_method, floor);
                 }
             }
         }

@@ -212,9 +212,11 @@ async fn ingest_documents_inner(
     // Phase 2H: async mode + queue available → enqueue to embed-ingest
     // topic and return 202 fast. Inline embedding only runs on the sync
     // path or as a degradation when no queue is configured.
-    if mode == "async" && embed_source == "native" {
-        if let Some(queue) = state.queue_client.clone() {
-            let producer = queue.producer();
+    if mode == "async"
+        && embed_source == "native"
+        && let Some(queue) = state.queue_client.clone()
+    {
+        let producer = queue.producer();
             // Build the EmbedIngestPayload directly from `records`'
             // props (where the text was hoisted during the build-loop
             // above). The drainer (Phase 2G) deserializes this exact
@@ -278,7 +280,6 @@ async fn ingest_documents_inner(
                     return Err(ApiError::Internal(format!("queue.send: {e}")));
                 }
             }
-        }
         // No queue configured — fall through to inline embed below.
     }
 

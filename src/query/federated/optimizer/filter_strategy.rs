@@ -98,10 +98,10 @@ pub fn choose_plan(inputs: &PlanInputs, _tier: &TenantTierRecord) -> PlanChoice 
     // Step 2: GLS-driven adjustment. Strong correlation can shift by one
     // step but never crosses two boundaries (we don't want a single signal
     // overriding both filter-strategy decisions).
-    if let Some(gls) = inputs.gls_score {
-        if gls.abs() >= GLS_CONFIDENT_ABS_THRESHOLD {
-            strategy = adjust_for_gls(strategy, gls);
-        }
+    if let Some(gls) = inputs.gls_score
+        && gls.abs() >= GLS_CONFIDENT_ABS_THRESHOLD
+    {
+        strategy = adjust_for_gls(strategy, gls);
     }
 
     // Step 3: route choice. Dim + recall_target drive the cost; collection

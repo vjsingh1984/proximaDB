@@ -84,10 +84,10 @@ impl ModalityExtractor {
     /// Returns the modality tag from the metadata, using fallback if necessary.
     pub fn extract_modality(&self, metadata: &HashMap<String, serde_json::Value>) -> String {
         // Try explicit field first
-        if let Some(value) = metadata.get(&self.modality_field) {
-            if let Some(tag) = value.as_str() {
-                return tag.to_string();
-            }
+        if let Some(value) = metadata.get(&self.modality_field)
+            && let Some(tag) = value.as_str()
+        {
+            return tag.to_string();
         }
 
         // Fall back to default
@@ -101,10 +101,10 @@ impl ModalityExtractor {
         metadata: &HashMap<String, serde_json::Value>,
     ) -> String {
         // Try explicit field first
-        if let Some(value) = metadata.get(&self.modality_field) {
-            if let Some(tag) = value.as_str() {
-                return tag.to_string();
-            }
+        if let Some(value) = metadata.get(&self.modality_field)
+            && let Some(tag) = value.as_str()
+        {
+            return tag.to_string();
         }
 
         // Try collection-specific fallback

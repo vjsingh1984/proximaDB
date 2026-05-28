@@ -949,10 +949,12 @@ impl PostgresProtocol {
             return self.send_empty_result().await;
         }
 
-        if upper.starts_with("CREATE ") || upper.starts_with("ALTER ") || upper.starts_with("DROP ")
+        if (upper.starts_with("CREATE ")
+            || upper.starts_with("ALTER ")
+            || upper.starts_with("DROP "))
+            && let Some(ddl_service) = self.ddl_service.clone()
         {
-            if let Some(ddl_service) = self.ddl_service.clone() {
-                let parser = SqlFrontendParser::new();
+            let parser = SqlFrontendParser::new();
                 match parser.parse_ddl(query) {
                     Ok(Some(statement)) => {
                         // Capture the canonical_embedding_precision
@@ -1023,7 +1025,6 @@ impl PostgresProtocol {
                                 .await;
                         }
                     }
-                }
             }
         }
 
@@ -1770,10 +1771,10 @@ impl PostgresProtocol {
         let upper_after = after.to_ascii_uppercase();
         let mut end = after.len();
         for terminator in [" LIMIT ", " OFFSET "] {
-            if let Some(idx) = Self::find_keyword_outside_literals(&upper_after, terminator) {
-                if idx < end {
-                    end = idx;
-                }
+            if let Some(idx) = Self::find_keyword_outside_literals(&upper_after, terminator)
+                && idx < end
+            {
+                end = idx;
             }
         }
         let clause = after[..end].trim().trim_end_matches(';').trim();

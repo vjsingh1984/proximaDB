@@ -250,18 +250,18 @@ impl SecureVectorOperations {
         let mut encrypted_fields: HashMap<String, EncryptedField> = HashMap::new();
 
         for field_name in &fields_to_encrypt {
-            if let Some(node) = record.props.get(field_name) {
-                if let Some(value_str) = proxima_node_to_string(node) {
-                    let value: serde_json::Value = serde_json::from_str(&value_str)
-                        .unwrap_or_else(|_| serde_json::json!(value_str));
+            if let Some(node) = record.props.get(field_name)
+                && let Some(value_str) = proxima_node_to_string(node)
+            {
+                let value: serde_json::Value = serde_json::from_str(&value_str)
+                    .unwrap_or_else(|_| serde_json::json!(value_str));
 
-                    match encryption.encrypt_field(field_name, &value) {
-                        Ok(encrypted) => {
-                            encrypted_fields.insert(field_name.clone(), encrypted);
-                        }
-                        Err(e) => {
-                            warn!("Failed to encrypt field {}: {}", field_name, e);
-                        }
+                match encryption.encrypt_field(field_name, &value) {
+                    Ok(encrypted) => {
+                        encrypted_fields.insert(field_name.clone(), encrypted);
+                    }
+                    Err(e) => {
+                        warn!("Failed to encrypt field {}: {}", field_name, e);
                     }
                 }
             }
@@ -307,24 +307,24 @@ impl SecureVectorOperations {
             .collect();
 
         for field_name in &fields_to_decrypt {
-            if let Some(node) = record.props.get(field_name) {
-                if let Some(encrypted_json) = proxima_node_to_string(node) {
-                    let encrypted: EncryptedField = match serde_json::from_str(&encrypted_json) {
-                        Ok(e) => e,
-                        Err(_) => continue,
-                    };
+            if let Some(node) = record.props.get(field_name)
+                && let Some(encrypted_json) = proxima_node_to_string(node)
+            {
+                let encrypted: EncryptedField = match serde_json::from_str(&encrypted_json) {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
 
-                    match encryption.decrypt_field(&encrypted) {
-                        Ok(decrypted) => {
-                            let decrypted_str = serde_json::to_string(&decrypted)?;
-                            record.props.insert(
-                                field_name.clone(),
-                                ProximaTreeNode::Value(ProximaValue::String(decrypted_str)),
-                            );
-                        }
-                        Err(e) => {
-                            warn!("Failed to decrypt field {}: {}", field_name, e);
-                        }
+                match encryption.decrypt_field(&encrypted) {
+                    Ok(decrypted) => {
+                        let decrypted_str = serde_json::to_string(&decrypted)?;
+                        record.props.insert(
+                            field_name.clone(),
+                            ProximaTreeNode::Value(ProximaValue::String(decrypted_str)),
+                        );
+                    }
+                    Err(e) => {
+                        warn!("Failed to decrypt field {}: {}", field_name, e);
                     }
                 }
             }
