@@ -137,6 +137,14 @@ struct BenchConfig {
     /// routing the SST reader through its SIMD vectorized path
     /// (TD-041). Default false uses the scalar path.
     vectorized: bool,
+    /// When true, construct an `AxisManager` with default HNSW
+    /// config, register it globally so the SstEngine picks it up,
+    /// and insert all records into AXIS after flush. This routes
+    /// queries through `execute_orchestrated_search` →
+    /// `axis_manager.query(...)` (HNSW) instead of the linear
+    /// fallback. Setup time grows by the HNSW build cost
+    /// (~O(n log n) NEON distance computes for build).
+    axis: bool,
 }
 
 impl BenchConfig {
@@ -152,6 +160,7 @@ impl BenchConfig {
             pre_warm_runs: 1,
             approx_mode: env_bool("BENCH_APPROX", false),
             vectorized: env_bool("BENCH_VECTORIZED", false),
+            axis: env_bool("BENCH_AXIS", false),
         }
     }
 }
@@ -179,6 +188,9 @@ struct SetupResult {
     warm_collection: Arc<Collection>,
     insert_ms: u128,
     flush_ms: u128,
+    /// Time spent building the AXIS HNSW index post-flush, or 0
+    /// when `BENCH_AXIS` is not set.
+    axis_build_ms: u128,
     _temp_dir: TempDir,
 }
 
@@ -187,6 +199,26 @@ impl SetupResult {
         let temp_dir = TempDir::new().expect("tempdir");
         let collection = make_collection(&temp_dir, cfg.dimension);
         let vectors = synthetic_records(&collection.id, cfg.vector_count, cfg.dimension);
+
+        // Slice B: when BENCH_AXIS is on, build the AxisManager and
+        // register it as the SstEngine's global *before* engine
+        // construction so `get_sst_axis_manager()` picks it up
+        // during `SstEngine::new_with_config`. AXIS construction is
+        // expensive enough (background tasks) that we want it once
+        // per bench run, not per-iteration.
+        if cfg.axis {
+            // OnceLock — safe to call once per process. If a prior
+            // bench iteration set this already, the second set is a
+            // no-op and we live with whichever instance won.
+            let axis_manager = std::sync::Arc::new(
+                proximadb::index::AxisManager::new(
+                    proximadb::index::AxisConfig::default(),
+                )
+                .await
+                .expect("axis manager"),
+            );
+            proximadb::storage::engines::sst::core::set_sst_axis_manager(axis_manager);
+        }
 
         let insert_start = Instant::now();
         let fs = Arc::new(
@@ -204,7 +236,7 @@ impl SetupResult {
         let params = FlushParameters {
             collection_id: Some(collection.id.clone()),
             collection_config: Some(collection.clone()),
-            vector_records: vectors,
+            vector_records: vectors.clone(),
             force: true,
             synchronous: true,
             ..Default::default()
@@ -212,11 +244,34 @@ impl SetupResult {
         engine.flush(params).await.expect("flush");
         let flush_ms = flush_start.elapsed().as_millis();
 
+        // Slice B: build the HNSW after flush so the AXIS index
+        // mirrors the on-disk data. The engine's
+        // `execute_orchestrated_search` will route warm queries
+        // through `axis_manager.query(...)` once records are
+        // indexed.
+        let axis_build_ms = if cfg.axis {
+            let build_start = Instant::now();
+            if let Some(axis_manager) =
+                proximadb::storage::engines::sst::core::get_sst_axis_manager()
+            {
+                for record in &vectors {
+                    axis_manager
+                        .insert_record(&collection.id, record)
+                        .await
+                        .expect("axis insert");
+                }
+            }
+            build_start.elapsed().as_millis()
+        } else {
+            0
+        };
+
         Self {
             warm_engine: Arc::new(engine),
             warm_collection: Arc::new(collection),
             insert_ms,
             flush_ms,
+            axis_build_ms,
             _temp_dir: temp_dir,
         }
     }
@@ -260,6 +315,7 @@ fn main() {
         "  vectorized: {} (enable_vectorized_execution)",
         cfg.vectorized
     );
+    println!("  axis_hnsw:  {} (BENCH_AXIS — orchestrated path)", cfg.axis);
     println!();
 
     let rt = tokio::runtime::Builder::new_multi_thread()
@@ -269,10 +325,17 @@ fn main() {
 
     rt.block_on(async move {
         let setup = SetupResult::run(&cfg).await;
-        println!(
-            "Setup: insert {} ms, flush {} ms",
-            setup.insert_ms, setup.flush_ms
-        );
+        if cfg.axis {
+            println!(
+                "Setup: insert {} ms, flush {} ms, axis_build {} ms",
+                setup.insert_ms, setup.flush_ms, setup.axis_build_ms
+            );
+        } else {
+            println!(
+                "Setup: insert {} ms, flush {} ms",
+                setup.insert_ms, setup.flush_ms
+            );
+        }
 
         // Pre-warm + reset
         for _ in 0..cfg.pre_warm_runs {
