@@ -2167,11 +2167,7 @@ impl UnifiedStorageEngine for HelixEngine {
         let metrics = self.metrics.read().await;
         let total_vectors = metrics.total_vectors;
         let total_bytes = metrics.total_size_bytes;
-        let avg_vector_bytes = if total_vectors > 0 {
-            total_bytes / total_vectors
-        } else {
-            640
-        };
+        let avg_vector_bytes = total_bytes.checked_div(total_vectors).unwrap_or(640);
 
         Ok(crate::storage::traits::CollectionStats {
             row_count: total_vectors,

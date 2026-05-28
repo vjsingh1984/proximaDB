@@ -597,8 +597,7 @@ impl ParquetReconstructor {
         {
             // Fallback for flat arrays
             let num_rows = column.len();
-            if num_rows > 0 {
-                let vector_dim = float_array.len() / num_rows;
+            if let Some(vector_dim) = float_array.len().checked_div(num_rows) {
                 let start = row_idx * vector_dim;
                 let end = start + vector_dim;
                 if end <= float_array.len() {

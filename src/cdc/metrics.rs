@@ -342,7 +342,7 @@ impl TransformMetrics {
         TransformCdcMetricsSnapshot {
             events_processed: events,
             processing_time_us: time_us,
-            avg_latency_us: if events > 0 { time_us / events } else { 0 },
+            avg_latency_us: time_us.checked_div(events).unwrap_or(0),
             errors: self.errors.load(Ordering::Relaxed),
         }
     }

@@ -1448,11 +1448,9 @@ impl UnifiedStorageEngine for NovaEngine {
         let collection_count = stats.collection_count as u64;
 
         // Estimate per-collection row count from total storage and collection count
-        let per_collection_bytes = if collection_count > 0 {
-            total_bytes / collection_count
-        } else {
-            total_bytes
-        };
+        let per_collection_bytes = total_bytes
+            .checked_div(collection_count)
+            .unwrap_or(total_bytes);
 
         // NOVA uses columnar Parquet: avg ~256 bytes per vector after compression
         let avg_record_bytes: u64 = 256;

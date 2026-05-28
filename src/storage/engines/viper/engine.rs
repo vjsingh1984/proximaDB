@@ -2892,11 +2892,7 @@ impl UnifiedStorageEngine for ViperEngine {
         let total_bytes = self.stats.total_size_bytes.load(Ordering::Relaxed);
         let total_storage = self.stats.total_storage_size_bytes.load(Ordering::Relaxed);
 
-        let avg_vector_bytes = if total_vectors > 0 {
-            total_bytes / total_vectors
-        } else {
-            0
-        };
+        let avg_vector_bytes = total_bytes.checked_div(total_vectors).unwrap_or(0);
 
         Ok(crate::storage::traits::CollectionStats {
             row_count: total_vectors,

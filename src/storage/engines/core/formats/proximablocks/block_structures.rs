@@ -1289,11 +1289,10 @@ impl ProximaDataBlock {
         let adaptive_config = crate::core::bloom::adaptive::AdaptiveBloomConfig::for_block_level();
         let num_keys = records.len();
         let optimal_size = adaptive_config.optimal_size(num_keys);
-        let bits_per_key = if num_keys > 0 {
-            (optimal_size / num_keys).max(4) as u32
-        } else {
-            10
-        };
+        let bits_per_key = optimal_size
+            .checked_div(num_keys)
+            .map(|v| v.max(4) as u32)
+            .unwrap_or(10);
 
         // Create config with adaptive sizing
         let bloom_config = BloomFilterConfig {

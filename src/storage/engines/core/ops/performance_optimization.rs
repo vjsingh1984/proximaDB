@@ -637,7 +637,7 @@ impl UniversalPerformanceOptimizer {
                 .map(|(k, v)| (k.clone(), v.last_access))
                 .collect();
 
-            entries.sort_by(|a, b| a.1.cmp(&b.1));
+            entries.sort_by_key(|e| e.1);
 
             for (key, _) in entries.into_iter().take(evict_count) {
                 cache.remove(&key);

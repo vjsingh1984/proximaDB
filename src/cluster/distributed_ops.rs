@@ -1239,16 +1239,14 @@ impl DistributedCollectionOps {
             total_writes: stats.total_writes,
             failed_searches: stats.failed_searches,
             failed_writes: stats.failed_writes,
-            avg_search_time_ms: if stats.total_searches > 0 {
-                stats.total_search_time_ms / stats.total_searches
-            } else {
-                0
-            },
-            avg_write_time_ms: if stats.total_writes > 0 {
-                stats.total_write_time_ms / stats.total_writes
-            } else {
-                0
-            },
+            avg_search_time_ms: stats
+                .total_search_time_ms
+                .checked_div(stats.total_searches)
+                .unwrap_or(0),
+            avg_write_time_ms: stats
+                .total_write_time_ms
+                .checked_div(stats.total_writes)
+                .unwrap_or(0),
         }
     }
 

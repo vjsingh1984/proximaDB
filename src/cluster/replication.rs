@@ -875,11 +875,10 @@ impl EngineReplication {
             total_bytes_replicated: stats.total_bytes_replicated,
             successful_replications: stats.successful_replications,
             failed_replications: stats.failed_replications,
-            avg_latency_ms: if stats.successful_replications > 0 {
-                stats.total_latency_ms / stats.successful_replications
-            } else {
-                0
-            },
+            avg_latency_ms: stats
+                .total_latency_ms
+                .checked_div(stats.successful_replications)
+                .unwrap_or(0),
             retry_count: stats.retry_count,
         }
     }

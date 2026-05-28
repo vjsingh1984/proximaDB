@@ -204,11 +204,7 @@ impl HelixSIMDWriter {
         let compression_ratio = if let Some(ref encoded) = block.encoded_vectors {
             let original_size = records.len() * records.first().map_or(0, |r| r.vector.len()) * 4;
             let encoded_size: usize = encoded.iter().map(|d| d.len()).sum();
-            if original_size > 0 {
-                (encoded_size * 100) / original_size
-            } else {
-                100
-            }
+            (encoded_size * 100).checked_div(original_size).unwrap_or(100)
         } else {
             100 // No encoding applied
         };
@@ -538,11 +534,9 @@ pub async fn write_helix_sstable(
     }
 
     // Calculate overall compression performance
-    let overall_compression_ratio = if total_original_size > 0 {
-        (total_compressed_size * 100) / total_original_size
-    } else {
-        100
-    };
+    let overall_compression_ratio = (total_compressed_size * 100)
+        .checked_div(total_original_size)
+        .unwrap_or(100);
 
     info!(
         "🎯 HELIX total compression: {} → {} bytes ({}% ratio) in {:.2}ms",

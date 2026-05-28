@@ -845,11 +845,9 @@ impl StreamingParquetWriter {
             vector_compression_ratio: compression_ratio,
             metadata_compression_ratio: 0.0,
             row_groups_written: total_row_groups,
-            avg_row_group_size: if total_row_groups > 0 {
-                self.total_records_written as usize / total_row_groups
-            } else {
-                0
-            },
+            avg_row_group_size: (self.total_records_written as usize)
+                .checked_div(total_row_groups)
+                .unwrap_or(0),
             min_row_group_size: 0,
             max_row_group_size: 0,
             bloom_filter_count: self.id_bloom_filters.len(),

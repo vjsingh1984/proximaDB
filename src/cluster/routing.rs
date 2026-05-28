@@ -1379,11 +1379,10 @@ impl RoutingService {
             replica_routes: stats.replica_routes,
             retries: stats.retries,
             failures: stats.failures,
-            avg_latency_us: if stats.total_routes > 0 {
-                stats.total_latency_us / stats.total_routes
-            } else {
-                0
-            },
+            avg_latency_us: stats
+                .total_latency_us
+                .checked_div(stats.total_routes)
+                .unwrap_or(0),
         }
     }
 }

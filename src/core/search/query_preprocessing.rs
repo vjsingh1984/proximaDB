@@ -618,11 +618,11 @@ impl QueryPreprocessor {
             } else {
                 0.0
             },
-            avg_preprocessing_time_us: if stats.misses > 0 {
-                (stats.preprocessing_time_ns / stats.misses) / 1000
-            } else {
-                0
-            },
+            avg_preprocessing_time_us: stats
+                .preprocessing_time_ns
+                .checked_div(stats.misses)
+                .map(|ns| ns / 1000)
+                .unwrap_or(0),
             simd_operations: stats.simd_operations,
         }
     }

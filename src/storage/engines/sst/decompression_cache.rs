@@ -537,11 +537,11 @@ impl CacheStatsProvider for DecompressionCacheStatsProvider {
             // Canonical CacheStats::hit_ratio() returns 0–100 (percent); divide for ratio.
             let hit_rate = stats.inner.hit_ratio() / 100.0;
             // Approximate avg entry size using bytes_saved per hit when available
-            let avg_entry_size = if stats.inner.hits > 0 {
-                (stats.bytes_saved / stats.inner.hits) as usize
-            } else {
-                64 * 1024
-            };
+            let avg_entry_size = stats
+                .bytes_saved
+                .checked_div(stats.inner.hits)
+                .map(|v| v as usize)
+                .unwrap_or(64 * 1024);
             // `total` here = aggregate access count (hits + misses). The
             // collapse of DecompressionCacheStats onto the canonical
             // `inner: CacheStats` struct removed the inline `total` field;

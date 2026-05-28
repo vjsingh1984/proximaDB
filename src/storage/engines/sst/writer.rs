@@ -1443,11 +1443,10 @@ impl SstableWriter {
             let _optimal_hash_count = adaptive_config.optimal_hash_count(optimal_size, num_keys);
 
             // Convert to bits_per_key for existing BloomFilterConfig
-            let bits_per_key = if num_keys > 0 {
-                (optimal_size / num_keys).max(4)
-            } else {
-                10 // fallback default
-            };
+            let bits_per_key = optimal_size
+                .checked_div(num_keys)
+                .map(|v| v.max(4))
+                .unwrap_or(10);
 
             let config = crate::core::bloom::BloomFilterConfig {
                 enabled: true,
