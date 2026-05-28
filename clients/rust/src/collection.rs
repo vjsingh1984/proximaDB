@@ -612,7 +612,6 @@ impl<'a> UpdateBuilder<'a> {
                 vector: self.vector.unwrap_or_default(),
                 props: self.metadata,
                 source: None,
-                ..Default::default()
             }],
             validate_schema: true,
             upsert: true,
@@ -756,7 +755,7 @@ impl<'a> InsertBuilder<'a> {
             }));
         }
 
-        for (id, vector) in ids.into_iter().zip(vectors.into_iter()) {
+        for (id, vector) in ids.into_iter().zip(vectors) {
             self.records.push(InsertRecord {
                 id,
                 vector,
@@ -884,7 +883,7 @@ impl<'a> InsertBuilderBatch<'a> {
             }));
         }
 
-        for (record, meta) in self.builder.records.iter_mut().zip(metadata.into_iter()) {
+        for (record, meta) in self.builder.records.iter_mut().zip(metadata) {
             record.metadata = meta;
         }
 

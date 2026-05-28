@@ -229,12 +229,12 @@ fn detect_drift_for_active(
             .as_ref()
             .map(|b| b.provider_rule_id.as_str()),
         observed.provider_rule_id.as_deref(),
-    ) {
-        if observed.rule_exists && expected != actual {
-            return ReconcileDecision::MarkProviderBlocked {
-                reason: BlockReason::ProviderMisconfiguration,
-            };
-        }
+    ) && observed.rule_exists
+        && expected != actual
+    {
+        return ReconcileDecision::MarkProviderBlocked {
+            reason: BlockReason::ProviderMisconfiguration,
+        };
     }
 
     // 2. Source-side prerequisite drift — provider can't replicate
@@ -255,12 +255,12 @@ fn detect_drift_for_active(
 
     // 4. Destination bucket/account changed under us — unsafe drift,
     //    do not auto-repair (could rewrite into wrong account).
-    if let Some(obs_dest) = observed.observed_destination.as_deref() {
-        if obs_dest != policy.placement.destination_bucket_or_account {
-            return ReconcileDecision::MarkDrifted {
-                reason: DriftReason::DestinationMismatch,
-            };
-        }
+    if let Some(obs_dest) = observed.observed_destination.as_deref()
+        && obs_dest != policy.placement.destination_bucket_or_account
+    {
+        return ReconcileDecision::MarkDrifted {
+            reason: DriftReason::DestinationMismatch,
+        };
     }
 
     // 5. KMS binding moved.
@@ -270,12 +270,11 @@ fn detect_drift_for_active(
             .as_ref()
             .and_then(|b| b.provider_kms_key_id.as_deref()),
         observed.provider_kms_key_id.as_deref(),
-    ) {
-        if expected_kms != actual_kms {
-            return ReconcileDecision::MarkDrifted {
-                reason: DriftReason::KmsBindingChanged,
-            };
-        }
+    ) && expected_kms != actual_kms
+    {
+        return ReconcileDecision::MarkDrifted {
+            reason: DriftReason::KmsBindingChanged,
+        };
     }
 
     // 6. Rule missing — Active policy expects an enabled rule.
@@ -293,12 +292,12 @@ fn detect_drift_for_active(
     }
 
     // 8. Prefix mismatch — provider filter labels drifted. Safe repair.
-    if let Some(obs_prefix) = observed.observed_prefix.as_deref() {
-        if obs_prefix != policy.placement.source_prefix {
-            return ReconcileDecision::RepairDrift {
-                reason: DriftReason::PrefixMismatch,
-            };
-        }
+    if let Some(obs_prefix) = observed.observed_prefix.as_deref()
+        && obs_prefix != policy.placement.source_prefix
+    {
+        return ReconcileDecision::RepairDrift {
+            reason: DriftReason::PrefixMismatch,
+        };
     }
 
     // 9. Healthy.
@@ -370,22 +369,13 @@ impl Default for BackoffPolicy {
 
 /// Per-policy retry state held by the shard loop. The pure functions
 /// below mutate it without any async or real time.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct BackoffEntry {
     /// Consecutive transient-failure count. 0 means healthy.
     pub attempt: u32,
     /// Earliest nanosecond timestamp the policy may be retried at. 0
     /// means "ready now".
     pub earliest_retry_ns: i64,
-}
-
-impl Default for BackoffEntry {
-    fn default() -> Self {
-        Self {
-            attempt: 0,
-            earliest_retry_ns: 0,
-        }
-    }
 }
 
 /// Outcome category the backoff layer reacts to. Distinct from
@@ -525,10 +515,10 @@ impl ShardPauseState {
         const SIXTY_SECS_NS: i64 = 60 * 1_000_000_000;
         let until = now_ns.saturating_add(SIXTY_SECS_NS);
         // Extend an existing pause rather than truncate.
-        if let Some(existing) = &self.paused {
-            if existing.until_ns >= until {
-                return;
-            }
+        if let Some(existing) = &self.paused
+            && existing.until_ns >= until
+        {
+            return;
         }
         self.paused = Some(ShardPause {
             reason: ShardPauseReason::QuotaExceeded,
@@ -1517,10 +1507,10 @@ pub mod testing {
                 return Err(e);
             }
             let mut leases = self.leases.lock();
-            if let Some((existing, _)) = leases.get(policy_id) {
-                if existing == holder_id {
-                    leases.remove(policy_id);
-                }
+            if let Some((existing, _)) = leases.get(policy_id)
+                && existing == holder_id
+            {
+                leases.remove(policy_id);
             }
             Ok(())
         }
