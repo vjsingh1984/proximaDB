@@ -9,7 +9,6 @@ requiring a running ProximaDB server and real connections.
 """
 
 import sys
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -30,7 +29,6 @@ except ImportError:
 
 import httpx
 
-from proximadb_sdk.config import ClientConfig, load_config
 from proximadb_sdk.protocols.connection_pools import (
     GrpcChannelContext,
     GrpcConnectionPool,

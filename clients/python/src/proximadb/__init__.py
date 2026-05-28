@@ -1,2 +1,1 @@
 """Generated ProximaDB protocol packages."""
-

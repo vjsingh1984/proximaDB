@@ -8,7 +8,6 @@ from client SDK through to storage engines.
 
 import logging
 import time
-from typing import Any, Dict, List
 
 import numpy as np
 import pytest
@@ -24,11 +23,9 @@ from proximadb_sdk import (
     QuantizationConfig,
     QuantizationHint,
     QuantizationType,
-)
-from proximadb_sdk import SearchOptimization as SearchOptimizationHints
-from proximadb_sdk import (
     VectorRecord,
 )
+from proximadb_sdk import SearchOptimization as SearchOptimizationHints
 
 # from proximadb_sdk import proximadb_pb2  # Use SDK models instead
 

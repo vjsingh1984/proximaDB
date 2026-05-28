@@ -10,11 +10,8 @@ Tests the Docker demo container functionality including:
 - Performance validation
 """
 
-import json
 import os
-import subprocess
 import time
-from typing import Dict, List, Optional
 
 import pytest
 import requests
@@ -104,7 +101,7 @@ class TestDockerDemoContainer:
                     collection_names.append(c.id)
             assert (
                 collection_name in collection_names
-            ), f"Created collection should be in list"
+            ), "Created collection should be in list"
 
             # Test get specific collection
             collection_info = client.get_collection(collection_name)

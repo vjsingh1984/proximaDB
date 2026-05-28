@@ -5,7 +5,6 @@ Provides dynamic provider registration and discovery via decorators.
 """
 
 import logging
-from typing import Dict, List, Optional, Type
 
 from .base import BaseEmbeddingProvider
 from .config import ModelMetadata
@@ -30,17 +29,17 @@ class ProviderRegistry:
             ...
     """
 
-    _providers: Dict[str, Type[BaseEmbeddingProvider]] = {}
-    _metadata: Dict[str, Dict[str, ModelMetadata]] = {}
-    _aliases: Dict[str, str] = {}
-    _descriptions: Dict[str, str] = {}
+    _providers: dict[str, type[BaseEmbeddingProvider]] = {}
+    _metadata: dict[str, dict[str, ModelMetadata]] = {}
+    _aliases: dict[str, str] = {}
+    _descriptions: dict[str, str] = {}
 
     @classmethod
     def register(
         cls,
         name: str,
-        models: Dict[str, ModelMetadata],
-        aliases: Optional[List[str]] = None,
+        models: dict[str, ModelMetadata],
+        aliases: list[str] | None = None,
         description: str = "",
     ):
         """
@@ -66,7 +65,7 @@ class ProviderRegistry:
                 ...
         """
 
-        def decorator(provider_class: Type[BaseEmbeddingProvider]):
+        def decorator(provider_class: type[BaseEmbeddingProvider]):
             # Validate provider class
             if not issubclass(provider_class, BaseEmbeddingProvider):
                 raise TypeError(
@@ -97,7 +96,7 @@ class ProviderRegistry:
         return decorator
 
     @classmethod
-    def get_provider(cls, name: str) -> Type[BaseEmbeddingProvider]:
+    def get_provider(cls, name: str) -> type[BaseEmbeddingProvider]:
         """
         Get provider class by name or alias
 
@@ -131,7 +130,7 @@ class ProviderRegistry:
         return cls._providers[name]
 
     @classmethod
-    def get_models(cls, provider_name: str) -> Dict[str, ModelMetadata]:
+    def get_models(cls, provider_name: str) -> dict[str, ModelMetadata]:
         """
         Get available models for a provider
 
@@ -151,7 +150,7 @@ class ProviderRegistry:
         return cls._metadata.get(provider_name, {})
 
     @classmethod
-    def get_default_model(cls, provider_name: str) -> Optional[ModelMetadata]:
+    def get_default_model(cls, provider_name: str) -> ModelMetadata | None:
         """
         Get the default model for a provider
 
@@ -174,7 +173,7 @@ class ProviderRegistry:
         return next(iter(models.values()))
 
     @classmethod
-    def list_providers(cls, include_aliases: bool = False) -> List[str]:
+    def list_providers(cls, include_aliases: bool = False) -> list[str]:
         """
         List all registered providers
 
@@ -194,7 +193,7 @@ class ProviderRegistry:
         return sorted(cls._providers.keys())
 
     @classmethod
-    def get_provider_info(cls, provider_name: str) -> Dict[str, any]:
+    def get_provider_info(cls, provider_name: str) -> dict[str, any]:
         """
         Get comprehensive provider information
 

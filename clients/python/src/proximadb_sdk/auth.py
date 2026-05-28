@@ -9,14 +9,13 @@ Licensed under the Apache License, Version 2.0
 """
 
 import asyncio
-import json
 import logging
-import time
 import warnings
-from dataclasses import asdict, dataclass
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -78,13 +77,13 @@ class AuthResult:
     """Result of authentication containing user information and permissions"""
 
     user_id: str
-    tenant_id: Optional[str] = None
-    roles: List[str] = None
-    permissions: List[Permission] = None
+    tenant_id: str | None = None
+    roles: list[str] = None
+    permissions: list[Permission] = None
     auth_method: AuthMethod = AuthMethod.API_KEY
-    token_expires_at: Optional[datetime] = None
-    access_token: Optional[str] = None
-    refresh_token: Optional[str] = None
+    token_expires_at: datetime | None = None
+    access_token: str | None = None
+    refresh_token: str | None = None
 
     def __post_init__(self):
         if self.roles is None:
@@ -112,35 +111,35 @@ class AuthConfig:
 
     # Basic auth settings
     enabled: bool = False
-    api_key: Optional[str] = None
+    api_key: str | None = None
 
     # JWT settings
-    jwt_token: Optional[str] = None
-    jwt_refresh_token: Optional[str] = None
+    jwt_token: str | None = None
+    jwt_refresh_token: str | None = None
     auto_refresh_jwt: bool = True
     refresh_threshold_minutes: int = 5
 
     # OAuth2 settings
-    oauth2_token: Optional[str] = None
-    oauth2_provider: Optional[str] = None
-    oauth2_client_id: Optional[str] = None
-    oauth2_client_secret: Optional[str] = None
-    oauth2_redirect_uri: Optional[str] = None
+    oauth2_token: str | None = None
+    oauth2_provider: str | None = None
+    oauth2_client_id: str | None = None
+    oauth2_client_secret: str | None = None
+    oauth2_redirect_uri: str | None = None
 
     # Certificate auth
-    client_cert_path: Optional[str] = None
-    client_key_path: Optional[str] = None
-    client_cert_file: Optional[str] = None  # Alias for client_cert_path
-    client_key_file: Optional[str] = None  # Alias for client_key_path
-    ca_cert_path: Optional[str] = None
+    client_cert_path: str | None = None
+    client_key_path: str | None = None
+    client_cert_file: str | None = None  # Alias for client_cert_path
+    client_key_file: str | None = None  # Alias for client_key_path
+    ca_cert_path: str | None = None
 
     # Session management
     session_timeout_seconds: int = 3600
     max_concurrent_sessions: int = 5
 
     # Callbacks
-    token_refresh_callback: Optional[Callable[["AuthResult"], None]] = None
-    auth_error_callback: Optional[Callable[[Exception], None]] = None
+    token_refresh_callback: Callable[["AuthResult"], None] | None = None
+    auth_error_callback: Callable[[Exception], None] | None = None
 
 
 class AuthenticationError(Exception):
@@ -152,7 +151,7 @@ class AuthenticationError(Exception):
 class AuthorizationError(Exception):
     """Authorization denied"""
 
-    def __init__(self, message: str, required_permission: Optional[Permission] = None):
+    def __init__(self, message: str, required_permission: Permission | None = None):
         super().__init__(message)
         self.required_permission = required_permission
 
@@ -176,13 +175,13 @@ class ProximaDBAuth:
         self,
         config: AuthConfig,
         base_url: str,
-        session: Optional[requests.Session] = None,
+        session: requests.Session | None = None,
     ):
         """Initialize authentication manager"""
         self.config = config
         self.base_url = base_url.rstrip("/")
         self.session = session or self._create_session()
-        self.auth_result: Optional[AuthResult] = None
+        self.auth_result: AuthResult | None = None
         self._refresh_lock = asyncio.Lock() if hasattr(asyncio, "Lock") else None
 
         # Configure session for authentication endpoints
@@ -377,7 +376,7 @@ class ProximaDBAuth:
             refresh_token=self.config.jwt_refresh_token,
         )
 
-    def _get_default_permissions(self) -> List[Permission]:
+    def _get_default_permissions(self) -> list[Permission]:
         """Get default permissions for fallback scenarios"""
         return [
             Permission.LIST_COLLECTIONS,
@@ -391,7 +390,7 @@ class ProximaDBAuth:
             Permission.VIEW_SYSTEM_HEALTH,
         ]
 
-    def _parse_expiration(self, expires_str: Optional[str]) -> Optional[datetime]:
+    def _parse_expiration(self, expires_str: str | None) -> datetime | None:
         """Parse expiration timestamp from string"""
         if not expires_str:
             return None
@@ -411,7 +410,7 @@ class ProximaDBAuth:
                 logger.warning(f"Could not parse expiration time: {expires_str}")
                 return None
 
-    def get_auth_headers(self) -> Dict[str, str]:
+    def get_auth_headers(self) -> dict[str, str]:
         """
         Get authentication headers for requests
 
@@ -601,7 +600,7 @@ class ProximaDBAuth:
         self.config.oauth2_token = None
         self.auth_result = None
 
-    def get_user_info(self) -> Optional[Dict[str, Any]]:
+    def get_user_info(self) -> dict[str, Any] | None:
         """Get information about the authenticated user"""
         if not self.auth_result:
             return None
@@ -630,7 +629,7 @@ def create_api_key_auth(api_key: str, **kwargs) -> AuthConfig:
 
 def create_jwt_auth(
     access_token: str,
-    refresh_token: Optional[str] = None,
+    refresh_token: str | None = None,
     auto_refresh: bool = True,
     **kwargs,
 ) -> AuthConfig:
@@ -647,7 +646,7 @@ def create_jwt_auth(
 def create_oauth2_auth(
     access_token: str,
     provider: str = "oauth2",
-    client_id: Optional[str] = None,
+    client_id: str | None = None,
     **kwargs,
 ) -> AuthConfig:
     """Create OAuth2 authentication configuration"""
@@ -661,7 +660,7 @@ def create_oauth2_auth(
 
 
 def create_cert_auth(
-    cert_path: str, key_path: str, ca_path: Optional[str] = None, **kwargs
+    cert_path: str, key_path: str, ca_path: str | None = None, **kwargs
 ) -> AuthConfig:
     """Create client certificate authentication configuration"""
     return AuthConfig(

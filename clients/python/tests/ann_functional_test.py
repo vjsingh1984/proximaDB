@@ -18,9 +18,7 @@ import shutil
 import sys
 import tempfile
 import time
-import traceback
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -48,7 +46,7 @@ class TestResult:
     search_time_ms: float
     recall: float
     total_elapsed_ms: float = 0.0  # Total time for this test case
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -59,16 +57,16 @@ class TestConfig:
     engine: str
     dimension: int
     distance_metric: str
-    index_type: Optional[str] = None
-    hnsw_m: Optional[int] = None
-    hnsw_ef_construction: Optional[int] = None
-    hnsw_ef_search: Optional[int] = None
-    ivf_n_lists: Optional[int] = None
-    ivf_n_probe: Optional[int] = None
-    pq_subvectors: Optional[int] = None
-    pq_bits: Optional[int] = None
-    quantization_type: Optional[str] = None
-    compression: Optional[str] = None
+    index_type: str | None = None
+    hnsw_m: int | None = None
+    hnsw_ef_construction: int | None = None
+    hnsw_ef_search: int | None = None
+    ivf_n_lists: int | None = None
+    ivf_n_probe: int | None = None
+    pq_subvectors: int | None = None
+    pq_bits: int | None = None
+    quantization_type: str | None = None
+    compression: str | None = None
 
 
 def generate_vectors(num_vectors: int, dimension: int, seed: int = 42) -> np.ndarray:
@@ -99,7 +97,7 @@ def compute_ground_truth(
 
 
 def compute_recall(
-    results: List[List[int]], ground_truth: np.ndarray, k: int = 10
+    results: list[list[int]], ground_truth: np.ndarray, k: int = 10
 ) -> float:
     """Compute recall@k"""
     if not results:
@@ -127,7 +125,7 @@ class ANNFunctionalTest:
         self.dimension = dimension
         self.num_queries = num_queries
         self.k = 10
-        self.results: List[TestResult] = []
+        self.results: list[TestResult] = []
 
         # Generate test data
         print(f"\nGenerating test data: {num_vectors} vectors x {dimension}D...")
@@ -217,7 +215,7 @@ class ANNFunctionalTest:
         finally:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
-    def get_test_configs(self) -> List[TestConfig]:
+    def get_test_configs(self) -> list[TestConfig]:
         """Get all test configurations"""
         configs = []
 
@@ -369,7 +367,7 @@ class ANNFunctionalTest:
 
         configs = self.get_test_configs()
         print(f"\n{'='*80}")
-        print(f"PROXIMADB ANN FUNCTIONAL TEST SUITE")
+        print("PROXIMADB ANN FUNCTIONAL TEST SUITE")
         print(f"{'='*80}")
         print(f"  Vectors: {self.num_vectors}")
         print(f"  Dimension: {self.dimension}")
@@ -426,7 +424,7 @@ class ANNFunctionalTest:
     def print_summary(self) -> None:
         """Print test summary"""
         print(f"\n{'='*100}")
-        print(f"TEST SUMMARY")
+        print("TEST SUMMARY")
         print(f"{'='*100}")
 
         passed = sum(1 for r in self.results if r.passed)
@@ -479,7 +477,7 @@ class ANNFunctionalTest:
         # Print errors if any
         error_results = [r for r in self.results if r.error]
         if error_results:
-            print(f"\n### ERRORS")
+            print("\n### ERRORS")
             print("-" * 100)
             for r in error_results:
                 print(f"{r.name}: {r.error}")
@@ -488,7 +486,7 @@ class ANNFunctionalTest:
         self.print_performance_comparison()
 
         print(f"\n{'='*100}")
-        print(f"ANN FUNCTIONAL TEST COMPLETE")
+        print("ANN FUNCTIONAL TEST COMPLETE")
         print(f"{'='*100}")
 
     def print_performance_comparison(self) -> None:

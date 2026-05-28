@@ -11,7 +11,7 @@ Top SFR Models (Open Source):
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -71,7 +71,7 @@ class SFREmbeddingProvider(EmbeddingProvider):
     # Instruction prefix for queries (critical for performance)
     QUERY_INSTRUCTION = "Instruct: Given a query, retrieve relevant passages that answer the query\nQuery: "
 
-    def __init__(self, config: Optional[EmbeddingConfig] = None):
+    def __init__(self, config: EmbeddingConfig | None = None):
         """Initialize SFR provider with optional config"""
         self.config = config if config is not None else self._get_default_config()
         self._available = None
@@ -136,7 +136,7 @@ class SFREmbeddingProvider(EmbeddingProvider):
             self._available = False
             logger.error(f"Failed to initialize SFR model: {e}")
 
-    def _apply_instruction(self, texts: List[str], is_query: bool = None) -> List[str]:
+    def _apply_instruction(self, texts: list[str], is_query: bool = None) -> list[str]:
         """
         Apply SFR instruction prefix if configured
 
@@ -174,7 +174,7 @@ class SFREmbeddingProvider(EmbeddingProvider):
         """
         return self.embed_texts([text], is_query=is_query)[0]
 
-    def embed_texts(self, texts: List[str], is_query: bool = None) -> np.ndarray:
+    def embed_texts(self, texts: list[str], is_query: bool = None) -> np.ndarray:
         """
         Generate embeddings for multiple texts
 
@@ -209,7 +209,7 @@ class SFREmbeddingProvider(EmbeddingProvider):
         return embeddings
 
     def embed_documents(
-        self, documents: List[Dict[str, Any]], text_field: str = "text"
+        self, documents: list[dict[str, Any]], text_field: str = "text"
     ) -> np.ndarray:
         """
         Generate embeddings for documents (passages, NOT queries)
@@ -239,7 +239,7 @@ class SFREmbeddingProvider(EmbeddingProvider):
         """
         return self.embed_text(query, is_query=True)
 
-    def embed_queries(self, queries: List[str]) -> np.ndarray:
+    def embed_queries(self, queries: list[str]) -> np.ndarray:
         """
         Generate embeddings for multiple search queries
 
@@ -257,7 +257,7 @@ class SFREmbeddingProvider(EmbeddingProvider):
         """Get embedding dimension (4096 for SFR models)"""
         return self.config.dimension
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """Get model information"""
         info = {
             "model_name": self.config.model_name,
@@ -289,7 +289,7 @@ class SFREmbeddingProvider(EmbeddingProvider):
         return self._available
 
     @classmethod
-    def list_available_models(cls) -> Dict[str, Dict[str, Any]]:
+    def list_available_models(cls) -> dict[str, dict[str, Any]]:
         """List available SFR models with their specifications"""
         return cls.SFR_MODELS.copy()
 

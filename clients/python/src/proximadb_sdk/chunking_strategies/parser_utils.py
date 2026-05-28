@@ -23,24 +23,14 @@ import re
 import threading
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from functools import lru_cache, wraps
+from functools import wraps
 from typing import (
     Any,
-    Callable,
-    Dict,
-    Generic,
-    List,
-    Optional,
-    Set,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
 )
-from weakref import WeakValueDictionary
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -126,7 +116,7 @@ class ParserMetrics:
     cache_hit: bool = False
     tree_sitter_available: bool = False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "language": self.language,
             "file_path": self.file_path,
@@ -151,7 +141,7 @@ class MetricsCollector:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._metrics: List[ParserMetrics] = []
+                    cls._instance._metrics: list[ParserMetrics] = []
                     cls._instance._enabled = True
         return cls._instance
 
@@ -160,12 +150,12 @@ class MetricsCollector:
         if self._enabled:
             self._metrics.append(metrics)
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """Get aggregated metrics summary"""
         if not self._metrics:
             return {}
 
-        by_language: Dict[str, List[ParserMetrics]] = {}
+        by_language: dict[str, list[ParserMetrics]] = {}
         for m in self._metrics:
             if m.language not in by_language:
                 by_language[m.language] = []
@@ -224,13 +214,13 @@ class ParserCache:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._cache: Dict[str, Any] = {}
-                    cls._instance._access_order: List[str] = []
+                    cls._instance._cache: dict[str, Any] = {}
+                    cls._instance._access_order: list[str] = []
                     cls._instance._max_size = max_size
                     cls._instance._cache_lock = threading.RLock()
         return cls._instance
 
-    def get(self, language: str) -> Optional[Any]:
+    def get(self, language: str) -> Any | None:
         """Get cached parser instance"""
         with self._cache_lock:
             if language in self._cache:
@@ -307,7 +297,7 @@ def with_metrics(func: Callable) -> Callable:
                 metrics.relation_count = len(result.relations)
 
             return result
-        except Exception as e:
+        except Exception:
             metrics.error_count += 1
             raise
         finally:
@@ -417,7 +407,7 @@ class BaseLanguageParser(ABC):
 
     @property
     @abstractmethod
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         """Supported file extensions"""
         pass
 
@@ -552,7 +542,7 @@ class CFamilyParser(BaseLanguageParser):
 
         return i if depth == 0 else -1
 
-    def _extract_block(self, content: str, start: int) -> Tuple[str, int]:
+    def _extract_block(self, content: str, start: int) -> tuple[str, int]:
         """Extract a braced block starting at given position"""
         brace_pos = content.find("{", start)
         if brace_pos == -1:
@@ -580,16 +570,16 @@ class JVMFamilyParser(CFamilyParser):
     IMPORT_PATTERN = re.compile(r"import\s+(?:static\s+)?([\w.*]+)\s*;?")
     ANNOTATION_PATTERN = re.compile(r"@(\w+)(?:\([^)]*\))?")
 
-    def _extract_package(self, content: str) -> Optional[str]:
+    def _extract_package(self, content: str) -> str | None:
         """Extract package declaration"""
         match = self.PACKAGE_PATTERN.search(content)
         return match.group(1) if match else None
 
-    def _extract_imports(self, content: str) -> List[str]:
+    def _extract_imports(self, content: str) -> list[str]:
         """Extract import statements"""
         return [m.group(1) for m in self.IMPORT_PATTERN.finditer(content)]
 
-    def _extract_annotations(self, content: str, pos: int) -> List[str]:
+    def _extract_annotations(self, content: str, pos: int) -> list[str]:
         """Extract annotations before a symbol"""
         # Look backwards from pos for annotations
         annotations = []
@@ -684,11 +674,11 @@ class MarkupParser(BaseLanguageParser):
     - Schema detection
     """
 
-    def _extract_keys(self, content: str) -> List[str]:
+    def _extract_keys(self, content: str) -> list[str]:
         """Extract top-level keys from structured data"""
         raise NotImplementedError
 
-    def _build_hierarchy(self, content: str) -> Dict[str, Any]:
+    def _build_hierarchy(self, content: str) -> dict[str, Any]:
         """Build hierarchical representation"""
         raise NotImplementedError
 
@@ -708,11 +698,11 @@ class ParserPlugin:
     def __init__(
         self,
         name: str,
-        parser_class: Type[BaseLanguageParser],
-        languages: List[str],
-        extensions: List[str],
+        parser_class: type[BaseLanguageParser],
+        languages: list[str],
+        extensions: list[str],
         priority: int = 0,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ):
         self.name = name
         self.parser_class = parser_class
@@ -720,7 +710,7 @@ class ParserPlugin:
         self.extensions = extensions
         self.priority = priority  # Higher priority = preferred
         self.metadata = metadata or {}
-        self._instance: Optional[BaseLanguageParser] = None
+        self._instance: BaseLanguageParser | None = None
 
     def get_parser(self) -> BaseLanguageParser:
         """Get or create parser instance"""
@@ -756,9 +746,9 @@ class ParserPluginRegistry:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._plugins: Dict[str, ParserPlugin] = {}
-                    cls._instance._language_index: Dict[str, List[str]] = {}
-                    cls._instance._extension_index: Dict[str, List[str]] = {}
+                    cls._instance._plugins: dict[str, ParserPlugin] = {}
+                    cls._instance._language_index: dict[str, list[str]] = {}
+                    cls._instance._extension_index: dict[str, list[str]] = {}
         return cls._instance
 
     def register(self, plugin: ParserPlugin) -> bool:
@@ -830,7 +820,7 @@ class ParserPluginRegistry:
         logger.info(f"Unregistered parser plugin: {name}")
         return True
 
-    def get_parser_for_language(self, language: str) -> Optional[BaseLanguageParser]:
+    def get_parser_for_language(self, language: str) -> BaseLanguageParser | None:
         """Get best available parser for language"""
         lang_lower = language.lower()
         if lang_lower not in self._language_index:
@@ -843,7 +833,7 @@ class ParserPluginRegistry:
         # Return highest priority parser
         return self._plugins[plugin_names[0]].get_parser()
 
-    def get_parser_for_extension(self, extension: str) -> Optional[BaseLanguageParser]:
+    def get_parser_for_extension(self, extension: str) -> BaseLanguageParser | None:
         """Get best available parser for file extension"""
         ext_lower = extension.lower()
         if not ext_lower.startswith("."):
@@ -858,7 +848,7 @@ class ParserPluginRegistry:
 
         return self._plugins[plugin_names[0]].get_parser()
 
-    def list_plugins(self) -> List[Dict[str, Any]]:
+    def list_plugins(self) -> list[dict[str, Any]]:
         """List all registered plugins"""
         return [
             {
@@ -871,11 +861,11 @@ class ParserPluginRegistry:
             for p in self._plugins.values()
         ]
 
-    def get_supported_languages(self) -> Set[str]:
+    def get_supported_languages(self) -> set[str]:
         """Get all supported languages"""
         return set(self._language_index.keys())
 
-    def get_supported_extensions(self) -> Set[str]:
+    def get_supported_extensions(self) -> set[str]:
         """Get all supported extensions"""
         return set(self._extension_index.keys())
 
@@ -895,8 +885,8 @@ class ValidationResult:
     """Result of configuration validation"""
 
     valid: bool
-    errors: List[str] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
 
 class ConfigValidator:
@@ -957,7 +947,7 @@ class ConfigValidator:
         return result
 
     @staticmethod
-    def validate_languages(languages: List[str]) -> ValidationResult:
+    def validate_languages(languages: list[str]) -> ValidationResult:
         """Validate language configuration"""
         result = ValidationResult(valid=True)
         registry = get_plugin_registry()
@@ -1031,7 +1021,7 @@ def parser_context(language: str):
         )
 
 
-def detect_language_from_content(content: str) -> Optional[str]:
+def detect_language_from_content(content: str) -> str | None:
     """
     Attempt to detect language from content patterns.
 

@@ -5,8 +5,7 @@ These tests verify the gRPC sync client configuration and API structure
 without actually creating gRPC connections.
 """
 
-import types
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 

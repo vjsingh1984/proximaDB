@@ -39,25 +39,18 @@ Copyright 2025 ProximaDB Contributors
 Licensed under the Apache License, Version 2.0
 """
 
-import asyncio
 import fnmatch
 import hashlib
-import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any
 
 from .chunking_strategies.base import TextChunk
 from .chunking_strategies.code import (
     EXTENSION_TO_LANGUAGE,
     CodeChunkingConfig,
     CodeChunkingStrategy,
-    CodeRelation,
-    CodeRelationType,
-    CodeSymbol,
-    CodeSymbolType,
-    ParsedCode,
-    SourceLocation,
     get_supported_extensions,
 )
 
@@ -79,8 +72,8 @@ class CodeIndexConfig:
     include_documentation: bool = True
 
     # File filtering
-    include_patterns: List[str] = field(default_factory=lambda: ["*"])
-    exclude_patterns: List[str] = field(
+    include_patterns: list[str] = field(default_factory=lambda: ["*"])
+    exclude_patterns: list[str] = field(
         default_factory=lambda: [
             "*.pyc",
             "__pycache__/*",
@@ -120,8 +113,8 @@ class IndexingResult:
     files_failed: int = 0
     symbols_indexed: int = 0
     relations_created: int = 0
-    errors: List[Dict[str, Any]] = field(default_factory=list)
-    file_hashes: Dict[str, str] = field(default_factory=dict)
+    errors: list[dict[str, Any]] = field(default_factory=list)
+    file_hashes: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -138,14 +131,14 @@ class CodeSearchResult:
     end_line: int
     language: str
     score: float
-    documentation: Optional[str] = None
-    signature: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    documentation: str | None = None
+    signature: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     # Graph-derived context (populated when include_context=True)
-    callers: List[str] = field(default_factory=list)
-    callees: List[str] = field(default_factory=list)
-    parent_symbols: List[str] = field(default_factory=list)
+    callers: list[str] = field(default_factory=list)
+    callees: list[str] = field(default_factory=list)
+    parent_symbols: list[str] = field(default_factory=list)
 
 
 class CodeKnowledgeBuilder:
@@ -163,8 +156,8 @@ class CodeKnowledgeBuilder:
     def __init__(
         self,
         client: Any,  # ProximaDBClient
-        config: Optional[CodeIndexConfig] = None,
-        embedding_provider: Optional[Any] = None,
+        config: CodeIndexConfig | None = None,
+        embedding_provider: Any | None = None,
     ):
         """
         Initialize CodeKnowledgeBuilder.
@@ -187,7 +180,7 @@ class CodeKnowledgeBuilder:
         )
 
         # Cache for file hashes (for incremental indexing)
-        self._file_hashes: Dict[str, str] = {}
+        self._file_hashes: dict[str, str] = {}
 
         # Track initialized resources
         self._vector_collection_ready = False
@@ -254,8 +247,8 @@ class CodeKnowledgeBuilder:
 
     async def index_file(
         self,
-        file_path: Union[str, Path],
-        content: Optional[str] = None,
+        file_path: str | Path,
+        content: str | None = None,
         force: bool = False,
     ) -> IndexingResult:
         """
@@ -335,10 +328,10 @@ class CodeKnowledgeBuilder:
 
     async def index_directory(
         self,
-        directory: Union[str, Path],
+        directory: str | Path,
         recursive: bool = True,
         force: bool = False,
-        progress_callback: Optional[Callable[[str, int, int], None]] = None,
+        progress_callback: Callable[[str, int, int], None] | None = None,
     ) -> IndexingResult:
         """
         Index all code files in a directory.
@@ -378,7 +371,7 @@ class CodeKnowledgeBuilder:
 
         return result
 
-    def _collect_files(self, directory: Path, recursive: bool) -> List[Path]:
+    def _collect_files(self, directory: Path, recursive: bool) -> list[Path]:
         """Collect files to index based on patterns."""
         files = []
         supported_extensions = set(get_supported_extensions())
@@ -409,7 +402,7 @@ class CodeKnowledgeBuilder:
 
         return sorted(files)
 
-    def _matches_patterns(self, path: str, patterns: List[str]) -> bool:
+    def _matches_patterns(self, path: str, patterns: list[str]) -> bool:
         """Check if path matches any of the patterns."""
         for pattern in patterns:
             if fnmatch.fnmatch(path, pattern):
@@ -425,7 +418,7 @@ class CodeKnowledgeBuilder:
         else:
             return hashlib.sha256(content.encode()).hexdigest()
 
-    async def _generate_embeddings(self, chunks: List[TextChunk]) -> List[List[float]]:
+    async def _generate_embeddings(self, chunks: list[TextChunk]) -> list[list[float]]:
         """Generate embeddings for code chunks."""
         if self.embedding_provider:
             # Use provided embedding provider
@@ -466,7 +459,7 @@ class CodeKnowledgeBuilder:
 
         return "\n\n".join(parts)
 
-    def _generate_placeholder_embedding(self, text: str) -> List[float]:
+    def _generate_placeholder_embedding(self, text: str) -> list[float]:
         """Generate placeholder embedding for testing (deterministic based on content)."""
         # Use hash to generate deterministic pseudo-random vector
         h = hashlib.sha256(text.encode()).hexdigest()
@@ -483,8 +476,8 @@ class CodeKnowledgeBuilder:
 
     async def _insert_records(
         self,
-        chunks: List[TextChunk],
-        embeddings: List[List[float]],
+        chunks: list[TextChunk],
+        embeddings: list[list[float]],
         file_path: Path,
         language: str,
     ) -> None:
@@ -546,7 +539,7 @@ class CodeKnowledgeBuilder:
 
     async def _insert_graph_data(
         self,
-        chunks: List[TextChunk],
+        chunks: list[TextChunk],
         file_path: Path,
         language: str,
     ) -> int:
@@ -639,7 +632,7 @@ class CodeKnowledgeBuilder:
                             relations_count += 1
                             break
 
-        except Exception as e:
+        except Exception:
             # Log but don't fail the whole operation
             pass
 
@@ -649,10 +642,10 @@ class CodeKnowledgeBuilder:
         self,
         query: str,
         top_k: int = 10,
-        filter_language: Optional[str] = None,
-        filter_symbol_types: Optional[List[str]] = None,
+        filter_language: str | None = None,
+        filter_symbol_types: list[str] | None = None,
         include_context: bool = False,
-    ) -> List[CodeSearchResult]:
+    ) -> list[CodeSearchResult]:
         """
         Search for code using semantic similarity.
 
@@ -717,7 +710,7 @@ class CodeKnowledgeBuilder:
 
         return results
 
-    async def _generate_query_embedding(self, query: str) -> List[float]:
+    async def _generate_query_embedding(self, query: str) -> list[float]:
         """Generate embedding for search query."""
         if self.embedding_provider:
             embeddings = await self.embedding_provider.embed_batch([query])
@@ -764,7 +757,7 @@ class CodeKnowledgeBuilder:
         self,
         symbol_name: str,
         max_depth: int = 1,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Find all symbols that call the given symbol.
 
@@ -796,7 +789,7 @@ class CodeKnowledgeBuilder:
         self,
         symbol_name: str,
         max_depth: int = 1,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Find all symbols that are called by the given symbol.
 
@@ -826,7 +819,7 @@ class CodeKnowledgeBuilder:
     async def find_usages(
         self,
         symbol_name: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Find all usages (references) of a symbol.
 
@@ -856,7 +849,7 @@ class CodeKnowledgeBuilder:
         self,
         symbol_name: str,
         max_depth: int = 3,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Analyze the impact of changing a symbol.
 
@@ -922,7 +915,7 @@ class CodeKnowledgeBuilder:
 
         return impact
 
-    async def _resolve_symbol_id(self, symbol_name: str) -> Optional[str]:
+    async def _resolve_symbol_id(self, symbol_name: str) -> str | None:
         """Resolve symbol name to ID."""
         # First check if it's already an ID
         if len(symbol_name) == 16 and symbol_name.isalnum():
@@ -940,7 +933,7 @@ class CodeKnowledgeBuilder:
 
         return None
 
-    async def delete_file_index(self, file_path: Union[str, Path]) -> bool:
+    async def delete_file_index(self, file_path: str | Path) -> bool:
         """
         Remove all indexed data for a file.
 
@@ -974,11 +967,11 @@ class CodeKnowledgeBuilder:
         except Exception:
             return False
 
-    def get_indexed_files(self) -> List[str]:
+    def get_indexed_files(self) -> list[str]:
         """Get list of currently indexed files."""
         return list(self._file_hashes.keys())
 
-    def get_file_hash(self, file_path: Union[str, Path]) -> Optional[str]:
+    def get_file_hash(self, file_path: str | Path) -> str | None:
         """Get the hash of an indexed file."""
         return self._file_hashes.get(str(file_path))
 
@@ -988,11 +981,11 @@ class CodeKnowledgeBuilder:
 
 async def create_code_knowledge_store(
     client: Any,
-    directory: Union[str, Path],
-    config: Optional[CodeIndexConfig] = None,
-    embedding_provider: Optional[Any] = None,
-    progress_callback: Optional[Callable[[str, int, int], None]] = None,
-) -> Tuple[CodeKnowledgeBuilder, IndexingResult]:
+    directory: str | Path,
+    config: CodeIndexConfig | None = None,
+    embedding_provider: Any | None = None,
+    progress_callback: Callable[[str, int, int], None] | None = None,
+) -> tuple[CodeKnowledgeBuilder, IndexingResult]:
     """
     Create and populate a code knowledge store.
 

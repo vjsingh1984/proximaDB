@@ -5,9 +5,7 @@ Provides intelligent batching strategies for embedding generation.
 """
 
 import logging
-from typing import Iterator, List, Optional
-
-import numpy as np
+from collections.abc import Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -30,8 +28,8 @@ class BatchingMixin:
     """
 
     def create_batches(
-        self, texts: List[str], batch_size: Optional[int] = None
-    ) -> Iterator[List[str]]:
+        self, texts: list[str], batch_size: int | None = None
+    ) -> Iterator[list[str]]:
         """
         Split texts into batches
 
@@ -55,7 +53,7 @@ class BatchingMixin:
         for i in range(0, len(texts), batch_size):
             yield texts[i : i + batch_size]
 
-    def adaptive_batch_size(self, texts: List[str]) -> int:
+    def adaptive_batch_size(self, texts: list[str]) -> int:
         """
         Calculate adaptive batch size based on text lengths
 

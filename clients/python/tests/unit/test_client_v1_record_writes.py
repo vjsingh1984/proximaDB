@@ -28,7 +28,9 @@ def test_client_v1_insert_vectors_uses_v2_record_batch(monkeypatch) -> None:
 
     monkeypatch.setattr("proximadb_sdk.client_v1.requests.post", fake_post)
 
-    client = ProximaDBClientV1(url="http://localhost:5678", protocol="rest", timeout=3.0)
+    client = ProximaDBClientV1(
+        url="http://localhost:5678", protocol="rest", timeout=3.0
+    )
     result = client.insert_vectors(
         "items",
         [

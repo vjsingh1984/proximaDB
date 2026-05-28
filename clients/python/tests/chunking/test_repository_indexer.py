@@ -8,15 +8,13 @@ This module tests:
 - Search with git context
 """
 
-import asyncio
 import importlib.util
 import shutil
 import subprocess
 import sys
 import types
-from datetime import datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

@@ -33,8 +33,8 @@ Both goals are exercised by the test suite under
 from __future__ import annotations
 
 import copy
-from typing import Any, Mapping
-
+from collections.abc import Mapping
+from typing import Any
 
 # ----------------------------------------------------------------------
 # Tool definitions
@@ -178,9 +178,7 @@ def render_invocation(
         # Defensive: graph_id is required for both tools, but the loop
         # above already verified that. Keep this assertion to catch a
         # future schema change that drops graph_id from `required`.
-        raise ValueError(
-            f"tool {tool_name!r} requires graph_id but none was supplied"
-        )
+        raise ValueError(f"tool {tool_name!r} requires graph_id but none was supplied")
 
     graph_id = arguments["graph_id"]
     suffix = "walk" if tool_name == "graph_walk" else "step"
@@ -188,11 +186,7 @@ def render_invocation(
 
     # Filter the body: only include declared fields, and drop graph_id
     # (it lives in the path).
-    body = {
-        k: v
-        for k, v in arguments.items()
-        if k in declared and k != "graph_id"
-    }
+    body = {k: v for k, v in arguments.items() if k in declared and k != "graph_id"}
 
     return ("POST", path, body)
 

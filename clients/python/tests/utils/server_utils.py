@@ -5,12 +5,11 @@ With embedded mode, most functions are no-ops since no external server is needed
 """
 
 import time
-from typing import Tuple
 
 
 def check_server_health(
     rest_url: str = "http://localhost:5678", grpc_url: str = "http://localhost:5679"
-) -> Tuple[bool, bool]:
+) -> tuple[bool, bool]:
     """
     Check if ProximaDB servers are healthy.
 

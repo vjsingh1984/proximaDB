@@ -11,10 +11,6 @@ This is the refactored version using the new architecture:
 - Better extensibility
 """
 
-from typing import List
-
-import numpy as np
-
 from ...core.base import BaseEmbeddingProvider
 from ...core.config import ModelMetadata, ProviderConfig
 from ...core.registry import ProviderRegistry

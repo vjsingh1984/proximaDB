@@ -15,7 +15,7 @@ Licensed under the Apache License, Version 2.0
 
 import logging
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import numpy as np
 
@@ -30,7 +30,6 @@ from ..models import (
     MetadataDict,
     OperationMetrics,
     SearchResult,
-    StorageEngine,
     VectorArray,
     VectorOperationResponse,
     VectorRecord,
@@ -62,8 +61,8 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def __init__(
         self,
         data_dir: str = "/tmp/proximadb/data",
-        config: Optional[Dict[str, Any]] = None,
-        embedded_db: Optional[Any] = None,
+        config: dict[str, Any] | None = None,
+        embedded_db: Any | None = None,
         **kwargs,
     ):
         """Initialize embedded protocol adapter.
@@ -75,7 +74,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         """
         self._data_dir = data_dir
         self._connected = False
-        self._collections: Dict[str, Collection] = {}
+        self._collections: dict[str, Collection] = {}
         self._db = embedded_db
 
         try:
@@ -94,9 +93,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
                         embedded_kwargs = {}
                     embedded_kwargs.update(kwargs)
 
-                    data_dirs = embedded_kwargs.pop("data_dirs", None) or embedded_kwargs.pop(
-                        "data_dir", data_dir
-                    )
+                    data_dirs = embedded_kwargs.pop(
+                        "data_dirs", None
+                    ) or embedded_kwargs.pop("data_dir", data_dir)
                     metadata_dir = embedded_kwargs.pop("metadata_dir", None)
                     cache_size_mb = embedded_kwargs.pop("cache_size_mb", 512)
                     default_engine = embedded_kwargs.pop("default_engine", "sst")
@@ -210,7 +209,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     # ==========================================================================
 
     def create_collection(
-        self, name: str, config: Optional[CollectionConfig] = None, **kwargs
+        self, name: str, config: CollectionConfig | None = None, **kwargs
     ) -> Collection:
         """Create a new vector collection."""
         # Extract parameters from config or kwargs
@@ -251,7 +250,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             logger.error(f"Failed to create collection: {e}")
             raise
 
-    def get_collection(self, collection_id: str) -> Optional[Collection]:
+    def get_collection(self, collection_id: str) -> Collection | None:
         """Get collection metadata by ID or name."""
         # Check cache first
         if collection_id in self._collections:
@@ -281,7 +280,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             logger.debug(f"Collection not found: {collection_id} - {e}")
             return None
 
-    def list_collections(self) -> List[Collection]:
+    def list_collections(self) -> list[Collection]:
         """List all collections."""
         try:
             if hasattr(self._db, "list_collections"):
@@ -328,11 +327,11 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             return False
 
     def _normalize_vector_records(
-        self, vectors: Union[List[VectorRecord], List[Dict[str, Any]]]
-    ) -> tuple[List[str], List[List[float]], Optional[List[Dict[str, Any]]]]:
-        ids: List[str] = []
-        vector_values: List[List[float]] = []
-        metadata_values: List[Dict[str, Any]] = []
+        self, vectors: list[VectorRecord] | list[dict[str, Any]]
+    ) -> tuple[list[str], list[list[float]], list[dict[str, Any]] | None]:
+        ids: list[str] = []
+        vector_values: list[list[float]] = []
+        metadata_values: list[dict[str, Any]] = []
         include_metadata = False
 
         for index, vector in enumerate(vectors):
@@ -359,7 +358,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         total_count: int,
         start_time: float,
         result: Any,
-        error: Optional[Exception] = None,
+        error: Exception | None = None,
     ) -> VectorOperationResponse:
         duration_ms = (time.time() - start_time) * 1000
         if error is not None:
@@ -391,9 +390,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def _execute_numpy_vector_batch(
         self,
         collection_id: str,
-        ids: List[str],
-        vectors: Union[VectorArray, List[List[float]]],
-        metadata_values: Optional[List[Dict[str, Any]]],
+        ids: list[str],
+        vectors: VectorArray | list[list[float]],
+        metadata_values: list[dict[str, Any]] | None,
         operation: str,
         *,
         upsert: bool,
@@ -454,9 +453,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def insert_numpy(
         self,
         collection_id: str,
-        ids: List[str],
-        vectors: Union[VectorArray, List[List[float]]],
-        metadata_values: Optional[List[Dict[str, Any]]] = None,
+        ids: list[str],
+        vectors: VectorArray | list[list[float]],
+        metadata_values: list[dict[str, Any]] | None = None,
     ) -> VectorOperationResponse:
         return self._execute_numpy_vector_batch(
             collection_id,
@@ -470,9 +469,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def upsert_numpy(
         self,
         collection_id: str,
-        ids: List[str],
-        vectors: Union[VectorArray, List[List[float]]],
-        metadata_values: Optional[List[Dict[str, Any]]] = None,
+        ids: list[str],
+        vectors: VectorArray | list[list[float]],
+        metadata_values: list[dict[str, Any]] | None = None,
     ) -> VectorOperationResponse:
         return self._execute_numpy_vector_batch(
             collection_id,
@@ -513,7 +512,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def insert_records(
         self,
         collection_id: str,
-        records: Union[List[ProximaRecord], List[Dict[str, Any]]],
+        records: list[ProximaRecord] | list[dict[str, Any]],
         **kwargs,
     ) -> BatchResult:
         """Insert ProximaRecord-shaped payloads into a collection.
@@ -560,7 +559,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def upsert_records(
         self,
         collection_id: str,
-        records: Union[List[ProximaRecord], List[Dict[str, Any]]],
+        records: list[ProximaRecord] | list[dict[str, Any]],
         **kwargs,
     ) -> BatchResult:
         """Upsert ProximaRecord-shaped payloads into a collection."""
@@ -606,7 +605,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def insert_vectors(
         self,
         collection_id: str,
-        vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
+        vectors: list[VectorRecord] | list[dict[str, Any]],
         **kwargs,
     ) -> VectorOperationResponse:
         """Compatibility alias for record-native inserts."""
@@ -617,7 +616,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def upsert_vectors(
         self,
         collection_id: str,
-        vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
+        vectors: list[VectorRecord] | list[dict[str, Any]],
         **kwargs,
     ) -> VectorOperationResponse:
         """Compatibility alias for record-native upserts."""
@@ -628,10 +627,10 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def get_vectors(
         self,
         collection_id: str,
-        vector_ids: List[str],
+        vector_ids: list[str],
         include_vectors: bool = True,
         **kwargs,
-    ) -> List[VectorRecord]:
+    ) -> list[VectorRecord]:
         """Get vectors by IDs."""
         try:
             if hasattr(self._db, "get_vectors"):
@@ -672,7 +671,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             return []
 
     def delete_vectors(
-        self, collection_id: str, vector_ids: List[str], **kwargs
+        self, collection_id: str, vector_ids: list[str], **kwargs
     ) -> VectorOperationResponse:
         """Delete vectors by IDs."""
         start_time = time.time()
@@ -681,7 +680,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             if hasattr(self._db, "delete_vectors"):
                 result = self._db.delete_vectors(collection_id, vector_ids)
             elif hasattr(self._db, "delete_vector") and len(vector_ids) == 1:
-                result = 1 if self._db.delete_vector(collection_id, vector_ids[0]) else 0
+                result = (
+                    1 if self._db.delete_vector(collection_id, vector_ids[0]) else 0
+                )
             else:
                 return VectorOperationResponse(
                     success=False,
@@ -795,11 +796,11 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         collection_id: str,
         query_vector: VectorArray,
         top_k: int = 10,
-        filter: Optional[FilterDict] = None,
+        filter: FilterDict | None = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
         **kwargs,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Search for similar vectors.
 
         The embedded API returns PyO3 objects or dictionaries from direct
@@ -808,7 +809,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         try:
             filter_expr = None
             if isinstance(filter, dict) and filter:
-                filter_expr = " AND ".join(f"{key} = '{value}'" for key, value in filter.items())
+                filter_expr = " AND ".join(
+                    f"{key} = '{value}'" for key, value in filter.items()
+                )
 
             if isinstance(query_vector, np.ndarray):
                 query_array = np.asarray(query_vector, dtype=np.float32)
@@ -841,13 +844,13 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def batch_search(
         self,
         collection_id: str,
-        query_vectors: List[VectorArray],
+        query_vectors: list[VectorArray],
         top_k: int = 10,
-        filter: Optional[FilterDict] = None,
+        filter: FilterDict | None = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
         **kwargs,
-    ) -> List[List[SearchResult]]:
+    ) -> list[list[SearchResult]]:
         """Batch search for similar vectors."""
         # Normalize query vectors
         normalized_queries = []
@@ -900,7 +903,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
 
     def _to_search_results(
         self, results: Any, include_vectors: bool, include_metadata: bool
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Convert embedded search results to SearchResult list.
 
         Handles various result formats:
@@ -968,14 +971,14 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
 
     @staticmethod
     def _graph_id_from_args(
-        graph: Optional[str],
-        kwargs: Dict[str, Any],
+        graph: str | None,
+        kwargs: dict[str, Any],
         default: str = "default",
     ) -> str:
         return graph or kwargs.pop("graph_id", None) or default
 
     @staticmethod
-    def _normalize_graph_node(node: Any) -> Optional[Dict[str, Any]]:
+    def _normalize_graph_node(node: Any) -> dict[str, Any] | None:
         if node is None:
             return None
         if isinstance(node, dict):
@@ -991,7 +994,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         }
 
     @staticmethod
-    def _normalize_graph_edge(edge: Any) -> Dict[str, Any]:
+    def _normalize_graph_edge(edge: Any) -> dict[str, Any]:
         if isinstance(edge, dict):
             return {
                 "id": edge.get("id"),
@@ -1012,7 +1015,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             "properties": dict(getattr(edge, "properties", {}) or {}),
         }
 
-    def create_graph(self, graph_id: str, **kwargs) -> Dict[str, Any]:
+    def create_graph(self, graph_id: str, **kwargs) -> dict[str, Any]:
         """Create a graph collection via embedded API."""
         engine = kwargs.get("engine")
         try:
@@ -1027,7 +1030,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             logger.error(f"Failed to create graph: {e}")
             raise
 
-    def delete_graph(self, graph_id: str, **kwargs) -> Dict[str, Any]:
+    def delete_graph(self, graph_id: str, **kwargs) -> dict[str, Any]:
         """Delete a graph collection via embedded API."""
         try:
             if hasattr(self._db, "delete_graph"):
@@ -1040,13 +1043,13 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
 
     def query_nodes(
         self,
-        graph: Optional[str] = None,
-        labels: Optional[List[str]] = None,
-        properties: Optional[Dict[str, Any]] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        graph: str | None = None,
+        labels: list[str] | None = None,
+        properties: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Query graph nodes via embedded API."""
         try:
             graph_id = self._graph_id_from_args(graph, kwargs)
@@ -1069,11 +1072,11 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         self,
         start_node_id: str,
         max_depth: int = 3,
-        edge_types: Optional[List[str]] = None,
-        limit: Optional[int] = None,
-        graph: Optional[str] = None,
+        edge_types: list[str] | None = None,
+        limit: int | None = None,
+        graph: str | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Traverse graph via embedded API."""
         try:
             graph_id = self._graph_id_from_args(graph, kwargs)
@@ -1085,7 +1088,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
                     edge_types=edge_types,
                     limit=limit,
                 )
-                return result if isinstance(result, dict) else {"nodes": [], "edges": []}
+                return (
+                    result if isinstance(result, dict) else {"nodes": [], "edges": []}
+                )
             raise NotImplementedError("traverse_graph not implemented in embedded API")
         except Exception as e:
             logger.error(f"Failed to traverse graph: {e}")
@@ -1094,11 +1099,11 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def create_node(
         self,
         node_id: str,
-        labels: List[str],
-        properties: Dict[str, Any],
-        graph: Optional[str] = None,
+        labels: list[str],
+        properties: dict[str, Any],
+        graph: str | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a graph node via embedded API."""
         try:
             graph_id = self._graph_id_from_args(graph, kwargs)
@@ -1120,12 +1125,12 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         self,
         edge_id: str,
         edge_type: str,
-        from_node: Optional[str] = None,
-        to_node: Optional[str] = None,
-        properties: Optional[Dict[str, Any]] = None,
-        graph: Optional[str] = None,
+        from_node: str | None = None,
+        to_node: str | None = None,
+        properties: dict[str, Any] | None = None,
+        graph: str | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a graph edge via embedded API."""
         try:
             graph_id = self._graph_id_from_args(graph, kwargs)
@@ -1151,9 +1156,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def get_node(
         self,
         node_id: str,
-        graph: Optional[str] = None,
+        graph: str | None = None,
         **kwargs,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get a graph node by ID via embedded API."""
         try:
             graph_id = self._graph_id_from_args(graph, kwargs)
@@ -1168,10 +1173,10 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def get_outgoing_edges(
         self,
         node_id: str,
-        graph: Optional[str] = None,
-        edge_types: Optional[List[str]] = None,
+        graph: str | None = None,
+        edge_types: list[str] | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get outgoing graph edges via embedded API."""
         try:
             graph_id = self._graph_id_from_args(graph, kwargs)
@@ -1182,7 +1187,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
                     edge_types=edge_types,
                 )
                 return [self._normalize_graph_edge(edge) for edge in (edges or [])]
-            raise NotImplementedError("get_outgoing_edges not implemented in embedded API")
+            raise NotImplementedError(
+                "get_outgoing_edges not implemented in embedded API"
+            )
         except Exception as e:
             logger.error(f"Failed to get outgoing edges: {e}")
             raise
@@ -1190,10 +1197,10 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def get_incoming_edges(
         self,
         node_id: str,
-        graph: Optional[str] = None,
-        edge_types: Optional[List[str]] = None,
+        graph: str | None = None,
+        edge_types: list[str] | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get incoming graph edges via embedded API."""
         try:
             graph_id = self._graph_id_from_args(graph, kwargs)
@@ -1204,7 +1211,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
                     edge_types=edge_types,
                 )
                 return [self._normalize_graph_edge(edge) for edge in (edges or [])]
-            raise NotImplementedError("get_incoming_edges not implemented in embedded API")
+            raise NotImplementedError(
+                "get_incoming_edges not implemented in embedded API"
+            )
         except Exception as e:
             logger.error(f"Failed to get incoming edges: {e}")
             raise
@@ -1212,7 +1221,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def delete_node(
         self,
         node_id: str,
-        graph: Optional[str] = None,
+        graph: str | None = None,
         **kwargs,
     ) -> bool:
         """Delete a graph node via embedded API."""
@@ -1225,7 +1234,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             logger.error(f"Failed to delete node: {e}")
             raise
 
-    def get_graph_stats(self, graph_id: str, **kwargs) -> Dict[str, Any]:
+    def get_graph_stats(self, graph_id: str, **kwargs) -> dict[str, Any]:
         """Get graph statistics via embedded API."""
         try:
             if hasattr(self._db, "graph_stats"):
@@ -1239,7 +1248,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             logger.error(f"Failed to get graph stats: {e}")
             raise
 
-    def execute_graph_query(self, graph: str, query: str, **kwargs) -> Dict[str, Any]:
+    def execute_graph_query(self, graph: str, query: str, **kwargs) -> dict[str, Any]:
         """Execute a graph query via embedded API."""
         try:
             if hasattr(self._db, "execute_graph_query"):
@@ -1271,8 +1280,8 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     # ==========================================================================
 
     def create_document_collection(
-        self, name: str, config: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Dict[str, Any]:
+        self, name: str, config: dict[str, Any] | None = None, **kwargs
+    ) -> dict[str, Any]:
         """Create a document collection via embedded API."""
         try:
             if hasattr(self._db, "create_document_collection"):
@@ -1289,8 +1298,8 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             raise
 
     def _create_document_collection_as_vector(
-        self, name: str, config: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        self, name: str, config: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Create a document collection using vector storage as fallback."""
         # Create a vector collection with a special tag for documents
         dimension = config.get("dimension", 768) if config else 768
@@ -1309,10 +1318,10 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def insert_document(
         self,
         collection_name: str,
-        document: Dict[str, Any],
-        id: Optional[str] = None,
+        document: dict[str, Any],
+        id: str | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Insert a document via embedded API."""
         try:
             if hasattr(self._db, "insert_document"):
@@ -1330,8 +1339,8 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             raise
 
     def _insert_document_as_vector(
-        self, collection_name: str, document: Dict[str, Any], id: Optional[str] = None
-    ) -> Dict[str, Any]:
+        self, collection_name: str, document: dict[str, Any], id: str | None = None
+    ) -> dict[str, Any]:
         """Insert a document using vector storage as fallback."""
         import json
 
@@ -1367,9 +1376,9 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         self,
         collection_name: str,
         doc_id: str,
-        projection: Optional[List[str]] = None,
+        projection: list[str] | None = None,
         **kwargs,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get a document by ID via embedded API."""
         try:
             if hasattr(self._db, "get_document"):
@@ -1384,7 +1393,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
 
     def _get_document_as_vector(
         self, collection_name: str, doc_id: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get a document using vector storage as fallback."""
         import json
 
@@ -1405,11 +1414,11 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def query_documents(
         self,
         collection_name: str,
-        filter: Optional[Dict[str, Any]] = None,
-        projection: Optional[List[str]] = None,
+        filter: dict[str, Any] | None = None,
+        projection: list[str] | None = None,
         limit: int = 100,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Query documents with filter via embedded API."""
         try:
             if hasattr(self._db, "query_documents"):
@@ -1432,20 +1441,20 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             raise
 
     def _query_documents_as_vector(
-        self, collection_name: str, filter: Optional[Dict[str, Any]], limit: int
-    ) -> Dict[str, Any]:
+        self, collection_name: str, filter: dict[str, Any] | None, limit: int
+    ) -> dict[str, Any]:
         """Query documents using vector storage as fallback."""
         # For now, return all vectors (could be improved with filtering)
         # This is a simplified fallback implementation
         return {"documents": [], "count": 0, "implementation": "vector_fallback"}
 
     def update_document(
-        self, collection_name: str, doc_id: str, updates: List[Dict[str, Any]], **kwargs
-    ) -> Dict[str, Any]:
+        self, collection_name: str, doc_id: str, updates: list[dict[str, Any]], **kwargs
+    ) -> dict[str, Any]:
         """Update a document via embedded API."""
         try:
             if hasattr(self._db, "update_document"):
-                update_map: Dict[str, Any] = {}
+                update_map: dict[str, Any] = {}
                 for update in updates:
                     path = update.get("path")
                     if path:
@@ -1460,8 +1469,8 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             raise
 
     def _update_document_as_vector(
-        self, collection_name: str, doc_id: str, updates: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, collection_name: str, doc_id: str, updates: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """Update a document using vector storage as fallback."""
         # Get existing document
         existing = self.get_document(collection_name, doc_id)
@@ -1502,7 +1511,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             logger.error(f"Failed to delete document: {e}")
             return False
 
-    def list_document_collections(self, **kwargs) -> List[Dict[str, Any]]:
+    def list_document_collections(self, **kwargs) -> list[dict[str, Any]]:
         """List all document collections via embedded API."""
         try:
             if hasattr(self._db, "list_document_collections"):
@@ -1543,11 +1552,11 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         self,
         collection: str,
         text_query: str,
-        query_vector: List[float],
+        query_vector: list[float],
         fusion_strategy: str = "rrf",
         top_k: int = 10,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute hybrid search via embedded API."""
         try:
             if hasattr(self._db, "hybrid_search"):
@@ -1567,8 +1576,8 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             raise
 
     def _hybrid_search_as_vector(
-        self, collection: str, query_vector: List[float], top_k: int
-    ) -> Dict[str, Any]:
+        self, collection: str, query_vector: list[float], top_k: int
+    ) -> dict[str, Any]:
         """Fallback hybrid search using vector search only."""
         results = self.search(
             collection_id=collection,
@@ -1595,8 +1604,8 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     # ==========================================================================
 
     def create_timeseries_collection(
-        self, name: str, config: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Dict[str, Any]:
+        self, name: str, config: dict[str, Any] | None = None, **kwargs
+    ) -> dict[str, Any]:
         """Create a time-series collection via embedded API."""
         try:
             if hasattr(self._db, "create_timeseries_collection"):
@@ -1612,8 +1621,8 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             raise
 
     def _create_timeseries_collection_as_vector(
-        self, name: str, config: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        self, name: str, config: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Create a time-series collection using vector storage as fallback."""
         dimension = config.get("dimension", 128) if config else 128
         collection = self.create_collection(name, config={"dimension": dimension})
@@ -1629,8 +1638,8 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         }
 
     def ingest_timeseries(
-        self, collection_name: str, points: List[Dict[str, Any]], **kwargs
-    ) -> Dict[str, Any]:
+        self, collection_name: str, points: list[dict[str, Any]], **kwargs
+    ) -> dict[str, Any]:
         """Ingest time-series data points via embedded API."""
         try:
             if hasattr(self._db, "ingest_timeseries"):
@@ -1647,8 +1656,8 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             raise
 
     def _ingest_timeseries_as_vector(
-        self, collection_name: str, points: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, collection_name: str, points: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """Ingest time-series data using vector storage as fallback."""
         import json
         from datetime import datetime
@@ -1689,10 +1698,10 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         start_time: str,
         end_time: str,
         aggregation: str = "avg",
-        bucket_ms: Optional[int] = None,
-        tag_filters: Optional[Dict[str, str]] = None,
+        bucket_ms: int | None = None,
+        tag_filters: dict[str, str] | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Query time-series data with optional aggregation via embedded API."""
         try:
             if hasattr(self._db, "query_timeseries"):
@@ -1719,8 +1728,8 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         collection_name: str,
         start_time: str,
         end_time: str,
-        tag_filters: Optional[Dict[str, str]],
-    ) -> Dict[str, Any]:
+        tag_filters: dict[str, str] | None,
+    ) -> dict[str, Any]:
         """Query time-series data using vector storage as fallback."""
         import json
 
@@ -1771,7 +1780,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             "implementation": "vector_fallback",
         }
 
-    def list_timeseries_collections(self, **kwargs) -> List[Dict[str, Any]]:
+    def list_timeseries_collections(self, **kwargs) -> list[dict[str, Any]]:
         """List all time-series collections via embedded API."""
         try:
             if hasattr(self._db, "list_timeseries_collections"):
@@ -1812,10 +1821,10 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def execute_sql(
         self,
         query: str,
-        parameters: Optional[List[Any]] = None,
-        collection: Optional[str] = None,
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute SQL via the embedded API."""
         try:
             if hasattr(self._db, "execute_sql"):
@@ -1828,10 +1837,10 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
     def execute_unified_query(
         self,
         query: str,
-        query_vector: Optional[List[float]] = None,
-        fusion_strategy: Optional[str] = None,
+        query_vector: list[float] | None = None,
+        fusion_strategy: str | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Execute a multi-model query via the embedded API."""
         try:
             if hasattr(self._db, "execute_unified_query"):
@@ -1847,8 +1856,8 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             raise
 
     def create_observability_namespace(
-        self, name: str, retention_days: Optional[int] = None, **kwargs
-    ) -> Dict[str, Any]:
+        self, name: str, retention_days: int | None = None, **kwargs
+    ) -> dict[str, Any]:
         try:
             if hasattr(self._db, "create_observability_namespace"):
                 self._db.create_observability_namespace(name, retention_days)
@@ -1860,7 +1869,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             logger.error(f"Failed to create observability namespace: {e}")
             raise
 
-    def ingest_logs(self, namespace: str, logs: List[Dict[str, Any]], **kwargs) -> int:
+    def ingest_logs(self, namespace: str, logs: list[dict[str, Any]], **kwargs) -> int:
         if hasattr(self._db, "ingest_logs"):
             return int(self._db.ingest_logs(namespace, logs))
         raise NotImplementedError("ingest_logs not implemented in embedded API")
@@ -1870,10 +1879,10 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         namespace: str,
         start_time_ns: int,
         end_time_ns: int,
-        query: Optional[str] = None,
+        query: str | None = None,
         limit: int = 100,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if hasattr(self._db, "query_logs"):
             return list(
                 self._db.query_logs(
@@ -1888,7 +1897,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         raise NotImplementedError("query_logs not implemented in embedded API")
 
     def ingest_metrics(
-        self, namespace: str, samples: List[Dict[str, Any]], **kwargs
+        self, namespace: str, samples: list[dict[str, Any]], **kwargs
     ) -> int:
         if hasattr(self._db, "ingest_metrics"):
             return int(self._db.ingest_metrics(namespace, samples))
@@ -1899,11 +1908,11 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         namespace: str,
         metric_name: str,
         aggregation: str = "avg",
-        start_time: Optional[str] = None,
-        end_time: Optional[str] = None,
+        start_time: str | None = None,
+        end_time: str | None = None,
         step_seconds: int = 60,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if hasattr(self._db, "aggregate_metrics"):
             return list(
                 self._db.aggregate_metrics(
@@ -1919,7 +1928,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         raise NotImplementedError("aggregate_metrics not implemented in embedded API")
 
     def ingest_traces(
-        self, namespace: str, traces: List[Dict[str, Any]], **kwargs
+        self, namespace: str, traces: list[dict[str, Any]], **kwargs
     ) -> int:
         if hasattr(self._db, "ingest_traces"):
             return int(self._db.ingest_traces(namespace, traces))
@@ -1930,14 +1939,14 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
         namespace: str,
         start_time_ns: int,
         end_time_ns: int,
-        trace_id: Optional[str] = None,
-        service: Optional[str] = None,
-        operation: Optional[str] = None,
-        min_duration_ns: Optional[int] = None,
-        status: Optional[str] = None,
+        trace_id: str | None = None,
+        service: str | None = None,
+        operation: str | None = None,
+        min_duration_ns: int | None = None,
+        status: str | None = None,
         limit: int = 100,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         if hasattr(self._db, "query_traces"):
             return list(
                 self._db.query_traces(
@@ -1955,7 +1964,7 @@ class EmbeddedProtocolAdapter(BaseProtocolAdapter):
             )
         raise NotImplementedError("query_traces not implemented in embedded API")
 
-    def get_trace(self, namespace: str, trace_id: str, **kwargs) -> Dict[str, Any]:
+    def get_trace(self, namespace: str, trace_id: str, **kwargs) -> dict[str, Any]:
         if hasattr(self._db, "get_trace"):
             return dict(self._db.get_trace(namespace, trace_id) or {})
         raise NotImplementedError("get_trace not implemented in embedded API")

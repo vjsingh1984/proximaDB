@@ -5,7 +5,6 @@ Fast deterministic embeddings for testing without model downloads.
 """
 
 import hashlib
-from typing import List
 
 import numpy as np
 
@@ -66,7 +65,7 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
         """No model to load - return True to indicate provider is ready"""
         return True
 
-    def embed(self, texts: List[str]) -> np.ndarray:
+    def embed(self, texts: list[str]) -> np.ndarray:
         """Generate simulated embeddings"""
         if not texts:
             return np.array([])
@@ -92,7 +91,7 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
 
     def _hash_embedding(self, text: str, dimension: int, seed: int) -> np.ndarray:
         """Generate embedding using deterministic hash"""
-        hash_input = f"{text}_{seed}".encode("utf-8")
+        hash_input = f"{text}_{seed}".encode()
         hash_obj = hashlib.sha256(hash_input)
 
         embedding = []
@@ -100,7 +99,7 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
 
         for i in range(dimension):
             if i * 4 >= len(hash_bytes):
-                hash_input = f"{text}_{seed}_{i}".encode("utf-8")
+                hash_input = f"{text}_{seed}_{i}".encode()
                 hash_obj = hashlib.sha256(hash_input)
                 hash_bytes = hash_obj.digest()
 

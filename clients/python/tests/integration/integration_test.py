@@ -8,14 +8,12 @@ Tests the client SDK against a running ProximaDB server
 # PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/integration/integration_test.py
 
 import os
-import subprocess
 import time
-from typing import Any, Dict, List
 
 import numpy as np
 import requests
 
-from proximadb_sdk import CollectionConfig, ProximaDBClient, ProximaDBError, connect
+from proximadb_sdk import CollectionConfig, ProximaDBClient
 
 
 class IntegrationTest:

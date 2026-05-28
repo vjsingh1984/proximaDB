@@ -30,8 +30,9 @@ Robustness contract:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Optional, Protocol
+from typing import Any, Protocol
 
 from proximadb_sdk.integrations.mcp_tools import render_invocation
 
@@ -45,8 +46,7 @@ class Transport(Protocol):
 
     def __call__(
         self, method: str, url: str, json: dict[str, Any]
-    ) -> dict[str, Any]:
-        ...
+    ) -> dict[str, Any]: ...
 
 
 class GraphWalkError(RuntimeError):
@@ -67,9 +67,7 @@ class StubTransport:
     response: dict[str, Any] = field(default_factory=dict)
     calls: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
 
-    def __call__(
-        self, method: str, url: str, json: dict[str, Any]
-    ) -> dict[str, Any]:
+    def __call__(self, method: str, url: str, json: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((method, url, dict(json)))
         return self.response
 
@@ -85,9 +83,7 @@ class GraphWalkClient:
             that raises -- you must supply one in production.
     """
 
-    def __init__(
-        self, base_url: str, transport: Optional[Transport] = None
-    ) -> None:
+    def __init__(self, base_url: str, transport: Transport | None = None) -> None:
         self._base_url = base_url.rstrip("/")
         if transport is None:
             transport = self._no_transport_configured  # type: ignore[assignment]
@@ -130,7 +126,7 @@ class GraphWalkClient:
         *,
         graph_id: str,
         node_id: str,
-        edge_type: Optional[str] = None,
+        edge_type: str | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
         """Single-step neighbor expansion. See
@@ -151,9 +147,7 @@ class GraphWalkClient:
 
     # ---- low-level dispatch ---------------------------------------
 
-    def invoke(
-        self, tool_name: str, arguments: Mapping[str, Any]
-    ) -> dict[str, Any]:
+    def invoke(self, tool_name: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
         """Generic dispatch: call any registered tool by name.
 
         This is the entry point an LLM agent's tool-call loop hits

@@ -5,7 +5,6 @@ Provides L2 normalization utilities for embedding vectors.
 """
 
 import logging
-from typing import List
 
 import numpy as np
 

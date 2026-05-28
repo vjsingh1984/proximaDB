@@ -6,7 +6,7 @@ Full end-to-end batching tests would require a live server and are better suited
 for E2E test suites.
 """
 
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 

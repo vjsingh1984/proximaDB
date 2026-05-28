@@ -27,10 +27,8 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
 
 import pytest
-
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 PROTO_ROOT = REPO_ROOT / "proto" / "proximadb"
@@ -46,14 +44,14 @@ BASELINE_PATH = Path(__file__).resolve().parent / "grpc_drift_baseline.json"
 @dataclass(frozen=True)
 class ProtoService:
     name: str
-    rpcs: Tuple[str, ...]
+    rpcs: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class ProtoFile:
     path: Path
     package: str
-    services: Tuple[ProtoService, ...]
+    services: tuple[ProtoService, ...]
 
 
 _SERVICE_RE = re.compile(r"^\s*service\s+(\w+)\s*\{", re.MULTILINE)
@@ -69,7 +67,7 @@ def _parse_proto(path: Path) -> ProtoFile:
     package_match = _PACKAGE_RE.search(text)
     package = package_match.group(1) if package_match else ""
 
-    services: List[ProtoService] = []
+    services: list[ProtoService] = []
     for svc_match in _SERVICE_RE.finditer(text):
         svc_start = svc_match.end()
         depth = 1
@@ -95,15 +93,15 @@ def _parse_proto(path: Path) -> ProtoFile:
 @dataclass(frozen=True)
 class StubModule:
     path: Path
-    servicers: Dict[str, Set[str]]  # ServicerClassName -> {method, ...}
+    servicers: dict[str, set[str]]  # ServicerClassName -> {method, ...}
 
 
 def _parse_generated_stub(path: Path) -> StubModule:
     tree = ast.parse(path.read_text())
-    servicers: Dict[str, Set[str]] = {}
+    servicers: dict[str, set[str]] = {}
     for node in tree.body:
         if isinstance(node, ast.ClassDef) and node.name.endswith("Servicer"):
-            methods: Set[str] = set()
+            methods: set[str] = set()
             for sub in node.body:
                 if isinstance(sub, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     methods.add(sub.name)
@@ -120,22 +118,21 @@ def _rel(p: Path) -> str:
     return str(p.relative_to(REPO_ROOT))
 
 
-def _compute_drift() -> Set[str]:
+def _compute_drift() -> set[str]:
     """Return the current drift set in stable string form."""
     proto_files = [_parse_proto(p) for p in sorted(PROTO_ROOT.rglob("*.proto"))]
     stubs = [
-        _parse_generated_stub(p)
-        for p in sorted(PYTHON_SRC_ROOT.rglob("*_pb2_grpc.py"))
+        _parse_generated_stub(p) for p in sorted(PYTHON_SRC_ROOT.rglob("*_pb2_grpc.py"))
     ]
-    stubs_by_basename: Dict[str, List[StubModule]] = defaultdict(list)
+    stubs_by_basename: dict[str, list[StubModule]] = defaultdict(list)
     for s in stubs:
         stubs_by_basename[s.path.name].append(s)
-    all_servicers: Dict[str, Set[str]] = defaultdict(set)
+    all_servicers: dict[str, set[str]] = defaultdict(set)
     for stub in stubs:
         for class_name, methods in stub.servicers.items():
             all_servicers[class_name] |= methods
 
-    drift: Set[str] = set()
+    drift: set[str] = set()
     for proto in proto_files:
         if not proto.services:
             continue
@@ -150,13 +147,11 @@ def _compute_drift() -> Set[str]:
                 continue
             for rpc in service.rpcs:
                 if rpc not in all_servicers[servicer]:
-                    drift.add(
-                        f"missing-rpc:{_rel(proto.path)}::{service.name}.{rpc}"
-                    )
+                    drift.add(f"missing-rpc:{_rel(proto.path)}::{service.name}.{rpc}")
     return drift
 
 
-def _load_baseline() -> Set[str]:
+def _load_baseline() -> set[str]:
     if not BASELINE_PATH.exists():
         return set()
     data = json.loads(BASELINE_PATH.read_text())
@@ -169,17 +164,17 @@ def _load_baseline() -> Set[str]:
 
 
 @pytest.fixture(scope="module")
-def proto_files() -> List[ProtoFile]:
+def proto_files() -> list[ProtoFile]:
     return [_parse_proto(p) for p in sorted(PROTO_ROOT.rglob("*.proto"))]
 
 
 @pytest.fixture(scope="module")
-def current_drift() -> Set[str]:
+def current_drift() -> set[str]:
     return _compute_drift()
 
 
 @pytest.fixture(scope="module")
-def baseline() -> Set[str]:
+def baseline() -> set[str]:
     return _load_baseline()
 
 
@@ -191,9 +186,9 @@ def baseline() -> Set[str]:
 def test_proto_inventory_nonempty(proto_files):
     """Sanity: parsing finds protos and at least one declares a service."""
     assert proto_files, "No .proto files found under proto/proximadb"
-    assert any(p.services for p in proto_files), (
-        "No .proto files declare any service — parser is likely broken"
-    )
+    assert any(
+        p.services for p in proto_files
+    ), "No .proto files declare any service — parser is likely broken"
 
 
 def test_no_new_proto_stub_drift(current_drift, baseline):

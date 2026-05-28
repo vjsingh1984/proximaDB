@@ -23,9 +23,10 @@ import shutil
 import sys
 import tempfile
 import time
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -59,11 +60,11 @@ class MetricResult:
     count: int
     total_ms: float
     throughput: float
-    avg_ms: Optional[float] = None
-    p50_ms: Optional[float] = None
-    p95_ms: Optional[float] = None
-    max_ms: Optional[float] = None
-    notes: Optional[str] = None
+    avg_ms: float | None = None
+    p50_ms: float | None = None
+    p95_ms: float | None = None
+    max_ms: float | None = None
+    notes: str | None = None
 
 
 def _normalized_random_vectors(count: int, dimension: int, seed: int) -> np.ndarray:
@@ -74,8 +75,8 @@ def _normalized_random_vectors(count: int, dimension: int, seed: int) -> np.ndar
     return vectors / norms
 
 
-def _run_samples(iterations: int, fn: Callable[[], Any]) -> tuple[List[float], Any]:
-    latencies_ms: List[float] = []
+def _run_samples(iterations: int, fn: Callable[[], Any]) -> tuple[list[float], Any]:
+    latencies_ms: list[float] = []
     last_result = None
     for _ in range(iterations):
         start = time.perf_counter()
@@ -87,8 +88,8 @@ def _run_samples(iterations: int, fn: Callable[[], Any]) -> tuple[List[float], A
 def _run_query_samples(
     queries: Iterable[np.ndarray],
     fn: Callable[[np.ndarray], Any],
-) -> tuple[List[float], Any]:
-    latencies_ms: List[float] = []
+) -> tuple[list[float], Any]:
+    latencies_ms: list[float] = []
     last_result = None
     for query in queries:
         start = time.perf_counter()
@@ -105,7 +106,7 @@ def _wait_for_embedded_axis_ready(
     base_dir: str,
     timeout_s: float,
     poll_interval_s: float = 0.5,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if timeout_s <= 0:
         return {
             "enabled": False,
@@ -126,7 +127,7 @@ def _wait_for_embedded_axis_ready(
 
     start = time.perf_counter()
     deadline = start + timeout_s
-    last_state: Dict[str, Any] = {}
+    last_state: dict[str, Any] = {}
 
     while time.perf_counter() < deadline:
         with queue_state_paths[0].open("r", encoding="utf-8") as handle:
@@ -152,7 +153,7 @@ def _wait_for_embedded_axis_ready(
     }
 
 
-def _build_vector_metadata(start: int, count: int) -> List[Dict[str, Any]]:
+def _build_vector_metadata(start: int, count: int) -> list[dict[str, Any]]:
     return [
         {
             "file_path": f"src/module_{(start + i) % 100}.py",
@@ -173,10 +174,10 @@ def _vector_insert_baseline(
     dimension: int,
     seed: int,
     with_metadata: bool = False,
-) -> tuple[MetricResult, np.ndarray, List[np.ndarray]]:
+) -> tuple[MetricResult, np.ndarray, list[np.ndarray]]:
     start = time.perf_counter()
-    query_vector: Optional[np.ndarray] = None
-    query_vectors: List[np.ndarray] = []
+    query_vector: np.ndarray | None = None
+    query_vectors: list[np.ndarray] = []
 
     for offset in range(0, total_vectors, batch_size):
         current = min(batch_size, total_vectors - offset)
@@ -216,10 +217,10 @@ def benchmark_native_vector_surface(
     batch_size: int,
     dimension: int,
     engine: str,
-    search_mode: Optional[str],
+    search_mode: str | None,
     wait_for_axis_ready_s: float,
-) -> List[MetricResult]:
-    results: List[MetricResult] = []
+) -> list[MetricResult]:
+    results: list[MetricResult] = []
 
     for total_vectors in vector_counts:
         temp_dir = tempfile.mkdtemp(prefix=f"proximadb_vec_{total_vectors}_")
@@ -280,7 +281,7 @@ def benchmark_native_vector_surface(
     return results
 
 
-def _make_graph_nodes(count: int) -> List[Any]:
+def _make_graph_nodes(count: int) -> list[Any]:
     nodes = []
     for index in range(count):
         node_kind = "function" if index % 2 == 0 else "class"
@@ -298,7 +299,7 @@ def _make_graph_nodes(count: int) -> List[Any]:
     return nodes
 
 
-def _make_graph_edges(node_count: int) -> List[Any]:
+def _make_graph_edges(node_count: int) -> list[Any]:
     edges = []
     for index in range(node_count):
         next_index = (index + 1) % node_count
@@ -318,8 +319,8 @@ def _make_graph_edges(node_count: int) -> List[Any]:
 def _benchmark_documents(
     db: Any,
     document_count: int,
-) -> List[MetricResult]:
-    results: List[MetricResult] = []
+) -> list[MetricResult]:
+    results: list[MetricResult] = []
     try:
         db.create_document_collection(DOCUMENT_COLLECTION, config={})
     except TypeError:
@@ -381,8 +382,8 @@ def _benchmark_documents(
     return results
 
 
-def _benchmark_graph(native: Any, node_count: int) -> List[MetricResult]:
-    results: List[MetricResult] = []
+def _benchmark_graph(native: Any, node_count: int) -> list[MetricResult]:
+    results: list[MetricResult] = []
     try:
         native.create_graph(GRAPH_COLLECTION, "orion")
     except Exception as exc:
@@ -464,8 +465,8 @@ def _benchmark_graph(native: Any, node_count: int) -> List[MetricResult]:
     return results
 
 
-def _benchmark_sql_and_unified(db: Any, query_vector: np.ndarray) -> List[MetricResult]:
-    results: List[MetricResult] = []
+def _benchmark_sql_and_unified(db: Any, query_vector: np.ndarray) -> list[MetricResult]:
+    results: list[MetricResult] = []
     vector_literal = _format_vector_literal(query_vector)
     vector_search_sql = (
         f"SELECT id, score FROM VECTOR_SEARCH('{VECTOR_COLLECTION}', "
@@ -518,8 +519,8 @@ def _benchmark_observability(
     db: Any,
     log_count: int,
     trace_count: int,
-) -> List[MetricResult]:
-    results: List[MetricResult] = []
+) -> list[MetricResult]:
+    results: list[MetricResult] = []
     try:
         db.create_observability_namespace(OBS_NAMESPACE, retention_days=7)
     except Exception as exc:
@@ -700,9 +701,9 @@ def benchmark_codingagent_shape(
     trace_count: int,
     dimension: int,
     engine: str,
-    search_mode: Optional[str],
+    search_mode: str | None,
     wait_for_axis_ready_s: float,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     temp_dir = tempfile.mkdtemp(prefix="proximadb_victor_shape_")
     try:
         api_surface = "raw_native"
@@ -747,18 +748,20 @@ def benchmark_codingagent_shape(
 
         vector_latencies_ms, vector_search_result = _run_query_samples(
             query_vectors,
-            lambda query: native.search_numpy(
-                VECTOR_COLLECTION,
-                query,
-                10,
-                None,
-                search_mode,
-            )
-            if hasattr(native, "search_numpy") and search_mode
-            else (
-                native.search_numpy(VECTOR_COLLECTION, query, 10)
-                if hasattr(native, "search_numpy")
-                else native.search(VECTOR_COLLECTION, query.tolist(), 10)
+            lambda query: (
+                native.search_numpy(
+                    VECTOR_COLLECTION,
+                    query,
+                    10,
+                    None,
+                    search_mode,
+                )
+                if hasattr(native, "search_numpy") and search_mode
+                else (
+                    native.search_numpy(VECTOR_COLLECTION, query, 10)
+                    if hasattr(native, "search_numpy")
+                    else native.search(VECTOR_COLLECTION, query.tolist(), 10)
+                )
             ),
         )
 
@@ -801,26 +804,12 @@ def benchmark_codingagent_shape(
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def _print_metric(metric: Dict[str, Any]) -> None:
-    avg = (
-        f" avg={metric['avg_ms']:.2f}ms"
-        if metric.get("avg_ms") is not None
-        else ""
-    )
-    p50 = (
-        f" p50={metric['p50_ms']:.2f}ms"
-        if metric.get("p50_ms") is not None
-        else ""
-    )
-    p95 = (
-        f" p95={metric['p95_ms']:.2f}ms"
-        if metric.get("p95_ms") is not None
-        else ""
-    )
+def _print_metric(metric: dict[str, Any]) -> None:
+    avg = f" avg={metric['avg_ms']:.2f}ms" if metric.get("avg_ms") is not None else ""
+    p50 = f" p50={metric['p50_ms']:.2f}ms" if metric.get("p50_ms") is not None else ""
+    p95 = f" p95={metric['p95_ms']:.2f}ms" if metric.get("p95_ms") is not None else ""
     max_ms = (
-        f" max={metric['max_ms']:.2f}ms"
-        if metric.get("max_ms") is not None
-        else ""
+        f" max={metric['max_ms']:.2f}ms" if metric.get("max_ms") is not None else ""
     )
     notes = f" notes={metric['notes']}" if metric.get("notes") else ""
     print(

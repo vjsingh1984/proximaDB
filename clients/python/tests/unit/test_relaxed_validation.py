@@ -5,15 +5,12 @@ Verifies that the SDK now allows server-unsupported configurations
 and provides appropriate warnings about fallbacks.
 """
 
-import warnings
-
 import pytest
 from pydantic import ValidationError
 
 from proximadb_sdk.models import (
     CollectionConfig,
     DistanceMetric,
-    IndexingAlgorithm,
     ServerCapabilities,
     StorageEngine,
 )

@@ -53,8 +53,6 @@ Usage:
 
 import asyncio
 import base64
-import hashlib
-import json
 import os
 import signal
 import subprocess
@@ -62,16 +60,13 @@ import sys
 import threading
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import (
     Any,
-    Callable,
-    Dict,
-    List,
     Optional,
     Protocol,
-    Union,
     runtime_checkable,
 )
 
@@ -88,7 +83,7 @@ class EmbeddingFunction(Protocol):
     This allows integration with any embedding provider.
     """
 
-    def __call__(self, text: str) -> List[float]:
+    def __call__(self, text: str) -> list[float]:
         """Generate embedding for text."""
         ...
 
@@ -97,7 +92,7 @@ class EmbeddingFunction(Protocol):
 class AsyncEmbeddingFunction(Protocol):
     """Protocol for async embedding functions."""
 
-    async def __call__(self, text: str) -> List[float]:
+    async def __call__(self, text: str) -> list[float]:
         """Generate embedding for text asynchronously."""
         ...
 
@@ -106,7 +101,7 @@ class AsyncEmbeddingFunction(Protocol):
 class BatchEmbeddingFunction(Protocol):
     """Protocol for batch embedding functions."""
 
-    def __call__(self, texts: List[str]) -> List[List[float]]:
+    def __call__(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts."""
         ...
 
@@ -118,12 +113,12 @@ class BaseEmbeddingModel(ABC):
     """
 
     @abstractmethod
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> list[float]:
         """Generate embedding for a single text."""
         pass
 
     @abstractmethod
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts."""
         pass
 
@@ -132,12 +127,12 @@ class BaseEmbeddingModel(ABC):
         """Get the embedding dimension."""
         pass
 
-    async def embed_async(self, text: str) -> List[float]:
+    async def embed_async(self, text: str) -> list[float]:
         """Async version of embed (default: runs sync in executor)."""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.embed, text)
 
-    async def embed_batch_async(self, texts: List[str]) -> List[List[float]]:
+    async def embed_batch_async(self, texts: list[str]) -> list[list[float]]:
         """Async version of embed_batch (default: runs sync in executor)."""
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self.embed_batch, texts)
@@ -157,7 +152,7 @@ class SentenceTransformerModel(BaseEmbeddingModel):
     """
 
     def __init__(
-        self, model_name: str = "BAAI/bge-small-en-v1.5", device: Optional[str] = None
+        self, model_name: str = "BAAI/bge-small-en-v1.5", device: str | None = None
     ):
         """Initialize sentence-transformer model.
 
@@ -168,7 +163,7 @@ class SentenceTransformerModel(BaseEmbeddingModel):
         self.model_name = model_name
         self.device = device
         self._model = None
-        self._dimension: Optional[int] = None
+        self._dimension: int | None = None
         self._lock = threading.Lock()
 
     def _ensure_loaded(self) -> None:
@@ -189,7 +184,7 @@ class SentenceTransformerModel(BaseEmbeddingModel):
                             "Install with: pip install sentence-transformers"
                         )
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> list[float]:
         """Generate embedding for text."""
         self._ensure_loaded()
         embedding = self._model.encode(
@@ -197,7 +192,7 @@ class SentenceTransformerModel(BaseEmbeddingModel):
         )
         return embedding.tolist()
 
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts."""
         self._ensure_loaded()
         embeddings = self._model.encode(
@@ -237,7 +232,7 @@ class OllamaEmbeddingModel(BaseEmbeddingModel):
         self.base_url = base_url
         self._dimension = dimension
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> list[float]:
         """Generate embedding using Ollama."""
         import httpx
 
@@ -249,7 +244,7 @@ class OllamaEmbeddingModel(BaseEmbeddingModel):
         response.raise_for_status()
         return response.json()["embedding"]
 
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts."""
         # Ollama doesn't have native batch API, so we parallelize
         import httpx
@@ -265,7 +260,7 @@ class OllamaEmbeddingModel(BaseEmbeddingModel):
                 embeddings.append(response.json()["embedding"])
         return embeddings
 
-    async def embed_async(self, text: str) -> List[float]:
+    async def embed_async(self, text: str) -> list[float]:
         """Generate embedding asynchronously."""
         import httpx
 
@@ -277,7 +272,7 @@ class OllamaEmbeddingModel(BaseEmbeddingModel):
             response.raise_for_status()
             return response.json()["embedding"]
 
-    async def embed_batch_async(self, texts: List[str]) -> List[List[float]]:
+    async def embed_batch_async(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings asynchronously with concurrency."""
         tasks = [self.embed_async(text) for text in texts]
         return await asyncio.gather(*tasks)
@@ -299,7 +294,7 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
     def __init__(
         self,
         model_name: str = "text-embedding-3-small",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
     ):
         """Initialize OpenAI embedding model.
 
@@ -318,7 +313,7 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
             "text-embedding-ada-002": 1536,
         }
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> list[float]:
         """Generate embedding using OpenAI."""
         import httpx
 
@@ -331,7 +326,7 @@ class OpenAIEmbeddingModel(BaseEmbeddingModel):
         response.raise_for_status()
         return response.json()["data"][0]["embedding"]
 
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts."""
         import httpx
 
@@ -371,10 +366,10 @@ class FunctionEmbeddingModel(BaseEmbeddingModel):
 
     def __init__(
         self,
-        embed_fn: Callable[[str], List[float]],
+        embed_fn: Callable[[str], list[float]],
         dimension: int,
-        batch_fn: Optional[Callable[[List[str]], List[List[float]]]] = None,
-        async_embed_fn: Optional[Callable[[str], Any]] = None,
+        batch_fn: Callable[[list[str]], list[list[float]]] | None = None,
+        async_embed_fn: Callable[[str], Any] | None = None,
     ):
         """Initialize with custom functions.
 
@@ -389,18 +384,18 @@ class FunctionEmbeddingModel(BaseEmbeddingModel):
         self._async_embed_fn = async_embed_fn
         self._dimension = dimension
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> list[float]:
         """Generate embedding using custom function."""
         return self._embed_fn(text)
 
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts."""
         if self._batch_fn:
             return self._batch_fn(texts)
         # Fallback to sequential
         return [self._embed_fn(text) for text in texts]
 
-    async def embed_async(self, text: str) -> List[float]:
+    async def embed_async(self, text: str) -> list[float]:
         """Generate embedding asynchronously."""
         if self._async_embed_fn:
             return await self._async_embed_fn(text)
@@ -413,7 +408,7 @@ class FunctionEmbeddingModel(BaseEmbeddingModel):
 
 def create_embedding_model(
     model_type: str = "sentence-transformers",
-    model_name: Optional[str] = None,
+    model_name: str | None = None,
     **kwargs,
 ) -> BaseEmbeddingModel:
     """Factory function to create embedding models.
@@ -492,7 +487,7 @@ class EmbeddedCollection:
         name: str,
         dimension: int,
         db: "EmbeddedProximaDB",
-        embedding_model: Optional[BaseEmbeddingModel] = None,
+        embedding_model: BaseEmbeddingModel | None = None,
     ):
         self.name = name
         self.dimension = dimension
@@ -509,8 +504,8 @@ class EmbeddedCollection:
 
     async def insert_records(
         self,
-        records: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        records: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Insert ProximaRecord-shaped records into collection.
 
         Args:
@@ -523,15 +518,15 @@ class EmbeddedCollection:
 
     async def insert(
         self,
-        vectors: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        vectors: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Compatibility alias for record-native insert."""
         return await self.insert_records(vectors)
 
     async def insert_with_embedding(
         self,
-        documents: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        documents: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Insert documents with automatic embedding generation.
 
         Args:
@@ -575,10 +570,10 @@ class EmbeddedCollection:
 
     async def search(
         self,
-        query_vector: List[float],
+        query_vector: list[float],
         top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Search for similar vectors.
 
         Args:
@@ -595,8 +590,8 @@ class EmbeddedCollection:
         self,
         query: str,
         top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Search using text query with automatic embedding.
 
         Args:
@@ -618,7 +613,7 @@ class EmbeddedCollection:
         query_vector = await self._embedding_model.embed_async(query)
         return await self._db._search_vectors(self.name, query_vector, top_k, filters)
 
-    async def delete(self, ids: List[str]) -> int:
+    async def delete(self, ids: list[str]) -> int:
         """Delete vectors by ID.
 
         Args:
@@ -659,9 +654,9 @@ class EmbeddedProximaDB:
 
     def __init__(
         self,
-        data_dir: Optional[str] = None,
-        config: Optional[EmbeddedConfig] = None,
-        binary_path: Optional[str] = None,
+        data_dir: str | None = None,
+        config: EmbeddedConfig | None = None,
+        binary_path: str | None = None,
     ):
         """Initialize embedded database.
 
@@ -674,9 +669,9 @@ class EmbeddedProximaDB:
             data_dir=data_dir or str(Path.home() / ".proximadb")
         )
         self._binary_path = binary_path
-        self._process: Optional[subprocess.Popen] = None
+        self._process: subprocess.Popen | None = None
         self._started = False
-        self._collections: Dict[str, EmbeddedCollection] = {}
+        self._collections: dict[str, EmbeddedCollection] = {}
         self._lock = threading.Lock()
 
         # Resolve data directory
@@ -726,10 +721,9 @@ class EmbeddedProximaDB:
                     return path
 
         # Debug logging
-        import sys
 
         print(f"[DEBUG] __file__ = {__file__}")
-        print(f"[DEBUG] Search paths checked:")
+        print("[DEBUG] Search paths checked:")
         for i, path in enumerate(search_paths):
             if isinstance(path, Path):
                 print(f"  {i}. {path} (exists: {path.exists()})")
@@ -872,9 +866,9 @@ prefetch_budget = 4
     async def create_collection(
         self,
         name: str,
-        dimension: Optional[int] = None,
+        dimension: int | None = None,
         distance_metric: str = "cosine",
-        embedding_model: Optional[Union[BaseEmbeddingModel, str]] = None,
+        embedding_model: BaseEmbeddingModel | str | None = None,
     ) -> EmbeddedCollection:
         """Create a new collection.
 
@@ -908,7 +902,7 @@ prefetch_budget = 4
             await self.start()
 
         # Handle embedding model
-        model_instance: Optional[BaseEmbeddingModel] = None
+        model_instance: BaseEmbeddingModel | None = None
         if isinstance(embedding_model, str):
             # Create sentence-transformers model from name
             model_instance = SentenceTransformerModel(model_name=embedding_model)
@@ -956,7 +950,7 @@ prefetch_budget = 4
         self._collections[name] = collection
         return collection
 
-    async def get_collection(self, name: str) -> Optional[EmbeddedCollection]:
+    async def get_collection(self, name: str) -> EmbeddedCollection | None:
         """Get an existing collection.
 
         Args:
@@ -1014,7 +1008,7 @@ prefetch_budget = 4
 
             return response.status_code in (200, 204, 404)
 
-    async def list_collections(self) -> List[str]:
+    async def list_collections(self) -> list[str]:
         """List all collections.
 
         Returns:
@@ -1038,7 +1032,7 @@ prefetch_budget = 4
 
         return []
 
-    def _to_sql_value(self, value: Any) -> Dict[str, Any]:
+    def _to_sql_value(self, value: Any) -> dict[str, Any]:
         """Convert Python value to SqlValue format."""
         if value is None:
             return {"null_value": None}
@@ -1062,7 +1056,7 @@ prefetch_budget = 4
             }
         return {"string_value": str(value)}
 
-    def _convert_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    def _convert_metadata(self, metadata: dict[str, Any]) -> dict[str, Any]:
         """Convert metadata dict to SqlValue format."""
         return {str(k): self._to_sql_value(v) for k, v in metadata.items()}
 
@@ -1071,9 +1065,15 @@ prefetch_budget = 4
         if value is None or isinstance(value, (bool, int, float, str)):
             return value
         if isinstance(value, (bytes, bytearray, memoryview)):
-            return {"type": "binary", "value": base64.b64encode(bytes(value)).decode("ascii")}
+            return {
+                "type": "binary",
+                "value": base64.b64encode(bytes(value)).decode("ascii"),
+            }
         if isinstance(value, (list, tuple)):
-            return {"type": "array", "value": [self._to_proxima_value(v) for v in value]}
+            return {
+                "type": "array",
+                "value": [self._to_proxima_value(v) for v in value],
+            }
         if isinstance(value, dict):
             if set(value.keys()) == {"type", "value"}:
                 return value
@@ -1084,8 +1084,8 @@ prefetch_budget = 4
         return str(value)
 
     def _normalize_record_payload(
-        self, record: Dict[str, Any], index: int = 0
-    ) -> Dict[str, Any]:
+        self, record: dict[str, Any], index: int = 0
+    ) -> dict[str, Any]:
         """Normalize embedded inputs to the v2 ProximaRecord REST shape."""
         vector = record.get("vector")
         if vector is None:
@@ -1095,7 +1095,9 @@ prefetch_budget = 4
         for source in ("props", "metadata", "flexible_fields"):
             values = record.get(source)
             if isinstance(values, dict):
-                props.update({str(k): self._to_proxima_value(v) for k, v in values.items()})
+                props.update(
+                    {str(k): self._to_proxima_value(v) for k, v in values.items()}
+                )
 
         typed_fields = record.get("typed_fields")
         if isinstance(typed_fields, dict):
@@ -1104,7 +1106,8 @@ prefetch_budget = 4
                     typed_value = typed_value.model_dump(exclude_none=True)
                 if isinstance(typed_value, dict) and "value" in typed_value:
                     props[str(key)] = {
-                        "type": typed_value.get("value_type") or typed_value.get("type"),
+                        "type": typed_value.get("value_type")
+                        or typed_value.get("type"),
                         "value": typed_value["value"],
                     }
                 else:
@@ -1122,8 +1125,8 @@ prefetch_budget = 4
     async def _insert_records(
         self,
         collection_name: str,
-        records: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        records: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Insert ProximaRecord-shaped records into a collection."""
         import httpx
 
@@ -1146,18 +1149,18 @@ prefetch_budget = 4
     async def _insert_vectors(
         self,
         collection_name: str,
-        vectors: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        vectors: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Compatibility alias for record-native insert."""
         return await self._insert_records(collection_name, vectors)
 
     async def _search_vectors(
         self,
         collection_name: str,
-        query_vector: List[float],
+        query_vector: list[float],
         top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Search for similar vectors."""
         import httpx
 
@@ -1191,7 +1194,7 @@ prefetch_budget = 4
     async def _delete_vectors(
         self,
         collection_name: str,
-        ids: List[str],
+        ids: list[str],
     ) -> int:
         """Delete vectors by ID."""
         # TODO: Implement delete endpoint in ProximaDB
@@ -1200,7 +1203,7 @@ prefetch_budget = 4
     async def _get_collection_stats(
         self,
         collection_name: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get collection statistics."""
         import httpx
 
@@ -1245,10 +1248,10 @@ prefetch_budget = 4
     async def create_document_collection(
         self,
         name: str,
-        indexes: Optional[List[Dict[str, Any]]] = None,
+        indexes: list[dict[str, Any]] | None = None,
         enable_fulltext: bool = False,
-        fulltext_paths: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+        fulltext_paths: list[str] | None = None,
+    ) -> dict[str, Any]:
         """Create a document collection.
 
         Args:
@@ -1284,9 +1287,9 @@ prefetch_budget = 4
     async def insert_document(
         self,
         collection_name: str,
-        document: Dict[str, Any],
-        id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        document: dict[str, Any],
+        id: str | None = None,
+    ) -> dict[str, Any]:
         """Insert a document into a collection.
 
         Args:
@@ -1318,7 +1321,7 @@ prefetch_budget = 4
         self,
         collection_name: str,
         doc_id: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get a document by ID.
 
         Args:
@@ -1346,11 +1349,11 @@ prefetch_budget = 4
     async def query_documents(
         self,
         collection_name: str,
-        filter: Optional[Dict[str, Any]] = None,
-        projection: Optional[List[str]] = None,
+        filter: dict[str, Any] | None = None,
+        projection: list[str] | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Query documents in a collection.
 
         Args:
@@ -1368,7 +1371,7 @@ prefetch_budget = 4
 
         import httpx
 
-        params: Dict[str, Any] = {"limit": limit}
+        params: dict[str, Any] = {"limit": limit}
         if offset:
             params["skip"] = offset
         if filter:
@@ -1388,8 +1391,8 @@ prefetch_budget = 4
         self,
         collection_name: str,
         doc_id: str,
-        updates: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        updates: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Update a document.
 
         Args:
@@ -1473,10 +1476,10 @@ prefetch_budget = 4
         self,
         name: str,
         timestamp_column: str = "timestamp",
-        value_columns: Optional[List[Dict[str, Any]]] = None,
-        tag_columns: Optional[List[str]] = None,
-        retention_ms: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        value_columns: list[dict[str, Any]] | None = None,
+        tag_columns: list[str] | None = None,
+        retention_ms: int | None = None,
+    ) -> dict[str, Any]:
         """Create a time-series collection.
 
         Args:
@@ -1514,8 +1517,8 @@ prefetch_budget = 4
     async def ingest_timeseries(
         self,
         collection_name: str,
-        points: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        points: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Ingest time-series data points.
 
         Args:
@@ -1548,11 +1551,11 @@ prefetch_budget = 4
         collection_name: str,
         start_time: str,
         end_time: str,
-        aggregation: Optional[str] = None,
-        bucket_ms: Optional[int] = None,
-        tag_filters: Optional[Dict[str, Any]] = None,
+        aggregation: str | None = None,
+        bucket_ms: int | None = None,
+        tag_filters: dict[str, Any] | None = None,
         limit: int = 1000,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Query time-series data.
 
         Args:
@@ -1598,8 +1601,8 @@ prefetch_budget = 4
         collection_name: str,
         start_time: str,
         end_time: str,
-        pipeline: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        pipeline: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Aggregate time-series data with a pipeline.
 
         Args:
@@ -1662,13 +1665,13 @@ prefetch_budget = 4
     async def hybrid_search(
         self,
         vector_collection: str,
-        query_vector: List[float],
-        text_query: Optional[str] = None,
+        query_vector: list[float],
+        text_query: str | None = None,
         fusion_strategy: str = "rrf",
         top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
-        fusion_params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        filters: dict[str, Any] | None = None,
+        fusion_params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Perform hybrid search combining vector and text search.
 
         Args:
@@ -1709,7 +1712,7 @@ prefetch_budget = 4
             )
             return response.json()
 
-    async def list_fusion_strategies(self) -> List[Dict[str, Any]]:
+    async def list_fusion_strategies(self) -> list[dict[str, Any]]:
         """List available fusion strategies for hybrid search.
 
         Returns:
@@ -1782,8 +1785,6 @@ prefetch_budget = 4
             CrossModalReranker,
             MultiModalQueryResult,
         )
-        from .multimodal_query import QueryContext as QC
-        from .multimodal_query import RerankConfig as RC
 
         # Create embedded executor
         executor = EmbeddedMultiModalQueryExecutor(self)
@@ -1831,9 +1832,7 @@ prefetch_budget = 4
 
 
 # Convenience function
-async def connect_embedded(
-    data_dir: Optional[str] = None, **kwargs
-) -> EmbeddedProximaDB:
+async def connect_embedded(data_dir: str | None = None, **kwargs) -> EmbeddedProximaDB:
     """Create and start an embedded ProximaDB instance.
 
     Args:
@@ -1884,13 +1883,12 @@ class EmbeddedMultiModalQueryExecutor:
         Returns:
             MultiModalQueryResult with fused results
         """
-        import math
 
-        from .multimodal_query import MultiModalQueryResult, TimeDecayFunction
+        from .multimodal_query import MultiModalQueryResult
 
         start_time = time.time()
-        component_times: Dict[str, float] = {}
-        component_results: List[List[Dict[str, Any]]] = []
+        component_times: dict[str, float] = {}
+        component_results: list[list[dict[str, Any]]] = []
 
         # Execute each component
         for i, component in enumerate(query.components):
@@ -1960,7 +1958,7 @@ class EmbeddedMultiModalQueryExecutor:
             },
         )
 
-    async def _execute_vector(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def _execute_vector(self, component: dict[str, Any]) -> list[dict[str, Any]]:
         """Execute vector search component against embedded database."""
         try:
             collection = component.get("collection", "")
@@ -1986,11 +1984,11 @@ class EmbeddedMultiModalQueryExecutor:
                 }
                 for r in results
             ]
-        except Exception as e:
+        except Exception:
             # Log error but return empty results to allow other components to proceed
             return []
 
-    async def _execute_graph(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def _execute_graph(self, component: dict[str, Any]) -> list[dict[str, Any]]:
         """Execute graph traversal component against embedded database.
 
         Performs graph traversal by:
@@ -2008,10 +2006,10 @@ class EmbeddedMultiModalQueryExecutor:
             max_depth = component.get("max_depth", 2)
             limit = component.get("limit", 100)
 
-            results: List[Dict[str, Any]] = []
+            results: list[dict[str, Any]] = []
 
             # Get start nodes
-            node_ids: List[str] = []
+            node_ids: list[str] = []
             if start_nodes:
                 node_ids = start_nodes
             elif start_label:
@@ -2079,12 +2077,12 @@ class EmbeddedMultiModalQueryExecutor:
 
             return results[:limit]
 
-        except Exception as e:
+        except Exception:
             return []
 
     async def _execute_document(
-        self, component: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, component: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """Execute document query component against embedded database."""
         try:
             import httpx
@@ -2135,10 +2133,10 @@ class EmbeddedMultiModalQueryExecutor:
 
             return []
 
-        except Exception as e:
+        except Exception:
             return []
 
-    async def _execute_logs(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def _execute_logs(self, component: dict[str, Any]) -> list[dict[str, Any]]:
         """Execute log query component.
 
         Note: Log queries are not yet fully implemented in embedded mode.
@@ -2147,7 +2145,7 @@ class EmbeddedMultiModalQueryExecutor:
         # Log queries would require observability backend integration
         return []
 
-    async def _execute_metrics(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
+    async def _execute_metrics(self, component: dict[str, Any]) -> list[dict[str, Any]]:
         """Execute metric aggregation component.
 
         Note: Metric queries are not yet fully implemented in embedded mode.
@@ -2158,9 +2156,9 @@ class EmbeddedMultiModalQueryExecutor:
 
     def _apply_joins(
         self,
-        component_results: List[List[Dict[str, Any]]],
-        joins: List[Dict[str, Any]],
-    ) -> List[List[Dict[str, Any]]]:
+        component_results: list[list[dict[str, Any]]],
+        joins: list[dict[str, Any]],
+    ) -> list[list[dict[str, Any]]]:
         """Apply joins between component results."""
         if len(component_results) < 2:
             return component_results
@@ -2175,14 +2173,14 @@ class EmbeddedMultiModalQueryExecutor:
                 right_results = component_results[1]
 
                 # Build index of right results
-                right_index: Dict[str, Dict[str, Any]] = {}
+                right_index: dict[str, dict[str, Any]] = {}
                 for r in right_results:
                     key = self._extract_field(r, right_field)
                     if key:
                         right_index[key] = r
 
                 # Join
-                joined: List[Dict[str, Any]] = []
+                joined: list[dict[str, Any]] = []
                 for left in left_results:
                     left_key = self._extract_field(left, left_field)
                     if left_key and left_key in right_index:
@@ -2194,7 +2192,7 @@ class EmbeddedMultiModalQueryExecutor:
 
         return component_results
 
-    def _extract_field(self, record: Dict[str, Any], field_path: str) -> Optional[str]:
+    def _extract_field(self, record: dict[str, Any], field_path: str) -> str | None:
         """Extract a field value from a nested record."""
         parts = field_path.split(".")
         current: Any = record
@@ -2207,10 +2205,10 @@ class EmbeddedMultiModalQueryExecutor:
 
     def _fuse_results(
         self,
-        component_results: List[List[Dict[str, Any]]],
+        component_results: list[list[dict[str, Any]]],
         strategy: str,
-        weights: Dict[str, float],
-    ) -> List[Dict[str, Any]]:
+        weights: dict[str, float],
+    ) -> list[dict[str, Any]]:
         """Fuse results from multiple components."""
         if not component_results:
             return []
@@ -2232,8 +2230,8 @@ class EmbeddedMultiModalQueryExecutor:
 
     def _fuse_intersection(
         self,
-        component_results: List[List[Dict[str, Any]]],
-    ) -> List[Dict[str, Any]]:
+        component_results: list[list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
         """Return only records present in all components."""
         if not component_results:
             return []
@@ -2247,7 +2245,7 @@ class EmbeddedMultiModalQueryExecutor:
             common_ids &= ids
 
         # Return records with common IDs, merging data from all components
-        merged_records: Dict[str, Dict[str, Any]] = {}
+        merged_records: dict[str, dict[str, Any]] = {}
         for results in component_results:
             for r in results:
                 record_id = r.get("id")
@@ -2264,11 +2262,11 @@ class EmbeddedMultiModalQueryExecutor:
 
     def _fuse_union(
         self,
-        component_results: List[List[Dict[str, Any]]],
-    ) -> List[Dict[str, Any]]:
+        component_results: list[list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
         """Return all records from any component (deduplicated)."""
         seen_ids: set = set()
-        result: List[Dict[str, Any]] = []
+        result: list[dict[str, Any]] = []
 
         for results in component_results:
             for r in results:
@@ -2283,10 +2281,10 @@ class EmbeddedMultiModalQueryExecutor:
 
     def _fuse_rrf(
         self,
-        component_results: List[List[Dict[str, Any]]],
-        weights: Dict[str, float],
+        component_results: list[list[dict[str, Any]]],
+        weights: dict[str, float],
         k: int = 60,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Reciprocal Rank Fusion.
 
         RRF score = sum(weight_i / (k + rank_i)) for each component
@@ -2294,8 +2292,8 @@ class EmbeddedMultiModalQueryExecutor:
         This is a robust fusion method that works well when different
         components have different score scales.
         """
-        scores: Dict[str, float] = {}
-        records: Dict[str, Dict[str, Any]] = {}
+        scores: dict[str, float] = {}
+        records: dict[str, dict[str, Any]] = {}
 
         for comp_idx, results in enumerate(component_results):
             weight = weights.get(f"component_{comp_idx}", 1.0)
@@ -2317,7 +2315,7 @@ class EmbeddedMultiModalQueryExecutor:
         # Sort by RRF score
         sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
 
-        result: List[Dict[str, Any]] = []
+        result: list[dict[str, Any]] = []
         for record_id in sorted_ids:
             record = records[record_id].copy()
             record["_rrf_score"] = scores[record_id]
@@ -2327,12 +2325,12 @@ class EmbeddedMultiModalQueryExecutor:
 
     def _fuse_weighted(
         self,
-        component_results: List[List[Dict[str, Any]]],
-        weights: Dict[str, float],
-    ) -> List[Dict[str, Any]]:
+        component_results: list[list[dict[str, Any]]],
+        weights: dict[str, float],
+    ) -> list[dict[str, Any]]:
         """Weighted score combination."""
-        scores: Dict[str, float] = {}
-        records: Dict[str, Dict[str, Any]] = {}
+        scores: dict[str, float] = {}
+        records: dict[str, dict[str, Any]] = {}
 
         for comp_idx, results in enumerate(component_results):
             weight = weights.get(f"component_{comp_idx}", 1.0)
@@ -2350,7 +2348,7 @@ class EmbeddedMultiModalQueryExecutor:
         # Sort by weighted score
         sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
 
-        result: List[Dict[str, Any]] = []
+        result: list[dict[str, Any]] = []
         for record_id in sorted_ids:
             record = records[record_id].copy()
             record["_weighted_score"] = scores[record_id]
@@ -2360,9 +2358,9 @@ class EmbeddedMultiModalQueryExecutor:
 
     def _apply_time_decay(
         self,
-        records: List[Dict[str, Any]],
+        records: list[dict[str, Any]],
         time_decay: tuple,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Apply time decay to record scores."""
         import math
 

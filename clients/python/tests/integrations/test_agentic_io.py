@@ -142,7 +142,9 @@ def test_event_store_append_replay_snapshot_and_version_conflict() -> None:
     snapshot = store.snapshot("project-1", {"symbols": 2})
 
     assert [event.version for event in store.read_stream("project-1")] == [1, 2, 3]
-    assert store.read_stream("project-1", after_version=1)[0].event_id == second.event_id
+    assert (
+        store.read_stream("project-1", after_version=1)[0].event_id == second.event_id
+    )
     assert snapshot.event_type == "$snapshot"
     assert [event.event_id for event in store.read_all()] == [
         first.event_id,
@@ -170,7 +172,9 @@ def test_mapper_session_upsert_query_vector_search_link_and_delete() -> None:
     loaded = session.get(Symbol, "sym-main", collection="symbols")
     assert loaded == Symbol(id="sym-main", name="main", language="rust")
 
-    rust_symbols = session.query(Symbol, collection="symbols").where(language="rust").all()
+    rust_symbols = (
+        session.query(Symbol, collection="symbols").where(language="rust").all()
+    )
     assert rust_symbols == [Symbol(id="sym-main", name="main", language="rust")]
 
     hits = session.vector_search(Symbol, [1.0, 0.0], collection="symbols")

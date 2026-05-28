@@ -5,7 +5,7 @@ Consolidated tests for ID-based search, metadata filtering, and proximity/simila
 """
 
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 import pytest
@@ -13,17 +13,12 @@ from sentence_transformers import SentenceTransformer
 
 from proximadb_sdk import (
     CollectionConfig,
-    DistanceMetric,
-    Protocol,
-    ProximaDBClient,
     ProximaDBError,
-    QuantizationConfig,
-    QuantizationType,
     connect_grpc,
     connect_rest,
 )
 
-from .test_helpers import COLLECTION_NAMES, cleanup_collection, ensure_collection
+from .test_helpers import COLLECTION_NAMES
 
 
 class TestSearchOperations:
@@ -68,7 +63,7 @@ class TestSearchOperations:
             pass
 
     @pytest.fixture(scope="class")
-    def test_data(self, bert_model) -> List[Dict[str, Any]]:
+    def test_data(self, bert_model) -> list[dict[str, Any]]:
         """Prepare diverse test data with embeddings"""
         documents = [
             # Technology category
@@ -501,7 +496,7 @@ class TestSearchOperations:
                     category == "technology"
                 ), f"Expected technology category, got {category}"
 
-        except Exception as e:
+        except Exception:
             # Server-side filtering not yet implemented - test client-side fallback
             all_results = grpc_client.search(
                 collection_id=search_collection.id,  # Use collection ID

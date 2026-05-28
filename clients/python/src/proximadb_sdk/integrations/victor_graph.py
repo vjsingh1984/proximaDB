@@ -10,9 +10,10 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, Iterable, List, Literal, Optional, Sequence
+from typing import Any, Literal
 
 from ..graph import GraphEdge as SDKGraphEdge
 from ..graph import GraphNode as SDKGraphNode
@@ -22,8 +23,14 @@ from ..unified_client import ProximaDBClient
 try:
     from victor.storage.graph.protocol import (
         GraphEdge as VictorGraphEdge,
+    )
+    from victor.storage.graph.protocol import (
         GraphNode as VictorGraphNode,
+    )
+    from victor.storage.graph.protocol import (
         GraphQueryResult as VictorGraphQueryResult,
+    )
+    from victor.storage.graph.protocol import (
         GraphStoreProtocol,
         GraphTraversalDirection,
         Subgraph,
@@ -45,7 +52,7 @@ except ImportError:
         docstring: str | None = None
         parent_id: str | None = None
         embedding_ref: str | None = None
-        metadata: Dict[str, Any] = field(default_factory=dict)
+        metadata: dict[str, Any] = field(default_factory=dict)
         ast_kind: str | None = None
         scope_id: str | None = None
         statement_type: str | None = None
@@ -58,27 +65,27 @@ except ImportError:
         dst: str
         type: str
         weight: float | None = None
-        metadata: Dict[str, Any] = field(default_factory=dict)
+        metadata: dict[str, Any] = field(default_factory=dict)
 
     @dataclass
     class Subgraph:
         subgraph_id: str
         anchor_node_id: str
         radius: int
-        edge_types: List[str]
-        node_ids: List[str]
-        edges: List[VictorGraphEdge]
+        edge_types: list[str]
+        node_ids: list[str]
+        edges: list[VictorGraphEdge]
         node_count: int = 0
         computed_at: str | None = None
 
     @dataclass
     class VictorGraphQueryResult:
-        nodes: List[VictorGraphNode]
-        edges: List[VictorGraphEdge]
-        subgraphs: List[Subgraph] = field(default_factory=list)
+        nodes: list[VictorGraphNode]
+        edges: list[VictorGraphEdge]
+        subgraphs: list[Subgraph] = field(default_factory=list)
         query: str = ""
         execution_time_ms: float = 0.0
-        metadata: Dict[str, Any] = field(default_factory=dict)
+        metadata: dict[str, Any] = field(default_factory=dict)
 
 
 _FILE_STATE_LABEL = "__FileState"
@@ -117,7 +124,7 @@ def _is_scalar(value: Any) -> bool:
     return value is None or isinstance(value, (str, int, float, bool))
 
 
-def _safe_json_loads(value: Any) -> Dict[str, Any]:
+def _safe_json_loads(value: Any) -> dict[str, Any]:
     if not value:
         return {}
     if isinstance(value, dict):
@@ -152,10 +159,10 @@ class ProximaDBGraphStore(GraphStoreProtocol):
 
     def __init__(
         self,
-        client: Optional[Any] = None,
+        client: Any | None = None,
         *,
         graph_id: str = "victor_code_graph",
-        url: Optional[str] = None,
+        url: str | None = None,
         create_if_missing: bool = True,
     ) -> None:
         self._client = client or ProximaDBClient(url=url or "embedded://local")
@@ -205,8 +212,8 @@ class ProximaDBGraphStore(GraphStoreProtocol):
         return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _sdk_node_from_victor(node: VictorGraphNode) -> Dict[str, Any]:
-        properties: Dict[str, Any] = {
+    def _sdk_node_from_victor(node: VictorGraphNode) -> dict[str, Any]:
+        properties: dict[str, Any] = {
             "type": node.type,
             "name": node.name,
             "file": node.file,
@@ -229,20 +236,24 @@ class ProximaDBGraphStore(GraphStoreProtocol):
                 properties[key] = value
 
         labels = [node.type]
-        extra_labels = node.metadata.get("labels") if isinstance(node.metadata, dict) else None
+        extra_labels = (
+            node.metadata.get("labels") if isinstance(node.metadata, dict) else None
+        )
         if isinstance(extra_labels, list):
             labels.extend(str(label) for label in extra_labels)
 
         return {
             "id": node.node_id,
             "labels": list(dict.fromkeys(label for label in labels if label)),
-            "properties": {key: value for key, value in properties.items() if value is not None},
+            "properties": {
+                key: value for key, value in properties.items() if value is not None
+            },
         }
 
     @staticmethod
-    def _sdk_edge_from_victor(edge: VictorGraphEdge) -> Dict[str, Any]:
+    def _sdk_edge_from_victor(edge: VictorGraphEdge) -> dict[str, Any]:
         edge_id = edge.metadata.get("id") or f"{edge.type}:{edge.src}:{edge.dst}"
-        properties: Dict[str, Any] = {
+        properties: dict[str, Any] = {
             "metadata_json": json.dumps(edge.metadata or {}, sort_keys=True),
         }
         for key, value in (edge.metadata or {}).items():
@@ -329,7 +340,9 @@ class ProximaDBGraphStore(GraphStoreProtocol):
             existing = self._graph.get_node_by_id(node.node_id)
             if existing is not None:
                 try:
-                    self._client.delete_node(node_id=node.node_id, graph_id=self._graph_id)
+                    self._client.delete_node(
+                        node_id=node.node_id, graph_id=self._graph_id
+                    )
                 except Exception:
                     pass
 
@@ -353,7 +366,7 @@ class ProximaDBGraphStore(GraphStoreProtocol):
         *,
         direction: GraphTraversalDirection = "both",
         max_depth: int = 1,
-    ) -> List[VictorGraphEdge]:
+    ) -> list[VictorGraphEdge]:
         await self.initialize()
         edges = self._graph.get_neighbors(
             node_id,
@@ -369,7 +382,7 @@ class ProximaDBGraphStore(GraphStoreProtocol):
         name: str | None = None,
         type: str | None = None,
         file: str | None = None,
-    ) -> List[VictorGraphNode]:
+    ) -> list[VictorGraphNode]:
         await self.initialize()
         nodes = self._graph.find_nodes(name=name, type=type, file=file)
         return [self._victor_node_from_sdk(node) for node in nodes]
@@ -380,7 +393,7 @@ class ProximaDBGraphStore(GraphStoreProtocol):
         *,
         limit: int = 20,
         symbol_types: Iterable[str] | None = None,
-    ) -> List[VictorGraphNode]:
+    ) -> list[VictorGraphNode]:
         await self.initialize()
         nodes = self._graph.search_symbols(
             query,
@@ -396,14 +409,14 @@ class ProximaDBGraphStore(GraphStoreProtocol):
             return None
         return self._victor_node_from_sdk(node)
 
-    async def get_all_nodes(self) -> List[VictorGraphNode]:
+    async def get_all_nodes(self) -> list[VictorGraphNode]:
         await self.initialize()
         return [
             self._victor_node_from_sdk(node)
             for node in self._graph.get_all_nodes(include_internal=False)
         ]
 
-    async def get_nodes_by_file(self, file: str) -> List[VictorGraphNode]:
+    async def get_nodes_by_file(self, file: str) -> list[VictorGraphNode]:
         await self.initialize()
         return [
             self._victor_node_from_sdk(node)
@@ -424,9 +437,9 @@ class ProximaDBGraphStore(GraphStoreProtocol):
         )
         await self.upsert_nodes([state_node])
 
-    async def get_stale_files(self, file_mtimes: Dict[str, float]) -> List[str]:
+    async def get_stale_files(self, file_mtimes: dict[str, float]) -> list[str]:
         await self.initialize()
-        stale_files: List[str] = []
+        stale_files: list[str] = []
         state_nodes = self._graph.get_all_nodes(
             labels=[_FILE_STATE_LABEL],
             include_internal=True,
@@ -471,7 +484,7 @@ class ProximaDBGraphStore(GraphStoreProtocol):
                 except Exception:
                     pass
 
-    async def stats(self) -> Dict[str, Any]:
+    async def stats(self) -> dict[str, Any]:
         await self.initialize()
         stats = self._graph.get_stats()
         data = stats.get("data", stats) if isinstance(stats, dict) else {}
@@ -479,11 +492,10 @@ class ProximaDBGraphStore(GraphStoreProtocol):
             return data
         return {}
 
-    async def get_all_edges(self) -> List[VictorGraphEdge]:
+    async def get_all_edges(self) -> list[VictorGraphEdge]:
         await self.initialize()
         return [
-            self._victor_edge_from_sdk(edge)
-            for edge in self._graph.get_all_edges()
+            self._victor_edge_from_sdk(edge) for edge in self._graph.get_all_edges()
         ]
 
     async def get_nodes_by_statement_type(
@@ -491,7 +503,7 @@ class ProximaDBGraphStore(GraphStoreProtocol):
         statement_type: str,
         *,
         file: str | None = None,
-    ) -> List[VictorGraphNode]:
+    ) -> list[VictorGraphNode]:
         await self.initialize()
         nodes = [
             node
@@ -502,15 +514,14 @@ class ProximaDBGraphStore(GraphStoreProtocol):
             nodes = [
                 node
                 for node in nodes
-                if (
-                    node.properties.get("file")
-                    or node.properties.get("file_path")
-                )
+                if (node.properties.get("file") or node.properties.get("file_path"))
                 == file
             ]
         return [self._victor_node_from_sdk(node) for node in nodes]
 
-    async def get_nodes_by_requirement(self, requirement_id: str) -> List[VictorGraphNode]:
+    async def get_nodes_by_requirement(
+        self, requirement_id: str
+    ) -> list[VictorGraphNode]:
         await self.initialize()
         nodes = [
             node
@@ -528,7 +539,9 @@ class ProximaDBGraphStore(GraphStoreProtocol):
         await self.initialize()
         edge_types_list = list(edge_types or [])
         subgraph_id = self._subgraph_cache_key(anchor_node_id, radius, edge_types_list)
-        cache_node = self._graph.get_node_by_id(self._subgraph_cache_node_id(subgraph_id))
+        cache_node = self._graph.get_node_by_id(
+            self._subgraph_cache_node_id(subgraph_id)
+        )
         if cache_node is not None:
             cached = _safe_json_loads(cache_node.properties.get("metadata_json")).get(
                 "payload",
@@ -546,7 +559,9 @@ class ProximaDBGraphStore(GraphStoreProtocol):
                     edge_types=edge_types_list,
                     node_ids=list(cached.get("node_ids", [])),
                     edges=edges,
-                    node_count=int(cached.get("node_count", len(cached.get("node_ids", [])))),
+                    node_count=int(
+                        cached.get("node_count", len(cached.get("node_ids", [])))
+                    ),
                     computed_at=cached.get("computed_at"),
                 )
 
@@ -610,7 +625,7 @@ class ProximaDBGraphStore(GraphStoreProtocol):
         except Exception:
             pass
 
-    async def get_nodes_by_scope(self, scope_id: str) -> List[VictorGraphNode]:
+    async def get_nodes_by_scope(self, scope_id: str) -> list[VictorGraphNode]:
         await self.initialize()
         nodes = [
             node
@@ -621,15 +636,15 @@ class ProximaDBGraphStore(GraphStoreProtocol):
 
     async def multi_hop_traverse(
         self,
-        start_node_ids: List[str],
+        start_node_ids: list[str],
         max_hops: int = 2,
         edge_types: Iterable[str] | None = None,
         max_nodes: int = 100,
     ) -> VictorGraphQueryResult:
         await self.initialize()
         edge_types_list = list(edge_types or [])
-        node_map: Dict[str, VictorGraphNode] = {}
-        edge_map: Dict[tuple[str, str, str], VictorGraphEdge] = {}
+        node_map: dict[str, VictorGraphNode] = {}
+        edge_map: dict[tuple[str, str, str], VictorGraphEdge] = {}
 
         for start_node_id in start_node_ids:
             node = await self.get_node_by_id(start_node_id)
@@ -670,7 +685,7 @@ class ProximaDBGraphStore(GraphStoreProtocol):
         name: str | None = None,
         type: str | None = None,
         file: str | None = None,
-    ) -> AsyncIterator[List[VictorGraphNode]]:
+    ) -> AsyncIterator[list[VictorGraphNode]]:
         await self.initialize()
         nodes = await self.find_nodes(name=name, type=type, file=file)
         for index in range(0, len(nodes), batch_size):
@@ -678,8 +693,8 @@ class ProximaDBGraphStore(GraphStoreProtocol):
 
     async def import_graphify_graph(
         self,
-        graph_data: Dict[str, Any] | str | Path,
-    ) -> Dict[str, Any]:
+        graph_data: dict[str, Any] | str | Path,
+    ) -> dict[str, Any]:
         """Import a Graphify-style ``graph.json`` payload into the graph store."""
         await self.initialize()
         return self._graph.import_graph_json(graph_data)

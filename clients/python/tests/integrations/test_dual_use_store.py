@@ -14,7 +14,7 @@ ProximaDB server.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 import pytest
 
@@ -25,8 +25,8 @@ from proximadb_sdk.integrations.dual_use_store import (  # noqa: E402
 )
 from proximadb_sdk.models import SearchResult
 
-
 # ---- stub model ----------------------------------------------------
+
 
 class StubDualUseModel:
     """Toy ``DualUseModel`` that maps text → length-3 vector and back.
@@ -60,12 +60,11 @@ class StubDualUseModel:
         # Look up the original text. In a real model this is the
         # decoder running over the embedding; here we just round-trip
         # through what we stored at embed() time.
-        return self._reverse_index.get(
-            tuple(embedding), f"<unknown:{embedding}>"
-        )
+        return self._reverse_index.get(tuple(embedding), f"<unknown:{embedding}>")
 
 
 # ---- stub client ---------------------------------------------------
+
 
 @dataclass
 class _Insert:
@@ -97,9 +96,7 @@ class StubClient:
         self, collection_id: str, records=None, **kwargs: Any
     ) -> dict[str, Any]:
         records = records or kwargs.get("records") or []
-        self.inserts.append(
-            _Insert(collection_id=collection_id, records=list(records))
-        )
+        self.inserts.append(_Insert(collection_id=collection_id, records=list(records)))
         return {"success": True, "count": len(list(records))}
 
     def search(
@@ -131,6 +128,7 @@ class StubClient:
 
 # ---- helpers -------------------------------------------------------
 
+
 def make_store() -> tuple[DualUseStore, StubClient, StubDualUseModel]:
     client = StubClient()
     model = StubDualUseModel()
@@ -139,6 +137,7 @@ def make_store() -> tuple[DualUseStore, StubClient, StubDualUseModel]:
 
 
 # ---- protocol contract ---------------------------------------------
+
 
 def test_stub_model_satisfies_dual_use_model_protocol() -> None:
     """Anyone implementing ``embed`` + ``decompress`` should be
@@ -150,6 +149,7 @@ def test_stub_model_satisfies_dual_use_model_protocol() -> None:
 
 # ---- add() ---------------------------------------------------------
 
+
 def test_add_stores_only_embedding_no_raw_text() -> None:
     """The whole point of dual-use embeddings: raw text MUST NOT
     appear in the stored metadata. Pin this aggressively because a
@@ -160,7 +160,11 @@ def test_add_stores_only_embedding_no_raw_text() -> None:
     assert len(client.inserts) == 1
     inserted = client.inserts[0].records[0]
     assert inserted["id"] == "d1"
-    assert inserted["vector"] == [11.0, float(sum(ord(c) for c in "hello world") % 100), 1.0]
+    assert inserted["vector"] == [
+        11.0,
+        float(sum(ord(c) for c in "hello world") % 100),
+        1.0,
+    ]
 
     # The metadata MUST NOT carry the original text -- if a future
     # change accidentally stuffs it back in, this assertion catches it.
@@ -194,6 +198,7 @@ def test_add_calls_embed_exactly_once() -> None:
 
 
 # ---- add_many() ----------------------------------------------------
+
 
 def test_add_many_stores_each_text_with_no_raw_text() -> None:
     store, client, model = make_store()
@@ -238,6 +243,7 @@ def test_add_many_with_empty_input_does_not_call_client() -> None:
 
 # ---- retrieve() ----------------------------------------------------
 
+
 def test_retrieve_includes_vectors_so_decompress_can_run() -> None:
     """The critical invariant: the search call MUST request vectors.
     Without them, the model has nothing to decompress and the whole
@@ -245,16 +251,14 @@ def test_retrieve_includes_vectors_so_decompress_can_run() -> None:
     store, client, model = make_store()
     # Seed: model embeds "alpha" first, so that vector reconstructs.
     embedded = model.embed("alpha")
-    client.next_search_results = [
-        SearchResult(id="d1", score=0.9, vector=embedded)
-    ]
+    client.next_search_results = [SearchResult(id="d1", score=0.9, vector=embedded)]
 
     results = store.retrieve("alpha")
 
     assert len(client.searches) == 1
-    assert client.searches[0].include_vectors is True, (
-        "DualUseStore must request vectors so decompress() has input"
-    )
+    assert (
+        client.searches[0].include_vectors is True
+    ), "DualUseStore must request vectors so decompress() has input"
     assert len(results) == 1
     assert results[0].text == "alpha"
 
@@ -302,9 +306,9 @@ def test_retrieve_skips_results_missing_vector() -> None:
         SearchResult(id="d2", score=0.7, vector=None),  # no vector
     ]
     results = store.retrieve("query")
-    assert [r.id for r in results] == ["d1"], (
-        "results without vectors must be silently skipped"
-    )
+    assert [r.id for r in results] == [
+        "d1"
+    ], "results without vectors must be silently skipped"
 
 
 def test_retrieve_empty_when_no_results() -> None:
@@ -322,6 +326,7 @@ def test_retrieve_passes_top_k() -> None:
 
 # ---- delete() ------------------------------------------------------
 
+
 def test_delete_forwards_ids_to_client() -> None:
     store, client, _ = make_store()
     store.delete(["d1", "d2"])
@@ -336,6 +341,7 @@ def test_delete_with_empty_list_is_noop() -> None:
 
 
 # ---- shape of DualUseRetrievalResult -------------------------------
+
 
 def test_retrieval_result_carries_id_score_and_text() -> None:
     store, client, model = make_store()

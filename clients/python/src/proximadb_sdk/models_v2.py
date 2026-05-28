@@ -36,7 +36,7 @@ import re
 import time
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -239,7 +239,7 @@ class TextColumnConfig(BaseModel):
     enable_full_text_search: bool = Field(
         default=False, description="Enable full-text search indexing"
     )
-    embedding_model: Optional[str] = Field(
+    embedding_model: str | None = Field(
         default=None,
         description="Embedding model name for CHUNKED strategy (e.g., 'text-embedding-3-small')",
     )
@@ -252,7 +252,7 @@ class TextColumnConfig(BaseModel):
     compression_enabled: bool = Field(
         default=False, description="Enable compression for stored text"
     )
-    language: Optional[str] = Field(
+    language: str | None = Field(
         default=None, description="Language hint for text processing (ISO 639-1 code)"
     )
 
@@ -299,7 +299,7 @@ class TextColumnConfig(BaseModel):
         column_name: str,
         chunk_size: int = 512,
         chunk_overlap: int = 50,
-        embedding_model: Optional[str] = None,
+        embedding_model: str | None = None,
         enable_ngram_bloom: bool = True,
     ) -> "TextColumnConfig":
         """Create a TEXT column configuration optimized for RAG workloads.
@@ -369,7 +369,7 @@ class TextColumnConfig(BaseModel):
         cls,
         column_name: str,
         compression_enabled: bool = True,
-        language: Optional[str] = None,
+        language: str | None = None,
     ) -> "TextColumnConfig":
         """Create a TEXT column configuration for large documents.
 
@@ -548,7 +548,7 @@ class TypedValue(BaseModel):
         return cls(value_type=ColumnDataType.FLOAT, value=value)
 
     @classmethod
-    def decimal(cls, value: Union[float, str]) -> "TypedValue":
+    def decimal(cls, value: float | str) -> "TypedValue":
         """Create a DECIMAL typed value for precise decimal numbers.
 
         Args:
@@ -598,7 +598,7 @@ class TypedValue(BaseModel):
         return cls(value_type=ColumnDataType.UUID, value=value)
 
     @classmethod
-    def timestamp(cls, value: Union[datetime, int]) -> "TypedValue":
+    def timestamp(cls, value: datetime | int) -> "TypedValue":
         """Create a TIMESTAMP typed value.
 
         Accepts either a datetime object or milliseconds since epoch.
@@ -619,7 +619,7 @@ class TypedValue(BaseModel):
 
     @classmethod
     def timestamp_tz(
-        cls, value: Union[datetime, int], timezone: Optional[str] = None
+        cls, value: datetime | int, timezone: str | None = None
     ) -> "TypedValue":
         """Create a TIMESTAMP_TZ typed value with timezone.
 
@@ -638,7 +638,7 @@ class TypedValue(BaseModel):
         )
 
     @classmethod
-    def date(cls, value: Union[datetime, str]) -> "TypedValue":
+    def date(cls, value: datetime | str) -> "TypedValue":
         """Create a DATE typed value (no time component).
 
         Args:
@@ -652,7 +652,7 @@ class TypedValue(BaseModel):
         return cls(value_type=ColumnDataType.DATE, value=value)
 
     @classmethod
-    def time_(cls, value: Union[datetime, str]) -> "TypedValue":
+    def time_(cls, value: datetime | str) -> "TypedValue":
         """Create a TIME typed value (no date component).
 
         Args:
@@ -696,7 +696,7 @@ class TypedValue(BaseModel):
         return cls(value_type=ColumnDataType.JSON, value=value)
 
     @classmethod
-    def array_text(cls, value: List[str]) -> "TypedValue":
+    def array_text(cls, value: list[str]) -> "TypedValue":
         """Create an ARRAY_TEXT typed value.
 
         Args:
@@ -711,7 +711,7 @@ class TypedValue(BaseModel):
         return cls(value_type=ColumnDataType.ARRAY_TEXT, value=value)
 
     @classmethod
-    def array_integer(cls, value: List[int]) -> "TypedValue":
+    def array_integer(cls, value: list[int]) -> "TypedValue":
         """Create an ARRAY_INTEGER typed value.
 
         Args:
@@ -723,7 +723,7 @@ class TypedValue(BaseModel):
         return cls(value_type=ColumnDataType.ARRAY_INTEGER, value=value)
 
     @classmethod
-    def array_float(cls, value: List[float]) -> "TypedValue":
+    def array_float(cls, value: list[float]) -> "TypedValue":
         """Create an ARRAY_FLOAT typed value.
 
         Args:
@@ -738,7 +738,7 @@ class TypedValue(BaseModel):
         return cls(value_type=ColumnDataType.ARRAY_FLOAT, value=value)
 
     @classmethod
-    def map_string_string(cls, value: Dict[str, str]) -> "TypedValue":
+    def map_string_string(cls, value: dict[str, str]) -> "TypedValue":
         """Create a MAP_STRING_STRING typed value.
 
         Args:
@@ -750,7 +750,7 @@ class TypedValue(BaseModel):
         return cls(value_type=ColumnDataType.MAP_STRING_STRING, value=value)
 
     @classmethod
-    def map_string_any(cls, value: Dict[str, Any]) -> "TypedValue":
+    def map_string_any(cls, value: dict[str, Any]) -> "TypedValue":
         """Create a MAP_STRING_ANY typed value.
 
         Args:
@@ -814,46 +814,44 @@ class ProximaRecord(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    id: Optional[str] = Field(
+    id: str | None = Field(
         default=None, description="Record ID (auto-generated if not provided)"
     )
-    vector: List[float] = Field(..., description="Embedding vector (required)")
-    vector_dimension: Optional[int] = Field(
+    vector: list[float] = Field(..., description="Embedding vector (required)")
+    vector_dimension: int | None = Field(
         default=None, description="Vector dimension hint"
     )
-    typed_fields: Dict[str, TypedValue] = Field(
+    typed_fields: dict[str, TypedValue] = Field(
         default_factory=dict, description="Strongly-typed field values"
     )
-    flexible_fields: Dict[str, Any] = Field(
+    flexible_fields: dict[str, Any] = Field(
         default_factory=dict,
         description="Untyped field values (for HYBRID schema mode)",
     )
-    text_fields: List[TextField] = Field(
+    text_fields: list[TextField] = Field(
         default_factory=list, description="Text fields with storage hints"
     )
     timestamp_ms: int = Field(
         default_factory=lambda: int(time.time() * 1000),
         description="Creation timestamp in milliseconds",
     )
-    updated_at_ms: Optional[int] = Field(
+    updated_at_ms: int | None = Field(
         default=None, description="Last update timestamp in milliseconds"
     )
-    expires_at_ms: Optional[int] = Field(
+    expires_at_ms: int | None = Field(
         default=None, description="TTL expiration timestamp in milliseconds"
     )
-    version: Optional[int] = Field(
+    version: int | None = Field(
         default=None, description="Version number for optimistic concurrency"
     )
-    source: Optional[str] = Field(
+    source: str | None = Field(
         default=None, description="Original content that generated this vector"
     )
-    schema_id: Optional[str] = Field(
-        default=None, description="Schema ID for validation"
-    )
+    schema_id: str | None = Field(default=None, description="Schema ID for validation")
 
     @field_validator("vector")
     @classmethod
-    def validate_vector(cls, v: List[float]) -> List[float]:
+    def validate_vector(cls, v: list[float]) -> list[float]:
         """Validate that vector is non-empty."""
         if not v:
             raise ValueError("Vector cannot be empty")
@@ -959,7 +957,7 @@ class ProximaRecord(BaseModel):
         self.timestamp_ms = value * 1000
 
     @property
-    def metadata(self) -> Dict[str, Any]:
+    def metadata(self) -> dict[str, Any]:
         """Backward compatibility: get metadata as dict.
 
         Combines typed_fields and flexible_fields into a single dict.
@@ -1010,17 +1008,13 @@ class ColumnDefinition(BaseModel):
     nullable: bool = Field(default=True, description="Whether NULL is allowed")
     indexed: bool = Field(default=False, description="Whether column is indexed")
     filterable: bool = Field(default=True, description="Whether filtering is supported")
-    max_length: Optional[int] = Field(default=None, description="Max length for TEXT")
-    min_value: Optional[float] = Field(
-        default=None, description="Min value for numerics"
-    )
-    max_value: Optional[float] = Field(
-        default=None, description="Max value for numerics"
-    )
-    regex_pattern: Optional[str] = Field(
+    max_length: int | None = Field(default=None, description="Max length for TEXT")
+    min_value: float | None = Field(default=None, description="Min value for numerics")
+    max_value: float | None = Field(default=None, description="Max value for numerics")
+    regex_pattern: str | None = Field(
         default=None, description="Regex for TEXT validation"
     )
-    default_value: Optional[Any] = Field(default=None, description="Default value")
+    default_value: Any | None = Field(default=None, description="Default value")
 
 
 class RecordSchema(BaseModel):
@@ -1047,14 +1041,12 @@ class RecordSchema(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    schema_id: Optional[str] = Field(
-        default=None, description="Unique schema identifier"
-    )
+    schema_id: str | None = Field(default=None, description="Unique schema identifier")
     schema_version: str = Field(default="1.0", description="Schema version")
-    columns: List[ColumnDefinition] = Field(
+    columns: list[ColumnDefinition] = Field(
         default_factory=list, description="Column definitions"
     )
-    text_columns: List["TextColumnConfig"] = Field(
+    text_columns: list["TextColumnConfig"] = Field(
         default_factory=list,
         description="TEXT column configurations with storage strategies",
     )
@@ -1221,7 +1213,7 @@ class RecordSchema(BaseModel):
         name: str,
         chunk_size: int = 512,
         chunk_overlap: int = 50,
-        embedding_model: Optional[str] = None,
+        embedding_model: str | None = None,
         enable_ngram_bloom: bool = True,
     ) -> "RecordSchema":
         """Add a TEXT column optimized for RAG (Retrieval-Augmented Generation).
@@ -1257,7 +1249,7 @@ class RecordSchema(BaseModel):
         self,
         name: str,
         compression_enabled: bool = True,
-        language: Optional[str] = None,
+        language: str | None = None,
     ) -> "RecordSchema":
         """Add a TEXT column for large documents (SIDECAR storage).
 
@@ -1296,7 +1288,7 @@ class RecordSchema(BaseModel):
                 return config
         return None
 
-    def get_column(self, name: str) -> Optional[ColumnDefinition]:
+    def get_column(self, name: str) -> ColumnDefinition | None:
         """Get a column definition by name.
 
         Args:
@@ -1310,7 +1302,7 @@ class RecordSchema(BaseModel):
                 return col
         return None
 
-    def validate_record(self, record: ProximaRecord) -> List[str]:
+    def validate_record(self, record: ProximaRecord) -> list[str]:
         """Validate a record against this schema.
 
         Args:
@@ -1416,9 +1408,7 @@ class TypedFilterCondition(BaseModel):
     field_name: str = Field(..., description="Field name to filter on")
     operator: FilterOperator = Field(..., description="Comparison operator")
     value: Any = Field(..., description="Value to compare against")
-    value_upper: Optional[Any] = Field(
-        default=None, description="Upper bound for BETWEEN"
-    )
+    value_upper: Any | None = Field(default=None, description="Upper bound for BETWEEN")
 
 
 class FilterBuilderV2:
@@ -1453,7 +1443,7 @@ class FilterBuilderV2:
         Args:
             field_name: Initial field to filter on
         """
-        self._conditions: List[TypedFilterCondition] = []
+        self._conditions: list[TypedFilterCondition] = []
         self._current_field = field_name
 
     def eq(self, value: Any) -> "FilterBuilderV2":
@@ -1626,7 +1616,7 @@ class FilterBuilderV2:
         )
         return self
 
-    def in_(self, values: List[Any]) -> "FilterBuilderV2":
+    def in_(self, values: list[Any]) -> "FilterBuilderV2":
         """Add IN condition.
 
         Args:
@@ -1684,7 +1674,7 @@ class FilterBuilderV2:
         self._current_field = field_name
         return self
 
-    def build(self) -> List[TypedFilterCondition]:
+    def build(self) -> list[TypedFilterCondition]:
         """Build and return the filter conditions.
 
         Returns:
@@ -1692,7 +1682,7 @@ class FilterBuilderV2:
         """
         return self._conditions
 
-    def to_dict(self) -> List[Dict[str, Any]]:
+    def to_dict(self) -> list[dict[str, Any]]:
         """Convert to list of dictionaries for API serialization.
 
         Returns:
@@ -1732,9 +1722,9 @@ class SearchRequestV2(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    vector: List[float] = Field(..., description="Query vector")
+    vector: list[float] = Field(..., description="Query vector")
     top_k: int = Field(default=10, ge=1, description="Number of results to return")
-    filters: List[TypedFilterCondition] = Field(
+    filters: list[TypedFilterCondition] = Field(
         default_factory=list, description="Typed filter conditions"
     )
     include_text: bool = Field(
@@ -1743,12 +1733,12 @@ class SearchRequestV2(BaseModel):
     include_vectors: bool = Field(
         default=False, description="Include vectors in results"
     )
-    ef_search: Optional[int] = Field(
+    ef_search: int | None = Field(
         default=None, ge=1, description="HNSW ef_search parameter"
     )
 
     @classmethod
-    def create(cls, vector: List[float], top_k: int = 10) -> "SearchRequestV2":
+    def create(cls, vector: list[float], top_k: int = 10) -> "SearchRequestV2":
         """Factory method to create a search request.
 
         Args:
@@ -1772,7 +1762,7 @@ class SearchRequestV2(BaseModel):
         self.filters.extend(builder.build())
         return self
 
-    def with_filters(self, conditions: List[TypedFilterCondition]) -> "SearchRequestV2":
+    def with_filters(self, conditions: list[TypedFilterCondition]) -> "SearchRequestV2":
         """Add filter conditions directly.
 
         Args:
@@ -1827,8 +1817,8 @@ FilterBuilder = FilterBuilderV2
 
 
 def create_text_column_schema(
-    text_columns: List[TextColumnConfig],
-    additional_columns: Optional[List[ColumnDefinition]] = None,
+    text_columns: list[TextColumnConfig],
+    additional_columns: list[ColumnDefinition] | None = None,
     enforcement: SchemaEnforcement = SchemaEnforcement.HYBRID,
 ) -> RecordSchema:
     """Create a RecordSchema with TEXT column configurations.

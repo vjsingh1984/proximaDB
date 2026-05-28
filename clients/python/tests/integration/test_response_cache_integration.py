@@ -4,12 +4,11 @@ Integration tests for response caching with REST client
 
 import threading
 import time
-from typing import Any, Dict
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
-from proximadb_sdk.cache import CacheLevel, CacheStrategy, ResponseCache
+from proximadb_sdk.cache import CacheStrategy
 from proximadb_sdk.config import ClientConfig
 from proximadb_sdk.protocols.rest_sync import ProximaDBClient
 

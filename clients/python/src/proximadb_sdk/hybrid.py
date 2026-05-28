@@ -54,30 +54,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from functools import lru_cache
 from typing import (
     Any,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Dict,
-    Generic,
-    Iterator,
-    List,
-    Optional,
-    Tuple,
-    TypeVar,
-    Union,
 )
-
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
-
-from .exceptions import ProximaDBError
 
 # =============================================================================
 # Enums and Constants
@@ -156,13 +135,13 @@ class VectorSearchResult:
 
     id: str
     score: float
-    distance: Optional[float] = None
+    distance: float | None = None
     rank: int = 0
-    vector: Optional[List[float]] = None
-    metadata: Optional[Dict[str, Any]] = None
-    collection: Optional[str] = None
+    vector: list[float] | None = None
+    metadata: dict[str, Any] | None = None
+    collection: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "id": self.id,
@@ -191,13 +170,13 @@ class GraphSearchResult:
 
     node_id: str
     score: float
-    path: Optional[List[str]] = None
-    properties: Optional[Dict[str, Any]] = None
-    labels: Optional[List[str]] = None
-    edges: Optional[List[Dict[str, Any]]] = None
-    collection: Optional[str] = None
+    path: list[str] | None = None
+    properties: dict[str, Any] | None = None
+    labels: list[str] | None = None
+    edges: list[dict[str, Any]] | None = None
+    collection: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "node_id": self.node_id,
@@ -228,12 +207,12 @@ class DocumentSearchResult:
     id: str
     score: float
     rank: int = 0
-    highlight: Optional[List[str]] = None
-    document: Optional[Dict[str, Any]] = None
-    metadata: Optional[Dict[str, Any]] = None
-    collection: Optional[str] = None
+    highlight: list[str] | None = None
+    document: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+    collection: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "id": self.id,
@@ -262,12 +241,12 @@ class TimeSeriesResult:
 
     id: str
     score: float
-    timestamp: Optional[datetime] = None
-    values: Optional[Dict[str, Any]] = None
-    tags: Optional[Dict[str, Any]] = None
-    collection: Optional[str] = None
+    timestamp: datetime | None = None
+    values: dict[str, Any] | None = None
+    tags: dict[str, Any] | None = None
+    collection: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "id": self.id,
@@ -295,10 +274,10 @@ class HybridSearchResult:
 
     id: str
     final_score: float
-    components: Dict[str, Any] = field(default_factory=dict)
+    components: dict[str, Any] = field(default_factory=dict)
     rank: int = 0
-    explanation: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    explanation: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def fused_score(self) -> float:
@@ -326,7 +305,7 @@ class HybridSearchResult:
             else document_component.get("score", 0.0)
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "id": self.id,
@@ -347,9 +326,9 @@ def _result_id(result: Any) -> str:
 
 
 def _normalize_fusion_inputs(
-    primary: Union[Dict[str, List[Any]], List[Any]],
-    secondary: Optional[List[Any]] = None,
-) -> Dict[str, List[Any]]:
+    primary: dict[str, list[Any]] | list[Any],
+    secondary: list[Any] | None = None,
+) -> dict[str, list[Any]]:
     if isinstance(primary, dict):
         return primary
 
@@ -359,8 +338,8 @@ def _normalize_fusion_inputs(
     return results
 
 
-def _merge_component_metadata(components: Dict[str, Any]) -> Dict[str, Any]:
-    metadata: Dict[str, Any] = {}
+def _merge_component_metadata(components: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
     for component in components.values():
         component_metadata = getattr(component, "metadata", None)
         if component_metadata is None and isinstance(component, dict):
@@ -381,11 +360,11 @@ class FusionStrategyBase(ABC):
     @abstractmethod
     def fuse(
         self,
-        results: Union[Dict[str, List[Any]], List[Any]],
-        secondary_results: Optional[List[Any]] = None,
-        top_k: Optional[int] = None,
-        weights: Optional[Dict[str, float]] = None,
-    ) -> List[HybridSearchResult]:
+        results: dict[str, list[Any]] | list[Any],
+        secondary_results: list[Any] | None = None,
+        top_k: int | None = None,
+        weights: dict[str, float] | None = None,
+    ) -> list[HybridSearchResult]:
         """Fuse results from multiple models.
 
         Args:
@@ -418,11 +397,11 @@ class ReciprocalRankFusion(FusionStrategyBase):
 
     def fuse(
         self,
-        results: Union[Dict[str, List[Any]], List[Any]],
-        secondary_results: Optional[List[Any]] = None,
-        top_k: Optional[int] = None,
-        weights: Optional[Dict[str, float]] = None,
-    ) -> List[HybridSearchResult]:
+        results: dict[str, list[Any]] | list[Any],
+        secondary_results: list[Any] | None = None,
+        top_k: int | None = None,
+        weights: dict[str, float] | None = None,
+    ) -> list[HybridSearchResult]:
         """Fuse results using RRF.
 
         Args:
@@ -437,7 +416,7 @@ class ReciprocalRankFusion(FusionStrategyBase):
         results = _normalize_fusion_inputs(results, secondary_results)
 
         # Calculate RRF scores
-        rrf_scores: Dict[str, float] = {}
+        rrf_scores: dict[str, float] = {}
 
         for model, model_results in results.items():
             model_weight = weights.get(model, 1.0) if weights else 1.0
@@ -493,8 +472,8 @@ class WeightedFusion(FusionStrategyBase):
 
     def __init__(
         self,
-        weights: Optional[Dict[str, float]] = None,
-        alpha: Optional[float] = None,
+        weights: dict[str, float] | None = None,
+        alpha: float | None = None,
         bm25_normalize: bool = True,
         vector_normalize: bool = True,
     ):
@@ -518,11 +497,11 @@ class WeightedFusion(FusionStrategyBase):
 
     def fuse(
         self,
-        results: Union[Dict[str, List[Any]], List[Any]],
-        secondary_results: Optional[List[Any]] = None,
-        top_k: Optional[int] = None,
-        weights: Optional[Dict[str, float]] = None,
-    ) -> List[HybridSearchResult]:
+        results: dict[str, list[Any]] | list[Any],
+        secondary_results: list[Any] | None = None,
+        top_k: int | None = None,
+        weights: dict[str, float] | None = None,
+    ) -> list[HybridSearchResult]:
         """Fuse results using weighted combination.
 
         Args:
@@ -538,7 +517,7 @@ class WeightedFusion(FusionStrategyBase):
         fusion_weights = weights or self.default_weights
 
         # Normalize scores per model
-        normalized_results: Dict[str, Dict[str, float]] = {}
+        normalized_results: dict[str, dict[str, float]] = {}
         for model, model_results in results.items():
             if not model_results:
                 continue
@@ -563,7 +542,7 @@ class WeightedFusion(FusionStrategyBase):
                 normalized_results[model][result_id] = score / max_score
 
         # Calculate weighted scores
-        weighted_scores: Dict[str, float] = {}
+        weighted_scores: dict[str, float] = {}
         for model, norm_results in normalized_results.items():
             model_weight = fusion_weights.get(model, 1.0)
 
@@ -626,11 +605,11 @@ class CascadeFusion(FusionStrategyBase):
 
     def fuse(
         self,
-        results: Union[Dict[str, List[Any]], List[Any]],
-        secondary_results: Optional[List[Any]] = None,
-        top_k: Optional[int] = None,
-        weights: Optional[Dict[str, float]] = None,
-    ) -> List[HybridSearchResult]:
+        results: dict[str, list[Any]] | list[Any],
+        secondary_results: list[Any] | None = None,
+        top_k: int | None = None,
+        weights: dict[str, float] | None = None,
+    ) -> list[HybridSearchResult]:
         """Fuse results using cascade strategy.
 
         Args:
@@ -710,10 +689,10 @@ class HybridQueryRepository:
         """
         self._client = client
         self._cache_ttl = cache_ttl
-        self._cache: Dict[str, Tuple[List[HybridSearchResult], float]] = {}
+        self._cache: dict[str, tuple[list[HybridSearchResult], float]] = {}
 
         # Fusion strategies
-        self._fusion_strategies: Dict[FusionStrategy, FusionStrategyBase] = {
+        self._fusion_strategies: dict[FusionStrategy, FusionStrategyBase] = {
             FusionStrategy.RRF: ReciprocalRankFusion(),
             FusionStrategy.WEIGHTED: WeightedFusion(),
             FusionStrategy.CASCADE: CascadeFusion(),
@@ -725,18 +704,18 @@ class HybridQueryRepository:
 
     async def search_async(
         self,
-        vector_query: Optional[List[float]] = None,
-        vector_collection: Optional[str] = None,
+        vector_query: list[float] | None = None,
+        vector_collection: str | None = None,
         top_k: int = 10,
-        graph_query: Optional[str] = None,
-        graph_collection: Optional[str] = None,
-        document_filter: Optional[Dict[str, Any]] = None,
-        document_collection: Optional[str] = None,
-        time_range: Optional[Tuple[datetime, datetime]] = None,
-        timeseries_collection: Optional[str] = None,
+        graph_query: str | None = None,
+        graph_collection: str | None = None,
+        document_filter: dict[str, Any] | None = None,
+        document_collection: str | None = None,
+        time_range: tuple[datetime, datetime] | None = None,
+        timeseries_collection: str | None = None,
         fusion_strategy: FusionStrategy = FusionStrategy.RRF,
-        weights: Optional[Dict[str, float]] = None,
-    ) -> List[HybridSearchResult]:
+        weights: dict[str, float] | None = None,
+    ) -> list[HybridSearchResult]:
         """Execute hybrid search across multiple models (async).
 
         Args:
@@ -826,18 +805,18 @@ class HybridQueryRepository:
 
     def search(
         self,
-        vector_query: Optional[List[float]] = None,
-        vector_collection: Optional[str] = None,
+        vector_query: list[float] | None = None,
+        vector_collection: str | None = None,
         top_k: int = 10,
-        graph_query: Optional[str] = None,
-        graph_collection: Optional[str] = None,
-        document_filter: Optional[Dict[str, Any]] = None,
-        document_collection: Optional[str] = None,
-        time_range: Optional[Tuple[datetime, datetime]] = None,
-        timeseries_collection: Optional[str] = None,
+        graph_query: str | None = None,
+        graph_collection: str | None = None,
+        document_filter: dict[str, Any] | None = None,
+        document_collection: str | None = None,
+        time_range: tuple[datetime, datetime] | None = None,
+        timeseries_collection: str | None = None,
         fusion_strategy: FusionStrategy = FusionStrategy.RRF,
-        weights: Optional[Dict[str, float]] = None,
-    ) -> List[HybridSearchResult]:
+        weights: dict[str, float] | None = None,
+    ) -> list[HybridSearchResult]:
         """Execute hybrid search across multiple models (sync).
 
         Args:
@@ -881,8 +860,8 @@ class HybridQueryRepository:
     async def sql_async(
         self,
         query: str,
-        params: Optional[List[Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        params: list[Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Execute federated SQL query across multiple models.
 
         Supports SQL extensions:
@@ -916,8 +895,8 @@ class HybridQueryRepository:
     def sql(
         self,
         query: str,
-        params: Optional[List[Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        params: list[Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Execute federated SQL query (sync).
 
         Args:
@@ -937,9 +916,9 @@ class HybridQueryRepository:
     async def _vector_search(
         self,
         collection: str,
-        vector: List[float],
+        vector: list[float],
         top_k: int,
-    ) -> List[VectorSearchResult]:
+    ) -> list[VectorSearchResult]:
         """Execute vector search.
 
         Args:
@@ -957,7 +936,7 @@ class HybridQueryRepository:
         self,
         collection: str,
         query: str,
-    ) -> List[GraphSearchResult]:
+    ) -> list[GraphSearchResult]:
         """Execute graph search.
 
         Args:
@@ -973,8 +952,8 @@ class HybridQueryRepository:
     async def _document_search(
         self,
         collection: str,
-        filter: Dict[str, Any],
-    ) -> List[DocumentSearchResult]:
+        filter: dict[str, Any],
+    ) -> list[DocumentSearchResult]:
         """Execute document search.
 
         Args:
@@ -989,10 +968,10 @@ class HybridQueryRepository:
 
     def _build_cache_key(
         self,
-        vector_query: Optional[List[float]],
-        graph_query: Optional[str],
-        document_filter: Optional[Dict[str, Any]],
-        time_range: Optional[Tuple[datetime, datetime]],
+        vector_query: list[float] | None,
+        graph_query: str | None,
+        document_filter: dict[str, Any] | None,
+        time_range: tuple[datetime, datetime] | None,
         fusion_strategy: FusionStrategy,
     ) -> str:
         """Build cache key from query parameters.
@@ -1068,7 +1047,7 @@ class ProximaDBHybrid:
         self._default_fusion = default_fusion
 
     def _resolve_fusion(
-        self, fusion_strategy: Optional[Union[FusionStrategy, FusionStrategyBase]]
+        self, fusion_strategy: FusionStrategy | FusionStrategyBase | None
     ) -> FusionStrategyBase:
         if isinstance(fusion_strategy, FusionStrategyBase):
             return fusion_strategy
@@ -1086,8 +1065,8 @@ class ProximaDBHybrid:
         self,
         collection: str,
         top_k: int,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[VectorSearchResult]:
+        filters: dict[str, Any] | None = None,
+    ) -> list[VectorSearchResult]:
         metadata = {
             "category": "tutorial",
             "language": "python",
@@ -1108,10 +1087,10 @@ class ProximaDBHybrid:
 
     def _mock_document_results(
         self,
-        text_query: Optional[str],
+        text_query: str | None,
         top_k: int,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[DocumentSearchResult]:
+        filters: dict[str, Any] | None = None,
+    ) -> list[DocumentSearchResult]:
         metadata = {
             "category": "tutorial",
             "language": "python",
@@ -1135,19 +1114,19 @@ class ProximaDBHybrid:
 
     def search(
         self,
-        vector_query: Optional[List[float]] = None,
-        vector_collection: Optional[str] = None,
+        vector_query: list[float] | None = None,
+        vector_collection: str | None = None,
         top_k: int = 10,
-        graph_query: Optional[str] = None,
-        graph_collection: Optional[str] = None,
-        document_filter: Optional[Dict[str, Any]] = None,
-        document_collection: Optional[str] = None,
-        fusion_strategy: Optional[Union[FusionStrategy, FusionStrategyBase]] = None,
-        weights: Optional[Dict[str, float]] = None,
-        query_vector: Optional[List[float]] = None,
-        text_query: Optional[str] = None,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[HybridSearchResult]:
+        graph_query: str | None = None,
+        graph_collection: str | None = None,
+        document_filter: dict[str, Any] | None = None,
+        document_collection: str | None = None,
+        fusion_strategy: FusionStrategy | FusionStrategyBase | None = None,
+        weights: dict[str, float] | None = None,
+        query_vector: list[float] | None = None,
+        text_query: str | None = None,
+        filters: dict[str, Any] | None = None,
+    ) -> list[HybridSearchResult]:
         """Execute hybrid search.
 
         Args:
@@ -1260,8 +1239,8 @@ class ProximaDBHybrid:
     def sql(
         self,
         query: str,
-        params: Optional[List[Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        params: list[Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Execute federated SQL query.
 
         Args:
@@ -1290,7 +1269,7 @@ class ProximaDBHybrid:
         """
         self._repository._cache.clear()
 
-    def list_strategies(self) -> List[Dict[str, Any]]:
+    def list_strategies(self) -> list[dict[str, Any]]:
         """List available fusion strategies."""
         return [
             {"id": "rrf"},

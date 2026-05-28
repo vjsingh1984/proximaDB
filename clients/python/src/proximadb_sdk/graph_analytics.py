@@ -11,7 +11,7 @@ Licensed under the Apache License, Version 2.0
 import json
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any
 
 
 class GraphAlgorithm(str, Enum):
@@ -60,16 +60,16 @@ class AlgorithmConfig:
 
     # Community detection settings
     resolution: float = 1.0
-    random_seed: Optional[int] = None
+    random_seed: int | None = None
 
     # Centrality settings
     normalized: bool = True
-    weight_property: Optional[str] = None
+    weight_property: str | None = None
 
     # Path settings
-    max_depth: Optional[int] = None
+    max_depth: int | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "damping_factor": self.damping_factor,
             "max_iterations": self.max_iterations,
@@ -93,7 +93,7 @@ class SemanticTraversalConfig:
     # Traversal settings
     max_depth: int = 3
     direction: TraversalDirection = TraversalDirection.OUTGOING
-    edge_types: Optional[List[str]] = None
+    edge_types: list[str] | None = None
 
     # Result settings
     limit: int = 100
@@ -101,10 +101,10 @@ class SemanticTraversalConfig:
     include_paths: bool = False
 
     # Filtering
-    node_label_filter: Optional[List[str]] = None
-    property_filters: Optional[Dict[str, Any]] = None
+    node_label_filter: list[str] | None = None
+    property_filters: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "similarity_threshold": self.similarity_threshold,
             "vector_field": self.vector_field,
@@ -124,8 +124,8 @@ class PatternElement:
     """Element in a graph pattern"""
 
     variable: str
-    label: Optional[str] = None
-    properties: Optional[Dict[str, Any]] = None
+    label: str | None = None
+    properties: dict[str, Any] | None = None
 
     def to_cypher(self) -> str:
         """Convert to Cypher-like pattern notation"""
@@ -147,12 +147,12 @@ class RelationshipPattern:
 
     source: PatternElement
     target: PatternElement
-    relationship_type: Optional[str] = None
-    relationship_var: Optional[str] = None
+    relationship_type: str | None = None
+    relationship_var: str | None = None
     direction: TraversalDirection = TraversalDirection.OUTGOING
     min_hops: int = 1
     max_hops: int = 1
-    properties: Optional[Dict[str, Any]] = None
+    properties: dict[str, Any] | None = None
 
     def to_cypher(self) -> str:
         """Convert to Cypher-like pattern notation"""
@@ -183,13 +183,11 @@ class RelationshipPattern:
 class GraphPattern:
     """Complete graph pattern for matching"""
 
-    patterns: List[Union[PatternElement, RelationshipPattern]] = field(
-        default_factory=list
-    )
-    where_clauses: List[str] = field(default_factory=list)
-    return_variables: List[str] = field(default_factory=list)
-    order_by: Optional[str] = None
-    limit: Optional[int] = None
+    patterns: list[PatternElement | RelationshipPattern] = field(default_factory=list)
+    where_clauses: list[str] = field(default_factory=list)
+    return_variables: list[str] = field(default_factory=list)
+    order_by: str | None = None
+    limit: int | None = None
 
     def match(self, element: PatternElement) -> "GraphPattern":
         """Add a node pattern to match"""
@@ -200,7 +198,7 @@ class GraphPattern:
         self,
         source: PatternElement,
         target: PatternElement,
-        rel_type: Optional[str] = None,
+        rel_type: str | None = None,
         direction: TraversalDirection = TraversalDirection.OUTGOING,
         min_hops: int = 1,
         max_hops: int = 1,
@@ -238,7 +236,7 @@ class GraphPattern:
         self.limit = n
         return self
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert pattern to dictionary for API"""
         return {
             "patterns": [
@@ -257,15 +255,15 @@ class AlgorithmResult:
     """Result from a graph algorithm execution"""
 
     algorithm: GraphAlgorithm
-    node_scores: Optional[Dict[str, float]] = None
-    communities: Optional[Dict[str, int]] = None
-    paths: Optional[List[List[str]]] = None
-    components: Optional[List[List[str]]] = None
-    statistics: Optional[Dict[str, Any]] = None
+    node_scores: dict[str, float] | None = None
+    communities: dict[str, int] | None = None
+    paths: list[list[str]] | None = None
+    components: list[list[str]] | None = None
+    statistics: dict[str, Any] | None = None
     execution_time_ms: float = 0
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "AlgorithmResult":
+    def from_dict(cls, data: dict[str, Any]) -> "AlgorithmResult":
         return cls(
             algorithm=GraphAlgorithm(data.get("algorithm", "pagerank")),
             node_scores=data.get("node_scores"),
@@ -281,10 +279,10 @@ class AlgorithmResult:
 class SemanticTraversalResult:
     """Result from semantic graph traversal"""
 
-    nodes: List[Dict[str, Any]]
-    edges: Optional[List[Dict[str, Any]]] = None
-    paths: Optional[List[List[str]]] = None
-    scores: Optional[Dict[str, float]] = None
+    nodes: list[dict[str, Any]]
+    edges: list[dict[str, Any]] | None = None
+    paths: list[list[str]] | None = None
+    scores: dict[str, float] | None = None
     total_count: int = 0
     execution_time_ms: float = 0
 
@@ -293,7 +291,7 @@ class SemanticTraversalResult:
 class PatternMatchResult:
     """Result from pattern matching"""
 
-    matches: List[Dict[str, Any]]
+    matches: list[dict[str, Any]]
     total_count: int = 0
     execution_time_ms: float = 0
 
@@ -349,8 +347,8 @@ class GraphAnalytics:
         self,
         graph_id: str,
         algorithm: GraphAlgorithm,
-        config: Optional[AlgorithmConfig] = None,
-        node_subset: Optional[List[str]] = None,
+        config: AlgorithmConfig | None = None,
+        node_subset: list[str] | None = None,
     ) -> AlgorithmResult:
         """
         Run a graph algorithm on the specified graph.
@@ -410,7 +408,7 @@ class GraphAnalytics:
         damping_factor: float = 0.85,
         max_iterations: int = 100,
         convergence_threshold: float = 1e-6,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """
         Compute PageRank scores for all nodes in the graph.
 
@@ -444,8 +442,8 @@ class GraphAnalytics:
         graph_id: str,
         centrality_type: str = "betweenness",
         normalized: bool = True,
-        weight_property: Optional[str] = None,
-    ) -> Dict[str, float]:
+        weight_property: str | None = None,
+    ) -> dict[str, float]:
         """
         Compute centrality scores for nodes.
 
@@ -488,8 +486,8 @@ class GraphAnalytics:
         graph_id: str,
         algorithm: str = "louvain",
         resolution: float = 1.0,
-        random_seed: Optional[int] = None,
-    ) -> Dict[str, int]:
+        random_seed: int | None = None,
+    ) -> dict[str, int]:
         """
         Detect communities in the graph.
 
@@ -528,7 +526,7 @@ class GraphAnalytics:
         self,
         graph_id: str,
         strongly_connected: bool = False,
-    ) -> List[List[str]]:
+    ) -> list[list[str]]:
         """
         Find connected components in the graph.
 
@@ -558,9 +556,9 @@ class GraphAnalytics:
         graph_id: str,
         source: str,
         target: str,
-        weight_property: Optional[str] = None,
-        edge_types: Optional[List[str]] = None,
-    ) -> Optional[List[str]]:
+        weight_property: str | None = None,
+        edge_types: list[str] | None = None,
+    ) -> list[str] | None:
         """
         Find the shortest path between two nodes.
 
@@ -601,9 +599,9 @@ class GraphAnalytics:
         self,
         graph_id: str,
         start_node: str,
-        query_vector: List[float],
-        config: Optional[SemanticTraversalConfig] = None,
-        collection_id: Optional[str] = None,
+        query_vector: list[float],
+        config: SemanticTraversalConfig | None = None,
+        collection_id: str | None = None,
     ) -> SemanticTraversalResult:
         """
         Traverse the graph using vector similarity to guide traversal.
@@ -671,11 +669,11 @@ class GraphAnalytics:
         self,
         graph_id: str,
         node_id: str,
-        query_vector: Optional[List[float]] = None,
+        query_vector: list[float] | None = None,
         similarity_threshold: float = 0.7,
         max_neighbors: int = 10,
-        edge_types: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
+        edge_types: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Find neighbors of a node filtered by vector similarity.
 
@@ -722,7 +720,7 @@ class GraphAnalytics:
         graph_id: str,
         pattern: GraphPattern,
         mode: PatternMatchMode = PatternMatchMode.EXACT,
-        limit: Optional[int] = None,
+        limit: int | None = None,
     ) -> PatternMatchResult:
         """
         Find subgraphs matching a pattern.
@@ -783,8 +781,8 @@ class GraphAnalytics:
     def find_triangles(
         self,
         graph_id: str,
-        node_id: Optional[str] = None,
-    ) -> List[List[str]]:
+        node_id: str | None = None,
+    ) -> list[list[str]]:
         """
         Find triangles in the graph.
 
@@ -809,8 +807,8 @@ class GraphAnalytics:
     def clustering_coefficient(
         self,
         graph_id: str,
-        node_id: Optional[str] = None,
-    ) -> Union[float, Dict[str, float]]:
+        node_id: str | None = None,
+    ) -> float | dict[str, float]:
         """
         Compute clustering coefficient.
 
@@ -840,7 +838,7 @@ class GraphAnalytics:
 
 
 # Convenience function for creating pattern elements
-def node(variable: str, label: Optional[str] = None, **properties) -> PatternElement:
+def node(variable: str, label: str | None = None, **properties) -> PatternElement:
     """
     Create a pattern element for graph matching.
 
@@ -861,7 +859,7 @@ def node(variable: str, label: Optional[str] = None, **properties) -> PatternEle
 def relationship(
     source: PatternElement,
     target: PatternElement,
-    rel_type: Optional[str] = None,
+    rel_type: str | None = None,
     direction: TraversalDirection = TraversalDirection.OUTGOING,
     **properties,
 ) -> RelationshipPattern:

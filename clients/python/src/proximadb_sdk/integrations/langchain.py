@@ -25,7 +25,8 @@ Example::
 from __future__ import annotations
 
 import uuid
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
@@ -65,8 +66,8 @@ class ProximaDBVectorStore(VectorStore):
     def add_texts(
         self,
         texts: Iterable[str],
-        metadatas: Optional[list[dict[str, Any]]] = None,
-        ids: Optional[list[str]] = None,
+        metadatas: list[dict[str, Any]] | None = None,
+        ids: list[str] | None = None,
         **kwargs: Any,
     ) -> list[str]:
         """Embed texts and insert them into ProximaDB.
@@ -98,7 +99,7 @@ class ProximaDBVectorStore(VectorStore):
         insert_records(self._client, self._collection_name, records)
         return generated_ids
 
-    def delete(self, ids: Optional[list[str]] = None, **kwargs: Any) -> Optional[bool]:
+    def delete(self, ids: list[str] | None = None, **kwargs: Any) -> bool | None:
         """Delete vectors by ID."""
         if not ids:
             return False
@@ -165,7 +166,7 @@ class ProximaDBVectorStore(VectorStore):
         cls,
         texts: list[str],
         embedding: Embeddings,
-        metadatas: Optional[list[dict[str, Any]]] = None,
+        metadatas: list[dict[str, Any]] | None = None,
         *,
         client: Any = None,
         collection_name: str = "langchain",

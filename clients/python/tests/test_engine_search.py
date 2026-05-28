@@ -9,7 +9,7 @@ import time
 import numpy as np
 import pytest
 
-from proximadb_sdk import StorageEngine, VectorRecord, connect_grpc, connect_rest
+from proximadb_sdk import StorageEngine, VectorRecord, connect_grpc
 
 # Test parameters for each engine
 ENGINES_TO_TEST = [

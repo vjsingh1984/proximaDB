@@ -18,7 +18,6 @@ limitations under the License.
 
 import os
 from enum import Enum
-from typing import Dict, Optional, Union
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -77,19 +76,17 @@ class CompressionConfig(BaseModel):
     threshold_bytes: int = Field(
         default=1024, ge=0, description="Minimum size to compress"
     )
-    level: Optional[int] = Field(
-        default=None, ge=1, le=9, description="Compression level"
-    )
+    level: int | None = Field(default=None, ge=1, le=9, description="Compression level")
 
 
 class TLSConfig(BaseModel):
     """TLS/SSL configuration"""
 
     verify: bool = True
-    ca_bundle: Optional[str] = None
-    cert_file: Optional[str] = None
-    key_file: Optional[str] = None
-    sni_hostname: Optional[str] = None
+    ca_bundle: str | None = None
+    cert_file: str | None = None
+    key_file: str | None = None
+    sni_hostname: str | None = None
 
 
 class ClientConfig(BaseModel):
@@ -97,9 +94,7 @@ class ClientConfig(BaseModel):
 
     # Connection settings
     url: str = Field(..., description="ProximaDB server URL")
-    api_key: Optional[str] = Field(
-        default=None, description="API key for authentication"
-    )
+    api_key: str | None = Field(default=None, description="API key for authentication")
     protocol: Protocol = Field(
         default=Protocol.AUTO, description="Communication protocol"
     )
@@ -125,10 +120,8 @@ class ClientConfig(BaseModel):
     tls: TLSConfig = Field(default_factory=TLSConfig)
 
     # Headers and metadata
-    user_agent: Optional[str] = Field(
-        default=None, description="Custom User-Agent header"
-    )
-    custom_headers: Dict[str, str] = Field(default_factory=dict)
+    user_agent: str | None = Field(default=None, description="Custom User-Agent header")
+    custom_headers: dict[str, str] = Field(default_factory=dict)
 
     # Logging
     log_level: LogLevel = Field(default=LogLevel.INFO)
@@ -171,7 +164,7 @@ class ClientConfig(BaseModel):
         return v
 
     @field_validator("api_key")
-    def validate_api_key(cls, v: Optional[str]) -> Optional[str]:
+    def validate_api_key(cls, v: str | None) -> str | None:
         """Validate API key format"""
         if v and len(v) < 10:
             raise ValueError("API key appears to be too short")
@@ -252,7 +245,7 @@ class ClientConfig(BaseModel):
 
         return cls(**config_dict)
 
-    def get_base_headers(self) -> Dict[str, str]:
+    def get_base_headers(self) -> dict[str, str]:
         """Get base headers for requests"""
         headers = {
             "User-Agent": self.user_agent or f"proximadb-python/{self._get_version()}",
@@ -382,9 +375,9 @@ DEFAULT_CONFIG = ClientConfig(
 
 
 def load_config(
-    url: Optional[str] = None,
-    api_key: Optional[str] = None,
-    config_file: Optional[str] = None,
+    url: str | None = None,
+    api_key: str | None = None,
+    config_file: str | None = None,
     **kwargs,
 ) -> ClientConfig:
     """Load configuration from multiple sources with precedence:

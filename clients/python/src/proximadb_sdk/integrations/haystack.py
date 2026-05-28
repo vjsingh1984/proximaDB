@@ -38,7 +38,7 @@ Example::
 from __future__ import annotations
 
 import uuid
-from typing import Any, List, Optional, Union, cast
+from typing import Any, cast
 
 from haystack.dataclasses import Document
 from haystack.document_stores import DuplicatePolicy
@@ -69,7 +69,7 @@ class ProximaDBDocumentStore:
         embedding_dim: int,
         *,
         text_key: str = "content",
-        namespace: Optional[str] = None,
+        namespace: str | None = None,
     ) -> None:
         self._client = client
         self._collection_name = collection_name
@@ -93,8 +93,8 @@ class ProximaDBDocumentStore:
 
     def filter_documents(
         self,
-        filters: Optional[dict[str, Any]] = None,
-    ) -> List[Document]:
+        filters: dict[str, Any] | None = None,
+    ) -> list[Document]:
         """Filter documents based on metadata criteria.
 
         Args:
@@ -117,9 +117,9 @@ class ProximaDBDocumentStore:
 
     def write_documents(
         self,
-        documents: List[Document],
+        documents: list[Document],
         policy: DuplicatePolicy = DuplicatePolicy.FAIL,
-    ) -> List[Document]:
+    ) -> list[Document]:
         """Index documents for retrieval.
 
         Args:
@@ -133,8 +133,8 @@ class ProximaDBDocumentStore:
             ValueError: If a document without embedding is provided and
                 policy is DUPLICATE_POLICY.FAIL.
         """
-        records: List[dict[str, Any]] = []
-        indexed_docs: List[Document] = []
+        records: list[dict[str, Any]] = []
+        indexed_docs: list[Document] = []
 
         for doc in documents:
             doc_id = doc.id or self._generate_id(doc)
@@ -171,7 +171,7 @@ class ProximaDBDocumentStore:
         insert_records(self._client, self._collection_name, records)
         return indexed_docs
 
-    def delete_documents(self, document_ids: List[str]) -> None:
+    def delete_documents(self, document_ids: list[str]) -> None:
         """Delete documents from the store.
 
         Args:
@@ -181,10 +181,10 @@ class ProximaDBDocumentStore:
 
     def retrieve_documents(
         self,
-        embedding_function: Union[List[float], List[List[float]]],
+        embedding_function: list[float] | list[list[float]],
         top_k: int = 10,
-        filters: Optional[dict[str, Any]] = None,
-    ) -> List[List[Document]]:
+        filters: dict[str, Any] | None = None,
+    ) -> list[list[Document]]:
         """Retrieve documents using vector similarity search.
 
         Args:
@@ -196,15 +196,15 @@ class ProximaDBDocumentStore:
             List of document lists (one list per query).
         """
         # Handle both single query and multiple queries
-        queries: List[List[float]]
+        queries: list[list[float]]
         if isinstance(embedding_function[0], list):
             # Multiple query embeddings
-            queries = cast(List[List[float]], embedding_function)
+            queries = cast(list[list[float]], embedding_function)
         else:
             # Single query embedding
-            queries = [cast(List[float], embedding_function)]
+            queries = [cast(list[float], embedding_function)]
 
-        all_results: List[List[Document]] = []
+        all_results: list[list[Document]] = []
 
         for query_embedding in queries:
             search_results = self._client.search(
@@ -243,7 +243,7 @@ class ProximaDBDocumentStore:
         metadata = dict(result.metadata) if result.metadata else {}
 
         # Extract text content from source or metadata
-        text_content: Optional[str] = result.source
+        text_content: str | None = result.source
         if text_content is None:
             text_content = str(metadata.pop(self._text_key, ""))
 
@@ -255,7 +255,7 @@ class ProximaDBDocumentStore:
         )
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "ProximaDBDocumentStore":
+    def from_dict(cls, data: dict[str, Any]) -> ProximaDBDocumentStore:
         """Deserialize a ProximaDBDocumentStore from a dictionary.
 
         Args:
@@ -312,7 +312,7 @@ class ProximaDBRetriever:
         self,
         document_store: ProximaDBDocumentStore,
         top_k: int = 10,
-        filters: Optional[dict[str, Any]] = None,
+        filters: dict[str, Any] | None = None,
     ) -> None:
         self._document_store = document_store
         self._top_k = top_k
@@ -320,8 +320,8 @@ class ProximaDBRetriever:
 
     def retrieve(
         self,
-        query_embedding: List[float],
-    ) -> List[Document]:
+        query_embedding: list[float],
+    ) -> list[Document]:
         """Retrieve documents for a query embedding.
 
         Args:

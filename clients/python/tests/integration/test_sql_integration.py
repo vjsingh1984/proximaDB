@@ -12,7 +12,6 @@ from proximadb_sdk import (
     CollectionConfig,
     FilterableColumn,
     FilterableDataType,
-    ProximaDBError,
     StorageEngine,
     VectorRecord,
     connect_rest,
@@ -44,7 +43,6 @@ class TestSqlIntegration:
     def client(self):
         """Create client connected to actual ProximaDB server"""
         # SQL is only supported over REST, not gRPC
-        from proximadb_sdk import connect_rest
 
         client = connect_rest(url="http://localhost:5678")
         yield client

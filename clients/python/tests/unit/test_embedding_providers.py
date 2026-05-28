@@ -5,8 +5,6 @@ Tests the base classes, factory, and simulated provider without requiring
 external model dependencies.
 """
 
-from unittest.mock import MagicMock, Mock, patch
-
 import numpy as np
 import pytest
 
@@ -14,9 +12,6 @@ from proximadb_sdk.embedding_providers.core import (
     BaseEmbeddingProvider as EmbeddingProvider,
 )
 from proximadb_sdk.embedding_providers.core import ProviderConfig as EmbeddingConfig
-from proximadb_sdk.embedding_providers.core import (
-    ProviderRegistry,
-)
 from proximadb_sdk.embedding_providers.providers.testing.simulated import (
     SimulatedEmbeddingProvider,
 )

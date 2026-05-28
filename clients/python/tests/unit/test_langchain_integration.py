@@ -6,7 +6,7 @@ run without a live server or real embedding model.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 

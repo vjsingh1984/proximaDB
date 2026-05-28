@@ -6,7 +6,6 @@ circuit breaker settings, and other fault tolerance mechanisms.
 """
 
 from enum import Enum
-from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -42,7 +41,7 @@ class NetworkRetryPolicy(BaseModel):
     retry_on_timeout: bool = Field(default=True)
     retry_on_connection_error: bool = Field(default=True)
     retry_on_server_error: bool = Field(default=True)
-    retry_status_codes: List[int] = Field(
+    retry_status_codes: list[int] = Field(
         default_factory=lambda: [429, 500, 502, 503, 504]
     )
 
@@ -71,7 +70,7 @@ class AdvancedRetryPolicy(BaseModel):
     retry_on_server_error: bool = Field(default=False)
 
     # Custom retry conditions
-    retryable_exceptions: List[str] = Field(default_factory=list)
+    retryable_exceptions: list[str] = Field(default_factory=list)
 
 
 class CircuitBreakerPolicy(BaseModel):

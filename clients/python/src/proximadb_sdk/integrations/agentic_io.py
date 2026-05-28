@@ -152,9 +152,7 @@ class ProximaEventStore:
             limit=max(limit, 1000),
         )
         events = [_event_from_document(doc) for doc in _documents(result)]
-        events = [
-            event for event in events if event.global_position > after_position
-        ]
+        events = [event for event in events if event.global_position > after_position]
         events.sort(key=lambda event: event.global_position)
         return events[:limit]
 
@@ -236,9 +234,14 @@ class ProximaMapperSession:
         self.adapter.insert_document(collection_name, payload, id=doc_id)
 
         if vector is not None:
-            from proximadb_sdk.integrations._records import insert_records, record_payload
+            from proximadb_sdk.integrations._records import (
+                insert_records,
+                record_payload,
+            )
 
-            target_vector_collection = vector_collection or f"{collection_name}__vectors"
+            target_vector_collection = (
+                vector_collection or f"{collection_name}__vectors"
+            )
             try:
                 self.adapter.create_collection(
                     target_vector_collection,
@@ -274,7 +277,9 @@ class ProximaMapperSession:
             return None
         return _dict_to_model(model_type, _payload(doc))
 
-    def query(self, model_type: type[T], *, collection: str | None = None) -> ProximaQuery[T]:
+    def query(
+        self, model_type: type[T], *, collection: str | None = None
+    ) -> ProximaQuery[T]:
         """Start a typed document query."""
         return ProximaQuery(self, model_type, collection=collection)
 
@@ -394,7 +399,9 @@ class ProximaQuery(Generic[T]):
         return self
 
     def all(self) -> list[T]:
-        collection_name = self.collection or self.session._collection_for(self.model_type)
+        collection_name = self.collection or self.session._collection_for(
+            self.model_type
+        )
         result = self.session.adapter.query_documents(
             collection_name,
             filter=self._filter or None,

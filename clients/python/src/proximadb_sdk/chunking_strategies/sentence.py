@@ -5,7 +5,7 @@ Chunks text at sentence boundaries while respecting size constraints.
 """
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
 
@@ -40,7 +40,7 @@ class SentenceStrategy(ChunkingStrategyInterface):
             re.IGNORECASE,
         )
 
-    def _split_into_sentences(self, text: str) -> List[str]:
+    def _split_into_sentences(self, text: str) -> list[str]:
         """Split text into sentences"""
         # Initial split
         parts = self.sentence_pattern.split(text)
@@ -83,8 +83,8 @@ class SentenceStrategy(ChunkingStrategyInterface):
         return False
 
     def chunk(
-        self, text: str, source_id: str, base_metadata: Optional[Dict[str, Any]] = None
-    ) -> List[TextChunk]:
+        self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
+    ) -> list[TextChunk]:
         """Create chunks at sentence boundaries"""
         self.validate_config()
 

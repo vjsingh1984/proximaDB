@@ -12,10 +12,8 @@ Performance Targets:
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -64,7 +62,7 @@ class GrpcChannelFactory(ResourceFactory[grpc.Channel]):
         keepalive_time_ms: int = 10000,
         keepalive_timeout_ms: int = 5000,
         use_tls: bool = False,
-        compression: Optional[grpc.Compression] = None,
+        compression: grpc.Compression | None = None,
     ):
         self.endpoint = endpoint
         self.max_message_size = max_message_size
@@ -212,7 +210,7 @@ class GrpcConnectionPool:
         keepalive_time_ms: int = 10000,
         keepalive_timeout_ms: int = 5000,
         use_tls: bool = False,
-        compression: Optional[grpc.Compression] = None,
+        compression: grpc.Compression | None = None,
         **kwargs,  # Accept additional parameters for backward compatibility
     ):
         self.endpoint = endpoint
@@ -341,7 +339,7 @@ class GrpcConnectionPool:
         Uses deterministic cleanup via channel state subscription in dispose().
         No sleeps - waits for actual channel shutdown state.
         """
-        logger.info(f"Closing gRPC connection pool")
+        logger.info("Closing gRPC connection pool")
         try:
             # ResourcePool.close() will call dispose() on each channel,
             # which waits deterministically for background threads to exit
@@ -363,8 +361,8 @@ class RestConnectionPool:
 
     def __init__(
         self,
-        config: Optional[ClientConfig] = None,
-        base_url: Optional[str] = None,
+        config: ClientConfig | None = None,
+        base_url: str | None = None,
         pool_size: int = 5,
         timeout: float = 30.0,
         max_connections: int = 10,
@@ -406,10 +404,10 @@ class RestConnectionPool:
         else:
             raise ValueError("Either config or base_url must be provided")
 
-        self._pools: Dict[str, httpx.Client] = {}
+        self._pools: dict[str, httpx.Client] = {}
         self._lock = threading.RLock()
         self.metrics = PoolMetrics()
-        self._request_times: List[float] = []
+        self._request_times: list[float] = []
 
         self._initialize_pools()
 

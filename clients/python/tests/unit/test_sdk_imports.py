@@ -6,7 +6,6 @@ This ensures all public APIs are properly exported and accessible.
 """
 
 import importlib
-import sys
 
 import pytest
 
@@ -95,9 +94,14 @@ class TestSDKImports:
 
     def test_import_error_messages(self):
         """Test helpful error messages for common import mistakes"""
-        # Test importing non-existent item
+        # Test importing non-existent item.
+        # `noqa: F401` keeps ruff from re-stripping the intentional
+        # never-resolves-to-anything import that's the whole point of
+        # this test. The previous ruff --fix pass replaced the line
+        # with `pass`, making the `pytest.raises(ImportError)` block
+        # silently never raise.
         with pytest.raises(ImportError) as exc_info:
-            from proximadb_sdk import NonExistentClass
+            from proximadb_sdk import NonExistentClass  # noqa: F401
 
         # The error should mention the module
         assert "proximadb" in str(exc_info.value)

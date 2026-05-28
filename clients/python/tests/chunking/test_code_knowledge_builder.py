@@ -5,23 +5,12 @@ This module tests the high-level code knowledge building functionality
 that coordinates vector and graph database population.
 """
 
-import asyncio
 import os
-import sys
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import pytest
-
-from proximadb_sdk.chunking_strategies.code import (
-    CodeRelation,
-    CodeRelationType,
-    CodeSymbol,
-    CodeSymbolType,
-    ParsedCode,
-    SourceLocation,
-)
 
 # Import after loader has set up modules
 from proximadb_sdk.code_knowledge import (
@@ -33,7 +22,7 @@ from proximadb_sdk.code_knowledge import (
 )
 
 # Use our custom loader to avoid protobuf issues
-from .loader import RESOURCES_DIR, code_module, read_resource_file
+from .loader import read_resource_file
 
 
 class TestCodeIndexConfig:

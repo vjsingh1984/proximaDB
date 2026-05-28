@@ -57,7 +57,7 @@ try:
     print(f"    {query_time:.1f}ms (found {len(result)} neighbors)\n")
 
     print(f"Total: {node_time + prep_time + rust_time + query_time:.1f}ms")
-    print(f"\nBreakdown:")
+    print("\nBreakdown:")
     print(f"  Python edge prep:  {prep_time:>8.1f}ms")
     print(f"  Rust edge insert:  {rust_time:>8.1f}ms  <- Main bottleneck")
     print(f"  First query:       {query_time:>8.1f}ms")

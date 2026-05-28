@@ -18,8 +18,10 @@ def test_feature_table_ddl_emits_pgwire_catalog_contract() -> None:
 
     statements = ddl.statements()
 
-    assert statements[0].startswith('CREATE TABLE IF NOT EXISTS "customer_churn_features"')
-    assert '"features" JSONB NOT NULL DEFAULT \'{}\'::jsonb' in statements[0]
+    assert statements[0].startswith(
+        'CREATE TABLE IF NOT EXISTS "customer_churn_features"'
+    )
+    assert "\"features\" JSONB NOT NULL DEFAULT '{}'::jsonb" in statements[0]
     assert '"embedding" VECTOR(64)' in statements[0]
     assert 'PRIMARY KEY ("entity_id", "event_time")' in statements[0]
     assert any(
@@ -32,14 +34,25 @@ def test_feature_table_ddl_emits_pgwire_catalog_contract() -> None:
 def test_experiment_tracker_ddl_covers_runs_metrics_registry_predictions() -> None:
     statements = ExperimentTrackerDDL(prefix="victor").statements()
 
-    assert any('CREATE TABLE IF NOT EXISTS "victor_runs"' in statement for statement in statements)
     assert any(
-        'CREATE TABLE IF NOT EXISTS "victor_metrics"' in statement for statement in statements
+        'CREATE TABLE IF NOT EXISTS "victor_runs"' in statement
+        for statement in statements
     )
-    assert any('CREATE TABLE IF NOT EXISTS "victor_params"' in statement for statement in statements)
-    assert any('CREATE TABLE IF NOT EXISTS "victor_models"' in statement for statement in statements)
     assert any(
-        'CREATE TABLE IF NOT EXISTS "victor_predictions"' in statement for statement in statements
+        'CREATE TABLE IF NOT EXISTS "victor_metrics"' in statement
+        for statement in statements
+    )
+    assert any(
+        'CREATE TABLE IF NOT EXISTS "victor_params"' in statement
+        for statement in statements
+    )
+    assert any(
+        'CREATE TABLE IF NOT EXISTS "victor_models"' in statement
+        for statement in statements
+    )
+    assert any(
+        'CREATE TABLE IF NOT EXISTS "victor_predictions"' in statement
+        for statement in statements
     )
     assert any("kind=experiment_runs" in statement for statement in statements)
 

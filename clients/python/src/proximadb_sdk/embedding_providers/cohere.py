@@ -8,7 +8,7 @@ WARNING: Requires API key and incurs costs per token.
 import logging
 import os
 import warnings
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 import numpy as np
 
@@ -123,7 +123,7 @@ class CohereProvider(EmbeddingProvider):
             self._available = False
             logger.error(f"Failed to initialize Cohere: {e}")
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
         """
         Generate embeddings for multiple texts
 
@@ -200,7 +200,7 @@ class CohereProvider(EmbeddingProvider):
 
     def embed_with_type(
         self,
-        texts: List[str],
+        texts: list[str],
         input_type: Literal[
             "search_document", "search_query", "classification", "clustering"
         ],
@@ -257,7 +257,7 @@ class CohereProvider(EmbeddingProvider):
             self._initialize()
         return self._available
 
-    def get_token_usage(self) -> Dict[str, Any]:
+    def get_token_usage(self) -> dict[str, Any]:
         """Get token usage statistics"""
         return {
             "estimated_tokens": self._token_count,
@@ -266,7 +266,7 @@ class CohereProvider(EmbeddingProvider):
         }
 
     @classmethod
-    def list_models(cls) -> Dict[str, Dict[str, Any]]:
+    def list_models(cls) -> dict[str, dict[str, Any]]:
         """List available models with details"""
         return {
             "embed-english-light-v3.0": {

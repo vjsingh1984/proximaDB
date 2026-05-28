@@ -157,7 +157,9 @@ def test_metadata_from_exchange_chunk_reads_app_metadata():
 
 @pytest.mark.skipif(not ARROW_AVAILABLE, reason="PyArrow is required")
 def test_call_options_include_auth_and_tenant_headers():
-    client = ArrowFlightClient("localhost:5680", api_key="token-1", tenant_id="tenant-a")
+    client = ArrowFlightClient(
+        "localhost:5680", api_key="token-1", tenant_id="tenant-a"
+    )
 
     options = client._get_call_options()
 
@@ -295,7 +297,9 @@ def test_bulk_write_exchange_handles_many_progress_batches():
         }
     )
 
-    result = client.bulk_write_exchange("records", table, operation="upsert", batch_size=4)
+    result = client.bulk_write_exchange(
+        "records", table, operation="upsert", batch_size=4
+    )
 
     assert fake.descriptor.path == [b"bulk_upsert", b"records"]
     assert len(fake.writer.batches) == 7

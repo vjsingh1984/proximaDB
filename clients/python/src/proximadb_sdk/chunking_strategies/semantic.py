@@ -6,7 +6,7 @@ This strategy focuses on text-based semantic analysis without embeddings.
 """
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
 
@@ -62,7 +62,7 @@ class SemanticStrategy(ChunkingStrategyInterface):
 
     def _identify_sections(
         self, text: str
-    ) -> List[Tuple[str, int, int, Dict[str, Any]]]:
+    ) -> list[tuple[str, int, int, dict[str, Any]]]:
         """Identify semantic sections in the text"""
         sections = []
 
@@ -144,7 +144,7 @@ class SemanticStrategy(ChunkingStrategyInterface):
 
     def _identify_topic_sections(
         self, text: str
-    ) -> List[Tuple[str, int, int, Dict[str, Any]]]:
+    ) -> list[tuple[str, int, int, dict[str, Any]]]:
         """Identify sections based on topic transitions"""
         sections = []
 
@@ -193,7 +193,7 @@ class SemanticStrategy(ChunkingStrategyInterface):
             else [(text, 0, len(text), {"section_type": "single", "has_header": False})]
         )
 
-    def _preserve_special_blocks(self, text: str) -> Tuple[str, List[Dict[str, Any]]]:
+    def _preserve_special_blocks(self, text: str) -> tuple[str, list[dict[str, Any]]]:
         """Extract and preserve special blocks (code, tables)"""
         preserved_blocks = []
 
@@ -228,7 +228,7 @@ class SemanticStrategy(ChunkingStrategyInterface):
         return text, preserved_blocks
 
     def _restore_special_blocks(
-        self, text: str, preserved_blocks: List[Dict[str, Any]]
+        self, text: str, preserved_blocks: list[dict[str, Any]]
     ) -> str:
         """Restore preserved special blocks"""
         for block in preserved_blocks:
@@ -236,8 +236,8 @@ class SemanticStrategy(ChunkingStrategyInterface):
         return text
 
     def chunk(
-        self, text: str, source_id: str, base_metadata: Optional[Dict[str, Any]] = None
-    ) -> List[TextChunk]:
+        self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
+    ) -> list[TextChunk]:
         """Create chunks based on semantic boundaries"""
         self.validate_config()
 
@@ -311,9 +311,9 @@ class SemanticStrategy(ChunkingStrategyInterface):
         start_pos: int,
         source_id: str,
         chunk_index: int,
-        base_metadata: Dict[str, Any],
-        section_metadata: Dict[str, Any],
-    ) -> List[TextChunk]:
+        base_metadata: dict[str, Any],
+        section_metadata: dict[str, Any],
+    ) -> list[TextChunk]:
         """Split a large section into smaller chunks"""
         chunks = []
 

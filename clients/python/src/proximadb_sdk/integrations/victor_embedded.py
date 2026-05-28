@@ -250,7 +250,10 @@ class ProximaDBEmbeddedVictorProvider:
     ) -> list[Any]:
         del threshold
         symbols = await self.semantic_search(_deterministic_vector(query), top_k=limit)
-        return [_unified_search_result(symbol, score=1.0, match_type="semantic") for symbol in symbols]
+        return [
+            _unified_search_result(symbol, score=1.0, match_type="semantic")
+            for symbol in symbols
+        ]
 
     async def search_keyword(
         self,
@@ -265,8 +268,13 @@ class ProximaDBEmbeddedVictorProvider:
         for symbol in candidates:
             if symbol_types and symbol.kind not in symbol_types:
                 continue
-            if lowered in symbol.name.lower() or lowered in (symbol.content or "").lower():
-                results.append(_unified_search_result(symbol, score=1.0, match_type="keyword"))
+            if (
+                lowered in symbol.name.lower()
+                or lowered in (symbol.content or "").lower()
+            ):
+                results.append(
+                    _unified_search_result(symbol, score=1.0, match_type="keyword")
+                )
             if len(results) >= limit:
                 break
         return results
@@ -300,7 +308,9 @@ class ProximaDBEmbeddedVictorProvider:
         return {
             "workspace": self.workspace,
             "symbol_count": len(symbols),
-            "event_count": len(self.events.read_stream(self.event_stream, limit=100_000)),
+            "event_count": len(
+                self.events.read_stream(self.event_stream, limit=100_000)
+            ),
         }
 
     async def event_history(self) -> list[dict[str, Any]]:
@@ -370,7 +380,9 @@ def _unified_symbol_from_record(symbol: VictorSymbolRecord) -> Any:
         return symbol
 
 
-def _unified_search_result(symbol: VictorSymbolRecord, *, score: float, match_type: str) -> Any:
+def _unified_search_result(
+    symbol: VictorSymbolRecord, *, score: float, match_type: str
+) -> Any:
     unified_symbol = _unified_symbol_from_record(symbol)
     try:
         from victor.storage.unified.protocol import UnifiedSearchResult

@@ -107,8 +107,7 @@ class AgenticDDL:
             for item in self.jsonb
         )
         definitions.extend(
-            f"{_q(item.field)} VECTOR({item.dimension})"
-            for item in self.vectors
+            f"{_q(item.field)} VECTOR({item.dimension})" for item in self.vectors
         )
         definitions.append(f"PRIMARY KEY ({_q('record_id')})")
         options = (

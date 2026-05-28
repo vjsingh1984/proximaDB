@@ -7,23 +7,16 @@ Tests run against embedded ProximaDB database for fast, reliable testing.
 """
 
 import time
-from typing import Any, Dict
 
 import pytest
 
 from proximadb_sdk import (
-    Collection,
     CollectionConfig,
     CollectionNotFoundError,
-    CollectionStats,
-    CompressionConfig,
     CompressionType,
-    DistanceMetric,
-    FlushConfig,
     IndexConfiguration,
     IndexType,
     ProximaDBError,
-    StorageConfig,
     StorageEngine,
 )
 

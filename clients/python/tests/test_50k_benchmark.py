@@ -17,7 +17,6 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass
-from typing import List, Optional, Set
 
 import numpy as np
 import pytest
@@ -52,7 +51,7 @@ class BenchmarkResult:
     p99_search_latency_ms: float
     avg_recall: float
     rating: str
-    error: Optional[str] = None
+    error: str | None = None
 
 
 def generate_vectors(count: int, dimension: int, seed: int = 42) -> np.ndarray:
@@ -65,7 +64,7 @@ def generate_vectors(count: int, dimension: int, seed: int = 42) -> np.ndarray:
 
 def compute_exact_neighbors(
     vectors: np.ndarray, query_vectors: np.ndarray, top_k: int
-) -> List[Set[str]]:
+) -> list[set[str]]:
     """Compute ground truth nearest neighbors using brute force."""
     exact_neighbors = []
     for query in query_vectors:
@@ -352,7 +351,7 @@ def main():
 
     # Summary
     print(f"\n{'='*80}")
-    print(f"  FINAL SUMMARY")
+    print("  FINAL SUMMARY")
     print("=" * 80)
 
     print(

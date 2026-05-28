@@ -12,9 +12,8 @@ This module tests:
 import os
 import sys
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -22,7 +21,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import from loader which handles the module loading (also loads document_parsers)
-from loader import RESOURCES_DIR, code_module
 
 # Get document parsers from sys.modules (loader has already set it up)
 doc_parsers = sys.modules["proximadb.chunking_strategies.document_parsers"]

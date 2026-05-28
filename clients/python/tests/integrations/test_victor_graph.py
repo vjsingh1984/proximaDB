@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -14,17 +14,17 @@ from proximadb_sdk.integrations.victor_graph import (
 
 class FakeGraphClient:
     def __init__(self) -> None:
-        self.graphs: Dict[str, Dict[str, Any]] = {}
+        self.graphs: dict[str, dict[str, Any]] = {}
         self.fail_on_traverse = False
 
-    def _graph(self, graph_id: str) -> Dict[str, Any]:
+    def _graph(self, graph_id: str) -> dict[str, Any]:
         return self.graphs.setdefault(graph_id, {"nodes": {}, "edges": {}})
 
-    def create_graph(self, graph_id: str, *args, **kwargs) -> Dict[str, Any]:
+    def create_graph(self, graph_id: str, *args, **kwargs) -> dict[str, Any]:
         self._graph(graph_id)
         return {"success": True, "graph_id": graph_id}
 
-    def delete_graph(self, graph_id: str) -> Dict[str, Any]:
+    def delete_graph(self, graph_id: str) -> dict[str, Any]:
         self.graphs.pop(graph_id, None)
         return {"success": True, "graph_id": graph_id}
 
@@ -33,10 +33,10 @@ class FakeGraphClient:
         *,
         graph_id: str,
         node_id: str,
-        labels: List[str],
-        properties: Dict[str, Any] | None = None,
+        labels: list[str],
+        properties: dict[str, Any] | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         graph = self._graph(graph_id)
         graph["nodes"][node_id] = {
             "id": node_id,
@@ -53,10 +53,10 @@ class FakeGraphClient:
         from_node_id: str,
         to_node_id: str,
         edge_type: str,
-        properties: Dict[str, Any] | None = None,
+        properties: dict[str, Any] | None = None,
         weight: float | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         graph = self._graph(graph_id)
         graph["edges"][edge_id] = {
             "id": edge_id,
@@ -72,12 +72,12 @@ class FakeGraphClient:
         self,
         *,
         graph_id: str,
-        labels: List[str] | None = None,
-        properties: Dict[str, Any] | None = None,
+        labels: list[str] | None = None,
+        properties: dict[str, Any] | None = None,
         limit: int | None = None,
         offset: int | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         graph = self._graph(graph_id)
         nodes = list(graph["nodes"].values())
         if labels:
@@ -90,14 +90,19 @@ class FakeGraphClient:
             nodes = [
                 node
                 for node in nodes
-                if all(node.get("properties", {}).get(key) == value for key, value in properties.items())
+                if all(
+                    node.get("properties", {}).get(key) == value
+                    for key, value in properties.items()
+                )
             ]
         start = offset or 0
         end = None if limit is None else start + limit
         page = nodes[start:end]
         return {"nodes": page, "total_count": len(nodes)}
 
-    def get_node(self, *, graph_id: str, node_id: str, **kwargs) -> Dict[str, Any] | None:
+    def get_node(
+        self, *, graph_id: str, node_id: str, **kwargs
+    ) -> dict[str, Any] | None:
         return self._graph(graph_id)["nodes"].get(node_id)
 
     def get_outgoing_edges(
@@ -105,9 +110,9 @@ class FakeGraphClient:
         *,
         graph_id: str,
         node_id: str,
-        edge_types: List[str] | None = None,
+        edge_types: list[str] | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         edges = [
             edge
             for edge in self._graph(graph_id)["edges"].values()
@@ -122,9 +127,9 @@ class FakeGraphClient:
         *,
         graph_id: str,
         node_id: str,
-        edge_types: List[str] | None = None,
+        edge_types: list[str] | None = None,
         **kwargs,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         edges = [
             edge
             for edge in self._graph(graph_id)["edges"].values()
@@ -150,11 +155,13 @@ class FakeGraphClient:
         graph_id: str,
         start_node_id: str,
         max_depth: int = 1,
-        edge_types: List[str] | None = None,
+        edge_types: list[str] | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if self.fail_on_traverse:
-            raise AssertionError("traverse_graph should not be used for incoming-edge lookups")
+            raise AssertionError(
+                "traverse_graph should not be used for incoming-edge lookups"
+            )
 
         graph = self._graph(graph_id)
         frontier = {start_node_id}
@@ -196,7 +203,7 @@ class FakeGraphClient:
             "stats": {},
         }
 
-    def get_graph_stats(self, graph_id: str) -> Dict[str, Any]:
+    def get_graph_stats(self, graph_id: str) -> dict[str, Any]:
         graph = self._graph(graph_id)
         return {
             "total_nodes": len(graph["nodes"]),
@@ -238,7 +245,12 @@ def test_import_graph_json_supports_graphify_shape() -> None:
     result = graph.import_graph_json(
         {
             "nodes": [
-                {"id": "file:app.py", "type": "File", "name": "app.py", "file": "app.py"},
+                {
+                    "id": "file:app.py",
+                    "type": "File",
+                    "name": "app.py",
+                    "file": "app.py",
+                },
                 {"id": "fn:main", "type": "Function", "name": "main", "file": "app.py"},
             ],
             "edges": [
@@ -250,7 +262,10 @@ def test_import_graph_json_supports_graphify_shape() -> None:
     assert result["success"] is True
     assert result["node_count"] == 2
     assert result["edge_count"] == 1
-    assert client.get_node(graph_id="graphify", node_id="fn:main")["properties"]["name"] == "main"
+    assert (
+        client.get_node(graph_id="graphify", node_id="fn:main")["properties"]["name"]
+        == "main"
+    )
     outgoing = client.get_outgoing_edges(graph_id="graphify", node_id="file:app.py")
     assert outgoing[0]["edge_type"] == "CONTAINS"
 
@@ -295,7 +310,9 @@ async def test_victor_graph_store_supports_victor_shape_workflows() -> None:
     await store.update_file_mtime("app.py", 100.0)
 
     search_results = await store.search_symbols("main", limit=5)
-    neighbors = await store.get_neighbors("fn:main", edge_types=["CALLS"], direction="out")
+    neighbors = await store.get_neighbors(
+        "fn:main", edge_types=["CALLS"], direction="out"
+    )
     stale_files = await store.get_stale_files({"app.py": 101.0, "lib.py": 50.0})
 
     assert [node.node_id for node in search_results] == ["fn:main"]

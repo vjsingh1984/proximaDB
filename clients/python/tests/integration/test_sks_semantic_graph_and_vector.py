@@ -1,8 +1,6 @@
 import os
 import uuid
-from typing import List
 
-import numpy as np
 import pytest
 
 from proximadb_sdk import ProximaDBClient, VectorRecord
@@ -47,9 +45,9 @@ def test_semantic_knowledge_store_graph_and_vector():
 
         # 2) Insert deterministic document embeddings (Vector API)
         # Two similar docs (rag, transformer) + one different (graph)
-        v_rag: List[float] = [0.90, 0.10, 0.10, 0.00, 0.00, 0.20, 0.10, 0.00]
-        v_transformer: List[float] = [0.88, 0.12, 0.08, 0.00, 0.00, 0.19, 0.09, 0.01]
-        v_graph: List[float] = [0.00, 0.00, 0.90, 0.10, 0.20, 0.00, 0.00, 0.00]
+        v_rag: list[float] = [0.90, 0.10, 0.10, 0.00, 0.00, 0.20, 0.10, 0.00]
+        v_transformer: list[float] = [0.88, 0.12, 0.08, 0.00, 0.00, 0.19, 0.09, 0.01]
+        v_graph: list[float] = [0.00, 0.00, 0.90, 0.10, 0.20, 0.00, 0.00, 0.00]
 
         records = [
             VectorRecord(

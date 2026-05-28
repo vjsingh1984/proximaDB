@@ -7,7 +7,8 @@ and improve initialization performance.
 
 import logging
 import threading
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +34,8 @@ class ModelCache:
 
     _instance: Optional["ModelCache"] = None
     _lock = threading.Lock()
-    _models: Dict[str, Any] = {}
-    _stats: Dict[str, int] = {"hits": 0, "misses": 0, "loads": 0}
+    _models: dict[str, Any] = {}
+    _stats: dict[str, int] = {"hits": 0, "misses": 0, "loads": 0}
 
     def __new__(cls):
         """Singleton pattern"""
@@ -99,7 +100,7 @@ class ModelCache:
                 logger.error(f"Failed to load model {key}: {e}")
                 raise
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """
         Get model from cache without loading
 
@@ -118,7 +119,7 @@ class ModelCache:
         with self._lock:
             return self._models.get(key)
 
-    def clear(self, key: Optional[str] = None):
+    def clear(self, key: str | None = None):
         """
         Clear cache entry or entire cache
 
@@ -172,7 +173,7 @@ class ModelCache:
         with self._lock:
             return len(self._models)
 
-    def stats(self) -> Dict[str, int]:
+    def stats(self) -> dict[str, int]:
         """
         Get cache statistics
 

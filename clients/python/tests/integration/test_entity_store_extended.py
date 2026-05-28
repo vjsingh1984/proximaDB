@@ -13,7 +13,6 @@ that were not covered by the basic tests, specifically targeting:
 import os
 import time
 import uuid
-from typing import List
 
 import numpy as np
 import pytest
@@ -61,7 +60,7 @@ def test_collection_create_and_list(client):
         assert collections is not None, "Collections list should not be None"
         assert isinstance(collections, list), "Collections should be a list"
 
-        print(f"\n✓ Created collection and listed all collections")
+        print("\n✓ Created collection and listed all collections")
         print(f"  Collection ID: {collection_id}")
         print(f"  Total collections in system: {len(collections)}")
 
@@ -169,7 +168,7 @@ def test_vector_operations_with_ids(client):
             rid in test_ids for rid in result_ids
         ), "Should find at least one custom ID in results"
 
-        print(f"\n✓ Vector operations with custom IDs successful")
+        print("\n✓ Vector operations with custom IDs successful")
         print(
             f"  Found {len([r for r in results if r.id in test_ids])} custom IDs in top-{len(results)}"
         )
@@ -223,7 +222,7 @@ def test_vector_search_with_filter(client):
             assert result.metadata is not None
             assert "category" in result.metadata
 
-        print(f"\n✓ Vector search with metadata successful")
+        print("\n✓ Vector search with metadata successful")
         print(f"  Results: {len(results)}")
 
     finally:
@@ -253,7 +252,7 @@ def test_empty_collection_search(client):
         # Empty collection should return empty results
         assert len(results) == 0, "Empty collection should return no results"
 
-        print(f"\n✓ Empty collection search handled correctly")
+        print("\n✓ Empty collection search handled correctly")
 
     finally:
         try:
@@ -282,7 +281,7 @@ def test_vector_dimension_mismatch(client):
             result = client.insert_vectors(collection_id, records=[record])
             # If server accepts it, verify the result
             assert result is not None, "Result should not be None"
-            print(f"\n✓ Server handled dimension mismatch gracefully")
+            print("\n✓ Server handled dimension mismatch gracefully")
         except Exception as e:
             # Expected: dimension mismatch error
             error_raised = True
@@ -334,7 +333,7 @@ def test_large_batch_insert(client):
         assert result.metrics.successful_count >= batch_size
 
         throughput = batch_size / duration
-        print(f"\n✓ Large batch insert successful")
+        print("\n✓ Large batch insert successful")
         print(f"  Batch size: {batch_size}")
         print(f"  Duration: {duration*1000:.2f}ms")
         print(f"  Throughput: {throughput:.2f} vectors/sec")
@@ -380,7 +379,7 @@ def test_search_with_different_top_k(client):
             assert len(results) <= k, f"Should return at most {k} results"
             print(f"  top_k={k}: {len(results)} results")
 
-        print(f"\n✓ Different top_k values work correctly")
+        print("\n✓ Different top_k values work correctly")
 
     finally:
         try:
@@ -413,7 +412,7 @@ def test_collection_with_different_dimensions(client):
 
             assert result.success
 
-        print(f"\n✓ Collections with different dimensions created successfully")
+        print("\n✓ Collections with different dimensions created successfully")
         print(f"  Dimensions tested: {dimensions}")
 
     finally:
@@ -435,28 +434,28 @@ def test_entity_store_coverage_summary_extended(client):
     assert isinstance(collections, list), "Should return a list of collections"
 
     print(f"\n{'='*70}")
-    print(f"Extended Entity Store Coverage Summary")
+    print("Extended Entity Store Coverage Summary")
     print(f"{'='*70}")
     print(f"✓ Client Connected: {len(collections)} collections available")
-    print(f"✓ Collection Management:")
-    print(f"  - Create collection")
-    print(f"  - List collections")
-    print(f"  - Get collection stats")
-    print(f"  - Delete collection")
-    print(f"✓ Vector Operations:")
-    print(f"  - Insert with custom IDs")
-    print(f"  - Search with metadata filter")
-    print(f"  - Empty collection handling")
-    print(f"  - Dimension validation")
-    print(f"  - Large batch operations (1000 vectors)")
-    print(f"  - Variable top_k search")
-    print(f"  - Multi-dimension support (64-1024 dims)")
-    print(f"✓ Edge Cases:")
-    print(f"  - Empty collection search")
-    print(f"  - Dimension mismatch handling")
-    print(f"✓ Integration:")
-    print(f"  - All tests passing")
-    print(f"  - Comprehensive entity store coverage")
+    print("✓ Collection Management:")
+    print("  - Create collection")
+    print("  - List collections")
+    print("  - Get collection stats")
+    print("  - Delete collection")
+    print("✓ Vector Operations:")
+    print("  - Insert with custom IDs")
+    print("  - Search with metadata filter")
+    print("  - Empty collection handling")
+    print("  - Dimension validation")
+    print("  - Large batch operations (1000 vectors)")
+    print("  - Variable top_k search")
+    print("  - Multi-dimension support (64-1024 dims)")
+    print("✓ Edge Cases:")
+    print("  - Empty collection search")
+    print("  - Dimension mismatch handling")
+    print("✓ Integration:")
+    print("  - All tests passing")
+    print("  - Comprehensive entity store coverage")
     print(f"{'='*70}\n")
 
 

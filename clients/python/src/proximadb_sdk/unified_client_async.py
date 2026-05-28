@@ -5,8 +5,6 @@ Picks between gRPC async client (if available) and REST async client for graph o
 """
 
 import logging
-from enum import Enum
-from typing import List, Optional
 
 from .config import ClientConfig, Protocol, load_config
 
@@ -24,11 +22,11 @@ from .protocols.rest_async import ProximaDBAsyncClient as RestAsyncClient
 class ProximaDBAsyncUnified:
     def __init__(
         self,
-        url: Optional[str] = None,
+        url: str | None = None,
         protocol: Protocol | str = Protocol.AUTO,
-        config: Optional[ClientConfig] = None,
-        grpc_endpoint: Optional[str] = None,
-        rest_url: Optional[str] = None,
+        config: ClientConfig | None = None,
+        grpc_endpoint: str | None = None,
+        rest_url: str | None = None,
         timeout: float = 60.0,
     ):
         self.config = config or load_config(url=url)
@@ -65,12 +63,12 @@ class ProximaDBAsyncUnified:
         self,
         start_node_id: str,
         target_node_id: str,
-        max_depth: Optional[int] = None,
-        edge_types: Optional[List[str]] = None,
+        max_depth: int | None = None,
+        edge_types: list[str] | None = None,
         algorithm: str = "DIJKSTRA",
-        k: Optional[int] = None,
-        enable_prefetch: Optional[bool] = None,
-        prefetch_budget: Optional[int] = None,
+        k: int | None = None,
+        enable_prefetch: bool | None = None,
+        prefetch_budget: int | None = None,
     ):
         if self._grpc and hasattr(self._grpc, "shortest_path"):
             return self._grpc.shortest_path(
@@ -100,13 +98,13 @@ class ProximaDBAsyncUnified:
         self,
         start_node_id: str,
         max_depth: int = 3,
-        edge_types: Optional[List[str]] = None,
+        edge_types: list[str] | None = None,
         algorithm: str = "BFS",
-        limit: Optional[int] = None,
-        timeout_ms: Optional[int] = None,
-        max_frontier: Optional[int] = None,
-        enable_prefetch: Optional[bool] = None,
-        prefetch_budget: Optional[int] = None,
+        limit: int | None = None,
+        timeout_ms: int | None = None,
+        max_frontier: int | None = None,
+        enable_prefetch: bool | None = None,
+        prefetch_budget: int | None = None,
     ):
         # REST path for traversal (gRPC streaming traversal not exposed here)
         if self._rest:

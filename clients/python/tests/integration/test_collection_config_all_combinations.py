@@ -8,8 +8,7 @@ requiring REST/gRPC client connections to a running server.
 """
 
 import logging
-import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pytest
 
@@ -18,7 +17,6 @@ from proximadb_sdk import (
     DistanceMetric,
     FilterableColumn,
     FilterableDataType,
-    IndexConfiguration,
     IndexingAlgorithm,
     ProximaDBError,
     QuantizationConfig,
@@ -63,7 +61,7 @@ class TestAllCollectionConfigurations:
 
     def _test_config(
         self, client, protocol: str, config: CollectionConfig
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Test a single configuration and return results"""
         result = {
             "protocol": protocol,
@@ -443,7 +441,7 @@ class TestAllCollectionConfigurations:
         # Summary
         self._print_summary("Comprehensive Combinations", results)
 
-    def _print_summary(self, test_name: str, results: Dict[str, List[Dict]]):
+    def _print_summary(self, test_name: str, results: dict[str, list[dict]]):
         """Print test summary"""
         print(f"\n{'='*60}")
         print(f"{test_name} Summary")
@@ -461,7 +459,7 @@ class TestAllCollectionConfigurations:
             print(f"  ✗ Failed: {failed}")
 
             if failed > 0:
-                print(f"\n  Failed configurations:")
+                print("\n  Failed configurations:")
                 for r in protocol_results:
                     if not r["success"]:
                         config_desc = self._get_config_description(r["config"])
@@ -470,14 +468,14 @@ class TestAllCollectionConfigurations:
             # Check for mismatches
             mismatched = [r for r in protocol_results if r.get("mismatches")]
             if mismatched:
-                print(f"\n  Configuration mismatches:")
+                print("\n  Configuration mismatches:")
                 for r in mismatched:
                     config_desc = self._get_config_description(r["config"])
                     print(f"    - {config_desc}:")
                     for mismatch in r["mismatches"]:
                         print(f"      • {mismatch}")
 
-    def _get_config_description(self, config: Dict) -> str:
+    def _get_config_description(self, config: dict) -> str:
         """Get a concise description of a configuration"""
         parts = []
         if "distance_metric" in config and config["distance_metric"]:

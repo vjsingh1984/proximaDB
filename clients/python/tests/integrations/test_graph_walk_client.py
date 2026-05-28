@@ -19,8 +19,8 @@ from proximadb_sdk.integrations.graph_walk_client import (  # noqa: E402
     StubTransport,
 )
 
-
 # ---- happy path: walk -----------------------------------------------
+
 
 def test_walk_builds_correct_request() -> None:
     transport = StubTransport(
@@ -46,9 +46,7 @@ def test_step_builds_correct_request() -> None:
     transport = StubTransport(response={"data": {"nodes": [{"id": "n1"}]}})
     client = GraphWalkClient("http://proximadb:5678", transport=transport)
 
-    result = client.step(
-        graph_id="g", node_id="n1", edge_type="REFERS_TO", limit=10
-    )
+    result = client.step(graph_id="g", node_id="n1", edge_type="REFERS_TO", limit=10)
 
     assert transport.calls == [
         (
@@ -76,6 +74,7 @@ def test_step_omits_empty_edge_type() -> None:
 
 # ---- base URL hygiene -----------------------------------------------
 
+
 def test_base_url_trailing_slash_stripped() -> None:
     """A trailing slash on base_url + a leading slash on the path
     would produce ``//api/v1/...``. The client must normalize one or
@@ -90,6 +89,7 @@ def test_base_url_trailing_slash_stripped() -> None:
 
 
 # ---- error propagation ----------------------------------------------
+
 
 def test_transport_error_is_wrapped() -> None:
     """Network errors from the underlying transport are wrapped in
@@ -121,6 +121,7 @@ def test_invalid_argument_passes_through_render_invocation() -> None:
 
 
 # ---- discovery / observability --------------------------------------
+
 
 def test_invoke_supports_either_tool_name() -> None:
     """``invoke(name, args)`` is the dispatch primitive an agent uses

@@ -7,7 +7,7 @@ Defines the core abstractions for text chunking without any embedding concerns.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class ChunkingStrategy(Enum):
@@ -34,7 +34,7 @@ class TextChunk:
     start_pos: int
     end_pos: int
     chunk_id: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def start(self) -> int:
@@ -84,7 +84,7 @@ class ChunkingConfig:
             self.max_chunk_size = self.chunk_size
 
     # Strategy-specific settings
-    sentence_endings: List[str] = field(
+    sentence_endings: list[str] = field(
         default_factory=lambda: [".", "!", "?", "。", "！", "？"]
     )
     preserve_sentences: bool = True
@@ -97,8 +97,8 @@ class ChunkingConfig:
     context_size: int = 50
 
     # Semantic settings (no embeddings)
-    section_patterns: List[str] = field(default_factory=list)
-    topic_indicators: List[str] = field(default_factory=list)
+    section_patterns: list[str] = field(default_factory=list)
+    topic_indicators: list[str] = field(default_factory=list)
 
 
 class ChunkingStrategyInterface(ABC):
@@ -113,8 +113,8 @@ class ChunkingStrategyInterface(ABC):
 
     @abstractmethod
     def chunk(
-        self, text: str, source_id: str, base_metadata: Optional[Dict[str, Any]] = None
-    ) -> List[TextChunk]:
+        self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
+    ) -> list[TextChunk]:
         """
         Chunk text into smaller pieces
 

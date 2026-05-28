@@ -1,7 +1,6 @@
-import asyncio
-
 import pytest
 
+from proximadb_sdk.chunking_strategies.base import TextChunk
 from proximadb_sdk.document_pipeline import (
     BatchResult,
     DocumentPipeline,
@@ -32,7 +31,6 @@ from proximadb_sdk.document_processor import (
     create_processor,
     detect_document_type,
 )
-from proximadb_sdk.chunking_strategies.base import TextChunk
 
 
 class SyncEmbeddingProvider:

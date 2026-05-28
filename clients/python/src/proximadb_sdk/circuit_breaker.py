@@ -9,13 +9,10 @@ import asyncio
 import logging
 import random
 import time
-from abc import ABC, abstractmethod
+from collections.abc import Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
-from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Union
-
-from pydantic import BaseModel, Field
+from dataclasses import dataclass
+from typing import Any
 
 from .exceptions import NetworkError, ProximaDBError, ServerError, TimeoutError
 from .resilience import (
@@ -37,8 +34,8 @@ class CircuitBreakerMetrics:
     failed_requests: int = 0
     rejected_requests: int = 0
     state_changes: int = 0
-    last_failure_time: Optional[float] = None
-    last_success_time: Optional[float] = None
+    last_failure_time: float | None = None
+    last_success_time: float | None = None
     current_failures: int = 0
 
     @property
@@ -79,7 +76,7 @@ class CircuitBreaker:
         self._logger = logging.getLogger(__name__)
 
         # Sliding window for metrics
-        self._recent_calls: List[Tuple[float, bool]] = []  # (timestamp, success)
+        self._recent_calls: list[Tuple[float, bool]] = []  # (timestamp, success)
 
     async def __aenter__(self):
         """Async context manager entry"""
@@ -120,7 +117,7 @@ class CircuitBreaker:
 
             return result
 
-        except Exception as e:
+        except Exception:
             await self._record_failure()
             raise
 
@@ -326,8 +323,8 @@ class ResilientClient:
     def __init__(
         self,
         name: str,
-        circuit_config: Optional[CircuitBreakerConfig] = None,
-        retry_config: Optional[RetryConfig] = None,
+        circuit_config: CircuitBreakerConfig | None = None,
+        retry_config: RetryConfig | None = None,
     ):
         self.name = name
         self.circuit_breaker = CircuitBreaker(
@@ -354,7 +351,7 @@ class ResilientClient:
             self._logger.error(f"Resilient operation failed: {e}")
             raise
 
-    def get_health_status(self) -> Dict[str, Any]:
+    def get_health_status(self) -> dict[str, Any]:
         """Get health status of the resilient client"""
         metrics = self.circuit_breaker.get_metrics()
 
@@ -467,8 +464,8 @@ def retry(
 
 def resilient(
     name: str,
-    circuit_config: Optional[CircuitBreakerConfig] = None,
-    retry_config: Optional[RetryConfig] = None,
+    circuit_config: CircuitBreakerConfig | None = None,
+    retry_config: RetryConfig | None = None,
 ):
     """Decorator combining circuit breaker and retry"""
     client = ResilientClient(name, circuit_config, retry_config)
@@ -490,8 +487,8 @@ def resilient(
 
 async def create_resilient_client(
     name: str,
-    circuit_config: Optional[CircuitBreakerConfig] = None,
-    retry_config: Optional[RetryConfig] = None,
+    circuit_config: CircuitBreakerConfig | None = None,
+    retry_config: RetryConfig | None = None,
 ) -> ResilientClient:
     """Create a resilient client instance"""
     return ResilientClient(name, circuit_config, retry_config)

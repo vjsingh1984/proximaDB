@@ -9,7 +9,6 @@ import random
 import shutil
 import tempfile
 import time
-from dataclasses import dataclass
 
 import numpy as np
 
@@ -45,7 +44,7 @@ try:
     from neo4j import GraphDatabase
 
     NEO4J_AVAILABLE = True
-    print(f"✓ Neo4j driver available")
+    print("✓ Neo4j driver available")
 except ImportError:
     NEO4J_AVAILABLE = False
     print("✗ Neo4j driver not available")

@@ -6,7 +6,7 @@ lightweight embedding models with ONNX runtime.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -94,7 +94,7 @@ class FastEmbedProvider(EmbeddingProvider):
             self._available = False
             logger.error(f"Failed to initialize FastEmbed: {e}")
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
         """
         Generate embeddings for multiple texts
 
@@ -140,7 +140,7 @@ class FastEmbedProvider(EmbeddingProvider):
         return self._available
 
     @classmethod
-    def list_recommended_models(cls) -> Dict[str, Dict[str, Any]]:
+    def list_recommended_models(cls) -> dict[str, dict[str, Any]]:
         """List recommended models with their properties"""
         return {
             "BAAI/bge-small-en-v1.5": {
@@ -174,7 +174,7 @@ class FastEmbedProvider(EmbeddingProvider):
         }
 
     @classmethod
-    def list_all_models(cls) -> List[str]:
+    def list_all_models(cls) -> list[str]:
         """List all available models"""
         try:
             from fastembed import TextEmbedding

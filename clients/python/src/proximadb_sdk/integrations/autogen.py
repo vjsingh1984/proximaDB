@@ -29,7 +29,8 @@ Example::
 from __future__ import annotations
 
 import uuid
-from typing import Any, Callable, Optional, Union
+from collections.abc import Callable
+from typing import Any, Union
 
 # Verify that at least one autogen package is available
 try:
@@ -75,7 +76,7 @@ class ProximaDBVectorDB:
     def __init__(
         self,
         client: Any,
-        embedding_fn: Optional[Callable[..., list[float]]] = None,
+        embedding_fn: Callable[..., list[float]] | None = None,
         dimension: int = 768,
     ) -> None:
         self._client = client
@@ -234,9 +235,9 @@ class ProximaDBVectorDB:
 
     def get_docs_by_ids(
         self,
-        ids: Optional[list[ItemID]] = None,
+        ids: list[ItemID] | None = None,
         collection_name: str = "default",
-        include: Optional[list[str]] = None,
+        include: list[str] | None = None,
         **kwargs: Any,
     ) -> list[Document]:
         """Retrieve documents by their IDs.

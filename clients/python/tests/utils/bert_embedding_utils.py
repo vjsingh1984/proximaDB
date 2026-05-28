@@ -5,14 +5,14 @@ Provides real text corpus generation and BERT embeddings
 """
 
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import numpy as np
 
 from ..embedding_utils import embed_text
 
 
-def generate_text_corpus(size: int) -> List[Dict[str, Any]]:
+def generate_text_corpus(size: int) -> list[dict[str, Any]]:
     """
     Generate a diverse text corpus for testing
     Assumes ~4 chars per token, creates meaningful text for embeddings
@@ -142,7 +142,7 @@ def generate_text_corpus(size: int) -> List[Dict[str, Any]]:
     return corpus[:size]
 
 
-def create_bert_embeddings(texts: List[str], dimension: int = 384) -> np.ndarray:
+def create_bert_embeddings(texts: list[str], dimension: int = 384) -> np.ndarray:
     """Create sentence-transformer embeddings for texts (realistic)."""
     return np.array([embed_text(text, dimension) for text in texts], dtype=np.float32)
 
@@ -152,7 +152,7 @@ def create_deterministic_embedding(text: str, dimension: int = 384) -> np.ndarra
     return np.array(embed_text(text, dimension), dtype=np.float32)
 
 
-def create_query_texts() -> List[Dict[str, Any]]:
+def create_query_texts() -> list[dict[str, Any]]:
     """Create sample query texts for search testing"""
 
     queries = [
@@ -202,8 +202,8 @@ def create_query_texts() -> List[Dict[str, Any]]:
 
 
 def convert_corpus_to_vectors(
-    corpus: List[Dict[str, Any]], dimension: int = 384
-) -> List[Dict[str, Any]]:
+    corpus: list[dict[str, Any]], dimension: int = 384
+) -> list[dict[str, Any]]:
     """Convert text corpus to vector format with embeddings"""
 
     vectors = []

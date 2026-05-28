@@ -15,7 +15,6 @@ import json
 
 import pytest
 
-
 # Module-under-test ---------------------------------------------------
 from proximadb_sdk.integrations.mcp_tools import (  # noqa: E402
     GRAPH_STEP_TOOL,
@@ -24,8 +23,8 @@ from proximadb_sdk.integrations.mcp_tools import (  # noqa: E402
     render_invocation,
 )
 
-
 # ---- shape: each tool is a valid MCP/OpenAI function spec ----------
+
 
 @pytest.mark.parametrize("tool", [GRAPH_WALK_TOOL, GRAPH_STEP_TOOL])
 def test_tool_has_name_and_description(tool: dict) -> None:
@@ -51,6 +50,7 @@ def test_tool_round_trips_through_json(tool: dict) -> None:
 
 # ---- content invariants: walk tool ---------------------------------
 
+
 def test_walk_tool_required_args() -> None:
     schema = GRAPH_WALK_TOOL["input_schema"]
     assert set(schema["required"]) == {"graph_id", "start_node_id"}
@@ -72,6 +72,7 @@ def test_walk_tool_parameter_types() -> None:
 
 # ---- content invariants: step tool ---------------------------------
 
+
 def test_step_tool_required_args() -> None:
     schema = GRAPH_STEP_TOOL["input_schema"]
     assert set(schema["required"]) == {"graph_id", "node_id"}
@@ -87,6 +88,7 @@ def test_step_tool_edge_type_is_optional_string() -> None:
 
 
 # ---- discovery API ------------------------------------------------
+
 
 def test_list_tools_returns_both() -> None:
     tools = list_tools()
@@ -108,6 +110,7 @@ def test_list_tools_returns_independent_copies() -> None:
 
 # ---- invocation rendering -----------------------------------------
 
+
 def test_render_invocation_walk_produces_valid_request() -> None:
     """The invocation rendering takes an agent's tool-call payload and
     produces the (HTTP method, path, body) tuple the SDK or any HTTP
@@ -127,7 +130,12 @@ def test_render_invocation_walk_produces_valid_request() -> None:
 def test_render_invocation_step_produces_valid_request() -> None:
     method, path, body = render_invocation(
         "graph_step",
-        {"graph_id": "ontology", "node_id": "n1", "edge_type": "REFERS_TO", "limit": 10},
+        {
+            "graph_id": "ontology",
+            "node_id": "n1",
+            "edge_type": "REFERS_TO",
+            "limit": 10,
+        },
     )
     assert method == "POST"
     assert path == "/api/v1/graph/graphs/ontology/step"

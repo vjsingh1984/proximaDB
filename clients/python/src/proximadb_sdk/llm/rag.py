@@ -7,9 +7,9 @@
 
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
-from proximadb_sdk.llm.config import EmbeddingConfig, LLMConfig, RAGConfig
+from proximadb_sdk.llm.config import LLMConfig
 from proximadb_sdk.llm.embedding import EmbeddingService
 from proximadb_sdk.llm.semantic_cache import SemanticCache
 
@@ -33,7 +33,7 @@ class Document:
     title: str
     content: str
     source: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -71,7 +71,7 @@ class RAGResponse:
     """
 
     answer: str
-    sources: List[Source]
+    sources: list[Source]
     confidence: float
     latency_ms: int
     retrieval_latency_ms: int
@@ -108,7 +108,7 @@ class RAGPipeline:
     def __init__(
         self,
         client: "ProximaDBClient",
-        config: Optional[LLMConfig] = None,
+        config: LLMConfig | None = None,
     ):
         """Initialize RAG pipeline.
 
@@ -134,7 +134,7 @@ class RAGPipeline:
     async def index_documents(
         self,
         collection: str,
-        documents: List[Document],
+        documents: list[Document],
         create_collection: bool = True,
     ) -> int:
         """Index documents into a collection.
@@ -200,9 +200,9 @@ class RAGPipeline:
         self,
         question: str,
         collection: str,
-        top_k: Optional[int] = None,
-        filter_metadata: Optional[Dict[str, Any]] = None,
-        system_prompt: Optional[str] = None,
+        top_k: int | None = None,
+        filter_metadata: dict[str, Any] | None = None,
+        system_prompt: str | None = None,
         skip_cache: bool = False,
     ) -> RAGResponse:
         """Execute a RAG query.
@@ -311,7 +311,7 @@ class RAGPipeline:
         self,
         question: str,
         context: str,
-        system_prompt: Optional[str] = None,
+        system_prompt: str | None = None,
     ) -> tuple[str, int]:
         """Generate answer using LLM provider.
 
@@ -381,7 +381,7 @@ Answer:"""
             return f"Based on the context: {best_sentence}."
         return "I couldn't find a relevant answer in the provided context."
 
-    def _calculate_confidence(self, sources: List[Source]) -> float:
+    def _calculate_confidence(self, sources: list[Source]) -> float:
         """Calculate confidence score based on sources."""
         if not sources:
             return 0.0
@@ -393,7 +393,7 @@ Answer:"""
     async def delete_documents(
         self,
         collection: str,
-        document_ids: List[str],
+        document_ids: list[str],
     ) -> int:
         """Delete documents from collection.
 

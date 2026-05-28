@@ -7,9 +7,6 @@ via Arrow Flight.
 Run with: PYTHONPATH=clients/python/src pytest clients/python/tests/test_arrow_export_sdk.py -v
 """
 
-import os
-import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,10 +18,6 @@ def test_arrow_export_imports():
     from proximadb_sdk.arrow_export import (
         ArrowExportClient,
         FileFormat,
-        FileInfo,
-        connect_arrow,
-        read_proximadb_collection,
-        read_proximadb_file,
     )
 
     assert ArrowExportClient is not None

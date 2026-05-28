@@ -13,7 +13,7 @@ import tempfile
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import numpy as np
 
@@ -34,7 +34,7 @@ class InsertResponse:
 
     success: bool = True
     inserted: int = 0
-    errors: List[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -43,8 +43,8 @@ class SearchResult:
 
     id: str
     score: float
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    vector: Optional[List[float]] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    vector: list[float] | None = None
 
 
 @dataclass
@@ -67,7 +67,7 @@ class EmbeddedClientAdapter:
 
     def __init__(
         self,
-        data_dir: Optional[str] = None,
+        data_dir: str | None = None,
         cache_size_mb: int = 256,
         default_engine: str = "sst",
     ):
@@ -122,7 +122,7 @@ class EmbeddedClientAdapter:
     # Collection operations
 
     def create_collection(
-        self, name: str, dimension: int, engine: Optional[str] = None, **kwargs
+        self, name: str, dimension: int, engine: str | None = None, **kwargs
     ) -> CollectionInfo:
         """Create a collection"""
         engine = engine or self._default_engine
@@ -137,7 +137,7 @@ class EmbeddedClientAdapter:
         except Exception:
             return False
 
-    def get_collection(self, name: str) -> Optional[CollectionInfo]:
+    def get_collection(self, name: str) -> CollectionInfo | None:
         """Get collection info"""
         try:
             info = self._db.get_collection(name)
@@ -154,7 +154,7 @@ class EmbeddedClientAdapter:
         except Exception:
             return None
 
-    def list_collections(self) -> List[CollectionInfo]:
+    def list_collections(self) -> list[CollectionInfo]:
         """List all collections"""
         try:
             collections = self._db.list_collections()
@@ -175,10 +175,10 @@ class EmbeddedClientAdapter:
     def insert_vectors(
         self,
         collection_id: str,
-        records: Optional[List] = None,
-        vectors: Optional[List] = None,
-        ids: Optional[List[str]] = None,
-        metadata: Optional[List[Dict]] = None,
+        records: list | None = None,
+        vectors: list | None = None,
+        ids: list[str] | None = None,
+        metadata: list[dict] | None = None,
         **kwargs,
     ) -> InsertResponse:
         """
@@ -227,11 +227,11 @@ class EmbeddedClientAdapter:
     def search(
         self,
         collection_id: str,
-        vector: Union[List[float], np.ndarray],
+        vector: list[float] | np.ndarray,
         top_k: int = 10,
-        filter: Optional[str] = None,
+        filter: str | None = None,
         **kwargs,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Search for similar vectors"""
         try:
             if not isinstance(vector, np.ndarray):
@@ -253,12 +253,12 @@ class EmbeddedClientAdapter:
             print(f"Search error: {e}")
             return []
 
-    def get_vector(self, collection_id: str, vector_id: str) -> Optional[SearchResult]:
+    def get_vector(self, collection_id: str, vector_id: str) -> SearchResult | None:
         """Get a specific vector by ID"""
         # Not directly supported, use search as fallback
         return None
 
-    def delete_vectors(self, collection_id: str, ids: List[str]) -> bool:
+    def delete_vectors(self, collection_id: str, ids: list[str]) -> bool:
         """Delete vectors by IDs"""
         # Not directly implemented in embedded module
         return False

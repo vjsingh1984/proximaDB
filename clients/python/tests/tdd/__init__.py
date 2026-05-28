@@ -98,12 +98,12 @@ class MockData:
     """Mock data generators for Python tests"""
 
     @staticmethod
-    def random_vector(dimension: int) -> List[float]:
+    def random_vector(dimension: int) -> list[float]:
         """Generate random vector"""
         return np.random.rand(dimension).tolist()
 
     @staticmethod
-    def random_normalized_vector(dimension: int) -> List[float]:
+    def random_normalized_vector(dimension: int) -> list[float]:
         """Generate normalized random vector (L2 norm = 1.0)"""
         vec = np.random.rand(dimension)
         return (vec / np.linalg.norm(vec)).tolist()
@@ -126,7 +126,7 @@ class MockData:
         return " ".join(np.random.choice(words, word_count))
 
     @staticmethod
-    def assert_vectors_close(a: List[float], b: List[float], epsilon: float = 0.001):
+    def assert_vectors_close(a: list[float], b: list[float], epsilon: float = 0.001):
         """Assert two vectors are approximately equal"""
         assert len(a) == len(b), f"Vector lengths differ: {len(a)} vs {len(b)}"
         for i, (x, y) in enumerate(zip(a, b)):

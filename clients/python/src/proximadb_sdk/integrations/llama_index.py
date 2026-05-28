@@ -30,18 +30,15 @@ Example::
 from __future__ import annotations
 
 import uuid
-from typing import Any, List, Optional
+from typing import Any
 
 from llama_index.core.base.base_retriever import BaseRetriever
-from llama_index.core.schema import Document
 from llama_index.core.vector_stores import (
-    VectorStore,
     VectorStoreQuery,
     VectorStoreQueryResult,
 )
 from llama_index.core.vector_stores.types import (
     BasePydanticVectorStore,
-    MetadataFilter,
     MetadataFilters,
     Node,
     VectorStoreQueryMode,
@@ -81,8 +78,8 @@ class ProximaDBVectorStore(BasePydanticVectorStore):
 
     def add(
         self,
-        nodes: List[Node],
-    ) -> List[str]:
+        nodes: list[Node],
+    ) -> list[str]:
         """Add nodes to ProximaDB.
 
         Args:
@@ -91,8 +88,8 @@ class ProximaDBVectorStore(BasePydanticVectorStore):
         Returns:
             List of node IDs that were added.
         """
-        ids: List[str] = []
-        records: List[dict[str, Any]] = []
+        ids: list[str] = []
+        records: list[dict[str, Any]] = []
 
         for node in nodes:
             doc_id = node.node_id or str(uuid.uuid4())
@@ -186,7 +183,7 @@ class ProximaDBVectorStore(BasePydanticVectorStore):
             ids=ids,
         )
 
-    def _convert_filters(self, filters: MetadataFilters) -> Optional[dict[str, Any]]:
+    def _convert_filters(self, filters: MetadataFilters) -> dict[str, Any] | None:
         """Convert LlamaIndex MetadataFilters to ProximaDB filter format.
 
         Args:
@@ -237,13 +234,13 @@ class ProximaDBRetriever(BaseRetriever):
         self,
         vector_store: ProximaDBVectorStore,
         similarity_top_k: int = 10,
-        filters: Optional[MetadataFilters] = None,
+        filters: MetadataFilters | None = None,
     ) -> None:
         self._vector_store = vector_store
         self._similarity_top_k = similarity_top_k
         self._filters = filters
 
-    def _retrieve(self, query_bundle: Any) -> List[Node]:
+    def _retrieve(self, query_bundle: Any) -> list[Node]:
         """Retrieve nodes for a query bundle.
 
         Args:

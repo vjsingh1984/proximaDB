@@ -4,10 +4,8 @@ Sample Python module for testing code chunking.
 This module contains various Python constructs to test AST parsing.
 """
 
-import os
-import sys
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Constants
 MAX_RETRIES = 3
@@ -20,7 +18,7 @@ class User:
 
     id: str
     name: str
-    email: Optional[str] = None
+    email: str | None = None
 
     def get_display_name(self) -> str:
         """Return the display name for the user."""
@@ -30,7 +28,7 @@ class User:
 class BaseService:
     """Base class for all services."""
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         """Initialize the service with configuration."""
         self.config = config
         self._initialized = False
@@ -47,12 +45,12 @@ class BaseService:
 class UserService(BaseService):
     """Service for managing users."""
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: dict[str, Any]):
         """Initialize UserService."""
         super().__init__(config)
-        self.users: Dict[str, User] = {}
+        self.users: dict[str, User] = {}
 
-    def create_user(self, id: str, name: str, email: Optional[str] = None) -> User:
+    def create_user(self, id: str, name: str, email: str | None = None) -> User:
         """
         Create a new user.
 
@@ -69,7 +67,7 @@ class UserService(BaseService):
         self._on_user_created(user)
         return user
 
-    def get_user(self, id: str) -> Optional[User]:
+    def get_user(self, id: str) -> User | None:
         """Get a user by ID."""
         return self.users.get(id)
 
@@ -92,7 +90,7 @@ def calculate_factorial(n: int) -> int:
     return n * calculate_factorial(n - 1)
 
 
-async def fetch_data(url: str, timeout: float = DEFAULT_TIMEOUT) -> Dict[str, Any]:
+async def fetch_data(url: str, timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
     """
     Fetch data from a URL asynchronously.
 
@@ -107,7 +105,7 @@ async def fetch_data(url: str, timeout: float = DEFAULT_TIMEOUT) -> Dict[str, An
     return {"url": url, "status": "ok"}
 
 
-def process_items(items: List[str], *, validate: bool = True) -> List[str]:
+def process_items(items: list[str], *, validate: bool = True) -> list[str]:
     """Process a list of items with optional validation."""
     if validate:
         items = [item for item in items if item]

@@ -12,7 +12,6 @@ import pytest
 
 from proximadb_sdk import (
     CollectionConfig,
-    DistanceMetric,
     Protocol,
     ProximaDBClient,
     QuantizationConfig,
@@ -226,7 +225,6 @@ class TestProtoQuantizationMessages:
         params.uniform.CopyFrom(uniform_params)
 
         # Add custom hints using google.protobuf.Value
-        from google.protobuf import struct_pb2
 
         params.custom_hints["use_gpu"].string_value = "true"
         params.custom_hints["batch_size"].string_value = "256"
@@ -334,7 +332,7 @@ class TestQuantizationIntegration:
             pytest.skip("ProximaDB server not running")
 
         # Create collection with quantization
-        collection_name = f"test_quant_123456"
+        collection_name = "test_quant_123456"
 
         try:
             # Create collection
@@ -370,7 +368,7 @@ class TestQuantizationIntegration:
         except Exception:
             pytest.skip("ProximaDB server not running")
 
-        collection_name = f"test_search_hints_123456"
+        collection_name = "test_search_hints_123456"
 
         try:
             # Create collection

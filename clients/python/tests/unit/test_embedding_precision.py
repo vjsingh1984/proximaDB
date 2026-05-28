@@ -19,7 +19,6 @@ import pytest
 
 from proximadb_sdk import CollectionConfig, EmbeddingPrecision
 
-
 # ── EmbeddingPrecision enum ────────────────────────────────────────────────
 
 
@@ -28,9 +27,7 @@ def test_embedding_precision_has_all_proto_variants():
     (proto/proximadb/v1/collection_types.proto:EmbeddingPrecision)."""
     expected = {"FP32", "FP16", "BF16", "INT8", "UINT8"}
     actual = {p.name for p in EmbeddingPrecision}
-    assert expected.issubset(actual), (
-        f"missing variants: {expected - actual}"
-    )
+    assert expected.issubset(actual), f"missing variants: {expected - actual}"
 
 
 def test_embedding_precision_value_matches_server_label():
@@ -51,7 +48,8 @@ def test_embedding_precision_str_constructor_accepts_canonical_form():
 def test_embedding_precision_serializes_as_lowercase_string_in_json():
     """The on-wire form must match what the server's REST workaround
     takes — lowercase string. This is the same shape the Rust SDK
-    serializes (clients/rust tests: `embedding_precision_serializes_as_lowercase_string`)."""
+    serializes (clients/rust tests: `embedding_precision_serializes_as_lowercase_string`).
+    """
     # str-backed enums round-trip through json.dumps as their value
     encoded = json.dumps(EmbeddingPrecision.FP16.value)
     assert json.loads(encoded) == "fp16"
@@ -84,9 +82,7 @@ def test_collection_config_accepts_enum_value():
 
 
 def test_collection_config_accepts_canonical_string():
-    cfg = CollectionConfig(
-        **_valid_kwargs(canonical_embedding_precision="fp16")
-    )
+    cfg = CollectionConfig(**_valid_kwargs(canonical_embedding_precision="fp16"))
     assert cfg.canonical_embedding_precision == EmbeddingPrecision.FP16
 
 
@@ -130,9 +126,9 @@ def test_collection_config_rejects_unknown_precision_label():
             **_valid_kwargs(canonical_embedding_precision="not_a_precision")
         )
     msg = str(exc_info.value).lower()
-    assert "precision" in msg or "not_a_precision" in msg, (
-        f"error should mention the bad input or the field name; got: {exc_info.value}"
-    )
+    assert (
+        "precision" in msg or "not_a_precision" in msg
+    ), f"error should mention the bad input or the field name; got: {exc_info.value}"
 
 
 def test_collection_config_serializes_precision_to_wire_payload():

@@ -18,8 +18,9 @@ limitations under the License.
 
 import json
 import warnings
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Optional
 
 try:
     import pyarrow as pa
@@ -47,7 +48,7 @@ class FlightPutResult:
     success: bool
     vectors_inserted: int
     message: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
 
     @property
     def records_processed(self) -> int:
@@ -73,8 +74,8 @@ class FlightExchangeResult:
     records_failed: int
     batches_processed: int
     message: str
-    progress: List[Dict[str, Any]]
-    metadata: Dict[str, Any]
+    progress: list[dict[str, Any]]
+    metadata: dict[str, Any]
 
 
 @dataclass
@@ -82,9 +83,9 @@ class FlightSearchResult:
     """Result from a DoGet search operation."""
 
     id: str
-    vector: List[float]
+    vector: list[float]
     score: float
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
 
 
 class ArrowFlightClient:
@@ -125,8 +126,8 @@ class ArrowFlightClient:
     def __init__(
         self,
         url: str,
-        api_key: Optional[str] = None,
-        tenant_id: Optional[str] = None,
+        api_key: str | None = None,
+        tenant_id: str | None = None,
         timeout_seconds: float = 300.0,
         max_message_size_mb: int = 512,
     ):
@@ -155,7 +156,7 @@ class ArrowFlightClient:
         self._location = self._parse_location(url)
 
         # Initialize client lazily
-        self._client: Optional[flight.FlightClient] = None
+        self._client: flight.FlightClient | None = None
 
     def _parse_location(self, url: str) -> "flight.Location":
         """Parse URL into Flight location."""
@@ -228,7 +229,7 @@ class ArrowFlightClient:
             )
 
     @staticmethod
-    def _affected_count(result_data: Dict[str, Any], fallback: int) -> int:
+    def _affected_count(result_data: dict[str, Any], fallback: int) -> int:
         """Extract affected row count from ProximaDB batch metadata."""
         metrics = result_data.get("metrics", {})
         for key in ("successful_count", "total_processed"):
@@ -238,7 +239,7 @@ class ArrowFlightClient:
         return fallback
 
     @staticmethod
-    def _decode_metadata(payload: Any) -> Dict[str, Any]:
+    def _decode_metadata(payload: Any) -> dict[str, Any]:
         """Decode JSON metadata returned by Flight DoPut/DoExchange."""
         if payload is None:
             return {}
@@ -253,7 +254,7 @@ class ArrowFlightClient:
         return json.loads(payload)
 
     @classmethod
-    def _metadata_from_exchange_chunk(cls, chunk: Any) -> Dict[str, Any]:
+    def _metadata_from_exchange_chunk(cls, chunk: Any) -> dict[str, Any]:
         """Extract app_metadata from a PyArrow Flight exchange chunk."""
         if hasattr(chunk, "app_metadata"):
             return cls._decode_metadata(chunk.app_metadata)
@@ -409,7 +410,7 @@ class ArrowFlightClient:
     def bulk_delete(
         self,
         collection_id: str,
-        ids: List[str],
+        ids: list[str],
         batch_size: int = 10000,
         trigger_compaction: bool = False,
     ) -> FlightPutResult:
@@ -472,8 +473,8 @@ class ArrowFlightClient:
         )
 
         total_rows = 0
-        progress: List[Dict[str, Any]] = []
-        final_metadata: Dict[str, Any] = {}
+        progress: list[dict[str, Any]] = []
+        final_metadata: dict[str, Any] = {}
 
         try:
             if hasattr(writer, "begin"):
@@ -494,13 +495,9 @@ class ArrowFlightClient:
                 else:
                     progress.append(metadata)
 
-            records_processed = int(
-                final_metadata.get("total_records", total_rows)
-            )
+            records_processed = int(final_metadata.get("total_records", total_rows))
             records_failed = int(final_metadata.get("total_failed", 0))
-            batches_processed = int(
-                final_metadata.get("total_batches", len(progress))
-            )
+            batches_processed = int(final_metadata.get("total_batches", len(progress)))
             success = bool(final_metadata.get("success", records_failed == 0))
 
             return FlightExchangeResult(
@@ -541,7 +538,7 @@ class ArrowFlightClient:
     def bulk_delete_exchange(
         self,
         collection_id: str,
-        ids: List[str],
+        ids: list[str],
         batch_size: int = 10000,
     ) -> FlightExchangeResult:
         """Bulk delete records over DoExchange with progress metadata."""
@@ -632,11 +629,11 @@ class ArrowFlightClient:
     def search(
         self,
         collection_id: str,
-        query_vector: List[float],
+        query_vector: list[float],
         top_k: int = 10,
-        filter_metadata: Optional[Dict[str, Any]] = None,
+        filter_metadata: dict[str, Any] | None = None,
         include_vectors: bool = False,
-    ) -> List[FlightSearchResult]:
+    ) -> list[FlightSearchResult]:
         """
         Search vectors using Arrow Flight DoGet.
 
@@ -690,9 +687,9 @@ class ArrowFlightClient:
     def search_batch(
         self,
         collection_id: str,
-        query_vectors: List[List[float]],
+        query_vectors: list[list[float]],
         top_k: int = 10,
-    ) -> List[List[FlightSearchResult]]:
+    ) -> list[list[FlightSearchResult]]:
         """
         Batch search for multiple query vectors.
 
@@ -746,7 +743,7 @@ class ArrowFlightClient:
         """
         return self._do_action("flush_and_compact", {"collection_id": collection_id})
 
-    def _do_action(self, action_type: str, body: Dict[str, Any]) -> bool:
+    def _do_action(self, action_type: str, body: dict[str, Any]) -> bool:
         """Execute a DoAction request."""
         client = self._get_client()
 
@@ -759,7 +756,7 @@ class ArrowFlightClient:
             print(f"Action {action_type} failed: {e}")
             return False
 
-    def list_actions(self) -> List[Tuple[str, str]]:
+    def list_actions(self) -> list[tuple[str, str]]:
         """
         List available actions.
 
@@ -807,10 +804,10 @@ class ArrowFlightClient:
 
 # Convenience function for creating Arrow tables from Python data
 def vectors_to_arrow_table(
-    ids: List[str],
-    vectors: List[List[float]],
-    metadata: Optional[List[Dict[str, Any]]] = None,
-    timestamps: Optional[List[int]] = None,
+    ids: list[str],
+    vectors: list[list[float]],
+    metadata: list[dict[str, Any]] | None = None,
+    timestamps: list[int] | None = None,
 ) -> "pa.Table":
     """
     Convert Python data to Arrow Table for bulk insert.
@@ -907,7 +904,7 @@ def vectors_to_arrow_table(
 
 def arrow_table_to_vectors(
     table: "pa.Table",
-) -> Tuple[List[str], List[List[float]], List[Optional[Dict[str, Any]]]]:
+) -> tuple[list[str], list[list[float]], list[dict[str, Any] | None]]:
     """
     Convert Arrow Table back to Python data.
 

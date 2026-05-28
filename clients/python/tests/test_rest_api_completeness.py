@@ -5,7 +5,6 @@ Test all REST endpoints to identify which are implemented vs missing (501/500 er
 """
 
 import time
-from typing import Any, Dict, List
 
 import numpy as np
 import pytest
@@ -13,7 +12,6 @@ import pytest
 from proximadb_sdk import (
     CollectionConfig,
     CollectionNotFoundError,
-    DistanceMetric,
     ProximaDBError,
     connect_rest,
 )

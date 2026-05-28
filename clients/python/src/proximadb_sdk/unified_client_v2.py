@@ -12,9 +12,7 @@ Licensed under the Apache License, Version 2.0
 """
 
 import logging
-import time
-from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import numpy as np
 
@@ -25,14 +23,10 @@ from .models import (
     BatchResult,
     Collection,
     CollectionConfig,
-    DistanceMetric,
     FilterDict,
     HealthStatus,
     MetadataDict,
-    OperationMetrics,
     SearchResult,
-    StorageEngine,
-    VectorArray,
     VectorOperationResponse,
     VectorRecord,
 )
@@ -51,11 +45,11 @@ class ProximaDBClient:
 
     def __init__(
         self,
-        url: Optional[str] = None,
-        api_key: Optional[str] = None,
-        protocol: Union[Protocol, str] = Protocol.AUTO,
-        config: Optional[ClientConfig] = None,
-        data_dir: Optional[str] = None,
+        url: str | None = None,
+        api_key: str | None = None,
+        protocol: Protocol | str = Protocol.AUTO,
+        config: ClientConfig | None = None,
+        data_dir: str | None = None,
         pool_size: int = 10,
         timeout: float = 60.0,
         **kwargs,
@@ -78,7 +72,7 @@ class ProximaDBClient:
 
         self.config = config
         self._protocol = Protocol(protocol) if isinstance(protocol, str) else protocol
-        self._adapter: Optional[BaseProtocolAdapter] = None
+        self._adapter: BaseProtocolAdapter | None = None
         self._url = url
         self._data_dir = data_dir
         self._timeout = timeout
@@ -190,18 +184,18 @@ class ProximaDBClient:
     # ==========================================================================
 
     def create_collection(
-        self, name: str, config: Optional[CollectionConfig] = None, **kwargs
+        self, name: str, config: CollectionConfig | None = None, **kwargs
     ) -> Collection:
         """Create a new vector collection."""
         if config is None:
             config = CollectionConfig(name=name, **kwargs)
         return self._adapter.create_collection(name, config, **kwargs)
 
-    def get_collection(self, collection_id: str) -> Optional[Collection]:
+    def get_collection(self, collection_id: str) -> Collection | None:
         """Get collection metadata by ID or name."""
         return self._adapter.get_collection(collection_id)
 
-    def list_collections(self) -> List[Collection]:
+    def list_collections(self) -> list[Collection]:
         """List all collections."""
         return self._adapter.list_collections()
 
@@ -227,7 +221,7 @@ class ProximaDBClient:
     def insert_records(
         self,
         collection_id: str,
-        records: List[Union[ProximaRecord, Dict[str, Any]]],
+        records: list[ProximaRecord | dict[str, Any]],
         **kwargs,
     ) -> BatchResult:
         """Insert ProximaRecord-shaped payloads through the active adapter."""
@@ -238,7 +232,7 @@ class ProximaDBClient:
     def upsert_records(
         self,
         collection_id: str,
-        records: List[Union[ProximaRecord, Dict[str, Any]]],
+        records: list[ProximaRecord | dict[str, Any]],
         **kwargs,
     ) -> BatchResult:
         """Upsert ProximaRecord-shaped payloads through the active adapter."""
@@ -253,12 +247,10 @@ class ProximaDBClient:
     def insert_vectors(
         self,
         collection_id: str,
-        vectors: Optional[
-            Union[List[List[float]], List[VectorRecord], np.ndarray]
-        ] = None,
-        ids: Optional[List[str]] = None,
-        metadata: Optional[List[Dict[str, Any]]] = None,
-        records: Optional[List[VectorRecord]] = None,
+        vectors: list[list[float]] | list[VectorRecord] | np.ndarray | None = None,
+        ids: list[str] | None = None,
+        metadata: list[dict[str, Any]] | None = None,
+        records: list[VectorRecord] | None = None,
         **kwargs,
     ) -> VectorOperationResponse:
         """Compatibility alias for record-native inserts.
@@ -306,7 +298,7 @@ class ProximaDBClient:
         )
 
     def upsert_vectors(
-        self, collection_id: str, records: List[VectorRecord]
+        self, collection_id: str, records: list[VectorRecord]
     ) -> VectorOperationResponse:
         """Compatibility alias for record-native upserts."""
         return self._batch_to_vector_response(
@@ -316,10 +308,10 @@ class ProximaDBClient:
     def get_vectors(
         self,
         collection_id: str,
-        vector_ids: List[str],
+        vector_ids: list[str],
         include_vectors: bool = True,
         **kwargs,
-    ) -> List[VectorRecord]:
+    ) -> list[VectorRecord]:
         """Get vectors by IDs."""
         return self._adapter.get_vectors(
             collection_id, vector_ids, include_vectors, **kwargs
@@ -331,13 +323,13 @@ class ProximaDBClient:
         vector_id: str,
         include_vector: bool = True,
         include_metadata: bool = True,
-    ) -> Optional[VectorRecord]:
+    ) -> VectorRecord | None:
         """Get a single vector by ID."""
         results = self.get_vectors(collection_id, [vector_id], include_vector)
         return results[0] if results else None
 
     def delete_vectors(
-        self, collection_id: str, vector_ids: List[str]
+        self, collection_id: str, vector_ids: list[str]
     ) -> VectorOperationResponse:
         """Delete vectors by IDs."""
         return self._adapter.delete_vectors(collection_id, vector_ids)
@@ -360,8 +352,8 @@ class ProximaDBClient:
         self,
         collection_id: str,
         vector_id: str,
-        vector: Union[List[float], np.ndarray],
-        metadata: Optional[Dict[str, Any]] = None,
+        vector: list[float] | np.ndarray,
+        metadata: dict[str, Any] | None = None,
         upsert: bool = False,
         **kwargs,
     ) -> VectorOperationResponse:
@@ -384,13 +376,13 @@ class ProximaDBClient:
     def search(
         self,
         collection_id: str,
-        vector: Union[List[float], np.ndarray],
+        vector: list[float] | np.ndarray,
         top_k: int = 10,
-        metadata_filter: Optional[FilterDict] = None,
+        metadata_filter: FilterDict | None = None,
         include_metadata: bool = True,
         include_vectors: bool = False,
         **kwargs,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Search for similar vectors."""
         if top_k <= 0:
             raise ProximaDBError(f"top_k must be positive, got {top_k}")
@@ -410,11 +402,11 @@ class ProximaDBClient:
     def search_single(
         self,
         collection_id: str,
-        vector: Union[List[float], np.ndarray],
+        vector: list[float] | np.ndarray,
         top_k: int = 10,
-        metadata_filter: Optional[FilterDict] = None,
+        metadata_filter: FilterDict | None = None,
         **kwargs,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Alias for search() for backward compatibility."""
         return self.search(
             collection_id=collection_id,
@@ -427,11 +419,11 @@ class ProximaDBClient:
     def search_batch(
         self,
         collection_id: str,
-        vectors: Union[List[List[float]], np.ndarray],
+        vectors: list[list[float]] | np.ndarray,
         top_k: int = 10,
-        metadata_filter: Optional[FilterDict] = None,
+        metadata_filter: FilterDict | None = None,
         **kwargs,
-    ) -> List[List[SearchResult]]:
+    ) -> list[list[SearchResult]]:
         """Batch search for similar vectors."""
         if isinstance(vectors, np.ndarray):
             vectors = vectors.tolist()
@@ -451,9 +443,9 @@ class ProximaDBClient:
     def insert(
         self,
         collection_id: str,
-        vectors: Union[List[List[float]], np.ndarray],
-        ids: Optional[List[str]] = None,
-        metadata: Optional[List[Dict[str, Any]]] = None,
+        vectors: list[list[float]] | np.ndarray,
+        ids: list[str] | None = None,
+        metadata: list[dict[str, Any]] | None = None,
     ) -> VectorOperationResponse:
         """Legacy insert method."""
         return self.insert_vectors(collection_id, vectors, ids, metadata)
@@ -461,9 +453,9 @@ class ProximaDBClient:
     def upsert(
         self,
         collection_id: str,
-        vectors: Union[List[List[float]], np.ndarray],
-        ids: List[str],
-        metadata: Optional[List[Dict[str, Any]]] = None,
+        vectors: list[list[float]] | np.ndarray,
+        ids: list[str],
+        metadata: list[dict[str, Any]] | None = None,
     ) -> VectorOperationResponse:
         """Legacy upsert method."""
         if isinstance(vectors, np.ndarray):
@@ -480,7 +472,7 @@ class ProximaDBClient:
 
         return self.upsert_vectors(collection_id, records)
 
-    def delete(self, collection_id: str, ids: List[str]) -> VectorOperationResponse:
+    def delete(self, collection_id: str, ids: list[str]) -> VectorOperationResponse:
         """Legacy delete method."""
         return self.delete_vectors(collection_id, ids)
 
@@ -488,7 +480,7 @@ class ProximaDBClient:
     # Utility Methods
     # ==========================================================================
 
-    def get_collection_stats(self, collection_id: str) -> Dict[str, Any]:
+    def get_collection_stats(self, collection_id: str) -> dict[str, Any]:
         """Get collection statistics."""
         collection = self.get_collection(collection_id)
         if collection:
@@ -501,7 +493,7 @@ class ProximaDBClient:
             }
         return {}
 
-    def get_performance_info(self) -> Dict[str, Any]:
+    def get_performance_info(self) -> dict[str, Any]:
         """Get performance information about the active protocol."""
         if self._protocol == Protocol.GRPC:
             return {
@@ -540,10 +532,10 @@ class ProximaDBClient:
         query: str,
         *,
         language: str = "uql",
-        parameters: Optional[List[Any]] = None,
-        collection: Optional[str] = None,
-        limit: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
         """Execute AQL/UQL through the active adapter.
 
         REST adapters use the OpenAPI v2 `/api/v2/query` contract. Other
@@ -565,10 +557,10 @@ class ProximaDBClient:
         self,
         query: str,
         *,
-        parameters: Optional[List[Any]] = None,
-        collection: Optional[str] = None,
-        limit: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
         """Execute a UQL query through the OpenAPI v2 REST query surface."""
         return self.execute_query(
             query,
@@ -582,10 +574,10 @@ class ProximaDBClient:
         self,
         query: str,
         *,
-        parameters: Optional[List[Any]] = None,
-        collection: Optional[str] = None,
-        limit: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
         """Execute an AQL query through the OpenAPI v2 REST query surface."""
         return self.execute_query(
             query,
@@ -599,10 +591,10 @@ class ProximaDBClient:
         self,
         query: str,
         *,
-        parameters: Optional[List[Any]] = None,
-        collection: Optional[str] = None,
-        limit: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
         """Execute federated SQL extensions through the OpenAPI v2 REST surface."""
         return self.execute_query(
             query,
@@ -617,8 +609,8 @@ class ProximaDBClient:
         query: str,
         *,
         language: str = "uql",
-        collection: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        collection: str | None = None,
+    ) -> dict[str, Any]:
         """Explain an AQL/UQL query through the active adapter."""
         if not hasattr(self._adapter, "explain_query"):
             raise ProximaDBError(
@@ -660,9 +652,9 @@ class ProximaDBClient:
 
 
 def connect(
-    url: Optional[str] = None,
-    api_key: Optional[str] = None,
-    protocol: Union[Protocol, str] = Protocol.AUTO,
+    url: str | None = None,
+    api_key: str | None = None,
+    protocol: Protocol | str = Protocol.AUTO,
     **kwargs,
 ) -> ProximaDBClient:
     """Create a ProximaDB client with simplified parameters."""
@@ -670,14 +662,14 @@ def connect(
 
 
 def connect_grpc(
-    url: Optional[str] = None, api_key: Optional[str] = None, **kwargs
+    url: str | None = None, api_key: str | None = None, **kwargs
 ) -> ProximaDBClient:
     """Create a ProximaDB client using gRPC protocol."""
     return ProximaDBClient(url=url, api_key=api_key, protocol=Protocol.GRPC, **kwargs)
 
 
 def connect_rest(
-    url: Optional[str] = None, api_key: Optional[str] = None, **kwargs
+    url: str | None = None, api_key: str | None = None, **kwargs
 ) -> ProximaDBClient:
     """Create a ProximaDB client using REST protocol."""
     return ProximaDBClient(url=url, api_key=api_key, protocol=Protocol.REST, **kwargs)

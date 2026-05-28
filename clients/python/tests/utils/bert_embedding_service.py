@@ -7,12 +7,8 @@ Generates 384, 768, or 1024 dimensional embeddings from text using sentence-tran
 import hashlib
 import json
 import logging
-import os
 import pickle
-import sys
-import time
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -33,7 +29,7 @@ class BERTEmbeddingService:
     """Service for generating BERT embeddings from text"""
 
     def __init__(
-        self, model_name: str = "all-MiniLM-L6-v2", cache_dir: Optional[str] = None
+        self, model_name: str = "all-MiniLM-L6-v2", cache_dir: str | None = None
     ):
         """
         Initialize BERT embedding service
@@ -107,8 +103,8 @@ class BERTEmbeddingService:
         return embedding
 
     def embed_texts(
-        self, texts: List[str], batch_size: int = 32, show_progress: bool = True
-    ) -> List[np.ndarray]:
+        self, texts: list[str], batch_size: int = 32, show_progress: bool = True
+    ) -> list[np.ndarray]:
         """
         Generate embeddings for multiple texts
 
@@ -194,9 +190,9 @@ class BERTEmbeddingService:
     def find_similar(
         self,
         query_embedding: np.ndarray,
-        corpus_embeddings: List[np.ndarray],
+        corpus_embeddings: list[np.ndarray],
         top_k: int = 10,
-    ) -> List[Tuple[int, float]]:
+    ) -> list[tuple[int, float]]:
         """
         Find most similar embeddings to query
 
@@ -220,7 +216,7 @@ class BERTEmbeddingService:
         return similarities[:top_k]
 
 
-def create_sample_corpus(size_mb: float = 10.0) -> List[Dict[str, str]]:
+def create_sample_corpus(size_mb: float = 10.0) -> list[dict[str, str]]:
     """
     Create a sample text corpus of approximately the specified size
 

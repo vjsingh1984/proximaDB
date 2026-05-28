@@ -47,9 +47,7 @@ async def test_embedded_insert_records_uses_v2_record_endpoint(monkeypatch):
     assert url == "http://localhost:15678/api/v2/collections/items/records/batch"
     assert timeout == 60.0
     assert payload == {
-        "records": [
-            {"id": "r1", "vector": [1.0, 2.0], "props": {"kind": "note"}}
-        ],
+        "records": [{"id": "r1", "vector": [1.0, 2.0], "props": {"kind": "note"}}],
         "validate_schema": True,
     }
 

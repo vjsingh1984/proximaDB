@@ -6,6 +6,13 @@ Uses embedded ProximaDB (PyO3/maturin) instead of requiring a running server.
 All tests run against the embedded database for faster, more reliable testing.
 """
 
+# PEP 604 union syntax (e.g. `CollectionConfig | None`) requires deferred
+# evaluation when the referenced names are lazily-loaded SDK placeholders
+# initialized to `None` further down this module. Without this `from
+# __future__` import, the class-body annotations evaluate `None | None`
+# → TypeError at import time.
+from __future__ import annotations
+
 import logging
 import os
 import shutil
@@ -15,8 +22,9 @@ import shutil
 import sys
 import tempfile
 import time
+from collections.abc import Generator
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional
+from typing import Any
 
 import numpy as np
 import pytest
@@ -28,9 +36,7 @@ if str(_tests_root) not in sys.path:
 from utils.test_helpers import (
     CollectionInfo,
     InsertResult,
-    ProximaDBTestError,
     SearchResult,
-    assert_proximadb_error,
 )
 
 # Lazy SDK imports - only load when actually needed by tests
@@ -77,7 +83,6 @@ ProximaDBError = None
 try:
     from proximadb_sdk import (
         CollectionConfig,
-        DistanceMetric,
         ProximaDBError,
         StorageEngine,
     )
@@ -129,16 +134,16 @@ class EmbeddedClientWrapper:
     def __init__(self, db: "ProximaDB", data_dir: str):
         self._db = db
         self._data_dir = data_dir
-        self._collections: Dict[str, Dict] = {}
+        self._collections: dict[str, dict] = {}
 
     def create_collection(
         self,
         name: str,
-        dimension: Optional[int] = None,
-        config: Optional[CollectionConfig] = None,
+        dimension: int | None = None,
+        config: CollectionConfig | None = None,
         distance_metric: str = "cosine",
         description: str = "",
-        storage_engine: Optional[StorageEngine] = None,
+        storage_engine: StorageEngine | None = None,
         **kwargs,
     ):
         """Create a collection in embedded database"""
@@ -206,7 +211,7 @@ class EmbeddedClientWrapper:
 
         raise ProximaDBError(f"Collection {name} not found")
 
-    def list_collections(self) -> List:
+    def list_collections(self) -> list:
         """List all collections"""
         try:
             collections = self._db.list_collections()
@@ -225,8 +230,8 @@ class EmbeddedClientWrapper:
         self,
         collection_id: str,
         vector_id: str,
-        vector: List[float],
-        metadata: Optional[Dict] = None,
+        vector: list[float],
+        metadata: dict | None = None,
     ):
         """Insert a single vector"""
         if not isinstance(vector, np.ndarray):
@@ -245,9 +250,9 @@ class EmbeddedClientWrapper:
     def insert_vectors(
         self,
         collection_id: str,
-        vectors: List,
-        ids: List[str],
-        metadata: Optional[List[Dict]] = None,
+        vectors: list,
+        ids: list[str],
+        metadata: list[dict] | None = None,
     ):
         """Insert multiple vectors"""
         if not isinstance(vectors, np.ndarray):
@@ -266,13 +271,13 @@ class EmbeddedClientWrapper:
     def search(
         self,
         collection_id: str,
-        vector: List[float],
+        vector: list[float],
         top_k: int = 10,
         include_metadata: bool = True,
         include_vectors: bool = False,
-        metadata_filter: Optional[Dict] = None,
+        metadata_filter: dict | None = None,
         **kwargs,
-    ) -> List:
+    ) -> list:
         """Search for similar vectors"""
         if top_k <= 0:
             raise ProximaDBError(f"Invalid top_k value: {top_k}")
@@ -318,7 +323,7 @@ class EmbeddedClientWrapper:
         vector_id: str,
         include_vector: bool = True,
         include_metadata: bool = True,
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         """Get a vector by ID - search based implementation"""
         # Embedded doesn't have direct get by ID, so we'd need to implement it
         # For now, raise an error that tests can handle
@@ -328,7 +333,7 @@ class EmbeddedClientWrapper:
         """Get collection ID by name (for embedded, name IS the ID)"""
         return name
 
-    def health(self) -> Dict:
+    def health(self) -> dict:
         """Health check"""
         return {"status": "healthy", "mode": "embedded"}
 
@@ -363,9 +368,9 @@ class EmbeddedClientWrapper:
     def create_node(
         self,
         node_id: str,
-        labels: List[str],
-        properties: Optional[Dict] = None,
-        embedding: Optional[List[float]] = None,
+        labels: list[str],
+        properties: dict | None = None,
+        embedding: list[float] | None = None,
         **kwargs,
     ):
         """Create a graph node"""
@@ -383,8 +388,8 @@ class EmbeddedClientWrapper:
         from_node_id: str,
         to_node_id: str,
         edge_type: str,
-        properties: Optional[Dict] = None,
-        weight: Optional[float] = None,
+        properties: dict | None = None,
+        weight: float | None = None,
         **kwargs,
     ):
         """Create a graph edge"""
@@ -402,10 +407,10 @@ class EmbeddedClientWrapper:
         self,
         start_node_id: str,
         max_depth: int = 3,
-        edge_types: Optional[List[str]] = None,
-        node_labels: Optional[List[str]] = None,
+        edge_types: list[str] | None = None,
+        node_labels: list[str] | None = None,
         algorithm: str = "BFS",
-        limit: Optional[int] = None,
+        limit: int | None = None,
         **kwargs,
     ):
         """Traverse graph from starting node"""
@@ -427,10 +432,10 @@ class EmbeddedClientWrapper:
 
     def query_nodes(
         self,
-        labels: Optional[List[str]] = None,
-        properties: Optional[Dict] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        labels: list[str] | None = None,
+        properties: dict | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
         **kwargs,
     ):
         """Query nodes by labels and properties"""
@@ -446,7 +451,7 @@ class EmbeddedClientWrapper:
 
 
 @pytest.fixture(scope="session")
-def test_config() -> Dict[str, Any]:
+def test_config() -> dict[str, Any]:
     """Test configuration fixture"""
     return TEST_CONFIG.copy()
 
@@ -580,7 +585,7 @@ def test_collection(rest_client, unique_collection_name, basic_collection_config
 class TestCollectionManager:
     """Helper class for managing test collections"""
 
-    def __init__(self, client: EmbeddedClientWrapper, config: Dict[str, Any]):
+    def __init__(self, client: EmbeddedClientWrapper, config: dict[str, Any]):
         self.client = client
         self.config = config
         self.created_collections = []
@@ -742,7 +747,7 @@ def performance_monitor():
                 return duration
             return 0.0
 
-        def get_timings(self) -> Dict[str, float]:
+        def get_timings(self) -> dict[str, float]:
             return self.timings.copy()
 
         def assert_performance(self, operation: str, max_seconds: float):
@@ -756,7 +761,7 @@ def performance_monitor():
 
 
 # Test data generators
-def generate_test_vectors(count: int, dimension: int) -> List:
+def generate_test_vectors(count: int, dimension: int) -> list:
     """Generate deterministic test vectors"""
     np.random.seed(42)
     vectors = np.random.rand(count, dimension).astype(np.float32)
@@ -766,7 +771,7 @@ def generate_test_vectors(count: int, dimension: int) -> List:
     return vectors.tolist()
 
 
-def generate_test_metadata(count: int, categories: list = None) -> List[Dict]:
+def generate_test_metadata(count: int, categories: list = None) -> list[dict]:
     """Generate test metadata for use in tests"""
     if categories is None:
         categories = ["technology", "science", "healthcare", "education", "business"]
@@ -793,6 +798,6 @@ def embed_seed(seed: int, dimension: int) -> np.ndarray:
     return vec / np.linalg.norm(vec)
 
 
-def embed_many(count: int, dimension: int) -> List[np.ndarray]:
+def embed_many(count: int, dimension: int) -> list[np.ndarray]:
     """Generate multiple deterministic embeddings"""
     return [embed_seed(i, dimension) for i in range(count)]

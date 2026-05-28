@@ -25,7 +25,9 @@ def record_payload(
     return payload
 
 
-def insert_records(client: Any, collection_name: str, records: list[dict[str, Any]]) -> Any:
+def insert_records(
+    client: Any, collection_name: str, records: list[dict[str, Any]]
+) -> Any:
     """Insert records through the native SDK method with compatibility fallback."""
     if hasattr(client, "insert_records"):
         return client.insert_records(collection_name, records)

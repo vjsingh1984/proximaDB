@@ -88,7 +88,9 @@ class ProximaBaseStore:
 
         if self.embed is not None and self.dims:
             try:
-                self.adapter.create_collection(self.vector_collection, dimension=self.dims)
+                self.adapter.create_collection(
+                    self.vector_collection, dimension=self.dims
+                )
             except TypeError:
                 self.adapter.create_collection(
                     self.vector_collection,
@@ -118,7 +120,9 @@ class ProximaBaseStore:
         doc_id = _store_doc_id(ns, key)
         existing = self.adapter.get_document(self.collection, doc_id)
         now = time.time()
-        created_at = _document_payload(existing).get("created_at", now) if existing else now
+        created_at = (
+            _document_payload(existing).get("created_at", now) if existing else now
+        )
         payload = {
             "id": doc_id,
             "namespace": list(ns),
@@ -226,7 +230,9 @@ class ProximaBaseStore:
         )
         docs = result.get("documents", []) if isinstance(result, dict) else []
         items = [_store_item_from_document(doc) for doc in docs]
-        filtered = [item for item in items if item and _matches_filter(item.value, filter)]
+        filtered = [
+            item for item in items if item and _matches_filter(item.value, filter)
+        ]
         filtered.sort(key=lambda item: item.updated_at, reverse=True)
         return filtered[offset : offset + limit]
 
@@ -363,7 +369,9 @@ class ProximaCheckpointSaver:
         self.setup()
         thread_id, checkpoint_ns, checkpoint_id = _checkpoint_keys(config)
         for index, (channel, value) in enumerate(writes):
-            doc_id = _write_doc_id(thread_id, checkpoint_ns, checkpoint_id, task_id, index)
+            doc_id = _write_doc_id(
+                thread_id, checkpoint_ns, checkpoint_id, task_id, index
+            )
             payload = {
                 "id": doc_id,
                 "thread_id": thread_id,
@@ -404,7 +412,9 @@ class ProximaCheckpointSaver:
             ]
         if not docs:
             return None
-        docs.sort(key=lambda doc: _document_payload(doc).get("created_at", 0), reverse=True)
+        docs.sort(
+            key=lambda doc: _document_payload(doc).get("created_at", 0), reverse=True
+        )
         return self._tuple_from_doc(docs[0])
 
     async def aget_tuple(self, config: dict[str, Any]) -> CheckpointTuple | None:
@@ -425,7 +435,9 @@ class ProximaCheckpointSaver:
         if before:
             _, _, before_id = _checkpoint_keys(before)
         docs = self._checkpoint_docs(thread_id, checkpoint_ns)
-        docs.sort(key=lambda doc: _document_payload(doc).get("created_at", 0), reverse=True)
+        docs.sort(
+            key=lambda doc: _document_payload(doc).get("created_at", 0), reverse=True
+        )
         if before_id:
             docs = [
                 doc
@@ -459,7 +471,9 @@ class ProximaCheckpointSaver:
                 payload = _document_payload(doc)
                 self.adapter.delete_document(collection, payload["id"])
 
-    def _checkpoint_docs(self, thread_id: str, checkpoint_ns: str) -> builtins.list[dict[str, Any]]:
+    def _checkpoint_docs(
+        self, thread_id: str, checkpoint_ns: str
+    ) -> builtins.list[dict[str, Any]]:
         result = self.adapter.query_documents(
             self.checkpoint_collection,
             filter={"thread_id": thread_id, "checkpoint_ns": checkpoint_ns},
@@ -467,7 +481,9 @@ class ProximaCheckpointSaver:
         )
         return result.get("documents", []) if isinstance(result, dict) else []
 
-    def _writes_for(self, thread_id: str, checkpoint_ns: str, checkpoint_id: str) -> builtins.list[dict[str, Any]]:
+    def _writes_for(
+        self, thread_id: str, checkpoint_ns: str, checkpoint_id: str
+    ) -> builtins.list[dict[str, Any]]:
         result = self.adapter.query_documents(
             self.writes_collection,
             filter={

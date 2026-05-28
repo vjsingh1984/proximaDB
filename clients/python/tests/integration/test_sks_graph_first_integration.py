@@ -20,7 +20,6 @@ Prerequisites:
 import os
 import time
 import uuid
-from typing import List
 
 import numpy as np
 import pytest
@@ -120,7 +119,7 @@ def test_batch_entity_insertion_performance(client, test_collection):
     duration = time.time() - start_time
 
     # Validate success
-    assert result.success, f"Batch insertion failed"
+    assert result.success, "Batch insertion failed"
     assert (
         result.metrics.successful_count >= num_entities
     ), f"Expected {num_entities} entities, got {result.metrics.successful_count}"
@@ -129,7 +128,7 @@ def test_batch_entity_insertion_performance(client, test_collection):
     throughput = num_entities / duration
     per_entity_latency_us = (duration / num_entities) * 1_000_000
 
-    print(f"\nBatch Insertion Performance:")
+    print("\nBatch Insertion Performance:")
     print(f"  Entities: {num_entities}")
     print(f"  Duration: {duration*1000:.2f}ms")
     print(f"  Throughput: {throughput:.2f} entities/sec")
@@ -219,7 +218,7 @@ def test_hybrid_query_vector_plus_graph(client, test_collection):
     vector_time_ms = (time.time() - start_time) * 1000
 
     assert len(vector_results) >= 1, "Vector search should return results"
-    print(f"\nHybrid Query Performance:")
+    print("\nHybrid Query Performance:")
     print(f"  Vector search: {len(vector_results)} results ({vector_time_ms:.2f}ms)")
 
     # Hybrid Query Step 2: Graph traversal
@@ -255,9 +254,9 @@ def test_hybrid_query_vector_plus_graph(client, test_collection):
     ), f"Hybrid query took {total_time_ms:.2f}ms (expected < 500ms)"
 
     if total_time_ms < 50:
-        print(f"  ✓ Excellent performance (<50ms)")
+        print("  ✓ Excellent performance (<50ms)")
     elif total_time_ms < 100:
-        print(f"  ✓ Good performance (<100ms)")
+        print("  ✓ Good performance (<100ms)")
 
 
 @pytest.mark.integration
@@ -299,7 +298,7 @@ def test_entity_retrieval_by_id(client, test_collection):
         found = any(r.id == entity_id for r in results)
         assert found, f"Entity {entity_id} not found"
 
-    print(f"\nEntity Retrieval Performance:")
+    print("\nEntity Retrieval Performance:")
     print(f"  Retrieved {len(test_ids)} entities successfully")
     print(f"  Average lookup time: {lookup_time_us / len(test_ids):.2f} µs")
 
@@ -393,7 +392,7 @@ def test_metadata_filtering(client, test_collection):
         assert result.metadata is not None, "Metadata should be included"
         assert "category" in result.metadata, "Category should be in metadata"
 
-    print(f"\nMetadata Filtering:")
+    print("\nMetadata Filtering:")
     print(f"  Retrieved {len(results)} results with metadata")
     categories = [r.metadata.get("category") for r in results if r.metadata]
     print(f"  Categories found: {len(set(str(c) for c in categories))} unique")
@@ -439,8 +438,8 @@ def test_concurrent_operations(client, test_collection):
         results = [f.result() for f in concurrent.futures.as_completed(futures)]
 
     assert all(r >= 1 for r in results), "All concurrent searches should succeed"
-    print(f"\nConcurrent Operations:")
-    print(f"  Executed 10 concurrent searches successfully")
+    print("\nConcurrent Operations:")
+    print("  Executed 10 concurrent searches successfully")
     print(f"  Average results per search: {sum(results) / len(results):.1f}")
 
 
@@ -460,14 +459,14 @@ def test_performance_summary(client):
     collections = client.list_collections()
     assert isinstance(collections, list), "Should return a list of collections"
 
-    print(f"\nSKS Graph-First Performance Summary:")
+    print("\nSKS Graph-First Performance Summary:")
     print(f"  ✓ Client Connected: {len(collections)} collections available")
-    print(f"  ✓ Batch Insert: 75K+ entities/sec (3-6x vs legacy)")
-    print(f"  ✓ Entity Lookup: 105K+ entities/sec (5-10x vs legacy)")
-    print(f"  ✓ Memory: 1,127 bytes/entity (21% savings)")
-    print(f"  ✓ Hybrid Query: 10-20ms (5x vs legacy)")
-    print(f"  ✓ Integration Tests: 12/12 passing (100% coverage)")
-    print(f"  ✓ Feature: graph-first-sks (enabled by default)")
+    print("  ✓ Batch Insert: 75K+ entities/sec (3-6x vs legacy)")
+    print("  ✓ Entity Lookup: 105K+ entities/sec (5-10x vs legacy)")
+    print("  ✓ Memory: 1,127 bytes/entity (21% savings)")
+    print("  ✓ Hybrid Query: 10-20ms (5x vs legacy)")
+    print("  ✓ Integration Tests: 12/12 passing (100% coverage)")
+    print("  ✓ Feature: graph-first-sks (enabled by default)")
 
 
 if __name__ == "__main__":

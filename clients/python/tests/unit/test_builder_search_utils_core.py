@@ -8,8 +8,18 @@ from proximadb_sdk.builders.collection import (
     image_collection,
     text_collection,
 )
-from proximadb_sdk.builders.insert import InsertBuilder, batch_insert, from_numpy, insert
-from proximadb_sdk.models import CompressionType, DistanceMetric, IndexingAlgorithm, StorageEngine
+from proximadb_sdk.builders.insert import (
+    InsertBuilder,
+    batch_insert,
+    from_numpy,
+    insert,
+)
+from proximadb_sdk.models import (
+    CompressionType,
+    DistanceMetric,
+    IndexingAlgorithm,
+    StorageEngine,
+)
 from proximadb_sdk.search_utils import (
     _python_value_to_sql_value,
     build_search_hints,
@@ -87,9 +97,14 @@ def test_collection_builder_fluent_methods_and_helpers():
 
     assert collection("another_collection", 16).build().dimension == 16
     assert text_collection("text_collection").build().dimension == 768
-    assert text_collection("mini_collection", "all-MiniLM-L6-v2").build().dimension == 384
+    assert (
+        text_collection("mini_collection", "all-MiniLM-L6-v2").build().dimension == 384
+    )
     assert image_collection("image_collection", "resnet").build().dimension == 2048
-    assert high_performance_collection("fast_collection", 64).build().storage_engine == StorageEngine.SST
+    assert (
+        high_performance_collection("fast_collection", 64).build().storage_engine
+        == StorageEngine.SST
+    )
 
 
 def test_insert_builder_full_record_flow_and_validation():
@@ -195,8 +210,20 @@ def test_search_optimization_rest_quantization_and_streaming_hints():
         ("binary", {"hint_type": "binary"}),
         ("scalar", {"hint_type": "scalar", "parameters": {"bits": 8}}),
         ("int16", {"hint_type": "scalar", "parameters": {"bits": 16}}),
-        ("pq4", {"hint_type": "product", "parameters": {"num_subvectors": 8, "bits_per_code": 4}}),
-        ("pqbad", {"hint_type": "product", "parameters": {"num_subvectors": 8, "bits_per_code": 8}}),
+        (
+            "pq4",
+            {
+                "hint_type": "product",
+                "parameters": {"num_subvectors": 8, "bits_per_code": 4},
+            },
+        ),
+        (
+            "pqbad",
+            {
+                "hint_type": "product",
+                "parameters": {"num_subvectors": 8, "bits_per_code": 8},
+            },
+        ),
     ]:
         result = build_search_optimization_rest(quantization_hint=hint, **common)
         assert result["quantization_hint"] == expected
@@ -205,14 +232,18 @@ def test_search_optimization_rest_quantization_and_streaming_hints():
         assert result["distance_metric"] == "cosine"
 
     custom_hint = {"hint_type": "custom"}
-    assert build_search_optimization_rest(quantization_hint=custom_hint)[
-        "quantization_hint"
-    ] == custom_hint
+    assert (
+        build_search_optimization_rest(quantization_hint=custom_hint)[
+            "quantization_hint"
+        ]
+        == custom_hint
+    )
     assert build_search_optimization_rest() == {}
 
 
 def test_search_hints_grpc_python_value_conversion_and_errors():
     from google.protobuf.struct_pb2 import NullValue
+
     from proximadb_sdk.v1 import types_pb2
 
     params = build_search_params_grpc(

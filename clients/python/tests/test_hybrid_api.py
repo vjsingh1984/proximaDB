@@ -15,7 +15,6 @@ import pytest
 # Add the src directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from proximadb_sdk import ProximaDBClient
 from proximadb_sdk.hybrid import (
     CascadeFusion,
     DocumentSearchResult,
@@ -387,7 +386,6 @@ class TestFusionStrategies:
 
     def test_rrf_fusion(self):
         """Test Reciprocal Rank Fusion calculation."""
-        import random
 
         # Create mock results
         vector_results = [

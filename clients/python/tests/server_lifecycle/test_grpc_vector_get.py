@@ -5,7 +5,6 @@ Test gRPC VectorGet functionality after fix
 
 import atexit
 import os
-import signal
 import subprocess
 import time
 

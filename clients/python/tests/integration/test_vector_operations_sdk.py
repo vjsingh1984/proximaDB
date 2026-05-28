@@ -8,12 +8,12 @@ using real data with chunking and different storage engines.
 import logging
 import time
 import uuid
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 import pytest
 
-from proximadb_sdk import Collection, ProximaDBClient, VectorRecord
+from proximadb_sdk import VectorRecord
 from proximadb_sdk.chunking import (
     ChunkingConfig,
     ChunkingStrategy,
@@ -50,7 +50,7 @@ class TestVectorOperationsSDK:
 
         def _generate(
             text: str, model: str = "all-MiniLM-L6-v2", seed: int = None
-        ) -> List[float]:
+        ) -> list[float]:
             dimension = self.MODEL_DIMENSIONS.get(model, 384)
             # Use text length as seed for reproducibility
             if seed is None:
@@ -70,9 +70,9 @@ class TestVectorOperationsSDK:
             text: str,
             source_id: str,
             source_type: str = "document",
-            custom_metadata: Dict[str, Any] = None,
+            custom_metadata: dict[str, Any] = None,
             model: str = "all-MiniLM-L6-v2",
-        ) -> Dict[str, Any]:
+        ) -> dict[str, Any]:
             # Create chunker with strategy
             config = ChunkingConfig(
                 strategy=ChunkingStrategy.SLIDING_WINDOW,
@@ -116,8 +116,8 @@ class TestVectorOperationsSDK:
 
             # Custom metadata enrichment function
             def enrich_chunk_metadata(
-                chunk_data: Dict[str, Any], index: int
-            ) -> Dict[str, Any]:
+                chunk_data: dict[str, Any], index: int
+            ) -> dict[str, Any]:
                 text = chunk_data.get("text", "")
                 return {
                     "has_technical_terms": any(

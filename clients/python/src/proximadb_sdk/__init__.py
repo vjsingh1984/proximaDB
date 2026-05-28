@@ -72,9 +72,6 @@ from .exceptions import (
     CollectionExistsError,
     CollectionNotFoundError,
     ConfigurationError,
-)
-from .exceptions import IndexError as ProximaIndexError
-from .exceptions import (
     InvalidVectorError,
     NetworkError,
     ProximaDBError,
@@ -91,6 +88,7 @@ from .exceptions import (
     map_grpc_error,
     map_http_error,
 )
+from .exceptions import IndexError as ProximaIndexError
 
 # Filter API
 from .filters import (
@@ -109,10 +107,6 @@ from .filters import (
 
 # Models
 from .models import (
-    IndexingAlgorithm,  # Collection models; Vector models; Operation responses
-)
-from .models import IndexType  # Enums; Type aliases
-from .models import (
     Collection,
     CollectionConfig,
     CollectionInfo,
@@ -126,6 +120,8 @@ from .models import (
     FlushConfig,
     HealthStatus,
     IndexConfiguration,
+    IndexingAlgorithm,  # Collection models; Vector models; Operation responses
+    IndexType,  # Enums; Type aliases
     MetadataDict,
     OperationMetrics,
     QuantizationConfig,
@@ -146,11 +142,6 @@ from .models_v2 import (
     ColumnDataType,
     ColumnDefinition,
     FilterBuilderV2,
-)
-from .models_v2 import (
-    FilterOperator as FilterOperatorV2,  # Core record type; Typed values; Text storage; Text column convenience functions; Schema; Typed filters; Search
-)
-from .models_v2 import (
     ProximaRecord,
     RecordSchema,
     SchemaEnforcement,
@@ -162,6 +153,9 @@ from .models_v2 import (
     TypedValue,
     create_text_column_schema,
     text_column,
+)
+from .models_v2 import (
+    FilterOperator as FilterOperatorV2,  # Core record type; Typed values; Text storage; Text column convenience functions; Schema; Typed filters; Search
 )
 
 # Centralized proto type conversion
@@ -666,7 +660,7 @@ __all__.extend(
     ]
 )
 __all__.extend(
-    name for name in _OPTIONAL_EXPORTS.keys() if _optional_export_is_available(name)
+    name for name in _OPTIONAL_EXPORTS if _optional_export_is_available(name)
 )
 
 
@@ -756,10 +750,6 @@ except ImportError:
 try:
     from .timeseries import (
         AggregatedMetric,
-    )
-    from .timeseries import AggregationType as TSAggregationType
-    from .timeseries import CompressionCodec as TSCompressionCodec
-    from .timeseries import (
         DownsampleMode,
         Metric,
         ProximaDBTimeSeries,
@@ -770,6 +760,8 @@ try:
         ValueType,
         create_timeseries_api,
     )
+    from .timeseries import AggregationType as TSAggregationType
+    from .timeseries import CompressionCodec as TSCompressionCodec
 
     _timeseries_available = True
 except ImportError:

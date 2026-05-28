@@ -111,7 +111,7 @@ def main():
             async_validation=True, persistence=True, graph_size=size
         )
 
-        print(f"\n  Results:")
+        print("\n  Results:")
         print(f"    Node insert: {result['node_time_ms']:.1f}ms")
         print(f"    Edge insert: {result['edge_time_ms']:.1f}ms")
         print(f"    Total: {result['total_time_ms']:.1f}ms")

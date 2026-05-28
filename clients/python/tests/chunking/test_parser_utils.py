@@ -16,7 +16,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
@@ -24,7 +24,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import from loader which handles the module loading
-from loader import RESOURCES_DIR, code_module, read_resource_file
 
 # Import parser utilities
 parser_utils = sys.modules.get("proximadb.chunking_strategies.parser_utils")

@@ -40,8 +40,9 @@ metadata text.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, List, Optional, Protocol, Sequence, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from proximadb_sdk.integrations._records import insert_records, record_payload
 
@@ -61,7 +62,7 @@ class DualUseModel(Protocol):
     on which model you use — we just need both functions.
     """
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> list[float]:
         """Encode `text` into a retrieval-ready vector that is also
         the compressed context."""
         ...
@@ -117,7 +118,7 @@ class DualUseStore:
 
     # ---- writes ---------------------------------------------------
 
-    def add(self, text: str, doc_id: Optional[str] = None) -> str:
+    def add(self, text: str, doc_id: str | None = None) -> str:
         """Embed and store `text` without keeping the raw text.
 
         Returns the document ID (caller-supplied if given, else a
@@ -132,8 +133,8 @@ class DualUseStore:
     def add_many(
         self,
         texts: Sequence[str],
-        ids: Optional[Sequence[str]] = None,
-    ) -> List[str]:
+        ids: Sequence[str] | None = None,
+    ) -> list[str]:
         """Batch variant of :meth:`add`.
 
         Empty input is a no-op (no client call). Mismatched ``ids``
@@ -141,14 +142,13 @@ class DualUseStore:
         """
         if ids is not None and len(ids) != len(texts):
             raise ValueError(
-                f"ids length ({len(ids)}) must match texts length "
-                f"({len(texts)})"
+                f"ids length ({len(ids)}) must match texts length " f"({len(texts)})"
             )
         if not texts:
             return []
 
-        records: List[dict[str, Any]] = []
-        out_ids: List[str] = []
+        records: list[dict[str, Any]] = []
+        out_ids: list[str] = []
         for i, text in enumerate(texts):
             vector = self._model.embed(text)
             doc_id = ids[i] if ids is not None else _new_id()
@@ -160,9 +160,7 @@ class DualUseStore:
 
     # ---- reads ----------------------------------------------------
 
-    def retrieve(
-        self, query: str, top_k: int = 10
-    ) -> List[DualUseRetrievalResult]:
+    def retrieve(self, query: str, top_k: int = 10) -> list[DualUseRetrievalResult]:
         """Embed `query`, search, and decompress every returned vector.
 
         ``include_vectors=True`` is forced on the search call — the
@@ -178,7 +176,7 @@ class DualUseStore:
             include_vectors=True,
         )
 
-        out: List[DualUseRetrievalResult] = []
+        out: list[DualUseRetrievalResult] = []
         for r in results:
             vector = getattr(r, "vector", None)
             if not vector:

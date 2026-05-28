@@ -13,14 +13,14 @@ FinBERT models available:
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import numpy as np
 import torch
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModel, AutoTokenizer
 
-from .base import EmbeddingConfig, EmbeddingProvider
+from .base import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +69,8 @@ class FinBERTProvider(EmbeddingProvider):
     def __init__(
         self,
         model_name: str = "finbert-general",
-        device: Optional[str] = None,
-        cache_dir: Optional[str] = None,
+        device: str | None = None,
+        cache_dir: str | None = None,
         batch_size: int = 32,
         normalize: bool = True,
         pooling_strategy: str = "mean",
@@ -156,7 +156,7 @@ class FinBERTProvider(EmbeddingProvider):
         """
         return self.embed_texts([text])[0]
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
         """
         Generate embeddings for multiple texts
 
@@ -208,7 +208,7 @@ class FinBERTProvider(EmbeddingProvider):
 
         return result
 
-    def _encode_with_transformers(self, texts: List[str]) -> np.ndarray:
+    def _encode_with_transformers(self, texts: list[str]) -> np.ndarray:
         """Encode texts using transformers library"""
         embeddings = []
 
@@ -252,7 +252,7 @@ class FinBERTProvider(EmbeddingProvider):
         return np.vstack(embeddings)
 
     def embed_documents(
-        self, documents: List[Dict[str, Any]], text_field: str = "text"
+        self, documents: list[dict[str, Any]], text_field: str = "text"
     ) -> np.ndarray:
         """
         Generate embeddings for documents
@@ -271,7 +271,7 @@ class FinBERTProvider(EmbeddingProvider):
         """Get embedding dimension"""
         return self.model_config["dimension"]
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """Get model information"""
         return {
             "provider": "FinBERT",

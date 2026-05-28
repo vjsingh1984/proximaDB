@@ -16,14 +16,11 @@ Run with:
     PYTHONPATH=src pytest tests/integration/test_code_indexing_integration.py -v -s
 """
 
-import asyncio
 import hashlib
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-from unittest.mock import MagicMock
+from typing import Any
 
 import pytest
 import requests
@@ -285,7 +282,7 @@ mod tests {
 
 def create_collection(
     server_url: str, name: str, dimension: int = 384
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a vector collection via REST API.
 
     Uses CollectionRequest format with integer operation codes:
@@ -319,8 +316,8 @@ def delete_collection(server_url: str, name: str) -> bool:
 def insert_vectors(
     server_url: str,
     collection_name: str,
-    vectors: List[Dict[str, Any]],
-) -> Dict[str, Any]:
+    vectors: list[dict[str, Any]],
+) -> dict[str, Any]:
     """Insert vectors into collection.
 
     Automatically converts metadata values to SqlValue format.
@@ -349,10 +346,10 @@ def insert_vectors(
 def search_vectors(
     server_url: str,
     collection_name: str,
-    query_vector: List[float],
+    query_vector: list[float],
     top_k: int = 5,
-    filters: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    filters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Search for similar vectors.
 
     Automatically converts filter values to SqlValue format.
@@ -377,7 +374,7 @@ def search_vectors(
     return response.json()
 
 
-def generate_embedding(text: str, dimension: int = 384) -> List[float]:
+def generate_embedding(text: str, dimension: int = 384) -> list[float]:
     """Generate a deterministic pseudo-embedding from text.
 
     This creates reproducible embeddings based on text content
@@ -405,7 +402,7 @@ def generate_embedding(text: str, dimension: int = 384) -> List[float]:
     return embedding
 
 
-def to_sql_value(value: Any) -> Dict[str, Any]:
+def to_sql_value(value: Any) -> dict[str, Any]:
     """Convert a Python value to ProximaDB SqlValue format.
 
     The API expects metadata values wrapped in SqlValue format:
@@ -436,12 +433,12 @@ def to_sql_value(value: Any) -> Dict[str, Any]:
         return {"string_value": str(value)}
 
 
-def convert_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+def convert_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     """Convert a metadata dictionary to SqlValue format."""
     return {k: to_sql_value(v) for k, v in metadata.items()}
 
 
-def check_success(result: Dict[str, Any]) -> bool:
+def check_success(result: dict[str, Any]) -> bool:
     """Check if API result indicates success.
 
     Returns True if:
@@ -458,7 +455,7 @@ def check_success(result: Dict[str, Any]) -> bool:
     return True
 
 
-def assert_success(result: Dict[str, Any], message: str = "API call failed"):
+def assert_success(result: dict[str, Any], message: str = "API call failed"):
     """Assert that an API result indicates success."""
     assert check_success(result), f"{message}: {result}"
 

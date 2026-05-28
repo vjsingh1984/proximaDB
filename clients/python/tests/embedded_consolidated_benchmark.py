@@ -55,21 +55,17 @@ Unified vector + graph with:
 """
 
 import gc
-import gzip
 import os
 import random
 import shutil
 import struct
-import sys
 import tempfile
 import threading
 import time
-import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime
-from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -117,7 +113,7 @@ class BenchmarkLogger:
         return time.perf_counter()
 
     @staticmethod
-    def log_end(engine_name: str, start_time: float, stats: Dict[str, Any] = None):
+    def log_end(engine_name: str, start_time: float, stats: dict[str, Any] = None):
         """Log benchmark completion with all stats on a single line."""
         elapsed_ms = (time.perf_counter() - start_time) * 1000
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -774,15 +770,15 @@ class BenchmarkConfig:
     """Configuration for the consolidated benchmark."""
 
     # Vector benchmark settings
-    vector_sizes: List[int] = field(default_factory=lambda: [1000, 5000, 10000])
+    vector_sizes: list[int] = field(default_factory=lambda: [1000, 5000, 10000])
     vector_dimension: int = 384
 
     # Graph benchmark settings
-    graph_nodes: List[int] = field(default_factory=lambda: [1000, 10000])
+    graph_nodes: list[int] = field(default_factory=lambda: [1000, 10000])
     edge_density: float = 5.0  # Edges per node
 
     # SKS benchmark settings
-    sks_entities: List[int] = field(default_factory=lambda: [1000, 5000])
+    sks_entities: list[int] = field(default_factory=lambda: [1000, 5000])
     sks_relations_per_entity: float = 3.0
 
 
@@ -793,13 +789,13 @@ class BenchmarkResult:
     operation: str
     engine: str
     time_ms: float
-    throughput: Optional[float] = None
-    p50_ms: Optional[float] = None
-    p95_ms: Optional[float] = None
-    p99_ms: Optional[float] = None
-    recall_at_k: Optional[float] = None  # NEW: Recall@K accuracy metric
-    error: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    throughput: float | None = None
+    p50_ms: float | None = None
+    p95_ms: float | None = None
+    p99_ms: float | None = None
+    recall_at_k: float | None = None  # NEW: Recall@K accuracy metric
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # =============================================================================
@@ -809,7 +805,7 @@ class BenchmarkResult:
 
 def compute_ground_truth(
     base_vectors: np.ndarray, query_vectors: np.ndarray, k: int
-) -> List[List[int]]:
+) -> list[list[int]]:
     """
     Compute ground truth top-k neighbors using brute-force L2 distance.
 
@@ -839,7 +835,7 @@ def compute_ground_truth_cached(
     dimension: int,
     num_queries: int,
     seed: int = 42,
-) -> Tuple[List[List[int]], bool, float]:
+) -> tuple[list[list[int]], bool, float]:
     """
     Compute ground truth with caching to avoid recomputation on subsequent runs.
 
@@ -890,7 +886,7 @@ def compute_ground_truth_cached(
 
 
 def compute_recall_at_k(
-    ground_truth_indices: List[int], result_ids: List[str], k: int
+    ground_truth_indices: list[int], result_ids: list[str], k: int
 ) -> float:
     """
     Compute recall@k: fraction of ground truth neighbors found in results.
@@ -938,7 +934,7 @@ def generate_vectors(num_vectors: int, dimension: int = 384) -> np.ndarray:
 
 def generate_graph_data(
     num_nodes: int, edge_density: float
-) -> Tuple[List[Dict], List[Dict]]:
+) -> tuple[list[dict], list[dict]]:
     """Generate graph nodes and edges."""
     labels = ["Entity", "Document", "Concept", "Person", "Organization"]
     edge_types = ["RELATED_TO", "REFERENCES", "CONTAINS", "AUTHORED_BY", "BELONGS_TO"]
@@ -1034,7 +1030,7 @@ def generate_sks_data(
 
 def benchmark_vector_store(
     config: BenchmarkConfig, temp_dir: str
-) -> List[BenchmarkResult]:
+) -> list[BenchmarkResult]:
     """Benchmark vector storage operations across all engines."""
     if not PROXIMADB_AVAILABLE:
         return [BenchmarkResult("init", "all", 0, error="ProximaDB not available")]
@@ -1242,7 +1238,7 @@ def benchmark_vector_store(
 # =============================================================================
 
 
-def benchmark_chromadb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
+def benchmark_chromadb(vectors: np.ndarray, temp_dir: str) -> dict[str, Any]:
     """Benchmark ChromaDB embedded mode."""
     if not CHROMADB_AVAILABLE:
         return {"error": "ChromaDB not available"}
@@ -1277,7 +1273,7 @@ def benchmark_chromadb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
-def benchmark_lancedb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
+def benchmark_lancedb(vectors: np.ndarray, temp_dir: str) -> dict[str, Any]:
     """Benchmark LanceDB embedded mode."""
     if not LANCEDB_AVAILABLE:
         return {"error": "LanceDB not available"}
@@ -1311,7 +1307,7 @@ def benchmark_lancedb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
-def benchmark_faiss(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
+def benchmark_faiss(vectors: np.ndarray, temp_dir: str) -> dict[str, Any]:
     """Benchmark FAISS (in-memory)."""
     if not FAISS_AVAILABLE:
         return {"error": "FAISS not available"}
@@ -1341,7 +1337,7 @@ def benchmark_faiss(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
-def benchmark_qdrant(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
+def benchmark_qdrant(vectors: np.ndarray, temp_dir: str) -> dict[str, Any]:
     """Benchmark Qdrant embedded mode."""
     if not QDRANT_AVAILABLE:
         return {"error": "Qdrant not available"}
@@ -1382,7 +1378,7 @@ def benchmark_qdrant(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
 
 def benchmark_vector_competitors(
     config: BenchmarkConfig, temp_dir: str
-) -> List[BenchmarkResult]:
+) -> list[BenchmarkResult]:
     """Benchmark competitive vector databases."""
     results = []
 
@@ -1453,7 +1449,7 @@ def benchmark_vector_competitors(
     return results
 
 
-def benchmark_usearch_quick(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
+def benchmark_usearch_quick(vectors: np.ndarray, temp_dir: str) -> dict[str, Any]:
     """Quick USearch benchmark for consolidated/quick runs."""
     if not USEARCH_AVAILABLE:
         return {"error": "USearch not available"}
@@ -1490,7 +1486,7 @@ def benchmark_usearch_quick(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any
         return {"error": str(e)}
 
 
-def benchmark_annoy_quick(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
+def benchmark_annoy_quick(vectors: np.ndarray, temp_dir: str) -> dict[str, Any]:
     """Quick Annoy benchmark for consolidated/quick runs."""
     if not ANNOY_AVAILABLE:
         return {"error": "Annoy not available"}
@@ -1529,7 +1525,7 @@ def benchmark_annoy_quick(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
-def benchmark_milvus_quick(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
+def benchmark_milvus_quick(vectors: np.ndarray, temp_dir: str) -> dict[str, Any]:
     """Quick Milvus Lite benchmark for consolidated/quick runs."""
     if not MILVUS_AVAILABLE:
         return {"error": "Milvus not available"}
@@ -1584,8 +1580,8 @@ def benchmark_milvus_quick(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]
 
 
 def benchmark_networkx(
-    nodes_data: List[Dict], edges_data: List[Dict]
-) -> Dict[str, Any]:
+    nodes_data: list[dict], edges_data: list[dict]
+) -> dict[str, Any]:
     """Benchmark NetworkX."""
     if not NETWORKX_AVAILABLE:
         return {"error": "NetworkX not available"}
@@ -1628,7 +1624,7 @@ def benchmark_networkx(
         return {"error": str(e)}
 
 
-def benchmark_igraph(nodes_data: List[Dict], edges_data: List[Dict]) -> Dict[str, Any]:
+def benchmark_igraph(nodes_data: list[dict], edges_data: list[dict]) -> dict[str, Any]:
     """Benchmark igraph."""
     if not IGRAPH_AVAILABLE:
         return {"error": "igraph not available"}
@@ -1681,7 +1677,7 @@ def benchmark_igraph(nodes_data: List[Dict], edges_data: List[Dict]) -> Dict[str
 
 def benchmark_graph_competitors(
     config: BenchmarkConfig, temp_dir: str
-) -> List[BenchmarkResult]:
+) -> list[BenchmarkResult]:
     """Benchmark competitive graph databases."""
     results = []
 
@@ -1752,8 +1748,8 @@ def benchmark_graph_competitors(
 
 
 def benchmark_graph_store(
-    config: BenchmarkConfig, temp_dir: str, graph_engines: List[str] = None
-) -> List[BenchmarkResult]:
+    config: BenchmarkConfig, temp_dir: str, graph_engines: list[str] = None
+) -> list[BenchmarkResult]:
     """Benchmark graph database operations."""
     if not PROXIMADB_AVAILABLE:
         return [BenchmarkResult("init", "orion", 0, error="ProximaDB not available")]
@@ -1905,7 +1901,7 @@ def benchmark_graph_store(
 
 def benchmark_sks_workload(
     config: BenchmarkConfig, temp_dir: str
-) -> List[BenchmarkResult]:
+) -> list[BenchmarkResult]:
     """Benchmark semantic knowledge store (unified vector + graph) workloads."""
     if not PROXIMADB_AVAILABLE:
         return [BenchmarkResult("init", "sks", 0, error="ProximaDB not available")]
@@ -2046,7 +2042,7 @@ def benchmark_sks_workload(
 # =============================================================================
 
 
-def render_engine_comparison_table(results: List[BenchmarkResult]) -> None:
+def render_engine_comparison_table(results: list[BenchmarkResult]) -> None:
     """Render engine comparison table."""
     print("\n" + "=" * 100)
     print("PROXIMADB ENGINE COMPARISON TABLE")
@@ -2214,7 +2210,7 @@ def render_engine_comparison_table(results: List[BenchmarkResult]) -> None:
             console.print(table)
 
 
-def write_consolidated_report(results: List[BenchmarkResult]) -> None:
+def write_consolidated_report(results: list[BenchmarkResult]) -> None:
     """Write consolidated markdown report."""
     target_dir = Path("target")
     target_dir.mkdir(exist_ok=True)
@@ -2505,7 +2501,7 @@ def benchmark_sift_1m(
     engines: str = "all",
     approximate_only: bool = False,
     exact_only: bool = False,
-) -> List[BenchmarkResult]:
+) -> list[BenchmarkResult]:
     """
     Benchmark ProximaDB against SIFT-1M dataset.
 
@@ -2568,7 +2564,7 @@ def benchmark_sift_1m(
         seed=42,  # Fixed seed used in data generation
     )
     if from_cache:
-        print(f" loaded from cache")
+        print(" loaded from cache")
     else:
         print(f" computed in {gt_time:.0f}ms (cached for reuse)")
     print()
@@ -2694,7 +2690,7 @@ def benchmark_sift_1m(
                 shutil.rmtree(chroma_dir, ignore_errors=True)
 
             except ImportError:
-                print(f"  ChromaDB - SKIPPED (not installed)", flush=True)
+                print("  ChromaDB - SKIPPED (not installed)", flush=True)
             except Exception as e:
                 BenchmarkLogger.log_error("ChromaDB", e)
                 results.append(BenchmarkResult("sift_ops", "chromadb", 0, error=str(e)))
@@ -2768,7 +2764,7 @@ def benchmark_sift_1m(
             del index
 
         except ImportError:
-            print(f"  FAISS* - SKIPPED (not installed)", flush=True)
+            print("  FAISS* - SKIPPED (not installed)", flush=True)
         except Exception as e:
             BenchmarkLogger.log_error("FAISS*", e)
             results.append(BenchmarkResult("sift_ops", "faiss*", 0, error=str(e)))
@@ -2871,7 +2867,7 @@ def benchmark_sift_1m(
             shutil.rmtree(lance_dir, ignore_errors=True)
 
         except ImportError:
-            print(f"  LanceDB - SKIPPED (not installed)", flush=True)
+            print("  LanceDB - SKIPPED (not installed)", flush=True)
         except Exception as e:
             BenchmarkLogger.log_error("LanceDB", e)
             results.append(BenchmarkResult("sift_ops", "lancedb", 0, error=str(e)))
@@ -2988,7 +2984,7 @@ def benchmark_sift_1m(
             shutil.rmtree(qdrant_dir, ignore_errors=True)
 
         except ImportError:
-            print(f"  Qdrant - SKIPPED (not installed)", flush=True)
+            print("  Qdrant - SKIPPED (not installed)", flush=True)
         except Exception as e:
             BenchmarkLogger.log_error("Qdrant", e)
             results.append(BenchmarkResult("sift_ops", "qdrant", 0, error=str(e)))
@@ -3078,7 +3074,7 @@ def benchmark_sift_1m(
             shutil.rmtree(usearch_dir, ignore_errors=True)
 
         except ImportError:
-            print(f"  USearch - SKIPPED (not installed)", flush=True)
+            print("  USearch - SKIPPED (not installed)", flush=True)
         except Exception as e:
             BenchmarkLogger.log_error("USearch", e)
             results.append(BenchmarkResult("sift_ops", "usearch", 0, error=str(e)))
@@ -3172,7 +3168,7 @@ def benchmark_sift_1m(
             shutil.rmtree(annoy_dir, ignore_errors=True)
 
         except ImportError:
-            print(f"  Annoy - SKIPPED (not installed)", flush=True)
+            print("  Annoy - SKIPPED (not installed)", flush=True)
         except Exception as e:
             BenchmarkLogger.log_error("Annoy", e)
             results.append(BenchmarkResult("sift_ops", "annoy", 0, error=str(e)))
@@ -3276,7 +3272,7 @@ def benchmark_sift_1m(
             shutil.rmtree(milvus_dir, ignore_errors=True)
 
         except ImportError:
-            print(f"  Milvus - SKIPPED (not installed)", flush=True)
+            print("  Milvus - SKIPPED (not installed)", flush=True)
         except Exception as e:
             BenchmarkLogger.log_error("Milvus Lite", e)
             results.append(BenchmarkResult("sift_ops", "milvus", 0, error=str(e)))
@@ -3368,11 +3364,11 @@ def _benchmark_proximadb_engine(
     metadata: dict,
     temp_dir: str = None,
     timeout_ms: float = None,
-    ground_truth: List[List[int]] = None,
+    ground_truth: list[list[int]] = None,
     k: int = 10,
     search_mode: str = "exact",
     display_name: str = None,
-) -> List[BenchmarkResult]:
+) -> list[BenchmarkResult]:
     """Benchmark a single ProximaDB engine with disk persistence."""
     results = []
     name = display_name if display_name else engine.upper()
@@ -3708,7 +3704,7 @@ def _investigate_raptor_performance():
 
 def benchmark_ldbc_snb(
     scale_factor: int = 1, temp_dir: str = None
-) -> List[BenchmarkResult]:
+) -> list[BenchmarkResult]:
     """
     Benchmark ProximaDB graph engine against LDBC SNB dataset.
 
@@ -3899,7 +3895,7 @@ def benchmark_ldbc_snb(
 
 def benchmark_hybrid_rag(
     num_documents: int = 10_000, temp_dir: str = None
-) -> List[BenchmarkResult]:
+) -> list[BenchmarkResult]:
     """
     Benchmark ProximaDB SKS (Semantic Knowledge Store) for HybridRAG workloads.
 
@@ -4169,7 +4165,7 @@ def benchmark_hybrid_rag(
     return results
 
 
-def _print_sift_summary_table(results: List[BenchmarkResult]):
+def _print_sift_summary_table(results: list[BenchmarkResult]):
     """Render a consolidated table for the SIFT benchmark results."""
     if not RICH_AVAILABLE:
         print("\nRich library not installed. Cannot print summary table.")
@@ -4314,7 +4310,7 @@ def run_standard_dataset_benchmarks(
     engines: str = "all",
     approximate_only: bool = False,
     exact_only: bool = False,
-) -> List[BenchmarkResult]:
+) -> list[BenchmarkResult]:
     """
     Run benchmarks using standard datasets.
 
@@ -4338,7 +4334,7 @@ def run_standard_dataset_benchmarks(
         1024: "BGE-large",
         1536: "OpenAI",
     }
-    dim_name = dim_names.get(dimension, f"custom")
+    dim_name = dim_names.get(dimension, "custom")
 
     print("\n" + "=" * 100)
     print("PROXIMADB STANDARD DATASET BENCHMARKS")

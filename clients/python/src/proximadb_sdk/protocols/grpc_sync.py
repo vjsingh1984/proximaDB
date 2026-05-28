@@ -8,10 +8,10 @@ Features:
 - Thread-safe concurrent operations
 """
 
-import logging
 import json
+import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from ..exceptions import ProximaDBError
 from ..models import (
@@ -32,8 +32,8 @@ class HealthCheckResponse:
     latency_ms: float
     status: str
     server_address: str
-    details: Optional[str] = None
-    version: Optional[str] = None
+    details: str | None = None
+    version: str | None = None
 
 
 @dataclass
@@ -111,7 +111,7 @@ class SearchResultsWrapper:
     - Direct list access via indexing, iteration, len()
     """
 
-    def __init__(self, results_list: List[Any]):
+    def __init__(self, results_list: list[Any]):
         """Initialize wrapper with a list of SearchResult objects"""
         self.results = results_list
 
@@ -139,7 +139,7 @@ class VectorWrapper:
     to an object with attribute access: obj.id, obj.vector, obj.metadata
     """
 
-    def __init__(self, vector_dict: Dict[str, Any]):
+    def __init__(self, vector_dict: dict[str, Any]):
         """Initialize wrapper with a vector dictionary"""
         self._dict = vector_dict
         # Set attributes from dict
@@ -165,7 +165,7 @@ class DictWrapper:
     Used for operation results like delete, update, etc.
     """
 
-    def __init__(self, data_dict: Dict[str, Any]):
+    def __init__(self, data_dict: dict[str, Any]):
         """Initialize wrapper with a dictionary"""
         self._dict = data_dict
         # Set attributes from dict
@@ -512,13 +512,13 @@ class ProximaDBSyncGrpcClient:
         self,
         start_node_id: str,
         target_node_id: str,
-        max_depth: Optional[int] = None,
-        edge_types: Optional[List[str]] = None,
+        max_depth: int | None = None,
+        edge_types: list[str] | None = None,
         algorithm: str = "DIJKSTRA",
-        k: Optional[int] = None,
-        enable_prefetch: Optional[bool] = None,
-        prefetch_budget: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        k: int | None = None,
+        enable_prefetch: bool | None = None,
+        prefetch_budget: int | None = None,
+    ) -> dict[str, Any]:
         """Compute shortest path via GraphService.ShortestPath with per-call prefetch overrides.
 
         Per-call overrides are passed as gRPC metadata headers:
@@ -570,8 +570,8 @@ class ProximaDBSyncGrpcClient:
     def execute_sql(
         self,
         query: str,
-        parameters: Optional[list] = None,
-        collection: Optional[str] = None,
+        parameters: list | None = None,
+        collection: str | None = None,
     ):
         """Execute SQL via proximadb.v1.SqlService.ExecuteSql
 
@@ -628,8 +628,8 @@ class ProximaDBSyncGrpcClient:
         dimension: int,
         distance_metric: int,
         storage_engine: int,
-        tags: Optional[list] = None,
-        description: Optional[str] = None,
+        tags: list | None = None,
+        description: str | None = None,
     ):
         def _op(channel):
             stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
@@ -657,9 +657,9 @@ class ProximaDBSyncGrpcClient:
 
     def list_collections_v1(
         self,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        include_stats: Optional[bool] = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        include_stats: bool | None = None,
     ):
         def _op(channel):
             stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
@@ -691,10 +691,10 @@ class ProximaDBSyncGrpcClient:
         indexing_algorithm: int = None,
         storage_engine: int = None,
         engine: int = None,  # Alias for storage_engine (backward compatibility)
-        filterable_columns: List[Any] = None,
-        index_configs: List[Any] = None,
+        filterable_columns: list[Any] = None,
+        index_configs: list[Any] = None,
         quantization_config: Any = None,
-        canonical_embedding_precision: Optional[int] = None,
+        canonical_embedding_precision: int | None = None,
     ) -> Any:
         """Create collection with unified interface
 
@@ -790,7 +790,7 @@ class ProximaDBSyncGrpcClient:
             "get_collection", _get_collection_operation
         )
 
-    def list_collections(self) -> List[Any]:
+    def list_collections(self) -> list[Any]:
         """List all collections"""
 
         def _list_collections_operation(stub):
@@ -935,10 +935,10 @@ class ProximaDBSyncGrpcClient:
         return getattr(value, which)
 
     def _normalize_vector_alias_records(
-        self, vectors: List[Union[Dict[str, Any], Any]]
-    ) -> List[Dict[str, Any]]:
+        self, vectors: list[dict[str, Any] | Any]
+    ) -> list[dict[str, Any]]:
         """Normalize legacy vector alias inputs to v2 ProximaRecord payloads."""
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for index, vector_data in enumerate(vectors):
             if hasattr(vector_data, "model_dump"):
                 vector_dict = vector_data.model_dump(exclude_none=True)
@@ -985,7 +985,7 @@ class ProximaDBSyncGrpcClient:
         return records
 
     def _record_proto_for_grpc(
-        self, record: Union[ProximaRecord, Dict[str, Any]], index: int = 0
+        self, record: ProximaRecord | dict[str, Any], index: int = 0
     ):
         if v2_record_pb2 is None:
             raise ProximaDBError("v2 record protobuf stubs not available")
@@ -1092,7 +1092,7 @@ class ProximaDBSyncGrpcClient:
     def insert_records(
         self,
         collection_id: str,
-        records: List[Union[ProximaRecord, Dict[str, Any]]],
+        records: list[ProximaRecord | dict[str, Any]],
         **kwargs,
     ) -> BatchResult:
         upsert = bool(kwargs.pop("upsert", False))
@@ -1126,7 +1126,7 @@ class ProximaDBSyncGrpcClient:
     def upsert_records(
         self,
         collection_id: str,
-        records: List[Union[ProximaRecord, Dict[str, Any]]],
+        records: list[ProximaRecord | dict[str, Any]],
         **kwargs,
     ) -> BatchResult:
         """Upsert ProximaRecord-shaped payloads."""
@@ -1157,7 +1157,7 @@ class ProximaDBSyncGrpcClient:
 
     # Vector Compatibility Aliases
     def insert_vectors(
-        self, collection_id: str, vectors: List[Dict[str, Any]], upsert: bool = False
+        self, collection_id: str, vectors: list[dict[str, Any]], upsert: bool = False
     ) -> VectorOperationResponse:
         """Insert vectors through the v2 ProximaRecord gRPC surface.
 
@@ -1189,13 +1189,13 @@ class ProximaDBSyncGrpcClient:
     def search_vectors(
         self,
         collection_id: str,
-        query_vectors: List[List[float]] = None,
-        query_vector: List[float] = None,
+        query_vectors: list[list[float]] = None,
+        query_vector: list[float] = None,
         top_k: int = 10,
-        metadata_filters: Optional[Dict[str, Any]] = None,
+        metadata_filters: dict[str, Any] | None = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
-        search_hints: Optional[Dict[str, Any]] = None,
+        search_hints: dict[str, Any] | None = None,
     ) -> SearchResult:
         """Search vectors through the v2 ProximaRecord gRPC surface.
 
@@ -1282,15 +1282,15 @@ class ProximaDBSyncGrpcClient:
     def search(
         self,
         collection_id: str = None,  # Can be positional or keyword
-        query_vector: List[float] = None,  # Can be positional
-        query_vectors: List[List[float]] = None,
+        query_vector: list[float] = None,  # Can be positional
+        query_vectors: list[list[float]] = None,
         top_k: int = None,
         k: int = None,  # Backward compatibility alias for top_k
         collection_name: str = None,  # Backward compatibility alias
-        metadata_filters: Optional[Dict[str, Any]] = None,
+        metadata_filters: dict[str, Any] | None = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
-        search_hints: Optional[Dict[str, Any]] = None,
+        search_hints: dict[str, Any] | None = None,
     ) -> SearchResult:
         """
         Alias for search_vectors() for backward compatibility and convenience
@@ -1340,7 +1340,7 @@ class ProximaDBSyncGrpcClient:
         vector_id: str,
         include_vector: bool = True,
         include_metadata: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get single vector by ID"""
 
         def _get_vector_operation(stub):
@@ -1406,9 +1406,9 @@ class ProximaDBSyncGrpcClient:
         self,
         collection_id: str,
         vector_id: str,
-        vector: Optional[List[float]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        vector: list[float] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Update vector data and/or metadata"""
         # Treat vector update as an upsert over the v2 ProximaRecord contract.
         vector_data = {"id": vector_id}
@@ -1428,7 +1428,7 @@ class ProximaDBSyncGrpcClient:
             "success": result.success,
         }
 
-    def delete_vector(self, collection_id: str, vector_id: str) -> Dict[str, Any]:
+    def delete_vector(self, collection_id: str, vector_id: str) -> dict[str, Any]:
         """Delete a vector through the v2 ProximaRecord gRPC surface."""
 
         def _delete_vector_operation(stub):
@@ -1452,8 +1452,8 @@ class ProximaDBSyncGrpcClient:
         return self._execute_record_with_pool("delete_vector", _delete_vector_operation)
 
     def delete_vectors(
-        self, collection_id: str, vector_ids: List[str]
-    ) -> Dict[str, Any]:
+        self, collection_id: str, vector_ids: list[str]
+    ) -> dict[str, Any]:
         """Delete multiple vectors through the v2 ProximaRecord gRPC surface."""
 
         def _delete_vectors_operation(stub):
@@ -1482,8 +1482,8 @@ class ProximaDBSyncGrpcClient:
         self,
         collection_id: str,
         vector_id: str,
-        vector: List[float],
-        metadata: Optional[Dict[str, Any]] = None,
+        vector: list[float],
+        metadata: dict[str, Any] | None = None,
         upsert: bool = False,
     ) -> VectorOperationResponse:
         """Insert a single vector - alias for batch insert with one vector
@@ -1566,7 +1566,7 @@ class ProximaDBSyncGrpcClient:
         else:
             return None
 
-    def _convert_node_from_proto(self, node) -> Dict[str, Any]:
+    def _convert_node_from_proto(self, node) -> dict[str, Any]:
         """Convert Node proto to dictionary"""
         from datetime import datetime, timezone
 
@@ -1593,7 +1593,7 @@ class ProximaDBSyncGrpcClient:
             ),
         }
 
-    def _convert_edge_from_proto(self, edge) -> Dict[str, Any]:
+    def _convert_edge_from_proto(self, edge) -> dict[str, Any]:
         """Convert Edge proto to dictionary"""
         from datetime import datetime, timezone
 
@@ -1623,7 +1623,7 @@ class ProximaDBSyncGrpcClient:
             ),
         }
 
-    def _convert_path_from_proto(self, path) -> List[str]:
+    def _convert_path_from_proto(self, path) -> list[str]:
         """Convert GraphPath proto to list of node IDs"""
         if hasattr(path, "node_ids"):
             return list(path.node_ids)
@@ -1633,11 +1633,11 @@ class ProximaDBSyncGrpcClient:
     def create_node(
         self,
         node_id: str,
-        labels: List[str],
-        properties: Optional[Dict[str, Any]] = None,
-        embedding: Optional[List[float]] = None,
+        labels: list[str],
+        properties: dict[str, Any] | None = None,
+        embedding: list[float] | None = None,
         graph_id: str = "default",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a graph node via gRPC
 
         Args:
@@ -1691,10 +1691,10 @@ class ProximaDBSyncGrpcClient:
         from_node_id: str,
         to_node_id: str,
         edge_type: str,
-        properties: Optional[Dict[str, Any]] = None,
-        weight: Optional[float] = None,
+        properties: dict[str, Any] | None = None,
+        weight: float | None = None,
         graph_id: str = "default",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a graph edge via gRPC
 
         Args:
@@ -1755,12 +1755,12 @@ class ProximaDBSyncGrpcClient:
         self,
         start_node_id: str,
         max_depth: int = 3,
-        edge_types: Optional[List[str]] = None,
-        node_labels: Optional[List[str]] = None,
+        edge_types: list[str] | None = None,
+        node_labels: list[str] | None = None,
         algorithm: str = "BFS",
-        limit: Optional[int] = None,
+        limit: int | None = None,
         graph_id: str = "default",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Traverse graph from a starting node via gRPC
 
         Args:
@@ -1854,12 +1854,12 @@ class ProximaDBSyncGrpcClient:
 
     def query_nodes(
         self,
-        labels: Optional[List[str]] = None,
-        properties: Optional[Dict[str, Any]] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        labels: list[str] | None = None,
+        properties: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
         graph_id: str = "default",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Query nodes by labels and properties via gRPC
 
         Args:
@@ -1926,13 +1926,13 @@ class ProximaDBSyncGrpcClient:
     def query_edges(
         self,
         edge_type: str = "",
-        from_node_id: Optional[str] = None,
-        to_node_id: Optional[str] = None,
-        properties: Optional[Dict[str, Any]] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        from_node_id: str | None = None,
+        to_node_id: str | None = None,
+        properties: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
         graph_id: str = "default",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Query edges by endpoints, type, and properties via gRPC."""
         if not GRPC_AVAILABLE:
             raise ProximaDBError(
@@ -1998,7 +1998,7 @@ class ProximaDBSyncGrpcClient:
         self,
         node_id: str,
         graph_id: str = "default",
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get a graph node by ID via gRPC."""
         if not GRPC_AVAILABLE:
             raise ProximaDBError(
@@ -2028,12 +2028,12 @@ class ProximaDBSyncGrpcClient:
     def get_outgoing_edges(
         self,
         node_id: str,
-        edge_types: Optional[List[str]] = None,
+        edge_types: list[str] | None = None,
         graph_id: str = "default",
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get outgoing graph edges for a node via gRPC."""
         edge_types = edge_types or [""]
-        edges: List[Dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
         for edge_type in edge_types:
             result = self.query_edges(
                 edge_type=edge_type,
@@ -2047,12 +2047,12 @@ class ProximaDBSyncGrpcClient:
     def get_incoming_edges(
         self,
         node_id: str,
-        edge_types: Optional[List[str]] = None,
+        edge_types: list[str] | None = None,
         graph_id: str = "default",
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get incoming graph edges for a node via gRPC."""
         edge_types = edge_types or [""]
-        edges: List[Dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
         for edge_type in edge_types:
             result = self.query_edges(
                 edge_type=edge_type,
@@ -2067,7 +2067,7 @@ class ProximaDBSyncGrpcClient:
         self,
         node_id: str,
         graph_id: str = "default",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Delete a graph node by ID via gRPC."""
         if not GRPC_AVAILABLE:
             raise ProximaDBError(

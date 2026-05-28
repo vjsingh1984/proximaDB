@@ -5,7 +5,7 @@ Provides immutable model metadata and flexible provider configuration.
 """
 
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -34,8 +34,8 @@ class ModelMetadata:
     max_length: int = 512
     provider_type: str = "sentence-transformer"
     requires_instruction: bool = False
-    instruction_template: Optional[str] = None
-    mteb_score: Optional[float] = None
+    instruction_template: str | None = None
+    mteb_score: float | None = None
     languages: str = "en"
     description: str = ""
     use_case: str = ""
@@ -71,10 +71,10 @@ class ProviderConfig:
     model: ModelMetadata
     batch_size: int = 32
     normalize: bool = True
-    device: Optional[str] = None
-    cache_dir: Optional[str] = None
+    device: str | None = None
+    cache_dir: str | None = None
     trust_remote_code: bool = False
-    extra: Dict[str, Any] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def merge(self, **kwargs) -> "ProviderConfig":
         """

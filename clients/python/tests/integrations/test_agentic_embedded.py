@@ -24,7 +24,9 @@ def _adapter(tmp_path) -> EmbeddedProtocolAdapter:
     return EmbeddedProtocolAdapter(data_dir=str(tmp_path / "embedded_data"))
 
 
-def test_agentic_store_checkpoint_and_event_use_real_embedded_documents(tmp_path) -> None:
+def test_agentic_store_checkpoint_and_event_use_real_embedded_documents(
+    tmp_path,
+) -> None:
     adapter = _adapter(tmp_path)
 
     store = ProximaBaseStore(adapter)
@@ -49,9 +51,13 @@ def test_agentic_store_checkpoint_and_event_use_real_embedded_documents(tmp_path
     ]
 
 
-def test_unified_query_cross_modal_path_uses_embedded_unified_entrypoint(tmp_path) -> None:
+def test_unified_query_cross_modal_path_uses_embedded_unified_entrypoint(
+    tmp_path,
+) -> None:
     adapter = _adapter(tmp_path)
-    adapter.create_document_collection("agent_docs", config={"indexed_paths": ["$.role"]})
+    adapter.create_document_collection(
+        "agent_docs", config={"indexed_paths": ["$.role"]}
+    )
     adapter.insert_document(
         "agent_docs",
         {"id": "doc-main", "role": "planner", "embedding": [1.0, 0.0, 0.0, 0.0]},
@@ -147,7 +153,9 @@ async def test_victor_embedded_provider_uses_mapper_graph_and_events(tmp_path) -
 
 
 @pytest.mark.asyncio
-async def test_victor_embedded_provider_matches_codingagent_unified_symbol_protocol(tmp_path) -> None:
+async def test_victor_embedded_provider_matches_codingagent_unified_symbol_protocol(
+    tmp_path,
+) -> None:
     pytest.importorskip("victor.storage.unified.protocol")
     from victor.storage.unified.protocol import SearchParams, UnifiedEdge, UnifiedSymbol
 

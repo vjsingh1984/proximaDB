@@ -25,22 +25,21 @@ Usage:
 """
 
 import threading
-import time
 from collections import defaultdict
-from typing import Any, Callable, Dict, List, Optional, Union
+from collections.abc import Callable
+from typing import Any
 
 # Import from chunking strategies for clean separation
 from .chunking_strategies import (
     ChunkingConfig,
     ChunkingStrategy,
-    ChunkingStrategyInterface,
     TextChunk,
     get_chunking_strategy,
 )
 from .models import VectorRecord
 from .resource_pool import ResourceFactory, ResourcePool
 
-RecordPayload = Dict[str, Any]
+RecordPayload = dict[str, Any]
 
 
 class ChunkerFactory(ResourceFactory):
@@ -90,8 +89,8 @@ class ChunkerPool:
 
     def __init__(self, max_pool_size: int = 50):
         self.max_pool_size = max_pool_size
-        self._pools: Dict[str, ResourcePool[TextChunker]] = {}
-        self._pool_locks: Dict[str, threading.RLock] = defaultdict(threading.RLock)
+        self._pools: dict[str, ResourcePool[TextChunker]] = {}
+        self._pool_locks: dict[str, threading.RLock] = defaultdict(threading.RLock)
 
     @classmethod
     def get_instance(cls) -> "ChunkerPool":
@@ -130,7 +129,7 @@ class ChunkerPool:
         pool = self._get_or_create_pool(config)
         pool.release(chunker)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get pool performance statistics"""
         all_stats = {}
         for pool_key, pool in self._pools.items():
@@ -193,7 +192,7 @@ class TextChunker:
     to the appropriate strategy while maintaining compatibility with existing code.
     """
 
-    def __init__(self, config: Optional[ChunkingConfig] = None):
+    def __init__(self, config: ChunkingConfig | None = None):
         """
         Initialize text chunker
 
@@ -223,9 +222,9 @@ class TextChunker:
     def chunk_text(
         self,
         text: str,
-        source_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> List[TextChunk]:
+        source_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> list[TextChunk]:
         """
         Chunk text using the configured strategy
 
@@ -247,8 +246,8 @@ class TextChunker:
         return self._strategy.chunk(text, source_id, metadata)
 
     def add_context_to_chunks(
-        self, chunks: List[TextChunk], context_size: int = 50
-    ) -> List[TextChunk]:
+        self, chunks: list[TextChunk], context_size: int = 50
+    ) -> list[TextChunk]:
         """
         Add context from surrounding chunks
 
@@ -291,7 +290,7 @@ class TextChunker:
         return enhanced_chunks
 
 
-def _records_to_vector_records(records: List[RecordPayload]) -> List[VectorRecord]:
+def _records_to_vector_records(records: list[RecordPayload]) -> list[VectorRecord]:
     """Convert record-shaped payloads to legacy VectorRecord objects."""
     return [
         VectorRecord(
@@ -305,15 +304,15 @@ def _records_to_vector_records(records: List[RecordPayload]) -> List[VectorRecor
 
 
 def create_records(
-    chunks: List[TextChunk],
-    embeddings: List[List[float]],
-    collection_metadata: Optional[Dict[str, Any]] = None,
-    filterable_fields: Optional[List[str]] = None,
-    model_id: Optional[str] = None,
-    processing_config: Optional[Dict[str, Any]] = None,
-    source_type: Optional[str] = None,
-    source_metadata: Optional[Dict[str, Any]] = None,
-) -> List[RecordPayload]:
+    chunks: list[TextChunk],
+    embeddings: list[list[float]],
+    collection_metadata: dict[str, Any] | None = None,
+    filterable_fields: list[str] | None = None,
+    model_id: str | None = None,
+    processing_config: dict[str, Any] | None = None,
+    source_type: str | None = None,
+    source_metadata: dict[str, Any] | None = None,
+) -> list[RecordPayload]:
     """
     Create ProximaRecord-shaped dictionaries from chunks and embeddings.
 
@@ -395,15 +394,15 @@ def create_records(
 
 
 def create_vector_records(
-    chunks: List[TextChunk],
-    embeddings: List[List[float]],
-    collection_metadata: Optional[Dict[str, Any]] = None,
-    filterable_fields: Optional[List[str]] = None,
-    model_id: Optional[str] = None,
-    processing_config: Optional[Dict[str, Any]] = None,
-    source_type: Optional[str] = None,
-    source_metadata: Optional[Dict[str, Any]] = None,
-) -> List[VectorRecord]:
+    chunks: list[TextChunk],
+    embeddings: list[list[float]],
+    collection_metadata: dict[str, Any] | None = None,
+    filterable_fields: list[str] | None = None,
+    model_id: str | None = None,
+    processing_config: dict[str, Any] | None = None,
+    source_type: str | None = None,
+    source_metadata: dict[str, Any] | None = None,
+) -> list[VectorRecord]:
     """Compatibility wrapper returning legacy VectorRecord objects."""
     return _records_to_vector_records(
         create_records(
@@ -423,12 +422,12 @@ def chunk_and_embed_records(
     text: str,
     source_id: str,
     embedding_provider,
-    chunking_config: Optional[ChunkingConfig] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-    filterable_fields: Optional[List[str]] = None,
-    model_id: Optional[str] = None,
-    processing_config: Optional[Dict[str, Any]] = None,
-) -> List[RecordPayload]:
+    chunking_config: ChunkingConfig | None = None,
+    metadata: dict[str, Any] | None = None,
+    filterable_fields: list[str] | None = None,
+    model_id: str | None = None,
+    processing_config: dict[str, Any] | None = None,
+) -> list[RecordPayload]:
     """
     Convenience function that chunks text and generates record-native embeddings.
 
@@ -485,12 +484,12 @@ def chunk_and_embed_text(
     text: str,
     source_id: str,
     embedding_provider,
-    chunking_config: Optional[ChunkingConfig] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-    filterable_fields: Optional[List[str]] = None,
-    model_id: Optional[str] = None,
-    processing_config: Optional[Dict[str, Any]] = None,
-) -> List[VectorRecord]:
+    chunking_config: ChunkingConfig | None = None,
+    metadata: dict[str, Any] | None = None,
+    filterable_fields: list[str] | None = None,
+    model_id: str | None = None,
+    processing_config: dict[str, Any] | None = None,
+) -> list[VectorRecord]:
     """Compatibility wrapper returning legacy VectorRecord objects."""
     return _records_to_vector_records(
         chunk_and_embed_records(
@@ -508,7 +507,7 @@ def chunk_and_embed_text(
 
 # Backward compatibility functions (legacy API from old chunking.py)
 def create_chunker(
-    strategy: Union[str, ChunkingStrategy, ChunkingConfig] = None, **kwargs
+    strategy: str | ChunkingStrategy | ChunkingConfig = None, **kwargs
 ) -> TextChunker:
     """Create a text chunker instance (backward compatibility)
 
@@ -556,9 +555,9 @@ def create_enhanced_semantic_chunker(
 def chunk_by_sentences(
     text: str,
     chunk_size: int = 512,
-    document_id: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> List[TextChunk]:
+    document_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> list[TextChunk]:
     """
     Chunk text by sentences.
 
@@ -580,9 +579,9 @@ def chunk_by_sentences(
 def chunk_by_paragraphs(
     text: str,
     max_size: int = 1000,
-    document_id: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> List[TextChunk]:
+    document_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> list[TextChunk]:
     """
     Chunk text by paragraphs.
 
@@ -605,9 +604,9 @@ def chunk_sliding_window(
     text: str,
     window_size: int = 512,
     overlap: int = 128,
-    document_id: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> List[TextChunk]:
+    document_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> list[TextChunk]:
     """
     Chunk text using sliding window.
 
@@ -632,14 +631,14 @@ def chunk_sliding_window(
 
 
 def prepare_records(
-    response: Dict[str, Any],
+    response: dict[str, Any],
     source_id: str,
-    source_type: Optional[str] = None,
-    source_metadata: Optional[Dict[str, Any]] = None,
-    filterable_fields: Optional[List[str]] = None,
-    chunk_metadata_fn: Optional[Callable[[Dict[str, Any], int], Dict[str, Any]]] = None,
+    source_type: str | None = None,
+    source_metadata: dict[str, Any] | None = None,
+    filterable_fields: list[str] | None = None,
+    chunk_metadata_fn: Callable[[dict[str, Any], int], dict[str, Any]] | None = None,
     preserve_embedding_metadata: bool = False,
-) -> List[RecordPayload]:
+) -> list[RecordPayload]:
     """
     Prepare record-shaped payloads from embedding service response.
 
@@ -706,7 +705,6 @@ def prepare_records(
         ...     filterable_fields=["section", "has_numbers"]
         ... )
     """
-    import time
     from datetime import datetime, timezone
 
     # Extract chunks from response
@@ -818,14 +816,14 @@ def prepare_records(
 
 
 def prepare_vector_records(
-    response: Dict[str, Any],
+    response: dict[str, Any],
     source_id: str,
-    source_type: Optional[str] = None,
-    source_metadata: Optional[Dict[str, Any]] = None,
-    filterable_fields: Optional[List[str]] = None,
-    chunk_metadata_fn: Optional[Callable[[Dict[str, Any], int], Dict[str, Any]]] = None,
+    source_type: str | None = None,
+    source_metadata: dict[str, Any] | None = None,
+    filterable_fields: list[str] | None = None,
+    chunk_metadata_fn: Callable[[dict[str, Any], int], dict[str, Any]] | None = None,
     preserve_embedding_metadata: bool = False,
-) -> List[VectorRecord]:
+) -> list[VectorRecord]:
     """Compatibility wrapper returning legacy VectorRecord objects."""
     return _records_to_vector_records(
         prepare_records(
@@ -840,7 +838,7 @@ def prepare_vector_records(
     )
 
 
-def get_chunker_pool_stats() -> Dict[str, Any]:
+def get_chunker_pool_stats() -> dict[str, Any]:
     """Get global chunker pool performance statistics"""
     return _global_chunker_pool.get_stats()
 

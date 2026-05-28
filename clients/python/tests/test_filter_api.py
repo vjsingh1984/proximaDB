@@ -11,7 +11,6 @@ from proximadb_sdk import (
     FilterBuilder,
     ProximaDBClient,
     VectorRecord,
-    and_filters,
     eq,
     gt,
     in_list,

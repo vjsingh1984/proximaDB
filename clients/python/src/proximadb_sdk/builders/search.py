@@ -4,11 +4,9 @@ Search Builder
 Fluent interface for building complex search operations.
 """
 
-from typing import Any, Dict, List, Optional, TypedDict, Union
+from typing import Any
 
-from ..models import MetadataFilter
-
-FilterDict = Dict[str, Any]
+FilterDict = dict[str, Any]
 from ..filters import FilterBuilder
 
 
@@ -47,7 +45,7 @@ class SearchBuilder:
             .build())
     """
 
-    def __init__(self, query_vector: List[float]):
+    def __init__(self, query_vector: list[float]):
         """
         Initialize search builder with query vector
 
@@ -58,11 +56,11 @@ class SearchBuilder:
         self._top_k = 10
         self._include_vectors = False
         self._include_metadata = True
-        self._filter_dict: Optional[FilterDict] = None
+        self._filter_dict: FilterDict | None = None
         self._explain = False
         self._use_index = True
-        self._timeout_ms: Optional[int] = None
-        self._filters: List[Dict[str, Any]] = []
+        self._timeout_ms: int | None = None
+        self._filters: list[dict[str, Any]] = []
 
     def top_k(self, k: int) -> "SearchBuilder":
         """Set number of results to return"""
@@ -100,8 +98,8 @@ class SearchBuilder:
     def filter_range(
         self,
         field: str,
-        min_value: Optional[Union[int, float]] = None,
-        max_value: Optional[Union[int, float]] = None,
+        min_value: int | float | None = None,
+        max_value: int | float | None = None,
     ) -> "SearchBuilder":
         """Add range filter"""
         if min_value is None and max_value is None:
@@ -119,7 +117,7 @@ class SearchBuilder:
         self._filter_dict["conditions"].extend(conditions)
         return self
 
-    def filter_in(self, field: str, values: List[Any]) -> "SearchBuilder":
+    def filter_in(self, field: str, values: list[Any]) -> "SearchBuilder":
         """Add IN filter for field matching any of the values"""
         if not values:
             raise ValueError("Values list cannot be empty")
@@ -157,7 +155,7 @@ class SearchBuilder:
         self._timeout_ms = timeout_ms
         return self
 
-    def build(self) -> Dict[str, Any]:
+    def build(self) -> dict[str, Any]:
         """Build search options dictionary"""
         return {
             "top_k": self._top_k,
@@ -169,7 +167,7 @@ class SearchBuilder:
             "timeout_ms": self._timeout_ms,
         }
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation"""
         options = self.build()
         result = {
@@ -191,17 +189,17 @@ class SearchBuilder:
 
 
 # Convenience functions
-def search(query_vector: List[float]) -> SearchBuilder:
+def search(query_vector: list[float]) -> SearchBuilder:
     """Create a new SearchBuilder"""
     return SearchBuilder(query_vector)
 
 
 def similarity_search(
-    query_vector: List[float],
+    query_vector: list[float],
     top_k: int = 10,
     include_metadata: bool = True,
     include_vectors: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create simple similarity search options"""
     return (
         SearchBuilder(query_vector)

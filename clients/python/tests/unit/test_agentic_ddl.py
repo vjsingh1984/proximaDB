@@ -13,22 +13,33 @@ def test_agentic_ddl_emits_pgwire_compatible_mixed_schema() -> None:
 
     statements = ddl.statements()
 
-    assert statements[0].startswith('CREATE TABLE IF NOT EXISTS "victor_repo_agent_store"')
+    assert statements[0].startswith(
+        'CREATE TABLE IF NOT EXISTS "victor_repo_agent_store"'
+    )
     assert '"tenant_id" TEXT NOT NULL' in statements[0]
-    assert '"payload" JSONB NOT NULL DEFAULT \'{}\'::jsonb' in statements[0]
+    assert "\"payload\" JSONB NOT NULL DEFAULT '{}'::jsonb" in statements[0]
     assert '"embedding" VECTOR(384)' in statements[0]
     assert 'PRIMARY KEY ("record_id")' in statements[0]
     assert "WITH (storage_engine = 'VIPER', layout = 'columnar'" in statements[0]
     assert "xcatalog_namespace = 'agentic.victor_repo'" in statements[0]
     assert "schema_kind = 'agentic_mixed'" in statements[0]
-    assert any("USING GIN" in statement and '"payload"' in statement for statement in statements)
-    assert any("USING HNSW" in statement and '"embedding"' in statement for statement in statements)
     assert any(
-        "xcatalog.namespace=agentic.victor_repo;engine=VIPER;layout=columnar" in statement
+        "USING GIN" in statement and '"payload"' in statement
+        for statement in statements
+    )
+    assert any(
+        "USING HNSW" in statement and '"embedding"' in statement
+        for statement in statements
+    )
+    assert any(
+        "xcatalog.namespace=agentic.victor_repo;engine=VIPER;layout=columnar"
+        in statement
         for statement in statements
     )
     assert any("xcatalog.graph.label=Symbol" in statement for statement in statements)
-    assert any("xcatalog.event.stream_prefix=agent" in statement for statement in statements)
+    assert any(
+        "xcatalog.event.stream_prefix=agent" in statement for statement in statements
+    )
 
 
 def test_agentic_ddl_can_emit_relational_core_without_catalog_comments() -> None:
@@ -47,9 +58,9 @@ def test_agentic_ddl_can_emit_relational_core_without_catalog_comments() -> None
         '"key" TEXT NOT NULL, '
         '"created_at_ms" BIGINT NOT NULL, '
         '"updated_at_ms" BIGINT NOT NULL, '
-        '"payload" JSONB NOT NULL DEFAULT \'{}\'::jsonb, '
-        '"metadata" JSONB NOT NULL DEFAULT \'{}\'::jsonb, '
-        '"checkpoint" JSONB NOT NULL DEFAULT \'{}\'::jsonb, '
+        "\"payload\" JSONB NOT NULL DEFAULT '{}'::jsonb, "
+        "\"metadata\" JSONB NOT NULL DEFAULT '{}'::jsonb, "
+        "\"checkpoint\" JSONB NOT NULL DEFAULT '{}'::jsonb, "
         '"embedding" VECTOR(16), '
         'PRIMARY KEY ("record_id")) WITH ('
         "storage_engine = 'SST', "

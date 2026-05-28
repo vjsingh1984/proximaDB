@@ -6,7 +6,6 @@ instruction-following embedding models.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 
@@ -85,7 +84,7 @@ class InstructorProvider(EmbeddingProvider):
             self._available = False
             logger.error(f"Failed to initialize Instructor: {e}")
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
         """
         Generate embeddings for multiple texts
 
@@ -119,7 +118,7 @@ class InstructorProvider(EmbeddingProvider):
         return embeddings
 
     def embed_texts_with_instructions(
-        self, texts: List[str], instructions: Union[str, List[str]]
+        self, texts: list[str], instructions: str | list[str]
     ) -> np.ndarray:
         """
         Generate embeddings with custom instructions

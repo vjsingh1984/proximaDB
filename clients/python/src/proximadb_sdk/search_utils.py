@@ -1,32 +1,32 @@
 """Search utilities for ProximaDB Python SDK."""
 
 import logging
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 def build_search_optimization_rest(
-    top_k: Optional[int] = None,
-    filters: Optional[Dict[str, Any]] = None,
-    accuracy_threshold: Optional[float] = None,
-    include_expired: Optional[bool] = None,
-    timeout_ms: Optional[int] = None,
-    enable_two_stage: Optional[bool] = None,
-    quantization_hint: Optional[Union[str, Dict[str, Any]]] = None,
-    enable_clustering_hint: Optional[bool] = None,
-    enable_metadata_filtering_hint: Optional[bool] = None,
-    custom_hints: Optional[Dict[str, Any]] = None,
+    top_k: int | None = None,
+    filters: dict[str, Any] | None = None,
+    accuracy_threshold: float | None = None,
+    include_expired: bool | None = None,
+    timeout_ms: int | None = None,
+    enable_two_stage: bool | None = None,
+    quantization_hint: str | dict[str, Any] | None = None,
+    enable_clustering_hint: bool | None = None,
+    enable_metadata_filtering_hint: bool | None = None,
+    custom_hints: dict[str, Any] | None = None,
     # Additional parameters from DirectVectorService
-    distance_metric: Optional[str] = None,
-    requires_ordering: Optional[bool] = None,
-    candidate_multiplier: Optional[float] = None,
+    distance_metric: str | None = None,
+    requires_ordering: bool | None = None,
+    candidate_multiplier: float | None = None,
     # Streaming search config
-    streaming_buffer_size: Optional[int] = None,
-    streaming_concurrent_search: Optional[bool] = None,
-    streaming_max_concurrent_tasks: Optional[int] = None,
-    streaming_batch_size: Optional[int] = None,
-) -> Dict[str, Any]:
+    streaming_buffer_size: int | None = None,
+    streaming_concurrent_search: bool | None = None,
+    streaming_max_concurrent_tasks: int | None = None,
+    streaming_batch_size: int | None = None,
+) -> dict[str, Any]:
     """Build search optimization parameters for REST API.
 
     Returns dict compatible with REST API SearchOptimization structure.
@@ -124,25 +124,25 @@ def build_search_optimization_rest(
 
 
 def build_search_params_grpc(
-    top_k: Optional[int] = None,
-    filters: Optional[Dict[str, Any]] = None,
-    accuracy_threshold: Optional[float] = None,
-    include_expired: Optional[bool] = None,
-    timeout_ms: Optional[int] = None,
-    enable_two_stage: Optional[bool] = None,
-    quantization_hint: Optional[Union[str, Dict[str, Any]]] = None,
-    enable_clustering_hint: Optional[bool] = None,
-    enable_metadata_filtering_hint: Optional[bool] = None,
-    custom_hints: Optional[Dict[str, Any]] = None,
+    top_k: int | None = None,
+    filters: dict[str, Any] | None = None,
+    accuracy_threshold: float | None = None,
+    include_expired: bool | None = None,
+    timeout_ms: int | None = None,
+    enable_two_stage: bool | None = None,
+    quantization_hint: str | dict[str, Any] | None = None,
+    enable_clustering_hint: bool | None = None,
+    enable_metadata_filtering_hint: bool | None = None,
+    custom_hints: dict[str, Any] | None = None,
     # Additional parameters from DirectVectorService
-    distance_metric: Optional[str] = None,
-    requires_ordering: Optional[bool] = None,
-    candidate_multiplier: Optional[float] = None,
+    distance_metric: str | None = None,
+    requires_ordering: bool | None = None,
+    candidate_multiplier: float | None = None,
     # Streaming search config
-    streaming_buffer_size: Optional[int] = None,
-    streaming_concurrent_search: Optional[bool] = None,
-    streaming_max_concurrent_tasks: Optional[int] = None,
-    streaming_batch_size: Optional[int] = None,
+    streaming_buffer_size: int | None = None,
+    streaming_concurrent_search: bool | None = None,
+    streaming_max_concurrent_tasks: int | None = None,
+    streaming_batch_size: int | None = None,
 ) -> Any:
     """Build search params for gRPC API (v1 proto).
 
@@ -276,18 +276,18 @@ def _python_value_to_sql_value(value: Any, types_pb2: Any) -> Any:
 
 def build_search_hints(
     protocol: str,
-    top_k: Optional[int] = None,
-    filters: Optional[Dict[str, Any]] = None,
-    accuracy_threshold: Optional[float] = None,
-    include_expired: Optional[bool] = None,
-    timeout_ms: Optional[int] = None,
-    enable_two_stage: Optional[bool] = None,
-    quantization_hint: Optional[Union[str, Dict[str, Any]]] = None,
-    enable_clustering_hint: Optional[bool] = None,
-    enable_metadata_filtering_hint: Optional[bool] = None,
-    custom_hints: Optional[Dict[str, Any]] = None,
+    top_k: int | None = None,
+    filters: dict[str, Any] | None = None,
+    accuracy_threshold: float | None = None,
+    include_expired: bool | None = None,
+    timeout_ms: int | None = None,
+    enable_two_stage: bool | None = None,
+    quantization_hint: str | dict[str, Any] | None = None,
+    enable_clustering_hint: bool | None = None,
+    enable_metadata_filtering_hint: bool | None = None,
+    custom_hints: dict[str, Any] | None = None,
     **kwargs,  # Accept additional parameters
-) -> Union[Dict[str, Any], Any]:
+) -> dict[str, Any] | Any:
     """Build search hints based on protocol type.
 
     Args:

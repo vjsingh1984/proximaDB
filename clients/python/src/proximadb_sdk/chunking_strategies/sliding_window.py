@@ -4,9 +4,9 @@ Sliding window chunking strategy
 Simple overlapping window approach for text chunking.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
+from .base import ChunkingStrategyInterface, TextChunk
 
 
 class SlidingWindowStrategy(ChunkingStrategyInterface):
@@ -17,8 +17,8 @@ class SlidingWindowStrategy(ChunkingStrategyInterface):
     """
 
     def chunk(
-        self, text: str, source_id: str, base_metadata: Optional[Dict[str, Any]] = None
-    ) -> List[TextChunk]:
+        self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
+    ) -> list[TextChunk]:
         """Create chunks using sliding window approach"""
         self.validate_config()
 

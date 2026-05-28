@@ -3,7 +3,7 @@ Metadata conversion utilities for ProximaDB Python client.
 Handles conversion between Python dict and typed proto MetadataItem.
 """
 
-from typing import Any, Dict, List, Union
+from typing import Any
 
 try:
     from proximadb_sdk.v1 import vector_types_pb2 as v1_vector_types_pb2
@@ -22,7 +22,7 @@ def _has_field(item: Any, field_name: str) -> bool:
         return False
 
 
-def dict_to_proto_metadata(metadata: Dict[str, Any]) -> List:
+def dict_to_proto_metadata(metadata: dict[str, Any]) -> list:
     """
     Convert a Python dict to a list of typed MetadataValue protos (v1 API).
 
@@ -60,7 +60,7 @@ def dict_to_proto_metadata(metadata: Dict[str, Any]) -> List:
     return items
 
 
-def proto_metadata_to_dict(metadata_items: List) -> Dict[str, Any]:
+def proto_metadata_to_dict(metadata_items: list) -> dict[str, Any]:
     """
     Convert a list of typed MetadataValue protos (v1 API) to a Python dict.
 
@@ -91,7 +91,7 @@ def proto_metadata_to_dict(metadata_items: List) -> Dict[str, Any]:
     return result
 
 
-def json_compatible_value(value: Any) -> Union[str, float, bool, None]:
+def json_compatible_value(value: Any) -> str | float | bool | None:
     """
     Convert a value to a JSON-compatible type for REST API.
 

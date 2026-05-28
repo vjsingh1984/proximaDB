@@ -25,7 +25,6 @@ from proximadb_sdk import (
     ProximaDBClient,
 )
 
-
 _server_process: subprocess.Popen | None = None
 
 

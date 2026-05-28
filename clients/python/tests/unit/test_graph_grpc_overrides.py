@@ -179,8 +179,12 @@ def test_grpc_graph_read_helpers_use_existing_query_endpoints(monkeypatch):
 
     client = ProximaDBSyncGrpcClient("localhost:5679")
     monkeypatch.setattr(client, "_convert_to_property_value", lambda value: value)
-    monkeypatch.setattr(client, "_convert_edge_from_proto", lambda edge: {"id": edge.id})
-    monkeypatch.setattr(client, "_convert_node_from_proto", lambda node: {"id": node.id})
+    monkeypatch.setattr(
+        client, "_convert_edge_from_proto", lambda edge: {"id": edge.id}
+    )
+    monkeypatch.setattr(
+        client, "_convert_node_from_proto", lambda node: {"id": node.id}
+    )
 
     edge_result = client.query_edges(
         edge_type="CALLS",

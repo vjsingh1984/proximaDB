@@ -27,7 +27,6 @@ from proximadb_sdk import (
     ProximaDBError,
 )
 
-
 _server_process: subprocess.Popen | None = None
 
 
@@ -125,4 +124,6 @@ def test_grpc_server_side_error_must_propagate_not_swallow() -> None:
             body.get("success") is False or body.get("collection") is None
         ), f"server-rejected create should leave no catalog row; got: {body}"
     else:
-        assert resp.status_code in (404,), f"unexpected REST GET status: {resp.status_code}"
+        assert resp.status_code in (
+            404,
+        ), f"unexpected REST GET status: {resp.status_code}"

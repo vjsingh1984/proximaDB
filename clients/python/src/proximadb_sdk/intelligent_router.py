@@ -18,19 +18,18 @@ Features:
 Performance Target: 20-40% improvement in overall throughput and reliability
 """
 
-import asyncio
 import logging
 import statistics
 import threading
 import time
-import weakref
 from collections import defaultdict, deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any
 
 from .config import ClientConfig, Protocol
-from .exceptions import NetworkError, ProximaDBError, TimeoutError
+from .exceptions import ProximaDBError
 
 logger = logging.getLogger(__name__)
 
@@ -93,14 +92,12 @@ class RoutingRule:
     operation: OperationType
     preferred_protocol: Protocol
     priority: int = 1
-    min_data_size_bytes: Optional[int] = None
-    max_data_size_bytes: Optional[int] = None
-    required_features: Set[str] = field(default_factory=set)
+    min_data_size_bytes: int | None = None
+    max_data_size_bytes: int | None = None
+    required_features: set[str] = field(default_factory=set)
     fallback_allowed: bool = True
 
-    def matches(
-        self, operation: OperationType, data_size: Optional[int] = None
-    ) -> bool:
+    def matches(self, operation: OperationType, data_size: int | None = None) -> bool:
         """Check if this rule matches the given operation"""
         if self.operation != operation:
             return False
@@ -130,7 +127,7 @@ class ProtocolMetrics:
     # Performance metrics
     latency_samples: deque = field(default_factory=lambda: deque(maxlen=100))
     throughput_samples: deque = field(default_factory=lambda: deque(maxlen=100))
-    error_counts: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    error_counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
 
     # Operation counts
     total_requests: int = 0
@@ -141,7 +138,7 @@ class ProtocolMetrics:
     total_response_time_ms: float = 0.0
     last_request_time: float = 0.0
 
-    def update_success(self, latency_ms: float, throughput_qps: Optional[float] = None):
+    def update_success(self, latency_ms: float, throughput_qps: float | None = None):
         """Update metrics for successful request"""
         self.successful_requests += 1
         self.total_requests += 1
@@ -272,7 +269,7 @@ class RoutingConfig:
     learning_update_interval: float = 300.0  # 5 minutes
 
     # Custom rules
-    custom_rules: List[RoutingRule] = field(default_factory=list)
+    custom_rules: list[RoutingRule] = field(default_factory=list)
 
 
 class IntelligentRouter:
@@ -290,7 +287,7 @@ class IntelligentRouter:
         self.client_config = client_config
 
         # Protocol metrics
-        self._metrics: Dict[Protocol, ProtocolMetrics] = {
+        self._metrics: dict[Protocol, ProtocolMetrics] = {
             Protocol.REST: ProtocolMetrics(Protocol.REST),
             Protocol.GRPC: ProtocolMetrics(Protocol.GRPC),
         }
@@ -304,27 +301,27 @@ class IntelligentRouter:
         self._routing_rules.sort(key=lambda r: r.priority, reverse=True)
 
         # Load balancing state
-        self._load_balance_counters: Dict[Protocol, int] = defaultdict(int)
+        self._load_balance_counters: dict[Protocol, int] = defaultdict(int)
         self._load_balance_window_start = time.time()
 
         # Adaptive learning
-        self._operation_history: Dict[Tuple[OperationType, Protocol], deque] = (
+        self._operation_history: dict[tuple[OperationType, Protocol], deque] = (
             defaultdict(lambda: deque(maxlen=self.config.learning_window_size))
         )
-        self._learned_preferences: Dict[OperationType, Protocol] = {}
+        self._learned_preferences: dict[OperationType, Protocol] = {}
 
         # Client management
-        self._client_factories: Dict[Protocol, Callable] = {}
-        self._clients: Dict[Protocol, Any] = (
+        self._client_factories: dict[Protocol, Callable] = {}
+        self._clients: dict[Protocol, Any] = (
             {}
         )  # Regular dict to properly cache clients
 
         # Background monitoring
-        self._monitoring_thread: Optional[threading.Thread] = None
+        self._monitoring_thread: threading.Thread | None = None
         self._stop_monitoring = threading.Event()
 
         # Selection state
-        self._current_protocol: Optional[Protocol] = None
+        self._current_protocol: Protocol | None = None
         self._round_robin_index = 0
 
         if self.config.health_check_interval_seconds > 0:
@@ -334,7 +331,7 @@ class IntelligentRouter:
             f"Initialized IntelligentRouter with strategy: {self.config.strategy.value}"
         )
 
-    def _create_default_rules(self) -> List[RoutingRule]:
+    def _create_default_rules(self) -> list[RoutingRule]:
         """Create default routing rules based on operation characteristics"""
         return [
             # Bulk operations → gRPC (better for large payloads)
@@ -391,10 +388,10 @@ class IntelligentRouter:
     def route_operation(
         self,
         operation: OperationType,
-        data_size: Optional[int] = None,
-        required_features: Optional[Set[str]] = None,
-        preferred_protocol: Optional[Protocol] = None,
-    ) -> Tuple[Protocol, Any]:
+        data_size: int | None = None,
+        required_features: set[str] | None = None,
+        preferred_protocol: Protocol | None = None,
+    ) -> tuple[Protocol, Any]:
         """
         Route an operation to the most suitable protocol
 
@@ -463,8 +460,8 @@ class IntelligentRouter:
     def _select_protocol(
         self,
         operation: OperationType,
-        data_size: Optional[int] = None,
-        required_features: Optional[Set[str]] = None,
+        data_size: int | None = None,
+        required_features: set[str] | None = None,
     ) -> Protocol:
         """Select protocol based on routing strategy"""
 
@@ -568,7 +565,7 @@ class IntelligentRouter:
             and not metrics.circuit_breaker_open
         )
 
-    def _get_fallback_protocol(self, failed_protocol: Protocol) -> Optional[Protocol]:
+    def _get_fallback_protocol(self, failed_protocol: Protocol) -> Protocol | None:
         """Get fallback protocol for failed one"""
         # Simply return the other protocol if healthy
         fallback = Protocol.GRPC if failed_protocol == Protocol.REST else Protocol.REST
@@ -587,7 +584,7 @@ class IntelligentRouter:
         protocol: Protocol,
         success: bool,
         latency_ms: float,
-        throughput_qps: Optional[float] = None,
+        throughput_qps: float | None = None,
     ):
         """
         Record operation result for metrics and learning
@@ -704,7 +701,7 @@ class IntelligentRouter:
                 logger.error(f"Health check failed for {protocol}: {e}")
                 self._metrics[protocol].update_failure("health_check_exception")
 
-    def get_metrics(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict[str, Any]:
         """Get comprehensive routing metrics"""
         with self._metrics_lock:
             return {

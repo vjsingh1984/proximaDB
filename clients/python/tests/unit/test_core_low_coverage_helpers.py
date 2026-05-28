@@ -18,7 +18,6 @@ from proximadb_sdk.performance.data_models import (
     MemoryMetrics,
     PerformanceReport,
     PerformanceSummary,
-    ThroughputMetrics,
     ValidationStatus,
     create_latency_stats,
     create_throughput_metrics,

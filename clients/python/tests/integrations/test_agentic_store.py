@@ -15,6 +15,7 @@ from proximadb_sdk.integrations.agentic_store import (
     ProximaCheckpointSaver,
 )
 
+
 @dataclass
 class _Hit:
     id: str

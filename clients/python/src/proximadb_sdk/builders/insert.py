@@ -4,7 +4,7 @@ Insert Builder
 Fluent interface for building batch insert operations.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import numpy as np
 
@@ -45,14 +45,16 @@ class InsertBuilder:
 
     def __init__(self):
         """Initialize insert builder"""
-        self.records: List[Dict[str, Any]] = []
+        self.records: list[dict[str, Any]] = []
         self._batch_size = 1000
         self._overwrite = False
         self._validate_vectors = True
         self._async_mode = False
 
     @staticmethod
-    def _normalize_record(record: Union[ProximaRecord, VectorRecord, Dict[str, Any]]) -> Dict[str, Any]:
+    def _normalize_record(
+        record: ProximaRecord | VectorRecord | dict[str, Any],
+    ) -> dict[str, Any]:
         if hasattr(record, "model_dump"):
             record = record.model_dump(exclude_none=True)
         elif hasattr(record, "dict"):
@@ -88,7 +90,7 @@ class InsertBuilder:
 
     def add_record(
         self,
-        record: Union[ProximaRecord, Dict[str, Any]],
+        record: ProximaRecord | dict[str, Any],
     ) -> "InsertBuilder":
         """Add a single ProximaRecord-shaped record."""
         self.records.append(self._normalize_record(record))
@@ -96,7 +98,7 @@ class InsertBuilder:
 
     def add_records(
         self,
-        records: List[Union[ProximaRecord, Dict[str, Any]]],
+        records: list[ProximaRecord | dict[str, Any]],
     ) -> "InsertBuilder":
         """Add ProximaRecord-shaped records."""
         for record in records:
@@ -106,14 +108,14 @@ class InsertBuilder:
     def add_vector(
         self,
         vector_id: str,
-        vector: List[float],
-        metadata: Optional[MetadataDict] = None,
+        vector: list[float],
+        metadata: MetadataDict | None = None,
     ) -> "InsertBuilder":
         """Compatibility alias for adding one vector-bearing record."""
         self.add_record({"id": vector_id, "vector": vector, "props": metadata or {}})
         return self
 
-    def add_vectors(self, vectors: List[VectorRecord]) -> "InsertBuilder":
+    def add_vectors(self, vectors: list[VectorRecord]) -> "InsertBuilder":
         """Compatibility alias for adding multiple vector records."""
         for vector in vectors:
             self.add_record(vector)
@@ -121,9 +123,9 @@ class InsertBuilder:
 
     def from_arrays(
         self,
-        ids: List[str],
-        vectors: Union[List[List[float]], np.ndarray],
-        metadata: Optional[List[MetadataDict]] = None,
+        ids: list[str],
+        vectors: list[list[float]] | np.ndarray,
+        metadata: list[MetadataDict] | None = None,
     ) -> "InsertBuilder":
         """Add vectors from arrays"""
         if isinstance(vectors, np.ndarray):
@@ -151,7 +153,7 @@ class InsertBuilder:
         df,
         id_col: str,
         vector_col: str,
-        metadata_cols: Optional[List[str]] = None,
+        metadata_cols: list[str] | None = None,
     ) -> "InsertBuilder":
         """Add vectors from pandas DataFrame"""
         try:
@@ -259,7 +261,7 @@ class InsertBuilder:
             record["props"] = transformer(record.get("props", {}))
         return self
 
-    def build(self) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    def build(self) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Build records list and insert options."""
         options = {
             "batch_size": self._batch_size,
@@ -269,11 +271,11 @@ class InsertBuilder:
         }
         return self.build_records(), options
 
-    def build_records(self) -> List[Dict[str, Any]]:
+    def build_records(self) -> list[dict[str, Any]]:
         """Build just the record list."""
         return [record.copy() for record in self.records]
 
-    def build_vectors(self) -> List[VectorRecord]:
+    def build_vectors(self) -> list[VectorRecord]:
         """Compatibility builder returning legacy VectorRecord objects."""
         return [
             VectorRecord(
@@ -284,7 +286,7 @@ class InsertBuilder:
             for record in self.records
         ]
 
-    def build_options(self) -> Dict[str, Any]:
+    def build_options(self) -> dict[str, Any]:
         """Build just the insert options"""
         return {
             "batch_size": self._batch_size,
@@ -301,15 +303,15 @@ class InsertBuilder:
         """Check if no records are added."""
         return len(self.records) == 0
 
-    def get_vector_ids(self) -> List[str]:
+    def get_vector_ids(self) -> list[str]:
         """Get list of all record IDs."""
         return [record.get("id") for record in self.records]
 
-    def get_dimensions(self) -> List[int]:
+    def get_dimensions(self) -> list[int]:
         """Get dimensions of all record vectors."""
         return [len(record.get("vector") or []) for record in self.records]
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self) -> dict[str, Any]:
         """Get summary statistics"""
         if not self.records:
             return {"count": 0, "dimensions": [], "has_metadata": False}
@@ -337,18 +339,18 @@ def insert() -> InsertBuilder:
 
 
 def batch_insert(
-    records: List[Union[ProximaRecord, Dict[str, Any]]], batch_size: int = 1000
-) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    records: list[ProximaRecord | dict[str, Any]], batch_size: int = 1000
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Create simple record batch insert."""
     return InsertBuilder().add_records(records).batch_size(batch_size).build()
 
 
 def from_numpy(
-    ids: List[str],
+    ids: list[str],
     vectors: np.ndarray,
-    metadata: Optional[List[MetadataDict]] = None,
+    metadata: list[MetadataDict] | None = None,
     batch_size: int = 1000,
-) -> tuple[List[Dict[str, Any]], Dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Create record batch insert from numpy array."""
     return (
         InsertBuilder()

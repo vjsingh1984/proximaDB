@@ -16,16 +16,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 import httpx
 import pytest
 import yaml
 from jsonschema import Draft202012Validator, RefResolver
 
-from proximadb_sdk.models import CollectionConfig, SchemaDefinition, ColumnDefinition
+from proximadb_sdk.models import CollectionConfig, ColumnDefinition, SchemaDefinition
 from proximadb_sdk.protocols.rest_sync import ProximaDBClient
-
 
 # ---------------------------------------------------------------------------
 # Spec loading
@@ -36,7 +35,7 @@ SPEC_PATH = REPO_ROOT / "docs" / "openapi" / "proximadb-openapi.yaml"
 
 
 @pytest.fixture(scope="module")
-def openapi_spec() -> Dict[str, Any]:
+def openapi_spec() -> dict[str, Any]:
     assert SPEC_PATH.exists(), f"OpenAPI spec missing at {SPEC_PATH}"
     with SPEC_PATH.open() as f:
         return yaml.safe_load(f)
@@ -52,7 +51,9 @@ def ref_resolver(openapi_spec):
 # ---------------------------------------------------------------------------
 
 
-def _operation_for(spec: Dict[str, Any], path_template: str, method: str) -> Dict[str, Any]:
+def _operation_for(
+    spec: dict[str, Any], path_template: str, method: str
+) -> dict[str, Any]:
     paths = spec.get("paths", {})
     assert path_template in paths, f"Path {path_template} not in OpenAPI spec"
     op = paths[path_template].get(method.lower())
@@ -60,10 +61,10 @@ def _operation_for(spec: Dict[str, Any], path_template: str, method: str) -> Dic
     return op
 
 
-def _path_parameters(spec: Dict[str, Any], path_template: str) -> List[Dict[str, Any]]:
+def _path_parameters(spec: dict[str, Any], path_template: str) -> list[dict[str, Any]]:
     """Return parameter objects declared at the path level (shared params)."""
     raw = spec["paths"][path_template].get("parameters", [])
-    resolved: List[Dict[str, Any]] = []
+    resolved: list[dict[str, Any]] = []
     for p in raw:
         if "$ref" in p:
             resolved.append(_resolve_ref(spec, p["$ref"]))
@@ -72,7 +73,7 @@ def _path_parameters(spec: Dict[str, Any], path_template: str) -> List[Dict[str,
     return resolved
 
 
-def _resolve_ref(spec: Dict[str, Any], ref: str) -> Dict[str, Any]:
+def _resolve_ref(spec: dict[str, Any], ref: str) -> dict[str, Any]:
     assert ref.startswith("#/"), f"unsupported $ref form: {ref}"
     node: Any = spec
     for part in ref[2:].split("/"):
@@ -81,8 +82,8 @@ def _resolve_ref(spec: Dict[str, Any], ref: str) -> Dict[str, Any]:
 
 
 def _request_body_schema(
-    spec: Dict[str, Any], operation: Dict[str, Any]
-) -> Optional[Dict[str, Any]]:
+    spec: dict[str, Any], operation: dict[str, Any]
+) -> dict[str, Any] | None:
     body = operation.get("requestBody")
     if not body:
         return None
@@ -92,7 +93,7 @@ def _request_body_schema(
     return schema
 
 
-def _validate(schema: Dict[str, Any], instance: Any, resolver: RefResolver) -> None:
+def _validate(schema: dict[str, Any], instance: Any, resolver: RefResolver) -> None:
     Draft202012Validator(schema, resolver=resolver).validate(instance)
 
 
@@ -103,15 +104,15 @@ def _validate(schema: Dict[str, Any], instance: Any, resolver: RefResolver) -> N
 
 class _CapturedRequest:
     def __init__(self) -> None:
-        self.method: Optional[str] = None
-        self.endpoint: Optional[str] = None
+        self.method: str | None = None
+        self.endpoint: str | None = None
         self.json_body: Any = None
-        self.params: Optional[Dict[str, Any]] = None
+        self.params: dict[str, Any] | None = None
 
 
 def _patched_client(
     monkeypatch, response_body: Any, status_code: int = 200
-) -> Tuple[ProximaDBClient, _CapturedRequest]:
+) -> tuple[ProximaDBClient, _CapturedRequest]:
     client = ProximaDBClient(url="http://contract.test")
     captured = _CapturedRequest()
 
@@ -172,7 +173,9 @@ def test_get_health_ready_matches_spec(monkeypatch, openapi_spec, ref_resolver):
     _validate(resp_schema, probe.model_dump(), ref_resolver)
 
 
-def test_create_collection_request_matches_spec(monkeypatch, openapi_spec, ref_resolver):
+def test_create_collection_request_matches_spec(
+    monkeypatch, openapi_spec, ref_resolver
+):
     response_body = {
         "collection_id": "col_abc",
         "name": "my_collection",
@@ -222,15 +225,15 @@ def test_list_collections_query_params_match_spec(monkeypatch, openapi_spec):
 
     # Resolve declared parameters and check the SDK uses only spec-defined keys
     # with values that satisfy the parameter schemas.
-    declared: Dict[str, Dict[str, Any]] = {}
+    declared: dict[str, dict[str, Any]] = {}
     for p in op.get("parameters", []):
         param = _resolve_ref(openapi_spec, p["$ref"]) if "$ref" in p else p
         if param["in"] == "query":
             declared[param["name"]] = param["schema"]
 
-    assert set(captured.params or {}).issubset(declared.keys()), (
-        f"Unknown query params: {set(captured.params) - declared.keys()}"
-    )
+    assert set(captured.params or {}).issubset(
+        declared.keys()
+    ), f"Unknown query params: {set(captured.params) - declared.keys()}"
     for name, schema in declared.items():
         if name in (captured.params or {}):
             value = captured.params[name]
@@ -256,7 +259,9 @@ def test_get_schema_matches_spec(monkeypatch, openapi_spec, ref_resolver):
 
     schema_resp = client.get_schema("col_abc")
 
-    op = _operation_for(openapi_spec, "/api/v2/collections/{collection_id}/schema", "get")
+    op = _operation_for(
+        openapi_spec, "/api/v2/collections/{collection_id}/schema", "get"
+    )
     assert op["operationId"] == "getCollectionSchema"
     assert captured.method == "GET"
     assert captured.endpoint == "/api/v2/collections/col_abc/schema"
@@ -292,7 +297,9 @@ def test_update_schema_request_matches_spec(monkeypatch, openapi_spec, ref_resol
     )
     client.update_schema("col_abc", schema, force=True)
 
-    op = _operation_for(openapi_spec, "/api/v2/collections/{collection_id}/schema", "put")
+    op = _operation_for(
+        openapi_spec, "/api/v2/collections/{collection_id}/schema", "put"
+    )
     assert op["operationId"] == "updateCollectionSchema"
     assert captured.method == "PUT"
     assert captured.endpoint == "/api/v2/collections/col_abc/schema"

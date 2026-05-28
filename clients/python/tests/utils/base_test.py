@@ -11,9 +11,8 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-import numpy as np
 import pytest
 
 # Add SDK to path
@@ -24,7 +23,6 @@ from proximadb_sdk.models import VectorRecord
 from .embedded_client_adapter import (
     PROXIMADB_IMPORT_ERROR,
     EmbeddedClientAdapter,
-    create_embedded_client,
 )
 
 
@@ -106,8 +104,8 @@ class BaseProximaDBTest:
 
     def create_collection(
         self,
-        client: Optional[EmbeddedClientAdapter] = None,
-        name: Optional[str] = None,
+        client: EmbeddedClientAdapter | None = None,
+        name: str | None = None,
         dimension: int = 384,
         engine: str = "sst",
     ) -> str:
@@ -137,8 +135,8 @@ class BaseProximaDBTest:
         collection_name: str,
         count: int = 10,
         dimension: int = 384,
-        metadata_template: Optional[Dict[str, Any]] = None,
-    ) -> List[VectorRecord]:
+        metadata_template: dict[str, Any] | None = None,
+    ) -> list[VectorRecord]:
         """
         Insert test vectors into collection
 
@@ -181,7 +179,7 @@ class BaseProximaDBTest:
         return vectors
 
     def verify_search_results(
-        self, results: List[Any], expected_count: int, check_scores: bool = True
+        self, results: list[Any], expected_count: int, check_scores: bool = True
     ):
         """
         Verify search results are valid

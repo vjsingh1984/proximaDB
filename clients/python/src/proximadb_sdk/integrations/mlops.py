@@ -86,16 +86,16 @@ class ExperimentTrackerDDL:
                 f"CREATE TABLE IF NOT EXISTS {_q(registry)} ("
                 '"model_name" TEXT NOT NULL, "version" TEXT NOT NULL, "stage" TEXT, '
                 '"run_id" TEXT, "artifact_uri" TEXT, "signature" JSONB NOT NULL DEFAULT \'{}\'::jsonb, '
-                '"metrics" JSONB NOT NULL DEFAULT \'{}\'::jsonb, '
+                "\"metrics\" JSONB NOT NULL DEFAULT '{}'::jsonb, "
                 'PRIMARY KEY ("model_name", "version"));'
             ),
             (
                 f"CREATE TABLE IF NOT EXISTS {_q(predictions)} ("
                 '"prediction_id" TEXT NOT NULL, "model_name" TEXT NOT NULL, '
                 '"model_version" TEXT, "entity_id" TEXT, "event_time" TIMESTAMP, '
-                '"inputs" JSONB NOT NULL DEFAULT \'{}\'::jsonb, '
-                '"prediction" JSONB NOT NULL DEFAULT \'{}\'::jsonb, '
-                '"labels" JSONB NOT NULL DEFAULT \'{}\'::jsonb, '
+                "\"inputs\" JSONB NOT NULL DEFAULT '{}'::jsonb, "
+                "\"prediction\" JSONB NOT NULL DEFAULT '{}'::jsonb, "
+                "\"labels\" JSONB NOT NULL DEFAULT '{}'::jsonb, "
                 'PRIMARY KEY ("prediction_id"));'
             ),
             (

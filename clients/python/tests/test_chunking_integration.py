@@ -4,11 +4,7 @@ Test chunking integration with SDK methods
 
 import json
 import logging
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
 
-import pytest
 from sentence_transformers import SentenceTransformer
 
 from proximadb_sdk import VectorRecord
@@ -17,7 +13,6 @@ from proximadb_sdk.chunking import (
     ChunkingStrategy,
     TextChunker,
     create_vector_records,
-    prepare_vector_records,
 )
 from proximadb_sdk.models import CollectionConfig, DistanceMetric, StorageEngine
 
@@ -148,7 +143,6 @@ class TestChunkingIntegration:
 
     def test_real_integration_rest_grpc_sql(self):
         """REAL integration test: chunking → VectorRecord → REST/gRPC insert → REST/gRPC/SQL search"""
-        import random
         import time
 
         from proximadb_sdk import Protocol, ProximaDBClient
@@ -402,7 +396,7 @@ class TestChunkingIntegration:
             # SQL query only selects id, so we just verify we got results
             assert sql_top is not None  # Got at least one ID
 
-            print(f"✅ Integration test passed:")
+            print("✅ Integration test passed:")
             print(f"   - Created collection: {collection_name}")
             print(f"   - Chunked text into {len(chunks)} chunks")
             print(f"   - Inserted {len(records)} records via gRPC")
@@ -421,9 +415,6 @@ class TestChunkingIntegration:
 
     def test_all_chunking_strategies_with_real_server(self):
         """Test all chunking strategies produce 10+ chunks and work with real server"""
-        import time
-
-        from proximadb_sdk import Protocol, ProximaDBClient
 
         # Long test text designed to produce many chunks
         long_text = """
@@ -497,12 +488,11 @@ class TestChunkingIntegration:
                 f"   ✅ {strategy_name} chunking: {len(chunks)} chunks, avg length: {sum(len(c.text) for c in chunks) // len(chunks)}"
             )
 
-        print(f"\n🎉 All chunking strategies successfully generated 10+ chunks!")
+        print("\n🎉 All chunking strategies successfully generated 10+ chunks!")
 
     def test_chunking_strategy_comparison(self):
         """COMPARATIVE TEST: Same text chunked with different strategies, compare search performance"""
         import logging
-        import random
         import time
 
         from proximadb_sdk import Protocol, ProximaDBClient
@@ -658,7 +648,7 @@ class TestChunkingIntegration:
                 logger.info(f"\n🔍 Testing search query: '{query_text}'")
 
                 # Generate real BERT embedding for query
-                logger.info(f"   Generating BERT query embedding...")
+                logger.info("   Generating BERT query embedding...")
                 query_embedding = get_bert_embeddings([query_text], logger)[0]
 
                 # Search and analyze results by strategy
@@ -726,7 +716,7 @@ class TestChunkingIntegration:
                     if results
                     else "   No results"
                 )
-                logger.info(f"   📊 Strategy distribution:")
+                logger.info("   📊 Strategy distribution:")
                 for strategy, count in strategy_counts.items():
                     avg_score = strategy_averages.get(strategy, 0)
                     logger.info(
@@ -734,16 +724,16 @@ class TestChunkingIntegration:
                     )
 
             # Final comprehensive analysis
-            logger.info(f"\n📈 COMPREHENSIVE RESULTS ANALYSIS:")
-            logger.info(f"=" * 80)
+            logger.info("\n📈 COMPREHENSIVE RESULTS ANALYSIS:")
+            logger.info("=" * 80)
 
             # Strategy chunk count summary
-            logger.info(f"📝 Chunk Counts by Strategy:")
+            logger.info("📝 Chunk Counts by Strategy:")
             for strategy, count in strategy_chunk_counts.items():
                 logger.info(f"   • {strategy}: {count} chunks")
 
             # Best strategy per query
-            logger.info(f"\n🏆 Best Strategy per Query:")
+            logger.info("\n🏆 Best Strategy per Query:")
             for query, result in comparison_results.items():
                 logger.info(f"   Query: '{query[:50]}...'")
                 logger.info(
@@ -754,7 +744,7 @@ class TestChunkingIntegration:
                 )
 
             # Overall strategy performance
-            logger.info(f"\n🎯 Overall Strategy Performance:")
+            logger.info("\n🎯 Overall Strategy Performance:")
             overall_performance = {}
             for query, result in comparison_results.items():
                 for strategy, avg_score in result["strategy_averages"].items():
@@ -787,7 +777,7 @@ class TestChunkingIntegration:
                 len(sorted_strategies) >= 3
             ), "Should have tested at least 3 strategies"
 
-            logger.info(f"\n🎉 Chunking strategy comparison completed successfully!")
+            logger.info("\n🎉 Chunking strategy comparison completed successfully!")
             logger.info(f"   • Total vectors tested: {len(all_records)}")
             logger.info(f"   • Search queries tested: {len(search_queries)}")
             logger.info(f"   • Strategies compared: {len(sorted_strategies)}")
@@ -802,7 +792,6 @@ class TestChunkingIntegration:
 
     def test_comprehensive_chunking_all_engines_protocols(self):
         """COMPREHENSIVE TEST: All chunking strategies × All engines × All protocols × SQL"""
-        import json
         import random
         import time
 
@@ -948,7 +937,7 @@ class TestChunkingIntegration:
                             insert_result.success, bool
                         ):
                             # gRPC returns VectorOperationResponse with success as bool
-                            assert insert_result.success is True, f"gRPC insert failed"
+                            assert insert_result.success is True, "gRPC insert failed"
                             if hasattr(insert_result, "metrics") and hasattr(
                                 insert_result.metrics, "successful_count"
                             ):
@@ -1024,7 +1013,7 @@ class TestChunkingIntegration:
                             # We're primarily testing that SQL executes without error
                             if len(sql_rows) == 0:
                                 print(
-                                    f"   ⚠️  SQL returned no results (timing issue?), but query executed successfully"
+                                    "   ⚠️  SQL returned no results (timing issue?), but query executed successfully"
                                 )
                             else:
                                 assert len(sql_rows) >= 1
@@ -1074,8 +1063,8 @@ class TestChunkingIntegration:
                             pass
 
         # Summary report
-        print(f"\n📊 COMPREHENSIVE TEST RESULTS:")
-        print(f"=" * 60)
+        print("\n📊 COMPREHENSIVE TEST RESULTS:")
+        print("=" * 60)
         passed = sum(1 for r in test_results if "PASSED" in r["status"])
         total = len(test_results)
 
@@ -1094,4 +1083,4 @@ class TestChunkingIntegration:
         assert (
             passed == total
         ), f"Some tests failed: {total-passed} failures out of {total} tests"
-        print(f"🎉 ALL COMPREHENSIVE TESTS PASSED!")
+        print("🎉 ALL COMPREHENSIVE TESTS PASSED!")

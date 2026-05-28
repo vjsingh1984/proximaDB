@@ -6,7 +6,6 @@ Each enum uses only 1 byte (0-255) instead of 4 bytes, matching the Rust impleme
 """
 
 from enum import IntEnum
-from typing import Optional, Tuple
 
 
 class ExtractionMethod(IntEnum):
@@ -164,7 +163,7 @@ def pack_processing_enums(
 
 def unpack_processing_enums(
     packed: int,
-) -> Tuple[ExtractionMethod, ProcessingStatus, QualityLevel, DataSource]:
+) -> tuple[ExtractionMethod, ProcessingStatus, QualityLevel, DataSource]:
     """
     Unpack processing enums from uint32.
 
@@ -230,7 +229,7 @@ def pack_source_attributes(
     return (int(quality) << 8) | int(category)
 
 
-def unpack_source_attributes(packed: int) -> Tuple[ContentCategory, QualityLevel]:
+def unpack_source_attributes(packed: int) -> tuple[ContentCategory, QualityLevel]:
     """
     Unpack source content attributes from uint32.
 
@@ -312,13 +311,13 @@ def unpack_language_code(packed: int) -> LanguageCode:
 
 # Helper functions for protobuf integration
 def create_processing_info(
-    model_id: Optional[str] = None,
+    model_id: str | None = None,
     extraction: ExtractionMethod = ExtractionMethod.UNSPECIFIED,
     status: ProcessingStatus = ProcessingStatus.UNSPECIFIED,
     quality: QualityLevel = QualityLevel.UNSPECIFIED,
     source: DataSource = DataSource.UNSPECIFIED,
-    processing_time_ms: Optional[int] = None,
-    processor_version: Optional[int] = None,
+    processing_time_ms: int | None = None,
+    processor_version: int | None = None,
 ) -> dict:
     """
     Create ProcessingInfo dictionary with packed enums.
@@ -366,9 +365,9 @@ def create_source_content(
     quality: QualityLevel = QualityLevel.UNSPECIFIED,
     mime_type: str = "",
     size_bytes: int = 0,
-    compressed_size: Optional[int] = None,
-    checksum: Optional[int] = None,
-    processing_info: Optional[dict] = None,
+    compressed_size: int | None = None,
+    checksum: int | None = None,
+    processing_info: dict | None = None,
 ) -> dict:
     """
     Create SourceContent dictionary with packed attributes.
@@ -417,8 +416,8 @@ def create_source_content(
 def create_text_content(
     content: str,
     language: LanguageCode = LanguageCode.UNSPECIFIED,
-    custom_language: Optional[str] = None,
-    chunk_context: Optional[dict] = None,
+    custom_language: str | None = None,
+    chunk_context: dict | None = None,
 ) -> dict:
     """
     Create TextContent dictionary with packed language.

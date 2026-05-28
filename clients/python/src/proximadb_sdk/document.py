@@ -51,26 +51,15 @@ Example:
 
 from __future__ import annotations
 
-import asyncio
 import json
-import re
-from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from functools import lru_cache
 from typing import (
     Any,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Dict,
     Generic,
-    Iterator,
-    List,
-    Optional,
     TypeVar,
-    Union,
 )
 
 from tenacity import (
@@ -136,13 +125,13 @@ class IndexDefinition:
         sparse: Skip null values (sparse index)
     """
 
-    name: Optional[str] = None
+    name: str | None = None
     path: str = "$.id"
     type: DocIndexType = DocIndexType.BTREE
     unique: bool = False
     sparse: bool = False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format for API."""
         return {
             "name": self.name or f"idx_{self.path.replace('$', '').replace('.', '_')}",
@@ -168,14 +157,14 @@ class DocumentCollectionConfig:
     """
 
     name: str
-    json_schema: Optional[str] = None
-    indexes: List[IndexDefinition] = field(default_factory=list)
+    json_schema: str | None = None
+    indexes: list[IndexDefinition] = field(default_factory=list)
     enable_fulltext: bool = False
-    fulltext_paths: List[str] = field(default_factory=list)
+    fulltext_paths: list[str] = field(default_factory=list)
     ttl_seconds: int = 0
     compression: CompressionAlgorithm = CompressionAlgorithm.LZ4
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format for API."""
         return {
             "name": self.name,
@@ -202,13 +191,13 @@ class Document:
     """
 
     id: str
-    content: Dict[str, Any]
+    content: dict[str, Any]
     version: int = 1
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-    metadata: Optional[Dict[str, Any]] = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    metadata: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format for API."""
         result = {
             "id": self.id,
@@ -223,7 +212,7 @@ class Document:
         return result
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Document":
+    def from_dict(cls, data: dict[str, Any]) -> Document:
         """Create Document from API response."""
         return cls(
             id=data["id"],
@@ -267,86 +256,86 @@ class DocumentFilter:
     """
 
     def __init__(self):
-        self._conditions: List[Dict[str, Any]] = []
+        self._conditions: list[dict[str, Any]] = []
         self._logic: str = "AND"  # AND or OR
-        self._groups: List["DocumentFilter"] = []
+        self._groups: list[DocumentFilter] = []
 
-    def eq(self, path: str, value: Any) -> "DocumentFilter":
+    def eq(self, path: str, value: Any) -> DocumentFilter:
         """Equality condition."""
         self._conditions.append({"path": path, "op": "eq", "value": value})
         return self
 
-    def ne(self, path: str, value: Any) -> "DocumentFilter":
+    def ne(self, path: str, value: Any) -> DocumentFilter:
         """Not-equal condition."""
         self._conditions.append({"path": path, "op": "ne", "value": value})
         return self
 
-    def gt(self, path: str, value: Any) -> "DocumentFilter":
+    def gt(self, path: str, value: Any) -> DocumentFilter:
         """Greater-than condition."""
         self._conditions.append({"path": path, "op": "gt", "value": value})
         return self
 
-    def gte(self, path: str, value: Any) -> "DocumentFilter":
+    def gte(self, path: str, value: Any) -> DocumentFilter:
         """Greater-than-or-equal condition."""
         self._conditions.append({"path": path, "op": "gte", "value": value})
         return self
 
-    def lt(self, path: str, value: Any) -> "DocumentFilter":
+    def lt(self, path: str, value: Any) -> DocumentFilter:
         """Less-than condition."""
         self._conditions.append({"path": path, "op": "lt", "value": value})
         return self
 
-    def lte(self, path: str, value: Any) -> "DocumentFilter":
+    def lte(self, path: str, value: Any) -> DocumentFilter:
         """Less-than-or-equal condition."""
         self._conditions.append({"path": path, "op": "lte", "value": value})
         return self
 
-    def contains(self, path: str, value: str) -> "DocumentFilter":
+    def contains(self, path: str, value: str) -> DocumentFilter:
         """String contains condition."""
         self._conditions.append({"path": path, "op": "contains", "value": value})
         return self
 
-    def fulltext(self, path: str, value: str) -> "DocumentFilter":
+    def fulltext(self, path: str, value: str) -> DocumentFilter:
         """Simple full-text condition."""
         self._conditions.append({"path": path, "op": "fulltext", "value": value})
         return self
 
-    def starts_with(self, path: str, value: str) -> "DocumentFilter":
+    def starts_with(self, path: str, value: str) -> DocumentFilter:
         """String starts-with condition."""
         self._conditions.append({"path": path, "op": "starts_with", "value": value})
         return self
 
-    def ends_with(self, path: str, value: str) -> "DocumentFilter":
+    def ends_with(self, path: str, value: str) -> DocumentFilter:
         """String ends-with condition."""
         self._conditions.append({"path": path, "op": "ends_with", "value": value})
         return self
 
-    def in_list(self, path: str, values: List[Any]) -> "DocumentFilter":
+    def in_list(self, path: str, values: list[Any]) -> DocumentFilter:
         """In-list condition."""
         self._conditions.append({"path": path, "op": "in", "value": values})
         return self
 
-    def exists(self, path: str) -> "DocumentFilter":
+    def exists(self, path: str) -> DocumentFilter:
         """Field exists condition."""
         self._conditions.append({"path": path, "op": "exists", "value": True})
         return self
 
-    def and_(self) -> "DocumentFilter":
+    def and_(self) -> DocumentFilter:
         """Switch to AND logic."""
         self._logic = "AND"
         return self
 
-    def or_(self) -> "DocumentFilter":
+    def or_(self) -> DocumentFilter:
         """Switch to OR logic."""
         self._logic = "OR"
         return self
 
-    def group(self, filter: "DocumentFilter") -> "DocumentFilter":
+    def group(self, filter: DocumentFilter) -> DocumentFilter:
         """Add nested filter group."""
         self._groups.append(filter)
         return self
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to API filter format."""
         return {
             "conditions": self._conditions,
@@ -354,14 +343,14 @@ class DocumentFilter:
             "groups": [g.to_dict() for g in self._groups],
         }
 
-    def __or__(self, other: "DocumentFilter") -> "DocumentFilter":
+    def __or__(self, other: DocumentFilter) -> DocumentFilter:
         """Combine filters with OR (| operator)."""
         result = DocumentFilter()
         result._logic = "OR"
         result._groups = [self, other]
         return result
 
-    def __and__(self, other: "DocumentFilter") -> "DocumentFilter":
+    def __and__(self, other: DocumentFilter) -> DocumentFilter:
         """Combine filters with AND (& operator)."""
         result = DocumentFilter()
         result._logic = "AND"
@@ -393,10 +382,10 @@ class DocumentQueryResult(Generic[T]):
 
     def __init__(
         self,
-        documents: List[T],
+        documents: list[T],
         total_count: int,
         has_more: bool = False,
-        fetch_fn: Optional[Callable[[], Awaitable[List[T]]]] = None,
+        fetch_fn: Callable[[], Awaitable[list[T]]] | None = None,
         batch_size: int = 100,
     ):
         self._documents = documents
@@ -407,7 +396,7 @@ class DocumentQueryResult(Generic[T]):
         self._fetched_all = not has_more
 
     @property
-    def documents(self) -> List[T]:
+    def documents(self) -> list[T]:
         """Get currently fetched documents."""
         return self._documents
 
@@ -429,7 +418,7 @@ class DocumentQueryResult(Generic[T]):
         """Get count of fetched documents."""
         return len(self._documents)
 
-    async def fetch_next_batch(self) -> List[T]:
+    async def fetch_next_batch(self) -> list[T]:
         """Fetch next batch of documents."""
         if not self._has_more or not self._fetch_fn:
             return []
@@ -443,13 +432,13 @@ class DocumentQueryResult(Generic[T]):
 
         return next_batch
 
-    async def fetch_all(self) -> List[T]:
+    async def fetch_all(self) -> list[T]:
         """Fetch all remaining documents."""
         while self._has_more:
             await self.fetch_next_batch()
         return self._documents
 
-    async def to_list(self) -> List[T]:
+    async def to_list(self) -> list[T]:
         """Convert to list (fetches all if not already)."""
         return await self.fetch_all()
 
@@ -459,7 +448,7 @@ class DocumentQueryResponse:
 
     def __init__(
         self,
-        documents: List[Dict[str, Any]],
+        documents: list[dict[str, Any]],
         total_count: int,
         has_more: bool = False,
     ):
@@ -467,7 +456,7 @@ class DocumentQueryResponse:
         self.total_count = total_count
         self.has_more = has_more
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "documents": self.documents,
             "total_count": self.total_count,
@@ -477,7 +466,7 @@ class DocumentQueryResponse:
     def get(self, key: str, default: Any = None) -> Any:
         return self.to_dict().get(key, default)
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         return iter(self.documents)
 
     def __len__(self) -> int:
@@ -502,9 +491,9 @@ class DocumentRepository:
         _batch_size: Batch size for auto-flush
     """
 
-    _shared_batch_buffer: Dict[str, List[Document]] = {}
-    _shared_collections: Dict[str, DocumentCollectionConfig] = {}
-    _shared_documents: Dict[str, Dict[str, Document]] = {}
+    _shared_batch_buffer: dict[str, list[Document]] = {}
+    _shared_collections: dict[str, DocumentCollectionConfig] = {}
+    _shared_documents: dict[str, dict[str, Document]] = {}
 
     def __init__(
         self,
@@ -526,8 +515,8 @@ class DocumentRepository:
         self._enable_cache = enable_cache
 
         # LRU cache for frequently accessed documents
-        self._cache: Dict[str, Document] = {} if enable_cache else {}
-        self._cache_keys: List[str] = []
+        self._cache: dict[str, Document] = {} if enable_cache else {}
+        self._cache_keys: list[str] = []
         self._cache_size = cache_size
 
         # Shared in-memory state keeps compatibility across client instances in
@@ -548,7 +537,7 @@ class DocumentRepository:
             return path[1:]
         return path
 
-    def _get_value(self, document: Dict[str, Any], path: str) -> Any:
+    def _get_value(self, document: dict[str, Any], path: str) -> Any:
         current: Any = document
         for segment in self._normalize_path(path).split("."):
             if not segment:
@@ -563,7 +552,7 @@ class DocumentRepository:
         self._documents.setdefault(collection_id, {})
 
     def _matches_condition(
-        self, document: Dict[str, Any], condition: Dict[str, Any]
+        self, document: dict[str, Any], condition: dict[str, Any]
     ) -> bool:
         value = self._get_value(document, condition.get("path", ""))
         expected = condition.get("value")
@@ -597,8 +586,8 @@ class DocumentRepository:
 
     def _matches_filter(
         self,
-        document: Dict[str, Any],
-        filter_value: Optional[Union[DocumentFilter, Dict[str, Any]]],
+        document: dict[str, Any],
+        filter_value: DocumentFilter | dict[str, Any] | None,
     ) -> bool:
         if filter_value is None:
             return True
@@ -629,12 +618,12 @@ class DocumentRepository:
         return all(results) if logic == "AND" else any(results)
 
     def _project_document(
-        self, document: Dict[str, Any], projection: Optional[List[str]]
-    ) -> Dict[str, Any]:
+        self, document: dict[str, Any], projection: list[str] | None
+    ) -> dict[str, Any]:
         if not projection:
             return dict(document)
 
-        projected: Dict[str, Any] = {}
+        projected: dict[str, Any] = {}
         for field in projection:
             normalized = self._normalize_path(field)
             value = self._get_value(document, field)
@@ -644,9 +633,9 @@ class DocumentRepository:
 
     def _apply_updates(
         self,
-        document: Dict[str, Any],
-        updates: Union[Dict[str, Any], List[Dict[str, Any]]],
-    ) -> Dict[str, Any]:
+        document: dict[str, Any],
+        updates: dict[str, Any] | list[dict[str, Any]],
+    ) -> dict[str, Any]:
         updated = dict(document)
 
         if isinstance(updates, dict):
@@ -720,7 +709,7 @@ class DocumentRepository:
                 f"Failed to create document collection '{config.name}': {e}"
             )
 
-    def get_collection(self, collection_id: str) -> Optional[Dict[str, Any]]:
+    def get_collection(self, collection_id: str) -> dict[str, Any] | None:
         """Get collection metadata.
 
         Args:
@@ -744,13 +733,13 @@ class DocumentRepository:
             "indexes": [index.to_dict() for index in config.indexes],
         }
 
-    def list_collections(self) -> List[Dict[str, Any]]:
+    def list_collections(self) -> list[dict[str, Any]]:
         """List all document collections.
 
         Returns:
             List of collection metadata
         """
-        collections: List[Dict[str, Any]] = []
+        collections: list[dict[str, Any]] = []
         for collection_id in self._collections:
             info = self.get_collection(collection_id)
             if info is not None:
@@ -786,8 +775,8 @@ class DocumentRepository:
     def insert(
         self,
         collection_id: str,
-        document: Dict[str, Any],
-        id: Optional[str] = None,
+        document: dict[str, Any],
+        id: str | None = None,
     ) -> Document:
         """Insert a document.
 
@@ -841,9 +830,9 @@ class DocumentRepository:
     def insert_batch(
         self,
         collection_id: str,
-        documents: List[Dict[str, Any]],
-        ids: Optional[List[str]] = None,
-    ) -> List[Document]:
+        documents: list[dict[str, Any]],
+        ids: list[str] | None = None,
+    ) -> list[Document]:
         """Insert multiple documents in a batch.
 
         Args:
@@ -886,7 +875,7 @@ class DocumentRepository:
         collection_id: str,
         doc_id: str,
         use_cache: bool = True,
-    ) -> Optional[Document]:
+    ) -> Document | None:
         """Get a document by ID.
 
         Args:
@@ -944,8 +933,8 @@ class DocumentRepository:
     def query(
         self,
         collection_id: str,
-        filter: Optional[DocumentFilter] = None,
-        projection: Optional[List[str]] = None,
+        filter: DocumentFilter | None = None,
+        projection: list[str] | None = None,
         limit: int = 100,
         offset: int = 0,
         strategy: QueryStrategy = QueryStrategy.AUTO,
@@ -1015,7 +1004,7 @@ class DocumentRepository:
                 has_more=has_more,
             )
 
-        except Exception as e:
+        except Exception:
             # Fallback to local query for offline scenarios
             documents = list(self._documents.get(collection_id, {}).values())
             matched = [
@@ -1048,7 +1037,7 @@ class DocumentRepository:
         text_query: str,
         limit: int = 10,
         highlight: bool = False,
-    ) -> List[Document]:
+    ) -> list[Document]:
         """Full-text search in documents.
 
         Args:
@@ -1078,9 +1067,9 @@ class DocumentRepository:
         self,
         collection_id: str,
         doc_id: str,
-        updates: Dict[str, Any],
-        version: Optional[int] = None,
-    ) -> Optional[Document]:
+        updates: dict[str, Any],
+        version: int | None = None,
+    ) -> Document | None:
         """Update a document.
 
         Args:
@@ -1162,7 +1151,7 @@ class DocumentRepository:
     # Batch Operations
     # ========================================================================
 
-    def flush_batch(self, collection_id: str) -> Dict[str, Any]:
+    def flush_batch(self, collection_id: str) -> dict[str, Any]:
         """Flush pending batch operations.
 
         Args:
@@ -1229,7 +1218,7 @@ class DocumentRepository:
     def list_indexes(
         self,
         collection_id: str,
-    ) -> List[IndexDefinition]:
+    ) -> list[IndexDefinition]:
         """List indexes on the collection.
 
         Args:
@@ -1261,7 +1250,7 @@ class DocumentRepository:
         self._cache[key] = document
         self._cache_keys.append(key)
 
-    def clear_cache(self, collection_id: Optional[str] = None) -> None:
+    def clear_cache(self, collection_id: str | None = None) -> None:
         """Clear cache.
 
         Args:
@@ -1279,7 +1268,7 @@ class DocumentRepository:
             self._cache.clear()
             self._cache_keys.clear()
 
-    def get_cache_stats(self) -> Dict[str, Any]:
+    def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics.
 
         Returns:
@@ -1334,13 +1323,13 @@ class ProximaDBDocument:
 
     def create_collection(
         self,
-        name: Optional[str] = None,
-        indexes: Optional[List[IndexDefinition]] = None,
+        name: str | None = None,
+        indexes: list[IndexDefinition] | None = None,
         enable_fulltext: bool = False,
-        fulltext_paths: Optional[List[str]] = None,
-        json_schema: Optional[str] = None,
-        config: Optional[DocumentCollectionConfig] = None,
-    ) -> Union[str, Dict[str, Any]]:
+        fulltext_paths: list[str] | None = None,
+        json_schema: str | None = None,
+        config: DocumentCollectionConfig | None = None,
+    ) -> str | dict[str, Any]:
         """Create a document collection.
 
         Args:
@@ -1382,8 +1371,8 @@ class ProximaDBDocument:
     def insert(
         self,
         collection_id: str,
-        document: Dict[str, Any],
-        id: Optional[str] = None,
+        document: dict[str, Any],
+        id: str | None = None,
     ) -> Document:
         """Insert a document.
 
@@ -1400,9 +1389,9 @@ class ProximaDBDocument:
     def insert_batch(
         self,
         collection_id: str,
-        documents: List[Dict[str, Any]],
-        ids: Optional[List[str]] = None,
-    ) -> List[Document]:
+        documents: list[dict[str, Any]],
+        ids: list[str] | None = None,
+    ) -> list[Document]:
         """Insert multiple documents.
 
         Args:
@@ -1419,7 +1408,7 @@ class ProximaDBDocument:
         self,
         collection_id: str,
         doc_id: str,
-    ) -> Optional[Document]:
+    ) -> Document | None:
         """Get a document by ID.
 
         Args:
@@ -1434,8 +1423,8 @@ class ProximaDBDocument:
     def query(
         self,
         collection_id: str,
-        filter: Optional[DocumentFilter] = None,
-        projection: Optional[List[str]] = None,
+        filter: DocumentFilter | None = None,
+        projection: list[str] | None = None,
         limit: int = 100,
     ) -> DocumentQueryResponse:
         """Query documents with filters.
@@ -1474,7 +1463,7 @@ class ProximaDBDocument:
         collection_id: str,
         text_query: str,
         limit: int = 10,
-    ) -> List[Document]:
+    ) -> list[Document]:
         """Full-text search in documents.
 
         Args:
@@ -1502,8 +1491,8 @@ class ProximaDBDocument:
         self,
         collection_id: str,
         doc_id: str,
-        updates: Union[Dict[str, Any], List[Dict[str, Any]]],
-    ) -> Optional[Dict[str, Any]]:
+        updates: dict[str, Any] | list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
         """Update a document.
 
         Args:
@@ -1540,7 +1529,7 @@ class ProximaDBDocument:
         """
         return self._repository.delete(collection_id, doc_id)
 
-    def flush(self, collection_id: str) -> Dict[str, Any]:
+    def flush(self, collection_id: str) -> dict[str, Any]:
         """Flush pending batch operations.
 
         Args:
@@ -1554,9 +1543,9 @@ class ProximaDBDocument:
     def insert_document(
         self,
         collection_id: str,
-        document: Dict[str, Any],
-        id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        document: dict[str, Any],
+        id: str | None = None,
+    ) -> dict[str, Any]:
         created = self._repository.insert(collection_id, document, id)
         return {
             "id": created.id,
@@ -1568,8 +1557,8 @@ class ProximaDBDocument:
         self,
         collection_id: str,
         doc_id: str,
-        projection: Optional[List[str]] = None,
-    ) -> Optional[Dict[str, Any]]:
+        projection: list[str] | None = None,
+    ) -> dict[str, Any] | None:
         document = self._repository.get(collection_id, doc_id)
         if document is None:
             return None
@@ -1582,7 +1571,7 @@ class ProximaDBDocument:
             "found": True,
         }
 
-    def list_collections(self) -> List[Dict[str, Any]]:
+    def list_collections(self) -> list[dict[str, Any]]:
         return self._repository.list_collections()
 
     def delete_collection(self, collection_id: str) -> bool:
@@ -1591,8 +1580,8 @@ class ProximaDBDocument:
     def aggregate(
         self,
         collection_id: str,
-        pipeline: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        pipeline: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         documents = list(self._repository._documents.get(collection_id, {}).values())
 
         for stage in pipeline:
@@ -1606,15 +1595,15 @@ class ProximaDBDocument:
                     )
                 ]
             elif stage_name == "group":
-                grouped: Dict[Any, List[Document]] = {}
+                grouped: dict[Any, list[Document]] = {}
                 key_path = stage.get("key", "$.id")
                 for doc in documents:
                     group_key = self._repository._get_value(doc.content, key_path)
                     grouped.setdefault(group_key, []).append(doc)
 
-                results: List[Dict[str, Any]] = []
+                results: list[dict[str, Any]] = []
                 for group_key, group_docs in grouped.items():
-                    row: Dict[str, Any] = {"key": group_key}
+                    row: dict[str, Any] = {"key": group_key}
                     for aggregation in stage.get("aggregations", []):
                         field_name = aggregation.get("field")
                         agg_type = aggregation.get("type")

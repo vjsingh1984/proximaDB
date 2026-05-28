@@ -5,7 +5,6 @@ Provides sentence-transformers integration with model caching.
 """
 
 import logging
-from typing import List, Optional
 
 import numpy as np
 
@@ -66,7 +65,7 @@ class SentenceTransformerMixin:
 
         return cache.get_or_load(cache_key, loader)
 
-    def embed(self, texts: List[str]) -> np.ndarray:
+    def embed(self, texts: list[str]) -> np.ndarray:
         """
         Generate embeddings using sentence-transformers
 
@@ -102,7 +101,7 @@ class SentenceTransformerMixin:
         return embeddings
 
     def embed_batch(
-        self, texts: List[str], batch_size: Optional[int] = None
+        self, texts: list[str], batch_size: int | None = None
     ) -> np.ndarray:
         """
         Embed texts with custom batch size

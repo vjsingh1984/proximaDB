@@ -8,9 +8,7 @@ NOTE: Moved from tests/unit/ to tests/integration/ - these are integration tests
 requiring REST/gRPC client connections to a running server.
 """
 
-import itertools
 import logging
-from typing import Any, Dict, List
 
 import pytest
 
@@ -21,8 +19,6 @@ from proximadb_sdk import (
     FilterableDataType,
     IndexConfiguration,
     IndexingAlgorithm,
-    Protocol,
-    ProximaDBClient,
     ProximaDBError,
     QuantizationConfig,
     QuantizationType,
@@ -33,7 +29,6 @@ from proximadb_sdk import (
 
 # Import index configs directly from models
 from proximadb_sdk.models import (
-    AnnoyConfig,
     FlatConfig,
     HnswConfig,
     IvfConfig,
@@ -872,7 +867,7 @@ class TestCollectionConfigComprehensive:
                     )
 
         # Assertions
-        logger.info(f"\n📊 Distance Metrics Test Results:")
+        logger.info("\n📊 Distance Metrics Test Results:")
         logger.info(f"   ✅ Successful: {len(successful_metrics)}/13 metrics")
         logger.info(f"   ⚠️  Fallback warnings: {len(fallback_warnings)} metrics")
 
@@ -969,7 +964,7 @@ class TestCollectionConfigComprehensive:
                     )
 
         # Assertions
-        logger.info(f"\n📊 Indexing Algorithms Test Results:")
+        logger.info("\n📊 Indexing Algorithms Test Results:")
         logger.info(f"   ✅ Successful: {len(successful_algorithms)}/6 algorithms")
         logger.info(f"   ⚠️  Fallback warnings: {len(fallback_warnings)} algorithms")
 

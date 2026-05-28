@@ -31,7 +31,7 @@ Example::
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from victor.storage.vector_stores.base import (
     BaseEmbeddingProvider,
@@ -71,9 +71,9 @@ class ProximaDBEmbeddingProvider(BaseEmbeddingProvider):
             "collection_name", "code_embeddings"
         )
         self._dimension: int = config.extra_config.get("dimension", 384)
-        self.embedding_model: Optional[BaseEmbeddingModel] = None
+        self.embedding_model: BaseEmbeddingModel | None = None
 
-    def _get_embedding_model_name(self) -> Optional[str]:
+    def _get_embedding_model_name(self) -> str | None:
         return getattr(
             self.config,
             "embedding_model_name",
@@ -135,7 +135,7 @@ class ProximaDBEmbeddingProvider(BaseEmbeddingProvider):
         self,
         doc_id: str,
         content: str,
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Embed and insert a single document."""
         vector = await self.embed_text(content)
@@ -174,7 +174,7 @@ class ProximaDBEmbeddingProvider(BaseEmbeddingProvider):
         self,
         query: str,
         limit: int = 10,
-        filter_metadata: Optional[dict[str, Any]] = None,
+        filter_metadata: dict[str, Any] | None = None,
     ) -> list[EmbeddingSearchResult]:
         """Embed *query* and return the most similar documents."""
         query_vector = await self.embed_text(query)

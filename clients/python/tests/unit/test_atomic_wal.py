@@ -7,10 +7,8 @@ Verifies that WAL writes are properly atomic between memtable and disk
 # To run this script, set PYTHONPATH to include the src directory:
 # PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/unit/test_atomic_wal.py
 
-import json
 import time
 
-import numpy as np
 import requests
 
 from proximadb_sdk import Protocol, ProximaDBClient
@@ -51,7 +49,7 @@ def test_atomic_wal_behavior():
         return None
 
     # Test 1: Normal successful write
-    print(f"\n🔥 Test 1: Normal WAL write (should succeed)")
+    print("\n🔥 Test 1: Normal WAL write (should succeed)")
     test_vectors = [
         {
             "id": "atomic_test_vec_1",
@@ -78,7 +76,7 @@ def test_atomic_wal_behavior():
         return None
 
     # Test 2: Verify durability by checking logs
-    print(f"\n💾 Test 2: Checking WAL disk write logs")
+    print("\n💾 Test 2: Checking WAL disk write logs")
 
     # Insert a few more vectors to trigger WAL activity
     more_vectors = []
@@ -116,7 +114,7 @@ def test_atomic_wal_behavior():
         return None
 
     # Test 3: Search to verify memtable access
-    print(f"\n🔍 Test 3: Search to verify memtable access")
+    print("\n🔍 Test 3: Search to verify memtable access")
 
     try:
         query_vector = embed_seed(2, 384)
@@ -134,7 +132,7 @@ def test_atomic_wal_behavior():
         print(f"❌ Search failed: {e}")
         return None
 
-    print(f"\n✅ All atomic WAL tests passed!")
+    print("\n✅ All atomic WAL tests passed!")
     print("📋 Key verifications:")
     print("   - WAL writes complete successfully")
     print("   - Immediate read consistency maintained")
@@ -147,10 +145,10 @@ def test_atomic_wal_behavior():
 def check_server_logs():
     """Check server logs for WAL atomicity messages"""
 
-    print(f"\n📋 Checking server logs for WAL atomicity behavior...")
+    print("\n📋 Checking server logs for WAL atomicity behavior...")
 
     try:
-        with open("server_atomic_test.log", "r") as f:
+        with open("server_atomic_test.log") as f:
             logs = f.read()
 
         # Look for key atomicity log messages
@@ -190,7 +188,7 @@ def check_server_logs():
         if found_errors:
             print(f"⚠️ Found error patterns: {found_errors}")
         else:
-            print(f"✅ No error patterns detected")
+            print("✅ No error patterns detected")
 
     except FileNotFoundError:
         print("⚠️ Server log file not found")
@@ -222,4 +220,4 @@ if __name__ == "__main__":
     check_server_logs()
 
     # Test always passes since errors are handled in the test
-    print(f"\n🎉 Atomic WAL implementation test completed successfully!")
+    print("\n🎉 Atomic WAL implementation test completed successfully!")

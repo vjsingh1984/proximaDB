@@ -5,7 +5,7 @@ Chunks text at paragraph boundaries while respecting size constraints.
 """
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
 
@@ -32,7 +32,7 @@ class ParagraphStrategy(ChunkingStrategyInterface):
         # Pattern for numbered lists
         self.numbered_list_pattern = re.compile(r"^\s*\d+[\.\)]\s+", re.MULTILINE)
 
-    def _split_into_paragraphs(self, text: str) -> List[Tuple[str, int]]:
+    def _split_into_paragraphs(self, text: str) -> list[tuple[str, int]]:
         """Split text into paragraphs with positions"""
         paragraphs = []
 
@@ -65,7 +65,7 @@ class ParagraphStrategy(ChunkingStrategyInterface):
 
         return list_lines >= len(lines) * 0.7
 
-    def _split_large_paragraph(self, text: str, max_size: int) -> List[str]:
+    def _split_large_paragraph(self, text: str, max_size: int) -> list[str]:
         """Split a large paragraph into smaller chunks"""
         if len(text) <= max_size:
             return [text]
@@ -98,8 +98,8 @@ class ParagraphStrategy(ChunkingStrategyInterface):
         return chunks
 
     def chunk(
-        self, text: str, source_id: str, base_metadata: Optional[Dict[str, Any]] = None
-    ) -> List[TextChunk]:
+        self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
+    ) -> list[TextChunk]:
         """Create chunks at paragraph boundaries"""
         self.validate_config()
 
@@ -224,7 +224,7 @@ class ParagraphStrategy(ChunkingStrategyInterface):
         start_pos: int,
         chunk_index: int,
         source_id: str,
-        base_metadata: Dict[str, Any],
+        base_metadata: dict[str, Any],
         paragraph_count: int,
         is_list: bool = False,
     ) -> TextChunk:

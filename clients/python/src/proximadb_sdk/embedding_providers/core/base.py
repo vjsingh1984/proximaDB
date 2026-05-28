@@ -6,7 +6,7 @@ Provides abstract base classes and protocols that all embedding providers must i
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -24,7 +24,7 @@ class EmbeddingProviderProtocol(Protocol):
     Use this for type hints when you want duck typing instead of inheritance.
     """
 
-    def embed(self, texts: List[str]) -> np.ndarray:
+    def embed(self, texts: list[str]) -> np.ndarray:
         """Generate embeddings for a list of texts"""
         ...
 
@@ -54,7 +54,7 @@ class BaseEmbeddingProvider(ABC):
     - embed(): Generate embeddings
     """
 
-    def __init__(self, config: Optional[ProviderConfig] = None):
+    def __init__(self, config: ProviderConfig | None = None):
         """
         Initialize provider with optional configuration
 
@@ -104,7 +104,7 @@ class BaseEmbeddingProvider(ABC):
         pass
 
     @abstractmethod
-    def embed(self, texts: List[str]) -> np.ndarray:
+    def embed(self, texts: list[str]) -> np.ndarray:
         """
         Generate embeddings for a list of texts
 
@@ -164,7 +164,7 @@ class BaseEmbeddingProvider(ABC):
         """
         return self.embed([text])[0]
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
         """
         Generate embeddings for multiple texts (convenience method)
 
@@ -202,7 +202,7 @@ class BaseEmbeddingProvider(ABC):
             logger.warning(f"Provider not available: {e}")
             return False
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """
         Get comprehensive model information
 

@@ -24,12 +24,10 @@ Default test configurations: 10K, 100K, and 1M vectors (dimension=384)
 import argparse
 import gc
 import os
-import shutil
-import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -114,7 +112,7 @@ def benchmark_proximadb(
     temp_dir: str,
     engine: str = "sst",
     search_mode: str = "sqrt",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Benchmark ProximaDB embedded mode with specified storage engine."""
     if not PROXIMADB_AVAILABLE:
         return {"error": "ProximaDB not available"}
@@ -141,9 +139,7 @@ def benchmark_proximadb(
         search_times = []
         results = []
         explicit_search_mode = (
-            search_mode
-            if search_mode in {"exact", "approximate", "adaptive"}
-            else None
+            search_mode if search_mode in {"exact", "approximate", "adaptive"} else None
         )
         for _ in range(10):
             start = time.perf_counter()
@@ -177,7 +173,7 @@ def benchmark_proximadb(
         return {"error": str(e)}
 
 
-def benchmark_chromadb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
+def benchmark_chromadb(vectors: np.ndarray, temp_dir: str) -> dict[str, Any]:
     """Benchmark ChromaDB embedded mode."""
     if not CHROMADB_AVAILABLE:
         return {"error": "ChromaDB not available"}
@@ -217,7 +213,7 @@ def benchmark_chromadb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
-def benchmark_lancedb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
+def benchmark_lancedb(vectors: np.ndarray, temp_dir: str) -> dict[str, Any]:
     """Benchmark LanceDB embedded mode."""
     if not LANCEDB_AVAILABLE:
         return {"error": "LanceDB not available"}
@@ -256,7 +252,7 @@ def benchmark_lancedb(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
-def benchmark_faiss(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
+def benchmark_faiss(vectors: np.ndarray, temp_dir: str) -> dict[str, Any]:
     """Benchmark FAISS (in-memory)."""
     if not FAISS_AVAILABLE:
         return {"error": "FAISS not available"}
@@ -290,7 +286,7 @@ def benchmark_faiss(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
-def benchmark_qdrant(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
+def benchmark_qdrant(vectors: np.ndarray, temp_dir: str) -> dict[str, Any]:
     """Benchmark Qdrant embedded mode."""
     if not QDRANT_AVAILABLE:
         return {"error": "Qdrant not available"}
@@ -338,12 +334,12 @@ def benchmark_qdrant(vectors: np.ndarray, temp_dir: str) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
-def parse_sizes(raw: str) -> List[int]:
+def parse_sizes(raw: str) -> list[int]:
     """Parse comma-separated vector counts."""
     return [int(part.strip()) for part in raw.split(",") if part.strip()]
 
 
-def parse_engines(raw: str) -> List[str]:
+def parse_engines(raw: str) -> list[str]:
     """Parse comma-separated engine names."""
     all_engines = ["sst", "helix", "viper", "nova", "swift", "raptor"]
     if raw.strip().lower() == "all":
@@ -352,9 +348,9 @@ def parse_engines(raw: str) -> List[str]:
 
 
 def run_benchmark(
-    batch_sizes: List[int] = [10_000, 100_000, 1_000_000],
+    batch_sizes: list[int] = [10_000, 100_000, 1_000_000],
     dimension: int = 384,
-    proximadb_engines: List[str] | None = None,
+    proximadb_engines: list[str] | None = None,
     include_competitors: bool = False,
     search_mode: str = "sqrt",
 ):
@@ -390,7 +386,7 @@ def run_benchmark(
             ]
         )
 
-    all_results: Dict[int, Dict[str, Dict[str, Any]]] = {}
+    all_results: dict[int, dict[str, dict[str, Any]]] = {}
 
     for batch_size in batch_sizes:
         print(f"\n{'='*80}")
@@ -438,12 +434,12 @@ def run_benchmark(
     write_markdown_report(all_results, proximadb_engines, include_competitors)
 
 
-def render_batch_table(batch_size: int, results: Dict[str, Dict[str, Any]]) -> None:
+def render_batch_table(batch_size: int, results: dict[str, dict[str, Any]]) -> None:
     """Render per-batch results using Rich if available, otherwise ASCII."""
     header = f"{'='*80}\nRESULTS: {batch_size:,} vectors\n{'='*80}"
     print("\n" + header)
 
-    def fmt_row(name: str, r: Dict[str, Any]) -> str:
+    def fmt_row(name: str, r: dict[str, Any]) -> str:
         return (
             f"{name:<18} {r['insert_time_ms']:>10.2f}ms   "
             f"{r['docs_per_sec']:>14,.0f}/s   {r['search_time_ms']:>8.3f}ms   "
@@ -507,8 +503,8 @@ def render_batch_table(batch_size: int, results: Dict[str, Dict[str, Any]]) -> N
 
 
 def render_summary_table(
-    all_results: Dict[int, Dict[str, Dict[str, Any]]],
-    proximadb_engines: List[str],
+    all_results: dict[int, dict[str, dict[str, Any]]],
+    proximadb_engines: list[str],
     include_competitors: bool,
 ) -> None:
     """Render cross-batch summary for throughput."""
@@ -555,21 +551,19 @@ def render_summary_table(
 
 
 def write_markdown_report(
-    all_results: Dict[int, Dict[str, Dict[str, Any]]],
-    proximadb_engines: List[str],
+    all_results: dict[int, dict[str, dict[str, Any]]],
+    proximadb_engines: list[str],
     include_competitors: bool,
 ) -> None:
     """Persist a Markdown-friendly snapshot for sharing."""
     target_dir = Path("target")
     target_dir.mkdir(exist_ok=True)
-    lines: List[str] = []
+    lines: list[str] = []
 
     lines.append("# Embedded Vector DB Benchmark")
     lines.append("")
     if include_competitors:
-        lines.append(
-            "Databases: ProximaDB plus ChromaDB, LanceDB, FAISS, and Qdrant."
-        )
+        lines.append("Databases: ProximaDB plus ChromaDB, LanceDB, FAISS, and Qdrant.")
     else:
         lines.append("Databases: ProximaDB only.")
     lines.append("")
@@ -597,7 +591,7 @@ def write_markdown_report(
         lines.append("")
 
     summary_header = (
-        "| Database | " + " | ".join(f"{b:,} vec" for b in all_results.keys()) + " |"
+        "| Database | " + " | ".join(f"{b:,} vec" for b in all_results) + " |"
     )
     summary_sep = "| --- " + " | ---: " * len(all_results) + "|"
     lines.append("## Throughput Summary")
@@ -609,7 +603,7 @@ def write_markdown_report(
         db_names.extend(["ChromaDB", "LanceDB", "FAISS", "Qdrant"])
     for db_name in db_names:
         row = [db_name]
-        for batch_size in all_results.keys():
+        for batch_size in all_results:
             result = all_results[batch_size].get(db_name, {})
             if "error" in result:
                 row.append("N/A")
@@ -623,9 +617,7 @@ def write_markdown_report(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Embedded vector database benchmark"
-    )
+    parser = argparse.ArgumentParser(description="Embedded vector database benchmark")
     parser.add_argument(
         "--sizes",
         default="10000,100000,1000000",

@@ -7,15 +7,12 @@ topic boundary detection, and content analysis.
 
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
 
-import numpy as np
 import pytest
 
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
-from utils.server_utils import ensure_server_running
 
 from proximadb_sdk.chunking import (
     ChunkingConfig,
@@ -26,10 +23,7 @@ from proximadb_sdk.chunking import (
 
 # Note: EnhancedSemanticChunker functionality has been consolidated into chunking strategies
 # This test needs to be updated for the new architecture
-from proximadb_sdk.chunking_strategies import SemanticStrategy
 from proximadb_sdk.embedding_interface import (
-    BERTEmbeddingProvider,
-    SimulatedEmbeddingProvider,
     create_embedding_provider,
     get_default_embedding_provider,
 )

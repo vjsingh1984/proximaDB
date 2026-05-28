@@ -33,12 +33,10 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from victor.storage.vector_stores.base import (
-    BaseEmbeddingProvider,
     EmbeddingConfig,
-    EmbeddingSearchResult,
 )
 
 from proximadb_sdk.integrations._records import insert_records, record_payload
@@ -64,7 +62,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         self,
         client: Any,
         workspace: str,
-        embedding_config: Optional[EmbeddingConfig] = None,
+        embedding_config: EmbeddingConfig | None = None,
     ) -> None:
         # Initialize with a default embedding config if not provided
         if embedding_config is None:
@@ -96,8 +94,8 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         file_path: str,
         content: str,
         language: str = "python",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Index a code file across all ProximaDB models.
 
         This single operation stores the code in:
@@ -119,7 +117,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         file_hash = hashlib.sha256(content.encode()).hexdigest()
 
         # Prepare base metadata
-        base_meta: Dict[str, Any] = {
+        base_meta: dict[str, Any] = {
             "file_path": file_path_str,
             "language": language,
             "file_hash": file_hash,
@@ -128,7 +126,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         if metadata:
             base_meta.update(metadata)
 
-        results: Dict[str, Any] = {}
+        results: dict[str, Any] = {}
 
         # 1. Vector: Semantic embedding (from parent class)
         try:
@@ -197,7 +195,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         file_path: str,
         content: str,
         language: str,
-        metadata: Dict[str, Any],
+        metadata: dict[str, Any],
     ) -> None:
         """Index code as a rich document.
 
@@ -232,8 +230,8 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         file_path: str,
         content: str,
         language: str,
-        metadata: Dict[str, Any],
-    ) -> Dict[str, int]:
+        metadata: dict[str, Any],
+    ) -> dict[str, int]:
         """Index code structure as a graph.
 
         Extracts:
@@ -263,8 +261,8 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
     async def _store_metrics(
         self,
         file_path: str,
-        metrics: List[Dict[str, Any]],
-        metadata: Dict[str, Any],
+        metrics: list[dict[str, Any]],
+        metadata: dict[str, Any],
     ) -> None:
         """Store code metrics in time-series store.
 
@@ -304,10 +302,10 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         self,
         query: str,
         top_k: int = 10,
-        graph_query: Optional[str] = None,
-        document_filter: Optional[Dict[str, Any]] = None,
-        time_range: Optional[tuple[datetime, datetime]] = None,
-    ) -> List[Dict[str, Any]]:
+        graph_query: str | None = None,
+        document_filter: dict[str, Any] | None = None,
+        time_range: tuple[datetime, datetime] | None = None,
+    ) -> list[dict[str, Any]]:
         """Perform hybrid search across all ProximaDB models.
 
         Combines:
@@ -326,7 +324,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         Returns:
             Combined results from all models with scores.
         """
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
 
         # 1. Vector search
         vector_results = await self.search_similar(query, limit=top_k)
@@ -353,7 +351,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
                             "metadata": gr.get("metadata", {}),
                         }
                     )
-            except Exception as e:
+            except Exception:
                 # Graph search failed, continue with other results
                 pass
 
@@ -369,7 +367,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         self,
         query: str,
         top_k: int,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Execute graph search query.
 
         In a full implementation, this would:
@@ -382,9 +380,9 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
 
     def _filter_hybrid_results(
         self,
-        results: List[Dict[str, Any]],
-        filter_dict: Optional[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        results: list[dict[str, Any]],
+        filter_dict: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
         """Filter hybrid search results."""
         if not filter_dict:
             return results
@@ -397,7 +395,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         return filtered
 
     def _matches_filter(
-        self, metadata: Dict[str, Any], filter_dict: Dict[str, Any]
+        self, metadata: dict[str, Any], filter_dict: dict[str, Any]
     ) -> bool:
         """Check if metadata matches filter criteria."""
         for key, value in filter_dict.items():
@@ -409,9 +407,9 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
 
     def _rank_hybrid_results(
         self,
-        results: List[Dict[str, Any]],
+        results: list[dict[str, Any]],
         top_k: int,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Rank and combine hybrid search results.
 
         Implements a simple scoring strategy:
@@ -420,7 +418,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         - Deduplicates by file_path
         """
         # Group by file_path
-        by_file: Dict[str, List[Dict[str, Any]]] = {}
+        by_file: dict[str, list[dict[str, Any]]] = {}
 
         for result in results:
             file_path = result.get("metadata", {}).get("file_path", "")
@@ -430,7 +428,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
                 by_file[file_path].append(result)
 
         # Score each file
-        scored: List[tuple[str, float, Optional[Dict[str, Any]]]] = []
+        scored: list[tuple[str, float, dict[str, Any] | None]] = []
 
         for file_path, file_results in by_file.items():
             # Combine scores from different result types
@@ -459,16 +457,16 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
     # Code Analysis Utilities
     # ========================================================================
 
-    def _chunk_code(self, content: str, chunk_size: int = 512) -> List[Dict[str, Any]]:
+    def _chunk_code(self, content: str, chunk_size: int = 512) -> list[dict[str, Any]]:
         """Chunk code content for better semantic retrieval.
 
         Splits code into logical chunks (functions, classes, blocks)
         while preserving metadata about line numbers.
         """
-        chunks: List[Dict[str, Any]] = []
+        chunks: list[dict[str, Any]] = []
 
         lines = content.split("\n")
-        current_chunk: List[str] = []
+        current_chunk: list[str] = []
         current_start = 0
 
         for i, line in enumerate(lines):
@@ -508,7 +506,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         self,
         content: str,
         language: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Extract code metrics for time-series tracking.
 
         Metrics:
@@ -519,7 +517,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         - max_nesting_depth: Maximum nesting level
         """
         lines = content.split("\n")
-        metrics: List[Dict[str, Any]] = []
+        metrics: list[dict[str, Any]] = []
 
         # Lines of code
         loc = sum(
@@ -559,10 +557,10 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
     async def find_similar_functions(
         self,
         code: str,
-        function_name: Optional[str] = None,
+        function_name: str | None = None,
         language: str = "python",
         top_k: int = 10,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Find functions that are semantically similar to the given code.
 
         Args:
@@ -611,7 +609,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         function_name: str,
         file_path: str,
         depth: int = 3,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Trace function call relationships through the codebase.
 
         Builds a call graph showing:
@@ -645,7 +643,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         self,
         days: int = 30,
         top_k: int = 10,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Find code hotspots based on recent changes and complexity.
 
         Identifies files/functions that are:
@@ -675,9 +673,9 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
     async def index_repository(
         self,
         repo_path: str,
-        language_map: Optional[Dict[str, str]] = None,
-        max_files: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        language_map: dict[str, str] | None = None,
+        max_files: int | None = None,
+    ) -> dict[str, Any]:
         """Index an entire repository into multi-model store.
 
         Args:
@@ -698,7 +696,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
         if max_files:
             code_files = code_files[:max_files]
 
-        results: Dict[str, Any] = {
+        results: dict[str, Any] = {
             "files_processed": 0,
             "files_failed": 0,
             "total_chunks": 0,
@@ -737,8 +735,8 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
     def _find_code_files(
         self,
         repo_path: Path,
-        language_map: Optional[Dict[str, str]] = None,
-    ) -> List[Path]:
+        language_map: dict[str, str] | None = None,
+    ) -> list[Path]:
         """Find all code files in the repository."""
         language_map = language_map or {
             ".py": "python",
@@ -765,7 +763,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
     def _detect_language(
         self,
         file_path: Path,
-        language_map: Optional[Dict[str, str]] = None,
+        language_map: dict[str, str] | None = None,
     ) -> str:
         """Detect programming language from file extension."""
         language_map = language_map or {}
@@ -778,7 +776,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
 
     async def get_repository_overview(
         self,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get overview of indexed repository.
 
         Returns:
@@ -797,7 +795,7 @@ class ProximaDBMultiModelProvider(ProximaDBEmbeddingProvider):
     async def analyze_dependencies(
         self,
         file_path: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Analyze dependencies for a file.
 
         Returns:

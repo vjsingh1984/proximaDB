@@ -9,7 +9,7 @@ Licensed under the Apache License, Version 2.0
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from ..models import (
     BatchResult,
@@ -134,7 +134,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
     # ==========================================================================
 
     def create_collection(
-        self, name: str, config: Optional[CollectionConfig] = None, **kwargs
+        self, name: str, config: CollectionConfig | None = None, **kwargs
     ) -> Collection:
         """Create a new vector collection."""
         # Extract parameters from config or kwargs
@@ -147,7 +147,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         )
         # Map EmbeddingPrecision (str-Enum) → proto int discriminant.
         # Mirrors proto: Unspecified=0, Fp32=1, Fp16=2, Bf16=3, Int8=4, Uint8=5.
-        precision_int: Optional[int] = None
+        precision_int: int | None = None
         precision_raw = (
             config.canonical_embedding_precision
             if config is not None
@@ -185,7 +185,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         # Convert CollectionWrapper or proto to Collection
         return self._to_collection(result, name, dimension)
 
-    def get_collection(self, collection_id: str) -> Optional[Collection]:
+    def get_collection(self, collection_id: str) -> Collection | None:
         """Get collection metadata by ID or name."""
         try:
             result = self._client.get_collection(collection_id)
@@ -198,7 +198,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
             logger.debug(f"Collection not found: {collection_id} - {e}")
             return None
 
-    def list_collections(self) -> List[Collection]:
+    def list_collections(self) -> list[Collection]:
         """List all collections."""
         results = self._client.list_collections()
 
@@ -257,7 +257,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
     # ==========================================================================
 
     @staticmethod
-    def _record_payloads(records: Union[List[ProximaRecord], List[Dict[str, Any]]]):
+    def _record_payloads(records: list[ProximaRecord] | list[dict[str, Any]]):
         payloads = []
         for record in records:
             if isinstance(record, dict):
@@ -282,7 +282,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
     def insert_records(
         self,
         collection_id: str,
-        records: Union[List[ProximaRecord], List[Dict[str, Any]]],
+        records: list[ProximaRecord] | list[dict[str, Any]],
         **kwargs,
     ) -> BatchResult:
         """Insert ProximaRecord-shaped payloads into a collection."""
@@ -307,7 +307,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
     def upsert_records(
         self,
         collection_id: str,
-        records: Union[List[ProximaRecord], List[Dict[str, Any]]],
+        records: list[ProximaRecord] | list[dict[str, Any]],
         **kwargs,
     ) -> BatchResult:
         """Upsert ProximaRecord-shaped payloads into a collection."""
@@ -339,7 +339,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
     def insert_vectors(
         self,
         collection_id: str,
-        vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
+        vectors: list[VectorRecord] | list[dict[str, Any]],
         **kwargs,
     ) -> VectorOperationResponse:
         """Compatibility alias for record-native inserts."""
@@ -350,7 +350,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
     def upsert_vectors(
         self,
         collection_id: str,
-        vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
+        vectors: list[VectorRecord] | list[dict[str, Any]],
         **kwargs,
     ) -> VectorOperationResponse:
         """Compatibility alias for record-native upserts."""
@@ -361,10 +361,10 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
     def get_vectors(
         self,
         collection_id: str,
-        vector_ids: List[str],
+        vector_ids: list[str],
         include_vectors: bool = True,
         **kwargs,
-    ) -> List[VectorRecord]:
+    ) -> list[VectorRecord]:
         """Get vectors by IDs."""
         if hasattr(self._client, "get_vectors"):
             results = self._client.get_vectors(
@@ -394,7 +394,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         return records
 
     def delete_vectors(
-        self, collection_id: str, vector_ids: List[str], **kwargs
+        self, collection_id: str, vector_ids: list[str], **kwargs
     ) -> VectorOperationResponse:
         """Delete vectors by IDs."""
         if hasattr(self._client, "delete_vectors"):
@@ -482,11 +482,11 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         collection_id: str,
         query_vector: VectorArray,
         top_k: int = 10,
-        filter: Optional[FilterDict] = None,
+        filter: FilterDict | None = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
         **kwargs,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Search for similar vectors."""
         # Normalize query vector
         if hasattr(query_vector, "tolist"):
@@ -507,13 +507,13 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
     def batch_search(
         self,
         collection_id: str,
-        query_vectors: List[VectorArray],
+        query_vectors: list[VectorArray],
         top_k: int = 10,
-        filter: Optional[FilterDict] = None,
+        filter: FilterDict | None = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
         **kwargs,
-    ) -> List[List[SearchResult]]:
+    ) -> list[list[SearchResult]]:
         """Batch search for similar vectors."""
         # Normalize query vectors
         normalized_queries = []
@@ -552,7 +552,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
 
     def _to_search_results(
         self, results: Any, include_vectors: bool, include_metadata: bool
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Convert various result types to SearchResult list."""
         if results is None:
             return []

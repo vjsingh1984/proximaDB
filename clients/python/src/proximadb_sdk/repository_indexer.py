@@ -41,15 +41,14 @@ Licensed under the Apache License, Version 2.0
 import asyncio
 import json
 import logging
-import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any
 
 from .chunking_strategies.code import (
-    EXTENSION_TO_LANGUAGE,
     get_supported_extensions,
 )
 from .code_knowledge import (
@@ -59,16 +58,12 @@ from .code_knowledge import (
     IndexingResult,
 )
 from .repository_manager import (
-    Author,
     ChangeType,
-    Commit,
     FileChange,
     IndexState,
     RepositoryManager,
-    VCSType,
     get_file_git_info,
     is_git_repository,
-    repository_context,
 )
 
 logger = logging.getLogger(__name__)
@@ -118,7 +113,7 @@ class RepositoryIndexConfig(CodeIndexConfig):
     max_concurrent_files: int = 10
 
     # Filtering
-    index_branches: List[str] = field(
+    index_branches: list[str] = field(
         default_factory=lambda: ["main", "master", "develop"]
     )
     skip_merge_commits: bool = False
@@ -128,10 +123,10 @@ class RepositoryIndexConfig(CodeIndexConfig):
 class RepositoryIndexResult(IndexingResult):
     """Extended result with repository information"""
 
-    repository_root: Optional[str] = None
-    current_commit: Optional[str] = None
-    current_branch: Optional[str] = None
-    previous_commit: Optional[str] = None
+    repository_root: str | None = None
+    current_commit: str | None = None
+    current_branch: str | None = None
+    previous_commit: str | None = None
 
     # Change statistics
     files_added: int = 0
@@ -140,10 +135,10 @@ class RepositoryIndexResult(IndexingResult):
     files_renamed: int = 0
 
     # Git metadata
-    authors_encountered: Set[str] = field(default_factory=set)
+    authors_encountered: set[str] = field(default_factory=set)
     commits_in_range: int = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary"""
         return {
             "files_processed": self.files_processed,
@@ -170,16 +165,16 @@ class GitEnrichedSearchResult(CodeSearchResult):
     """Search result enriched with git information"""
 
     # Git context
-    commit_hash: Optional[str] = None
-    branch: Optional[str] = None
-    remote_url: Optional[str] = None
-    last_modified_by: Optional[str] = None
-    last_modified_date: Optional[datetime] = None
-    contributors: List[str] = field(default_factory=list)
+    commit_hash: str | None = None
+    branch: str | None = None
+    remote_url: str | None = None
+    last_modified_by: str | None = None
+    last_modified_date: datetime | None = None
+    contributors: list[str] = field(default_factory=list)
 
     # History context
     total_commits: int = 0
-    recent_changes: List[Dict[str, Any]] = field(default_factory=list)
+    recent_changes: list[dict[str, Any]] = field(default_factory=list)
 
 
 # =============================================================================
@@ -202,8 +197,8 @@ class RepositoryIndexer:
     def __init__(
         self,
         client: Any,  # ProximaDBClient
-        config: Optional[RepositoryIndexConfig] = None,
-        embedding_provider: Optional[Any] = None,
+        config: RepositoryIndexConfig | None = None,
+        embedding_provider: Any | None = None,
     ):
         """
         Initialize RepositoryIndexer.
@@ -222,15 +217,15 @@ class RepositoryIndexer:
         self.client = client
 
         # Repository managers cache
-        self._repo_managers: Dict[str, RepositoryManager] = {}
+        self._repo_managers: dict[str, RepositoryManager] = {}
 
         # Index states cache
-        self._index_states: Dict[str, IndexState] = {}
+        self._index_states: dict[str, IndexState] = {}
 
     def _get_repo_manager(
         self,
-        path: Union[str, Path],
-    ) -> Optional[RepositoryManager]:
+        path: str | Path,
+    ) -> RepositoryManager | None:
         """Get or create repository manager for path."""
         path = Path(path).resolve()
         path_str = str(path)
@@ -254,7 +249,7 @@ class RepositoryIndexer:
             logger.warning(f"Failed to initialize git integration: {e}")
             return None
 
-    def _load_index_state(self, repo_path: Path) -> Optional[IndexState]:
+    def _load_index_state(self, repo_path: Path) -> IndexState | None:
         """Load index state from repository."""
         state_file = repo_path / self.config.state_file_name
         if state_file.exists():
@@ -282,10 +277,10 @@ class RepositoryIndexer:
 
     async def index_repository(
         self,
-        path: Union[str, Path],
-        mode: Optional[IndexMode] = None,
+        path: str | Path,
+        mode: IndexMode | None = None,
         force: bool = False,
-        progress_callback: Optional[Callable[[str, int, int], None]] = None,
+        progress_callback: Callable[[str, int, int], None] | None = None,
     ) -> RepositoryIndexResult:
         """
         Index a repository with git awareness.
@@ -337,7 +332,7 @@ class RepositoryIndexer:
 
         # Index files
         total_files = len(files_to_index)
-        indexed_hashes: Dict[str, str] = {}
+        indexed_hashes: dict[str, str] = {}
 
         if self.config.parallel_file_processing and total_files > 1:
             # Parallel processing
@@ -384,8 +379,8 @@ class RepositoryIndexer:
 
     async def update_repository(
         self,
-        path: Union[str, Path],
-        progress_callback: Optional[Callable[[str, int, int], None]] = None,
+        path: str | Path,
+        progress_callback: Callable[[str, int, int], None] | None = None,
     ) -> RepositoryIndexResult:
         """
         Incrementally update repository index.
@@ -405,7 +400,7 @@ class RepositoryIndexer:
             progress_callback=progress_callback,
         )
 
-    def _collect_all_files(self, directory: Path) -> List[Path]:
+    def _collect_all_files(self, directory: Path) -> list[Path]:
         """Collect all indexable files in directory."""
         supported_extensions = set(get_supported_extensions())
         files = []
@@ -442,7 +437,7 @@ class RepositoryIndexer:
     async def _get_changed_files(
         self,
         repo_manager: RepositoryManager,
-    ) -> List[Path]:
+    ) -> list[Path]:
         """Get files that need indexing based on git changes."""
         changes = repo_manager.get_files_to_reindex(filter_code_files=True)
 
@@ -453,13 +448,13 @@ class RepositoryIndexer:
     async def _get_deleted_files(
         self,
         repo_manager: RepositoryManager,
-    ) -> List[FileChange]:
+    ) -> list[FileChange]:
         """Get files that were deleted."""
         return repo_manager.get_deleted_files()
 
     async def _handle_deleted_files(
         self,
-        deleted_files: List[FileChange],
+        deleted_files: list[FileChange],
         result: RepositoryIndexResult,
     ) -> None:
         """Handle deleted files by removing from index."""
@@ -478,8 +473,8 @@ class RepositoryIndexer:
     async def _index_single_file(
         self,
         file_path: Path,
-        repo_manager: Optional[RepositoryManager],
-    ) -> Tuple[IndexingResult, Optional[str]]:
+        repo_manager: RepositoryManager | None,
+    ) -> tuple[IndexingResult, str | None]:
         """Index a single file with git metadata enrichment."""
         try:
             content = file_path.read_text(encoding="utf-8")
@@ -521,10 +516,10 @@ class RepositoryIndexer:
 
     async def _index_files_parallel(
         self,
-        files: List[Path],
-        repo_manager: Optional[RepositoryManager],
-        progress_callback: Optional[Callable[[str, int, int], None]],
-    ) -> List[Tuple[IndexingResult, Path, Optional[str]]]:
+        files: list[Path],
+        repo_manager: RepositoryManager | None,
+        progress_callback: Callable[[str, int, int], None] | None,
+    ) -> list[tuple[IndexingResult, Path, str | None]]:
         """Index files in parallel with concurrency limit."""
         semaphore = asyncio.Semaphore(self.config.max_concurrent_files)
         total = len(files)
@@ -532,7 +527,7 @@ class RepositoryIndexer:
 
         async def process_file(
             file_path: Path,
-        ) -> Tuple[IndexingResult, Path, Optional[str]]:
+        ) -> tuple[IndexingResult, Path, str | None]:
             nonlocal completed
             async with semaphore:
                 result, content_hash = await self._index_single_file(
@@ -565,10 +560,10 @@ class RepositoryIndexer:
         query: str,
         top_k: int = 10,
         include_git_context: bool = True,
-        repository_path: Optional[Union[str, Path]] = None,
-        language: Optional[str] = None,
+        repository_path: str | Path | None = None,
+        language: str | None = None,
         **kwargs,
-    ) -> List[GitEnrichedSearchResult]:
+    ) -> list[GitEnrichedSearchResult]:
         """
         Search code with optional git context enrichment.
 
@@ -622,8 +617,8 @@ class RepositoryIndexer:
 
     async def get_repository_stats(
         self,
-        path: Union[str, Path],
-    ) -> Dict[str, Any]:
+        path: str | Path,
+    ) -> dict[str, Any]:
         """
         Get statistics for an indexed repository.
 
@@ -671,7 +666,7 @@ class RepositoryIndexer:
 
     async def clear_index(
         self,
-        path: Union[str, Path],
+        path: str | Path,
         clear_state: bool = True,
     ) -> bool:
         """
@@ -739,7 +734,7 @@ def create_repository_indexer(
 
 async def index_repository(
     client: Any,
-    path: Union[str, Path],
+    path: str | Path,
     incremental: bool = True,
     **kwargs,
 ) -> RepositoryIndexResult:

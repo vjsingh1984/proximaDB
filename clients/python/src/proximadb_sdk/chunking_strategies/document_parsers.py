@@ -35,7 +35,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 from .parser_utils import BaseLanguageParser, ParseError, ParserError
 
@@ -79,10 +79,10 @@ class BinarySymbol:
     address: str
     symbol_type: str  # function, data, import, export
     size: int = 0
-    section: Optional[str] = None
-    decompiled_code: Optional[str] = None
-    disassembly: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    section: str | None = None
+    decompiled_code: str | None = None
+    disassembly: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -92,14 +92,14 @@ class BinaryAnalysis:
     file_path: str
     binary_type: BinaryType
     architecture: str
-    symbols: List[BinarySymbol]
-    imports: List[str]
-    exports: List[str]
-    strings: List[str]
-    sections: List[Dict[str, Any]]
-    entry_point: Optional[str] = None
+    symbols: list[BinarySymbol]
+    imports: list[str]
+    exports: list[str]
+    strings: list[str]
+    sections: list[dict[str, Any]]
+    entry_point: str | None = None
     content_hash: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -109,11 +109,11 @@ class OCRResult:
     file_path: str
     document_type: DocumentType
     text: str
-    pages: List[Dict[str, Any]]
+    pages: list[dict[str, Any]]
     confidence: float = 0.0
     language: str = "eng"
     content_hash: str = ""
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -121,7 +121,7 @@ class BinaryParserConfig:
     """Configuration for binary parser"""
 
     # Tool preferences (in order of preference)
-    preferred_tools: List[str] = field(
+    preferred_tools: list[str] = field(
         default_factory=lambda: ["radare2", "ghidra", "objdump"]
     )
     # Extract strings with minimum length
@@ -132,7 +132,7 @@ class BinaryParserConfig:
     max_function_size: int = 10000
     # Wine/Proton for Windows binaries on Linux
     use_wine: bool = True
-    wine_prefix: Optional[str] = None
+    wine_prefix: str | None = None
 
 
 @dataclass
@@ -141,7 +141,7 @@ class OCRConfig:
 
     # Tesseract options
     language: str = "eng"  # OCR language
-    tesseract_cmd: Optional[str] = None  # Path to tesseract
+    tesseract_cmd: str | None = None  # Path to tesseract
     # PDF options
     pdf_dpi: int = 300
     # Processing options
@@ -159,10 +159,10 @@ class OCRConfig:
 class ToolDetector:
     """Detects available reverse engineering and OCR tools"""
 
-    _cache: Dict[str, Optional[str]] = {}
+    _cache: dict[str, str | None] = {}
 
     @classmethod
-    def find_tool(cls, tool_name: str) -> Optional[str]:
+    def find_tool(cls, tool_name: str) -> str | None:
         """Find path to tool executable"""
         if tool_name in cls._cache:
             return cls._cache[tool_name]
@@ -177,7 +177,7 @@ class ToolDetector:
         return cls.find_tool(tool_name) is not None
 
     @classmethod
-    def get_available_re_tools(cls) -> List[str]:
+    def get_available_re_tools(cls) -> list[str]:
         """Get list of available RE tools"""
         tools = []
         for tool in [
@@ -193,7 +193,7 @@ class ToolDetector:
         return tools
 
     @classmethod
-    def get_available_ocr_tools(cls) -> List[str]:
+    def get_available_ocr_tools(cls) -> list[str]:
         """Get list of available OCR tools"""
         tools = []
         for tool in ["tesseract", "pdftoppm", "pdftotext"]:
@@ -207,7 +207,7 @@ class ToolDetector:
         return cls.is_available("wine") or cls.is_available("wine64")
 
     @classmethod
-    def get_system_info(cls) -> Dict[str, Any]:
+    def get_system_info(cls) -> dict[str, Any]:
         """Get system information for tool selection"""
         return {
             "platform": platform.system(),
@@ -420,7 +420,7 @@ class Radare2Adapter(REToolAdapter):
 
             # Get strings
             result = subprocess.run(
-                [r2_path, "-q", "-c", f"iz~[2:]", file_path],
+                [r2_path, "-q", "-c", "iz~[2:]", file_path],
                 capture_output=True,
                 text=True,
                 timeout=60,
@@ -799,9 +799,9 @@ class BinaryParser(BaseLanguageParser):
     - Ghidra (if installed)
     """
 
-    def __init__(self, config: Optional[BinaryParserConfig] = None):
+    def __init__(self, config: BinaryParserConfig | None = None):
         self.config = config or BinaryParserConfig()
-        self._adapters: List[REToolAdapter] = []
+        self._adapters: list[REToolAdapter] = []
         self._init_adapters()
         super().__init__()
 
@@ -835,7 +835,7 @@ class BinaryParser(BaseLanguageParser):
         return "binary"  # No tree-sitter for binaries
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".exe", ".dll", ".so", ".dylib", ".o", ".obj", ".a", ".lib"]
 
     def _init_tree_sitter(self):
@@ -845,7 +845,7 @@ class BinaryParser(BaseLanguageParser):
 
     def parse(self, content: str, file_path: str):
         """Parse binary file and extract symbols"""
-        from .code import CodeSymbol, CodeSymbolType, ParsedCode, SourceLocation
+        from .code import CodeSymbol, ParsedCode, SourceLocation
 
         # For binary files, content is ignored - we read the file directly
         if not os.path.exists(file_path):
@@ -951,9 +951,9 @@ class DocumentParser(BaseLanguageParser):
     - Images (TIFF, PNG, JPEG, BMP, WEBP)
     """
 
-    def __init__(self, config: Optional[OCRConfig] = None):
+    def __init__(self, config: OCRConfig | None = None):
         self.config = config or OCRConfig()
-        self._adapter: Optional[OCRAdapter] = None
+        self._adapter: OCRAdapter | None = None
         self._init_adapter()
         super().__init__()
 
@@ -972,7 +972,7 @@ class DocumentParser(BaseLanguageParser):
         return "document"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".pdf", ".tiff", ".tif", ".png", ".jpg", ".jpeg", ".bmp", ".webp"]
 
     def _init_tree_sitter(self):
@@ -1057,17 +1057,17 @@ class DocumentParser(BaseLanguageParser):
 # =============================================================================
 
 
-def create_binary_parser(config: Optional[BinaryParserConfig] = None) -> BinaryParser:
+def create_binary_parser(config: BinaryParserConfig | None = None) -> BinaryParser:
     """Create a binary file parser"""
     return BinaryParser(config)
 
 
-def create_document_parser(config: Optional[OCRConfig] = None) -> DocumentParser:
+def create_document_parser(config: OCRConfig | None = None) -> DocumentParser:
     """Create a document/OCR parser"""
     return DocumentParser(config)
 
 
-def get_available_tools() -> Dict[str, List[str]]:
+def get_available_tools() -> dict[str, list[str]]:
     """Get all available parsing tools"""
     return {
         "re_tools": ToolDetector.get_available_re_tools(),

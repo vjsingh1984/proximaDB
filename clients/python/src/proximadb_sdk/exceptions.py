@@ -16,7 +16,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class ProximaDBError(Exception):
@@ -25,9 +25,9 @@ class ProximaDBError(Exception):
     def __init__(
         self,
         message: str,
-        error_code: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
-        request_id: Optional[str] = None,
+        error_code: str | None = None,
+        details: dict[str, Any] | None = None,
+        request_id: str | None = None,
         retryable: bool = False,
     ) -> None:
         super().__init__(message)
@@ -110,7 +110,7 @@ class RateLimitError(ProximaDBError):
     def __init__(
         self,
         message: str = "Rate limit exceeded",
-        retry_after: Optional[int] = None,
+        retry_after: int | None = None,
         **kwargs,
     ) -> None:
         super().__init__(message, error_code="RATE_LIMIT_EXCEEDED", **kwargs)
@@ -123,7 +123,7 @@ class QuotaExceededError(ProximaDBError):
     def __init__(
         self,
         message: str = "Usage quota exceeded",
-        quota_type: Optional[str] = None,
+        quota_type: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(message, error_code="QUOTA_EXCEEDED", **kwargs)
@@ -133,7 +133,7 @@ class QuotaExceededError(ProximaDBError):
 class ValidationError(ProximaDBError):
     """Request validation failed"""
 
-    def __init__(self, message: str, field: Optional[str] = None, **kwargs) -> None:
+    def __init__(self, message: str, field: str | None = None, **kwargs) -> None:
         super().__init__(message, error_code="VALIDATION_ERROR", **kwargs)
         self.field = field
 
@@ -144,7 +144,7 @@ class ServerError(ProximaDBError):
     def __init__(
         self,
         message: str = "Internal server error",
-        status_code: Optional[int] = None,
+        status_code: int | None = None,
         **kwargs,
     ) -> None:
         super().__init__(message, error_code="SERVER_ERROR", **kwargs)
@@ -157,7 +157,7 @@ class NetworkError(ProximaDBError):
     def __init__(
         self,
         message: str = "Network error",
-        original_error: Optional[Exception] = None,
+        original_error: Exception | None = None,
         **kwargs,
     ) -> None:
         super().__init__(message, error_code="NETWORK_ERROR", **kwargs)
@@ -170,8 +170,8 @@ class TransportError(ProximaDBError):
     def __init__(
         self,
         message: str = "Transport error",
-        transport_type: Optional[str] = None,
-        original_error: Optional[Exception] = None,
+        transport_type: str | None = None,
+        original_error: Exception | None = None,
         **kwargs,
     ) -> None:
         super().__init__(message, error_code="TRANSPORT_ERROR", **kwargs)
@@ -185,7 +185,7 @@ class TimeoutError(ProximaDBError):
     def __init__(
         self,
         message: str = "Request timeout",
-        timeout_seconds: Optional[float] = None,
+        timeout_seconds: float | None = None,
         **kwargs,
     ) -> None:
         super().__init__(message, error_code="TIMEOUT", **kwargs)
@@ -202,9 +202,7 @@ class ConfigurationError(ProximaDBError):
 class IndexError(ProximaDBError):
     """Vector index error"""
 
-    def __init__(
-        self, message: str, index_type: Optional[str] = None, **kwargs
-    ) -> None:
+    def __init__(self, message: str, index_type: str | None = None, **kwargs) -> None:
         super().__init__(message, error_code="INDEX_ERROR", **kwargs)
         self.index_type = index_type
 
@@ -217,7 +215,7 @@ class BatchError(ProximaDBError):
         message: str,
         successful_count: int = 0,
         failed_count: int = 0,
-        errors: Optional[list] = None,
+        errors: list | None = None,
         **kwargs,
     ) -> None:
         super().__init__(message, error_code="BATCH_ERROR", **kwargs)

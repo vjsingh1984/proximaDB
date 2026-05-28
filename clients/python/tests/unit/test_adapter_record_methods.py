@@ -139,7 +139,6 @@ def test_rest_adapter_query_methods_delegate_to_openapi_client():
     ]
 
 
-
 class RecordingUnifiedAdapter:
     def __init__(self):
         self.calls = []

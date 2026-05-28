@@ -22,13 +22,13 @@ import logging
 import pickle
 import threading
 import time
-import weakref
 import zlib
 from abc import ABC, abstractmethod
 from collections import OrderedDict, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -87,10 +87,10 @@ class CacheEntry:
     timestamp: float = field(default_factory=time.time)
     access_count: int = 0
     last_access: float = field(default_factory=time.time)
-    ttl: Optional[float] = None
+    ttl: float | None = None
     size_bytes: int = 0
     compressed: bool = False
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def is_expired(self) -> bool:
         """Check if entry has expired"""
@@ -108,12 +108,12 @@ class CacheBackend(ABC):
     """Abstract base class for cache backends"""
 
     @abstractmethod
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """Get value from cache"""
         pass
 
     @abstractmethod
-    def set(self, key: str, value: Any, ttl: Optional[float] = None) -> bool:
+    def set(self, key: str, value: Any, ttl: float | None = None) -> bool:
         """Set value in cache"""
         pass
 
@@ -149,7 +149,7 @@ class MemoryCacheBackend(CacheBackend):
         self._lock = threading.RLock()
         self.metrics = CacheMetrics()
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """Get value from cache with strategy-specific handling"""
         with self._lock:
             self.metrics.total_requests += 1
@@ -182,7 +182,7 @@ class MemoryCacheBackend(CacheBackend):
 
             return value
 
-    def set(self, key: str, value: Any, ttl: Optional[float] = None) -> bool:
+    def set(self, key: str, value: Any, ttl: float | None = None) -> bool:
         """Set value in cache with eviction if needed"""
         with self._lock:
             # Serialize and potentially compress
@@ -273,19 +273,19 @@ class ResponseCache:
 
     def __init__(
         self,
-        backend: Optional[CacheBackend] = None,
+        backend: CacheBackend | None = None,
         default_ttl: float = 300,  # 5 minutes
         enable_compression: bool = True,
         collection_aware: bool = True,
-        config: Optional[Dict[str, Any]] = None,
+        config: dict[str, Any] | None = None,
     ):
         self.backend = backend or MemoryCacheBackend()
         self.default_ttl = default_ttl
         self.enable_compression = enable_compression
         self.collection_aware = collection_aware
         self.config = config or {}  # Store config for test introspection
-        self._collection_keys: Dict[str, Set[str]] = defaultdict(set)
-        self._key_collections: Dict[str, str] = {}
+        self._collection_keys: dict[str, set[str]] = defaultdict(set)
+        self._key_collections: dict[str, str] = {}
         self._lock = threading.RLock()
 
     def cache_key(self, operation: str, **params) -> str:
@@ -300,9 +300,9 @@ class ResponseCache:
     def get(
         self,
         operation: str,
-        params: Dict[str, Any],
-        fetch_func: Optional[Callable] = None,
-    ) -> Optional[Any]:
+        params: dict[str, Any],
+        fetch_func: Callable | None = None,
+    ) -> Any | None:
         """Get from cache or fetch if miss"""
         key = self.cache_key(operation, **params)
 
@@ -322,10 +322,10 @@ class ResponseCache:
     def set(
         self,
         operation: str,
-        params: Dict[str, Any],
+        params: dict[str, Any],
         value: Any,
-        ttl: Optional[float] = None,
-        collection_id: Optional[str] = None,
+        ttl: float | None = None,
+        collection_id: str | None = None,
     ) -> bool:
         """Set in cache with optional collection tracking"""
         key = self.cache_key(operation, **params)
@@ -394,8 +394,8 @@ class SmartCache:
 
     def __init__(
         self,
-        l1_backend: Optional[CacheBackend] = None,
-        l2_backend: Optional[CacheBackend] = None,
+        l1_backend: CacheBackend | None = None,
+        l2_backend: CacheBackend | None = None,
         enable_prefetch: bool = True,
         prefetch_threshold: int = 3,
     ):
@@ -403,11 +403,11 @@ class SmartCache:
         self.l2 = l2_backend  # Optional second level
         self.enable_prefetch = enable_prefetch
         self.prefetch_threshold = prefetch_threshold
-        self._access_patterns: Dict[str, List[str]] = defaultdict(list)
+        self._access_patterns: dict[str, list[str]] = defaultdict(list)
         self._prefetch_queue: asyncio.Queue = None
         self._lock = threading.RLock()
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         """Get with multi-level lookup and pattern tracking"""
         # Try L1
         value = self.l1.get(key)
@@ -430,7 +430,7 @@ class SmartCache:
         self,
         key: str,
         value: Any,
-        ttl: Optional[float] = None,
+        ttl: float | None = None,
         level: CacheLevel = CacheLevel.L1_MEMORY,
     ) -> bool:
         """Set with level specification"""
@@ -442,7 +442,7 @@ class SmartCache:
             # Default to L1
             return self.l1.set(key, value, ttl)
 
-    def prefetch(self, keys: List[str], fetch_func: Callable[[str], Any]):
+    def prefetch(self, keys: list[str], fetch_func: Callable[[str], Any]):
         """Prefetch multiple keys asynchronously"""
         if not self.enable_prefetch:
             return
@@ -478,7 +478,7 @@ class SmartCache:
                     # Could implement pattern detection here
                     pass
 
-    def get_metrics(self) -> Dict[str, CacheMetrics]:
+    def get_metrics(self) -> dict[str, CacheMetrics]:
         """Get metrics for all levels"""
         metrics = {}
 
@@ -541,9 +541,9 @@ class ObjectPool:
         self.max_idle_time = max_idle_time
         self.enable_metrics = enable_metrics
 
-        self._pools: Dict[str, List[Tuple[Any, float]]] = defaultdict(list)
-        self._locks: Dict[str, threading.RLock] = defaultdict(threading.RLock)
-        self._last_access: Dict[str, float] = {}
+        self._pools: dict[str, list[tuple[Any, float]]] = defaultdict(list)
+        self._locks: dict[str, threading.RLock] = defaultdict(threading.RLock)
+        self._last_access: dict[str, float] = {}
         self._global_lock = threading.RLock()
 
         if enable_metrics:
@@ -649,7 +649,7 @@ class ObjectPool:
                     self.metrics.pools_cleaned += 1
                     self.metrics.objects_cleaned += count
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get pool statistics"""
         stats = {
             "active_pools": len(self._pools),

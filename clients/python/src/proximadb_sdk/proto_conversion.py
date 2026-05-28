@@ -13,7 +13,7 @@ Licensed under the Apache License, Version 2.0
 """
 
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 
 class ProtoConverter:
@@ -34,7 +34,7 @@ class ProtoConverter:
     # Distance Metric Mappings (13 metrics)
     # =========================================================================
 
-    _DISTANCE_METRIC_STR_TO_INT: Dict[str, int] = {
+    _DISTANCE_METRIC_STR_TO_INT: dict[str, int] = {
         "unspecified": 0,
         "cosine": 1,
         "euclidean": 2,
@@ -51,7 +51,7 @@ class ProtoConverter:
         "custom": 13,
     }
 
-    _DISTANCE_METRIC_INT_TO_STR: Dict[int, str] = {
+    _DISTANCE_METRIC_INT_TO_STR: dict[int, str] = {
         v: k for k, v in _DISTANCE_METRIC_STR_TO_INT.items()
     }
 
@@ -59,7 +59,7 @@ class ProtoConverter:
     # Storage Engine Mappings (6 engines + legacy aliases)
     # =========================================================================
 
-    _STORAGE_ENGINE_STR_TO_INT: Dict[str, int] = {
+    _STORAGE_ENGINE_STR_TO_INT: dict[str, int] = {
         "unspecified": 0,
         "viper": 1,
         "sst": 2,
@@ -72,7 +72,7 @@ class ProtoConverter:
         "hybrid": 1,
     }
 
-    _STORAGE_ENGINE_INT_TO_STR: Dict[int, str] = {
+    _STORAGE_ENGINE_INT_TO_STR: dict[int, str] = {
         0: "unspecified",
         1: "viper",
         2: "sst",
@@ -86,7 +86,7 @@ class ProtoConverter:
     # Index Type Mappings (6 algorithms)
     # =========================================================================
 
-    _INDEX_TYPE_STR_TO_INT: Dict[str, int] = {
+    _INDEX_TYPE_STR_TO_INT: dict[str, int] = {
         "unspecified": 0,
         "hnsw": 1,
         "ivf": 2,
@@ -96,7 +96,7 @@ class ProtoConverter:
         "lsh": 6,
     }
 
-    _INDEX_TYPE_INT_TO_STR: Dict[int, str] = {
+    _INDEX_TYPE_INT_TO_STR: dict[int, str] = {
         v: k for k, v in _INDEX_TYPE_STR_TO_INT.items()
     }
 
@@ -104,7 +104,7 @@ class ProtoConverter:
     # Quantization Type Mappings
     # =========================================================================
 
-    _QUANTIZATION_TYPE_STR_TO_INT: Dict[str, int] = {
+    _QUANTIZATION_TYPE_STR_TO_INT: dict[str, int] = {
         "none": 0,
         "uniform": 1,
         "pq": 2,
@@ -113,7 +113,7 @@ class ProtoConverter:
         "custom": 5,
     }
 
-    _QUANTIZATION_TYPE_INT_TO_STR: Dict[int, str] = {
+    _QUANTIZATION_TYPE_INT_TO_STR: dict[int, str] = {
         v: k for k, v in _QUANTIZATION_TYPE_STR_TO_INT.items()
     }
 
@@ -122,7 +122,7 @@ class ProtoConverter:
     # =========================================================================
 
     @classmethod
-    def distance_metric_to_int(cls, value: Union[str, int, Enum, None]) -> int:
+    def distance_metric_to_int(cls, value: str | int | Enum | None) -> int:
         """Convert distance metric to gRPC integer representation.
 
         Args:
@@ -145,7 +145,7 @@ class ProtoConverter:
         return 0
 
     @classmethod
-    def distance_metric_to_str(cls, value: Union[str, int, Enum, None]) -> str:
+    def distance_metric_to_str(cls, value: str | int | Enum | None) -> str:
         """Convert distance metric to REST string representation.
 
         Args:
@@ -175,7 +175,7 @@ class ProtoConverter:
     # =========================================================================
 
     @classmethod
-    def storage_engine_to_int(cls, value: Union[str, int, Enum, None]) -> int:
+    def storage_engine_to_int(cls, value: str | int | Enum | None) -> int:
         """Convert storage engine to gRPC integer representation.
 
         Args:
@@ -198,7 +198,7 @@ class ProtoConverter:
         return 1
 
     @classmethod
-    def storage_engine_to_str(cls, value: Union[str, int, Enum, None]) -> str:
+    def storage_engine_to_str(cls, value: str | int | Enum | None) -> str:
         """Convert storage engine to REST string representation.
 
         Args:
@@ -229,7 +229,7 @@ class ProtoConverter:
     # =========================================================================
 
     @classmethod
-    def index_type_to_int(cls, value: Union[str, int, Enum, None]) -> int:
+    def index_type_to_int(cls, value: str | int | Enum | None) -> int:
         """Convert index type/algorithm to gRPC integer representation.
 
         Args:
@@ -252,7 +252,7 @@ class ProtoConverter:
         return 1
 
     @classmethod
-    def index_type_to_str(cls, value: Union[str, int, Enum, None]) -> str:
+    def index_type_to_str(cls, value: str | int | Enum | None) -> str:
         """Convert index type/algorithm to REST string representation.
 
         Args:
@@ -282,7 +282,7 @@ class ProtoConverter:
     # =========================================================================
 
     @classmethod
-    def quantization_type_to_int(cls, value: Union[str, int, Enum, None]) -> int:
+    def quantization_type_to_int(cls, value: str | int | Enum | None) -> int:
         """Convert quantization type to gRPC integer representation."""
         if value is None:
             return 0
@@ -298,7 +298,7 @@ class ProtoConverter:
         return 0
 
     @classmethod
-    def quantization_type_to_str(cls, value: Union[str, int, Enum, None]) -> str:
+    def quantization_type_to_str(cls, value: str | int | Enum | None) -> str:
         """Convert quantization type to REST string representation."""
         if value is None:
             return "none"
@@ -321,7 +321,7 @@ class ProtoConverter:
     # =========================================================================
 
     @classmethod
-    def vector_record_to_dict(cls, record: Any) -> Dict[str, Any]:
+    def vector_record_to_dict(cls, record: Any) -> dict[str, Any]:
         """Convert a VectorRecord to a dictionary for REST API."""
         if isinstance(record, dict):
             return record
@@ -336,7 +336,7 @@ class ProtoConverter:
         }
 
     @classmethod
-    def dict_to_search_result(cls, data: Dict[str, Any]) -> Dict[str, Any]:
+    def dict_to_search_result(cls, data: dict[str, Any]) -> dict[str, Any]:
         """Normalize a search result dictionary."""
         return {
             "id": data.get("id", data.get("vector_id", "")),
@@ -350,11 +350,11 @@ class ProtoConverter:
         cls,
         name: str,
         dimension: int,
-        distance_metric: Union[str, int, Enum, None] = None,
-        storage_engine: Union[str, int, Enum, None] = None,
-        index_type: Union[str, int, Enum, None] = None,
+        distance_metric: str | int | Enum | None = None,
+        storage_engine: str | int | Enum | None = None,
+        index_type: str | int | Enum | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Build a collection config dictionary for REST API."""
         config = {
             "name": name,
@@ -372,41 +372,41 @@ class ProtoConverter:
 # =========================================================================
 
 
-def distance_metric_to_int(value: Union[str, int, Enum, None]) -> int:
+def distance_metric_to_int(value: str | int | Enum | None) -> int:
     """Convert distance metric to integer."""
     return ProtoConverter.distance_metric_to_int(value)
 
 
-def distance_metric_to_str(value: Union[str, int, Enum, None]) -> str:
+def distance_metric_to_str(value: str | int | Enum | None) -> str:
     """Convert distance metric to string."""
     return ProtoConverter.distance_metric_to_str(value)
 
 
-def storage_engine_to_int(value: Union[str, int, Enum, None]) -> int:
+def storage_engine_to_int(value: str | int | Enum | None) -> int:
     """Convert storage engine to integer."""
     return ProtoConverter.storage_engine_to_int(value)
 
 
-def storage_engine_to_str(value: Union[str, int, Enum, None]) -> str:
+def storage_engine_to_str(value: str | int | Enum | None) -> str:
     """Convert storage engine to string."""
     return ProtoConverter.storage_engine_to_str(value)
 
 
-def index_type_to_int(value: Union[str, int, Enum, None]) -> int:
+def index_type_to_int(value: str | int | Enum | None) -> int:
     """Convert index type to integer."""
     return ProtoConverter.index_type_to_int(value)
 
 
-def index_type_to_str(value: Union[str, int, Enum, None]) -> str:
+def index_type_to_str(value: str | int | Enum | None) -> str:
     """Convert index type to string."""
     return ProtoConverter.index_type_to_str(value)
 
 
-def quantization_type_to_int(value: Union[str, int, Enum, None]) -> int:
+def quantization_type_to_int(value: str | int | Enum | None) -> int:
     """Convert quantization type to integer."""
     return ProtoConverter.quantization_type_to_int(value)
 
 
-def quantization_type_to_str(value: Union[str, int, Enum, None]) -> str:
+def quantization_type_to_str(value: str | int | Enum | None) -> str:
     """Convert quantization type to string."""
     return ProtoConverter.quantization_type_to_str(value)

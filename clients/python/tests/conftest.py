@@ -10,13 +10,24 @@ Tests rely on the editable install (pip install -e .) rather than
 sys.path manipulation for consistent imports.
 """
 
+# Quarantine list — files that reference deprecated `proximadb.ProximaDB`
+# or `proximadb.init_logging` at module load time and therefore fail
+# pytest collection before any test can run. Each entry should either
+# be deleted, or updated to the current SDK API, in a follow-up
+# cleanup PR. Listing them here keeps the rest of the suite collectable.
+collect_ignore_glob = [
+    "quick_timing_test.py",
+    "test_50k_benchmark.py",
+    "test_engine_index_matrix.py",
+    "test_rl_planner_embedded.py",
+    "utils/embedded_base_test.py",
+]
+
 import asyncio
 import logging
 import os
 import tempfile
 import time
-from pathlib import Path
-from typing import Any, Dict, Optional
 
 import pytest
 

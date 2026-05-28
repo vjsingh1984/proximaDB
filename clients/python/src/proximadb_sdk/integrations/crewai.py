@@ -23,7 +23,8 @@ Example::
 from __future__ import annotations
 
 import uuid
-from typing import Any, Callable, Optional, Type
+from collections.abc import Callable
+from typing import Any
 
 from crewai.tools import BaseTool
 from pydantic import BaseModel, Field
@@ -54,7 +55,7 @@ class ProximaDBSearchTool(BaseTool):
         "Search for relevant documents in ProximaDB using semantic similarity. "
         "Input should be a natural language query string."
     )
-    args_schema: Type[BaseModel] = _SearchInput
+    args_schema: type[BaseModel] = _SearchInput
 
     client: Any = Field(exclude=True)
     collection_name: str = Field(default="documents")
@@ -105,8 +106,8 @@ class ProximaDBKnowledgeSource:
     def add(
         self,
         texts: list[str],
-        metadatas: Optional[list[dict[str, Any]]] = None,
-        ids: Optional[list[str]] = None,
+        metadatas: list[dict[str, Any]] | None = None,
+        ids: list[str] | None = None,
     ) -> list[str]:
         """Embed and insert texts into ProximaDB.
 

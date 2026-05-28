@@ -7,9 +7,7 @@ requiring a running ProximaDB server.
 
 import logging
 import time
-from typing import Any, Dict, List
 
-import numpy as np
 import pytest
 
 logger = logging.getLogger(__name__)
@@ -87,7 +85,7 @@ class TestComprehensiveIntegration:
         insert_time = time.time() - start_time
         throughput = test_size / insert_time
 
-        logger.info(f"\\n📊 INSERT PERFORMANCE:")
+        logger.info("\\n📊 INSERT PERFORMANCE:")
         logger.info(f"   Vectors: {test_size}")
         logger.info(f"   Time: {insert_time:.2f}s")
         logger.info(f"   Throughput: {throughput:.1f} vectors/sec")
@@ -97,7 +95,7 @@ class TestComprehensiveIntegration:
 
     def _test_search_operations(self, bert_service, corpus_size):
         """Test different search operations."""
-        logger.info(f"\\n🔍 TESTING SEARCH OPERATIONS:")
+        logger.info("\\n🔍 TESTING SEARCH OPERATIONS:")
 
         # 1. Test ID-based search (metadata filter)
         test_id = "corpus_vec_00001"

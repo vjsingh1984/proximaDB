@@ -133,8 +133,8 @@ def test_comprehensive_recovery():
             storage_engine="sst",  # Using SST for persistence testing
         )
         print(f"✅ Collection created: {collection_name}")
-        print(f"   Storage engine: SST")
-        print(f"   Dimension: 128")
+        print("   Storage engine: SST")
+        print("   Dimension: 128")
     except Exception as e:
         print(f"❌ Failed to create collection: {e}")
         stop_server()
@@ -310,7 +310,7 @@ def test_comprehensive_recovery():
                     f"   Metadata preserved: {list(search_results[0].metadata.keys())}"
                 )
         else:
-            print(f"❌ No vectors found after restart")
+            print("❌ No vectors found after restart")
             recovery_results["errors"].append("Vectors not recovered")
 
     except Exception as e:
@@ -335,7 +335,7 @@ def test_comprehensive_recovery():
                 print(f"✅ Found {len(nodes)} graph nodes after restart")
                 recovery_results["graph_nodes"] = True
             else:
-                print(f"⚠️  No graph nodes found")
+                print("⚠️  No graph nodes found")
         except Exception as e:
             print(f"⚠️  Graph node check: {e}")
 
@@ -349,7 +349,7 @@ def test_comprehensive_recovery():
     print("RECOVERY TEST RESULTS")
     print("=" * 80)
 
-    print(f"\n📊 Recovery Summary:")
+    print("\n📊 Recovery Summary:")
     print(
         f"   Collections recovered: {'✅' if recovery_results['collections'] else '❌'}"
     )
@@ -361,7 +361,7 @@ def test_comprehensive_recovery():
     )
 
     if recovery_results["errors"]:
-        print(f"\n⚠️  Errors encountered:")
+        print("\n⚠️  Errors encountered:")
         for error in recovery_results["errors"]:
             print(f"   - {error}")
 
@@ -369,7 +369,7 @@ def test_comprehensive_recovery():
     print("\n🧹 Cleaning up...")
     try:
         rest_client.delete_collection(collection_name)
-        print(f"✅ Deleted test collection")
+        print("✅ Deleted test collection")
     except:
         pass
 
