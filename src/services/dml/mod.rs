@@ -610,7 +610,7 @@ impl DmlService {
                 record
                     .map(Self::rich_result_to_record)
                     .filter(|record| {
-                        Self::record_matches_select_predicates(record, &predicates, primary_key)
+                        Self::record_matches_select_predicates(record, predicates, primary_key)
                     })
                     .into_iter()
                     .take(limit.unwrap_or(usize::MAX))
@@ -636,7 +636,7 @@ impl DmlService {
             let primary_key = table_schema.primary_key.first().map(String::as_str);
             let mut filtered = Vec::new();
             for record in records {
-                if Self::record_matches_select_predicates(&record, &predicates, primary_key) {
+                if Self::record_matches_select_predicates(&record, predicates, primary_key) {
                     filtered.push(record);
                     if limit.is_some_and(|limit| filtered.len() >= limit) {
                         break;
@@ -1421,7 +1421,7 @@ impl DmlService {
                     .iter()
                     .filter(|row| {
                         row.get(idx)
-                            .map_or(true, |v| matches!(v, SqlValueLiteral::Null))
+                            .is_none_or(|v| matches!(v, SqlValueLiteral::Null))
                     })
                     .count() as u64
             })
@@ -2301,12 +2301,12 @@ impl DmlService {
                 table_schema,
             )?;
 
-            if column_name == "timestamp" {
-                if let Some(timestamp_ms) = self.literal_to_timestamp(&effective_value)? {
-                    let timestamp_ns = timestamp_ms.saturating_mul(1_000_000);
-                    created_at_ns = Some(timestamp_ns);
-                    updated_at_ns = timestamp_ns;
-                }
+            if column_name == "timestamp"
+                && let Some(timestamp_ms) = self.literal_to_timestamp(&effective_value)?
+            {
+                let timestamp_ns = timestamp_ms.saturating_mul(1_000_000);
+                created_at_ns = Some(timestamp_ns);
+                updated_at_ns = timestamp_ns;
             }
 
             row_values.insert(column_name.clone(), proxima_value);
@@ -2420,22 +2420,18 @@ impl DmlService {
                     column,
                     operator,
                     value,
-                } => {
-                    if column == &primary_key_column
-                        && matches!(operator, ComparisonOperator::Equal)
-                    {
-                        ids.push(self.literal_to_string(value)?);
-                    }
+                } if column == &primary_key_column
+                    && matches!(operator, ComparisonOperator::Equal) =>
+                {
+                    ids.push(self.literal_to_string(value)?);
                 }
                 Condition::In {
                     column,
                     values,
                     negated,
-                } => {
-                    if column == &primary_key_column && !negated {
-                        for v in values {
-                            ids.push(self.literal_to_string(v)?);
-                        }
+                } if column == &primary_key_column && !negated => {
+                    for v in values {
+                        ids.push(self.literal_to_string(v)?);
                     }
                 }
                 _ => {}
@@ -2510,10 +2506,10 @@ impl DmlService {
 
         if let Some(unquoted) = Self::unquote_sql_string(trimmed) {
             let value = unquoted?;
-            if value.starts_with('{') || value.starts_with('[') {
-                if let Ok(json) = serde_json::from_str(&value) {
-                    return Ok(SqlValueLiteral::Json(json));
-                }
+            if (value.starts_with('{') || value.starts_with('['))
+                && let Ok(json) = serde_json::from_str(&value)
+            {
+                return Ok(SqlValueLiteral::Json(json));
             }
             return Ok(SqlValueLiteral::String(value));
         }

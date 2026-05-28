@@ -461,9 +461,15 @@ fn run_phases_blocking(
     // Drop the arena-bearing context before second phase — the scorer
     // doesn't need it (it carries its own model session) and dropping
     // here makes the lifetime story easier for any future caller that
-    // wants to keep the pipeline alive past this function.
-    drop(ctx);
-    drop(arena);
+    // wants to keep the pipeline alive past this function. Neither
+    // type currently impls `Drop`, but `drop(_)` still ends the
+    // lexical borrow so subsequent code can re-borrow whatever they
+    // were carrying.
+    #[allow(clippy::drop_non_drop)]
+    {
+        drop(ctx);
+        drop(arena);
+    }
 
     // R-7c.4d follow-up: emit per-phase wall-clock latency (spec
     // §4.10 rank_phase_latency_us histogram) for first phase from
@@ -506,18 +512,16 @@ fn run_phases_blocking(
                 // distinction only matters once a real per-doc
                 // feature observation lands.
                 m.observe_phase_latency_us(profile, phase_label, elapsed_us);
-                if let Ok(ref outcome) = result {
-                    if outcome.truncated {
-                        // The second phase preserves the first
-                        // phase's truncated flag; if it's still set
-                        // post-rescore, surface a second-phase
-                        // truncation event too so dashboards
-                        // attribute correctly (the first-phase
-                        // record_phase_truncated emit at the
-                        // rank-core call site already fired with
-                        // "budget"/"deadline").
-                        m.inc_phase_truncated(profile, phase_label, "carried_forward");
-                    }
+                if let Ok(ref outcome) = result
+                    && outcome.truncated
+                {
+                    // The second phase preserves the first phase's
+                    // truncated flag; if it's still set post-rescore,
+                    // surface a second-phase truncation event too so
+                    // dashboards attribute correctly (the first-phase
+                    // record_phase_truncated emit at the rank-core
+                    // call site already fired with "budget"/"deadline").
+                    m.inc_phase_truncated(profile, phase_label, "carried_forward");
                 }
             }
             result
@@ -617,14 +621,14 @@ impl RankServices {
             .map(|r| r.value().clone())
     }
 
-    /// Install (or hot-reload) a compiled profile into the registry
-    /// + fire `proximadb_rank_profile_reload_total{profile, outcome}`
-    /// per spec §4.10. The registry's install is infallible so the
-    /// outcome label is always `"ok"` here; the `error` variant is
-    /// reserved for higher-level install paths (DSL parse failure,
-    /// validator rejection) that decide *not* to call into the
-    /// registry. Callers that go through the validator should bump
-    /// the counter with `outcome="error"` on rejection.
+    /// Install (or hot-reload) a compiled profile into the registry and
+    /// fire `proximadb_rank_profile_reload_total{profile, outcome}` per
+    /// spec §4.10. The registry's install is infallible so the outcome
+    /// label is always `"ok"` here; the `error` variant is reserved for
+    /// higher-level install paths (DSL parse failure, validator
+    /// rejection) that decide *not* to call into the registry. Callers
+    /// that go through the validator should bump the counter with
+    /// `outcome="error"` on rejection.
     pub fn install_profile(&self, profile: CompiledRankProfile) {
         let name = profile.spec.name.clone();
         self.profile_registry.install(profile);
@@ -741,6 +745,11 @@ impl HybridCoordinatorAdapter {
 /// non-numeric ids — the caller decides whether to drop or use a
 /// sentinel. R-7c.3.1 should replace this with a string-aware
 /// DocHandle variant.
+///
+/// Currently unused at production call sites — kept (and
+/// `#[allow(dead_code)]`-d) for the R-7c.3.1 follow-up that wires it
+/// into the hybrid candidate path.
+#[allow(dead_code)]
 fn doc_id_to_handle(doc_id: &str) -> Option<DocHandle> {
     doc_id.parse::<u32>().ok().map(DocHandle)
 }

@@ -53,7 +53,7 @@ use proximadb_records::{ProximaRecord, ProximaTreeNode};
 /// Filterable metadata cached in HNSW nodes for predicate-aware search
 ///
 /// Memory overhead target: <50 bytes per record (excluding typed_attrs)
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FilterableHnswMetadata {
     /// Tenant identifier for multi-tenancy isolation
     pub tenant_id: Option<String>,
@@ -70,18 +70,6 @@ pub struct FilterableHnswMetadata {
     /// Compact typed attributes for equality/range predicates
     /// Only stores primitives; complex types remain in SST
     pub typed_attrs: TypedAttributes,
-}
-
-impl Default for FilterableHnswMetadata {
-    fn default() -> Self {
-        Self {
-            tenant_id: None,
-            rls_tags: Vec::new(),
-            created_at_ns: 0,
-            expires_at_ns: None,
-            typed_attrs: TypedAttributes::default(),
-        }
-    }
 }
 
 impl FilterableHnswMetadata {
@@ -241,62 +229,58 @@ pub fn extract_filterable_metadata(
     record: &ProximaRecord,
     filterable_fields: &FilterableFieldsConfig,
 ) -> FilterableHnswMetadata {
-    let mut metadata = FilterableHnswMetadata::default();
-
-    // Extract tenant_id
-    metadata.tenant_id = if !record.tenant_id.is_empty() {
-        Some(record.tenant_id.clone())
-    } else {
-        None
+    let mut metadata = FilterableHnswMetadata {
+        tenant_id: if !record.tenant_id.is_empty() {
+            Some(record.tenant_id.clone())
+        } else {
+            None
+        },
+        created_at_ns: record.created_at_ns,
+        expires_at_ns: record
+            .props
+            .get("expires_at_ns")
+            .and_then(extract_i64_from_node),
+        ..FilterableHnswMetadata::default()
     };
 
     // Extract RLS tags from props if present
-    if let Some(rls_value) = record.props.get("rls_tags") {
-        if let Some(tags) = extract_string_array(rls_value) {
-            metadata.rls_tags = tags;
-        }
-    }
-
-    // Extract timestamps
-    metadata.created_at_ns = record.created_at_ns;
-
-    // Extract TTL if present
-    if let Some(ttl_value) = record.props.get("expires_at_ns") {
-        metadata.expires_at_ns = extract_i64_from_node(ttl_value);
+    if let Some(rls_value) = record.props.get("rls_tags")
+        && let Some(tags) = extract_string_array(rls_value)
+    {
+        metadata.rls_tags = tags;
     }
 
     // Extract typed attributes based on config
     for field in &filterable_fields.int_fields {
-        if let Some(value) = record.props.get(field) {
-            if let Some(int_val) = extract_i64_from_node(value) {
-                metadata.typed_attrs.set_int(field.clone(), int_val);
-            }
+        if let Some(value) = record.props.get(field)
+            && let Some(int_val) = extract_i64_from_node(value)
+        {
+            metadata.typed_attrs.set_int(field.clone(), int_val);
         }
     }
 
     for field in &filterable_fields.float_fields {
-        if let Some(value) = record.props.get(field) {
-            if let Some(float_val) = extract_f64_from_node(value) {
-                metadata.typed_attrs.set_float(field.clone(), float_val);
-            }
+        if let Some(value) = record.props.get(field)
+            && let Some(float_val) = extract_f64_from_node(value)
+        {
+            metadata.typed_attrs.set_float(field.clone(), float_val);
         }
     }
 
     for field in &filterable_fields.bool_fields {
-        if let Some(value) = record.props.get(field) {
-            if let Some(bool_val) = extract_bool_from_node(value) {
-                metadata.typed_attrs.set_bool(field.clone(), bool_val);
-            }
+        if let Some(value) = record.props.get(field)
+            && let Some(bool_val) = extract_bool_from_node(value)
+        {
+            metadata.typed_attrs.set_bool(field.clone(), bool_val);
         }
     }
 
     for field in &filterable_fields.string_fields {
-        if let Some(value) = record.props.get(field) {
-            if let Some(string_val) = extract_string_from_node(value) {
-                if string_val.len() <= 64 {
-                    let _ = metadata.typed_attrs.set_string(field.clone(), string_val);
-                }
-            }
+        if let Some(value) = record.props.get(field)
+            && let Some(string_val) = extract_string_from_node(value)
+            && string_val.len() <= 64
+        {
+            let _ = metadata.typed_attrs.set_string(field.clone(), string_val);
         }
     }
 

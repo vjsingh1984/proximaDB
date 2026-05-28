@@ -1318,7 +1318,7 @@ impl VectorRecordProcessor {
 
             CustomComparisonType::CollectionGrouped => {
                 // Since all records are from the same collection, just sort by timestamp
-                records.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+                records.sort_by_key(|r| r.timestamp);
             }
 
             CustomComparisonType::CompressionOptimal => {
@@ -1355,7 +1355,7 @@ impl VectorRecordProcessor {
     ) -> Result<()> {
         match strategy {
             SortingStrategy::ByTimestamp => {
-                records.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+                records.sort_by_key(|r| r.timestamp);
             }
             SortingStrategy::ById => {
                 records.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
@@ -1407,7 +1407,7 @@ impl VectorRecordProcessor {
     ) -> Result<()> {
         match strategy {
             SortingStrategy::ByTimestamp => {
-                records.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+                records.sort_by_key(|r| r.timestamp);
             }
             SortingStrategy::BySimilarity => {
                 // Enhanced similarity sorting using vector magnitude and first few dimensions
@@ -1737,11 +1737,7 @@ impl VectorRecordProcessor {
 
         let total_size = batch.get_array_memory_size();
         let row_count = batch.num_rows();
-        let avg_row_size = if row_count > 0 {
-            total_size / row_count
-        } else {
-            0
-        };
+        let avg_row_size = total_size.checked_div(row_count).unwrap_or(0);
 
         let recommended_algorithm = if avg_row_size > 1024 {
             "ZSTD" // Better for larger rows
@@ -1844,7 +1840,7 @@ impl VectorProcessor for VectorRecordProcessor {
 
         match &self.config.sorting_strategy {
             SortingStrategy::ByTimestamp => {
-                records.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+                records.sort_by_key(|r| r.timestamp);
                 tracing::debug!("🔢 Sorted {} records by timestamp", record_count);
             }
 
@@ -2139,7 +2135,7 @@ impl ParquetFlusher {
         // Extract base compression algorithm from ViperCompressionConfig
         // For Mixed mode, use the default algorithm as the base compression
         let base_algorithm = match &self.config.compression_algorithm {
-            ViperCompressionConfig::Uniform(algo) => algo.clone(),
+            ViperCompressionConfig::Uniform(algo) => *algo,
             ViperCompressionConfig::Mixed { default, .. } => default.clone(),
         };
 
