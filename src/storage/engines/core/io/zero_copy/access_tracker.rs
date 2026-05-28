@@ -230,7 +230,11 @@ impl ZeroCopyAccessPatternTracker {
     }
 
     /// Get access statistics for a file
-    pub fn get_file_stats(&self, file_path: &str, collection_id: &str) -> Option<&ZeroCopyAccessStats> {
+    pub fn get_file_stats(
+        &self,
+        file_path: &str,
+        collection_id: &str,
+    ) -> Option<&ZeroCopyAccessStats> {
         let file_key = self.create_file_key(file_path, collection_id);
         self.file_stats.get(&file_key)
     }
@@ -431,7 +435,9 @@ impl ZeroCopyAccessPatternTracker {
         }
     }
 
-    fn analyze_timing_pattern_static(recent_events: &VecDeque<ZeroCopyAccessEvent>) -> TimingPattern {
+    fn analyze_timing_pattern_static(
+        recent_events: &VecDeque<ZeroCopyAccessEvent>,
+    ) -> TimingPattern {
         if recent_events.len() < 3 {
             return TimingPattern::Random;
         }

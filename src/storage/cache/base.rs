@@ -233,8 +233,7 @@ where
                     .await;
             }
             Err(e)
-                if e.kind
-                    == crate::storage::cache::backend::StorageErrorKind::CapacityExceeded =>
+                if e.kind == crate::storage::cache::backend::StorageErrorKind::CapacityExceeded =>
             {
                 // Cache is full - trigger eviction through global orchestrator
                 if let Some(orchestrator) =

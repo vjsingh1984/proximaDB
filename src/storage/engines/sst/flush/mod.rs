@@ -268,9 +268,8 @@ impl SstEngine {
         // format is used. None for ArrowBlock writes (which don't expose
         // index metadata yet — directory emission stays off for that
         // branch until ArrowBlockWriter grows an equivalent outcome).
-        let mut write_outcome: Option<
-            crate::storage::engines::sst::writer::SstableWriteOutcome,
-        > = None;
+        let mut write_outcome: Option<crate::storage::engines::sst::writer::SstableWriteOutcome> =
+            None;
 
         match block_format {
             BlockFormat::ArrowBlock => {

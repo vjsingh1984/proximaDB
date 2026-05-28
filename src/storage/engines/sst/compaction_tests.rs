@@ -295,8 +295,8 @@ mod tests {
     /// for an fp16 collection.
     #[tokio::test]
     async fn check_compaction_needed_stamps_precision_hint_from_resolver() {
-        use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
         use proximadb_catalog::cache::CatalogCache;
+        use proximadb_catalog::canonical_precision::CanonicalPrecisionResolver;
         use proximadb_catalog::oltp::{OltpCatalog, OltpCatalogConfig};
         use proximadb_catalog::{Catalog, CatalogTableSchema, TableIdentifier};
         use std::collections::HashMap as StdHashMap;
@@ -321,8 +321,7 @@ mod tests {
             name: "fp16_coll".to_string(),
             ..Default::default()
         };
-        schema.canonical_embedding_precision =
-            proximadb_records::EmbeddingScalarType::Fp16;
+        schema.canonical_embedding_precision = proximadb_records::EmbeddingScalarType::Fp16;
         cat.create_table(&table_id, schema).await.unwrap();
 
         let resolver = Arc::new(CanonicalPrecisionResolver::new(
@@ -355,7 +354,10 @@ mod tests {
         // that when a real compaction task is produced, it will go
         // through the .resolve() call we just added at line 524.
         let probe_id = Compaction::collection_to_table_identifier("fp16_coll");
-        assert_eq!(probe_id, table_id, "collection→TableIdentifier mapping must match the catalog");
+        assert_eq!(
+            probe_id, table_id,
+            "collection→TableIdentifier mapping must match the catalog"
+        );
 
         // Drop the manager (worker pool not started). The test asserts
         // wiring shape; full integration with a real source SST file
@@ -404,8 +406,7 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(i, src)| {
-                let f16s: Vec<half::f16> =
-                    src.iter().map(|&x| half::f16::from_f32(x)).collect();
+                let f16s: Vec<half::f16> = src.iter().map(|&x| half::f16::from_f32(x)).collect();
                 ProximaRecord {
                     oid: format!("compact_fp16_{:05}", i),
                     embeddings: vec![EmbeddingCell {

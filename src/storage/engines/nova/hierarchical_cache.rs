@@ -284,7 +284,10 @@ impl NovaHierarchicalCache {
     }
 
     /// Get RowGroup statistics with TTL
-    pub async fn get_rowgroup_stats(&self, rowgroup_id: &str) -> Result<Arc<NovaCacheRowGroupStats>> {
+    pub async fn get_rowgroup_stats(
+        &self,
+        rowgroup_id: &str,
+    ) -> Result<Arc<NovaCacheRowGroupStats>> {
         // Check cache with TTL
         {
             let cache = self.rowgroup_cache.read().await;
@@ -358,7 +361,11 @@ impl NovaHierarchicalCache {
     }
 
     /// Update global statistics sidecar
-    pub async fn update_global_stats(&self, collection_id: &str, stats: NovaCacheCollectionStatistics) {
+    pub async fn update_global_stats(
+        &self,
+        collection_id: &str,
+        stats: NovaCacheCollectionStatistics,
+    ) {
         let mut global = self.global_stats.write().await;
         global
             .collection_stats

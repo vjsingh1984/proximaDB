@@ -54,8 +54,11 @@ pub struct DecompressionCache {
     /// Cache statistics
     stats: Arc<RwLock<DecompressionCacheStats>>,
     /// Compression-specific sub-caches for better locality
-    compression_caches:
-        Arc<RwLock<HashMap<proximadb_compression::CompressionAlgorithm, Vec<DecompressionBlockCacheKey>>>>,
+    compression_caches: Arc<
+        RwLock<
+            HashMap<proximadb_compression::CompressionAlgorithm, Vec<DecompressionBlockCacheKey>>,
+        >,
+    >,
     /// File modification timestamps for invalidation
     file_timestamps: Arc<dashmap::DashMap<String, i64>>,
     /// Configuration from TOML

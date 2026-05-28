@@ -102,7 +102,7 @@ pub enum PeekedPaxBlockVersion {
 /// just the scalar type without re-deriving the table each time.
 pub const fn alignment_log2_for(scalar_type: EmbeddingScalarType) -> u8 {
     match scalar_type {
-        EmbeddingScalarType::Fp32 => 2, // 4-byte
+        EmbeddingScalarType::Fp32 => 2,                             // 4-byte
         EmbeddingScalarType::Fp16 | EmbeddingScalarType::Bf16 => 1, // 2-byte
         EmbeddingScalarType::Int8Scalar | EmbeddingScalarType::UInt8Scalar => 0, // 1-byte
     }
@@ -376,9 +376,7 @@ fn write_native_bytes_into(values: &EmbeddingValues, buf: &mut Vec<u8>) -> Resul
 /// - mixed scalar_type for the same column slot across records
 /// - mixed embedding cell count across records
 /// - any column carries Int8/UInt8 (Phase 3 work)
-pub fn encode_pax_v2_block(
-    records: &[ProximaRecord],
-) -> Result<(Vec<u8>, Vec<ColumnTableEntry>)> {
+pub fn encode_pax_v2_block(records: &[ProximaRecord]) -> Result<(Vec<u8>, Vec<ColumnTableEntry>)> {
     if records.is_empty() {
         bail!("cannot encode empty record batch as v2 PAX block");
     }
@@ -450,7 +448,12 @@ pub fn encode_pax_v2_block(
         if out.len() < target {
             out.resize(target, 0u8); // zero-fill alignment pad
         }
-        debug_assert_eq!(out.len(), target, "writer offset drift at column {}", entry.column_id);
+        debug_assert_eq!(
+            out.len(),
+            target,
+            "writer offset drift at column {}",
+            entry.column_id
+        );
         out.extend_from_slice(payload);
     }
     Ok((out, table))
@@ -545,10 +548,16 @@ mod tests {
         buf.extend_from_slice(PAX_BLOCK_MAGIC);
         buf.extend_from_slice(&1u16.to_le_bytes());
         buf.extend_from_slice(&[0u8; 2]); // num_columns placeholder
-        assert_eq!(peek_pax_block_version(&buf).unwrap(), PeekedPaxBlockVersion::V1);
+        assert_eq!(
+            peek_pax_block_version(&buf).unwrap(),
+            PeekedPaxBlockVersion::V1
+        );
         // v2
         buf[4..6].copy_from_slice(&2u16.to_le_bytes());
-        assert_eq!(peek_pax_block_version(&buf).unwrap(), PeekedPaxBlockVersion::V2);
+        assert_eq!(
+            peek_pax_block_version(&buf).unwrap(),
+            PeekedPaxBlockVersion::V2
+        );
         // garbage version
         buf[4..6].copy_from_slice(&99u16.to_le_bytes());
         assert!(peek_pax_block_version(&buf).is_err());
@@ -598,7 +607,11 @@ mod tests {
         // Header: 8 prefix + 2*8 entries + 8 suffix = 32.
         assert_eq!(header_bytes.len(), 32);
         assert_eq!(table[0].offset, 32, "fp32 starts right after header");
-        assert_eq!(table[1].offset, 32 + 48, "fp16 abuts fp32 (already 2-aligned)");
+        assert_eq!(
+            table[1].offset,
+            32 + 48,
+            "fp16 abuts fp32 (already 2-aligned)"
+        );
         // Both offsets are aligned.
         assert_eq!(table[0].offset % 4, 0);
         assert_eq!(table[1].offset % 2, 0);
@@ -624,7 +637,8 @@ mod tests {
         let int8_end = table[0].offset + 5;
         assert_eq!(int8_end % 2, 1, "int8 ends on odd offset");
         assert_eq!(
-            table[1].offset, int8_end + 1,
+            table[1].offset,
+            int8_end + 1,
             "fp16 column gets 1 byte of padding"
         );
         assert_eq!(table[1].offset % 2, 0);
@@ -912,7 +926,9 @@ mod tests {
         }
         assert_eq!(
             got,
-            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0]
+            vec![
+                1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0
+            ]
         );
     }
 

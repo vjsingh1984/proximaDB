@@ -838,7 +838,10 @@ mod codebook_lifecycle_tests {
         cb.mark_stale_on_epoch_bump(2);
         assert!(cb.try_claim_for_retraining());
         assert_eq!(cb.status, CodebookStatus::Retraining);
-        assert!(!cb.mark_stale_on_epoch_bump(3), "must not overwrite Retraining");
+        assert!(
+            !cb.mark_stale_on_epoch_bump(3),
+            "must not overwrite Retraining"
+        );
         assert_eq!(cb.status, CodebookStatus::Retraining);
     }
 
@@ -848,7 +851,10 @@ mod codebook_lifecycle_tests {
         assert!(!cb.try_claim_for_retraining(), "Fresh is not claimable");
         cb.mark_stale_on_epoch_bump(2);
         assert!(cb.try_claim_for_retraining());
-        assert!(!cb.try_claim_for_retraining(), "Retraining double-claim refused");
+        assert!(
+            !cb.try_claim_for_retraining(),
+            "Retraining double-claim refused"
+        );
     }
 
     #[test]

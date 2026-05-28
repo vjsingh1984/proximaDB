@@ -189,7 +189,10 @@ impl PredictivePrefetcher {
     }
 
     /// Get prefetched block if available
-    pub async fn get_prefetched(&self, key: &PrefetcherBlockCacheKey) -> Option<Arc<ProximaDataBlock>> {
+    pub async fn get_prefetched(
+        &self,
+        key: &PrefetcherBlockCacheKey,
+    ) -> Option<Arc<ProximaDataBlock>> {
         if let Some((_, block)) = self.prefetch_cache.remove(key) {
             self.metrics.prefetch_hits.fetch_add(1, Ordering::Relaxed);
             Some(block)
@@ -596,7 +599,11 @@ impl PrefetchQueue {
         self.active_tasks.contains_key(key)
     }
 
-    fn mark_active(&mut self, key: PrefetcherBlockCacheKey, handle: tokio::task::JoinHandle<Result<()>>) {
+    fn mark_active(
+        &mut self,
+        key: PrefetcherBlockCacheKey,
+        handle: tokio::task::JoinHandle<Result<()>>,
+    ) {
         self.active_tasks.insert(key, handle);
     }
 }

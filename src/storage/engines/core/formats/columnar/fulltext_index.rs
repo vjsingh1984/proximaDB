@@ -1087,7 +1087,11 @@ impl FullTextIndex {
     }
 
     /// Search the index with custom options
-    pub fn search_with_options(&self, query: &str, options: SearchOptions) -> Vec<FulltextSearchResult> {
+    pub fn search_with_options(
+        &self,
+        query: &str,
+        options: SearchOptions,
+    ) -> Vec<FulltextSearchResult> {
         if self.documents.is_empty() {
             return Vec::new();
         }

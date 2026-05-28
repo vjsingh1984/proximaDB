@@ -2086,7 +2086,11 @@ impl ParquetFlusher {
     }
 
     /// Flush record batch to parquet file
-    pub async fn flush_batch(&self, batch: RecordBatch, output_path: &str) -> Result<ViperPipelineFlushResult> {
+    pub async fn flush_batch(
+        &self,
+        batch: RecordBatch,
+        output_path: &str,
+    ) -> Result<ViperPipelineFlushResult> {
         let start_time = Instant::now();
         let original_size = batch.get_array_memory_size();
 
@@ -2406,7 +2410,10 @@ impl ParquetFlusher {
 }
 
 impl CompactionEngine {
-    async fn new(config: ViperPipelineCompactionConfig, filesystem: Arc<FilesystemFactory>) -> Result<Self> {
+    async fn new(
+        config: ViperPipelineCompactionConfig,
+        filesystem: Arc<FilesystemFactory>,
+    ) -> Result<Self> {
         Ok(Self {
             config,
             task_queue: Arc::new(Mutex::new(VecDeque::new())),

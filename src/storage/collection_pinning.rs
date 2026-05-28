@@ -202,7 +202,35 @@ impl CollectionPinRegistry {
             }
         }
 
+        // Metrics: after the registry materializes from disk, snap the
+        // current-pins gauge to the authoritative count per target.
+        // Per-pin `inc_current_pin` was never called for these entries
+        // because they were inserted directly into the DashMap, so the
+        // gauge needs an explicit reset to agree with reality from the
+        // first scrape after startup.
+        registry.publish_current_pins_to_metrics();
+
         registry
+    }
+
+    /// Recompute current-pins-per-target from the in-memory registry
+    /// and write the result into the Prometheus gauges. Called by
+    /// [`Self::load_or_create_at`] after disk load. Cheap (one pass
+    /// over the DashMap) — safe to call from cold paths or test
+    /// fixtures where the registry was populated outside the
+    /// `pin`/`unpin` hooks.
+    pub fn publish_current_pins_to_metrics(&self) {
+        let mut memory = 0i64;
+        let mut nvme = 0i64;
+        let mut cloud = 0i64;
+        for entry in self.pinned.iter() {
+            match entry.value().target {
+                CollectionPinTarget::Memory => memory += 1,
+                CollectionPinTarget::NvmeSsd => nvme += 1,
+                CollectionPinTarget::Cloud => cloud += 1,
+            }
+        }
+        crate::metrics::collection_pin_metrics::reset_current_pins(memory, nvme, cloud);
     }
 
     /// Best-effort serialize-and-write of the current state. Used
@@ -250,8 +278,21 @@ impl CollectionPinRegistry {
             replicas,
             pinned_at_ns,
         };
-        self.pinned.insert(collection_id.into(), state.clone());
+        let previous = self
+            .pinned
+            .insert(collection_id.into(), state.clone());
         self.persist_if_configured();
+
+        // Metrics: always count the pin op. For the current-pins
+        // gauge, re-pinning (replacing a previous pin) needs to
+        // decrement the OLD target before incrementing the NEW one so
+        // the gauge stays consistent with the registry.
+        crate::metrics::collection_pin_metrics::record_pin(target);
+        if let Some(prev) = previous {
+            crate::metrics::collection_pin_metrics::dec_current_pin(prev.target);
+        }
+        crate::metrics::collection_pin_metrics::inc_current_pin(target);
+
         state
     }
 
@@ -259,8 +300,13 @@ impl CollectionPinRegistry {
     /// existed, `None` when the collection wasn't pinned.
     pub fn unpin(&self, collection_id: &str) -> Option<PinState> {
         let result = self.pinned.remove(collection_id).map(|(_, state)| state);
-        if result.is_some() {
+        if let Some(ref prev) = result {
             self.persist_if_configured();
+            // Metrics: count the unpin op and drop the gauge for the
+            // tier that was actually removed (not the registry's
+            // current state, which no longer contains this entry).
+            crate::metrics::collection_pin_metrics::record_unpin(prev.target);
+            crate::metrics::collection_pin_metrics::dec_current_pin(prev.target);
         }
         result
     }
@@ -441,10 +487,8 @@ mod tests {
     // ── Slice 6.5: persistence tests ────────────────────────────────────
 
     fn temp_registry_path() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "proximadb-pin-registry-{}",
-            uuid::Uuid::new_v4()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("proximadb-pin-registry-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir.join("registry.json")
     }
@@ -495,7 +539,10 @@ mod tests {
         drop(reg);
         let reloaded = CollectionPinRegistry::load_or_create_at(path.clone());
         assert_eq!(reloaded.len(), 1);
-        assert!(!reloaded.is_pinned("coll-a"), "unpinned collection must not survive reload");
+        assert!(
+            !reloaded.is_pinned("coll-a"),
+            "unpinned collection must not survive reload"
+        );
         assert!(reloaded.is_pinned("coll-b"));
 
         let _ = std::fs::remove_file(&path);

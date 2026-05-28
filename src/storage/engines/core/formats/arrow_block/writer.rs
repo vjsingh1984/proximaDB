@@ -371,7 +371,9 @@ mod tests {
                 model_id: "test".to_string(),
                 modality: "dense_vector".to_string(),
                 dim: dim as u32,
-                values: proximadb_records::EmbeddingValues::Fp32((0..dim).map(|i| i as f32 * 0.1).collect()),
+                values: proximadb_records::EmbeddingValues::Fp32(
+                    (0..dim).map(|i| i as f32 * 0.1).collect(),
+                ),
                 ..Default::default()
             }],
             ..ProximaRecord::default()
@@ -456,11 +458,12 @@ mod tests {
             .iter()
             .enumerate()
             .map(|(i, src)| {
-                let f16s: Vec<half::f16> =
-                    src.iter().map(|&x| half::f16::from_f32(x)).collect();
+                let f16s: Vec<half::f16> = src.iter().map(|&x| half::f16::from_f32(x)).collect();
                 ProximaRecord {
                     oid: format!("fp16_{:05}", i),
-                    created_at_ns: chrono::Utc::now().timestamp_millis().saturating_mul(1_000_000),
+                    created_at_ns: chrono::Utc::now()
+                        .timestamp_millis()
+                        .saturating_mul(1_000_000),
                     record_version: 1,
                     embeddings: vec![EmbeddingCell {
                         model_id: "test".to_string(),
@@ -498,7 +501,10 @@ mod tests {
                     other.scalar_type()
                 ),
             };
-            assert_eq!(orig_f16, got_f16, "fp16 bit-exact round-trip through SST file");
+            assert_eq!(
+                orig_f16, got_f16,
+                "fp16 bit-exact round-trip through SST file"
+            );
             assert_eq!(
                 got.embeddings[0].precision,
                 proximadb_records::EmbeddingScalarType::Fp16,
@@ -541,11 +547,9 @@ mod tests {
 
         // ---- fp32 file ----
         let fp32_path = dir.path().join("baseline_fp32.arrow");
-        let mut writer_fp32 = ArrowBlockWriter::new(
-            &fp32_path,
-            ArrowBlockConfig::new(dimension as u32),
-        )
-        .expect("fp32 writer");
+        let mut writer_fp32 =
+            ArrowBlockWriter::new(&fp32_path, ArrowBlockConfig::new(dimension as u32))
+                .expect("fp32 writer");
         let fp32_records: Vec<ProximaRecord> = (0..num_records)
             .map(|i| {
                 let src = make_src(i);
@@ -570,16 +574,13 @@ mod tests {
 
         // ---- fp16 file ----
         let fp16_path = dir.path().join("native_fp16.arrow");
-        let mut writer_fp16 = ArrowBlockWriter::new(
-            &fp16_path,
-            ArrowBlockConfig::new(dimension as u32),
-        )
-        .expect("fp16 writer");
+        let mut writer_fp16 =
+            ArrowBlockWriter::new(&fp16_path, ArrowBlockConfig::new(dimension as u32))
+                .expect("fp16 writer");
         let fp16_records: Vec<ProximaRecord> = (0..num_records)
             .map(|i| {
                 let src = make_src(i);
-                let f16s: Vec<half::f16> =
-                    src.iter().map(|&x| half::f16::from_f32(x)).collect();
+                let f16s: Vec<half::f16> = src.iter().map(|&x| half::f16::from_f32(x)).collect();
                 ProximaRecord {
                     oid: format!("fp16_{:06}", i),
                     record_version: 1,
@@ -601,12 +602,8 @@ mod tests {
         writer_fp16.finalize().expect("fp16 finalize");
 
         // ---- measure + assert ----
-        let fp32_size = std::fs::metadata(&fp32_path)
-            .expect("fp32 metadata")
-            .len();
-        let fp16_size = std::fs::metadata(&fp16_path)
-            .expect("fp16 metadata")
-            .len();
+        let fp32_size = std::fs::metadata(&fp32_path).expect("fp32 metadata").len();
+        let fp16_size = std::fs::metadata(&fp16_path).expect("fp16 metadata").len();
         let ratio = fp16_size as f64 / fp32_size as f64;
         assert!(
             (0.45..=0.55).contains(&ratio),

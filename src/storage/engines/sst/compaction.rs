@@ -157,9 +157,8 @@ pub struct Compaction {
     /// flushing. When unset, `precision_hint` stays `None` (records keep
     /// whatever precision the VectorRecord intermediate hands them —
     /// always fp32 today).
-    precision_resolver: Arc<
-        OnceCell<Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>>,
-    >,
+    precision_resolver:
+        Arc<OnceCell<Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>>>,
     // manifest: Option<Arc<super::SstManifest>>, // Removed - using directory discovery
 }
 
@@ -344,9 +343,7 @@ impl Compaction {
 
     /// Mirror of `CollectionManager::collection_table_identifier` for
     /// the compaction-scheduler side of the precision lookup.
-    fn collection_to_table_identifier(
-        collection_id: &str,
-    ) -> proximadb_catalog::TableIdentifier {
+    fn collection_to_table_identifier(collection_id: &str) -> proximadb_catalog::TableIdentifier {
         let parsed = proximadb_catalog::TableIdentifier::parse(collection_id);
         if parsed.namespace.is_empty() {
             proximadb_catalog::TableIdentifier::new(vec!["default".to_string()], parsed.name)

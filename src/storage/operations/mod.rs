@@ -285,7 +285,10 @@ impl UnifiedOperationCoordinator {
     }
 
     /// Schedule minor compaction with optimization
-    pub async fn schedule_minor_compaction(&self, collection_id: &str) -> Result<OpsCompactionResult> {
+    pub async fn schedule_minor_compaction(
+        &self,
+        collection_id: &str,
+    ) -> Result<OpsCompactionResult> {
         info!(
             "Scheduling minor compaction for collection: {}",
             collection_id
@@ -342,7 +345,10 @@ impl UnifiedOperationCoordinator {
     }
 
     /// Schedule major compaction across levels
-    pub async fn schedule_major_compaction(&self, collection_id: &str) -> Result<OpsCompactionResult> {
+    pub async fn schedule_major_compaction(
+        &self,
+        collection_id: &str,
+    ) -> Result<OpsCompactionResult> {
         info!(
             "Scheduling major compaction for collection: {}",
             collection_id

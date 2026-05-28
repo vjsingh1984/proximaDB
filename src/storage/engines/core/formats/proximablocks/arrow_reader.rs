@@ -597,7 +597,9 @@ mod tests {
                     embeddings: vec![EmbeddingCell {
                         model_id: "test-model".to_string(),
                         modality: "text".to_string(),
-                        values: proximadb_records::EmbeddingValues::Fp32((0..dimension).map(|d| (i + d) as f32 * 0.01).collect()),
+                        values: proximadb_records::EmbeddingValues::Fp32(
+                            (0..dimension).map(|d| (i + d) as f32 * 0.01).collect(),
+                        ),
                         dim: dimension as u32,
                         ..Default::default()
                     }],

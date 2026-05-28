@@ -474,7 +474,10 @@ impl CompactionCoordinator {
     }
 
     /// Trigger background compaction for a collection
-    async fn trigger_background_compaction(&self, collection_id: &str) -> Result<WalCompactionResult> {
+    async fn trigger_background_compaction(
+        &self,
+        collection_id: &str,
+    ) -> Result<WalCompactionResult> {
         let task_id = proximadb_kernel::uuid::Uuid::new_v4().to_string();
         let collection_id = collection_id.to_string();
 
@@ -816,7 +819,10 @@ impl CompactionCoordinator {
     }
 
     /// Check collection compaction status and trigger if needed
-    pub async fn check_and_compact(&self, collection_id: &str) -> Result<Option<WalCompactionResult>> {
+    pub async fn check_and_compact(
+        &self,
+        collection_id: &str,
+    ) -> Result<Option<WalCompactionResult>> {
         // Initialize collection state if not exists
         if self.get_collection_state(collection_id).await.is_none() {
             self.initialize_collection(collection_id, "VIPER").await?;

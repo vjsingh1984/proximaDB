@@ -47,13 +47,46 @@
 //!
 //! ## Remaining Integration Work
 //!
-//! The following work is documented for future implementation:
-//! 1. Wire access tracking into SST search path (call `record_access()`)
-//! 2. Wire tier determination into SST flush path (call `determine_flush_tier()`)
-//! 3. Wire tier evaluation into SST compaction (call `evaluate_collection()`)
-//! 4. Implement actual data movement between tier storage locations
+//! 1. ✅ Access tracking wired into SST search path
+//!    (`src/storage/engines/sst/search/coordinator.rs:78-100` — calls
+//!    `record_access` on every result; landed 2026-05-27)
+//! 2. ✅ Tier determination wired into SST flush path
+//!    (`src/storage/engines/sst/flush/coordinator.rs:47-63` — calls
+//!    `determine_flush_tier` pre-flush, decision currently advisory;
+//!    landed 2026-05-27)
+//! 3. ✅ Tier evaluation wired into SST compaction trigger
+//!    (`src/storage/engines/sst/flush/coordinator.rs:130-170` — calls
+//!    `evaluate_collection` when flush triggers compaction; landed
+//!    2026-05-27)
+//! 4. ✅ Migration executor for physical byte-movement between tier
+//!    paths (`src/storage/tiering/executor.rs`). Routes through
+//!    `FilesystemFactory::move_atomic`, so file://↔s3://↔gs:// all
+//!    work via the same code path. Includes idempotency check (crash
+//!    after copy / before delete → next attempt completes the delete)
+//!    and a bounded-concurrency batch executor.
+//! 5. ✅ Policy engine wired to executor (`TieringPolicyEngine.with_executor`).
+//!    The background eval loop now invokes `executor.execute_batch`
+//!    on every cycle and records each `MigrationResult` via
+//!    `record_migration_complete`. `SharedServices` bootstrap
+//!    constructs the executor from the same `SstTieringConfig` and
+//!    attaches it before `start()`, so an operator who sets
+//!    `enabled = true` in TOML gets actual byte movement — no
+//!    follow-up code change required.
+//! 6. ✅ Prometheus metrics (`src/metrics/tier_migration_metrics.rs`):
+//!    `proximadb_tier_migrations_total`,
+//!    `proximadb_tier_migration_bytes_total`,
+//!    `proximadb_tier_migration_duration_seconds`, and
+//!    `proximadb_tier_migration_in_flight`. Emitted from
+//!    `TierMigrationExecutor::execute` on every call with RAII-guarded
+//!    in-flight gauge — survives panics. See the module doc for
+//!    label cardinality and bucket layout.
 //!
-//! See `src/storage/engines/impls/sst/tiering_integration.rs` for detailed deferred comments.
+//! When `SstEngine.with_tiering_integration` is set, items 1–3 fire on
+//! their natural cadences. When unset (the default), all three become
+//! cheap `if-let-Some` no-ops — no behavior change for legacy callers.
+//!
+//! See `src/storage/engines/sst/tiering_integration.rs` for the detailed
+//! deferred-design comments around physical migration.
 //!
 //! ---
 //!
@@ -98,12 +131,16 @@
 //! ```
 
 pub mod engine;
+/// Tier migration executor — physical byte-movement between tier paths.
+/// Closes the last deferred item from the tier-migration pipeline.
+pub mod executor;
 pub mod migration;
 pub mod policy;
 pub mod retention;
 pub mod tracker;
 
 pub use engine::{TieringEngineConfig, TieringPolicyEngine, TieringStats};
+pub use executor::{MigrationExecutionError, TierMigrationExecutor, apply_result_to_task};
 pub use migration::{MigrationResult, MigrationStatus, MigrationTask};
 pub use policy::{PerformanceTier, PolicyAction, PolicyCondition, TieringPolicy, TieringRule};
 pub use retention::{

@@ -508,7 +508,11 @@ impl NullScalarPruner {
 }
 
 impl ScalarPruner for NullScalarPruner {
-    fn prune_by_predicate(&self, _column: &str, _predicate: &ScalarPredicate) -> SchemaPruningResult {
+    fn prune_by_predicate(
+        &self,
+        _column: &str,
+        _predicate: &ScalarPredicate,
+    ) -> SchemaPruningResult {
         SchemaPruningResult::include_all(self.total)
     }
 

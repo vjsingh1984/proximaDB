@@ -256,13 +256,19 @@ impl WorkloadRouter {
     }
 
     /// Route a query based on its characteristics
-    pub async fn route(&self, query_id: &str, chars: &QueryCharacteristics) -> LegacyHtapRoutingDecision {
+    pub async fn route(
+        &self,
+        query_id: &str,
+        chars: &QueryCharacteristics,
+    ) -> LegacyHtapRoutingDecision {
         // First, check if OLAP is even available and fresh enough
         if let Some(replication) = &self.replication {
             // Check freshness for all tables
             for table in &chars.tables {
                 if !replication.can_use_olap(table, true).await {
-                    return LegacyHtapRoutingDecision::oltp("OLAP not fresh enough for required tables");
+                    return LegacyHtapRoutingDecision::oltp(
+                        "OLAP not fresh enough for required tables",
+                    );
                 }
             }
         }
@@ -276,7 +282,9 @@ impl WorkloadRouter {
         // Aggregations with GROUP BY go to OLAP
         if chars.has_aggregation && chars.has_group_by && self.config.olap_for_aggregations {
             self.olap_queries.fetch_add(1, Ordering::Relaxed);
-            return LegacyHtapRoutingDecision::olap("Aggregation with GROUP BY - optimized for OLAP");
+            return LegacyHtapRoutingDecision::olap(
+                "Aggregation with GROUP BY - optimized for OLAP",
+            );
         }
 
         // Full table scans go to OLAP

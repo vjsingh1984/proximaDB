@@ -507,7 +507,20 @@ impl FileSystem for UnifiedCachingFilesystem {
     /// CRITICAL: This must be in the FileSystem trait impl, not the inherent impl,
     /// otherwise the default trait implementation is used when calling through `&dyn FileSystem`.
     async fn read_range(&self, path: &str, offset: u64, length: u64) -> FsResult<Vec<u8>> {
-        // Delegate to underlying filesystem's read_range for proper offset/length handling
+        self.record_access(path, AccessOperation::RangeRead).await;
+
+        if let Some(cached_data) = self.disk_cache.get_data(path).await
+            && let Ok(start) = usize::try_from(offset)
+            && let Ok(len) = usize::try_from(length)
+            && let Some(end) = start.checked_add(len)
+            && end <= cached_data.len()
+        {
+            self.metrics
+                .record_cache_hit_with_size(CacheType::Disk, len);
+            return Ok(cached_data[start..end].to_vec());
+        }
+
+        self.metrics.record_cache_miss(CacheType::Disk);
         self.underlying_fs.read_range(path, offset, length).await
     }
 
@@ -645,5 +658,61 @@ impl UnifiedFilesystemBuilder {
 impl Default for UnifiedFilesystemBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::persistence::filesystem::local::{LocalConfig, LocalFileSystem};
+    use tempfile::TempDir;
+
+    async fn test_caching_fs() -> (UnifiedCachingFilesystem, TempDir) {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let local = LocalFileSystem::new(LocalConfig {
+            root_dir: Some(temp_dir.path().to_path_buf()),
+            ..LocalConfig::default()
+        })
+        .await
+        .expect("local filesystem");
+
+        (
+            UnifiedCachingFilesystem::new(
+                Arc::new(local),
+                "test_collection".to_string(),
+                "sst".to_string(),
+            ),
+            temp_dir,
+        )
+    }
+
+    #[tokio::test]
+    async fn read_range_records_access_for_pattern_learning() {
+        let (fs, _temp_dir) = test_caching_fs().await;
+        fs.write("range-source.bin", b"0123456789", None)
+            .await
+            .expect("write test file");
+
+        let range = fs
+            .read_range("range-source.bin", 2, 4)
+            .await
+            .expect("range read");
+
+        assert_eq!(range, b"2345");
+        assert!(fs.metrics.get_report().await.total_accesses >= 2);
+    }
+
+    #[tokio::test]
+    async fn read_range_uses_cached_full_file_body_when_available() {
+        let (fs, _temp_dir) = test_caching_fs().await;
+        fs.disk_cache.put("cached-source.bin", b"abcdefghij").await;
+
+        let range = fs
+            .read_range("cached-source.bin", 2, 3)
+            .await
+            .expect("cached range read");
+
+        assert_eq!(range, b"cde");
+        assert!(fs.get_metrics().await.total_hits >= 1);
     }
 }

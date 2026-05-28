@@ -726,7 +726,10 @@ pub struct PrefetchRequest {
 }
 
 impl PredictivePrefetchEngine {
-    pub fn new(pattern_tracker: Arc<OrchestratorAccessPatternTracker>, max_queue_size: usize) -> Self {
+    pub fn new(
+        pattern_tracker: Arc<OrchestratorAccessPatternTracker>,
+        max_queue_size: usize,
+    ) -> Self {
         Self {
             pattern_tracker,
             prefetch_queue: Arc::new(Mutex::new(VecDeque::with_capacity(max_queue_size))),

@@ -737,7 +737,11 @@ impl AccessPatternPredictor {
             .push(event);
     }
 
-    fn predict_access(&self, file_path: &str, _query_context: &QueryContext) -> BandwidthAccessPrediction {
+    fn predict_access(
+        &self,
+        file_path: &str,
+        _query_context: &QueryContext,
+    ) -> BandwidthAccessPrediction {
         let history = self.file_access_history.get(file_path);
 
         match history {

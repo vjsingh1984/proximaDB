@@ -157,9 +157,7 @@ impl V2SegmentHeader {
     pub fn decode(data: &[u8]) -> Result<(Self, usize)> {
         match peek_segment_version(data)? {
             PeekedSegmentVersion::V1 => {
-                bail!(
-                    "decode called on a v1 segment; route via peek_segment_version first"
-                );
+                bail!("decode called on a v1 segment; route via peek_segment_version first");
             }
             PeekedSegmentVersion::V2 => {}
         }
@@ -349,7 +347,10 @@ mod tests {
             header.canonical_default_precision = prec;
             let bytes = header.encode();
             let (back, _) = V2SegmentHeader::decode(&bytes).unwrap();
-            assert_eq!(back.canonical_default_precision, prec, "round-trip {prec:?}");
+            assert_eq!(
+                back.canonical_default_precision, prec,
+                "round-trip {prec:?}"
+            );
         }
     }
 

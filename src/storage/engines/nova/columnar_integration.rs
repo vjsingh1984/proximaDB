@@ -394,7 +394,9 @@ impl NovaUnifiedEngine {
 
         // Initialize NOVA-specific components
         let hierarchical_stats = Arc::new(HierarchicalStatsManager::new(nova_config.clone()));
-        let zone_map_manager = Arc::new(NovaColumnarZoneMapManager::new(nova_config.zone_map_config.clone()));
+        let zone_map_manager = Arc::new(NovaColumnarZoneMapManager::new(
+            nova_config.zone_map_config.clone(),
+        ));
         let streaming_processor = Arc::new(StreamingProcessor::new(
             nova_config.streaming_config.clone(),
         ));

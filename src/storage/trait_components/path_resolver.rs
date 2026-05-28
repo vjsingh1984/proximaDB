@@ -535,11 +535,13 @@ impl DrPathBuilder {
         namespace: &CatalogNamespace,
         collection_id: &str,
     ) -> Result<DrResolvedPath, PathResolverError> {
-        let tenant_id = namespace.tenant_id.as_deref().ok_or_else(|| {
-            PathResolverError::MissingTenantId {
-                namespace_fqn: namespace.fqn(),
-            }
-        })?;
+        let tenant_id =
+            namespace
+                .tenant_id
+                .as_deref()
+                .ok_or_else(|| PathResolverError::MissingTenantId {
+                    namespace_fqn: namespace.fqn(),
+                })?;
         let namespace_id = namespace.namespace_id.as_deref().ok_or_else(|| {
             PathResolverError::MissingNamespaceId {
                 namespace_fqn: namespace.fqn(),
@@ -748,8 +750,7 @@ mod tests {
     fn dr_builder_rejects_namespace_without_tenant() {
         // Legacy namespace pending P0.5 backfill — has namespace_id but
         // no tenant_id.
-        let ns = CatalogNamespace::new(vec!["legacy".into()])
-            .with_namespace_id("ns_legacy_001");
+        let ns = CatalogNamespace::new(vec!["legacy".into()]).with_namespace_id("ns_legacy_001");
         let err = DrPathBuilder::build(&ns, "col_x").unwrap_err();
         assert!(matches!(err, PathResolverError::MissingTenantId { .. }));
     }
@@ -758,8 +759,7 @@ mod tests {
     fn dr_builder_rejects_namespace_without_namespace_id() {
         // Legacy namespace pending P0.5 backfill — has tenant but no
         // namespace_id.
-        let ns = CatalogNamespace::new(vec!["legacy".into()])
-            .with_tenant("tnt_legacy_system");
+        let ns = CatalogNamespace::new(vec!["legacy".into()]).with_tenant("tnt_legacy_system");
         let err = DrPathBuilder::build(&ns, "col_x").unwrap_err();
         assert!(matches!(err, PathResolverError::MissingNamespaceId { .. }));
     }
@@ -842,8 +842,7 @@ mod tests {
     fn dr_builder_for_pool_accepts_matching_class() {
         let ns = dr_addressable_namespace();
         let path =
-            DrPathBuilder::build_for_pool(&ns, "col_orders", StoragePoolClass::Business)
-                .unwrap();
+            DrPathBuilder::build_for_pool(&ns, "col_orders", StoragePoolClass::Business).unwrap();
         assert_eq!(path.storage_pool_class, StoragePoolClass::Business);
     }
 
@@ -853,8 +852,7 @@ mod tests {
         // is the contract's "cross-class refusal" rule.
         let ns = dr_addressable_namespace();
         let err =
-            DrPathBuilder::build_for_pool(&ns, "col_orders", StoragePoolClass::Pooled)
-                .unwrap_err();
+            DrPathBuilder::build_for_pool(&ns, "col_orders", StoragePoolClass::Pooled).unwrap_err();
         match err {
             PathResolverError::PoolClassMismatch { expected, got } => {
                 assert_eq!(expected, StoragePoolClass::Business);
@@ -868,14 +866,9 @@ mod tests {
     fn dr_builder_for_pool_propagates_missing_ids() {
         // Pool-class check runs *after* ID validation, so a missing
         // tenant_id surfaces first instead of being masked.
-        let ns = CatalogNamespace::new(vec!["legacy".into()])
-            .with_namespace_id("ns_legacy");
-        let err = DrPathBuilder::build_for_pool(
-            &ns,
-            "col_x",
-            StoragePoolClass::Pooled,
-        )
-        .unwrap_err();
+        let ns = CatalogNamespace::new(vec!["legacy".into()]).with_namespace_id("ns_legacy");
+        let err =
+            DrPathBuilder::build_for_pool(&ns, "col_x", StoragePoolClass::Pooled).unwrap_err();
         assert!(matches!(err, PathResolverError::MissingTenantId { .. }));
     }
 }

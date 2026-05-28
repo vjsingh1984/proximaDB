@@ -271,7 +271,10 @@ async fn test_create_test_vector_function() {
     let vector = create_test_vector("test_id", vec![1.0, 2.0, 3.0]);
 
     assert_eq!(vector.oid, "test_id");
-    assert_eq!(vector.embeddings[0].values, proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0]));
+    assert_eq!(
+        vector.embeddings[0].values,
+        proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0])
+    );
     assert_eq!(vector.props.len(), 1);
     assert_eq!(vector.record_version, 1);
 }

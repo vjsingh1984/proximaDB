@@ -202,9 +202,8 @@ pub struct SstableWriter {
     /// entry after the atomic SST write succeeds and invalidates the
     /// read-side cache. When `None`, directory emission is skipped
     /// entirely — pre-existing callers are unaffected until they opt in.
-    directory_emission: Option<
-        crate::storage::engines::sst::object_economy_directory::SstableWriterDirectoryHooks,
-    >,
+    directory_emission:
+        Option<crate::storage::engines::sst::object_economy_directory::SstableWriterDirectoryHooks>,
 }
 
 impl SstableWriter {

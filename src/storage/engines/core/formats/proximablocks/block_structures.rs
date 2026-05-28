@@ -1227,10 +1227,9 @@ impl ProximaDataBlock {
 
         // Compute bloom filter and vector-layout decision before moving records into the block.
         let bloom_filter = Self::generate_bloom_filter(&records);
-        let needs_simd_layout = compression_config.vector_layout != VectorEncodingLayout::FullVector
-            && records
-                .iter()
-                .any(|r| !Self::record_vector(r).is_empty());
+        let needs_simd_layout = compression_config.vector_layout
+            != VectorEncodingLayout::FullVector
+            && records.iter().any(|r| !Self::record_vector(r).is_empty());
 
         // Initialize with default values, SIMD encoding will be applied later if needed
         let mut block = Self {
@@ -1403,9 +1402,9 @@ impl ProximaDataBlock {
         // Compute bloom filter and SIMD-layout decision before moving records
         // into the block (so we can move instead of cloning at line below).
         let bloom_filter = Self::generate_bloom_filter(&records);
-        let needs_simd_layout =
-            compression_config.vector_layout != VectorEncodingLayout::FullVector
-                && !records.is_empty();
+        let needs_simd_layout = compression_config.vector_layout
+            != VectorEncodingLayout::FullVector
+            && !records.is_empty();
 
         let mut block = Self {
             encoding_marker,

@@ -404,11 +404,7 @@ impl ColumnarSerializer {
         // Extract vectors from records
         let vectors: Vec<&[f32]> = records
             .iter()
-            .map(|r| {
-                r.embeddings
-                    .first()
-                    .map_or(&[][..], |e| e.as_fp32_slice())
-            })
+            .map(|r| r.embeddings.first().map_or(&[][..], |e| e.as_fp32_slice()))
             .collect();
 
         // Serialize FP32 vectors

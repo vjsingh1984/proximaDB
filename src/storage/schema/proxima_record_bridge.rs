@@ -305,9 +305,7 @@ impl DefaultProximaRecordBridge {
     /// to batch records by precision before reaching the bridge.
     /// Records with no embedding cells are ignored for precision
     /// inference; an all-empty batch defaults to Fp32.
-    fn infer_batch_vector_precision(
-        records: &[ProximaRecord],
-    ) -> Result<EmbeddingScalarType> {
+    fn infer_batch_vector_precision(records: &[ProximaRecord]) -> Result<EmbeddingScalarType> {
         let mut precision: Option<EmbeddingScalarType> = None;
         for record in records {
             if let Some(cell) = record.embeddings.first() {
@@ -660,11 +658,7 @@ impl DefaultProximaRecordBridge {
     /// `EmbeddingValues::Fp16` when the column is a `Float16Array`-
     /// backed `FixedSizeListArray`, otherwise `EmbeddingValues::Fp32`
     /// via the legacy `extract_vector` path.
-    fn extract_typed_vector(
-        &self,
-        batch: &RecordBatch,
-        row: usize,
-    ) -> Result<EmbeddingValues> {
+    fn extract_typed_vector(&self, batch: &RecordBatch, row: usize) -> Result<EmbeddingValues> {
         let dimension =
             self.vector_dimension()
                 .ok_or_else(|| anyhow!("Schema has no vector dimension"))? as usize;
@@ -1172,7 +1166,9 @@ mod tests {
                 model_id: "test".to_string(),
                 modality: "dense_vector".to_string(),
                 dim: dim as u32,
-                values: proximadb_records::EmbeddingValues::Fp32((0..dim).map(|i| i as f32 * 0.1).collect()),
+                values: proximadb_records::EmbeddingValues::Fp32(
+                    (0..dim).map(|i| i as f32 * 0.1).collect(),
+                ),
                 ..Default::default()
             }],
             ..ProximaRecord::default()
@@ -1485,10 +1481,16 @@ mod tests {
             };
             let got_vs = match &got.embeddings[0].values {
                 proximadb_records::EmbeddingValues::Fp16(v) => v.clone(),
-                other => panic!("recovered should be Fp16 (no downconvert), got {:?}", other.scalar_type()),
+                other => panic!(
+                    "recovered should be Fp16 (no downconvert), got {:?}",
+                    other.scalar_type()
+                ),
             };
             assert_eq!(orig_vs, got_vs, "bit-exact fp16 round-trip");
-            assert_eq!(got.embeddings[0].precision, proximadb_records::EmbeddingScalarType::Fp16);
+            assert_eq!(
+                got.embeddings[0].precision,
+                proximadb_records::EmbeddingScalarType::Fp16
+            );
         }
     }
 

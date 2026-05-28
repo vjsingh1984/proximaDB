@@ -710,10 +710,22 @@ pub struct TxnLegacyGraphEdge {
 /// Staged graph operations buffered until commit.
 #[derive(Debug, Clone)]
 pub enum StagedGraphOperation {
-    CreateNode { graph_id: String, node: TxnLegacyGraphNode },
-    CreateEdge { graph_id: String, edge: TxnLegacyGraphEdge },
-    DeleteNode { graph_id: String, node_id: String },
-    DeleteEdge { graph_id: String, edge_id: String },
+    CreateNode {
+        graph_id: String,
+        node: TxnLegacyGraphNode,
+    },
+    CreateEdge {
+        graph_id: String,
+        edge: TxnLegacyGraphEdge,
+    },
+    DeleteNode {
+        graph_id: String,
+        node_id: String,
+    },
+    DeleteEdge {
+        graph_id: String,
+        edge_id: String,
+    },
 }
 
 /// Backwards-compat alias for [`LegacyMultimodelGraphStoreParticipant`].

@@ -490,7 +490,7 @@ impl SstEngine {
         &Arc<
             crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache,
         >,
-    > {
+    >{
         self.directory_cache.as_ref()
     }
 
@@ -500,9 +500,7 @@ impl SstEngine {
     /// the WAL delta.
     pub fn with_freshness_lsn_source(
         mut self,
-        source: Arc<
-            dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource,
-        >,
+        source: Arc<dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource>,
     ) -> Self {
         self.freshness_lsn_source = Some(source);
         self
@@ -519,11 +517,8 @@ impl SstEngine {
     /// hooks.
     pub(crate) fn freshness_lsn_source_ref(
         &self,
-    ) -> Option<
-        &Arc<
-            dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource,
-        >,
-    > {
+    ) -> Option<&Arc<dyn crate::storage::engines::sst::object_economy_directory::FreshnessLsnSource>>
+    {
         self.freshness_lsn_source.as_ref()
     }
 

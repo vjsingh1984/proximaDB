@@ -293,8 +293,11 @@ impl WALBatchStrategy for AvroSerializationStrategy {
             let Some(embedding) = vector.embeddings.first() else {
                 continue;
             };
-            let distance_result =
-                distance_compute.calculate_distance(query_vector, &*embedding.as_fp32_cow(), &metric);
+            let distance_result = distance_compute.calculate_distance(
+                query_vector,
+                &*embedding.as_fp32_cow(),
+                &metric,
+            );
             // Use empty string for vectors without IDs
             let id = vector.oid.clone();
             // Use rank_value for sorting (lower = more similar)

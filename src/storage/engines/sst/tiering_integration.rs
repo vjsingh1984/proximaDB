@@ -361,11 +361,7 @@ impl SstTieringIntegration {
     /// # Returns
     ///
     /// The target performance tier for the data
-    pub async fn determine_flush_tier(
-        &self,
-        collection: &str,
-        _data_size: u64,
-    ) -> PerformanceTier {
+    pub async fn determine_flush_tier(&self, collection: &str, _data_size: u64) -> PerformanceTier {
         // Phase 6 data plane: operator pins override the default tier.
         // When the collection is pinned to `memory`/`nvme_ssd`/`cloud`,
         // the flush lands on the corresponding `PerformanceTier`. When
@@ -415,11 +411,7 @@ impl SstTieringIntegration {
         // access-pattern-driven proposal is suppressed for that
         // collection. Migrations TOWARDS the pinned tier are kept —
         // that's how a freshly-pinned collection actually catches up.
-        let filtered = match self
-            .pin_registry
-            .as_ref()
-            .and_then(|r| r.get(collection))
-        {
+        let filtered = match self.pin_registry.as_ref().and_then(|r| r.get(collection)) {
             Some(pin) => {
                 let pinned_tier = pin.target.to_performance_tier();
                 let kept: Vec<MigrationTask> = tasks
@@ -668,9 +660,7 @@ mod tests {
 
     #[tokio::test]
     async fn pin_overrides_flush_tier_to_pinned_target() {
-        use crate::storage::collection_pinning::{
-            new_shared, CollectionPinTarget,
-        };
+        use crate::storage::collection_pinning::{CollectionPinTarget, new_shared};
         let config = SstTieringConfig {
             enabled: true,
             // Default is Warm — pin should override to Hot when the
@@ -696,9 +686,7 @@ mod tests {
 
     #[tokio::test]
     async fn pin_to_cloud_routes_flush_to_cold_tier() {
-        use crate::storage::collection_pinning::{
-            new_shared, CollectionPinTarget,
-        };
+        use crate::storage::collection_pinning::{CollectionPinTarget, new_shared};
         let config = SstTieringConfig {
             enabled: true,
             default_tier: PerformanceTier::Warm,
@@ -722,9 +710,7 @@ mod tests {
 
     #[tokio::test]
     async fn unpinning_collection_restores_config_default_flush_tier() {
-        use crate::storage::collection_pinning::{
-            new_shared, CollectionPinTarget,
-        };
+        use crate::storage::collection_pinning::{CollectionPinTarget, new_shared};
         let config = SstTieringConfig {
             enabled: true,
             default_tier: PerformanceTier::Warm,

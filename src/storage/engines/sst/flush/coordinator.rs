@@ -50,9 +50,10 @@ impl FlushCoordinator {
         // the call populates the tiering engine's state so subsequent
         // `evaluate_collection` calls can reason about the new segment.
         let estimated_bytes: u64 = params.estimated_size as u64;
-        if let (Some(tiering), Some(coll)) =
-            (self.engine.tiering_integration(), params.collection_id.as_ref())
-        {
+        if let (Some(tiering), Some(coll)) = (
+            self.engine.tiering_integration(),
+            params.collection_id.as_ref(),
+        ) {
             let tier = tiering
                 .determine_flush_tier(coll.as_str(), estimated_bytes)
                 .await;
@@ -108,9 +109,10 @@ impl FlushCoordinator {
         // Without this signal, just-flushed segments look as cold as
         // never-accessed ones and would be demoted immediately by an
         // age-based policy.
-        if let (Some(tiering), Some(coll)) =
-            (self.engine.tiering_integration(), params.collection_id.as_ref())
-        {
+        if let (Some(tiering), Some(coll)) = (
+            self.engine.tiering_integration(),
+            params.collection_id.as_ref(),
+        ) {
             let bytes_written = result.bytes_written.unwrap_or(0) as u64;
             tiering
                 .record_access(
@@ -140,9 +142,10 @@ impl FlushCoordinator {
             // is feed the policy engine's accounting so operator
             // dashboards see pending migrations and so the next
             // `evaluate_all()` doesn't re-propose the same migration.
-            if let (Some(tiering), Some(coll)) =
-                (self.engine.tiering_integration(), params.collection_id.as_ref())
-            {
+            if let (Some(tiering), Some(coll)) = (
+                self.engine.tiering_integration(),
+                params.collection_id.as_ref(),
+            ) {
                 match tiering.evaluate_collection(coll.as_str()).await {
                     Ok(tasks) if !tasks.is_empty() => {
                         info!(

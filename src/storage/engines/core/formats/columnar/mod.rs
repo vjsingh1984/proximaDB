@@ -279,12 +279,12 @@ pub use fulltext_index::{
     FullTextIndex,
     FullTextIndexBuilder,
     FullTextIndexError,
+    FulltextSearchResult as FullTextSearchResult,
     // Posting types
     Posting,
     PostingList,
     // Search types
     SearchOptions,
-    FulltextSearchResult as FullTextSearchResult,
     // Statistics
     TextStatistics,
     // Tokenization

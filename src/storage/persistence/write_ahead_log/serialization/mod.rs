@@ -112,8 +112,7 @@ pub trait VectorBatchSerializer: Send + Sync {
         Option<crate::storage::persistence::write_ahead_log::v2_segment_header::V2SegmentHeader>,
     )> {
         use crate::storage::persistence::write_ahead_log::v2_segment_header::{
-            PWAL_MAGIC, PWAL_PEEK_LEN, PeekedSegmentVersion, V2SegmentHeader,
-            peek_segment_version,
+            PWAL_MAGIC, PWAL_PEEK_LEN, PeekedSegmentVersion, V2SegmentHeader, peek_segment_version,
         };
         // Magic check is bounded: any blob shorter than 4 bytes or that
         // doesn't start with PWAL is treated as legacy v1 and handed to

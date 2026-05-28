@@ -105,6 +105,11 @@ pub struct TieringPolicyEngine {
     stats: Arc<RwLock<StorageTieringStats>>,
     /// Running state
     running: Arc<AtomicBool>,
+    /// Optional migration executor. When `Some`, the background
+    /// evaluation loop dispatches generated `MigrationTask`s to it
+    /// instead of dropping them. When `None`, the loop produces tasks
+    /// but no bytes move (legacy / planning-only mode).
+    executor: Option<Arc<super::executor::TierMigrationExecutor>>,
 }
 
 impl TieringPolicyEngine {
@@ -120,7 +125,23 @@ impl TieringPolicyEngine {
             item_states: Arc::new(RwLock::new(HashMap::new())),
             stats: Arc::new(RwLock::new(StorageTieringStats::default())),
             running: Arc::new(AtomicBool::new(false)),
+            executor: None,
         }
+    }
+
+    /// Attach a migration executor so the background eval loop
+    /// dispatches generated `MigrationTask`s instead of dropping them.
+    /// Without this, the engine generates tasks but no bytes move.
+    pub fn with_executor(mut self, executor: Arc<super::executor::TierMigrationExecutor>) -> Self {
+        self.executor = Some(executor);
+        self
+    }
+
+    /// In-place setter for the migration executor. Useful when the
+    /// engine is already owned mutably (e.g. inside a `SstTieringIntegration`
+    /// builder) and the consuming `with_executor` would force a move.
+    pub fn set_executor(&mut self, executor: Arc<super::executor::TierMigrationExecutor>) {
+        self.executor = Some(executor);
     }
 
     /// Create with custom access tracker
@@ -172,6 +193,14 @@ impl TieringPolicyEngine {
 
             tokio::spawn(async move {
                 let mut ticker = tokio::time::interval(interval);
+                // When a migration cycle takes longer than the tick
+                // interval (common for cloud → cloud transfers), Burst
+                // (the default) would fire catch-up ticks back-to-back
+                // and overlap with the in-flight cycle. `Delay`
+                // re-anchors the next tick to "now + interval" after
+                // the slow cycle finishes — no overlap, no thundering
+                // herd against the cloud backend.
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                 loop {
                     ticker.tick().await;
 
@@ -179,8 +208,40 @@ impl TieringPolicyEngine {
                         break;
                     }
 
-                    if let Err(e) = engine.evaluate_all().await {
-                        warn!("Tiering evaluation error: {}", e);
+                    // Generate migration tasks from current policies +
+                    // access patterns.
+                    let tasks = match engine.evaluate_all().await {
+                        Ok(t) => t,
+                        Err(e) => {
+                            warn!("Tiering evaluation error: {}", e);
+                            continue;
+                        }
+                    };
+
+                    if tasks.is_empty() {
+                        continue;
+                    }
+
+                    // Dispatch to the executor when configured.
+                    // Without an executor, the tasks are dropped here —
+                    // the engine acts as a planning-only surface,
+                    // matching pre-executor behavior.
+                    if let Some(executor) = engine.executor.as_ref() {
+                        let max_concurrent = engine.config.max_concurrent_migrations.max(1);
+                        let results = executor.execute_batch(&tasks, max_concurrent).await;
+                        for r in &results {
+                            engine.record_migration_complete(r).await;
+                        }
+                        info!(
+                            "Tiering eval cycle: dispatched {} task(s), {} succeeded",
+                            results.len(),
+                            results.iter().filter(|r| r.success).count()
+                        );
+                    } else {
+                        debug!(
+                            "Tiering eval cycle: generated {} task(s); no executor attached, tasks dropped",
+                            tasks.len()
+                        );
                     }
                 }
             });
@@ -210,6 +271,7 @@ impl TieringPolicyEngine {
             item_states: Arc::clone(&self.item_states),
             stats: Arc::clone(&self.stats),
             running: Arc::clone(&self.running),
+            executor: self.executor.clone(),
         }
     }
 

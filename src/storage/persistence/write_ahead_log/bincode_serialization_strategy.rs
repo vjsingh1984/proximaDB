@@ -204,18 +204,17 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
             // cluster writes "default canonical fp32, default policy"
             // headers and the actual fp16 storage win lands in INT-3
             // when the PAX writer keys on the header.
-            let serialized = if proximadb_config::EmbeddingPrecisionConfig::cached()
-                .schema_v2_enabled
-            {
-                let header = build_default_v2_segment_header(&batch.batch_id);
-                self.serializer.serialize_batch_with_v2_segment_header(
-                    batch.vector_records.as_ref(),
-                    &header,
-                )?
-            } else {
-                self.serializer
-                    .serialize_batch(batch.vector_records.as_ref())?
-            };
+            let serialized =
+                if proximadb_config::EmbeddingPrecisionConfig::cached().schema_v2_enabled {
+                    let header = build_default_v2_segment_header(&batch.batch_id);
+                    self.serializer.serialize_batch_with_v2_segment_header(
+                        batch.vector_records.as_ref(),
+                        &header,
+                    )?
+                } else {
+                    self.serializer
+                        .serialize_batch(batch.vector_records.as_ref())?
+                };
 
             // INT-4-partial (mini-phase EMBEDDING_PRECISION_INTEGRATION_PLAN):
             // populate `proximadb_embedding_precision_canonical_bytes`
@@ -357,8 +356,11 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
             let Some(embedding) = vector.embeddings.first() else {
                 continue;
             };
-            let distance_result =
-                distance_compute.calculate_distance(query_vector, &*embedding.as_fp32_cow(), &metric);
+            let distance_result = distance_compute.calculate_distance(
+                query_vector,
+                &*embedding.as_fp32_cow(),
+                &metric,
+            );
             // Use empty string for vectors without IDs
             let id = vector.oid.clone();
             // Use rank_value for sorting (lower = more similar)
@@ -980,8 +982,7 @@ fn build_default_v2_segment_header(
     // the batch_id is a natural unique key for the segment. Pack the
     // 10-byte CompactBatchId (timestamp_ms u64 + counter u16) into the
     // header's u128 segment_id with timestamp in the high 64 bits.
-    let segment_id =
-        ((batch_id.timestamp_ms() as u128) << 64) | (batch_id.counter() as u128);
+    let segment_id = ((batch_id.timestamp_ms() as u128) << 64) | (batch_id.counter() as u128);
 
     crate::storage::persistence::write_ahead_log::v2_segment_header::V2SegmentHeader {
         flags: 0,

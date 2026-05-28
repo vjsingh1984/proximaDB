@@ -495,8 +495,7 @@ impl RaptorReader {
         // candidates in cache-friendly chunks.
         let mut results = Vec::with_capacity(candidates.len());
         if !candidates.is_empty() {
-            let vector_slices: Vec<&[f32]> =
-                candidates.iter().map(|(_, v)| v.as_slice()).collect();
+            let vector_slices: Vec<&[f32]> = candidates.iter().map(|(_, v)| v.as_slice()).collect();
             let mut sim_results: Vec<SimilarityResult> = Vec::with_capacity(candidates.len());
             self.distance_compute.batch_distance_into_buffer(
                 query,
@@ -3147,7 +3146,11 @@ impl RaptorReader {
     }
 
     /// Apply 5-component boosting formula (simplified)
-    fn apply_5_component_boosting(&self, base_distance: f32, cluster_info: &RaptorClusterInfo) -> f32 {
+    fn apply_5_component_boosting(
+        &self,
+        base_distance: f32,
+        cluster_info: &RaptorClusterInfo,
+    ) -> f32 {
         // Simplified 5-component boosting
         // In full implementation, this would use the complete formula from the design
         let alpha_own = 1.0; // Weight for intra-cluster distance

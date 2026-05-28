@@ -505,7 +505,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_begin() {
-        let coordinator = LegacyMultimodelTransactionCoordinator::new(LegacyMultimodelTransactionConfig::default());
+        let coordinator = LegacyMultimodelTransactionCoordinator::new(
+            LegacyMultimodelTransactionConfig::default(),
+        );
 
         let txn_id = coordinator
             .begin(None)
@@ -523,7 +525,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_commit() {
-        let coordinator = LegacyMultimodelTransactionCoordinator::new(LegacyMultimodelTransactionConfig::default());
+        let coordinator = LegacyMultimodelTransactionCoordinator::new(
+            LegacyMultimodelTransactionConfig::default(),
+        );
 
         let txn_id = coordinator
             .begin(None)
@@ -554,7 +558,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_rollback() {
-        let coordinator = LegacyMultimodelTransactionCoordinator::new(LegacyMultimodelTransactionConfig::default());
+        let coordinator = LegacyMultimodelTransactionCoordinator::new(
+            LegacyMultimodelTransactionConfig::default(),
+        );
 
         let txn_id = coordinator
             .begin(None)
@@ -628,7 +634,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_isolation_levels() {
-        let coordinator = LegacyMultimodelTransactionCoordinator::new(LegacyMultimodelTransactionConfig::default());
+        let coordinator = LegacyMultimodelTransactionCoordinator::new(
+            LegacyMultimodelTransactionConfig::default(),
+        );
 
         let _txn1 = coordinator
             .begin(Some(IsolationLevel::ReadCommitted))
@@ -652,7 +660,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_cleanup() {
-        let coordinator = LegacyMultimodelTransactionCoordinator::new(LegacyMultimodelTransactionConfig::default());
+        let coordinator = LegacyMultimodelTransactionCoordinator::new(
+            LegacyMultimodelTransactionConfig::default(),
+        );
 
         let txn_id = coordinator
             .begin(None)

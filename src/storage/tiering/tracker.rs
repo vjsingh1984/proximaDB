@@ -224,7 +224,11 @@ impl AccessTracker {
     }
 
     /// Get access pattern for an item
-    pub async fn get_pattern(&self, collection: &str, item_id: &str) -> Option<TieringAccessPattern> {
+    pub async fn get_pattern(
+        &self,
+        collection: &str,
+        item_id: &str,
+    ) -> Option<TieringAccessPattern> {
         let patterns = self.patterns.read().await;
         patterns
             .get(&(collection.to_string(), item_id.to_string()))
@@ -232,7 +236,10 @@ impl AccessTracker {
     }
 
     /// Get all patterns for a collection
-    pub async fn get_collection_patterns(&self, collection: &str) -> Vec<(String, TieringAccessPattern)> {
+    pub async fn get_collection_patterns(
+        &self,
+        collection: &str,
+    ) -> Vec<(String, TieringAccessPattern)> {
         let patterns = self.patterns.read().await;
         patterns
             .iter()

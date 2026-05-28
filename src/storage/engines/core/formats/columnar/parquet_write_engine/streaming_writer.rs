@@ -61,6 +61,9 @@ pub struct StreamingParquetWriter {
     /// Filesystem factory for cloud storage support
     #[allow(dead_code)]
     filesystem_factory: Arc<FilesystemFactory>,
+
+    /// TD-040: Writer statistics tracking vector bounds
+    writer_stats: StreamingParquetWriterStats,
 }
 
 impl StreamingParquetWriter {
@@ -165,6 +168,7 @@ impl StreamingParquetWriter {
             filterable_columns: columnar_filterable,
             metadata_collector: None,
             filesystem_factory,
+            writer_stats: StreamingParquetWriterStats::new(),
         })
     }
 
@@ -264,7 +268,7 @@ impl StreamingParquetWriter {
     }
 
     /// Convert ProximaRecords to Arrow RecordBatch
-    fn create_record_batch(&self, records: &[ProximaRecord]) -> Result<RecordBatch> {
+    fn create_record_batch(&mut self, records: &[ProximaRecord]) -> Result<RecordBatch> {
         // This is a simplified version - the full implementation would handle
         // all the columns including quantized vectors, metadata, etc.
 
@@ -284,6 +288,15 @@ impl StreamingParquetWriter {
         // Vector data - Create List array of Float32 (non-nullable items)
         // Create fixed-size list array (more efficient for vectors with known dimension)
         use arrow_array::{FixedSizeListArray, Float32Array};
+
+        // TD-040: Collect vectors for bounds computation
+        let vectors_for_bounds: Vec<Vec<f32>> = records
+            .iter()
+            .filter_map(|record| record.embeddings.first().map(|e| e.as_fp32_cow().to_vec()))
+            .collect();
+
+        // Update vector bounds statistics (TD-040)
+        self.writer_stats.update_vector_bounds(&vectors_for_bounds);
 
         // Flatten all vectors into a single array
         let mut values = Vec::with_capacity(records.len() * self.dimension);
@@ -306,13 +319,11 @@ impl StreamingParquetWriter {
                         .unwrap_or(0)
                 ));
             }
-            values.extend_from_slice(
-                record
-                    .embeddings
-                    .first()
-                    .map(|e| e.as_fp32_slice())
-                    .unwrap_or(&[]),
-            );
+            // Use as_fp32_cow() to handle all quantization types (TD-040)
+            // Convert Cow to owned Vec to extend values
+            if let Some(vec_data) = record.embeddings.first().map(|e| e.as_fp32_cow().to_vec()) {
+                values.extend_from_slice(&vec_data);
+            }
         }
 
         let values_array = Float32Array::from(values);
@@ -854,12 +865,12 @@ impl StreamingParquetWriter {
             filterable_columns_count: self.filterable_columns.len(),
             records_with_metadata: 0,
             avg_metadata_fields: 0.0,
-            // TD-040: Vector bounds computed during write (populated by caller)
-            vector_norm_min: None,
-            vector_norm_max: None,
-            vector_norm_mean: None,
-            vector_component_min: None,
-            vector_component_max: None,
+            // TD-040: Vector bounds computed during write (now populated)
+            vector_norm_min: self.writer_stats.vector_norm_min,
+            vector_norm_max: self.writer_stats.vector_norm_max,
+            vector_norm_mean: self.writer_stats.vector_norm_mean,
+            vector_component_min: self.writer_stats.vector_component_min.clone(),
+            vector_component_max: self.writer_stats.vector_component_max.clone(),
         };
 
         Ok((stats, written_data, self.metadata_collector))

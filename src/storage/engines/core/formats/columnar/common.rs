@@ -569,8 +569,9 @@ impl CommonColumnarOperations {
         }));
 
         // Initialize performance monitor
-        let performance_monitor =
-            Arc::new(ColumnarPerformanceMonitor::new(config.monitoring_config.clone()));
+        let performance_monitor = Arc::new(ColumnarPerformanceMonitor::new(
+            config.monitoring_config.clone(),
+        ));
 
         info!("Common columnar operations initialized successfully");
 
@@ -775,7 +776,9 @@ impl CommonColumnarOperations {
     }
 
     /// Get performance metrics
-    pub async fn get_performance_metrics(&self) -> Result<(ColumnarCommonOperationMetrics, ResourceMetrics)> {
+    pub async fn get_performance_metrics(
+        &self,
+    ) -> Result<(ColumnarCommonOperationMetrics, ResourceMetrics)> {
         let operation_metrics = {
             let guard = self.performance_monitor.operation_metrics.read().await;
             (*guard).clone()

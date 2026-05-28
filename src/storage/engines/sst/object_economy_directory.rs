@@ -145,7 +145,11 @@ impl VectorObjectEconomyDirectory {
     /// an existing entry was replaced. Used by the writer to update the
     /// directory after a flush or compaction emits a new file.
     pub fn upsert_file(&mut self, file: ObjectEconomyFileEntry) -> bool {
-        if let Some(slot) = self.files.iter_mut().find(|entry| entry.file_id == file.file_id) {
+        if let Some(slot) = self
+            .files
+            .iter_mut()
+            .find(|entry| entry.file_id == file.file_id)
+        {
             *slot = file;
             true
         } else {
@@ -190,8 +194,8 @@ impl VectorObjectEconomyDirectory {
     pub fn serialize(&self) -> Result<Vec<u8>> {
         self.validate()?;
 
-        let payload =
-            serde_json::to_vec(self).context("serialize vector object-economy directory payload")?;
+        let payload = serde_json::to_vec(self)
+            .context("serialize vector object-economy directory payload")?;
         let checksum = crc32fast::hash(&payload);
         let mut out = Vec::with_capacity(HEADER_LEN + payload.len());
         out.extend_from_slice(DIRECTORY_MAGIC);
@@ -254,8 +258,10 @@ impl ObjectEconomyFileEntry {
         block_index_size: u32,
         entries: &[IndexEntry],
     ) -> Result<Self> {
-        let blocks: Vec<ObjectEconomyBlockEntry> =
-            entries.iter().map(ObjectEconomyBlockEntry::from_index_entry).collect();
+        let blocks: Vec<ObjectEconomyBlockEntry> = entries
+            .iter()
+            .map(ObjectEconomyBlockEntry::from_index_entry)
+            .collect();
         let vector_dimension = infer_vector_dimension(&blocks)?;
         let centroid_encoding = infer_centroid_encoding(&blocks);
         let (min_key, max_key) = derive_key_range(entries);
@@ -388,9 +394,7 @@ impl<'a> VectorObjectEconomyDirectoryStore<'a> {
     /// whether the sidecar was used as-is or rebuilt. Readers use the status
     /// to mark the route as degraded in EXPLAIN so callers can detect when
     /// they fell back to embedded SST index reads.
-    pub async fn load_with_status(
-        &self,
-    ) -> (VectorObjectEconomyDirectory, DirectoryLoadStatus) {
+    pub async fn load_with_status(&self) -> (VectorObjectEconomyDirectory, DirectoryLoadStatus) {
         let path = self.path();
         let empty = || {
             VectorObjectEconomyDirectory::empty(
@@ -543,6 +547,13 @@ impl CachedDirectoryHandle {
         self.cell.initialized()
     }
 
+    /// Return the cached directory entry if this handle has already been
+    /// populated. This is intentionally non-loading so diagnostics can inspect
+    /// cache state without triggering object-storage reads.
+    pub fn get_cached(&self) -> Option<Arc<CachedDirectoryEntry>> {
+        self.cell.get().cloned()
+    }
+
     /// Load-once: the first caller's `loader` populates the cell; concurrent
     /// callers wait for the same load. The returned `Arc<CachedDirectoryEntry>`
     /// is cheap to clone for downstream consumers (search plan, EXPLAIN).
@@ -587,6 +598,12 @@ impl VectorObjectEconomyDirectoryCache {
             .entry(collection_id.to_string())
             .or_insert_with(|| Arc::new(CachedDirectoryHandle::new()))
             .clone()
+    }
+
+    /// Return an existing handle without creating or loading one. Used by
+    /// diagnostics that must not perform object-storage I/O.
+    pub fn get_handle(&self, collection_id: &str) -> Option<Arc<CachedDirectoryHandle>> {
+        self.inner.get(collection_id).map(|entry| entry.clone())
     }
 
     /// Drop the cached handle for `collection_id`. The next reader will
@@ -936,7 +953,10 @@ mod tests {
         assert_eq!(decoded.version, DIRECTORY_VERSION);
         assert_eq!(decoded.files.len(), 2);
         assert_eq!(decoded.block_count(), 4);
-        assert_eq!(decoded.authority_mode, CatalogAuthorityMode::ProximaAuthoritative);
+        assert_eq!(
+            decoded.authority_mode,
+            CatalogAuthorityMode::ProximaAuthoritative
+        );
         assert_eq!(decoded.freshness_watermark_lsn, 1_234);
         assert_eq!(decoded.freshness_watermark_ns, 1_700_000_000);
         assert!(decoded.pca_model_ref.is_some());
@@ -971,7 +991,9 @@ mod tests {
             VectorObjectEconomyDirectory::empty("", 1, CatalogAuthorityMode::ProximaAuthoritative);
         directory.push_file(sample_file("l0_0001", 0, 0));
 
-        let err = directory.serialize().expect_err("empty collection_id should fail");
+        let err = directory
+            .serialize()
+            .expect_err("empty collection_id should fail");
         assert!(err.to_string().contains("collection_id"));
     }
 
@@ -1282,12 +1304,11 @@ mod tests {
     async fn load_with_status_reports_mismatch_when_collection_differs() {
         let fs = InMemoryFs::default();
         let path = vector_object_economy_directory_path("s3://bucket/coll", 3);
-        let mut other =
-            VectorObjectEconomyDirectory::empty(
-                "other-collection",
-                3,
-                CatalogAuthorityMode::ProximaAuthoritative,
-            );
+        let mut other = VectorObjectEconomyDirectory::empty(
+            "other-collection",
+            3,
+            CatalogAuthorityMode::ProximaAuthoritative,
+        );
         other.upsert_file(sample_file("l0_0001", 0, 0));
         let bytes = other.serialize().expect("serialize");
         fs.write(&path, &bytes, None).await.expect("seed sidecar");
@@ -1488,8 +1509,14 @@ mod tests {
         let h2 = cache.handle_for("coll-b");
         let h1_again = cache.handle_for("coll-a");
 
-        assert!(!Arc::ptr_eq(&h1, &h2), "different collections get distinct handles");
-        assert!(Arc::ptr_eq(&h1, &h1_again), "same collection returns same handle");
+        assert!(
+            !Arc::ptr_eq(&h1, &h2),
+            "different collections get distinct handles"
+        );
+        assert!(
+            Arc::ptr_eq(&h1, &h1_again),
+            "same collection returns same handle"
+        );
         assert_eq!(cache.len(), 2);
         assert!(cache.has_handle("coll-a"));
         assert!(!cache.has_handle("coll-c"));
@@ -1541,7 +1568,11 @@ mod tests {
             .await;
         assert_eq!(entry2.directory.storage_epoch, 2);
         assert_eq!(entry2.status, DirectoryLoadStatus::Loaded);
-        assert_eq!(calls.load(Ordering::SeqCst), 2, "reload fires after invalidate");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "reload fires after invalidate"
+        );
     }
 
     #[test]
@@ -1594,9 +1625,7 @@ mod tests {
         // again. We confirm by passing a panicking loader.
         let entry_again = cache
             .handle_for("coll")
-            .get_or_load(|| async {
-                panic!("loader should not fire on cached read")
-            })
+            .get_or_load(|| async { panic!("loader should not fire on cached read") })
             .await;
         assert!(Arc::ptr_eq(&entry, &entry_again));
     }
@@ -1636,13 +1665,19 @@ mod tests {
     // no fallback magic) — when unset, the writer skips emission entirely.
 
     fn sample_index_entries(base_block: u32) -> Vec<IndexEntry> {
-        vec![index_entry(base_block, 100), index_entry(base_block + 1, 300)]
+        vec![
+            index_entry(base_block, 100),
+            index_entry(base_block + 1, 300),
+        ]
     }
 
     fn hooks_with_fresh_cache(
         collection_id: &str,
         storage_epoch: u64,
-    ) -> (SstableWriterDirectoryHooks, Arc<VectorObjectEconomyDirectoryCache>) {
+    ) -> (
+        SstableWriterDirectoryHooks,
+        Arc<VectorObjectEconomyDirectoryCache>,
+    ) {
         let cache = Arc::new(VectorObjectEconomyDirectoryCache::new());
         let hooks = SstableWriterDirectoryHooks {
             cache: cache.clone(),

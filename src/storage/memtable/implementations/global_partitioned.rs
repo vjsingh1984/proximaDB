@@ -1841,10 +1841,7 @@ mod tests {
 
         assert_eq!(current_vector.oid, vector_id.to_string());
         assert_eq!(
-            current_vector
-                .embeddings
-                .first()
-                .map(|e| e.as_fp32_slice()),
+            current_vector.embeddings.first().map(|e| e.as_fp32_slice()),
             Some(vec![1.0, 2.0, 3.0].as_slice())
         );
         assert_eq!(current_vector.record_version, 1);

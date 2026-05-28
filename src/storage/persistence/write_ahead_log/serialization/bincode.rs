@@ -163,12 +163,12 @@ mod tests {
         let serializer = BincodeSerializer::new();
         let bytes = serializer.serialize_batch(&[create_test_vector()]).unwrap();
         let records = serializer
-            .deserialize_batch_with_schema_version(
-                &bytes,
-                proximadb_records::schema_version::V1,
-            )
+            .deserialize_batch_with_schema_version(&bytes, proximadb_records::schema_version::V1)
             .unwrap();
-        assert_eq!(records[0].schema_version, proximadb_records::schema_version::V1);
+        assert_eq!(
+            records[0].schema_version,
+            proximadb_records::schema_version::V1
+        );
     }
 
     #[test]
@@ -180,12 +180,12 @@ mod tests {
         let serializer = BincodeSerializer::new();
         let bytes = serializer.serialize_batch(&[create_test_vector()]).unwrap();
         let records = serializer
-            .deserialize_batch_with_schema_version(
-                &bytes,
-                proximadb_records::schema_version::V2,
-            )
+            .deserialize_batch_with_schema_version(&bytes, proximadb_records::schema_version::V2)
             .unwrap();
-        assert_eq!(records[0].schema_version, proximadb_records::schema_version::V2);
+        assert_eq!(
+            records[0].schema_version,
+            proximadb_records::schema_version::V2
+        );
     }
 
     // === INT-2a: v2 segment header round-trip via the generic trait helpers ===
@@ -339,19 +339,19 @@ mod tests {
         let bytes_b = serializer.serialize_batch(&[create_test_vector()]).unwrap();
 
         let v1_records = serializer
-            .deserialize_batch_with_schema_version(
-                &bytes_a,
-                proximadb_records::schema_version::V1,
-            )
+            .deserialize_batch_with_schema_version(&bytes_a, proximadb_records::schema_version::V1)
             .unwrap();
         let v2_records = serializer
-            .deserialize_batch_with_schema_version(
-                &bytes_b,
-                proximadb_records::schema_version::V2,
-            )
+            .deserialize_batch_with_schema_version(&bytes_b, proximadb_records::schema_version::V2)
             .unwrap();
-        assert_eq!(v1_records[0].schema_version, proximadb_records::schema_version::V1);
-        assert_eq!(v2_records[0].schema_version, proximadb_records::schema_version::V2);
+        assert_eq!(
+            v1_records[0].schema_version,
+            proximadb_records::schema_version::V1
+        );
+        assert_eq!(
+            v2_records[0].schema_version,
+            proximadb_records::schema_version::V2
+        );
         // Payload is structurally identical — PR 4 will change this when the
         // v2 path swaps in the EmbeddingValues decoder.
         assert_eq!(

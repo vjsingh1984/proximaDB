@@ -78,21 +78,17 @@ mod tests {
 
         // Opt in via builder — accessor flips.
         let cache = Arc::new(VectorObjectEconomyDirectoryCache::new());
-        let writer_opted_in = SstableWriter::new_with_config(
-            temp.path().join("test.sst"),
-            64 * 1024,
-            fs,
-            None,
-        )
-        .with_directory_emission(SstableWriterDirectoryHooks {
-            cache,
-            collection_id: "coll".to_string(),
-            collection_root: "file:///tmp/coll".to_string(),
-            storage_epoch: 1,
-            authority_mode: CatalogAuthorityMode::RebuildableProjection,
-            freshness_lsn: 0,
-            level: 0,
-        });
+        let writer_opted_in =
+            SstableWriter::new_with_config(temp.path().join("test.sst"), 64 * 1024, fs, None)
+                .with_directory_emission(SstableWriterDirectoryHooks {
+                    cache,
+                    collection_id: "coll".to_string(),
+                    collection_root: "file:///tmp/coll".to_string(),
+                    storage_epoch: 1,
+                    authority_mode: CatalogAuthorityMode::RebuildableProjection,
+                    freshness_lsn: 0,
+                    level: 0,
+                });
         assert!(writer_opted_in.directory_emission_configured());
     }
 

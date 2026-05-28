@@ -69,12 +69,12 @@ pub use proxima_record_bridge::{
 // Header cache exports
 pub use header_cache::{
     CachedHeader,
-    HeaderCacheStats,
     CachingHeaderLoader,
     ColumnBounds,
     ColumnValue,
     // Encoding and stats
     EncodingInfo,
+    HeaderCacheStats,
     // Header loading
     HeaderLoader,
     IoSavingsEstimate,

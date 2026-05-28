@@ -192,7 +192,10 @@ impl CompactionAxisUpdater {
                 let _ = index.remove(vector_id).await; // Ignore errors as it might not exist
 
                 // Add updated version
-                match index.add(vector_id.clone(), embedding.values.to_fp32_owned()).await {
+                match index
+                    .add(vector_id.clone(), embedding.values.to_fp32_owned())
+                    .await
+                {
                     Ok(_) => {
                         debug!("Updated vector {} in index {}", vector_id, index_name);
                     }

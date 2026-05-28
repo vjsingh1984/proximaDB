@@ -1379,7 +1379,9 @@ mod tests {
         };
 
         let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-        let coordinator = UnifiedTransactionCoordinator::new(filesystem, None).await.unwrap();
+        let coordinator = UnifiedTransactionCoordinator::new(filesystem, None)
+            .await
+            .unwrap();
 
         (coordinator, temp_dir)
     }

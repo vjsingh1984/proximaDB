@@ -2255,18 +2255,18 @@ impl proximadb_runtime::DocumentPort for DocumentService {
         &self,
         request: crate::proto::proximadb_v1::CreateDocumentCollectionRequest,
     ) -> Result<crate::proto::proximadb_v1::CreateDocumentCollectionResponse> {
-        let config = request
-            .config
-            .ok_or_else(|| anyhow!("Missing config"))?;
+        let config = request.config.ok_or_else(|| anyhow!("Missing config"))?;
         let name = config.name.clone();
         let id = self
             .create_collection(&name, config)
             .await
             .map_err(|e| anyhow!("Failed to create collection: {}", e))?;
-        Ok(crate::proto::proximadb_v1::CreateDocumentCollectionResponse {
-            collection_id: id,
-            success: true,
-        })
+        Ok(
+            crate::proto::proximadb_v1::CreateDocumentCollectionResponse {
+                collection_id: id,
+                success: true,
+            },
+        )
     }
 
     async fn list_collections(

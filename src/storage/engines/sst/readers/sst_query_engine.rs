@@ -278,6 +278,170 @@ pub struct SstQueryBlockCacheKey {
     pub block_index: usize,
 }
 
+/// Policy for coalescing selected SST data-block ranges into fewer object reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObjectRangeCoalescePolicy {
+    /// Merge adjacent selected ranges when the gap between them is at or below this size.
+    pub max_gap_bytes: u64,
+    /// Do not produce a merged range larger than this size. Zero means unlimited.
+    pub max_range_bytes: u64,
+}
+
+impl Default for ObjectRangeCoalescePolicy {
+    fn default() -> Self {
+        Self {
+            max_gap_bytes: 64 * 1024,
+            max_range_bytes: 8 * 1024 * 1024,
+        }
+    }
+}
+
+/// One selected block's position inside a coalesced range buffer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RangeBlockSlice {
+    pub block_id: u32,
+    pub block_index: usize,
+    pub offset_within_range: u64,
+    /// Serialized ProximaDataBlock length, excluding the 4-byte block-size prefix.
+    pub serialized_len: u32,
+}
+
+/// One remote/local range read that may contain one or more selected blocks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoalescedRange {
+    pub start: u64,
+    pub len: u64,
+    pub blocks: Vec<RangeBlockSlice>,
+}
+
+/// Planned object reads for a set of selected SST blocks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjectRangePlan {
+    pub object_url: String,
+    pub selected_blocks: Vec<u32>,
+    pub ranges: Vec<CoalescedRange>,
+    pub estimated_bytes: u64,
+    pub useful_block_bytes: u64,
+    pub overfetch_bytes: u64,
+    pub estimated_get_requests: usize,
+    pub pruned_blocks: usize,
+    pub total_blocks: usize,
+}
+
+/// Aggregate object-economy read counters for one SST search.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ObjectRangeExecutionStats {
+    pub selected_files: usize,
+    pub selected_blocks: usize,
+    pub pruned_blocks: usize,
+    pub estimated_object_gets: usize,
+    pub actual_object_gets: usize,
+    pub estimated_remote_bytes: u64,
+    pub actual_remote_bytes: u64,
+    pub useful_block_bytes: u64,
+    pub overfetch_bytes: u64,
+    pub rejected_route_reasons: Vec<String>,
+}
+
+impl ObjectRangeExecutionStats {
+    pub fn record_plan(&mut self, plan: &ObjectRangePlan) {
+        self.selected_files += 1;
+        self.selected_blocks += plan.selected_blocks.len();
+        self.pruned_blocks += plan.pruned_blocks;
+        self.estimated_object_gets += plan.estimated_get_requests;
+        self.actual_object_gets += plan.ranges.len();
+        self.estimated_remote_bytes = self
+            .estimated_remote_bytes
+            .saturating_add(plan.estimated_bytes);
+        self.actual_remote_bytes = self
+            .actual_remote_bytes
+            .saturating_add(plan.estimated_bytes);
+        self.useful_block_bytes = self
+            .useful_block_bytes
+            .saturating_add(plan.useful_block_bytes);
+        self.overfetch_bytes = self.overfetch_bytes.saturating_add(plan.overfetch_bytes);
+    }
+
+    pub fn to_service_index_stats(&self) -> crate::core::service_types::ServiceIndexStats {
+        crate::core::service_types::ServiceIndexStats {
+            object_selected_blocks: self.selected_blocks as i64,
+            object_pruned_blocks: self.pruned_blocks as i64,
+            object_estimated_gets: self.estimated_object_gets as i64,
+            object_actual_gets: self.actual_object_gets as i64,
+            object_estimated_remote_bytes: self.estimated_remote_bytes as i64,
+            object_actual_remote_bytes: self.actual_remote_bytes as i64,
+            object_overfetch_bytes: self.overfetch_bytes as i64,
+            ..Default::default()
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ObjectEconomyRouteOptions {
+    enabled: bool,
+    max_object_gets: Option<usize>,
+    max_remote_bytes: Option<u64>,
+}
+
+impl ObjectEconomyRouteOptions {
+    fn allows_plan(&self, plan: &ObjectRangePlan) -> Result<()> {
+        if let Some(max_object_gets) = self.max_object_gets
+            && plan.estimated_get_requests > max_object_gets
+        {
+            return Err(anyhow::anyhow!(
+                "object_economy_route_budget_exceeded: estimated_gets={} max_object_gets={}",
+                plan.estimated_get_requests,
+                max_object_gets
+            ));
+        }
+
+        if let Some(max_remote_bytes) = self.max_remote_bytes
+            && plan.estimated_bytes > max_remote_bytes
+        {
+            return Err(anyhow::anyhow!(
+                "object_economy_route_budget_exceeded: estimated_remote_bytes={} max_remote_bytes={}",
+                plan.estimated_bytes,
+                max_remote_bytes
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+fn object_economy_route_options_from_params(params: &SearchParams) -> ObjectEconomyRouteOptions {
+    let mut options = ObjectEconomyRouteOptions::default();
+    let Some(hints) = params.custom_hints.as_ref() else {
+        return options;
+    };
+
+    if hints
+        .get("vector_route")
+        .and_then(|value| value.as_str())
+        .is_some_and(|route| route.eq_ignore_ascii_case("object_economy"))
+    {
+        options.enabled = true;
+    }
+
+    if let Some(enabled) = hints
+        .get("object_economy_enabled")
+        .or_else(|| hints.get("vector_object_economy_enabled"))
+        .and_then(|value| value.as_bool())
+    {
+        options.enabled = enabled;
+    }
+
+    options.max_object_gets = hints
+        .get("max_object_gets")
+        .and_then(|value| value.as_u64())
+        .and_then(|value| usize::try_from(value).ok());
+    options.max_remote_bytes = hints
+        .get("max_remote_bytes")
+        .and_then(|value| value.as_u64());
+
+    options
+}
+
 /// Cache statistics
 #[derive(Debug, Default)]
 pub struct SstQueryCacheStats {
@@ -366,6 +530,31 @@ pub struct SstQueryCollectionContext {
     pub collection: Option<Arc<crate::proto::proximadb_v1::Collection>>,
 }
 
+fn object_range_policy_from_context(
+    context: &SstQueryCollectionContext,
+) -> ObjectRangeCoalescePolicy {
+    let mut policy = ObjectRangeCoalescePolicy::default();
+    let Some(hints) = context.io_optimization_hints.as_ref() else {
+        return policy;
+    };
+
+    if let Some(max_gap_bytes) = hints
+        .get("sst_object_range_max_gap_bytes")
+        .and_then(|value| value.as_u64())
+    {
+        policy.max_gap_bytes = max_gap_bytes;
+    }
+
+    if let Some(max_range_bytes) = hints
+        .get("sst_object_range_max_range_bytes")
+        .and_then(|value| value.as_u64())
+    {
+        policy.max_range_bytes = max_range_bytes;
+    }
+
+    policy
+}
+
 /// Modular block reader for shared block-level operations
 /// Uses filesystem API for abstracted range reading across cloud and local storage
 #[derive(Clone)]
@@ -413,6 +602,154 @@ impl ModularBlockReader {
         fs.read_range(&self.file_path, offset, length as u64)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to read range: {}", e))
+    }
+
+    /// Build a coalesced range-read plan for selected block indexes.
+    ///
+    /// Each IndexEntry offset points at the 4-byte block-size prefix. The planned range
+    /// therefore includes that prefix plus the serialized ProximaDataBlock bytes.
+    pub fn plan_selected_block_ranges(
+        &self,
+        entries: &[IndexEntry],
+        selected_indices: &[usize],
+        policy: &ObjectRangeCoalescePolicy,
+    ) -> Result<ObjectRangePlan> {
+        let mut selected: Vec<(usize, &IndexEntry, u64, u64)> = Vec::new();
+        for &idx in selected_indices {
+            let entry = entries.get(idx).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Selected block index {} out of bounds for {} entries",
+                    idx,
+                    entries.len()
+                )
+            })?;
+
+            let useful_len = u64::from(entry.size);
+            let read_len = useful_len
+                .checked_add(4)
+                .ok_or_else(|| anyhow::anyhow!("Block {} size overflow", entry.block_id))?;
+            selected.push((idx, entry, entry.offset, read_len));
+        }
+
+        selected.sort_by_key(|(_, _, start, _)| *start);
+
+        let mut ranges: Vec<CoalescedRange> = Vec::new();
+        let mut useful_block_bytes = 0u64;
+
+        for (idx, entry, start, read_len) in selected {
+            useful_block_bytes = useful_block_bytes.saturating_add(u64::from(entry.size));
+            let end = start.saturating_add(read_len);
+
+            let mut appended = false;
+            if let Some(current) = ranges.last_mut() {
+                let current_end = current.start.saturating_add(current.len);
+                let gap = start.saturating_sub(current_end);
+                let merged_end = current_end.max(end);
+                let merged_len = merged_end.saturating_sub(current.start);
+                let within_gap = start <= current_end || gap <= policy.max_gap_bytes;
+                let within_max =
+                    policy.max_range_bytes == 0 || merged_len <= policy.max_range_bytes;
+
+                if within_gap && within_max {
+                    current.blocks.push(RangeBlockSlice {
+                        block_id: entry.block_id,
+                        block_index: idx,
+                        offset_within_range: start.saturating_sub(current.start),
+                        serialized_len: entry.size,
+                    });
+                    current.len = merged_len;
+                    appended = true;
+                }
+            }
+
+            if !appended {
+                ranges.push(CoalescedRange {
+                    start,
+                    len: read_len,
+                    blocks: vec![RangeBlockSlice {
+                        block_id: entry.block_id,
+                        block_index: idx,
+                        offset_within_range: 0,
+                        serialized_len: entry.size,
+                    }],
+                });
+            }
+        }
+
+        let estimated_bytes = ranges.iter().map(|range| range.len).sum::<u64>();
+        let selected_blocks = ranges
+            .iter()
+            .flat_map(|range| range.blocks.iter().map(|block| block.block_id))
+            .collect::<Vec<_>>();
+        let estimated_get_requests = ranges.len();
+
+        Ok(ObjectRangePlan {
+            object_url: self.file_path.clone(),
+            selected_blocks,
+            ranges,
+            estimated_bytes,
+            useful_block_bytes,
+            overfetch_bytes: estimated_bytes.saturating_sub(useful_block_bytes),
+            estimated_get_requests,
+            pruned_blocks: entries.len().saturating_sub(selected_indices.len()),
+            total_blocks: entries.len(),
+        })
+    }
+
+    /// Execute a coalesced range-read plan and deserialize the selected data blocks.
+    pub async fn read_blocks_by_range_plan(
+        &self,
+        plan: &ObjectRangePlan,
+    ) -> Result<Vec<(u32, ProximaDataBlock)>> {
+        let mut blocks = Vec::with_capacity(plan.selected_blocks.len());
+
+        for range in &plan.ranges {
+            let range_data = self.read_range(range.start, range.len as usize).await?;
+
+            for slice in &range.blocks {
+                let prefix_start = slice.offset_within_range as usize;
+                let prefix_end = prefix_start.checked_add(4).ok_or_else(|| {
+                    anyhow::anyhow!("Block {} prefix offset overflow", slice.block_id)
+                })?;
+                if prefix_end > range_data.len() {
+                    return Err(anyhow::anyhow!(
+                        "Block {} prefix outside coalesced range buffer",
+                        slice.block_id
+                    ));
+                }
+
+                let declared_len = u32::from_le_bytes([
+                    range_data[prefix_start],
+                    range_data[prefix_start + 1],
+                    range_data[prefix_start + 2],
+                    range_data[prefix_start + 3],
+                ]) as usize;
+                let block_start = prefix_end;
+                let block_end = block_start.checked_add(declared_len).ok_or_else(|| {
+                    anyhow::anyhow!("Block {} declared length overflow", slice.block_id)
+                })?;
+
+                if block_end > range_data.len() {
+                    return Err(anyhow::anyhow!(
+                        "Block {} data outside coalesced range buffer",
+                        slice.block_id
+                    ));
+                }
+
+                let data_block =
+                    ProximaDataBlock::deserialize(&range_data[block_start..block_end], None)
+                        .map_err(|e| {
+                            anyhow::anyhow!(
+                                "Failed to deserialize ProximaDataBlock for block {}: {}",
+                                slice.block_id,
+                                e
+                            )
+                        })?;
+                blocks.push((slice.block_id, data_block));
+            }
+        }
+
+        Ok(blocks)
     }
 
     /// Read only quantized section from a data block for progressive search
@@ -932,6 +1269,268 @@ impl ModularBlockReader {
                 ))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod object_economy_range_plan_tests {
+    use super::*;
+    use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+
+    async fn test_reader() -> ModularBlockReader {
+        let fs = Arc::new(
+            FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .expect("filesystem factory"),
+        );
+        ModularBlockReader::new(fs, "s3://bucket/collection/data/l0.sst".to_string())
+    }
+
+    fn entry(block_id: u32, offset: u64, size: u32) -> IndexEntry {
+        IndexEntry {
+            block_id,
+            offset,
+            size,
+            ..IndexEntry::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn coalesces_adjacent_selected_blocks_under_gap_threshold() {
+        let reader = test_reader().await;
+        let entries = vec![
+            entry(0, 100, 40),
+            entry(1, 150, 40),
+            entry(2, 210, 40),
+            entry(3, 1_000, 40),
+        ];
+        let policy = ObjectRangeCoalescePolicy {
+            max_gap_bytes: 32,
+            max_range_bytes: 0,
+        };
+
+        let plan = reader
+            .plan_selected_block_ranges(&entries, &[0, 1, 2], &policy)
+            .expect("range plan");
+
+        assert_eq!(plan.estimated_get_requests, 1);
+        assert_eq!(plan.ranges.len(), 1);
+        assert_eq!(plan.ranges[0].start, 100);
+        assert_eq!(plan.ranges[0].len, 154);
+        assert_eq!(plan.ranges[0].blocks.len(), 3);
+        assert_eq!(plan.pruned_blocks, 1);
+    }
+
+    #[tokio::test]
+    async fn does_not_overmerge_when_max_range_bytes_exceeded() {
+        let reader = test_reader().await;
+        let entries = vec![entry(0, 100, 80), entry(1, 190, 80), entry(2, 280, 80)];
+        let policy = ObjectRangeCoalescePolicy {
+            max_gap_bytes: 64,
+            max_range_bytes: 180,
+        };
+
+        let plan = reader
+            .plan_selected_block_ranges(&entries, &[0, 1, 2], &policy)
+            .expect("range plan");
+
+        assert_eq!(plan.estimated_get_requests, 2);
+        assert_eq!(plan.ranges.len(), 2);
+        assert_eq!(plan.ranges[0].blocks.len(), 2);
+        assert_eq!(plan.ranges[1].blocks.len(), 1);
+        assert!(plan.ranges.iter().all(|range| range.len <= 180));
+    }
+
+    #[tokio::test]
+    async fn range_plan_reports_overfetch_and_prune_counts() {
+        let reader = test_reader().await;
+        let entries = (0..100)
+            .map(|idx| entry(idx as u32, 100 + (idx as u64 * 128), 64))
+            .collect::<Vec<_>>();
+        let selected = (0..10).collect::<Vec<_>>();
+        let policy = ObjectRangeCoalescePolicy {
+            max_gap_bytes: 128,
+            max_range_bytes: 0,
+        };
+
+        let plan = reader
+            .plan_selected_block_ranges(&entries, &selected, &policy)
+            .expect("range plan");
+
+        assert_eq!(plan.total_blocks, 100);
+        assert_eq!(plan.selected_blocks.len(), 10);
+        assert_eq!(plan.pruned_blocks, 90);
+        assert_eq!(plan.useful_block_bytes, 640);
+        assert!(plan.estimated_bytes >= plan.useful_block_bytes);
+        assert_eq!(
+            plan.overfetch_bytes,
+            plan.estimated_bytes - plan.useful_block_bytes
+        );
+    }
+
+    #[tokio::test]
+    async fn range_plan_keeps_block_slice_offsets_stable() {
+        let reader = test_reader().await;
+        let entries = vec![
+            entry(7, 1_000, 50),
+            entry(8, 1_100, 60),
+            entry(9, 1_500, 70),
+        ];
+        let policy = ObjectRangeCoalescePolicy {
+            max_gap_bytes: 100,
+            max_range_bytes: 0,
+        };
+
+        let plan = reader
+            .plan_selected_block_ranges(&entries, &[0, 1], &policy)
+            .expect("range plan");
+
+        assert_eq!(plan.ranges.len(), 1);
+        assert_eq!(plan.ranges[0].blocks[0].offset_within_range, 0);
+        assert_eq!(plan.ranges[0].blocks[1].offset_within_range, 100);
+        assert_eq!(plan.ranges[0].blocks[0].serialized_len, 50);
+        assert_eq!(plan.ranges[0].blocks[1].serialized_len, 60);
+    }
+
+    #[tokio::test]
+    async fn range_execution_stats_accumulates_service_counters() {
+        let reader = test_reader().await;
+        let entries = vec![
+            entry(0, 100, 40),
+            entry(1, 150, 40),
+            entry(2, 1_000, 40),
+            entry(3, 2_000, 40),
+        ];
+        let policy = ObjectRangeCoalescePolicy {
+            max_gap_bytes: 32,
+            max_range_bytes: 0,
+        };
+        let plan = reader
+            .plan_selected_block_ranges(&entries, &[0, 1], &policy)
+            .expect("range plan");
+        let mut stats = ObjectRangeExecutionStats::default();
+
+        stats.record_plan(&plan);
+        let index_stats = stats.to_service_index_stats();
+
+        assert_eq!(stats.selected_files, 1);
+        assert_eq!(index_stats.object_selected_blocks, 2);
+        assert_eq!(index_stats.object_pruned_blocks, 2);
+        assert_eq!(index_stats.object_estimated_gets, 1);
+        assert_eq!(index_stats.object_actual_gets, 1);
+        assert_eq!(
+            index_stats.object_estimated_remote_bytes,
+            stats.estimated_remote_bytes as i64
+        );
+        assert_eq!(
+            index_stats.object_overfetch_bytes,
+            stats.overfetch_bytes as i64
+        );
+    }
+
+    #[test]
+    fn object_economy_route_is_disabled_without_explicit_hint() {
+        let params = SearchParams::default();
+
+        let options = object_economy_route_options_from_params(&params);
+
+        assert!(!options.enabled);
+        assert!(options.max_object_gets.is_none());
+        assert!(options.max_remote_bytes.is_none());
+    }
+
+    #[test]
+    fn object_economy_route_parses_hints_and_budgets() {
+        let mut hints = HashMap::new();
+        hints.insert(
+            "vector_route".to_string(),
+            serde_json::json!("object_economy"),
+        );
+        hints.insert("max_object_gets".to_string(), serde_json::json!(3));
+        hints.insert("max_remote_bytes".to_string(), serde_json::json!(4096));
+        let params = SearchParams {
+            custom_hints: Some(hints),
+            ..Default::default()
+        };
+
+        let options = object_economy_route_options_from_params(&params);
+
+        assert!(options.enabled);
+        assert_eq!(options.max_object_gets, Some(3));
+        assert_eq!(options.max_remote_bytes, Some(4096));
+    }
+
+    #[test]
+    fn object_economy_explicit_disable_overrides_route_hint() {
+        let mut hints = HashMap::new();
+        hints.insert(
+            "vector_route".to_string(),
+            serde_json::json!("object_economy"),
+        );
+        hints.insert(
+            "object_economy_enabled".to_string(),
+            serde_json::json!(false),
+        );
+        let params = SearchParams {
+            custom_hints: Some(hints),
+            ..Default::default()
+        };
+
+        let options = object_economy_route_options_from_params(&params);
+
+        assert!(!options.enabled);
+    }
+
+    #[tokio::test]
+    async fn object_economy_budget_rejects_plan_before_reads() {
+        let reader = test_reader().await;
+        let entries = vec![entry(0, 100, 80), entry(1, 1_000, 80)];
+        let policy = ObjectRangeCoalescePolicy {
+            max_gap_bytes: 0,
+            max_range_bytes: 0,
+        };
+        let plan = reader
+            .plan_selected_block_ranges(&entries, &[0, 1], &policy)
+            .expect("range plan");
+        let options = ObjectEconomyRouteOptions {
+            enabled: true,
+            max_object_gets: Some(1),
+            max_remote_bytes: None,
+        };
+
+        let err = options
+            .allows_plan(&plan)
+            .expect_err("plan should exceed GET budget");
+
+        assert!(err.to_string().contains("estimated_gets=2"));
+    }
+
+    #[test]
+    fn range_policy_uses_context_io_hints() {
+        let mut hints = HashMap::new();
+        hints.insert(
+            "sst_object_range_max_gap_bytes".to_string(),
+            serde_json::json!(4096),
+        );
+        hints.insert(
+            "sst_object_range_max_range_bytes".to_string(),
+            serde_json::json!(16 * 1024 * 1024),
+        );
+        let context = SstQueryCollectionContext {
+            file_path: "s3://bucket/collection/data/l0.sst".to_string(),
+            sstable_files: vec!["s3://bucket/collection/data/l0.sst".to_string()],
+            total_vectors: 0,
+            metadata_columns: Vec::new(),
+            level: 0,
+            creation_time: chrono::Utc::now(),
+            io_optimization_hints: Some(hints),
+            collection: None,
+        };
+
+        let policy = object_range_policy_from_context(&context);
+
+        assert_eq!(policy.max_gap_bytes, 4096);
+        assert_eq!(policy.max_range_bytes, 16 * 1024 * 1024);
     }
 }
 
@@ -5033,7 +5632,19 @@ impl UnifiedSstableReader {
         context: &SstQueryCollectionContext,
         search_params: &SearchParams,
     ) -> Result<Vec<ProximaDataBlock>> {
+        self.search_optimized_strategy_modular_with_stats(context, search_params)
+            .await
+            .map(|(blocks, _stats)| blocks)
+    }
+
+    async fn search_optimized_strategy_modular_with_stats(
+        &self,
+        context: &SstQueryCollectionContext,
+        search_params: &SearchParams,
+    ) -> Result<(Vec<ProximaDataBlock>, ObjectRangeExecutionStats)> {
         let mut relevant_blocks = Vec::new();
+        let mut object_stats = ObjectRangeExecutionStats::default();
+        let route_options = object_economy_route_options_from_params(search_params);
 
         for file_path in &context.sstable_files {
             let mut block_reader =
@@ -5047,8 +5658,10 @@ impl UnifiedSstableReader {
             // Smart block selection based on search parameters (sqrt-based pruning)
             let selected_blocks = self.select_blocks_for_search(&index_blocks, search_params);
 
-            // Apply zone map pruning if filter expression is present
+            // Apply zone map pruning if filter expression is present, then load
+            // the surviving blocks with an object-store friendly range plan.
             let filter_expr = search_params.filter_expression.as_ref();
+            let mut selected_after_zone_map = Vec::with_capacity(selected_blocks.len());
             let mut blocks_after_zone_map = 0usize;
             let blocks_before_zone_map = selected_blocks.len();
 
@@ -5062,18 +5675,49 @@ impl UnifiedSstableReader {
                     }
 
                     blocks_after_zone_map += 1;
-                    match block_reader
-                        .read_data_block_at_offset(index_entry.offset, index_entry.size as usize)
-                        .await
-                    {
-                        Ok(data_block) => {
-                            relevant_blocks.push(data_block);
-                        }
-                        Err(e) => {
-                            return Err(e);
-                        }
-                    }
+                    selected_after_zone_map.push(*block_idx);
                 }
+            }
+
+            if !selected_after_zone_map.is_empty() {
+                if !route_options.enabled {
+                    let loaded_blocks = self
+                        .read_selected_blocks_individually(
+                            &block_reader,
+                            &index_blocks,
+                            &selected_after_zone_map,
+                        )
+                        .await?;
+                    relevant_blocks.extend(loaded_blocks);
+                    continue;
+                }
+
+                let policy = object_range_policy_from_context(context);
+                let range_plan = block_reader.plan_selected_block_ranges(
+                    &index_blocks,
+                    &selected_after_zone_map,
+                    &policy,
+                )?;
+                if let Err(e) = route_options.allows_plan(&range_plan) {
+                    object_stats.rejected_route_reasons.push(e.to_string());
+                    return Err(e);
+                }
+
+                tracing::debug!(
+                    "📦 SST object range plan: file={}, selected_blocks={}, ranges={}, estimated_bytes={}, useful_bytes={}, overfetch_bytes={}, pruned_blocks={}/{}",
+                    file_path,
+                    range_plan.selected_blocks.len(),
+                    range_plan.estimated_get_requests,
+                    range_plan.estimated_bytes,
+                    range_plan.useful_block_bytes,
+                    range_plan.overfetch_bytes,
+                    range_plan.pruned_blocks,
+                    range_plan.total_blocks
+                );
+
+                object_stats.record_plan(&range_plan);
+                let loaded_blocks = block_reader.read_blocks_by_range_plan(&range_plan).await?;
+                relevant_blocks.extend(loaded_blocks.into_iter().map(|(_, block)| block));
             }
 
             // Log zone map pruning effectiveness
@@ -5092,7 +5736,27 @@ impl UnifiedSstableReader {
             }
         }
 
-        Ok(relevant_blocks)
+        Ok((relevant_blocks, object_stats))
+    }
+
+    async fn read_selected_blocks_individually(
+        &self,
+        block_reader: &ModularBlockReader,
+        index_blocks: &[IndexEntry],
+        selected_indices: &[usize],
+    ) -> Result<Vec<ProximaDataBlock>> {
+        let mut blocks = Vec::with_capacity(selected_indices.len());
+
+        for block_idx in selected_indices {
+            if let Some(index_entry) = index_blocks.get(*block_idx) {
+                let data_block = block_reader
+                    .read_data_block_at_offset(index_entry.offset, index_entry.size as usize)
+                    .await?;
+                blocks.push(data_block);
+            }
+        }
+
+        Ok(blocks)
     }
 
     // Helper methods for modular strategies

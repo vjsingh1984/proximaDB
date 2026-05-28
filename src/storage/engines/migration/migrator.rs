@@ -428,7 +428,10 @@ impl EngineMigrator {
         Ok(plan.record_count)
     }
 
-    fn calculate_resource_requirements(&self, total_data_size: u64) -> MigratorResourceRequirements {
+    fn calculate_resource_requirements(
+        &self,
+        total_data_size: u64,
+    ) -> MigratorResourceRequirements {
         let data_size_gb = total_data_size as f64 / (1024.0 * 1024.0 * 1024.0);
 
         MigratorResourceRequirements {
@@ -446,7 +449,10 @@ impl EngineMigrator {
         }
     }
 
-    fn assess_migration_risks(&self, collections: &[CollectionMigratorMigrationPlan]) -> RiskAssessment {
+    fn assess_migration_risks(
+        &self,
+        collections: &[CollectionMigratorMigrationPlan],
+    ) -> RiskAssessment {
         let mut overall_risk = RiskLevel::Low;
         let mut mitigation_strategies = Vec::new();
 
