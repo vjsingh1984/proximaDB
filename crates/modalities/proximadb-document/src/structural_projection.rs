@@ -381,7 +381,7 @@ fn collect_tree_observations(
     observations: &mut Vec<PathObservation>,
 ) {
     let mut fields = tree.iter().collect::<Vec<_>>();
-    fields.sort_by(|(left, _), (right, _)| left.cmp(right));
+    fields.sort_by_key(|(k, _)| *k);
 
     for (key, node) in fields {
         let path = join_path(prefix, key);
@@ -416,14 +416,14 @@ fn collect_value_observations(
     match value {
         ProximaValue::Map(fields) => {
             let mut fields = fields.iter().collect::<Vec<_>>();
-            fields.sort_by(|(left, _), (right, _)| left.cmp(right));
+            fields.sort_by_key(|(k, _)| *k);
             for (key, child) in fields {
                 collect_value_observations(join_path(Some(&path), key), child, observations);
             }
         }
         ProximaValue::Struct(fields) => {
             let mut fields = fields.iter().collect::<Vec<_>>();
-            fields.sort_by(|(left, _), (right, _)| left.cmp(right));
+            fields.sort_by_key(|(k, _)| *k);
             for (key, child) in fields {
                 collect_value_observations(join_path(Some(&path), key), child, observations);
             }

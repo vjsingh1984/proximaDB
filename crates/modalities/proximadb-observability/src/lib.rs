@@ -67,7 +67,7 @@ impl ObservabilityRecordKey {
         labels: &std::collections::HashMap<String, String>,
     ) -> Self {
         let mut label_pairs = labels.iter().collect::<Vec<_>>();
-        label_pairs.sort_by(|(left, _), (right, _)| left.cmp(right));
+        label_pairs.sort_by_key(|(k, _)| *k);
         let label_fingerprint = label_pairs
             .into_iter()
             .map(|(key, value)| format!("{key}={value}"))

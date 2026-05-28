@@ -39,7 +39,7 @@ pub struct SignMagnitudeVector {
 impl SignMagnitudeVector {
     /// Storage-bytes count for a given dimensionality.
     pub const fn storage_bytes(dimensions: usize) -> usize {
-        (dimensions + 3) / 4
+        dimensions.div_ceil(4)
     }
 
     /// Allocate an empty (all-zero) vector with the given dimensionality.
