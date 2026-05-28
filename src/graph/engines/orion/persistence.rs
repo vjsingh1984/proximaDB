@@ -105,6 +105,16 @@ pub struct OrionPersistence {
     /// WAL path for future implementation
     wal_path: Option<PathBuf>,
 
+    /// Optional path to the shared canonical WAL
+    /// (`<data_dir>/pgwire/canonical-records.wal`) held by
+    /// `SharedServices`. Used by [`Self::canonical_checkpoint_lsn`] for
+    /// read-side observability of TD-066 checkpoint emission on
+    /// recovery — `None` falls back to today's engine-WAL-only
+    /// recovery behavior. Behavior of `replay_wal` is unchanged either
+    /// way (Part 1 of TD-066 (c) is read-side observability; behavior
+    /// changes are the Part 2 follow-up slice).
+    canonical_wal_path: Option<PathBuf>,
+
     /// WAL writer for unified operations
     wal_writer: Option<Arc<tokio::sync::Mutex<UnifiedWALWriter>>>,
 
@@ -149,7 +159,14 @@ impl OrionPersistence {
             .map_err(|_| ProximaDBError::Internal(format!("{lock_name} write lock poisoned")))
     }
 
-    /// Create a new persistence manager for a specific graph
+    /// Create a new persistence manager for a specific graph.
+    ///
+    /// The constructor does not take a canonical WAL path — that's set
+    /// post-construction via [`Self::with_canonical_wal_path`] so the
+    /// 24+ existing test/bench callers don't need updating. Production
+    /// wiring (`src/graph/service_engine_factory.rs` →
+    /// `OrionGraphEngine::with_persistence_for_graph`) reaches into
+    /// the underlying persistence and sets the path via the builder.
     pub async fn new(graph_id: String, base_url: String, enable_wal: bool) -> Result<Self> {
         // Create filesystem factory with default configuration and initialize filesystems
         let filesystem_factory = Arc::new(
@@ -243,12 +260,87 @@ impl OrionPersistence {
             filesystem_factory,
             filesystem,
             wal_path,
+            canonical_wal_path: None,
             wal_writer,
             compression: CompressionAlgorithm::Zstd,
             compression_level: 3,
             max_snapshots: 10,
             incremental_snapshots: false,
         })
+    }
+
+    /// Inject the path to the shared canonical WAL
+    /// (`<data_dir>/pgwire/canonical-records.wal`) for read-side
+    /// observability on recovery (TD-066 (c) Part 1). Production wiring
+    /// derives this from `SharedServices.canonical_wal_appender.path()`.
+    /// Test/bench paths can leave this unset; recovery falls back to
+    /// engine-WAL-only behavior.
+    pub fn with_canonical_wal_path(mut self, path: PathBuf) -> Self {
+        self.canonical_wal_path = Some(path);
+        self
+    }
+
+    /// The graph this persistence manager is bound to (used by
+    /// `canonical_checkpoint_lsn` and recovery observability).
+    pub fn graph_id(&self) -> &str {
+        &self.graph_id
+    }
+
+    /// Scan the shared canonical WAL for the latest
+    /// `CanonicalOperation::Checkpoint(SnapshotManifest)` entry whose
+    /// `manifest.collection_ids` contains this persistence manager's
+    /// `graph_id`, and return the manifest's `sequence_number` (the
+    /// engine-side checkpoint LSN at the time of emission).
+    ///
+    /// Returns `None` when:
+    /// - `canonical_wal_path` is `None` (recovery falls back to
+    ///   engine-WAL-only behavior), OR
+    /// - the canonical WAL file doesn't exist yet (fresh deployment),
+    ///   OR
+    /// - no Checkpoint entry for this `graph_id` has been persisted.
+    ///
+    /// This is the **read-side** half of TD-066 (c) Part 1:
+    /// observability only — `replay_wal` doesn't use this value yet.
+    /// Per ADR-020 the canonical WAL is the durability authority; this
+    /// method makes that authority visible to recovery so operators
+    /// can confirm "did my graph checkpoint actually land durably?"
+    /// before the follow-up slice changes recovery behavior to use the
+    /// LSN as a replay bound.
+    pub async fn canonical_checkpoint_lsn(&self) -> Option<u64> {
+        let path = self.canonical_wal_path.as_ref()?;
+        if !tokio::fs::try_exists(path).await.unwrap_or(false) {
+            return None;
+        }
+        let entries =
+            match crate::services::FramedTableWalAppender::read_entries_from_path(path).await {
+                Ok(entries) => entries,
+                Err(err) => {
+                    tracing::warn!(
+                        graph_id = %self.graph_id,
+                        canonical_wal_path = %path.display(),
+                        error = %err,
+                        "ORION canonical_checkpoint_lsn: failed to read canonical WAL; \
+                         returning None and falling back to engine-WAL-only recovery"
+                    );
+                    return None;
+                }
+            };
+
+        let graph_id = self.graph_id.as_str();
+        entries
+            .iter()
+            .filter_map(|entry| match &entry.operation {
+                proximadb_storage_common::CanonicalOperation::Checkpoint(manifest)
+                    if manifest
+                        .collection_ids
+                        .iter()
+                        .any(|id| id == graph_id) =>
+                {
+                    Some(manifest.sequence_number)
+                }
+                _ => None,
+            })
+            .max()
     }
 
     /// Save a snapshot of the engine state

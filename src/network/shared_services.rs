@@ -363,8 +363,23 @@ impl SharedServices {
             {
                 if tiering_cfg.enabled {
                     use crate::storage::engines::sst::tiering_integration::SstTieringIntegration;
+                    use crate::storage::tiering::TierMigrationExecutor;
+
+                    // Build the migration executor first — it shares the
+                    // filesystem factory with the engine so file://↔s3://
+                    // moves use the same backend pool. Per-tier paths are
+                    // pulled directly from the tiering config block.
+                    let executor = Arc::new(TierMigrationExecutor::from_tiering_config(
+                        filesystem_factory.clone(),
+                        &tiering_cfg,
+                    ));
+
                     match SstTieringIntegration::new(tiering_cfg) {
-                        Ok(mut integration) => {
+                        Ok(integration) => {
+                            // Attach the executor BEFORE start() so the
+                            // background eval loop, when it wakes, has
+                            // somewhere to dispatch migration tasks.
+                            let mut integration = integration.with_executor(executor);
                             if let Err(e) = integration.start().await {
                                 warn!(
                                     "⚠️ SharedServices: tier-migration integration failed to start ({}); continuing without tiering",
@@ -372,7 +387,7 @@ impl SharedServices {
                                 );
                             } else {
                                 info!(
-                                    "🪜 SharedServices: SST tier-migration integration started — flush/search/compaction hooks now active"
+                                    "🪜 SharedServices: SST tier-migration integration started — flush/search/compaction hooks active, executor dispatching tasks"
                                 );
                                 engine = engine.with_tiering_integration(Arc::new(integration));
                             }
@@ -740,12 +755,16 @@ impl SharedServices {
                 graph_collection_service.clone(),
             );
         // T2.3 / TD-066: inject the shared appender so flush_wal persists
-        // canonical checkpoints to disk.
+        // canonical checkpoints to disk. Also inject the WAL path so the
+        // graph engine factory can plumb it into ORION's persistence
+        // layer for the read-side recovery hook (TD-066 (c) Part 1).
         if let Some(appender) = canonical_wal_appender.as_ref() {
             graph_service_inst =
                 graph_service_inst
                     .with_canonical_wal_appender(appender.clone()
                         as Arc<dyn crate::services::record_store::TableWalAppender>);
+            graph_service_inst =
+                graph_service_inst.with_canonical_wal_path(appender.path().to_path_buf());
         }
         // Wire the storage root so graph engines persist under the same base path as vectors
         if let Some(first_loc) = storage_config.storage_locations.first() {

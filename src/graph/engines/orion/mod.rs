@@ -245,8 +245,31 @@ impl OrionGraphEngine {
         base_url: String,
         enable_wal: bool,
     ) -> Result<Self> {
-        let persistence =
-            Arc::new(persistence::OrionPersistence::new(graph_id, base_url, enable_wal).await?);
+        Self::with_persistence_for_graph_and_canonical_wal(
+            graph_id, base_url, enable_wal, None,
+        )
+        .await
+    }
+
+    /// Create ORION engine with persistence AND a shared canonical WAL
+    /// path for the TD-066 (c) recovery hook. When
+    /// `canonical_wal_path` is `Some`, `OrionPersistence` will scan
+    /// the canonical WAL on recovery and log the latest checkpoint
+    /// LSN for this graph (read-side observability only; recovery
+    /// behavior is unchanged in Part 1). When `None`, behavior is
+    /// identical to [`Self::with_persistence_for_graph`].
+    pub async fn with_persistence_for_graph_and_canonical_wal(
+        graph_id: String,
+        base_url: String,
+        enable_wal: bool,
+        canonical_wal_path: Option<std::path::PathBuf>,
+    ) -> Result<Self> {
+        let mut persistence =
+            persistence::OrionPersistence::new(graph_id, base_url, enable_wal).await?;
+        if let Some(path) = canonical_wal_path {
+            persistence = persistence.with_canonical_wal_path(path);
+        }
+        let persistence = Arc::new(persistence);
 
         Ok(Self {
             memory_pool: Arc::new(GraphMemoryPool::new()),
@@ -273,6 +296,13 @@ impl OrionGraphEngine {
         }
 
         Ok(engine)
+    }
+
+    /// Access the optional persistence layer. Returns `None` for in-memory
+    /// engines constructed via [`Self::new`]. Exposed for read-side
+    /// observability tests (TD-066 (c) Part 1) and ADR-020 recovery hooks.
+    pub fn persistence(&self) -> Option<&Arc<persistence::OrionPersistence>> {
+        self.persistence.as_ref()
     }
 
     /// Load engine from persistent snapshot for a specific graph
@@ -456,6 +486,20 @@ impl OrionGraphEngine {
     pub async fn recover(&self) -> Result<()> {
         if let Some(ref persistence) = self.persistence {
             tracing::info!("🔄 Starting ORION graph recovery...");
+
+            // TD-066 (c) Part 1: read-side observability of the canonical
+            // WAL checkpoint. If a shared canonical WAL path is wired
+            // through, log the latest checkpoint LSN for this graph so
+            // operators can confirm the durability authority's state.
+            // Recovery BEHAVIOR is unchanged in Part 1 — Part 2 will use
+            // this LSN to scope engine WAL replay.
+            let canonical_checkpoint_lsn = persistence.canonical_checkpoint_lsn().await;
+            tracing::info!(
+                graph_id = persistence.graph_id(),
+                canonical_checkpoint_lsn = ?canonical_checkpoint_lsn,
+                "ORION recovery: canonical checkpoint scan (read-side observability; \
+                 recovery behavior unchanged — TD-066 (c) Part 1)"
+            );
 
             // Step 1: Load latest snapshot (if available)
             // Deferred: Implement snapshot discovery and loading

@@ -135,8 +135,14 @@ pub struct GraphOperationsService {
     /// a `CanonicalOperation::Checkpoint(SnapshotManifest)` entry to the
     /// canonical WAL before the engine-local WAL is flushed (TD-066 /
     /// ADR-020 — canonical WAL as durability authority).
-    canonical_wal_appender:
-        Option<Arc<dyn crate::services::record_store::TableWalAppender>>,
+    canonical_wal_appender: Option<Arc<dyn crate::services::record_store::TableWalAppender>>,
+    /// Optional canonical WAL path, paired with `canonical_wal_appender`
+    /// when production wiring is active. The `TableWalAppender` trait
+    /// doesn't expose `path()`, so we store the path as a parallel
+    /// field. Production wiring threads this into ORION's persistence
+    /// via `engine_factory.rs` so recovery can call
+    /// `OrionPersistence::canonical_checkpoint_lsn` (TD-066 (c) Part 1).
+    canonical_wal_path: Option<std::path::PathBuf>,
     /// Rebuildable adjacency projections over canonical edge records, keyed by graph id.
     adjacency_projections: Arc<DashMap<String, Arc<InMemoryGraphAdjacencyProjection>>>,
     /// Monotonic edge-mutation epoch per graph, used to invalidate CSR/topology projections.
@@ -191,6 +197,7 @@ impl GraphOperationsService {
             graphs: Arc::new(DashMap::new()),
             canonical_record_store: None,
             canonical_wal_appender: None,
+            canonical_wal_path: None,
             adjacency_projections: Arc::new(DashMap::new()),
             edge_epochs: Arc::new(DashMap::new()),
             csr_rebuild_epochs: Arc::new(DashMap::new()),
@@ -271,6 +278,7 @@ impl GraphOperationsService {
             graphs: Arc::new(DashMap::new()),
             canonical_record_store: None,
             canonical_wal_appender: None,
+            canonical_wal_path: None,
             adjacency_projections: Arc::new(DashMap::new()),
             edge_epochs: Arc::new(DashMap::new()),
             csr_rebuild_epochs: Arc::new(DashMap::new()),
@@ -349,6 +357,16 @@ impl GraphOperationsService {
         appender: Arc<dyn crate::services::record_store::TableWalAppender>,
     ) -> Self {
         self.canonical_wal_appender = Some(appender);
+        self
+    }
+
+    /// Inject the canonical WAL path so the engine factory can pass it
+    /// to ORION's persistence layer for the read-side observability
+    /// hook (TD-066 (c) Part 1). The path is stored alongside the
+    /// appender because the `TableWalAppender` trait doesn't expose
+    /// `path()`.
+    pub fn with_canonical_wal_path(mut self, path: std::path::PathBuf) -> Self {
+        self.canonical_wal_path = Some(path);
         self
     }
 
@@ -979,8 +997,7 @@ impl GraphOperationsService {
                 .await
             {
                 Ok(written) => {
-                    let written_seq =
-                        written.first().map(|e| e.sequence_number).unwrap_or(0);
+                    let written_seq = written.first().map(|e| e.sequence_number).unwrap_or(0);
                     tracing::debug!(
                         graph_id,
                         checkpoint_lsn,

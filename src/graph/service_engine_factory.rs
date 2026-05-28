@@ -127,10 +127,18 @@ impl super::GraphOperationsService {
                 }
             }
             _ => {
-                let orion = crate::graph::OrionGraphEngine::with_persistence_for_graph(
+                // TD-066 (c) Part 1: thread the shared canonical WAL
+                // path into ORION's persistence layer so recovery can
+                // scan and log the latest checkpoint LSN per graph.
+                // The path is None for callers that haven't wired
+                // SharedServices.canonical_wal_appender yet — preserves
+                // today's recovery behavior.
+                let canonical_wal_path = self.canonical_wal_path.clone();
+                let orion = crate::graph::OrionGraphEngine::with_persistence_for_graph_and_canonical_wal(
                     graph_id.to_string(),
                     storage_root_url,
                     true,
+                    canonical_wal_path,
                 )
                 .await?;
                 crate::graph::engines::GraphEngineImpl::Orion(orion)
