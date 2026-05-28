@@ -462,6 +462,22 @@ fn run_phases_blocking(
     drop(ctx);
     drop(arena);
 
+    // R-7c.4d follow-up: emit per-phase wall-clock latency (spec
+    // §4.10 rank_phase_latency_us histogram) for first phase from
+    // the outcome's elapsed_us. Done here at the orchestrator so
+    // rank-core stays single-responsibility (it only emits
+    // per-feature latency via the metrics sink).
+    if let Some((m, profile)) = metrics.as_ref() {
+        let phase_label = crate::observability::rank_metrics::RankPipelineMetrics::phase_label_for(
+            PhaseId::FIRST.0,
+        );
+        m.observe_phase_latency_us(
+            profile,
+            phase_label,
+            first_outcome.elapsed_us as f64,
+        );
+    }
+
     match second_phase_scorer {
         Some(scorer) => {
             // R-7c.4d follow-up: time the second-phase rescore
@@ -478,15 +494,18 @@ fn run_phases_blocking(
             let result = pipeline.run_second_phase(first_outcome, scorer, qctx);
             if let Some((m, profile)) = metrics.as_ref() {
                 let elapsed_ns = t0.elapsed().as_nanos() as u64;
+                let elapsed_us = elapsed_ns as f64 / 1_000.0;
                 let phase_label = crate::observability::rank_metrics::RankPipelineMetrics::phase_label_for(
                     PhaseId::SECOND.0,
                 );
-                m.observe_feature_latency_us(
-                    profile,
-                    phase_label,
-                    "second_phase",
-                    elapsed_ns as f64 / 1_000.0,
-                );
+                m.observe_feature_latency_us(profile, phase_label, "second_phase", elapsed_us);
+                // Per-phase wall-clock latency for second phase
+                // (spec §4.10 schema). Same elapsed value as
+                // feature=second_phase because the wrapper-level
+                // observation IS the per-phase wall clock — the
+                // distinction only matters once a real per-doc
+                // feature observation lands.
+                m.observe_phase_latency_us(profile, phase_label, elapsed_us);
                 if let Ok(ref outcome) = result {
                     if outcome.truncated {
                         // The second phase preserves the first
@@ -497,7 +516,7 @@ fn run_phases_blocking(
                         // record_phase_truncated emit at the
                         // rank-core call site already fired with
                         // "budget"/"deadline").
-                        m.inc_phase_truncated(phase_label, "carried_forward");
+                        m.inc_phase_truncated(profile, phase_label, "carried_forward");
                     }
                 }
             }
