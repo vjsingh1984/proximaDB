@@ -227,15 +227,33 @@ fn sql_params_to_proxima_values(
     })
 }
 
-/// ADR-012 graph branch merge endpoint.
+/// ADR-012 graph branch merge endpoint — extractor shim.
 ///
-/// This slice intentionally supports dry-run reports only. Commit/write-back
-/// requires the follow-up canonical WAL merge-fragment writer, so non-dry-run
-/// requests return 501 rather than pretending a merge was durable.
+/// All actual logic lives in [`merge_graph_branch_inner`] so integration
+/// tests can drive it through their own minimal axum Router without
+/// constructing a full `AppState`. See
+/// `tests/graph_branch_merge_rest_integration_test.rs`.
 pub async fn merge_graph_branch(
     State(state): State<AppState>,
     Path((collection, branch)): Path<(String, String)>,
     Json(request): Json<GraphBranchMergeRequest>,
+) -> ApiResult<JsonResponse<serde_json::Value>> {
+    merge_graph_branch_inner(&state.data_dir, &collection, &branch, request).await
+}
+
+/// Pure-logic core of the branch-merge handler. Decoupled from `AppState`
+/// so it can be driven from integration tests (and any future REST
+/// endpoint that needs the same logic) without service-stub scaffolding.
+///
+/// Reads the canonical WAL under `data_dir/pgwire/canonical-records.wal`,
+/// filters by `collection`, runs `merge_branches`, and (if `!dry_run`)
+/// writes the resolutions back through `write_back_merge` with
+/// `origin = "branch_merge:<branch>:<request.target_branch>"`.
+pub async fn merge_graph_branch_inner(
+    data_dir: &std::path::Path,
+    collection: &str,
+    branch: &str,
+    request: GraphBranchMergeRequest,
 ) -> ApiResult<JsonResponse<serde_json::Value>> {
     if collection.trim().is_empty() {
         return Err(ApiError::InvalidArgument(
@@ -253,7 +271,7 @@ pub async fn merge_graph_branch(
         ));
     }
 
-    let wal_path = graph_branch_merge_wal_path(&state);
+    let wal_path = graph_branch_merge_wal_path(data_dir);
     if !tokio::fs::try_exists(&wal_path).await.map_err(|err| {
         ApiError::Internal(format!(
             "checking canonical WAL {} failed: {}",
@@ -276,9 +294,9 @@ pub async fn merge_graph_branch(
                 err
             ))
         })?;
-    let collection_entries = filter_canonical_wal_for_collection(entries, &collection);
+    let collection_entries = filter_canonical_wal_for_collection(entries, collection);
     let report =
-        crate::graph::merge::merge_branches(&collection_entries, &branch, &request.target_branch)
+        crate::graph::merge::merge_branches(&collection_entries, branch, &request.target_branch)
             .ok_or_else(|| {
             ApiError::NotFound(format!(
                 "no mergeable branch entries found for collection '{}' source '{}' target '{}'",
@@ -292,8 +310,8 @@ pub async fn merge_graph_branch(
             &collection_entries,
             &report,
             &wal_path,
-            &collection,
-            &branch,
+            collection,
+            branch,
             &request.target_branch,
             request.tenant_id.clone(),
         )
@@ -340,8 +358,8 @@ pub async fn merge_graph_branch(
     })))
 }
 
-fn graph_branch_merge_wal_path(state: &AppState) -> std::path::PathBuf {
-    state.data_dir.join("pgwire").join("canonical-records.wal")
+fn graph_branch_merge_wal_path(data_dir: &std::path::Path) -> std::path::PathBuf {
+    data_dir.join("pgwire").join("canonical-records.wal")
 }
 
 fn filter_canonical_wal_for_collection(
