@@ -394,6 +394,13 @@ impl SharedServices {
             }
         }
 
+        // Vector Object Economy Phase 4 (2-B): construct the process-wide
+        // per-collection directory cache before the vector service so the
+        // service holds the same Arc the SharedServices field will expose.
+        let directory_cache = Arc::new(
+            crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
+        );
+
         let vector_operations_service = Arc::new(
             VectorOperationsService::new(
                 sst_engine,
@@ -401,7 +408,8 @@ impl SharedServices {
                 axis_manager.clone(),
                 collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
             )
-            .with_orchestrator(Some(orchestrator.clone())),
+            .with_orchestrator(Some(orchestrator.clone()))
+            .with_directory_cache(directory_cache.clone()),
         );
 
         info!(
@@ -983,12 +991,11 @@ impl SharedServices {
                     std::collections::HashMap::new(),
                 )),
                 // Vector Object Economy Phase 4 (2-B): process-wide
-                // per-collection directory cache. Empty at startup; first
-                // search per collection populates it. Invalidated by the
-                // writer/compactor when a new directory version lands.
-                directory_cache: Arc::new(
-                    crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache::new(),
-                ),
+                // per-collection directory cache. The same Arc is also
+                // attached to `vector_operations_service` via
+                // `with_directory_cache` above so the search service can
+                // touch the cache without re-resolving SharedServices.
+                directory_cache,
             },
             collection_service,
         ))

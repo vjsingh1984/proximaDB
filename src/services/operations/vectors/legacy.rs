@@ -515,6 +515,19 @@ pub struct VectorOperationsService {
 
     /// Per tenant+collection guard for insert-only check-and-append operations.
     insert_only_locks: Arc<dashmap::DashMap<String, Arc<Mutex<()>>>>,
+
+    /// Vector Object Economy per-collection directory cache. `None` until
+    /// wired by `SharedServices::new` via `with_directory_cache`. The cache
+    /// is the search-side counterpart to the writer/compactor's
+    /// `upsert_and_persist` — first reader per collection loads the
+    /// sidecar; subsequent readers reuse the cached entry.
+    ///
+    /// Used by [`Self::touch_object_economy_directory_for_search`] today as
+    /// a smoke-test seam. Future EXPLAIN/route work will consume the cached
+    /// entry in the search planner.
+    directory_cache: Option<
+        Arc<crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache>,
+    >,
 }
 
 impl VectorOperationsService {
@@ -1145,6 +1158,7 @@ impl VectorOperationsService {
             collection_name_validator: CollectionNameValidator::default(),
             pseudo_query_generator: Arc::new(DefaultPseudoQueryGenerator::default()),
             insert_only_locks: Arc::new(dashmap::DashMap::new()),
+            directory_cache: None,
         }
     }
 
@@ -1164,6 +1178,59 @@ impl VectorOperationsService {
     ) -> Self {
         self.rbac_enforcer = Some(rbac_enforcer);
         self
+    }
+
+    /// Attach the Vector Object Economy per-collection directory cache.
+    /// Called once by `SharedServices::new` after both the service and
+    /// the cache have been constructed. Subsequent calls overwrite the
+    /// previous cache reference.
+    pub fn with_directory_cache(
+        mut self,
+        cache: Arc<
+            crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectoryCache,
+        >,
+    ) -> Self {
+        self.directory_cache = Some(cache);
+        self
+    }
+
+    /// Smoke-test seam for the object-economy directory cache.
+    ///
+    /// Calls `directory_cache.handle_for(collection_id).get_or_load(...)`
+    /// using `load_directory_for` with safe defaults (`storage_epoch = 0`,
+    /// `authority_mode = RebuildableProjection`) so the cache surface is
+    /// exercised end-to-end without depending on writer-wiring source
+    /// values. Returns `None` when the cache has not been wired (test
+    /// scenarios that bypass `SharedServices`).
+    ///
+    /// Today this is only meant to verify the integration is sound. Once
+    /// the writer call-site lands and the directory has real content,
+    /// production routing/EXPLAIN code will consume the cached entry
+    /// directly via `directory_cache.handle_for(...)`. Then this helper
+    /// should be removed or repurposed.
+    pub async fn touch_object_economy_directory_for_search(
+        &self,
+        collection_id: &str,
+        fs: &dyn crate::storage::persistence::filesystem::FileSystem,
+        collection_root: &str,
+    ) -> Option<crate::storage::engines::sst::object_economy_directory::DirectoryLoadStatus>
+    {
+        use proximadb_catalog::CatalogAuthorityMode;
+        let cache = self.directory_cache.as_ref()?;
+        let entry = cache
+            .handle_for(collection_id)
+            .get_or_load(|| async {
+                crate::storage::engines::sst::object_economy_directory::load_directory_for(
+                    fs,
+                    collection_id,
+                    collection_root,
+                    0,
+                    CatalogAuthorityMode::RebuildableProjection,
+                )
+                .await
+            })
+            .await;
+        Some(entry.status.clone())
     }
 
     /// Attach orchestrator (builder-style)

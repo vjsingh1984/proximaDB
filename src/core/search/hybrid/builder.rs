@@ -578,6 +578,10 @@ impl From<SearchHybridQuery> for AxisHybridQueryImport {
             top_k: query.top_k,
             include_expired: query.include_expired,
             ann_filtering_mode,
+            // ADR-011 policy-driven routing not exposed via this converter
+            // yet; the legacy strategy enum already determined the mode above.
+            ann_filtering_policy: None,
+            estimated_selectivity: None,
         }
     }
 }

@@ -159,6 +159,10 @@ pub fn build_axis_hybrid_query_with_mode(
         top_k: search_params.top_k.unwrap_or(10),
         include_expired: search_params.include_expired.unwrap_or(false),
         ann_filtering_mode,
+        // ADR-011 policy-driven routing not exposed via this builder yet;
+        // fall back to the hard-coded ann_filtering_mode above.
+        ann_filtering_policy: None,
+        estimated_selectivity: None,
     })
 }
 
