@@ -29,10 +29,15 @@ RUN mkdir -p src/bin && \
 # Build dependencies only (cached layer)
 RUN cargo build --release --bin proximadb-server 2>/dev/null || true
 
-# Copy actual source code
+# Copy actual source code. Workspace members (apps/, clients/, crates/)
+# are required for cargo to resolve the workspace — Cargo.toml at /build
+# declares them and refuses to build any single member otherwise.
 COPY src/ src/
 COPY proto/ proto/
 COPY config/ config/
+COPY apps/ apps/
+COPY clients/ clients/
+COPY crates/ crates/
 
 # Build the actual binary
 RUN cargo build --release --bin proximadb-server
