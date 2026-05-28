@@ -616,6 +616,33 @@ impl RankServices {
             .get(profile_name)
             .map(|r| r.value().clone())
     }
+
+    /// Install (or hot-reload) a compiled profile into the registry
+    /// + fire `proximadb_rank_profile_reload_total{profile, outcome}`
+    /// per spec §4.10. The registry's install is infallible so the
+    /// outcome label is always `"ok"` here; the `error` variant is
+    /// reserved for higher-level install paths (DSL parse failure,
+    /// validator rejection) that decide *not* to call into the
+    /// registry. Callers that go through the validator should bump
+    /// the counter with `outcome="error"` on rejection.
+    pub fn install_profile(&self, profile: CompiledRankProfile) {
+        let name = profile.spec.name.clone();
+        self.profile_registry.install(profile);
+        if let Some(metrics) = &self.metrics {
+            metrics.inc_profile_reload(&name, "ok");
+        }
+    }
+
+    /// Record a failed profile install attempt (validation /
+    /// compilation rejected the profile, so it never reached the
+    /// registry). Bumps the spec §4.10
+    /// `proximadb_rank_profile_reload_total{profile, outcome="error"}`
+    /// counter when metrics are wired.
+    pub fn record_profile_reload_error(&self, profile_name: &str) {
+        if let Some(metrics) = &self.metrics {
+            metrics.inc_profile_reload(profile_name, "error");
+        }
+    }
 }
 
 /// Mock candidate provider that returns a fixed range of `DocHandle`s for
@@ -1110,6 +1137,91 @@ mod tests {
         assert!((resp.hits[0].match_features["1.0"] - 1.0).abs() < 1e-5);
         assert!((resp.hits[1].match_features["docid()"] - 2.0).abs() < 1e-5);
         assert!((resp.hits[1].match_features["1.0"] - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn rank_services_install_profile_increments_reload_counter() {
+        // R-7c.4d follow-up: RankServices::install_profile is the
+        // hot-reload entry point per spec §4.10. Verify the counter
+        // fires with `outcome="ok"` for each successful install and
+        // `record_profile_reload_error` bumps the error variant.
+        use crate::observability::rank_metrics::RankPipelineMetrics;
+        let prom_registry = prometheus::Registry::new();
+        let metrics = Arc::new(
+            RankPipelineMetrics::register(&prom_registry).unwrap(),
+        );
+        let candidates: Arc<dyn CandidateProvider> =
+            Arc::new(MockRangeCandidateProvider::default());
+        let services = RankServices::new(candidates).with_metrics(metrics.clone());
+
+        let factory = factory_with_docid();
+        let mut spec = RankProfileSpec::new("p1");
+        spec.first_phase = Some(PhaseSpec {
+            expression: "docid()".into(),
+            heap_size: Some(10),
+            rerank_count: None,
+            batch_size: None,
+        });
+        spec.version = 1;
+        let compiled = CompiledRankProfile::compile(spec, factory).unwrap();
+
+        // First install → ok counter increments to 1.
+        services.install_profile(compiled.clone());
+        let ok_cnt = prom_registry
+            .gather()
+            .into_iter()
+            .filter(|mf| mf.name() == "proximadb_rank_profile_reload_total")
+            .flat_map(|mf| mf.get_metric().to_vec())
+            .filter(|m| {
+                m.get_label()
+                    .iter()
+                    .any(|l| l.name() == "profile" && l.value() == "p1")
+                    && m.get_label()
+                        .iter()
+                        .any(|l| l.name() == "outcome" && l.value() == "ok")
+            })
+            .map(|m| m.get_counter().value())
+            .sum::<f64>();
+        assert!((ok_cnt - 1.0).abs() < f64::EPSILON);
+
+        // Reload (same name) → ok counter increments to 2 — verifies
+        // the hot-reload path counts the swap.
+        services.install_profile(compiled);
+        let ok_cnt2 = prom_registry
+            .gather()
+            .into_iter()
+            .filter(|mf| mf.name() == "proximadb_rank_profile_reload_total")
+            .flat_map(|mf| mf.get_metric().to_vec())
+            .filter(|m| {
+                m.get_label()
+                    .iter()
+                    .any(|l| l.name() == "profile" && l.value() == "p1")
+                    && m.get_label()
+                        .iter()
+                        .any(|l| l.name() == "outcome" && l.value() == "ok")
+            })
+            .map(|m| m.get_counter().value())
+            .sum::<f64>();
+        assert!((ok_cnt2 - 2.0).abs() < f64::EPSILON);
+
+        // Error path: caller surfaces a rejected install.
+        services.record_profile_reload_error("p1");
+        let err_cnt = prom_registry
+            .gather()
+            .into_iter()
+            .filter(|mf| mf.name() == "proximadb_rank_profile_reload_total")
+            .flat_map(|mf| mf.get_metric().to_vec())
+            .filter(|m| {
+                m.get_label()
+                    .iter()
+                    .any(|l| l.name() == "profile" && l.value() == "p1")
+                    && m.get_label()
+                        .iter()
+                        .any(|l| l.name() == "outcome" && l.value() == "error")
+            })
+            .map(|m| m.get_counter().value())
+            .sum::<f64>();
+        assert!((err_cnt - 1.0).abs() < f64::EPSILON);
     }
 
     fn install_profile_with_summary_features(

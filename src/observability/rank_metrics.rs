@@ -47,6 +47,11 @@ pub const METRIC_PHASE_LATENCY_US: &str = "proximadb_rank_phase_latency_us";
 /// per-profile.
 pub const METRIC_PHASE_TRUNCATED_TOTAL: &str = "proximadb_rank_phase_truncated_total";
 
+/// `proximadb_rank_profile_reload_total{profile,outcome}` — number
+/// of profile installs / hot-reloads via the registry, partitioned
+/// by outcome (spec §4.10: `outcome ∈ {ok, error}`). Counter.
+pub const METRIC_PROFILE_RELOAD_TOTAL: &str = "proximadb_rank_profile_reload_total";
+
 // ---------------------------------------------------------------------------
 // Label keys
 // ---------------------------------------------------------------------------
@@ -55,6 +60,7 @@ pub const LABEL_PROFILE: &str = "profile";
 pub const LABEL_PHASE: &str = "phase";
 pub const LABEL_FEATURE: &str = "feature";
 pub const LABEL_REASON: &str = "reason";
+pub const LABEL_OUTCOME: &str = "outcome";
 
 /// Bounded histogram buckets for per-feature latency in
 /// microseconds. Tuned for the per-doc cost target (≤ 250 ns per 5
@@ -72,6 +78,7 @@ pub struct RankPipelineMetrics {
     feature_latency_us: HistogramVec,
     phase_latency_us: HistogramVec,
     phase_truncated_total: CounterVec,
+    profile_reload_total: CounterVec,
 }
 
 impl RankPipelineMetrics {
@@ -83,6 +90,7 @@ impl RankPipelineMetrics {
         registry.register(Box::new(metrics.feature_latency_us.clone()))?;
         registry.register(Box::new(metrics.phase_latency_us.clone()))?;
         registry.register(Box::new(metrics.phase_truncated_total.clone()))?;
+        registry.register(Box::new(metrics.profile_reload_total.clone()))?;
         Ok(metrics)
     }
 
@@ -113,6 +121,13 @@ impl RankPipelineMetrics {
                     "Number of rank phases truncated by budget/heap/etc.",
                 ),
                 &[LABEL_PROFILE, LABEL_PHASE, LABEL_REASON],
+            )?,
+            profile_reload_total: CounterVec::new(
+                Opts::new(
+                    METRIC_PROFILE_RELOAD_TOTAL,
+                    "Number of rank profile installs / hot-reloads, by outcome",
+                ),
+                &[LABEL_PROFILE, LABEL_OUTCOME],
             )?,
         })
     }
@@ -149,6 +164,16 @@ impl RankPipelineMetrics {
     pub fn inc_phase_truncated(&self, profile: &str, phase: &str, reason: &str) {
         self.phase_truncated_total
             .with_label_values(&[profile, phase, reason])
+            .inc();
+    }
+
+    /// Increment the profile-reload counter (spec §4.10:
+    /// `outcome ∈ {ok, error}`). Call once per
+    /// `ProfileRegistry::install` (or equivalent install path) so
+    /// dashboards can alert on failed reloads + cutover frequency.
+    pub fn inc_profile_reload(&self, profile: &str, outcome: &str) {
+        self.profile_reload_total
+            .with_label_values(&[profile, outcome])
             .inc();
     }
 
@@ -234,6 +259,10 @@ mod tests {
             METRIC_PHASE_TRUNCATED_TOTAL,
             "proximadb_rank_phase_truncated_total"
         );
+        assert_eq!(
+            METRIC_PROFILE_RELOAD_TOTAL,
+            "proximadb_rank_profile_reload_total"
+        );
     }
 
     #[test]
@@ -243,6 +272,36 @@ mod tests {
         // Smoke the setters so we exercise the label arity.
         metrics.observe_feature_latency_us("default", "first", "bm25(body)", 12.5);
         metrics.inc_phase_truncated("default", "second", "budget");
+        metrics.inc_profile_reload("default", "ok");
+    }
+
+    #[test]
+    fn inc_profile_reload_partitions_by_outcome() {
+        // Spec §4.10: `outcome ∈ {ok, error}` — verify the counter
+        // partitions correctly so dashboards can compute
+        // failure-rate ratios.
+        let registry = Registry::new();
+        let metrics = RankPipelineMetrics::register(&registry).unwrap();
+        metrics.inc_profile_reload("p1", "ok");
+        metrics.inc_profile_reload("p1", "ok");
+        metrics.inc_profile_reload("p1", "error");
+        metrics.inc_profile_reload("p2", "ok");
+
+        let p1_ok = metrics
+            .profile_reload_total
+            .with_label_values(&["p1", "ok"])
+            .get();
+        let p1_err = metrics
+            .profile_reload_total
+            .with_label_values(&["p1", "error"])
+            .get();
+        let p2_ok = metrics
+            .profile_reload_total
+            .with_label_values(&["p2", "ok"])
+            .get();
+        assert!((p1_ok - 2.0).abs() < f64::EPSILON);
+        assert!((p1_err - 1.0).abs() < f64::EPSILON);
+        assert!((p2_ok - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
