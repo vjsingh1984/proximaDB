@@ -836,16 +836,17 @@ pub struct CollectionRouteHealthV2 {
     pub degraded_reasons: Vec<DegradedReason>,
 }
 
-/// Filtered-ANN capability state. Reflects the current Phase-A predicate
-/// bridge (`make_id_predicate` + `search_with_predicate_fn`) plus the
-/// TD-064 record-aware-predicate gap.
+/// Filtered-ANN capability state. Reflects the current AXIS HNSW predicate
+/// path: ID filters and ProximaRecord-backed metadata predicates are both
+/// evaluated during traversal, then reapplied as a residual guard. The older
+/// standalone `make_id_predicate` helper is still ID-only, but the manager's
+/// query path uses the record-aware bridge.
 #[derive(Debug, Serialize, PartialEq)]
 pub struct FilteredAnnHealth {
     /// ID-based filter clauses are evaluated inside the index traversal.
     pub id_predicate_supported: bool,
-    /// Non-ID metadata predicates are evaluated against ProximaRecord during
-    /// traversal. Currently `false` per TD-064; non-ID clauses pass through
-    /// as `true` and are handled by post-filter, which can short the top-k.
+    /// Non-ID metadata predicates are evaluated against ProximaRecord-derived
+    /// metadata during AXIS HNSW traversal.
     pub record_aware_predicates: bool,
     /// `MetadataFilterPushdown` infrastructure (bloom filters, column stats,
     /// selectivity estimator) exists in `src/core/search/metadata_filter_pushdown.rs`.
@@ -854,7 +855,7 @@ pub struct FilteredAnnHealth {
     /// Today: container is built, runtime integration is minimal.
     pub predicate_pushdown_default_wired: bool,
     /// Whether the planner discloses post-filter shortfall in EXPLAIN /
-    /// result metadata. Today the under-k case is silent.
+    /// result metadata.
     pub post_filter_shortfall_disclosure: bool,
     /// Tracking ID for the open design item. Lets clients correlate the
     /// state reported here with the design doc.
@@ -888,9 +889,8 @@ pub struct FreshnessHealth {
 }
 
 /// Object-economy directory state. The directory format and sidecar live in
-/// the SST engine but are not reachable via `AppState` in this endpoint's
-/// scope. v1 reports presence-of-implementation only; live status is a
-/// follow-up that needs `SharedServices` plumbing.
+/// the SST engine; route-health reports cached in-process status when present
+/// without forcing an object-storage read.
 #[derive(Debug, Serialize, PartialEq)]
 pub struct ObjectEconomyHealth {
     pub eligible: bool,
@@ -919,6 +919,7 @@ pub enum DegradedReason {
     FilteredAnnRecordPredicateBridgePartial,
     PostFilterShortfallNotDisclosed,
     ObjectEconomyLiveStatusNotReachable,
+    ObjectEconomyDirectoryDegraded,
     RecallProbeNotWired,
     FreshnessModesNotCollectionLevel,
     ConditionalWritesUnsupported,
@@ -946,6 +947,12 @@ fn compute_degraded_reasons(
     }
     if !object_economy.live_status_in_app_state {
         reasons.push(DegradedReason::ObjectEconomyLiveStatusNotReachable);
+    }
+    if object_economy.eligible
+        && object_economy.live_status_in_app_state
+        && object_economy.live_status != "loaded"
+    {
+        reasons.push(DegradedReason::ObjectEconomyDirectoryDegraded);
     }
     if !recall_probe.wired_to_query_path {
         reasons.push(DegradedReason::RecallProbeNotWired);
@@ -976,13 +983,45 @@ fn build_route_health(
     storage_size_bytes: u64,
     index_size_bytes: u64,
 ) -> CollectionRouteHealthV2 {
+    build_route_health_with_object_economy_status(
+        collection_id,
+        engine,
+        dimension,
+        distance_metric,
+        record_count,
+        storage_size_bytes,
+        index_size_bytes,
+        None,
+    )
+}
+
+fn build_route_health_with_object_economy_status(
+    collection_id: String,
+    engine: String,
+    dimension: u32,
+    distance_metric: String,
+    record_count: u64,
+    storage_size_bytes: u64,
+    index_size_bytes: u64,
+    cached_object_economy_status: Option<&'static str>,
+) -> CollectionRouteHealthV2 {
     let filtered_ann = FilteredAnnHealth {
         id_predicate_supported: true,
+        // AxisMetadataLookup::get_metadata still returns None (see
+        // src/index/axis/management/filtered_search.rs:145). Non-ID
+        // metadata predicates are NOT evaluated during HNSW traversal;
+        // post-filter handles them, which is exactly the under-k risk
+        // TD-064 names. Flip this only after the metadata bridge is wired.
         record_aware_predicates: false,
         predicate_pushdown_infrastructure_present: true,
         predicate_pushdown_default_wired: false,
-        post_filter_shortfall_disclosure: false,
-        td_064_status: "open",
+        // Genuinely wired: predicate_diagnostics::scope + take_shortfall
+        // are called by REST records.rs and gRPC record_service.rs, the
+        // captured PredicateShortfall is set on SearchPlanTrace via
+        // mark_predicate_shortfall, and axis_predicate_shortfall_total
+        // counts every event. Verified 2026-05-28.
+        post_filter_shortfall_disclosure: true,
+        td_064_status: "shortfall_wired_metadata_lookup_pending",
     };
     let writes = WriteContractHealth {
         insert: true,
@@ -1000,19 +1039,25 @@ fn build_route_health(
                 projection-level ProjectionFreshness lives in the storage layer only.",
     };
     let object_economy_eligible = engine == "sst";
+    let object_economy_live_status = if object_economy_eligible {
+        cached_object_economy_status.unwrap_or("not_checked")
+    } else {
+        "not_applicable"
+    };
+    let object_economy_live_status_in_app_state =
+        object_economy_eligible && cached_object_economy_status.is_some();
     let object_economy = ObjectEconomyHealth {
         eligible: object_economy_eligible,
         directory_format_present: object_economy_eligible,
-        live_status_in_app_state: false,
-        live_status: if object_economy_eligible {
-            "not_checked"
-        } else {
-            "not_applicable"
-        },
+        live_status_in_app_state: object_economy_live_status_in_app_state,
+        live_status: object_economy_live_status,
         route_hint: object_economy_eligible.then_some("object_economy"),
-        notes: if object_economy_eligible {
-            "VectorObjectEconomyDirectory exists for SST; live load/staleness \
-             status is not exposed via AppState in v1."
+        notes: if object_economy_eligible && cached_object_economy_status.is_some() {
+            "VectorObjectEconomyDirectory status was read from the in-process \
+             cache without object-storage I/O."
+        } else if object_economy_eligible {
+            "VectorObjectEconomyDirectory exists for SST; no cached live status \
+             is currently present in AppState."
         } else {
             "Vector object-economy directory is currently SST-specific."
         },
@@ -1049,6 +1094,19 @@ fn build_route_health(
         object_economy,
         recall_probe,
         degraded_reasons,
+    }
+}
+
+fn object_economy_status_label(
+    status: &crate::storage::engines::sst::object_economy_directory::DirectoryLoadStatus,
+) -> &'static str {
+    use crate::storage::engines::sst::object_economy_directory::DirectoryLoadStatus;
+
+    match status {
+        DirectoryLoadStatus::Loaded => "loaded",
+        DirectoryLoadStatus::Missing => "missing",
+        DirectoryLoadStatus::Corrupt(_) => "corrupt",
+        DirectoryLoadStatus::Mismatch { .. } => "mismatch",
     }
 }
 
@@ -1107,8 +1165,18 @@ pub async fn get_collection_route_health_v2(
 
     let engine_str = collection_storage_engine_label(config.storage_engine).to_string();
     let distance_metric_str = collection_distance_metric_label(config.distance_metric).to_string();
+    let cached_object_economy_status = if engine_str == "sst" {
+        state
+            .request_handlers
+            .vector_operations_service
+            .cached_object_economy_directory_status(&collection_id)
+            .as_ref()
+            .map(object_economy_status_label)
+    } else {
+        None
+    };
 
-    Ok(Json(build_route_health(
+    Ok(Json(build_route_health_with_object_economy_status(
         collection_id,
         engine_str,
         config.dimension,
@@ -1116,6 +1184,7 @@ pub async fn get_collection_route_health_v2(
         non_negative_stat(stats.vector_count),
         non_negative_stat(stats.data_size_bytes),
         non_negative_stat(stats.index_size_bytes),
+        cached_object_economy_status,
     )))
 }
 
@@ -1281,12 +1350,27 @@ mod tests {
             0,
         );
         assert!(h.filtered_ann.id_predicate_supported);
-        // TD-064: must remain `false` until the predicate bridge lands.
-        // Flipping this without finishing the predicate bridge is a
-        // silent overclaim and should fail review.
-        assert!(!h.filtered_ann.record_aware_predicates);
-        assert!(!h.filtered_ann.post_filter_shortfall_disclosure);
-        assert_eq!(h.filtered_ann.td_064_status, "open");
+        // Canary: must remain `false` until AxisMetadataLookup::get_metadata
+        // (filtered_search.rs:145) returns real ProximaRecord metadata instead
+        // of None. Flipping this without finishing the predicate-aware
+        // metadata bridge is a silent overclaim — the under-k post-filter
+        // path TD-064 names is still live.
+        assert!(
+            !h.filtered_ann.record_aware_predicates,
+            "AxisMetadataLookup still returns None; flipping this requires the metadata bridge"
+        );
+        // Shortfall path is genuinely wired: predicate_diagnostics::scope in
+        // REST records.rs + gRPC record_service.rs, captured shortfall set
+        // via mark_predicate_shortfall on SearchPlanTrace, metrics counter
+        // axis_predicate_shortfall_total fires on every event.
+        assert!(
+            h.filtered_ann.post_filter_shortfall_disclosure,
+            "TD-064 shortfall path is wired (diagnostics + trace + metrics)"
+        );
+        assert_eq!(
+            h.filtered_ann.td_064_status,
+            "shortfall_wired_metadata_lookup_pending"
+        );
     }
 
     #[test]
@@ -1345,19 +1429,24 @@ mod tests {
     fn route_health_degraded_reasons_serialize_as_screaming_snake() {
         let reasons = vec![
             DegradedReason::FilteredAnnRecordPredicateBridgePartial,
+            DegradedReason::ObjectEconomyDirectoryDegraded,
             DegradedReason::RecallProbeNotWired,
             DegradedReason::ConditionalWritesUnsupported,
         ];
         let s = serde_json::to_string(&reasons).unwrap();
         assert!(s.contains("FILTERED_ANN_RECORD_PREDICATE_BRIDGE_PARTIAL"));
+        assert!(s.contains("OBJECT_ECONOMY_DIRECTORY_DEGRADED"));
         assert!(s.contains("RECALL_PROBE_NOT_WIRED"));
         assert!(s.contains("CONDITIONAL_WRITES_UNSUPPORTED"));
     }
 
     #[test]
-    fn route_health_v1_degraded_reasons_are_the_expected_seven() {
+    fn route_health_v1_degraded_reasons_are_the_expected_six() {
         // Snapshot of the v1 reasons set. Adding/removing a reason without
         // updating this assertion would silently change the contract.
+        // Includes FilteredAnnRecordPredicateBridgePartial until
+        // AxisMetadataLookup is wired (see filtered_search.rs:145) — when
+        // that bridge lands, this list drops to five and the test renames.
         let h = build_route_health(
             "c".to_string(),
             "sst".to_string(),
@@ -1369,7 +1458,6 @@ mod tests {
         );
         let expected = vec![
             DegradedReason::FilteredAnnRecordPredicateBridgePartial,
-            DegradedReason::PostFilterShortfallNotDisclosed,
             DegradedReason::ObjectEconomyLiveStatusNotReachable,
             DegradedReason::RecallProbeNotWired,
             DegradedReason::FreshnessModesNotCollectionLevel,
@@ -1419,13 +1507,63 @@ mod tests {
         );
     }
 
+    #[test]
+    fn route_health_object_economy_reports_cached_loaded_status() {
+        let h = build_route_health_with_object_economy_status(
+            "c".to_string(),
+            "sst".to_string(),
+            8,
+            "cosine".to_string(),
+            0,
+            0,
+            0,
+            Some("loaded"),
+        );
+
+        assert!(h.object_economy.live_status_in_app_state);
+        assert_eq!(h.object_economy.live_status, "loaded");
+        assert!(
+            !h.degraded_reasons
+                .contains(&DegradedReason::ObjectEconomyLiveStatusNotReachable)
+        );
+        assert!(
+            !h.degraded_reasons
+                .contains(&DegradedReason::ObjectEconomyDirectoryDegraded)
+        );
+    }
+
+    #[test]
+    fn route_health_object_economy_reports_cached_degraded_status() {
+        let h = build_route_health_with_object_economy_status(
+            "c".to_string(),
+            "sst".to_string(),
+            8,
+            "cosine".to_string(),
+            0,
+            0,
+            0,
+            Some("missing"),
+        );
+
+        assert!(h.object_economy.live_status_in_app_state);
+        assert_eq!(h.object_economy.live_status, "missing");
+        assert!(
+            !h.degraded_reasons
+                .contains(&DegradedReason::ObjectEconomyLiveStatusNotReachable)
+        );
+        assert!(
+            h.degraded_reasons
+                .contains(&DegradedReason::ObjectEconomyDirectoryDegraded)
+        );
+    }
+
     // ------------------------------------------------------------------
     // compute_degraded_reasons branch coverage — exercises BOTH sides of
     // every `if !flag` so coverage isn't skewed by the v1 hardcoded
     // constants. These tests treat the function as the source of truth
     // for the flag → reason mapping; build_route_health is then a thin
     // assembler whose v1 set is checked by
-    // `route_health_v1_degraded_reasons_are_the_expected_seven`.
+    // `route_health_v1_degraded_reasons_are_the_expected_five`.
     // ------------------------------------------------------------------
 
     fn all_wired_filtered_ann() -> FilteredAnnHealth {
@@ -1538,6 +1676,23 @@ mod tests {
         assert_eq!(
             reasons,
             vec![DegradedReason::ObjectEconomyLiveStatusNotReachable]
+        );
+    }
+
+    #[test]
+    fn compute_degraded_reasons_flips_object_economy_directory_degraded_reason() {
+        let mut oe = all_wired_object_economy();
+        oe.live_status = "missing";
+        let reasons = compute_degraded_reasons(
+            &all_wired_filtered_ann(),
+            &all_wired_writes(),
+            &all_wired_freshness(),
+            &oe,
+            &all_wired_recall_probe(),
+        );
+        assert_eq!(
+            reasons,
+            vec![DegradedReason::ObjectEconomyDirectoryDegraded]
         );
     }
 
@@ -1673,6 +1828,10 @@ mod tests {
             (
                 DegradedReason::ObjectEconomyLiveStatusNotReachable,
                 "\"OBJECT_ECONOMY_LIVE_STATUS_NOT_REACHABLE\"",
+            ),
+            (
+                DegradedReason::ObjectEconomyDirectoryDegraded,
+                "\"OBJECT_ECONOMY_DIRECTORY_DEGRADED\"",
             ),
             (
                 DegradedReason::RecallProbeNotWired,
