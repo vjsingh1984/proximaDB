@@ -462,6 +462,67 @@ impl SharedServices {
             None => crate::cluster::primary_pod_registry::new_shared(),
         };
 
+        // Slice 5c: pull any catalog-side primary_pod bindings into
+        // the registry. Existing entries (loaded from the JSON
+        // sidecar in `new_shared_at`) take precedence per the
+        // transition policy. Failures are non-fatal — they only mean
+        // the registry has no catalog backfill, which is the same
+        // state as a fresh install. A catalog mirror that lags will
+        // also surface in the slice 5b.2 mirror-failure metric.
+        match crate::cluster::primary_pod_registry::hydrate_from_catalog(
+            &primary_pod_registry,
+            &catalog_manager,
+        )
+        .await
+        {
+            Ok(report) => {
+                info!(
+                    "🔁 SharedServices: primary-pod catalog hydration: \
+                     seen={} inserted={} skipped_existing={}",
+                    report.seen, report.inserted, report.skipped_existing
+                );
+            }
+            Err(err) => {
+                warn!(
+                    "⚠️ SharedServices: primary-pod catalog hydration failed: {} \
+                     (registry continues with sidecar-only contents)",
+                    err
+                );
+            }
+        }
+
+        // Slice 5d.1: push registry entries the catalog is missing
+        // back into the catalog. Convergence step — over time the
+        // catalog reaches feature-parity with the JSON sidecar so
+        // slice 5d.2 can flip persistence priority safely. The
+        // `migrated` counter trending to zero across boots is the
+        // operator's "catalog is now authoritative" signal.
+        match crate::cluster::primary_pod_registry::migrate_registry_to_catalog(
+            &primary_pod_registry,
+            &catalog_manager,
+        )
+        .await
+        {
+            Ok(report) => {
+                info!(
+                    "📤 SharedServices: primary-pod sidecar→catalog migration: \
+                     seen={} migrated={} already_present={} skipped_table_missing={} failed={}",
+                    report.seen,
+                    report.migrated,
+                    report.already_present,
+                    report.skipped_table_missing,
+                    report.failed
+                );
+            }
+            Err(err) => {
+                warn!(
+                    "⚠️ SharedServices: primary-pod sidecar→catalog migration failed: {} \
+                     (registry stays sidecar-primary)",
+                    err
+                );
+            }
+        }
+
         // Create WAL manager for two-stage search FIRST so the SST
         // engine can read its global manifest singleton when wiring the
         // Phase 5 freshness LSN source.
@@ -1306,8 +1367,25 @@ impl SharedServices {
         let snapshot_coordinator = Arc::new(
             crate::services::snapshot::SnapshotPublishCoordinator::new(catalog_manager.clone()),
         );
-        let discovery_registry =
-            Arc::new(crate::services::discovery::DiscoveryRegistry::new());
+        // Phase 8 (F1): per-collection discovery-job registry. Durable when a
+        // full config is present (jobs + states survive restart), mirroring the
+        // primary-pod registry persistence pattern; in-memory otherwise
+        // (embedded/test harnesses without a data dir).
+        let discovery_registry = match opt_config {
+            Some(cfg) => {
+                let path = cfg
+                    .server
+                    .data_dir
+                    .join("discovery_jobs")
+                    .join("registry.json");
+                info!(
+                    "🔍 SharedServices: discovery-job registry persistence at {}",
+                    path.display()
+                );
+                Arc::new(crate::services::discovery::DiscoveryRegistry::load_or_create_at(path))
+            }
+            None => Arc::new(crate::services::discovery::DiscoveryRegistry::new()),
+        };
         let discovery_service = Arc::new(crate::services::discovery::DiscoveryService::new(
             discovery_registry.clone(),
             snapshot_coordinator.clone(),

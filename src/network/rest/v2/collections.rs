@@ -833,6 +833,7 @@ pub struct CollectionRouteHealthV2 {
     pub object_economy: ObjectEconomyHealth,
     pub recall_probe: RecallProbeHealth,
     pub pinning: PinningHealth,
+    pub discovery: DiscoveryHealth,
 
     pub degraded_reasons: Vec<DegradedReason>,
 }
@@ -972,6 +973,46 @@ pub struct RecallProbeHealth {
     /// recent probe outcome held in memory.
     pub gate_open: Option<bool>,
     pub notes: &'static str,
+}
+
+/// Continuous Discovery (Phase 8 F1) state. Surfaces the per-collection
+/// `discovery_active` projection freshness driven by the snapshot-publish
+/// coordinator when a discovery job republishes a refined snapshot.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct DiscoveryHealth {
+    pub implementation_present: bool,
+    pub live_state_in_app_state: bool,
+    /// Freshness of the discovery projection ("fresh" / "updating" /
+    /// "rebuild_required" / ...) when the discovery service is wired and a
+    /// projection exists; `None` otherwise.
+    pub active_projection_freshness: Option<String>,
+    /// Pinned-snapshot lineage of the last republish (e.g. "wal:3..9").
+    pub source_range: Option<String>,
+    pub notes: &'static str,
+}
+
+impl DiscoveryHealth {
+    fn unwired() -> Self {
+        Self {
+            implementation_present: true,
+            live_state_in_app_state: false,
+            active_projection_freshness: None,
+            source_range: None,
+            notes: "Continuous Discovery (F1) is implemented; the discovery \
+                    service is not wired into AppState for this deployment.",
+        }
+    }
+
+    fn wired(active_projection_freshness: Option<String>, source_range: Option<String>) -> Self {
+        Self {
+            implementation_present: true,
+            live_state_in_app_state: true,
+            active_projection_freshness,
+            source_range,
+            notes: "Discovery service is reachable from AppState; freshness \
+                    reflects the discovery_active projection's latest republish state.",
+        }
+    }
 }
 
 /// Typed reasons the collection's route is degraded. Closed enum — adding a
@@ -1204,6 +1245,9 @@ fn build_route_health_with_live_state(
         object_economy,
         recall_probe,
         pinning,
+        // Default unwired; the async handler patches this with live
+        // coordinator state. Builder callers (tests) get the unwired block.
+        discovery: DiscoveryHealth::unwired(),
         degraded_reasons,
     }
 }
@@ -1300,7 +1344,8 @@ pub async fn get_collection_route_health_v2(
 
     let pin_state = state.pin_registry.get(&collection_id);
 
-    Ok(Json(build_route_health_with_live_state(
+    let collection_id_for_discovery = collection_id.clone();
+    let mut health = build_route_health_with_live_state(
         collection_id,
         engine_str,
         config.dimension,
@@ -1311,7 +1356,26 @@ pub async fn get_collection_route_health_v2(
         cached_object_economy_status,
         recall_probe_state,
         pin_state,
-    )))
+    );
+
+    // Phase 8 (F1): patch the discovery block with live snapshot-coordinator
+    // state (the discovery_active projection's freshness + lineage).
+    health.discovery = match &state.discovery_service {
+        Some(svc) => match svc
+            .coordinator()
+            .active_projection(&collection_id_for_discovery)
+            .await
+        {
+            Ok(Some(projection)) => DiscoveryHealth::wired(
+                Some(format!("{:?}", projection.freshness_state).to_lowercase()),
+                projection.source_range,
+            ),
+            _ => DiscoveryHealth::wired(None, None),
+        },
+        None => DiscoveryHealth::unwired(),
+    };
+
+    Ok(Json(health))
 }
 
 #[cfg(test)]
@@ -1643,6 +1707,7 @@ mod tests {
                 "collection_id",
                 "degraded_reasons",
                 "dimension",
+                "discovery",
                 "distance_metric",
                 "engine",
                 "filtered_ann",

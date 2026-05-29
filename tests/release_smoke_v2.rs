@@ -226,6 +226,7 @@ async fn rest_v2_record_release_smoke_round_trip() {
         "filtered_ann",
         "object_economy",
         "recall_probe",
+        "discovery",
     ] {
         assert!(
             rh_json.get(block).is_some(),
