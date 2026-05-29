@@ -291,17 +291,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: "v1-clippy-nightly"
-      # Note: Clippy is advisory only. The main codebase has accumulated
-      # lint warnings that should be addressed in a dedicated cleanup PR.
+      # Clippy is authoritative. TD-079 retired the accumulated root-crate
+      # lint debt (2026-05-28); any new warning fails CI. If a new lint
+      # surfaces from a dependency or toolchain update, prefer fixing it
+      # over re-adding `-A warnings`. Targeted `#[allow(...)]` with an
+      # inline rationale is acceptable for genuinely infallible / large
+      # blast-radius edge cases.
       # Only lint lib+bins to stay within CI memory limits (--all-targets OOMs).
-      - name: Run clippy (advisory)
-        continue-on-error: true
+      - name: Run clippy (-D warnings)
         env:
           CARGO_PROFILE_DEV_DEBUG: 0
-        run: |
-          cargo clippy --lib --bins 2>&1 | tee clippy-output.txt || true
-          echo "Clippy found the following issues (advisory only):"
-          grep -E "^(warning|error)" clippy-output.txt | head -50 || true
+        run: cargo clippy --lib --bins -- -D warnings
 
   rust-security:
     name: Security Audit
@@ -538,10 +538,12 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
 
       - name: Build All Binaries
-        # Note: We allow warnings for now to unblock CI. The warnings should
-        # be addressed in a dedicated cleanup PR.
+        # TD-079 retired the root-crate lint debt 2026-05-28 — no
+        # `-A warnings` override needed. Cargo build doesn't fail on
+        # warnings by default; the rust-clippy job is the authoritative
+        # lint gate.
         run: |
-          RUSTFLAGS="-A warnings" cargo build ${{ matrix.args }} \
+          cargo build ${{ matrix.args }} \
             --bin proximadb-server \
             --bin proximadb-bench \
             --bin proximadb-migrate
@@ -585,7 +587,7 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
 
       - name: Run Tests
-        run: RUSTFLAGS="-A warnings" cargo test ${{ matrix.args }} -- --test-threads=${{ matrix.threads }}
+        run: cargo test ${{ matrix.args }} -- --test-threads=${{ matrix.threads }}
 
   # Targeted integration tests based on changed components
   rust-integration-test-storage:
@@ -610,8 +612,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - name: Run Storage Integration Tests
-        env:
-          RUSTFLAGS: "-A warnings"
         run: |
           # Run only explicitly named storage test files (avoids compiling all tests)
           for test_file in tests/*sst*.rs tests/*storage*.rs tests/*wal*.rs; do
@@ -644,8 +644,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - name: Run Query Integration Tests
-        env:
-          RUSTFLAGS: "-A warnings"
         run: |
           for test_file in tests/*query*.rs tests/*federated*.rs tests/*cache*.rs; do
             if [ -f "$test_file" ]; then
@@ -677,8 +675,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - name: Run Graph Integration Tests
-        env:
-          RUSTFLAGS: "-A warnings"
         run: |
           for test_file in tests/*graph*.rs; do
             if [ -f "$test_file" ]; then
@@ -710,8 +706,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
       - name: Run Cluster Integration Tests
-        env:
-          RUSTFLAGS: "-A warnings"
         run: |
           for test_file in tests/*cluster*.rs tests/*distributed*.rs; do
             if [ -f "$test_file" ]; then
@@ -739,7 +733,6 @@ jobs:
           cargo install cargo-tarpaulin
       - name: Generate Coverage
         env:
-          RUSTFLAGS: "-A warnings"
           CARGO_PROFILE_DEV_DEBUG: 0
         run: |
           # Use --lib only and limit parallelism to avoid OOM on CI runners
@@ -983,8 +976,6 @@ jobs:
           sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
 
       - name: Run Benchmarks
-        env:
-          RUSTFLAGS: "-A warnings"
         run: |
           cargo bench --bench bench_21_query_cache -- --noplot 2>&1 | tee bench-results.txt
 
