@@ -673,6 +673,15 @@ pub enum FieldCondition {
 }
 
 /// Vector operations for batch processing
+//
+// The `Insert` and `Search` variants are intentionally large (a full
+// `ProximaRecord` / `SearchRequest`). Boxing them would force every
+// caller — including tests and the storage/transaction layer — to
+// allocate even on the hot insert path. Operations are typically held
+// in `Vec<VectorOperation>` for batch execution; the per-variant size
+// is amortised across the batch and matched against the heap-resident
+// payloads they describe.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum VectorOperation {
     /// Insert a new vector

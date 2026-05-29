@@ -62,6 +62,95 @@ use serde::{Deserialize, Serialize};
 use crate::cluster::primary_pod_registry::{AssignmentReason, PrimaryPod};
 use crate::network::rest::v1::handlers::AppState;
 use crate::security::rbac_service::{UnifiedPermission, UnifiedUserContext};
+use proximadb_catalog::{CatalogPrimaryPod, TableIdentifier};
+
+// ── Catalog mirror (Slice 5b.2) ────────────────────────────────────
+//
+// Best-effort write-through from the in-memory registry to the
+// catalog's per-table `primary_pod` field. The registry remains the
+// authoritative source until slice 5d (JSON sidecar deprecation);
+// the catalog mirror is forward-prep for catalog-driven hydration
+// in slice 5c.
+//
+// Failure mode: any catalog error is logged at WARN with the reason
+// (typed via `MirrorFailure` for easy aggregation) and the REST call
+// still returns 200. The next assign() will retry the mirror, and
+// the JSON sidecar still drives cold-start recovery, so the system
+// stays correct even when the mirror is lagging.
+
+/// Reason a mirror attempt didn't write to the catalog. Kept distinct
+/// from a generic `Result<_, anyhow::Error>` so the audit log carries
+/// a stable, parseable label that operators can grep / alert on.
+#[derive(Debug)]
+enum MirrorFailure {
+    /// No default catalog is registered yet. Normal during bootstrap;
+    /// rare in production.
+    NoDefaultCatalog,
+    /// The catalog backend rejected the call. Includes the underlying
+    /// error message verbatim. For non-Native backends this is the
+    /// expected outcome (default trait impl returns "not supported").
+    /// The string is retained for diagnostic logging at the call site
+    /// even though `label()` returns a stable enum-discriminator string;
+    /// future tracing/structured-log work can re-read it.
+    CatalogError(#[allow(dead_code)] String),
+}
+
+impl MirrorFailure {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::NoDefaultCatalog => "no_default_catalog",
+            Self::CatalogError(_) => "catalog_error",
+        }
+    }
+}
+
+/// Convention: (tenant_id, collection_id) maps to TableIdentifier
+/// `[tenant_id] :: collection_id`. Matches the multi-tenant catalog
+/// layout used elsewhere in v1 (cf. `src/network/rest/v1/catalog.rs`)
+/// where namespace = tenant scope and table name = collection.
+fn table_id_for(tenant_id: &str, collection_id: &str) -> TableIdentifier {
+    TableIdentifier::new(vec![tenant_id.to_string()], collection_id)
+}
+
+/// Mirror an assign to the catalog. Returns `Ok(())` on success, or
+/// a `MirrorFailure` describing why the mirror was a no-op. Callers
+/// must NOT propagate this as a REST error — log and continue.
+async fn mirror_assign_to_catalog(
+    catalog_manager: &crate::catalog::CatalogManager,
+    tenant_id: &str,
+    collection_id: &str,
+    primary: &PrimaryPod,
+) -> Result<(), MirrorFailure> {
+    let catalog = catalog_manager
+        .default_catalog()
+        .await
+        .map_err(|_| MirrorFailure::NoDefaultCatalog)?;
+    let id = table_id_for(tenant_id, collection_id);
+    let cp: CatalogPrimaryPod = primary.into();
+    catalog
+        .set_primary_pod(&id, Some(cp))
+        .await
+        .map_err(|e| MirrorFailure::CatalogError(e.to_string()))?;
+    Ok(())
+}
+
+/// Mirror an unassign to the catalog. Symmetric to [`mirror_assign_to_catalog`].
+async fn mirror_unassign_from_catalog(
+    catalog_manager: &crate::catalog::CatalogManager,
+    tenant_id: &str,
+    collection_id: &str,
+) -> Result<(), MirrorFailure> {
+    let catalog = catalog_manager
+        .default_catalog()
+        .await
+        .map_err(|_| MirrorFailure::NoDefaultCatalog)?;
+    let id = table_id_for(tenant_id, collection_id);
+    catalog
+        .set_primary_pod(&id, None)
+        .await
+        .map_err(|e| MirrorFailure::CatalogError(e.to_string()))?;
+    Ok(())
+}
 
 /// Standard error payload for the operator endpoints. Mirrors the
 /// shape used by the other v1 operator routes — `code` is the HTTP
@@ -245,6 +334,25 @@ pub async fn put_primary_pod(
         "primary-pod assignment applied via REST"
     );
 
+    if let Err(failure) =
+        mirror_assign_to_catalog(&state.catalog_manager, &tenant_id, &collection_id, &primary).await
+    {
+        // Mirror failure is operationally noteworthy but not fatal:
+        // the registry write succeeded, the sidecar persists it, and
+        // the REST contract guarantees "PUT-success means the binding
+        // is in effect for routing". The catalog will catch up on
+        // the next assign for this key.
+        tracing::warn!(
+            target = "proximadb.primary_pod.audit",
+            tenant_id = %tenant_id,
+            collection_id = %collection_id,
+            pod = %primary.pod,
+            failure = failure.label(),
+            detail = ?failure,
+            "primary-pod catalog mirror failed (REST call still succeeded)"
+        );
+    }
+
     Ok(Json(AssignResponse {
         tenant_id,
         collection_id,
@@ -273,6 +381,21 @@ pub async fn delete_primary_pod(
         removed = removed.is_some(),
         "primary-pod unassign via REST"
     );
+
+    if let Err(failure) =
+        mirror_unassign_from_catalog(&state.catalog_manager, &tenant_id, &collection_id).await
+    {
+        // Same policy as PUT: REST still succeeds, mirror lag is
+        // logged for observability and reconciled on next write.
+        tracing::warn!(
+            target = "proximadb.primary_pod.audit",
+            tenant_id = %tenant_id,
+            collection_id = %collection_id,
+            failure = failure.label(),
+            detail = ?failure,
+            "primary-pod catalog mirror unassign failed (REST call still succeeded)"
+        );
+    }
 
     Ok(Json(UnassignResponse {
         tenant_id,
@@ -399,5 +522,134 @@ mod tests {
         // initial assignment at collection-create time. Lock this in
         // so a refactor doesn't silently change the audit trail.
         assert_eq!(default_assign_reason(), AssignmentReason::Operator);
+    }
+
+    // ── Slice 5b.2: catalog mirror helpers ──────────────────────────
+    //
+    // Each test owns a fresh `TempDir` for the catalog's metadata
+    // directory and creates its own `CatalogManager` so they can run
+    // in parallel without colliding on disk or on global state.
+
+    use crate::catalog::CatalogManager;
+    use proximadb_catalog::{CatalogColumn, CatalogDataType, CatalogTableSchema};
+
+    async fn manager_with_native_catalog(tmp: &tempfile::TempDir) -> CatalogManager {
+        let mgr = CatalogManager::new();
+        mgr.create_native_catalog("test", &format!("file://{}", tmp.path().display()))
+            .await
+            .expect("native catalog created");
+        // First catalog auto-becomes default; assert defensively so a
+        // future change to that behavior doesn't silently make these
+        // tests measure the wrong thing.
+        assert!(mgr.default_catalog().await.is_ok());
+        mgr
+    }
+
+    async fn seed_table(mgr: &CatalogManager, tenant_id: &str, collection_id: &str) {
+        let catalog = mgr.default_catalog().await.unwrap();
+        catalog
+            .create_namespace(&[tenant_id.to_string()], std::collections::HashMap::new())
+            .await
+            .expect("namespace");
+        let id = TableIdentifier::new(vec![tenant_id.to_string()], collection_id);
+        let schema = CatalogTableSchema::new(collection_id).with_column(CatalogColumn::new(
+            1,
+            "id",
+            CatalogDataType::Int64,
+        ));
+        catalog
+            .create_table(&id, schema)
+            .await
+            .expect("create table");
+    }
+
+    fn pod_for(name: &str, reason: AssignmentReason) -> PrimaryPod {
+        PrimaryPod {
+            pod: name.to_string(),
+            assigned_at_ns: 1_700_000_000_000_000_000,
+            reason,
+        }
+    }
+
+    #[tokio::test]
+    async fn mirror_assign_writes_field_when_catalog_has_table() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mgr = manager_with_native_catalog(&tmp).await;
+        seed_table(&mgr, "tenant-a", "events").await;
+
+        let pod = pod_for("pod-1", AssignmentReason::Create);
+        mirror_assign_to_catalog(&mgr, "tenant-a", "events", &pod)
+            .await
+            .expect("mirror succeeds against native catalog");
+
+        let id = TableIdentifier::new(vec!["tenant-a".to_string()], "events");
+        let schema = mgr.default_catalog().await.unwrap().get_table(&id).await.unwrap();
+        assert_eq!(schema.primary_pod.as_ref().unwrap().pod, "pod-1");
+    }
+
+    #[tokio::test]
+    async fn mirror_unassign_clears_field_when_catalog_has_table() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mgr = manager_with_native_catalog(&tmp).await;
+        seed_table(&mgr, "tenant-b", "orders").await;
+
+        let pod = pod_for("pod-2", AssignmentReason::Operator);
+        mirror_assign_to_catalog(&mgr, "tenant-b", "orders", &pod)
+            .await
+            .unwrap();
+        mirror_unassign_from_catalog(&mgr, "tenant-b", "orders")
+            .await
+            .unwrap();
+
+        let id = TableIdentifier::new(vec!["tenant-b".to_string()], "orders");
+        let schema = mgr.default_catalog().await.unwrap().get_table(&id).await.unwrap();
+        assert!(
+            schema.primary_pod.is_none(),
+            "unassign must clear the catalog field"
+        );
+    }
+
+    #[tokio::test]
+    async fn mirror_assign_returns_catalog_error_when_table_missing() {
+        // Realistic scenario: the operator binds primary_pod for a
+        // (tenant, collection) that isn't represented in the catalog
+        // yet. The mirror must fail loudly so the warn-log fires; the
+        // REST handler proves separately that the call still returns 200.
+        let tmp = tempfile::tempdir().unwrap();
+        let mgr = manager_with_native_catalog(&tmp).await;
+
+        let pod = pod_for("pod-3", AssignmentReason::Failover);
+        let err = mirror_assign_to_catalog(&mgr, "ghost", "missing", &pod)
+            .await
+            .expect_err("missing table must produce catalog_error");
+        assert!(matches!(err, MirrorFailure::CatalogError(_)));
+        assert_eq!(err.label(), "catalog_error");
+    }
+
+    #[tokio::test]
+    async fn mirror_assign_returns_no_default_catalog_when_unconfigured() {
+        // An empty CatalogManager (no backend registered) is the
+        // bootstrap state. Mirror must short-circuit with the typed
+        // label so the warn-log is unambiguous.
+        let mgr = CatalogManager::new();
+        let pod = pod_for("pod-4", AssignmentReason::Rebalance);
+        let err = mirror_assign_to_catalog(&mgr, "tenant", "col", &pod)
+            .await
+            .expect_err("no catalog must short-circuit");
+        assert!(matches!(err, MirrorFailure::NoDefaultCatalog));
+        assert_eq!(err.label(), "no_default_catalog");
+    }
+
+    #[test]
+    fn mirror_failure_labels_are_stable_for_log_aggregation() {
+        // The label strings are part of the audit-log contract — they
+        // are what operators grep for and what alert rules pattern
+        // on. Lock them in so a refactor of the enum doesn't silently
+        // rename them.
+        assert_eq!(MirrorFailure::NoDefaultCatalog.label(), "no_default_catalog");
+        assert_eq!(
+            MirrorFailure::CatalogError("anything".into()).label(),
+            "catalog_error"
+        );
     }
 }

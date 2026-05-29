@@ -2600,6 +2600,7 @@ impl GraphOperationsService {
             // operators that surface I/O errors from the graph engine; they
             // can't be collapsed into match-arm guards without losing the
             // error propagation, so the lint is silenced locally.
+            #[allow(clippy::collapsible_match)]
             #[allow(clippy::collapsible_if)]
             match ets.cardinality {
                 x if x == Cardinality::OneToOne as i32 => {

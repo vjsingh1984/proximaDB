@@ -73,6 +73,13 @@ pub enum UnifiedWALOperation {
 }
 
 /// Time-series operations for WAL
+//
+// `InsertRecord` carries a full ProximaRecord; the other variants are
+// small. Boxing would force every write-path caller to allocate even
+// when buffered in batch Vecs (where the per-variant size is
+// amortised). WAL ops are serialised on the durable path — heap
+// layout is dominated by the record payload, not the enum tag.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TimeSeriesOperation {
     /// Insert a time-series record into a partition
@@ -109,6 +116,13 @@ pub enum TimeSeriesOperation {
 }
 
 /// Document operations for WAL
+//
+// `InsertDocument` carries a full DocumentRecord; smaller variants
+// describe drops/edits/projections. Boxing every variant would force
+// per-call heap allocation on the hot write path. WAL ops are framed
+// for durable serialisation — the document payload itself dominates
+// the byte budget.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DocumentOperation {
     /// Insert or update a document

@@ -1322,6 +1322,12 @@ impl SharedServices {
             );
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
             std::mem::forget(shutdown_tx);
+            // The discovery executor is a long-running background task; we
+            // intentionally drop the JoinHandle so it runs for the process
+            // lifetime. `spawn_discovery_executor` spawns its own task
+            // internally, so what we drop here is a fire-and-forget future
+            // already on the runtime, not a Future awaiting first poll.
+            #[allow(clippy::let_underscore_future)]
             let _ = crate::services::discovery::spawn_discovery_executor(
                 executor,
                 shutdown_rx,
