@@ -294,18 +294,30 @@ impl HmgiRouter {
             .await
             .ok_or_else(|| anyhow::anyhow!("Partition not found: {}", partition))?;
 
-        // Search the index using search_simple. Raw distances come
-        // back ascending (best = lowest); the conversion below
-        // normalizes them so consumers can sort descending by
-        // `similarity` and get the closest match first.
+        // Search the index using search_simple. HNSW returns values
+        // with a **lower = better** invariant for every metric
+        // (`AxisHnswIndex::metric_aware_distance` negates DotProduct
+        // internally so the heap ordering works). For
+        // `SimilarityResult::new` to produce the right normalized
+        // similarity we must undo that negation for similarity
+        // metrics — otherwise DotProduct similarity scores end up
+        // mirrored.
         let raw_distance_results = index.search_simple(query_vector, k).await?;
         let metric = index.distance_metric();
 
-        use crate::compute::distance_computation::engine::SimilarityResult;
+        use crate::compute::distance_computation::engine::{
+            DistanceMetricExt, SimilarityResult,
+        };
         let scored_results = raw_distance_results
             .into_iter()
             .map(|(id, raw_distance)| {
-                let normalized = SimilarityResult::new(raw_distance, metric).normalized_score;
+                let raw_for_similarity = if metric.is_similarity() {
+                    -raw_distance
+                } else {
+                    raw_distance
+                };
+                let normalized =
+                    SimilarityResult::new(raw_for_similarity, metric).normalized_score;
                 ScoredResult {
                     vector_id: id,
                     similarity: normalized,

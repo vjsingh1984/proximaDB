@@ -168,15 +168,29 @@ impl SstEngine {
                 ..Default::default()
             };
 
-            // Execute AXIS query (HNSW or IVF based on index type)
+            // Execute AXIS query (HNSW or IVF based on index type).
+            //
+            // Phase timer surfaces what fraction of the warm-path
+            // latency is the actual AXIS walk vs the surrounding
+            // dispatch (HybridQuery construction above, result
+            // conversion below, outer get-or-create-via-OnceLock).
+            // Empirically (10K × 128d cosine) the AXIS walk itself
+            // is ~1 ms; the rest is dispatch + conversion overhead.
             let axis_start = std::time::Instant::now();
             match axis_manager.query(hybrid_query).await {
                 Ok(axis_results) => {
-                    let axis_duration = axis_start.elapsed();
+                    let axis_us = axis_start.elapsed().as_micros() as u64;
                     info!(
                         "✅ SST: AXIS HNSW search completed in {:?} - found {} candidates",
-                        axis_duration,
+                        std::time::Duration::from_micros(axis_us),
                         axis_results.results.len()
+                    );
+                    tracing::info!(
+                        target: "sst_warm_phase",
+                        phase = "axis_query",
+                        elapsed_us = axis_us,
+                        n_results = axis_results.results.len(),
+                        "phase done"
                     );
                     tracing::info!(
                         target: "axis_diag",
@@ -188,6 +202,7 @@ impl SstEngine {
                     );
 
                     // Convert AXIS results to OptimizedSearchRecord
+                    let convert_start = std::time::Instant::now();
                     let results: Vec<OptimizedSearchRecord> = axis_results
                         .results
                         .into_iter()
@@ -201,6 +216,14 @@ impl SstEngine {
                             ..Default::default()
                         })
                         .collect();
+                    let convert_us = convert_start.elapsed().as_micros() as u64;
+                    tracing::info!(
+                        target: "sst_warm_phase",
+                        phase = "axis_result_convert",
+                        elapsed_us = convert_us,
+                        n_results = results.len(),
+                        "phase done"
+                    );
 
                     // If we need vectors or got fewer results, optionally refine with SST lookup
                     if results.is_empty() {

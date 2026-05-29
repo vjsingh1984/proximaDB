@@ -193,7 +193,28 @@ struct BenchConfig {
     /// `axis_manager.query(...)` (HNSW) instead of the linear
     /// fallback. Setup time grows by the HNSW build cost
     /// (~O(n log n) NEON distance computes for build).
+    ///
+    /// Kept as a legacy boolean for backward compatibility; the
+    /// `index` field is the new richer surface that subsumes it.
+    /// When `index = Flat`, axis is forced off regardless.
     axis: bool,
+    /// Which index type to exercise (`BENCH_INDEX`). Drives the
+    /// AxisManager wiring + strategy selection:
+    ///   * `flat`  — no AXIS registered; engine falls back to direct
+    ///               brute-force scan (always 100% recall, slowest).
+    ///   * `hnsw`  — AXIS registered, default collection-scoped HNSW
+    ///               (post-`b3985b59c` default). Inserts route through
+    ///               `insert_into_hnsw` which honors the collection
+    ///               metric.
+    ///   * `hmgi`  — AXIS registered; `enable_hmgi` called BEFORE
+    ///               inserts so insertion routes through HMGI
+    ///               partitions. Multi-modality partitioning over
+    ///               HNSW (see arXiv:2510.10123).
+    ///   * `ivf`   — AXIS registered; `update_collection_strategy`
+    ///               injects an IVF spec so inserts route through
+    ///               `insert_into_ivf`. Coarse-quantizer + per-cell
+    ///               probe.
+    index: IndexType,
     /// Distance metric for the collection. Configurable via
     /// `BENCH_METRIC=cosine|euclidean|dotproduct`. Default: cosine
     /// (matches the SaaS default the product ships with).
@@ -205,6 +226,45 @@ struct BenchConfig {
     /// then localises to a specific (metric, algorithm) pair instead
     /// of a global "AXIS is broken" verdict.
     metric: DistanceMetric,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IndexType {
+    Flat,
+    Hnsw,
+    Hmgi,
+    Ivf,
+}
+
+impl IndexType {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Flat => "flat",
+            Self::Hnsw => "hnsw",
+            Self::Hmgi => "hmgi",
+            Self::Ivf => "ivf",
+        }
+    }
+
+    fn use_axis(&self) -> bool {
+        !matches!(self, Self::Flat)
+    }
+}
+
+fn parse_index(s: Option<&str>) -> IndexType {
+    match s.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        None | Some("") | Some("hnsw") => IndexType::Hnsw,
+        Some("flat") | Some("brute") | Some("brute_force") => IndexType::Flat,
+        Some("hmgi") => IndexType::Hmgi,
+        Some("ivf") => IndexType::Ivf,
+        Some(other) => {
+            eprintln!(
+                "[bench warn] unknown BENCH_INDEX={:?}, falling back to hnsw",
+                other
+            );
+            IndexType::Hnsw
+        }
+    }
 }
 
 impl BenchConfig {
@@ -220,8 +280,15 @@ impl BenchConfig {
             pre_warm_runs: 1,
             approx_mode: env_bool("BENCH_APPROX", false),
             vectorized: env_bool("BENCH_VECTORIZED", false),
-            axis: env_bool("BENCH_AXIS", false),
+            // If BENCH_INDEX is supplied, it wins over the legacy
+            // BENCH_AXIS bool — axis is implied by the index type
+            // (Flat → no axis; everything else → axis).
+            axis: match std::env::var("BENCH_INDEX") {
+                Ok(s) => parse_index(Some(s.as_str())).use_axis(),
+                Err(_) => env_bool("BENCH_AXIS", false),
+            },
             metric: parse_metric(std::env::var("BENCH_METRIC").ok().as_deref()),
+            index: parse_index(std::env::var("BENCH_INDEX").ok().as_deref()),
         }
     }
 }
@@ -297,20 +364,28 @@ impl SetupResult {
         let collection = make_collection(&temp_dir, cfg.dimension, cfg.metric);
         let vectors = synthetic_records(&collection.id, cfg.vector_count, cfg.dimension);
 
-        // Slice B: when BENCH_AXIS is on, build the AxisManager and
-        // register it as the SstEngine's global *before* engine
+        // AXIS wiring: gated by `cfg.axis` (driven by BENCH_INDEX
+        // when supplied, falling back to BENCH_AXIS). Builds the
+        // AxisManager and registers it globally *before* engine
         // construction so `get_sst_axis_manager()` picks it up
-        // during `SstEngine::new_with_config`. AXIS construction is
-        // expensive enough (background tasks) that we want it once
-        // per bench run, not per-iteration.
+        // during `SstEngine::new_with_config`.
         //
-        // **Important**: AxisManager defaults to DotProduct when it
-        // can't find the collection's distance metric (see
-        // src/index/axis/management/manager.rs:830). Without a
-        // shared_collection_cache, AXIS and the exact path would
-        // use different metrics → recall measurement is meaningless.
-        // We inject a minimal cache here so AXIS reads the same
-        // Cosine metric the collection was constructed with.
+        // **Metric correctness**: AxisManager defaults to DotProduct
+        // when it can't find the collection's distance metric (see
+        // manager.rs:830). Without a shared_collection_cache, AXIS
+        // and the exact path would use different metrics → recall
+        // measurement is meaningless. Inject a minimal cache so AXIS
+        // reads the same metric the collection was constructed with.
+        //
+        // Per-index-type branching also happens here:
+        //   * Flat:  AXIS not registered (use_axis() returns false).
+        //   * HNSW:  default — `insert_into_hnsw` runs.
+        //   * HMGI:  explicit `enable_hmgi` call before any insert
+        //            so `is_hmgi_enabled == true` and inserts route
+        //            through HMGI partitions.
+        //   * IVF:   explicit `update_collection_strategy` with an
+        //            IVF spec so `insert_dense_vector_index`
+        //            dispatches to `insert_into_ivf`.
         if cfg.axis {
             let mut axis_manager_inner = proximadb::index::AxisManager::new(
                 proximadb::index::AxisConfig::default(),
@@ -322,10 +397,63 @@ impl SetupResult {
             shared_cache.insert(collection.id.clone(), std::sync::Arc::new(collection.clone()));
             axis_manager_inner.set_shared_collection_cache(shared_cache);
 
-            // OnceLock — safe to call once per process.
-            proximadb::storage::engines::sst::core::set_sst_axis_manager(std::sync::Arc::new(
-                axis_manager_inner,
-            ));
+            // Per-index-type strategy injection BEFORE wrapping in Arc.
+            // ensure_collection_strategy creates a default strategy
+            // lazily on first insert if none exists; we override
+            // here so the chosen algorithm is used from the start.
+            match cfg.index {
+                IndexType::Hmgi => {
+                    use proximadb::index::axis::management::manager as axis_mgr;
+                    // We must drive enable_hmgi via the SAME instance
+                    // we'll later retrieve via get_sst_axis_manager,
+                    // so wrap in Arc first.
+                    let axis_arc = std::sync::Arc::new(axis_manager_inner);
+                    let oid: u64 = {
+                        use std::hash::{Hash, Hasher};
+                        let mut h = std::collections::hash_map::DefaultHasher::new();
+                        collection.id.hash(&mut h);
+                        h.finish()
+                    };
+                    axis_arc
+                        .enable_hmgi(&collection.id, None, oid)
+                        .await
+                        .expect("enable_hmgi");
+                    let _ = axis_mgr::AxisManager::new; // silence unused-import lint
+                    proximadb::storage::engines::sst::core::set_sst_axis_manager(axis_arc);
+                }
+                IndexType::Ivf => {
+                    use proximadb::index::axis::types::{
+                        Data, IndexAlgorithm, IndexSelectionStrategy, IndexSpecification,
+                    };
+                    let ivf_spec = IndexSpecification::new(
+                        Data::DenseVector {
+                            dimension: cfg.dimension,
+                        },
+                        IndexAlgorithm::IVF {
+                            nlist: 100,
+                            nprobe: 10,
+                            quantizer: None,
+                        },
+                    );
+                    let strategy = IndexSelectionStrategy {
+                        indexes: vec![ivf_spec],
+                        routing_rules: vec![],
+                    };
+                    let axis_arc = std::sync::Arc::new(axis_manager_inner);
+                    axis_arc
+                        .update_collection_strategy(&collection.id, strategy)
+                        .await
+                        .expect("update_collection_strategy IVF");
+                    proximadb::storage::engines::sst::core::set_sst_axis_manager(axis_arc);
+                }
+                IndexType::Hnsw | IndexType::Flat => {
+                    // Default — HNSW (post-b3985b59c fix). Flat
+                    // never reaches this branch (cfg.axis = false).
+                    proximadb::storage::engines::sst::core::set_sst_axis_manager(
+                        std::sync::Arc::new(axis_manager_inner),
+                    );
+                }
+            }
         }
 
         let insert_start = Instant::now();
@@ -423,7 +551,8 @@ fn main() {
         "  vectorized: {} (enable_vectorized_execution)",
         cfg.vectorized
     );
-    println!("  axis_hnsw:  {} (BENCH_AXIS — orchestrated path)", cfg.axis);
+    println!("  index:      {} (BENCH_INDEX)", cfg.index.label());
+    println!("  axis:       {} (derived from BENCH_INDEX/BENCH_AXIS)", cfg.axis);
     println!("  metric:     {:?} (BENCH_METRIC)", cfg.metric);
     println!();
 
@@ -469,6 +598,18 @@ fn main() {
         } else {
             None
         };
+
+        // **Important** — drain the phase store after the recall
+        // pass. Recall measurement calls `fallback_to_direct_search`
+        // (which fires `discovery` / `per_file_scan` / `topk_merge`
+        // / `result_filter` events) and `search_vectors_unified`
+        // (which fires `axis_query` / `axis_result_convert` when
+        // AXIS is wired). If we don't drain, the warm-pass report
+        // mixes both populations and the per-phase means are
+        // misleading.
+        if let Ok(mut s) = store.lock() {
+            s.drain_and_collect();
+        }
 
         println!();
         println!("📊 Capturing per-phase timings across {} warm queries", cfg.warm_runs);
@@ -853,7 +994,21 @@ fn print_report(cfg: &BenchConfig, total_us: &[u64], captured: &HashMap<String, 
     // Print captured phases in a consistent order matching the
     // search pipeline. Unknown phases (added later by source code)
     // appear at the end.
-    let canonical = ["discovery", "per_file_scan", "topk_merge", "result_filter"];
+    //
+    // The first 4 are the direct/flat fallback path
+    // (`fallback_to_direct_search` in `sst/search/mod.rs`).
+    // `axis_query` and `axis_result_convert` are the AXIS-path
+    // phases (`execute_orchestrated_search`). For a given run only
+    // one set fires — flat populates the first 4, AXIS-backed
+    // indexes populate the latter 2.
+    let canonical = [
+        "discovery",
+        "per_file_scan",
+        "topk_merge",
+        "result_filter",
+        "axis_query",
+        "axis_result_convert",
+    ];
     println!("Per-phase breakdown (microseconds, {} samples / phase):", cfg.warm_runs);
     println!(
         "  {:<18} {:>10} {:>10} {:>10} {:>10} {:>8}",

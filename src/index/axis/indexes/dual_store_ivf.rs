@@ -653,6 +653,14 @@ pub struct UnifiedIvfIndex {
 }
 
 impl UnifiedIvfIndex {
+    /// Distance metric the IVF index was built with. Exposed so
+    /// upstream layers can normalize the raw distances returned by
+    /// `search` into the canonical `SimilarityResult.normalized_score`
+    /// shape. Mirrors the equivalent method on `AxisHnswIndex`.
+    pub fn distance_metric(&self) -> DistanceMetric {
+        self.config.distance_metric
+    }
+
     /// Train mini-batch K-means (more efficient for large datasets)
     async fn train_minibatch_kmeans(
         &self,

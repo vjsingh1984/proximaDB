@@ -922,12 +922,26 @@ impl AxisManager {
         Ok(())
     }
 
-    /// Query vectors from the real HNSW index
+    /// Query vectors from the real HNSW index.
+    ///
+    /// **Score-units note**: `AxisVectorIndex::search` returns
+    /// `(id, raw_distance)` where the f32 is a metric-native value
+    /// with "lower = closer" semantics (HNSW's `metric_aware_distance`
+    /// negates DotProduct internally so heap ordering is consistent).
+    /// `ScoredResult.similarity` is contractually higher = better in
+    /// [0, 1], so we convert through `SimilarityResult` here. Without
+    /// this conversion, sorting descending by `similarity` returns
+    /// the FARTHEST records first (was the recall=0 bug in HMGI
+    /// before commit b3985b59c). Mirroring the fix on this legacy
+    /// path.
     async fn query_hnsw(
         &self,
         collection_id: &str,
         query: &AxisHybridQuery,
     ) -> Result<Vec<ScoredResult>> {
+        use crate::compute::distance_computation::engine::{
+            DistanceMetricExt, SimilarityResult,
+        };
         use crate::index::axis::index_factory::AxisVectorIndex;
 
         let indexes = self.hnsw_indexes.read().await;
@@ -935,13 +949,21 @@ impl AxisManager {
             // Extract query vector
             if let Some(VectorQuery::Dense { vector, .. }) = &query.vector_query {
                 let results = index.search(vector, query.top_k, None).await?;
+                let metric = index.distance_metric();
                 return Ok(results
                     .into_iter()
-                    .map(|(id, score)| {
+                    .map(|(id, raw_distance)| {
+                        let raw_for_similarity = if metric.is_similarity() {
+                            -raw_distance
+                        } else {
+                            raw_distance
+                        };
+                        let similarity = SimilarityResult::new(raw_for_similarity, metric)
+                            .normalized_score;
                         let expires_at = self.lookup_record_expiration(collection_id, &id);
                         ScoredResult {
                             vector_id: id,
-                            similarity: score,
+                            similarity,
                             expires_at,
                         }
                     })
@@ -1056,6 +1078,14 @@ impl AxisManager {
             .search_with_predicate_fn(vector, oversample_k, predicate)
             .await?;
 
+        // See query_hnsw for the score-units rationale — raw values
+        // out of HNSW are lower-better metric-native distances; we
+        // convert through SimilarityResult so ScoredResult.similarity
+        // honors the higher=better contract.
+        use crate::compute::distance_computation::engine::{
+            DistanceMetricExt, SimilarityResult,
+        };
+        let metric = index.distance_metric();
         let results: Vec<ScoredResult> = raw
             .into_iter()
             .filter(|(id, _)| {
@@ -1073,11 +1103,18 @@ impl AxisManager {
                 crate::core::search::json_comparison::evaluate_filter(expr, metadata)
             })
             .take(query.top_k)
-            .map(|(id, score)| {
+            .map(|(id, raw_distance)| {
+                let raw_for_similarity = if metric.is_similarity() {
+                    -raw_distance
+                } else {
+                    raw_distance
+                };
+                let similarity =
+                    SimilarityResult::new(raw_for_similarity, metric).normalized_score;
                 let expires_at = self.lookup_record_expiration(collection_id, &id);
                 ScoredResult {
                     vector_id: id,
-                    similarity: score,
+                    similarity,
                     expires_at,
                 }
             })
@@ -1337,13 +1374,27 @@ impl AxisManager {
                     query.top_k
                 );
 
+                // Score-units conversion — see query_hnsw for rationale.
+                // IVF returns lower-better metric-native distances;
+                // ScoredResult.similarity must be higher-better [0,1].
+                use crate::compute::distance_computation::engine::{
+                    DistanceMetricExt, SimilarityResult,
+                };
+                let metric = index.distance_metric();
                 return Ok(results
                     .into_iter()
-                    .map(|(id, score)| {
+                    .map(|(id, raw_distance)| {
+                        let raw_for_similarity = if metric.is_similarity() {
+                            -raw_distance
+                        } else {
+                            raw_distance
+                        };
+                        let similarity = SimilarityResult::new(raw_for_similarity, metric)
+                            .normalized_score;
                         let expires_at = self.lookup_record_expiration(collection_id, &id);
                         ScoredResult {
                             vector_id: id,
-                            similarity: score,
+                            similarity,
                             expires_at,
                         }
                     })

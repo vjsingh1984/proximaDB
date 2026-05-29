@@ -447,10 +447,40 @@ impl SimilarityResult {
     fn normalize_distance(value: f32, metric: &DistanceMetric) -> (f32, f32) {
         match metric {
             DistanceMetric::DotProduct => {
-                // Dot product: higher = more similar, so invert for distance semantics
-                // Return negated value as distance (lower = more similar)
+                // Dot product: higher = more similar, so invert for
+                // distance semantics. Return negated value as distance
+                // (lower = more similar). HNSW's heap also negates
+                // internally via `metric_aware_distance`; consumers
+                // that want SimilarityResult directly should rely on
+                // this `distance` field for ranking.
                 let distance = -value;
-                let normalized_similarity = ((value + 1.0) / 2.0).clamp(0.0, 1.0);
+
+                // **Soft-sign normalization** (replaces the older
+                // `((v+1)/2).clamp(0, 1)` which silently collapsed
+                // every unnormalized inner product above 1.0 to the
+                // same score of 1.0 — destroying magnitude information
+                // for vectors with norms in the tens or hundreds).
+                //
+                // Formula: `f(v) = 0.5 + 0.5 * v / (1 + |v|)`
+                //   * monotone increasing across the entire real line
+                //   * bounded in (0, 1), `f(0) = 0.5` (orthogonal anchor)
+                //   * no clamping → preserves rank for any |v|
+                //     (v=5 → 0.917, v=50 → 0.990, v=500 → 0.999)
+                //   * cheap: 2 adds, 1 mul, 1 div, 1 abs (no `exp`)
+                //
+                // NaN / infinity guards avoid 0/0 and ∞/∞ producing
+                // NaN scores that would corrupt downstream ranking.
+                let normalized_similarity = if value.is_nan() {
+                    0.5
+                } else if value.is_infinite() {
+                    if value > 0.0 {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                } else {
+                    0.5 + 0.5 * value / (1.0 + value.abs())
+                };
                 (distance, normalized_similarity)
             }
             DistanceMetric::Cosine | DistanceMetric::Unspecified => {
@@ -2153,6 +2183,57 @@ mod tests {
             "Unit vector dot with itself should be 1.0, got {}",
             distance
         );
+    }
+
+    #[test]
+    fn test_dot_product_normalized_similarity_soft_sign() {
+        // Pins the soft-sign transform for DotProduct normalization.
+        // The old `((v+1)/2).clamp(0,1)` collapsed every inner
+        // product above 1.0 to a score of 1.0 — destroying magnitude
+        // information for unnormalized vectors. This test fails if a
+        // future regression reintroduces clamping.
+        let cases = [
+            // (raw inner product, expected normalized similarity)
+            (-50.0_f32, 0.5 + 0.5 * (-50.0) / 51.0), // ≈ 0.010
+            (-1.0, 0.25),                            // 0.5 + 0.5 * -0.5 = 0.25
+            (0.0, 0.5),                              // orthogonal anchor
+            (0.5, 0.5 + 0.5 * 0.5 / 1.5),            // ≈ 0.667
+            (1.0, 0.75),                             // 0.5 + 0.5 * 0.5 = 0.75
+            (5.0, 0.5 + 0.5 * 5.0 / 6.0),            // ≈ 0.917
+            (50.0, 0.5 + 0.5 * 50.0 / 51.0),         // ≈ 0.990 (NOT clamped to 1.0)
+            (500.0, 0.5 + 0.5 * 500.0 / 501.0),      // ≈ 0.999 (NOT clamped to 1.0)
+        ];
+        for (raw, expected) in cases {
+            let result = SimilarityResult::new(raw, DistanceMetric::DotProduct);
+            assert!(
+                (result.normalized_score - expected).abs() < 1e-5,
+                "DotProduct soft-sign at v={}: expected {:.6}, got {:.6}",
+                raw,
+                expected,
+                result.normalized_score
+            );
+        }
+
+        // Critical regression check: two unnormalized inner products
+        // must produce DISTINGUISHABLE scores (old formula clamped
+        // both to 1.0).
+        let s5 = SimilarityResult::new(5.0, DistanceMetric::DotProduct).normalized_score;
+        let s50 = SimilarityResult::new(50.0, DistanceMetric::DotProduct).normalized_score;
+        assert!(
+            s50 > s5 + 0.01,
+            "v=5 and v=50 must produce distinguishable similarity scores, got s5={} s50={}",
+            s5,
+            s50
+        );
+
+        // NaN / infinity handling.
+        let nan = SimilarityResult::new(f32::NAN, DistanceMetric::DotProduct).normalized_score;
+        assert!((nan - 0.5).abs() < 1e-6, "NaN inner product → 0.5, got {}", nan);
+        let pinf = SimilarityResult::new(f32::INFINITY, DistanceMetric::DotProduct).normalized_score;
+        assert!((pinf - 1.0).abs() < 1e-6, "+inf → 1.0, got {}", pinf);
+        let ninf =
+            SimilarityResult::new(f32::NEG_INFINITY, DistanceMetric::DotProduct).normalized_score;
+        assert!((ninf - 0.0).abs() < 1e-6, "-inf → 0.0, got {}", ninf);
     }
 
     #[test]

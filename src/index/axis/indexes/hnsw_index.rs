@@ -341,7 +341,7 @@ impl AxisHnswIndex {
         let mut visited = HashSet::new();
         let mut candidates = BinaryHeap::new(); // Min heap for candidates (to visit)
         let mut dynamic_candidates = BinaryHeap::new(); // Max heap for best found
-        let metric = self.config.distance_metric;
+        let _metric = self.config.distance_metric;
 
         // Initialize with entry points
         // OPTIMIZATION: Compute distances inline to avoid allocations
@@ -356,9 +356,10 @@ impl AxisHnswIndex {
                     && let Some(view) = vectors_lock.get(&external_id)
                     && let Some(vector_data) = view.as_f32()
                 {
-                    let dist =
-                        self.distance_computer
-                            .distance_with_metric(query, vector_data, &metric);
+                    // metric_aware_distance normalises every metric
+                    // to lower=better so the BinaryHeap ordering is
+                    // consistent (see DotProduct recall bug fix).
+                    let dist = self.metric_aware_distance(query, vector_data);
                     visited.insert(ep);
                     candidates.push(std::cmp::Reverse((OrderedFloat(dist), ep)));
                     dynamic_candidates.push((OrderedFloat(dist), ep));
@@ -390,11 +391,7 @@ impl AxisHnswIndex {
                             && let Some(view) = vectors_lock.get(&external_id)
                             && let Some(vector_data) = view.as_f32()
                         {
-                            let dist = self.distance_computer.distance_with_metric(
-                                query,
-                                vector_data,
-                                &metric,
-                            );
+                            let dist = self.metric_aware_distance(query, vector_data);
 
                             if dynamic_candidates.len() < ef {
                                 candidates.push(std::cmp::Reverse((OrderedFloat(dist), neighbor)));
@@ -479,7 +476,7 @@ impl AxisHnswIndex {
         let mut visited = HashSet::new();
         let mut frontier = BinaryHeap::new(); // min-heap of (dist, node) to explore
         let mut result_candidates: BinaryHeap<(OrderedFloat, usize)> = BinaryHeap::new();
-        let metric = self.config.distance_metric;
+        let _metric = self.config.distance_metric;
 
         {
             let vectors_lock = self
@@ -492,9 +489,7 @@ impl AxisHnswIndex {
                     && let Some(view) = vectors_lock.get(&external_id)
                     && let Some(vector_data) = view.as_f32()
                 {
-                    let dist =
-                        self.distance_computer
-                            .distance_with_metric(query, vector_data, &metric);
+                    let dist = self.metric_aware_distance(query, vector_data);
                     visited.insert(ep);
                     frontier.push(std::cmp::Reverse((OrderedFloat(dist), ep)));
                     if predicate(ep) {
@@ -526,11 +521,7 @@ impl AxisHnswIndex {
                             && let Some(view) = vectors_lock.get(&external_id)
                             && let Some(vector_data) = view.as_f32()
                         {
-                            let dist = self.distance_computer.distance_with_metric(
-                                query,
-                                vector_data,
-                                &metric,
-                            );
+                            let dist = self.metric_aware_distance(query, vector_data);
                             // Always push to frontier (skip-through traversal)
                             frontier.push(std::cmp::Reverse((OrderedFloat(dist), neighbor)));
                             // Only add to results if predicate passes
@@ -1100,6 +1091,37 @@ impl AxisHnswIndex {
         &self,
     ) -> crate::compute::distance_computation::DistanceMetric {
         self.config.distance_metric
+    }
+
+    /// Compute a distance with **lower = better** semantics across
+    /// every metric the HNSW algorithm sees.
+    ///
+    /// The compute layer's `distance_with_metric` returns the
+    /// metric's native value:
+    ///   * Cosine / Euclidean / Manhattan → a distance (lower = better)
+    ///   * DotProduct → the raw inner product (HIGHER = better)
+    ///
+    /// HNSW's `BinaryHeap` logic everywhere assumes lower = better.
+    /// Without this wrapper, DotProduct vectors were inserted into
+    /// the priority queue with inverted ranking — the algorithm
+    /// kept the records with the LOWEST inner product (farthest
+    /// from the query) and discarded the closest ones. Measured at
+    /// 10K × 128d: recall=0.00 for DotProduct, vs 0.78+ for Cosine
+    /// and Euclidean. Negating the similarity-metric values here
+    /// restores the lower-better invariant; the router undoes the
+    /// negation when constructing `SimilarityResult` for the
+    /// caller.
+    #[inline]
+    fn metric_aware_distance(&self, q: &[f32], v: &[f32]) -> f32 {
+        use crate::compute::distance_computation::engine::DistanceMetricExt;
+        let raw = self
+            .distance_computer
+            .distance_with_metric(q, v, &self.config.distance_metric);
+        if self.config.distance_metric.is_similarity() {
+            -raw
+        } else {
+            raw
+        }
     }
 
     /// Get memory usage of the index
