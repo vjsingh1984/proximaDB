@@ -1123,10 +1123,10 @@ physical layouts.
 | Root `proximadb` crate accumulated clippy lint backlog
 | P4
 | LOW
-| Partial — ~41 warnings remain (down from 164; 75% cleared 2026-05-28)
-| `cargo clippy --workspace --lib --bins -- -D warnings` is now CLEAN across all 50+ non-root workspace crates and the workspace `cargo fmt --all -- --check` exits 0. The root `proximadb` crate is now down to ~41 clippy warnings (`cargo clippy -p proximadb --lib`), from 164 at the start of the multi-day sweep. Remaining backlog: 12 collapsible_if-into-outer-match (these contain `?` operators and side-effects in the inner bodies — converting to match-arm guards is unsafe), 22 unwrap_used / expect_used / panic-in-production (need real `Result`-handling refactors at WAL / I/O / SQL-parse boundaries), 3 large_enum_variant (need Box-ing — touches every constructor + match site), 3 truly-dead-code items requiring product decisions, plus a sub-10-warning long tail.
-| 4-6 hours remaining cleanup
-| **Sweep across 14 batches landed 2026-05-28** (`7db1d804e` → `555ed5b2a`): all foundation + horizontal + storage + modality + query + control + platform crates clippy-clean under `-D warnings`; root-crate now at 75% reduction (164 → 41). Batch-by-batch: manual_checked_ops sweep (17 files), derivable_impls sweep (7), unnecessary_sort_by → sort_by_key (12), collapsible_if let-chain sweeps (waves 7/8/9 totaling 26 files), doc_lazy_continuation + auto-deref + useless_conversion bundle (14), clone_on_copy + singletons (8), long-tail singleton sweep (18), dead-alias deletion + needless_range_loop allows (7), dead-code helpers + remaining field-init (6). **Acceptance for closing**: `cargo clippy -p proximadb --lib -- -D warnings` exits 0 (or each remaining lint has an audited `#[allow(...)]` with an inline justification). The remaining ~41 are dominated by error-handling refactors (real product-code change, not mechanical) so a focused PR is still warranted — the "easy" sweep mass is gone.
+| Resolved 2026-05-28
+| `cargo clippy --workspace --lib --bins -- -D warnings` is now CLEAN across all 50+ non-root workspace crates and the root `proximadb` crate itself. `cargo fmt --all -- --check` exits 0. Total reduction: 164 → 0 across a 16-batch multi-day sweep. The remaining hard-to-mechanical lints (collapsible_if-into-match with `?`-operator bodies; unwrap/expect on documented infallible invariants; intentionally-large variants) carry inline `#[allow(...)]` with rationale linking to the static invariant or the constructor blast-radius reason.
+| Closed
+| **RESOLVED 2026-05-28** across 16 batches (`7db1d804e` → `a297949ca`). Acceptance criterion met: `cargo clippy -p proximadb --lib -- -D warnings` exits 0. Batch-by-batch: (1-3) workspace-wide sweep across 50+ crates; (4) manual_checked_ops (17 files); (5) derivable_impls (7); (6) unnecessary_sort_by → sort_by_key (12); (7-9) collapsible_if let-chain waves (26 files); (10) doc_lazy_continuation + auto-deref + useless_conversion (14); (11) clone_on_copy + singletons (8); (12) long-tail singleton sweep — needless_question_mark, manual_clamp, manual_repeat_n, io::Error::other, matches!, iter_kv_map, manual_strip, char-array-pattern, manual_size_of_val (18); (13) dead-alias deletion + needless_range_loop allows (7); (14) dead-code helper deletion + remaining field-init (6); (15) error-handling refactors + match-arm guards — 5 expect/unwrap converted to audited `#[allow]` with invariant rationale, 1 real refactor (init_hmgi), 7 collapsible_if-into-match converted to match-arm guards, 2 to allow with `?`-operator rationale (23 files); (16) close — large_enum_variant allows, let_underscore_future allow, unused-import drop, dead-field allow (5 files). Follow-up: tighten the CI lint job at `.github/workflows/ci.yml` to drop the `RUSTFLAGS: '-A warnings'` override now that the root crate itself is clean.
 
 | TD-080
 | Catalog default-bootstrap in embedded test harnesses (precision_resolver wiring)
@@ -1216,7 +1216,7 @@ physical layouts.
 | Open
 | ProximaDB has embedded and distributed (experimental, `cluster` flag) deployment but not the three-mode elastic model with minute-level billing and warm pools. There is no warm-pool scheduler that attaches a pinned snapshot to prepared compute on request and releases on idle while catalog/metadata stay queryable with zero resident compute. This is the practical realization of the 2028 VISION "serverless deployment mode" milestone and the Vector Lakebase "resources follow the data" pillar. See `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R4.
 | 6+ months
-| Surfaced 2026-05-28 (Vector Lakebase trend review). Depends on TD-077 (distributed transport) and is gated by TD-087/TD-088 (which make scale-to-zero economical first). Acceptance: (1) `Long-running` / `OnDemand` / `OfflineBatch` compute modes over the same logical store; (2) warm-pool scheduler with attach-on-request / release-on-idle; (3) metadata queryable with no compute resident; (4) cost/latency model documented. Sequence *after* R1/R2/R3.
+| Surfaced 2026-05-28 (Vector Lakebase trend review). **Split (2026-05-28 plan refinement)**: this TD now scopes only the *multi-node* warm-pool half (F4b — minute-billed `OnDemand` pods + `OfflineBatch` cluster), which is the part genuinely blocked on TD-077 (distributed transport). The *single-node* scale-to-zero half (collection suspend/resume — most of the "idle tenants don't pay" economics) is **unblocked** and split out to **TD-094 (F4a)**. Gated by TD-087/TD-088 (which make scale-to-zero economical first). Acceptance: (1) `OnDemand` (minute-billed) + `OfflineBatch` modes over the same logical store across nodes; (2) warm-pool scheduler with attach-on-request / release-on-idle; (3) metadata queryable with no compute resident cluster-wide; (4) cost/latency model documented. Sequence *after* R1/R2/R3 and after TD-077.
 
 | TD-090
 | External Collection — ProximaDB-owned indexes over external-resident data (index-in-place)
@@ -1235,4 +1235,31 @@ physical layouts.
 | ProximaDB supports Iceberg/Delta/Hudi/Parquet but not Lance, a vector-native lake format treated as a primary external substrate in the Vector Lakebase ecosystem. See `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R6.
 | 3-6 weeks
 | Surfaced 2026-05-28 (Vector Lakebase trend review). Lowest priority of the six trend-review items. Acceptance: Lance as a read/import/external-index substrate alongside the existing open formats; gates TD-090 (External Collection) for Lance-resident corpora.
+
+| TD-092
+| BM25↔vector hybrid fusion — wire the live Tantivy full-text leg into the fusion path
+| P2
+| MEDIUM
+| Open
+| **Near-term parity (un-wired primitive, not new build).** Tantivy full-text indexing is production (`src/storage/document/indexes/fulltext.rs`) and the RRF/weighted/8-strategy fusion engine is production (`src/core/search/hybrid/hybrid_search.rs`), but `src/core/search/hybrid/bm25_wrapper.rs` is a *stub* — so the BM25 leg never reaches the fusion path and "hybrid search" fuses dense vectors only. Zilliz markets "full-spectrum search across vectors, text, JSON, geospatial with hybrid retrieval and reranking" as table stakes, so this is a visible competitive-parity gap that is nearly free (integration of two finished components). Also corrects `VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc`, whose scorecard prematurely lists "hybrid BM25 + RRF/weighted fusion" as shipping (✅) when the BM25 leg is not wired.
+| 1-2 weeks
+| Surfaced 2026-05-28 (plan refinement). Acceptance: (1) `bm25_wrapper` backed by the live Tantivy index rather than a stub; (2) hybrid search fuses BM25 + dense candidates through the existing fusion engine (RRF default); (3) integration test asserting a keyword-only match surfaces via hybrid search that a pure-vector query misses. Sequence *before* Phase 8 (Parity Sprint).
+
+| TD-093
+| RankServices startup wiring — production CandidateProvider for SQL RERANK
+| P2
+| MEDIUM
+| Open
+| **Near-term parity (un-wired primitive, not new build).** The SQL `RERANK` SRF, the ONNX model cache, and 8 of 9 §4.10 rank metrics are live end-to-end (`crates/modalities/proximadb-rank-*`), but no production `CandidateProvider` / `RankServices` is constructed at server boot — so the RERANK path degrades to retrieval-only without profile dispatch. It needs a `HybridSearchBackend`-backed provider wired into `SharedServices`. Integration of finished primitives; previously deferred to "a fresh session" (see memory `project-rank-services-production-wiring-2026-05-28`).
+| 1-2 weeks
+| Surfaced 2026-05-28 (plan refinement). Acceptance: (1) `RankServices` constructed at startup over the hybrid backend and registered in `SharedServices`; (2) SQL `RERANK` dispatches rank profiles end-to-end across REST / gRPC / Arrow Flight (not retrieval-only); (3) the 9th metric (async loader, R-5b) closed or explicitly tracked. Sequence *before* Phase 8 (Parity Sprint). Pairs with TD-092 — both feed F1 re-embed/quality passes downstream.
+
+| TD-094
+| Single-node scale-to-zero (collection suspend/resume) — unblocked half split from TD-089 (F4a)
+| P4
+| MEDIUM
+| Open
+| Split from TD-089 (2026-05-28 plan refinement). TD-089's three-mode elastic model is blocked on TD-077 (distributed transport), but the *single-node* economics are **not** blocked: evict a collection's compute/index from memory while keeping its catalog metadata queryable, then lazy-warm on first query — reusing the already-built `CollectionPinRegistry` (`src/storage/collection_pinning.rs`), `DirectoryLoadStatus` (`src/storage/engines/sst/object_economy_directory.rs`), route-health diagnostics (`GET /api/v2/_diagnostics/collections/:id/route-health`), and the tiering engine. Delivers most of the "idle tenants don't pay" benefit for embedded / single-node deployments and chains off TD-087 (fast cold-start makes resume cheap). See `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R4 (F4a).
+| 3-6 weeks
+| Surfaced 2026-05-28 (plan refinement). Acceptance: (1) a collection can be suspended (compute/index released, sidecar marked cold) with its catalog metadata still queryable; (2) the first query after suspend lazy-warms via the TD-087 cold path; (3) suspend/resume state is observable in route-health; (4) no dependency on TD-077. Unblocked — can precede or run parallel to F1; sequence after TD-087.
 |===
