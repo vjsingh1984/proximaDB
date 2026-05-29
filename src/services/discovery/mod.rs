@@ -9,8 +9,12 @@
 //!
 //! See `docs/12-design/PHASE8_CONTINUOUS_LOOP_HLD_LLD_2026_05_28.adoc` (F1).
 
+mod executor;
 mod job;
 mod registry;
+mod service;
 
+pub use executor::{spawn_discovery_executor, DiscoveryJobExecutor, DEFAULT_POLL_INTERVAL};
 pub use job::{DiscoveryJob, DiscoveryJobKind, DiscoveryJobResult, DiscoveryJobStatus};
 pub use registry::DiscoveryRegistry;
+pub use service::DiscoveryService;
