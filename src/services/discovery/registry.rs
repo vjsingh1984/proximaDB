@@ -101,7 +101,7 @@ impl DiscoveryRegistry {
             .filter(|e| e.value().collection_id == collection_id)
             .map(|e| e.value().clone())
             .collect();
-        jobs.sort_by(|a, b| b.created_at_ms.cmp(&a.created_at_ms));
+        jobs.sort_by_key(|j| std::cmp::Reverse(j.created_at_ms));
         jobs
     }
 

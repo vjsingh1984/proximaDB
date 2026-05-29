@@ -241,6 +241,19 @@ pub struct SharedServices {
     /// is `None` (some test paths), this store is backed by an in-memory
     /// appender that does not survive restart.
     pub rank_profile_store: Arc<dyn crate::services::RankProfileStore>,
+
+    /// Phase 8 (F1) snapshot-publish coordinator: pins canonical WAL snapshots
+    /// and atomically republishes refined snapshots via the per-collection
+    /// `discovery_active` projection freshness state machine. Shared by the
+    /// discovery executor (data plane) and route-health disclosure (control
+    /// plane). See `docs/12-design/PHASE8_CONTINUOUS_LOOP_HLD_LLD_2026_05_28.adoc`.
+    pub snapshot_coordinator: Arc<crate::services::snapshot::SnapshotPublishCoordinator>,
+
+    /// Phase 8 (F1) Continuous Discovery service: create/inspect discovery
+    /// jobs. The background `DiscoveryJobExecutor` (spawned in `new`) consumes
+    /// scheduled jobs from the same registry and republishes refined snapshots
+    /// via `snapshot_coordinator`.
+    pub discovery_service: Arc<crate::services::discovery::DiscoveryService>,
 }
 
 impl SharedServices {
@@ -1282,6 +1295,38 @@ impl SharedServices {
             ));
         debug!("✅ SharedServices::new - Port-backed runtime API handlers created");
 
+        // Phase 8 (F1) — Continuous Discovery loop. The snapshot-publish
+        // coordinator and discovery service share the catalog manager; the
+        // background executor is spawned for the process lifetime. The shutdown
+        // sender is intentionally leaked (matching the always-on
+        // start_axis_consumer maintenance pattern): dropping it would make the
+        // executor's `shutdown.changed()` return Err and exit immediately.
+        // Registry is in-memory for this first (experimental) wiring; durable
+        // persistence under the data dir is a follow-up.
+        let snapshot_coordinator = Arc::new(
+            crate::services::snapshot::SnapshotPublishCoordinator::new(catalog_manager.clone()),
+        );
+        let discovery_registry =
+            Arc::new(crate::services::discovery::DiscoveryRegistry::new());
+        let discovery_service = Arc::new(crate::services::discovery::DiscoveryService::new(
+            discovery_registry.clone(),
+            snapshot_coordinator.clone(),
+        ));
+        {
+            let executor = Arc::new(crate::services::discovery::DiscoveryJobExecutor::new(
+                discovery_registry.clone(),
+                snapshot_coordinator.clone(),
+            ));
+            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            std::mem::forget(shutdown_tx);
+            let _ = crate::services::discovery::spawn_discovery_executor(
+                executor,
+                shutdown_rx,
+                crate::services::discovery::DEFAULT_POLL_INTERVAL,
+            );
+            info!("✅ SharedServices: DiscoveryJobExecutor spawned (Phase 8 CS/CD loop)");
+        }
+
         info!(
             "✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)"
         );
@@ -1376,6 +1421,10 @@ impl SharedServices {
                 // FederatedQueryContext so SQL RERANK shares the registry.
                 rank_services,
                 rank_profile_store,
+                // Phase 8 (F1): snapshot-publish coordinator + Continuous
+                // Discovery service. The background executor was spawned above.
+                snapshot_coordinator,
+                discovery_service,
             },
             collection_service,
         ))
