@@ -1,14 +1,13 @@
 //! Dedup refinement pass (Phase 8 F1 keystone, S3).
 //!
-//! Reads the pinned snapshot's records via the v2 canonical read path
-//! (`VectorOperationsService::scan_records_with_tenant_context`), detects
-//! near-duplicate embeddings by cosine similarity, and removes the duplicates
-//! via the v2 canonical delete path
-//! (`delete_records_with_tenant_context`, tombstones). The executor then
-//! atomically republishes the refined snapshot.
+//! Reads the pinned snapshot's records via the v2 canonical storage-inclusive
+//! read path (`VectorOperationsService::list_all_records_with_tenant_context`,
+//! which merges WAL/memtable + flushed storage), detects near-duplicate
+//! embeddings by cosine similarity, and removes the duplicates via the v2
+//! canonical delete path (`delete_records_with_tenant_context`, tombstones).
+//! The executor then atomically republishes the refined snapshot.
 //!
-//! Scope (MVP): operates over the records the read path returns (WAL/memtable
-//! contents today). O(n^2) greedy detection — fine for offline batch scale; a
+//! Scope (MVP): O(n^2) greedy detection — fine for offline batch scale; a
 //! future version can route distance through the SIMD provider and add LSH
 //! blocking for larger corpora.
 
@@ -28,11 +27,18 @@ pub async fn run(ctx: &PassContext) -> Result<DiscoveryJobResult> {
         // No canonical path wired: identity pass (republish unchanged).
         return Ok(DiscoveryJobResult::default());
     };
-    let collection_id = ctx.collection_id.as_str();
+    // Resolve the user-facing collection name to the canonical internal id the
+    // write path keys WAL + storage under (the catalog/snapshot side uses the
+    // name; the vector data side uses the resolved id).
+    let collection_id = vector_ops
+        .resolve_collection_id(ctx.collection_id.as_str())
+        .await;
+    let collection_id = collection_id.as_str();
 
-    // v2 canonical read: include vectors, skip props (not needed for dedup).
+    // v2 canonical storage-inclusive read: WAL/memtable + flushed storage,
+    // merged by oid (freshest wins). Records carry embeddings.
     let records = vector_ops
-        .scan_records_with_tenant_context(collection_id, None, true, false, None)
+        .list_all_records_with_tenant_context(collection_id, None)
         .await?;
     let input = records.len() as u64;
 

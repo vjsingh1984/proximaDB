@@ -264,6 +264,42 @@ impl UnifiedStorageEngine for SstEngine {
         })
     }
 
+    /// Read ALL records of a collection from persisted SST files (Phase 8 F1).
+    /// Discovers the collection's SST data files (mirroring `collection_stats`)
+    /// and reads them via the compaction reader. WAL/memtable records are not
+    /// included here — the service layer merges those in.
+    async fn read_all_records(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
+        let storage_url = self.get_collection_storage_url(collection_id).await?;
+        let fs = self.filesystem().get_filesystem(&storage_url)?;
+
+        let mut files = Vec::new();
+        if let Ok(entries) = fs.list(&storage_url).await {
+            for entry in &entries {
+                if !entry.metadata.is_directory
+                    && (entry.url.ends_with(".sst") || entry.url.ends_with(".proximablock"))
+                {
+                    files.push(entry.url.clone());
+                }
+            }
+        }
+        if files.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let reader = super::sst_reader::UnifiedSSTReader::for_compaction(
+            self.filesystem().clone(),
+            collection_id.to_string(),
+        )?;
+        let mut all = Vec::new();
+        for file in &files {
+            all.extend(reader.read_batch(file).await?);
+        }
+        Ok(all)
+    }
+
     /// Collect engine metrics
     async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
         let mut metrics = HashMap::new();

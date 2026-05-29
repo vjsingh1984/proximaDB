@@ -226,25 +226,15 @@ async fn discovery_dedup_job_removes_duplicates_and_completes() {
         "completed job should record the pinned snapshot range: {final_job}"
     );
 
-    // Dedup efficacy: assert duplicate removal only when the pass actually saw
-    // the records. The S3 MVP reads the WAL/memtable scan path
-    // (`scan_records_with_tenant_context` -> `get_collection_vectors`); records
-    // already flushed to storage by the time the 2s-poll executor runs are not
-    // visible to it (a storage-inclusive scan is tracked follow-up work). When
-    // the records ARE visible (`input_record_count >= 4`), the 2 duplicates
-    // (rec-3, rec-4) must be removed.
+    // Dedup efficacy: the storage-inclusive scan
+    // (`list_all_records_with_tenant_context`) enumerates WAL + flushed storage,
+    // so the records are visible regardless of flush timing. The 2 duplicates
+    // (rec-3 == rec-0, rec-4 == rec-1) must be removed.
     let input = job["input_record_count"].as_u64().unwrap_or(0);
     let removed = job["removed_count"].as_u64().unwrap_or(0);
-    if input >= 4 {
-        assert!(
-            removed >= 2,
-            "with records visible to the pass (input={input}), dedup must remove the 2 \
-             duplicates (rec-3, rec-4); got removed_count={removed}: {final_job}"
-        );
-    } else {
-        eprintln!(
-            "NOTE: dedup pass saw input_record_count={input} (records flushed past the \
-             WAL/memtable scan); pipeline-completion still verified. removed_count={removed}."
-        );
-    }
+    assert!(
+        removed >= 2,
+        "dedup must remove the 2 duplicate records (rec-3, rec-4); \
+         got removed_count={removed}, input_record_count={input}: {final_job}"
+    );
 }

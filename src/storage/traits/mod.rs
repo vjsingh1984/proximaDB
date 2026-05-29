@@ -799,6 +799,19 @@ pub trait UnifiedStorageEngine: Send + Sync {
         ))
     }
 
+    /// Read ALL records of a collection from persisted (flushed) storage.
+    ///
+    /// Used by offline/discovery passes (Phase 8 F1) that must enumerate the
+    /// full collection, not just the WAL/memtable. Default returns empty — the
+    /// engine does not support full enumeration; engines used for
+    /// discovery/compaction (SST today) override this.
+    async fn read_all_records(
+        &self,
+        _collection_id: &str,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
+        Ok(Vec::new())
+    }
+
     /// Get scan capabilities for this engine
     ///
     /// Delegates to `CapabilityFactory` for OCP-compliant capability lookup.

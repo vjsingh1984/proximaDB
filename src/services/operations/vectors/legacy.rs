@@ -779,6 +779,65 @@ impl VectorOperationsService {
         Ok(records)
     }
 
+    /// Resolve a user-facing collection identifier (name) to the canonical
+    /// internal id that the write path keys WAL + storage under. Idempotent for
+    /// already-canonical ids; falls back to the input if resolution fails.
+    pub async fn resolve_collection_id(&self, identifier: &str) -> String {
+        match self.get_or_load_collection(identifier).await {
+            Ok(collection) => collection.id.clone(),
+            Err(_) => identifier.to_string(),
+        }
+    }
+
+    /// Enumerate ALL records of a collection, including flushed/storage-resident
+    /// ones (Phase 8 F1, storage-inclusive scan). Merges the WAL/memtable scan
+    /// with the storage engine's `read_all_records`, keyed by `oid` with the
+    /// freshest version winning (WAL takes priority on ties). Used by discovery
+    /// passes that must see the full collection, not just unflushed data.
+    pub async fn list_all_records_with_tenant_context(
+        &self,
+        collection_id: &str,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
+    ) -> Result<Vec<ProximaRecord>> {
+        self.validate_tenant_collection_access(collection_id, tenant_context)
+            .await?;
+
+        // WAL/memtable (unflushed) + flushed storage. Storage is best-effort:
+        // an engine that doesn't implement read_all_records returns empty.
+        let wal_records = self
+            .wal_manager
+            .get_collection_vectors(collection_id)
+            .await?;
+        let storage_records = match self.get_engine_for_collection(collection_id).await {
+            Ok(engine) => engine.read_all_records(collection_id).await.unwrap_or_default(),
+            Err(_) => Vec::new(),
+        };
+
+        // Merge by oid: storage baseline, then WAL overrides on >= updated_at_ns
+        // so the freshest version (WAL) wins ties.
+        let mut by_oid: std::collections::HashMap<String, ProximaRecord> =
+            std::collections::HashMap::with_capacity(wal_records.len() + storage_records.len());
+        for record in storage_records {
+            by_oid.insert(record.oid.clone(), record);
+        }
+        for record in wal_records {
+            match by_oid.get(&record.oid) {
+                Some(existing) if existing.updated_at_ns > record.updated_at_ns => {}
+                _ => {
+                    by_oid.insert(record.oid.clone(), record);
+                }
+            }
+        }
+
+        let mut records: Vec<ProximaRecord> = by_oid.into_values().collect();
+        if let Some(tenant_context) = tenant_context {
+            records.retain(|record| {
+                record.tenant_id.is_empty() || record.tenant_id == tenant_context.tenant_id
+            });
+        }
+        Ok(records)
+    }
+
     /// Delete canonical rich records by writing tombstones.
     pub async fn delete_records_with_tenant_context(
         &self,
