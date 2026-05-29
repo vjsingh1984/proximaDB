@@ -172,6 +172,7 @@ pub mod canonical_wal;
 pub mod catalog_introspection;
 pub mod collection;
 pub mod ddl;
+pub mod discovery;
 pub mod dml;
 pub mod embedding_drainer;
 pub mod events;
@@ -183,6 +184,7 @@ pub mod record_memtable;
 pub mod record_store;
 pub mod schema;
 pub mod search;
+pub mod snapshot;
 #[cfg(feature = "tenant_access")]
 pub mod tenant_access;
 pub mod write_intent;

@@ -410,6 +410,9 @@ COPILOT.md
 *prompt*.txt
 *snapshot*
 !src/**/snapshot.rs
+# Phase 8 snapshot-publish coordinator module (source, not a snapshot artifact)
+!src/services/snapshot/
+!src/services/snapshot/**
 *_PROMPT.md
 *_SNAPSHOT.md
 *_summary.py
