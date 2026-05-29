@@ -698,6 +698,10 @@ impl PostgresProtocol {
                     if in_single && chars.peek() == Some(&'\'') {
                         // SQL '' escape — consume the second quote
                         // verbatim and stay inside the literal.
+                        // `peek() == Some(&'\'')` proves the iterator has
+                        // at least one element, so `next()` cannot return
+                        // None on this branch.
+                        #[allow(clippy::unwrap_used)]
                         current.push(chars.next().unwrap());
                     } else {
                         in_single = !in_single;
@@ -4565,15 +4569,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_extract_explain_inner_query_for_table_write() {
-        let inner = PostgresProtocol::extract_explain_inner_query(
-            "EXPLAIN (FORMAT JSON) INSERT INTO facts SELECT * FROM staging;",
-        )
-        .expect("explain should parse");
-
-        assert_eq!(inner, "INSERT INTO facts SELECT * FROM staging;");
-    }
+    // Note: a prior `test_extract_explain_inner_query_for_table_write`
+    // covered `PostgresProtocol::extract_explain_inner_query`, which
+    // was removed alongside `strip_explain_prefix` in clippy cleanup
+    // batch 14 (commit `555ed5b2a`). `extract_explain_with_analyze`
+    // is the surviving entry point and is exercised below.
 
     #[test]
     fn test_extract_explain_with_analyze_detects_analyze_flag() {

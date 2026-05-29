@@ -2595,11 +2595,11 @@ impl UnifiedQueryOptimizer {
                     cpu_cores = cpu_cores.max(available_cores * 3 / 4);
                     io_threads = io_threads.max(2);
                 }
-                ExecutionStep::MetadataFilter { estimated_cost, .. } => {
+                ExecutionStep::MetadataFilter { estimated_cost, .. }
+                    if *estimated_cost > 1.0 =>
+                {
                     // Filter cost scales with data size
-                    if *estimated_cost > 1.0 {
-                        cpu_cores = cpu_cores.max(2);
-                    }
+                    cpu_cores = cpu_cores.max(2);
                 }
                 ExecutionStep::IndexLookup { .. } => {
                     // Index lookups are memory-intensive

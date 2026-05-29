@@ -76,7 +76,11 @@ impl MvccResolver {
                     .then_with(|| a.created_at_ns.cmp(&b.created_at_ns))
             });
 
-            // Require the sequence to start at 0 or 1
+            // Require the sequence to start at 0 or 1. `versions.first()` is
+            // safe to unwrap because the Vec was built via
+            // `id_groups.entry(oid).or_default().push(record)`, so every
+            // entry in `id_groups` has at least one record by construction.
+            #[allow(clippy::unwrap_used)]
             let start = effective_version(versions.first().unwrap());
             if start > 1 {
                 debug!(

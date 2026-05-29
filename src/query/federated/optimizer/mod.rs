@@ -2077,10 +2077,10 @@ impl PlanCacheKey {
         for ext in &query.extensions {
             match ext {
                 SqlExtension::VectorSearch { collection, .. }
-                | SqlExtension::DocumentQuery { collection, .. } => {
-                    if !targets.contains(collection) {
-                        targets.push(collection.clone());
-                    }
+                | SqlExtension::DocumentQuery { collection, .. }
+                    if !targets.contains(collection) =>
+                {
+                    targets.push(collection.clone());
                 }
                 _ => {}
             }

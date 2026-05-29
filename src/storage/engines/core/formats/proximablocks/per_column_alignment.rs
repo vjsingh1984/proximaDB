@@ -226,6 +226,12 @@ impl PaxBlockHeaderV2 {
     /// Parse a v2 PAX block header from the start of `data`.
     ///
     /// Returns the parsed header and the byte length consumed.
+    ///
+    /// The `try_into().unwrap()` calls below are infallible: each takes an
+    /// exact-4-byte slice of `data` and converts it to `[u8; 4]`. The
+    /// preceding `data.len() < header_len` checks ensure every slice is
+    /// in bounds and exactly 4 bytes long.
+    #[allow(clippy::unwrap_used)]
     pub fn decode(data: &[u8]) -> Result<(Self, usize)> {
         match peek_pax_block_version(data)? {
             PeekedPaxBlockVersion::V1 => {

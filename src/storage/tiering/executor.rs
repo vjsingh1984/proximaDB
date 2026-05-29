@@ -302,6 +302,11 @@ impl TierMigrationExecutor {
             let sem = sem.clone();
             let exec = self.clone_for_task();
             let h = tokio::spawn(async move {
+                // `Semaphore::acquire` only fails after the semaphore is
+                // explicitly closed via `close()`, which we never do.
+                // Holding the permit for the lifetime of the task is the
+                // intended back-pressure mechanism.
+                #[allow(clippy::expect_used)]
                 let _permit = sem.acquire().await.expect("semaphore closed");
                 let result = exec.execute(&task).await;
                 (idx, result)

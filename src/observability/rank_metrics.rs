@@ -351,6 +351,11 @@ pub fn rank_metrics_registry() -> &'static Registry {
 ///
 /// The server binary calls this at boot inside `SharedServices::new`; hot-path
 /// callers should read via [`metrics`] and never re-init.
+// Startup-only metric registration. A `register` failure means the
+// Prometheus registry rejected our metric definitions — that's a
+// build-time bug, not a runtime condition. Failing fast at boot is
+// correct; downstream code assumes metrics are wired.
+#[allow(clippy::expect_used)]
 pub fn init_rank_pipeline_metrics() -> Arc<RankPipelineMetrics> {
     METRICS
         .get_or_init(|| {

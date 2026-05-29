@@ -174,6 +174,11 @@ fn pricing() -> &'static PricingConfig {
     })
 }
 
+// Startup-only invariant check on the loaded tier config. A malformed
+// config means the operator overlay JSON is broken — failing fast at
+// boot is the right answer; downstream code assumes every Tier variant
+// has pricing wired up.
+#[allow(clippy::panic)]
 fn validate_pricing_matches_enum(p: &PricingConfig, source_label: &str) {
     use std::collections::HashSet;
     // Phase B-4: validation is now alias-aware. Each JSON tier id is parsed

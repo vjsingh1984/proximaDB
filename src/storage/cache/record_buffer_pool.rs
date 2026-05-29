@@ -328,6 +328,11 @@ where
         self.inner.lock().await.slots.len()
     }
 
+    /// True when no records are currently cached.
+    pub async fn is_empty(&self) -> bool {
+        self.inner.lock().await.slots.is_empty()
+    }
+
     /// Record a page-level hit. Phase 3+ integration will call this from
     /// the page-cache adapter so the LLD trace can compute the record-vs-page
     /// hit-ratio.

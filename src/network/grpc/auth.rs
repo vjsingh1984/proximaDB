@@ -304,6 +304,11 @@ fn tenant_id_from_metadata(metadata: &tonic::metadata::MetadataMap) -> Option<St
         .map(ToOwned::to_owned)
 }
 
+// `http::Response::Builder::body` only fails if a header is invalid.
+// All headers above are static strings or grpc-status digits, and the
+// message has had embedded newlines stripped. The `expect` documents
+// the static-construction invariant.
+#[allow(clippy::expect_used)]
 fn status_to_http_response(status: Status) -> HttpResponse<tonic::body::Body> {
     let code = status.code();
     let message = status.message().replace('\n', " ");

@@ -364,6 +364,14 @@ fn checksum(payload: &[u8]) -> u32 {
     hasher.finalize()
 }
 
+// Each `read_uN` helper takes an `&[u8]` and an offset, slices N bytes,
+// and converts to a fixed-size array via `try_into`. The `.get(...)?`
+// returns `None` when the slice would overrun, so by the time we hit
+// `try_into`, the source slice is exactly N bytes long and the conversion
+// is infallible. The `expect` is a documented "slice length matches array
+// size" invariant — keep it inline so future readers see why panic is
+// unreachable.
+#[allow(clippy::expect_used)]
 fn read_u16(bytes: &[u8], offset: &mut usize) -> Result<u16> {
     let end = *offset + 2;
     let value = bytes
@@ -375,6 +383,7 @@ fn read_u16(bytes: &[u8], offset: &mut usize) -> Result<u16> {
     ))
 }
 
+#[allow(clippy::expect_used)]
 fn read_u32(bytes: &[u8], offset: &mut usize) -> Result<u32> {
     let end = *offset + 4;
     let value = bytes
@@ -386,6 +395,7 @@ fn read_u32(bytes: &[u8], offset: &mut usize) -> Result<u32> {
     ))
 }
 
+#[allow(clippy::expect_used)]
 fn read_u64(bytes: &[u8], offset: &mut usize) -> Result<u64> {
     let end = *offset + 8;
     let value = bytes

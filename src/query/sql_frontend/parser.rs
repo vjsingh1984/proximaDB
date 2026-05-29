@@ -2852,11 +2852,11 @@ impl SqlFrontendParser {
                 ColumnOption::Comment(c) => {
                     comment = Some(c.clone());
                 }
-                ColumnOption::Unique { is_primary, .. } => {
-                    if *is_primary {
-                        primary_key = true;
-                        nullable = false;
-                    }
+                ColumnOption::Unique {
+                    is_primary: true, ..
+                } => {
+                    primary_key = true;
+                    nullable = false;
                 }
                 _ => {}
             }

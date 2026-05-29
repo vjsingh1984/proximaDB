@@ -1054,17 +1054,13 @@ impl PromQLExecutor {
                         } else {
                             match op {
                                 AggregationOp::Rate => (last.value - first.value) / time_diff_s,
-                                AggregationOp::Irate => {
+                                AggregationOp::Irate if ordered.len() >= 2 => {
                                     // Use last two samples
-                                    if ordered.len() >= 2 {
-                                        let prev = ordered[ordered.len() - 2];
-                                        let time_diff =
-                                            (last.timestamp_ns - prev.timestamp_ns) as f64 / 1e9;
-                                        if time_diff > 0.0 {
-                                            (last.value - prev.value) / time_diff
-                                        } else {
-                                            0.0
-                                        }
+                                    let prev = ordered[ordered.len() - 2];
+                                    let time_diff =
+                                        (last.timestamp_ns - prev.timestamp_ns) as f64 / 1e9;
+                                    if time_diff > 0.0 {
+                                        (last.value - prev.value) / time_diff
                                     } else {
                                         0.0
                                     }

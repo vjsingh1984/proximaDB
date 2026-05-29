@@ -2596,6 +2596,11 @@ impl GraphOperationsService {
                 .find(|et| et.edge_type == edge.edge_type)
         {
             use crate::proto::proximadb_v1::Cardinality;
+            // The inner `if !engine.get_*().is_empty()` bodies contain `?`
+            // operators that surface I/O errors from the graph engine; they
+            // can't be collapsed into match-arm guards without losing the
+            // error propagation, so the lint is silenced locally.
+            #[allow(clippy::collapsible_if)]
             match ets.cardinality {
                 x if x == Cardinality::OneToOne as i32 => {
                     if !engine

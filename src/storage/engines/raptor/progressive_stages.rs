@@ -166,6 +166,10 @@ impl ProgressiveSearchStage for RaptorInt8Stage {
         }
 
         if !fp32_indices.is_empty() {
+            // `fp32_indices` is populated above only when
+            // `candidate.vector.is_some()` (line 148), so the as_ref on
+            // each indexed entry is guaranteed to return `Some`.
+            #[allow(clippy::expect_used)]
             let fp32_slices: Vec<&[f32]> = fp32_indices
                 .iter()
                 .map(|&i| {

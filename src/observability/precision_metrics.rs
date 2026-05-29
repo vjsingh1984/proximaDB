@@ -278,6 +278,11 @@ pub fn precision_metrics_registry() -> &'static Registry {
 ///
 /// The server binary calls this at boot (after the PR 7a hw probe);
 /// hot-path callers read via `metrics()` and never re-init.
+// Startup-only metric registration. A `register` failure means the
+// Prometheus registry rejected our metric definitions — that's a
+// build-time bug, not a runtime condition. Failing fast at boot is
+// correct; downstream code assumes metrics are wired.
+#[allow(clippy::expect_used)]
 pub fn init_precision_metrics() -> &'static PrecisionMetrics {
     METRICS.get_or_init(|| {
         let metrics = PrecisionMetrics::register(precision_metrics_registry())

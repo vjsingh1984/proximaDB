@@ -519,6 +519,10 @@ impl StreamingDecompressor {
             let mut result = Vec::new();
             let mut cursor = 0usize;
             while cursor + 4 <= compressed_data.len() {
+                // The `cursor + 4 <= len` while-condition guarantees the
+                // 4-byte slice is in bounds; `try_into` to `[u8; 4]` from
+                // an exactly-4-byte slice is infallible.
+                #[allow(clippy::unwrap_used)]
                 let len =
                     u32::from_le_bytes(compressed_data[cursor..cursor + 4].try_into().unwrap())
                         as usize;

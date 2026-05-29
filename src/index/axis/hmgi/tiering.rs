@@ -317,6 +317,12 @@ impl HmgiTierPolicy {
 }
 
 impl Default for HmgiTierPolicy {
+    // `Default::default()` is infallible by trait, and the inputs here are
+    // hard-coded literal strings (`"hmgi_default"` + `"/mnt/nvme"`). Both
+    // are valid `CollectionStorageConfig` inputs by construction, so the
+    // `from_base_location` call cannot fail at runtime. Keeping the unwrap
+    // documents the static-input invariant.
+    #[allow(clippy::unwrap_used)]
     fn default() -> Self {
         use crate::infrastructure::tier_policy_engine::CollectionStorageConfig;
 
