@@ -939,6 +939,22 @@ impl ProximaDB {
         }
     }
 
+    /// Force-flush a collection's WAL/memtable to persisted engine storage
+    /// (test/ops helper). Resolves the user-facing name to the canonical id
+    /// first, then drains the WAL so subsequent reads must come from storage.
+    pub async fn force_flush_collection(&self, collection: &str) -> anyhow::Result<()> {
+        if let Some(ref multi_server) = self.multi_server {
+            let vops = &multi_server.shared_services.vector_operations_service;
+            let id = vops.resolve_collection_id(collection).await;
+            vops.force_flush_collection(&id)
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to force-flush collection: {}", e))?;
+            Ok(())
+        } else {
+            anyhow::bail!("Multi-server not initialized")
+        }
+    }
+
     /// Flush the WAL for a specific graph to ensure durability
     pub async fn flush_graph_wal(&self, graph_id: &str) -> anyhow::Result<()> {
         if let Some(ref multi_server) = self.multi_server {

@@ -177,6 +177,19 @@ async fn discovery_dedup_job_removes_duplicates_and_completes() {
 
     sleep(Duration::from_millis(500)).await;
 
+    // Force a flush so the records leave the WAL/memtable and live only in
+    // engine storage (.sst / .parquet / .helix). This makes the dedup pass
+    // exercise the storage-inclusive read leg (read_all_records) for this
+    // engine, not just the WAL leg.
+    server
+        .db
+        .as_ref()
+        .expect("db handle")
+        .force_flush_collection(&name)
+        .await
+        .unwrap_or_else(|e| panic!("[{engine}] force flush: {e}"));
+    sleep(Duration::from_millis(300)).await;
+
     // SCHEDULE a dedup discovery job via the v2 endpoint.
     let job_resp = http
         .post(format!("{base}/api/v2/collections/{name}/discovery-jobs"))
