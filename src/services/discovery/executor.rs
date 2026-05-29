@@ -22,6 +22,9 @@ pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
 pub struct DiscoveryJobExecutor {
     registry: Arc<DiscoveryRegistry>,
     coordinator: Arc<SnapshotPublishCoordinator>,
+    /// v2 canonical read/write path used by refinement passes. `None` => every
+    /// pass is an identity pass (walking skeleton / lightweight tests).
+    vector_ops: Option<Arc<crate::services::VectorOperationsService>>,
 }
 
 impl DiscoveryJobExecutor {
@@ -32,7 +35,18 @@ impl DiscoveryJobExecutor {
         Self {
             registry,
             coordinator,
+            vector_ops: None,
         }
+    }
+
+    /// Attach the v2 vector-operations service so refinement passes (dedup)
+    /// can read and rewrite records via the canonical path.
+    pub fn with_vector_ops(
+        mut self,
+        vector_ops: Arc<crate::services::VectorOperationsService>,
+    ) -> Self {
+        self.vector_ops = Some(vector_ops);
+        self
     }
 
     /// Claim and process one scheduled job, if any. Returns the processed job id.
@@ -89,18 +103,18 @@ impl DiscoveryJobExecutor {
 
     /// Run the refinement pass for a job's kind.
     ///
-    /// Walking-skeleton behavior (this increment): every kind is an identity
-    /// pass that republishes the pinned snapshot unchanged, proving the
-    /// pin -> publish substrate end-to-end. S3 replaces `Dedup` with a real
-    /// pass (read pinned records, drop near-duplicates, rewrite via the v2
-    /// canonical path); the other kinds remain stubs for later phases.
-    async fn run_pass(&self, _job: &DiscoveryJob) -> anyhow::Result<DiscoveryJobResult> {
-        match _job.kind {
-            DiscoveryJobKind::Dedup
-            | DiscoveryJobKind::Recluster
-            | DiscoveryJobKind::ReEmbed
-            | DiscoveryJobKind::QualityScan
-            | DiscoveryJobKind::TrajectoryAnalysis => Ok(DiscoveryJobResult::default()),
+    /// `Dedup` is the keystone pass (S3): when a vector-operations service is
+    /// attached it reads the pinned snapshot, removes near-duplicates, and the
+    /// caller atomically republishes. Without a vector-operations service (or
+    /// for the not-yet-implemented kinds) the pass is an identity pass that
+    /// republishes the pinned snapshot unchanged.
+    async fn run_pass(&self, job: &DiscoveryJob) -> anyhow::Result<DiscoveryJobResult> {
+        match (job.kind, self.vector_ops.as_ref()) {
+            (DiscoveryJobKind::Dedup, Some(vector_ops)) => {
+                super::passes::dedup::run_dedup(vector_ops, &job.collection_id).await
+            }
+            // Identity pass: no vector-ops wired, or a later-phase kind.
+            _ => Ok(DiscoveryJobResult::default()),
         }
     }
 

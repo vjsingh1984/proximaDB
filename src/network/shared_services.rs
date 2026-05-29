@@ -1313,10 +1313,13 @@ impl SharedServices {
             snapshot_coordinator.clone(),
         ));
         {
-            let executor = Arc::new(crate::services::discovery::DiscoveryJobExecutor::new(
-                discovery_registry.clone(),
-                snapshot_coordinator.clone(),
-            ));
+            let executor = Arc::new(
+                crate::services::discovery::DiscoveryJobExecutor::new(
+                    discovery_registry.clone(),
+                    snapshot_coordinator.clone(),
+                )
+                .with_vector_ops(vector_operations_service.clone()),
+            );
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
             std::mem::forget(shutdown_tx);
             let _ = crate::services::discovery::spawn_discovery_executor(

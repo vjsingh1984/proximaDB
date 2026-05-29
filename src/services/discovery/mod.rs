@@ -11,6 +11,7 @@
 
 mod executor;
 mod job;
+pub mod passes;
 mod registry;
 mod service;
 
