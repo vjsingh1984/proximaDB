@@ -1,16 +1,18 @@
-//! S5 gate (Phase 8 F1): end-to-end Continuous Discovery dedup over REST v2.
+//! S5 gate (Phase 8 F1): end-to-end Continuous Discovery over REST v2 for the
+//! two *real* refinement passes — `dedup` and `recluster`.
 //!
-//! Boots the full DB (`ProximaDB::new` wires `SharedServices`, including the
-//! background `DiscoveryJobExecutor` and the snapshot-publish coordinator),
-//! creates a collection, inserts records with exact-duplicate vectors,
-//! schedules a `dedup` discovery job via the v2 endpoint, waits for the
-//! background executor to complete it, and asserts:
-//!   * the job reaches `complete` (full pipeline: pin -> pass -> atomic
-//!     republish), and
-//!   * duplicates were removed (`removed_count >= 2`).
+//! Both tests boot the full DB (`ProximaDB::new` wires `SharedServices`,
+//! including the background `DiscoveryJobExecutor` and the snapshot-publish
+//! coordinator), create a collection, insert records, schedule a discovery job
+//! via the v2 endpoint, wait for the background executor to finish, and assert
+//! the job reaches `complete` (full pipeline: pin -> pass -> atomic republish):
+//!   * `dedup` — inserts exact-duplicate vectors, asserts `removed_count >= 2`.
+//!   * `recluster` — inserts enough varied vectors to cluster, asserts records
+//!     are unchanged (`removed_count == 0`) and cluster-quality metrics are
+//!     reported (`quality_metrics.recluster_clusters >= 2`, no `recluster_skipped`).
 //!
 //! Exercises S0 (snapshot coordinator) + S1 (registry) + S2/S2b (service +
-//! executor wired into SharedServices) + S3 (dedup pass) + S4 (REST surface).
+//! executor wired into SharedServices) + S3/recluster (passes) + S4 (REST surface).
 
 use std::net::TcpListener;
 use std::time::{Duration, Instant};
@@ -117,7 +119,12 @@ async fn discovery_dedup_job_removes_duplicates_and_completes() {
         .build()
         .unwrap();
     let base = server.base_url();
-    let name = format!("disc_dedup_{}", nanos());
+
+    // Dedup must work on every production engine whose read_all_records override
+    // exposes flushed records to the storage-inclusive scan: SST and VIPER today
+    // (NOVA/HELIX deferred — see UnifiedStorageEngine::read_all_records).
+    for engine in ["sst", "viper"] {
+    let name = format!("disc_dedup_{engine}_{}", nanos());
     let dim: usize = 8;
 
     // CREATE (fp32 default, canonical searchable path).
@@ -126,7 +133,7 @@ async fn discovery_dedup_job_removes_duplicates_and_completes() {
         .json(&json!({
             "name": name,
             "dimension": dim,
-            "engine": "sst",
+            "engine": engine,
             "distance_metric": "cosine",
             "enable_proxima_record": false,
         }))
@@ -236,5 +243,146 @@ async fn discovery_dedup_job_removes_duplicates_and_completes() {
         removed >= 2,
         "dedup must remove the 2 duplicate records (rec-3, rec-4); \
          got removed_count={removed}, input_record_count={input}: {final_job}"
+    );
+    } // for engine
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_recluster_job_reports_cluster_metrics_and_completes() {
+    let server = DiscoveryServer::start().await.expect("server start");
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .no_proxy()
+        .build()
+        .unwrap();
+    let base = server.base_url();
+    let name = format!("disc_recluster_{}", nanos());
+    let dim: usize = 8;
+
+    // CREATE (fp32 default, canonical searchable path).
+    let create = http
+        .post(format!("{base}/api/v2/collections"))
+        .json(&json!({
+            "name": name,
+            "dimension": dim,
+            "engine": "sst",
+            "distance_metric": "cosine",
+            "enable_proxima_record": false,
+        }))
+        .send()
+        .await
+        .expect("v2 create");
+    assert!(
+        create.status().is_success(),
+        "v2 create: {} {}",
+        create.status(),
+        create.text().await.unwrap_or_default()
+    );
+
+    // INSERT 40 varied records — comfortably above the recluster minimum (16),
+    // with directional spread so k-means forms multiple clusters under cosine.
+    const N: usize = 40;
+    let mk = |i: usize| -> Vec<f32> {
+        let mut v = vec![0.0f32; dim];
+        v[i % dim] = 1.0;
+        v[(i / dim + 1) % dim] += 0.5;
+        v
+    };
+    let recs: Vec<serde_json::Value> = (0..N)
+        .map(|i| json!({ "id": format!("rec-{i}"), "vector": mk(i) }))
+        .collect();
+    let insert = http
+        .post(format!("{base}/api/v2/collections/{name}/records/batch"))
+        .json(&json!({ "records": recs }))
+        .send()
+        .await
+        .expect("v2 insert");
+    assert!(
+        insert.status().is_success(),
+        "v2 insert: {} {}",
+        insert.status(),
+        insert.text().await.unwrap_or_default()
+    );
+
+    sleep(Duration::from_millis(500)).await;
+
+    // SCHEDULE a recluster discovery job via the v2 endpoint.
+    let job_resp = http
+        .post(format!("{base}/api/v2/collections/{name}/discovery-jobs"))
+        .json(&json!({ "kind": "recluster" }))
+        .send()
+        .await
+        .expect("create discovery job");
+    assert!(
+        job_resp.status().is_success(),
+        "create discovery job: {} {}",
+        job_resp.status(),
+        job_resp.text().await.unwrap_or_default()
+    );
+    let job_body: serde_json::Value = job_resp.json().await.unwrap();
+    let job_id = job_body["job"]["job_id"]
+        .as_str()
+        .expect("job_id in response")
+        .to_string();
+
+    // POLL until the background executor finishes (it polls every ~2s).
+    let deadline = Instant::now() + Duration::from_secs(25);
+    let final_job = loop {
+        let g = http
+            .get(format!(
+                "{base}/api/v2/collections/{name}/discovery-jobs/{job_id}"
+            ))
+            .send()
+            .await
+            .expect("get discovery job");
+        assert!(g.status().is_success(), "get discovery job: {}", g.status());
+        let body: serde_json::Value = g.json().await.unwrap();
+        let status = body["job"]["status"].as_str().unwrap_or("").to_string();
+        if status == "complete" || status == "failed" {
+            break body;
+        }
+        if Instant::now() > deadline {
+            panic!("discovery job {job_id} did not finish in 25s: {body}");
+        }
+        sleep(Duration::from_millis(500)).await;
+    };
+
+    let job = &final_job["job"];
+
+    // Full CS/CD pipeline ran end-to-end through REST: schedule -> background
+    // claim -> pin snapshot -> recluster pass -> atomic republish -> Complete.
+    assert_eq!(
+        job["status"].as_str(),
+        Some("complete"),
+        "recluster job should complete (pin -> recluster -> atomic republish): {final_job}"
+    );
+    assert!(
+        job["snapshot_to_lsn"].is_u64(),
+        "completed job should record the pinned snapshot range: {final_job}"
+    );
+
+    // Recluster refines the index, not the data — no records removed.
+    assert_eq!(
+        job["removed_count"].as_u64(),
+        Some(0),
+        "recluster must not remove records: {final_job}"
+    );
+
+    // It actually clustered (not the too-few-vectors no-op) and reported the
+    // cluster-quality metrics the pass computes over the pinned snapshot.
+    let metrics = &job["quality_metrics"];
+    assert!(
+        metrics.get("recluster_skipped").is_none(),
+        "recluster should not be skipped for {N} vectors: {final_job}"
+    );
+    let clusters = metrics["recluster_clusters"].as_f64().unwrap_or(0.0);
+    assert!(
+        clusters >= 2.0,
+        "recluster should report >= 2 clusters; got {clusters}: {final_job}"
+    );
+    let vectors = metrics["recluster_vectors"].as_f64().unwrap_or(0.0);
+    assert!(
+        vectors >= 16.0,
+        "recluster should have clustered >= 16 vectors; got {vectors}: {final_job}"
     );
 }

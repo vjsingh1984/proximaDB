@@ -3001,6 +3001,34 @@ impl UnifiedStorageEngine for ViperEngine {
         })
     }
 
+    /// Read ALL records of a collection from persisted Parquet files (Phase 8
+    /// F1). Reuses the columnar `UnifiedParquetReader`, which returns canonical
+    /// `ProximaRecord`s directly. WAL/memtable records are merged in by the
+    /// service layer.
+    async fn read_all_records(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
+        let files = self
+            .parquet_files_for_collection(collection_id)
+            .await
+            .unwrap_or_default();
+        if files.is_empty() {
+            return Ok(Vec::new());
+        }
+        // dimension = 0: Parquet carries its own schema for full-record reads
+        // (matches the column-read sites at engine.rs:785/906).
+        let reader = super::readers::UnifiedParquetReader::new(
+            files,
+            0,
+            self.filesystem_factory.clone(),
+            self.filesystem.clone(),
+            collection_id.to_string(),
+            "viper".to_string(),
+        )?;
+        reader.read_all_records(0, None).await
+    }
+
     fn get_filesystem_factory(
         &self,
     ) -> &crate::storage::persistence::filesystem::FilesystemFactory {
