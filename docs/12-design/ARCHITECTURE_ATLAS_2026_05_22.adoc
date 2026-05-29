@@ -489,3 +489,124 @@ Use this cycle for feature growth:
 
 This keeps the system from drifting into parallel protocol, storage, or modality paths while still
 allowing rapid feature expansion.
+
+== Use Case Map
+
+Actor-to-entry-point map. Ports verified against `config/config.toml` (5678 unified REST,
+5679 gRPC, 5680 Arrow Flight) and `CLAUDE.md` (5433 pgwire). Entry surfaces verified against
+`src/network/` (rest, grpc, postgres, arrow_ipc) and `src/embedded/` (PyO3/JNI/NAPI/C-FFI).
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart LR
+  subgraph Actors["Actors"]
+    WebApp["Web app (JS/TS)"]
+    SqlClient["SQL / psql client"]
+    AppDev["App developer (Python/Rust/Go/Java SDK)"]
+    DataPipeline["Data pipeline (bulk insert)"]
+    AIAgent["AI agent (embedded)"]
+    OpMonitor["Operator (monitoring)"]
+    ExtConsumer["External format consumer (Parquet/Delta/Iceberg)"]
+  end
+
+  subgraph Entry["Entry surfaces"]
+    REST["REST API :5678 (HTTP/1.1)"]
+    GRPC["gRPC API :5679 (HTTP/2)"]
+    ARROW["Arrow Flight :5680"]
+    PGWIRE["PostgreSQL wire :5433 (pgvector ops)"]
+    EMBEDDED["Embedded (in-process)"]
+  end
+
+  WebApp -->|vector search, collection mgmt| REST
+  SqlClient -->|SQL, pgvector distance ops| PGWIRE
+  AppDev -->|create collection, insert/upsert, search| GRPC
+  AppDev -->|JSON REST calls| REST
+  DataPipeline -->|bulk insert via Arrow| ARROW
+  DataPipeline -->|high-throughput streaming| GRPC
+  AIAgent -->|in-process multi-model search, Graph RAG| EMBEDDED
+  OpMonitor -->|scrape /metrics/prometheus, /health| REST
+  ExtConsumer -->|federated / open-format read| REST
+  ExtConsumer -->|Arrow export of multi-modal records| ARROW
+----
+
+== Deployment Topology
+
+Verified against `deploy/docker/docker-compose.yml`, `deploy/kubernetes/`, `Dockerfile`,
+`config/config.toml` (`[distributed]` disabled by default), and `src/network/multi_server.rs`.
+Distributed mode is gated by the `cluster` feature + `distributed.enabled = true`.
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+graph TD
+  subgraph ClientTier["Client tier"]
+    Web["Browser / dashboard"]
+    CLI["CLI / psql"]
+    SDK["SDK client"]
+    ETL["ETL (Spark/Kafka)"]
+  end
+
+  subgraph SingleNode["Single-node (default: dev/test)"]
+    PDB["ProximaDB server\n:5678 REST · :5679 gRPC\n:5680 Arrow Flight · :5433 pgwire"]
+    STORAGE["Local storage /tmp/proximadb\n(data/ metadata/ manifest/)"]
+    HEALTH["GET /health"]
+  end
+
+  subgraph K8s["Kubernetes (staging/prod)"]
+    SVC["Service / load balancer"]
+    POD["Pod: proximadb\n(ports as above + :9090 metrics)"]
+    PVC["PersistentVolume /data"]
+    CM["ConfigMap config.toml"]
+  end
+
+  subgraph Cluster["Distributed cluster (feature=cluster)"]
+    N1["Node 1 — Raft leader"]
+    N2["Node 2 — follower"]
+    N3["Node 3 — follower"]
+    RAFT["Raft consensus over :5679"]
+    SHARED["Shared object store (S3/Azure/GCS)"]
+  end
+
+  subgraph Obs["Observability (optional sidecars)"]
+    PROM["Prometheus :9091"]
+    GRAF["Grafana :3000"]
+  end
+
+  subgraph Cloud["Cloud storage (feature=cloud-full)"]
+    S3["S3"]
+    AZ["Azure Blob"]
+    GCS["GCS"]
+  end
+
+  Web --> SingleNode
+  CLI --> SingleNode
+  SDK --> SingleNode
+  ETL --> SingleNode
+  SingleNode --> STORAGE
+  STORAGE -.-> Cloud
+  SingleNode --> HEALTH
+  SingleNode -.-> Obs
+
+  SDK --> SVC
+  SVC --> POD
+  POD --> PVC
+  POD --> CM
+  POD -.-> Obs
+
+  N1 -.-> RAFT
+  N2 -.-> RAFT
+  N3 -.-> RAFT
+  N1 --> SHARED
+  N2 --> SHARED
+  N3 --> SHARED
+  SHARED --> S3
+  SHARED --> AZ
+  SHARED --> GCS
+
+  PROM --> GRAF
+----
+
+NOTE: These two system-level views complement the recursive per-`src/`-module decomposition in
+`MODULE_COMPONENT_LLD_2026_05_22.adoc` ("Recursive src Module Decomposition"). Read this atlas for
+shape and entry points; read the LLD for component-internal structure and critical-path flows.
