@@ -1342,6 +1342,51 @@ impl UnifiedStorageEngine for NovaEngine {
         crate::storage::traits::StorageEngineStrategy::Nova
     }
 
+    /// Read ALL records of a collection from persisted Parquet files (Phase 8
+    /// F1). Discovers `.parquet` files at the service-resolved `storage_url` and
+    /// reads them via the columnar `UnifiedParquetReader` (returns canonical
+    /// `ProximaRecord`s). WAL/memtable records are merged in by the service.
+    async fn read_all_records(
+        &self,
+        collection_id: &str,
+        storage_url: Option<&str>,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
+        let Some(storage_url) = storage_url else {
+            return Ok(Vec::new());
+        };
+        let fs = self.filesystem.get_filesystem(storage_url)?;
+        let mut files = Vec::new();
+        if let Ok(entries) = fs.list(storage_url).await {
+            for entry in &entries {
+                if !entry.metadata.is_directory && entry.url.ends_with(".parquet") {
+                    files.push(entry.url.clone());
+                }
+            }
+        }
+        if files.is_empty() {
+            return Ok(Vec::new());
+        }
+        // UnifiedParquetReader wants a concrete UnifiedCachingFilesystem; build a
+        // minimal one over the base fs (mirrors sst_reader.rs direct mode).
+        let base_fs = self.filesystem.get_filesystem(storage_url)?;
+        let caching = std::sync::Arc::new(
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
+                base_fs,
+                collection_id.to_string(),
+                "nova".to_string(),
+            ),
+        );
+        let reader = crate::storage::engines::core::formats::columnar::UnifiedParquetReader::new(
+            files,
+            0,
+            self.filesystem.clone(),
+            caching,
+            collection_id.to_string(),
+            "nova".to_string(),
+        )?;
+        reader.read_all_records(0, None).await
+    }
+
     fn get_filesystem_factory(
         &self,
     ) -> &crate::storage::persistence::filesystem::FilesystemFactory {

@@ -2222,6 +2222,49 @@ impl UnifiedStorageEngine for HelixEngine {
         Ok(map)
     }
 
+    /// Read ALL records of a collection from persisted HELIX (ProximaBlock)
+    /// files (Phase 8 F1). Discovers `.helix` files at the service-resolved
+    /// `storage_url`; each `ProximaDataBlock` already holds `Vec<ProximaRecord>`
+    /// (the shared ProximaBlock format), so reading is `block.records` — same as
+    /// SST. WAL/memtable records are merged in by the service.
+    async fn read_all_records(
+        &self,
+        collection_id: &str,
+        storage_url: Option<&str>,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
+        let Some(storage_url) = storage_url else {
+            return Ok(Vec::new());
+        };
+        let fs = self.filesystem_factory.get_filesystem(storage_url)?;
+        let mut files = Vec::new();
+        if let Ok(entries) = fs.list(storage_url).await {
+            for entry in &entries {
+                if !entry.metadata.is_directory
+                    && entry
+                        .url
+                        .ends_with(crate::storage::engines::constants::HELIX_FILE_EXT)
+                {
+                    files.push(entry.url.clone());
+                }
+            }
+        }
+        if files.is_empty() {
+            return Ok(Vec::new());
+        }
+        let reader =
+            crate::storage::engines::core::formats::proximablocks::block_reader::HelixBlockReader::new(
+                self.filesystem.clone(),
+                collection_id.to_string(),
+            );
+        let mut all = Vec::new();
+        for file in &files {
+            for block in reader.read_for_compaction(file).await? {
+                all.extend(block.records);
+            }
+        }
+        Ok(all)
+    }
+
     fn get_filesystem_factory(&self) -> &FilesystemFactory {
         &self.filesystem_factory
     }

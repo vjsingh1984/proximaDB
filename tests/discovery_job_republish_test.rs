@@ -121,9 +121,9 @@ async fn discovery_dedup_job_removes_duplicates_and_completes() {
     let base = server.base_url();
 
     // Dedup must work on every production engine whose read_all_records override
-    // exposes flushed records to the storage-inclusive scan: SST and VIPER today
-    // (NOVA/HELIX deferred — see UnifiedStorageEngine::read_all_records).
-    for engine in ["sst", "viper"] {
+    // exposes flushed records to the storage-inclusive scan: SST, VIPER, NOVA,
+    // and HELIX all override it now.
+    for engine in ["sst", "viper", "nova", "helix"] {
     let name = format!("disc_dedup_{engine}_{}", nanos());
     let dim: usize = 8;
 

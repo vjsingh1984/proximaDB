@@ -802,12 +802,15 @@ pub trait UnifiedStorageEngine: Send + Sync {
     /// Read ALL records of a collection from persisted (flushed) storage.
     ///
     /// Used by offline/discovery passes (Phase 8 F1) that must enumerate the
-    /// full collection, not just the WAL/memtable. Default returns empty — the
-    /// engine does not support full enumeration; engines used for
-    /// discovery/compaction (SST today) override this.
+    /// full collection, not just the WAL/memtable. `storage_url` is the
+    /// collection's resolved data location (the service layer resolves it from
+    /// collection metadata and passes it down — engines stay pure format
+    /// readers and do not resolve paths themselves). Default returns empty; the
+    /// SST/VIPER/NOVA/HELIX format readers override this.
     async fn read_all_records(
         &self,
         _collection_id: &str,
+        _storage_url: Option<&str>,
     ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         Ok(Vec::new())
     }

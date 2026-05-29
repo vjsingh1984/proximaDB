@@ -808,8 +808,24 @@ impl VectorOperationsService {
             .wal_manager
             .get_collection_vectors(collection_id)
             .await?;
+        // Resolve the collection's data location from metadata and pass it to
+        // the engine, which stays a pure format reader (it does not resolve
+        // paths itself). Mirrors ViperEngine::parquet_files_for_collection.
+        let storage_url = self
+            .get_or_load_collection(collection_id)
+            .await
+            .ok()
+            .and_then(|collection| {
+                collection
+                    .storage_assignment
+                    .as_ref()
+                    .map(|sa| format!("{}/{}/data", sa.base_location, collection_id))
+            });
         let storage_records = match self.get_engine_for_collection(collection_id).await {
-            Ok(engine) => engine.read_all_records(collection_id).await.unwrap_or_default(),
+            Ok(engine) => engine
+                .read_all_records(collection_id, storage_url.as_deref())
+                .await
+                .unwrap_or_default(),
             Err(_) => Vec::new(),
         };
 

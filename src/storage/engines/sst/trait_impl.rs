@@ -265,18 +265,21 @@ impl UnifiedStorageEngine for SstEngine {
     }
 
     /// Read ALL records of a collection from persisted SST files (Phase 8 F1).
-    /// Discovers the collection's SST data files (mirroring `collection_stats`)
-    /// and reads them via the compaction reader. WAL/memtable records are not
-    /// included here — the service layer merges those in.
+    /// Discovers SST data files at the service-resolved `storage_url` and reads
+    /// them via the compaction reader. WAL/memtable records are merged in by the
+    /// service layer.
     async fn read_all_records(
         &self,
         collection_id: &str,
+        storage_url: Option<&str>,
     ) -> Result<Vec<proximadb_records::ProximaRecord>> {
-        let storage_url = self.get_collection_storage_url(collection_id).await?;
-        let fs = self.filesystem().get_filesystem(&storage_url)?;
+        let Some(storage_url) = storage_url else {
+            return Ok(Vec::new());
+        };
+        let fs = self.filesystem().get_filesystem(storage_url)?;
 
         let mut files = Vec::new();
-        if let Ok(entries) = fs.list(&storage_url).await {
+        if let Ok(entries) = fs.list(storage_url).await {
             for entry in &entries {
                 if !entry.metadata.is_directory
                     && (entry.url.ends_with(".sst") || entry.url.ends_with(".proximablock"))
