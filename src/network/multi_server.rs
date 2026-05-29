@@ -630,6 +630,7 @@ impl MultiServer {
             // `Arc<RwLock<...>>` so the clone is cheap and the spawned task
             // gets the same shared handle).
             let fulltext_indexes_for_rest = self.shared_services.fulltext_indexes.clone();
+            let discovery_service_for_rest = self.shared_services.discovery_service.clone();
             let rest_handle = tokio::spawn(async move {
                 use crate::network::rest::server::{RestServer, RestServerSecurityConfig};
 
@@ -660,6 +661,7 @@ impl MultiServer {
                     Some(catalog_manager),
                     queue_client_for_rest,
                     Some(fulltext_indexes_for_rest),
+                    Some(discovery_service_for_rest),
                 )
                 .start()
                 .await
@@ -855,6 +857,7 @@ impl MultiServer {
                 Some(services.recall_probe_gate.clone()),
                 Some(services.rank_services.clone()),
                 Some(services.rank_profile_store.clone()),
+                Some(services.discovery_service.clone()),
             );
 
             info!(

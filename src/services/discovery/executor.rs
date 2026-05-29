@@ -12,9 +12,10 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tracing::{error, info, warn};
 
-use super::job::{now_ms, DiscoveryJob, DiscoveryJobKind, DiscoveryJobResult, DiscoveryJobStatus};
+use super::job::{now_ms, DiscoveryJob, DiscoveryJobResult, DiscoveryJobStatus};
+use super::passes::PassContext;
 use super::registry::DiscoveryRegistry;
-use crate::services::snapshot::SnapshotPublishCoordinator;
+use crate::services::snapshot::{SnapshotPin, SnapshotPublishCoordinator};
 
 /// Default poll interval for the background loop.
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -74,7 +75,7 @@ impl DiscoveryJobExecutor {
         }
 
         // 3. Run the refinement pass against the pinned snapshot.
-        let result = match self.run_pass(&job).await {
+        let result = match self.run_pass(&job, &pin).await {
             Ok(result) => result,
             Err(err) => {
                 let _ = self.coordinator.abort_publish(&pin).await;
@@ -101,21 +102,20 @@ impl DiscoveryJobExecutor {
         Ok(())
     }
 
-    /// Run the refinement pass for a job's kind.
+    /// Run the refinement pass for a job's kind against the pinned snapshot.
     ///
-    /// `Dedup` is the keystone pass (S3): when a vector-operations service is
-    /// attached it reads the pinned snapshot, removes near-duplicates, and the
-    /// caller atomically republishes. Without a vector-operations service (or
-    /// for the not-yet-implemented kinds) the pass is an identity pass that
-    /// republishes the pinned snapshot unchanged.
-    async fn run_pass(&self, job: &DiscoveryJob) -> anyhow::Result<DiscoveryJobResult> {
-        match (job.kind, self.vector_ops.as_ref()) {
-            (DiscoveryJobKind::Dedup, Some(vector_ops)) => {
-                super::passes::dedup::run_dedup(vector_ops, &job.collection_id).await
-            }
-            // Identity pass: no vector-ops wired, or a later-phase kind.
-            _ => Ok(DiscoveryJobResult::default()),
-        }
+    /// Orchestration only: build the [`PassContext`] (pinned snapshot +
+    /// capability handles) and dispatch by kind via [`super::passes::run`]. The
+    /// pass itself owns the refinement logic; a not-yet-implemented kind or a
+    /// missing capability resolves to an identity pass and the caller
+    /// atomically republishes the pinned snapshot unchanged.
+    async fn run_pass(
+        &self,
+        job: &DiscoveryJob,
+        pin: &SnapshotPin,
+    ) -> anyhow::Result<DiscoveryJobResult> {
+        let ctx = PassContext::new(pin.clone()).with_vector_ops(self.vector_ops.clone());
+        super::passes::run(job.kind, &ctx).await
     }
 
     fn fail(&self, job: &mut DiscoveryJob, msg: String) {
@@ -156,6 +156,7 @@ pub fn spawn_discovery_executor(
 mod tests {
     use super::*;
     use crate::catalog::CatalogManager;
+    use crate::services::discovery::job::DiscoveryJobKind;
     use proximadb_catalog::{CatalogColumn, CatalogDataType, CatalogTableSchema, TableIdentifier};
 
     async fn wired(collection: &str) -> (Arc<DiscoveryJobExecutor>, Arc<SnapshotPublishCoordinator>, Arc<DiscoveryRegistry>) {

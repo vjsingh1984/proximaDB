@@ -43,6 +43,7 @@
 //! mixed v1/v2 operations during transition.
 
 pub mod collections;
+pub mod discovery;
 pub mod query;
 pub mod records;
 pub mod schema;
@@ -117,6 +118,19 @@ pub fn create_v2_router() -> Router<AppState> {
         // Query facade operations
         .route("/query", post(query::execute_query))
         .route("/query/explain", post(query::explain_query))
+        // Phase 8 (F1) — Continuous Discovery jobs (experimental).
+        .route(
+            "/collections/:collection_id/discovery-jobs",
+            post(discovery::create_discovery_job_v2),
+        )
+        .route(
+            "/collections/:collection_id/discovery-jobs",
+            get(discovery::list_discovery_jobs_v2),
+        )
+        .route(
+            "/collections/:collection_id/discovery-jobs/:job_id",
+            get(discovery::get_discovery_job_v2),
+        )
         // Diagnostics — experimental capability contract endpoints.
         // Namespaced under `_diagnostics` while the shape stabilizes;
         // promotion to `/collections/:id/route-health` is intentional

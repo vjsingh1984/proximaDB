@@ -59,6 +59,24 @@ pub struct AppState {
     /// endpoints and the `VectorOperationsService` data-plane
     /// recorder share the same `Arc`.
     pub affinity_registry: Arc<crate::cluster::cache_affinity::CacheAffinityRegistry>,
+    /// Slice 3 of tenant-pod-affinity: per-(tenant, collection)
+    /// primary-pod registry. Set from `SharedServices.primary_pod_registry`
+    /// so the REST operator endpoints and the future gateway write
+    /// router share the same `Arc`. The REST handlers in
+    /// `crate::network::rest::v1::primary_pod` gate every read/write
+    /// behind an operator-permission check — see
+    /// [`crate::network::rest::v1::primary_pod::authorize_operator`].
+    pub primary_pod_registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+
+    /// Slice 4 of tenant-pod-affinity: this pod's identity, used by
+    /// the gateway write-router gate to compare against bindings in
+    /// `primary_pod_registry`. Resolved via
+    /// [`crate::cluster::primary_pod_registry::resolve_self_pod_id`]:
+    /// explicit config override → `PROXIMADB_POD_ID` env var →
+    /// `"self"` fallback. Stored as a plain `String` (not `Arc`)
+    /// because it's cheap to clone and immutable for the process
+    /// lifetime.
+    pub self_pod_id: String,
     /// PAX segment registry shared with the write path (gRPC v2, Arrow Flight).
     /// Enables Iceberg REST snapshot summaries to reflect real PAX segment stats.
     pub segment_registry: Arc<crate::catalog::SegmentRegistry>,
@@ -108,6 +126,12 @@ pub struct AppState {
     /// (`wired_to_query_path: true`) is a separate follow-up; this slot
     /// only proves the gate is reachable from request handlers.
     pub recall_probe_gate: Option<Arc<crate::catalog::RecallProbeGate>>,
+
+    /// Phase 8 (F1) Continuous Discovery service. Wired from
+    /// `SharedServices.discovery_service` via `with_discovery_service` in
+    /// `src/network/multi_server.rs` so the v2 `discovery-jobs` endpoints reach
+    /// the same registry the background executor consumes.
+    pub discovery_service: Option<Arc<crate::services::discovery::DiscoveryService>>,
 }
 
 impl AppState {
@@ -140,6 +164,15 @@ impl AppState {
             // so REST handlers and the search-path recorder share the
             // same Arc.
             affinity_registry: crate::cluster::cache_affinity::new_shared(),
+            // Default: standalone primary-pod registry. Production
+            // wires `SharedServices.primary_pod_registry` so REST
+            // handlers and the future gateway write router share the
+            // same `Arc`.
+            primary_pod_registry: crate::cluster::primary_pod_registry::new_shared(),
+            // Default pod identity: resolve from env var or fall
+            // back to `"self"`. Production may override via
+            // `with_self_pod_id` once the config field lands.
+            self_pod_id: crate::cluster::primary_pod_registry::resolve_self_pod_id(None),
             segment_registry: Arc::new(crate::catalog::SegmentRegistry::new()),
             llm_engine,
             doc_port: None,
@@ -151,6 +184,7 @@ impl AppState {
             rank_services: None,
             rank_profile_store: None,
             recall_probe_gate: None,
+            discovery_service: None,
         }
     }
 
@@ -175,6 +209,28 @@ impl AppState {
         registry: Arc<crate::cluster::cache_affinity::CacheAffinityRegistry>,
     ) -> Self {
         self.affinity_registry = registry;
+        self
+    }
+
+    /// Inject the process-wide primary-pod registry (Slice 3 of
+    /// tenant-pod-affinity). Wired from
+    /// `SharedServices.primary_pod_registry` so REST operator
+    /// endpoints and the future gateway write router share the same
+    /// `Arc`.
+    pub fn with_primary_pod_registry(
+        mut self,
+        registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+    ) -> Self {
+        self.primary_pod_registry = registry;
+        self
+    }
+
+    /// Override the resolved self-pod identity (Slice 4 of
+    /// tenant-pod-affinity). Production wires this when the config
+    /// field or env var sets a known pod_id; tests inject deterministic
+    /// values so the write-routing gate behaves predictably.
+    pub fn with_self_pod_id(mut self, pod_id: impl Into<String>) -> Self {
+        self.self_pod_id = pod_id.into();
         self
     }
 
@@ -240,6 +296,16 @@ impl AppState {
     /// consultation (`wired_to_query_path: true`) is separate.
     pub fn with_recall_probe_gate(mut self, gate: Arc<crate::catalog::RecallProbeGate>) -> Self {
         self.recall_probe_gate = Some(gate);
+        self
+    }
+
+    /// Inject the Phase 8 Continuous Discovery service (F1) so the v2
+    /// `discovery-jobs` endpoints can create/inspect jobs.
+    pub fn with_discovery_service(
+        mut self,
+        discovery_service: Arc<crate::services::discovery::DiscoveryService>,
+    ) -> Self {
+        self.discovery_service = Some(discovery_service);
         self
     }
 
@@ -1192,6 +1258,24 @@ pub fn create_router(state: AppState) -> axum::Router {
         .route(
             "/api/v1/collections/affinity",
             get(crate::network::rest::v1::affinity::list_affinity),
+        )
+        // Slice 3 of tenant-pod-affinity: per-(tenant, collection)
+        // primary-pod operator API. Auth-gated inside each handler
+        // to `SystemAdmin` or `ConfigureSystem` — these endpoints
+        // expose cross-tenant placement and drive WAL write routing,
+        // so they MUST NOT be reachable by regular tenants. The
+        // auth_middleware_unified layer authenticates the request;
+        // `authorize_operator` then checks for the operator-level
+        // permission.
+        .route(
+            "/api/v1/primary-pod/:tenant_id/:collection_id",
+            get(crate::network::rest::v1::primary_pod::get_primary_pod)
+                .put(crate::network::rest::v1::primary_pod::put_primary_pod)
+                .delete(crate::network::rest::v1::primary_pod::delete_primary_pod),
+        )
+        .route(
+            "/api/v1/primary-pod",
+            get(crate::network::rest::v1::primary_pod::list_primary_pods),
         )
         // Health check endpoints
         .route("/health", get(comprehensive_health_check))

@@ -351,6 +351,7 @@ impl RestServer {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -376,6 +377,7 @@ impl RestServer {
         catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
         queue_client: Option<Arc<proximadb_queue::QueueClient>>,
         fulltext_indexes: Option<crate::network::rest::v1::handlers::FullTextIndexMap>,
+        discovery_service: Option<Arc<crate::services::discovery::DiscoveryService>>,
     ) -> Self {
         // Tier 1.2 (pre-release foundational plan 2026-05-26):
         // Warn loudly if a production-mode server is being constructed with
@@ -419,6 +421,12 @@ impl RestServer {
         // component returns 0 results.
         if let Some(indexes) = fulltext_indexes.clone() {
             base_state = base_state.with_fulltext_indexes(indexes);
+        }
+        // Phase 8 (F1): share the Continuous Discovery service so the v2
+        // `discovery-jobs` endpoints reach the same registry the background
+        // executor consumes (multi-port REST path).
+        if let Some(discovery) = discovery_service {
+            base_state = base_state.with_discovery_service(discovery);
         }
         let state = if let Some(p) = ports {
             let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);
@@ -647,6 +655,7 @@ impl RestServer {
         recall_probe_gate: Option<Arc<crate::catalog::RecallProbeGate>>,
         rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
         rank_profile_store: Option<Arc<dyn crate::services::RankProfileStore>>,
+        discovery_service: Option<Arc<crate::services::discovery::DiscoveryService>>,
     ) -> Router {
         let mut base_state = AppState::new(
             request_handlers,
@@ -686,6 +695,12 @@ impl RestServer {
         }
         if let Some(store) = rank_profile_store {
             base_state = base_state.with_rank_profile_store(store);
+        }
+        // Phase 8 (F1): share the Continuous Discovery service so the v2
+        // `discovery-jobs` endpoints reach the same registry the background
+        // executor consumes.
+        if let Some(discovery) = discovery_service {
+            base_state = base_state.with_discovery_service(discovery);
         }
         let state = if let Some(p) = ports {
             let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);

@@ -12,22 +12,24 @@
 //! future version can route distance through the SIMD provider and add LSH
 //! blocking for larger corpora.
 
-use std::sync::Arc;
-
 use anyhow::Result;
 
+use super::PassContext;
 use crate::services::discovery::DiscoveryJobResult;
-use crate::services::VectorOperationsService;
 
 /// Cosine-similarity threshold at/above which two records are treated as
 /// near-duplicates. Exact / near-exact duplicates score ~1.0.
 const DEFAULT_DEDUP_SIMILARITY: f32 = 0.9999;
 
-/// Run the dedup pass against `collection_id`, returning the refinement result.
-pub async fn run_dedup(
-    vector_ops: &Arc<VectorOperationsService>,
-    collection_id: &str,
-) -> Result<DiscoveryJobResult> {
+/// Run the dedup pass against `ctx.collection_id`, returning the refinement
+/// result. Identity pass (no-op) if the canonical read/write path is not wired.
+pub async fn run(ctx: &PassContext) -> Result<DiscoveryJobResult> {
+    let Some(vector_ops) = ctx.vector_ops.as_ref() else {
+        // No canonical path wired: identity pass (republish unchanged).
+        return Ok(DiscoveryJobResult::default());
+    };
+    let collection_id = ctx.collection_id.as_str();
+
     // v2 canonical read: include vectors, skip props (not needed for dedup).
     let records = vector_ops
         .scan_records_with_tenant_context(collection_id, None, true, false, None)
