@@ -57,8 +57,12 @@ Read these in order for future-shaping architecture work:
 == Stable Reference Docs
 
 * `ARCHITECTURE_ATLAS_2026_05_22.adoc` - top-down OSS/SaaS architecture map, workspace map, and
-  Victor/Cargo connectedness findings.
-* `MODULE_COMPONENT_LLD_2026_05_22.adoc` - per-module LLD component and authority map.
+  Victor/Cargo connectedness findings. Includes the system-level "Use Case Map" and "Deployment
+  Topology" UML diagrams.
+* `MODULE_COMPONENT_LLD_2026_05_22.adoc` - per-module LLD component and authority map. Includes the
+  "Recursive src Module Decomposition" (component, class, sequence, and activity UML diagrams for
+  every `src/` subsystem) and the write/search "Critical-Path Sequence And Activity Diagrams". All
+  diagrams are mermaid; render via the asciidoctor/kroki pipeline.
 * `DOCUMENTATION_CONSOLIDATION_AND_ARCHIVE_PLAN_2026_05_22.adoc` - OSS documentation taxonomy,
   duplicate-doc findings, and archive batch plan.
 * `DESIGN_PATTERNS.adoc` - general design patterns and implementation references.
