@@ -36,7 +36,6 @@
 //! let fused = engine.fuse(bm25_results, vector_results)?;
 //! ```
 
-pub mod bm25_wrapper;
 pub mod builder; // Filtered hybrid query builder (Issue #39, SB-09)
 pub mod coordinator;
 pub mod fusion;

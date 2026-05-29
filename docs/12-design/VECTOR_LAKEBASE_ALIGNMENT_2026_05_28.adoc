@@ -186,9 +186,16 @@ capacity, elastic scheduling, shared data plane" lesson is explicitly adopted in
 catalog and one query planner (VISION "The Context Database").
 
 | Native vector-DB capabilities (ANN, hybrid, scalar/JSON filter, FTS, metrics)
-| ✅
-| 6 engines + AXIS (HNSW/IVF/PQ/Annoy/LSH); hybrid BM25 + RRF/weighted fusion; predicate-aware
-filtering work (TD-064); multiple distance metrics with SIMD.
+| ✅ (one ⚠️ residual)
+| Shipping: 6 engines + AXIS (HNSW/IVF/PQ/Annoy/LSH); predicate-aware filtering (TD-064);
+JSON/full-text (Tantivy)/geo filtering; multiple distance metrics with SIMD; the RRF/weighted
+8-strategy fusion engine; real BM25↔vector fusion in `RestHybridPortImpl` + `ProductionHybridBackend`;
+and SQL `RERANK` dispatching the full pipeline via `RankServices` wired at startup
+(`shared_services.rs:1232`, verified 2026-05-28). ⚠️ *One residual* (TD-092, re-scoped): the hybrid
+BM25 index is not auto-populated on the canonical INSERT path (only via the explicit BM25 index
+endpoint), so freshly-inserted records need a separate index call before they are hybrid-BM25-
+searchable; and a duplicate hybrid entry point (`request_handlers.rs::execute_hybrid_search`) has
+BM25 disabled. Write-path work, gated by the `enable_fulltext_index` schema flag.
 
 | Open formats, no forced migration (read by external engines)
 | ✅
@@ -282,6 +289,30 @@ and (b) declare authority/freshness behavior per the architecture mandates. New 
 proposed in `docs/10-quality/TECHNICAL_DEBT.adoc` (TD-086..TD-091) and a new roadmap phase is
 proposed in the strategic roadmap.
 
+=== R0 -- Parity Sprint [TD-092, TD-093] — REVISED after live-path audit (2026-05-28)
+
+The original R0 claimed two "finished-but-un-wired primitives." A live-path audit on 2026-05-28
+(before writing any code) found the framing was wrong on both — a textbook case of the
+`feedback-survey-live-paths` lesson:
+
+* *RankServices startup wiring (TD-093) — ALREADY DONE.* `build_rank_services()` runs at startup
+  (`src/network/shared_services.rs:1232`), constructs the production `RankServices` over
+  `ProductionHybridBackend`, and wires it into both the SQL federated context and REST. SQL `RERANK`
+  dispatches the full pipeline. The "not wired" belief came from a stale memory note; TD-093 is
+  marked Resolved, no code needed.
+* *BM25↔vector hybrid fusion (TD-092) — RE-SCOPED.* The fusion engine, `RestHybridPortImpl`
+  (`/api/v1/hybrid/*`), and `ProductionHybridBackend` *already fuse real Tantivy BM25 + vector*. The
+  `bm25_wrapper.rs` "stub" was a dead, never-referenced scaffold (removed 2026-05-28) — it is what
+  made the gap look like trivial wiring. The *genuine* residual is write-path, not parity-wiring:
+  (1) the hybrid BM25 index is populated only via the explicit `BM25IndexPort::index_documents`
+  endpoint, **not on the canonical INSERT path**, so inserted records aren't hybrid-BM25-searchable
+  until separately indexed; (2) `request_handlers.rs::execute_hybrid_search` has BM25 hardcoded
+  disabled. See TD-092 (re-scoped, ~3-6 weeks, gated by the `enable_fulltext_index` schema flag).
+
+Net: R0 collapsed to one dead-code removal (done) + one already-done item + one re-scoped write-path
+task. The "Parity Sprint as cheap pre-Phase-8 wiring" assumption did not survive contact with the
+code — verify live caller chains before scheduling.
+
 === R1 -- Continuous Discovery surface + atomic snapshot republish (CS/CD) [TD-086]
 
 Make discovery a first-class, cataloged workflow rather than an external pipeline:
@@ -296,6 +327,23 @@ Make discovery a first-class, cataloged workflow rather than an external pipelin
   DataFusionDistributed / Spark / Ray), declaring `authority_mode` and `freshness_sla` so the
   republish is explainable in unified EXPLAIN.
 * This converts `src/automl/` from "tuning" into the offline arm of the flywheel.
+
+*Close the loop -- the trigger arm (do not omit).* The current Phase 8 spec builds the discovery
+*execution + atomic republish* but not what makes the loop *continuous* rather than manually invoked.
+The flywheel is "serving generates feedback -> discovery refines -> republish": ProximaDB has the
+refine and republish halves, but nothing feeds signals back to *trigger* a job. Outbound CDC exists
+(`src/cdc/`) but never enqueues a `DiscoveryJob`, and AutoML's `WorkloadAnalyzer` /
+`PerformancePredictor` already detect drift and access-pattern shifts but are not wired to discovery.
+Wire recall-probe failures + freshness-SLA breaches + AutoML drift signals to auto-enqueue
+`DiscoveryJob`s, and *reuse AutoML as the cost-aware scheduler* rather than building a new one. This
+is the difference between "batch jobs you invoke" and a genuine CS/CD flywheel.
+
+*First real pass: recluster, not dedup.* The walking skeleton (S0-S2) already lands; the first
+*real* refinement pass should be `Recluster` (pure reuse of the existing `UnifiedIvfIndex` k-means ->
+a measurable index-quality win, no external model dependency), then `ReEmbed` (highest customer pain
+per the article -- "embedding models change", "moving a billion vectors takes days" -- reusing the
+`proximadb-embedding` OpenAI/BGE/BYO backends), then `Dedup`. Recluster is the cleanest end-to-end
+proof of the loop with maximal reuse.
 
 This is the highest-leverage gap to close: it is what makes ProximaDB a *data foundation* rather
 than a serving engine, and it is mostly composition over existing primitives (manifest snapshots,
@@ -326,18 +374,32 @@ Address point-read amplification for serving over object storage:
 * Keep serving (point read) and discovery (scan) access patterns over *one logical copy* -- do not
   introduce a second physical store users must maintain.
 
-=== R4 -- Elastic compute modes + resources-follow-data scheduler [TD-089]
+*Scope narrowing (plan refinement).* PAX already has an `BlockMode::Oltp` row-directory mode --
+conceptually the same row alignment Loon uses -- so the genuine gap is narrow: *object-storage
+range-request granularity* (fetch the byte ranges for N matched IDs without dragging whole row
+groups/stripes). Frame R3 as "S3 range-read coalescing over the existing PAX OLTP layout", with
+Vortex as a *measured fallback only* if PAX cannot hit the byte-amplification target. Adopting Vortex
+wholesale would duplicate the `proximadb-block-format` investment and violate the reuse-first
+mandate -- it must be a benchmark-justified decision, not a default.
 
-Introduce the three-mode model behind the existing deployment-neutrality story:
+=== R4 -- Elastic compute modes + resources-follow-data scheduler [TD-089, TD-094]
 
-* `Long-running` (today's resident server), `OnDemand` (seconds to start, minute-billed, for
-  interactive/cold-data work), `OfflineBatch` (job-scoped, released on completion -- the natural home
-  for R1 discovery jobs).
-* A warm-pool scheduler that attaches a pinned snapshot to prepared compute on request and releases
-  on idle, while catalog/metadata stay queryable with no compute resident.
-* This is the practical realization of the 2028 VISION "serverless deployment mode" milestone and
-  depends on closing the distributed transport gap (TD-077). Sequence it *after* R1/R2/R3 since
-  those make scale-to-zero economical in the first place.
+Introduce the three-mode model behind the existing deployment-neutrality story -- but *split it by
+what is actually blocked*, because the plan should not bury the unblocked, high-value half behind
+the distributed-transport gap.
+
+*R4a -- single-node scale-to-zero (TD-094, UNBLOCKED).* Evict a collection's compute/index from
+memory while keeping its catalog metadata queryable, and lazy-warm on first query. This reuses
+already-built surfaces -- `CollectionPinRegistry`, `DirectoryLoadStatus`, route-health diagnostics,
+and the tiering engine -- and delivers most of the "idle tenants don't pay" economics for embedded /
+single-node deployments *today*, with no dependency on TD-077. It chains directly off R2: scale-to-
+zero is only viable if cold-start is fast. Sequence it right after R2, parallel to R1.
+
+*R4b -- multi-node elastic modes (TD-089, BLOCKED on TD-077).* `OnDemand` (seconds to start,
+minute-billed) and `OfflineBatch` (job-scoped) pods plus a warm-pool scheduler that attaches a pinned
+snapshot to prepared compute on request and releases on idle, cluster-wide. This is the full
+realization of the 2028 VISION "serverless deployment mode" milestone and depends on closing the
+distributed transport gap (TD-077). Sequence it *after* R1/R2/R3/R4a.
 
 === R5 -- External Collection: ProximaDB-owned indexes over external-resident data [TD-090]
 
@@ -374,20 +436,37 @@ Recommended framing to fold in (see the VISION and roadmap edits accompanying th
 * Keep the explicit non-goal boundary: ProximaDB is not a general-purpose OLAP warehouse; discovery
   here means *unstructured-data refinement for AI*, not BI.
 
+*Wedge to name explicitly: governed continuous discovery.* ProximaDB's discovery loop runs over
+governed `ProximaRecord` with RLS + policy + lineage, not raw vectors in a lake. Zilliz's lakebase
+has a weaker governance story on the *offline* arm. "Governed continuous discovery" -- dedup /
+recluster / re-embed that respects row-level security and tenant isolation and emits lineage to
+EXPLAIN -- is a differentiator a pure vector DB structurally cannot match, because it lacks the
+relational/policy substrate. This is reinforced by the companion Zilliz piece (vector DB vs
+object-relational DB), which argues the vector/relational convergence "is just beginning":
+ProximaDB *already* sits at that convergence (`ProximaRecord`/`ProximaType` rich types + pgwire +
+RLS + canonical WAL), so the CS/CD story over a governed multi-model record is stronger than the
+vectors-plus-lake framing -- and it costs nothing extra, the substrate already exists.
+
 == Traceability
 
 [cols="2,3", options="header"]
 |===
 | Recommendation | Tracked as
 
-| R1 Continuous Discovery + atomic republish | TD-086 (roadmap: new Phase 8 "Continuous Data Loop")
+| R0 Parity Sprint (audited 2026-05-28) | TD-093 Resolved (already wired); TD-092 re-scoped to BM25 auto-index on insert; dead `bm25_wrapper.rs` removed
+| R1 Continuous Discovery + atomic republish (+ trigger arm, recluster-first) | TD-086 (roadmap: new Phase 8 "Continuous Data Loop")
 | R2 Scale-to-zero cold path | TD-087
-| R3 Point-read I/O amplification | TD-088
-| R4 Elastic compute modes + scheduler | TD-089 (realizes 2028 VISION serverless milestone)
+| R3 Point-read I/O amplification (narrowed: S3 range-read over PAX OLTP) | TD-088
+| R4a Single-node scale-to-zero (unblocked) | TD-094
+| R4b Multi-node elastic modes + scheduler (blocked on TD-077) | TD-089 (realizes 2028 VISION serverless milestone)
 | R5 External Collection index-in-place | TD-090
 | R6 Lance interoperability | TD-091
 | CS/CD design principle | VISION.adoc "Design Principles" + STRATEGIC_ROADMAP Phase 8
 |===
+
+*Refined sequence (plan refinement 2026-05-28):* R0 Parity Sprint -> R2 + R3 (enablers) ->
+R1 (keystone, recluster-first + trigger arm) -> R4a (single-node scale-to-zero) -> R5
+(External Collection) -> R4b / R6 (blocked / lowest).
 
 The recommendations above are dialed down to executable HLD/LLD feature specifications (F1..F6),
 with task checklists and success criteria, in

@@ -111,7 +111,7 @@ impl Drop for DiscoveryServer {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn discovery_dedup_job_removes_duplicates_and_completes() {
+async fn discovery_dedup_and_recluster_e2e() {
     let server = DiscoveryServer::start().await.expect("server start");
     let http = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
@@ -258,17 +258,13 @@ async fn discovery_dedup_job_removes_duplicates_and_completes() {
          got removed_count={removed}, input_record_count={input}: {final_job}"
     );
     } // for engine
-}
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn discovery_recluster_job_reports_cluster_metrics_and_completes() {
-    let server = DiscoveryServer::start().await.expect("server start");
-    let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .no_proxy()
-        .build()
-        .unwrap();
-    let base = server.base_url();
+    // ── Recluster phase — runs against the SAME server. There is one ProximaDB
+    // boot per process on purpose: the global WAL manifest is a process-wide
+    // singleton (`manifest::init` is a no-op once set), so a second boot in the
+    // same test binary would silently reuse the first server's manifest and read
+    // an empty/stale collection. Insert enough varied vectors to cluster and
+    // assert the recluster pass reports cluster-quality metrics.
     let name = format!("disc_recluster_{}", nanos());
     let dim: usize = 8;
 

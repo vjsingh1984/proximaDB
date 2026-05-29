@@ -81,15 +81,28 @@ The six features map onto this control plane:
 
 [source]
 ----
-F2 cold-path ─┐                        (independent; also closes TD-075)
+F0 Parity Sprint (BM25 fusion TD-092 + RankServices startup TD-093) ── before Phase 8 build ──┐
+                                                                                               ▼
+F2 cold-path ─┐                        (independent; also closes TD-075)        (feeds F1 re-embed/quality passes)
 F3 point-read ┤── enable ──▶ F1 discovery loop (keystone) ──uses──▶ F5 External Collection
               │                          │                              │
-              └──────────────────────────┘                              └── F6 Lance (substrate)
-F4 elastic compute (OfflineBatch hosts F1 jobs) ── BLOCKED ON ──▶ TD-077 transport
+              ├──▶ F4a single-node       │                              └── F6 Lance (substrate)
+              │     scale-to-zero        │
+              │     (TD-094, UNBLOCKED)  │
+              └──────────────────────────┘
+F4b multi-node elastic modes (OfflineBatch/OnDemand pods) ── BLOCKED ON ──▶ TD-077 transport
 ----
 
-Recommended execution order: **F2 + F3 (near-term enablers) → F1 (keystone) → F5 → F4 (blocked on
-TD-077) → F6 (lowest priority).**
+Recommended execution order: **F0 Parity Sprint → F2 + F3 (near-term enablers) → F1 (keystone) →
+F4a (single-node scale-to-zero, unblocked) → F5 → F4b (blocked on TD-077) → F6 (lowest priority).**
+
+NOTE: F0 (the Parity Sprint) was audited against the live code on 2026-05-28 and largely dissolved:
+**TD-093 (RankServices startup) was already wired** (`shared_services.rs:1232`) and is marked
+Resolved; the `bm25_wrapper.rs` "stub" was **dead code, now removed**; and **TD-092 was re-scoped**
+from "wire the stub" to the real residual — auto-populating the hybrid BM25 index on the canonical
+INSERT path (the production fusion path already fuses real BM25). TD-092 is therefore write-path
+work gated by the `enable_fulltext_index` schema flag, not trivial pre-Phase-8 wiring. See
+`TECHNICAL_DEBT.adoc` (TD-092/093) and `VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R0.
 
 === Cross-cutting mandates (apply to every feature)
 
@@ -139,6 +152,32 @@ sequenceDiagram
 ----
 
 Refinement kinds: `Dedup`, `Recluster`, `ReEmbed`, `QualityScan`, `TrajectoryAnalysis`.
+
+==== Trigger arm — what makes the loop *continuous* (do not omit)
+
+The execution + atomic-republish path above is the *refine → republish* half. A flywheel also needs
+a *feedback → trigger* half, or it is just batch jobs an operator invokes by hand. ProximaDB has the
+signals already; they are simply not wired to enqueue jobs:
+
+* `RecallProbeGate` FAIL streaks (recall degradation) → enqueue a `Recluster` / `ReEmbed` job.
+* Freshness-SLA breaches (projection `Stale`/`RebuildRequired`) → enqueue a refresh/rebuild job.
+* AutoML `WorkloadAnalyzer` / `PerformancePredictor` drift + access-pattern shift (`src/automl/`) →
+  enqueue the appropriate refinement.
+* Outbound CDC (`src/cdc/`) volume/pattern signals → optional trigger source.
+
+Reuse AutoML as the *cost-aware scheduler* (it already models workload patterns and optimization
+goals) rather than building a new scheduler. Add a thin `DiscoveryTrigger` that subscribes to these
+signals and calls `DiscoveryRegistry::enqueue`. This is also where R4a single-node scale-to-zero
+interacts: a suspended collection's triggers queue jobs that warm it only when discovery actually
+runs.
+
+==== First real pass: `Recluster`, then `ReEmbed`, then `Dedup`
+
+The S0–S2 walking skeleton runs every kind as an identity pass. When implementing the *first real*
+pass, prefer `Recluster` (pure reuse of `UnifiedIvfIndex` k-means → a measurable index-quality win,
+no external model dependency, smallest end-to-end proof), then `ReEmbed` (highest customer value —
+"embedding models change", "moving a billion vectors takes days" — reusing the `proximadb-embedding`
+OpenAI/BGE/BYO backends and the R0 rank/hybrid surfaces), then `Dedup`.
 
 === LLD
 
@@ -202,11 +241,15 @@ patterns (`src/network/rest/v2/`).
   (`src/services/discovery/job.rs`). → TD-086 acceptance (1)
 * [ ] *T1.2* Persist `discovery_jobs` as a cataloged asset (`proximadb-catalog`). → (1)
 * [ ] *T1.3* Snapshot pin via `GlobalManifest` checkpoint LSN range. → (2)
-* [ ] *T1.4* `DiscoveryJobExecutor` with dedup / recluster / re-embed / quality passes. → (3)
+* [ ] *T1.4* `DiscoveryJobExecutor` refinement passes, in order: `Recluster` (first real pass) →
+  `ReEmbed` → `Dedup` → `QualityScan`. → (3)
 * [ ] *T1.5* Branch-staged write + atomic publish via freshness-state swap. → (3)(4)
 * [ ] *T1.6* REST endpoints + handler wiring. → (1)
 * [ ] *T1.7* Unified-EXPLAIN / route-health disclosure of republished snapshot. → (5)
 * [ ] *T1.8* Integration test `tests/discovery_job_atomic_republish_test.rs`. → (6)
+* [ ] *T1.9* `DiscoveryTrigger` — subscribe to RecallProbeGate FAIL streaks, freshness-SLA breaches,
+  and AutoML drift signals; enqueue jobs via `DiscoveryRegistry`; reuse AutoML as the cost-aware
+  scheduler. Closes the *trigger arm* of the flywheel. → (7) [see new success criterion]
 
 === Success criteria
 
@@ -218,6 +261,9 @@ patterns (`src/network/rest/v2/`).
 5. EXPLAIN discloses `authority_mode` + freshness + snapshot lineage for the republished projection.
 6. Integration test proves the old snapshot is served throughout the run and the refined snapshot
    immediately after the switch.
+7. *Trigger arm*: at least one feedback signal (RecallProbeGate FAIL streak, freshness-SLA breach,
+   or AutoML drift) auto-enqueues a `DiscoveryJob` without operator action — the loop is continuous,
+   not manually invoked.
 
 _Maps to_: TD-086 · Roadmap Phase 8 / Continuous Discovery Loop.
 
@@ -309,10 +355,17 @@ _Maps to_: TD-087 (and closes TD-075) · Roadmap Phase 8 / Elastic Compute And S
 
 A vector search returns IDs; serving then needs full records (text, metadata, permissions,
 timestamps). Today the VIPER path deserializes a whole Parquet row group per point read — large I/O
-amplification over object storage. Add a PAX **row-aligned column-group** mode so a point read
-fetches only the needed columns' byte ranges, and evaluate the open **Vortex** format for
-point-read-heavy collections. Serving (point reads) and discovery (scans) stay over *one logical
-copy*.
+amplification over object storage. Serving (point reads) and discovery (scans) stay over *one
+logical copy*.
+
+*Scope narrowing (plan refinement).* PAX already ships `BlockMode::Oltp` with an O(log N) row
+directory — conceptually the same row alignment Loon uses — so this is **not** a new-format build.
+The genuine gap is narrow: *object-storage range-request granularity*, i.e. coalescing and issuing
+byte-range reads for the matched IDs' columns instead of pulling whole row groups/stripes. The
+work is a column-group grouping on the existing PAX OLTP layout plus a range-read fetch path; the
+**Vortex** evaluation is a *benchmark-justified fallback only* if PAX-grouped reads cannot hit the
+byte-amplification target. Adopting Vortex by default would duplicate the `proximadb-block-format`
+investment and violate the reuse-first mandate.
 
 === LLD
 
@@ -446,38 +499,79 @@ distributed/federated patterns.
 
 _Maps to_: TD-090 · Roadmap Phase 8 / Continuous Discovery Loop. Gated for Lance corpora by F6.
 
-== F4 — Elastic compute modes + resources-follow-data scheduler (TD-089) [OUTLINE]
+== F4 — Elastic compute modes + resources-follow-data scheduler [SPLIT]
 
-=== HLD (outline)
+The original single F4 is **split by what is actually blocked**, so the unblocked, high-value half
+is not buried behind the distributed-transport gap. F4a is single-node and unblocked; F4b is the
+multi-node warm-pool that genuinely needs TD-077.
 
-Three compute modes over one logical store:
+=== F4a — Single-node scale-to-zero / collection suspend-resume (TD-094) [OUTLINE, UNBLOCKED]
+
+==== HLD (outline)
+
+Within one node: evict a collection's compute/index from memory while keeping its catalog metadata
+queryable, then lazy-warm on first query (via the F2 cold path). This delivers most of the "idle
+tenants don't pay" economics for embedded / single-node deployments with **no dependency on
+TD-077**. It reuses surfaces that already exist:
+
+* `CollectionPinRegistry` (`src/storage/collection_pinning.rs`) — pin/unpin + tier override.
+* `DirectoryLoadStatus` (`src/storage/engines/sst/object_economy_directory.rs`) — warm/cold marker.
+* Route-health diagnostics (`GET /api/v2/_diagnostics/collections/:id/route-health`) — observability.
+* Tiering engine (`src/storage/tiering/`) — eviction/promotion mechanics.
+
+Chains off F2: suspend/resume is only attractive if the warm-up is in the seconds class. Pairs with
+F1's trigger arm: a suspended collection warms only when a triggered discovery job (or a live query)
+actually needs it.
+
+==== Outline tasks
+
+* [ ] `suspend(collection)` — release compute/index, mark sidecar cold, keep catalog metadata live.
+* [ ] `resume`-on-query — lazy-warm via the F2 cold path on first access.
+* [ ] Surface suspend/resume state in route-health.
+* [ ] Bench: metadata-query latency while suspended + first-query warm latency.
+
+==== Outline success criteria
+
+1. A collection can be suspended (compute/index released) with metadata still queryable.
+2. First query after suspend lazy-warms via the F2 cold path (seconds class).
+3. Suspend/resume state is observable in route-health.
+4. No dependency on TD-077.
+
+_Maps to_: TD-094 · Roadmap Phase 8 / Elastic Compute And Scale-To-Zero. **Unblocked** — sequence
+after F2, can run parallel to F1.
+
+=== F4b — Multi-node elastic modes + warm-pool scheduler (TD-089) [OUTLINE, BLOCKED on TD-077]
+
+==== HLD (outline)
+
+Three compute modes over one logical store, cluster-wide:
 
 * `Long-running` — today's resident server (production serving, hot indexes preloaded).
 * `OnDemand` — starts in seconds, minute-billed, for interactive / cold-data work.
 * `OfflineBatch` — job-scoped, released on completion; the home for F1 discovery jobs.
 
 A warm-pool scheduler attaches a pinned snapshot to prepared compute on request and releases it on
-idle, while catalog/metadata stay queryable with **zero resident compute**. Built on
+idle, while catalog/metadata stay queryable with **zero resident compute** cluster-wide. Built on
 `ClusterManager` / `NodeInfo` (`src/cluster/`) by adding a `ComputeMode` and extending
 `NodeInfo.capabilities` / `load` / heartbeat.
 
-=== Dependency and deferral
+==== Dependency and deferral
 
-BLOCKED on **TD-077** (distributed RPC transport / failover). Sequence after F1/F2/F3 make
-scale-to-zero economical. This feature realizes the 2028 VISION "serverless deployment mode"
-milestone.
+BLOCKED on **TD-077** (distributed RPC transport / failover). Sequence after F1/F2/F3/F4a make
+scale-to-zero economical first. This is the full realization of the 2028 VISION "serverless
+deployment mode" milestone.
 
-=== Outline tasks
+==== Outline tasks
 
 * [ ] `ComputeMode` enum + per-collection/per-request mode resolution.
-* [ ] Warm-pool scheduler (attach pinned snapshot on request, release on idle).
-* [ ] Metadata queryable with no resident compute.
+* [ ] Warm-pool scheduler (attach pinned snapshot on request, release on idle) across nodes.
+* [ ] Metadata queryable with no resident compute cluster-wide.
 * [ ] Cost/latency model documented.
 
-=== Outline success criteria
+==== Outline success criteria
 
 1. Three modes operate over the same logical store.
-2. Warm-pool attach-on-request / release-on-idle works.
+2. Warm-pool attach-on-request / release-on-idle works across nodes.
 3. Metadata is queryable with zero resident compute.
 4. A cost/latency model is documented.
 
@@ -512,11 +606,13 @@ _Maps to_: TD-091 · Roadmap Phase 8 / Continuous Discovery Loop.
 |===
 | Feature | TD | Roadmap Phase 8 row | Reused primitives (anchors)
 
-| F1 Discovery loop | TD-086 | Continuous Discovery Loop | GlobalManifest, ProjectionFreshnessState, merge.rs, CatalogStorageLayout, BackgroundMaintenanceManager, automl
+| F0 Parity Sprint | TD-092, TD-093 | (pre-Phase-8) | bm25_wrapper + Tantivy fulltext + fusion engine; RankServices/CandidateProvider + SharedServices
+| F1 Discovery loop (+ trigger arm) | TD-086 | Continuous Discovery Loop | GlobalManifest, ProjectionFreshnessState, merge.rs, CatalogStorageLayout, BackgroundMaintenanceManager, automl, RecallProbeGate/CDC (triggers)
 | F2 Cold path | TD-087 (+TD-075) | Elastic Compute And Scale-To-Zero | calculate_progressive_distance, BinaryQuantization, UnifiedIvfIndex, UniversalIndexStorage, RecallProbeGate
-| F3 Point-read | TD-088 | Elastic Compute And Scale-To-Zero | proximadb-block-format (RowDirectory/ColumnMeta), VIPER fetch path
+| F3 Point-read (narrowed: S3 range-read) | TD-088 | Elastic Compute And Scale-To-Zero | proximadb-block-format BlockMode::Oltp (RowDirectory/ColumnMeta), VIPER fetch path
+| F4a Single-node scale-to-zero | TD-094 | Elastic Compute And Scale-To-Zero | CollectionPinRegistry, DirectoryLoadStatus, route-health, tiering (UNBLOCKED)
 | F5 External Collection | TD-090 | Continuous Discovery Loop | CatalogAuthorityMode, catalog backends, AxisVectorIndex, FullTextIndex, UniversalIndexStorage
-| F4 Elastic compute | TD-089 | Elastic Compute And Scale-To-Zero | ClusterManager/NodeInfo (blocked on TD-077)
+| F4b Multi-node elastic compute | TD-089 | Elastic Compute And Scale-To-Zero | ClusterManager/NodeInfo (blocked on TD-077)
 | F6 Lance | TD-091 | Continuous Discovery Loop | open-format catalog backends
 |===
 
@@ -538,7 +634,12 @@ For the eventual implementation (not part of this spec task):
 == Scope and non-goals of this specification
 
 * This document is a specification only. It defines no durability contract and is not an ADR.
-* F4 and F6 are intentionally outline-only; their full LLDs are deferred (F4 until TD-077 lands).
+* F0 (Parity Sprint) is not a Phase 8 build feature — it is two un-wired existing primitives
+  (TD-092/093) sequenced before Phase 8 and specified in `TECHNICAL_DEBT.adoc`; it appears here only
+  to fix its place in the sequence.
+* F4 is split into F4a (single-node scale-to-zero, TD-094, **unblocked**) and F4b (multi-node
+  warm-pool, TD-089, blocked on TD-077). F4a/F4b and F6 are outline-only; their full LLDs are
+  deferred (F4b until TD-077 lands).
 * No rebrand to "Vector Lakebase" — "The Context Database" remains the category (see the alignment
   doc). Phase 8 internalizes the continuous-loop and elastic-compute ideas without changing the
   category.
