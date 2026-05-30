@@ -1024,6 +1024,11 @@ impl AxisHnswIndex {
         let mut curr_nearest = vec![entry_point];
         let max_layer = self.max_layer.load(AtomicOrdering::Relaxed);
 
+        // Phase profiling — surfaces whether time is spent in the
+        // top-layer greedy descent vs the layer-0 ef walk vs the
+        // id-mapping post-conversion. Cheap timer per phase.
+        let descent_start = std::time::Instant::now();
+
         // Search from top layer down to layer 1 (greedy with ef=1)
         for layer in (1..=max_layer).rev() {
             curr_nearest = self
@@ -1032,6 +1037,7 @@ impl AxisHnswIndex {
                 .map(|(node, _)| node)
                 .collect();
         }
+        let descent_us = descent_start.elapsed().as_micros() as u64;
 
         // Search layer 0 with collection-size-aware ef for consistent recall at scale
         // For N vectors, optimal ef ≈ sqrt(N) for high recall (>95%)
@@ -1052,10 +1058,14 @@ impl AxisHnswIndex {
             search_ef
         );
 
+        let layer0_start = std::time::Instant::now();
         let candidates = self.search_layer(query, &curr_nearest, search_ef, 0);
+        let layer0_us = layer0_start.elapsed().as_micros() as u64;
+        let candidates_visited = candidates.len();
 
         // Convert internal IDs to external IDs - no filtering at index level
         // Metadata filtering happens at storage layer, not in indexes
+        let convert_start = std::time::Instant::now();
         let results: Vec<(String, f32)> = candidates
             .into_iter()
             .take(top_k)
@@ -1065,10 +1075,31 @@ impl AxisHnswIndex {
                     .map(|external_id| (external_id, score))
             })
             .collect();
+        let convert_us = convert_start.elapsed().as_micros() as u64;
+        let total_us = start.elapsed().as_micros() as u64;
+
+        // Emit a single structured event per search so the bench can
+        // attribute the latency. Threshold gating keeps logs quiet
+        // for fast searches (HMGI partitions usually ~1ms) but
+        // surfaces the slow ones (legacy HNSW path apparently
+        // ~60-90ms even on identical data — the gap this
+        // instrumentation is designed to expose).
+        tracing::info!(
+            target: "axis_diag",
+            site = "AxisHnswIndex::search_with_filter",
+            collection_size = collection_size,
+            search_ef = search_ef,
+            descent_us = descent_us,
+            layer0_us = layer0_us,
+            convert_us = convert_us,
+            total_us = total_us,
+            candidates_visited = candidates_visited,
+            "HNSW search phase breakdown"
+        );
 
         // USING UTILS: Record successful operation
         self.stats
-            .record_success(start.elapsed().as_micros() as u64);
+            .record_success(total_us);
         Ok(results)
     }
 

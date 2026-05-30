@@ -446,9 +446,44 @@ impl SetupResult {
                         .expect("update_collection_strategy IVF");
                     proximadb::storage::engines::sst::core::set_sst_axis_manager(axis_arc);
                 }
-                IndexType::Hnsw | IndexType::Flat => {
-                    // Default — HNSW (post-b3985b59c fix). Flat
-                    // never reaches this branch (cfg.axis = false).
+                IndexType::Hnsw => {
+                    // Force an explicit HNSW strategy. WITHOUT this,
+                    // the adaptive engine's `recommend_strategy` for
+                    // a dense-vector collection returns IVF (see
+                    // src/index/axis/management/strategy_selector.rs)
+                    // and the bench silently exercises IVF instead
+                    // of HNSW — masking real HNSW behaviour. The
+                    // override mirrors what the IVF cell does just
+                    // above, with the canonical HNSW config (m=16,
+                    // ef_construction=200) that
+                    // `AxisHnswConfig::default()` carries.
+                    use proximadb::index::axis::types::{
+                        Data, IndexAlgorithm, IndexSelectionStrategy, IndexSpecification,
+                    };
+                    let hnsw_spec = IndexSpecification::new(
+                        Data::DenseVector {
+                            dimension: cfg.dimension,
+                        },
+                        IndexAlgorithm::HNSW {
+                            m: 16,
+                            ef_construction: 200,
+                            ef_search: 50,
+                            max_elements: 1_000_000,
+                        },
+                    );
+                    let strategy = IndexSelectionStrategy {
+                        indexes: vec![hnsw_spec],
+                        routing_rules: vec![],
+                    };
+                    let axis_arc = std::sync::Arc::new(axis_manager_inner);
+                    axis_arc
+                        .update_collection_strategy(&collection.id, strategy)
+                        .await
+                        .expect("update_collection_strategy HNSW");
+                    proximadb::storage::engines::sst::core::set_sst_axis_manager(axis_arc);
+                }
+                IndexType::Flat => {
+                    // Flat never reaches this branch (cfg.axis = false).
                     proximadb::storage::engines::sst::core::set_sst_axis_manager(
                         std::sync::Arc::new(axis_manager_inner),
                     );

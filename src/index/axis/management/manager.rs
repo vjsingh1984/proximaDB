@@ -675,11 +675,18 @@ impl AxisManager {
             policy_driven_mode.unwrap_or(query.ann_filtering_mode);
         let mut selected_filtering_mode: Option<AnnFilteringMode> = None;
 
+        // Determine which inner search path will run. Promote to
+        // info so the bench's tracing layer captures it — the same
+        // log was previously trace and silently dropped, masking
+        // the fact that the HNSW cell wasn't actually exercising
+        // query_hnsw at all (it was hitting an entirely different
+        // path, presumably IVF or the empty-result fallback).
         let results = if self.is_hmgi_enabled(collection_id).await && hmgi_query_safe {
-            tracing::trace!(
+            tracing::info!(
                 target: "axis_diag",
                 site = "axis_manager.query",
                 route = "search_hmgi",
+                collection_id = collection_id,
                 "query routed through HMGI"
             );
             self.search_hmgi(collection_id, &query, query.top_k).await?
@@ -726,8 +733,22 @@ impl AxisManager {
             });
 
             if use_ivf {
+                tracing::info!(
+                    target: "axis_diag",
+                    site = "axis_manager.query",
+                    route = "query_ivf",
+                    collection_id = collection_id,
+                    "query routed through IVF"
+                );
                 self.query_ivf(collection_id, &query).await?
             } else {
+                tracing::info!(
+                    target: "axis_diag",
+                    site = "axis_manager.query",
+                    route = "query_hnsw",
+                    collection_id = collection_id,
+                    "query routed through legacy HNSW"
+                );
                 self.query_hnsw(collection_id, &query).await?
             }
         };
@@ -769,37 +790,74 @@ impl AxisManager {
         algorithm: &IndexAlgorithm,
     ) -> Result<()> {
         if self.is_hmgi_enabled(collection_id).await {
-            tracing::trace!(
-                target: "axis_diag",
-                site = "insert_dense_vector_index",
-                branch = "hmgi",
-                "routing insert through HMGI"
-            );
+            // Only log the first insert per collection to avoid log
+            // spam at 10K+ scale. The collection_vectors map is the
+            // canonical "already seen this collection" signal.
+            let first = self
+                .collection_vectors
+                .read()
+                .await
+                .get(collection_id)
+                .is_none_or(|v| v.is_empty());
+            if first {
+                tracing::info!(
+                    target: "axis_diag",
+                    site = "insert_dense_vector_index",
+                    branch = "hmgi",
+                    collection_id = collection_id,
+                    "FIRST INSERT — routing through HMGI"
+                );
+            }
             self.insert_hmgi(collection_id, vector.clone()).await?;
             return Ok(());
         }
 
+        let first = self
+            .collection_vectors
+            .read()
+            .await
+            .get(collection_id)
+            .is_none_or(|v| v.is_empty());
+
         match algorithm {
             IndexAlgorithm::HNSW { .. } => {
-                tracing::trace!(
-                    target: "axis_diag",
-                    site = "insert_dense_vector_index",
-                    branch = "hnsw",
-                    "routing insert through legacy HNSW"
-                );
+                if first {
+                    tracing::info!(
+                        target: "axis_diag",
+                        site = "insert_dense_vector_index",
+                        branch = "hnsw",
+                        collection_id = collection_id,
+                        "FIRST INSERT — routing through legacy HNSW"
+                    );
+                }
                 self.insert_into_hnsw(collection_id, vector).await
             }
             IndexAlgorithm::IVF { .. } | IndexAlgorithm::PQ { .. } => {
-                tracing::trace!(
-                    target: "axis_diag",
-                    site = "insert_dense_vector_index",
-                    branch = "ivf_pq",
-                    algorithm = ?algorithm,
-                    "routing insert through IVF/PQ"
-                );
+                if first {
+                    tracing::info!(
+                        target: "axis_diag",
+                        site = "insert_dense_vector_index",
+                        branch = "ivf_pq",
+                        collection_id = collection_id,
+                        algorithm = ?algorithm,
+                        "FIRST INSERT — routing through IVF/PQ"
+                    );
+                }
                 self.insert_into_ivf(collection_id, vector).await
             }
-            _ => self.insert_into_hnsw(collection_id, vector).await,
+            other => {
+                if first {
+                    tracing::info!(
+                        target: "axis_diag",
+                        site = "insert_dense_vector_index",
+                        branch = "fallback_hnsw",
+                        collection_id = collection_id,
+                        algorithm = ?other,
+                        "FIRST INSERT — algorithm not in match, falling back to HNSW"
+                    );
+                }
+                self.insert_into_hnsw(collection_id, vector).await
+            }
         }
     }
 
