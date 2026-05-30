@@ -439,6 +439,75 @@ impl AxisManager {
         tracing::info!("🔗 AXIS: RecallProbeGate set for quantized-route gating (TD-075)");
     }
 
+    /// Collection ids that have a trained IVF index with quantized storage —
+    /// the candidates the Phase-5 recall observer probes.
+    pub async fn quantized_ivf_collections(&self) -> Vec<String> {
+        let indexes = self.ivf_indexes.read().await;
+        let mut out = Vec::new();
+        for (collection_id, index_lock) in indexes.iter() {
+            let index = index_lock.read().await;
+            if index.is_trained() && index.has_quantized_storage() {
+                out.push(collection_id.clone());
+            }
+        }
+        out
+    }
+
+    /// Phase-5 recall observer: probe quantized-vs-exact recall over `queries`
+    /// and feed the outcome into the recall-probe gate. Returns the resulting
+    /// `ProbeState`, or `None` if there's nothing to probe (no gate, no quantized
+    /// IVF index for the collection, untrained index, or empty queries). The
+    /// gate opens after `passes_required` consecutive passes (default 3), at
+    /// which point `query_ivf` starts selecting the quantized route.
+    pub async fn probe_and_observe(
+        &self,
+        collection_id: &str,
+        queries: &[Vec<f32>],
+        k: usize,
+        recall_floor: f32,
+    ) -> Option<crate::catalog::ProbeState> {
+        let gate = self.recall_probe_gate.as_ref()?;
+        if queries.is_empty() || k == 0 {
+            return None;
+        }
+        let indexes = self.ivf_indexes.read().await;
+        let index = indexes.get(collection_id)?.read().await;
+        if !index.is_trained() || !index.has_quantized_storage() {
+            return None;
+        }
+
+        let mut recalls: Vec<f32> = Vec::with_capacity(queries.len());
+        for q in queries {
+            let exact = index.search(q, k, None).await.ok()?;
+            let quant = index
+                .search_with_quantized_acceleration(q, k, None)
+                .await
+                .ok()?;
+            let exact_ids: Vec<String> = exact.into_iter().map(|(id, _)| id).collect();
+            let quant_ids: Vec<String> = quant.into_iter().map(|(id, _)| id).collect();
+            recalls.push(recall_at_k(&exact_ids, &quant_ids, k));
+        }
+        if recalls.is_empty() {
+            return None;
+        }
+        let mean_recall = recalls.iter().sum::<f32>() / recalls.len() as f32;
+        let outcome = recall_outcome(mean_recall, recall_floor);
+        let scope = crate::catalog::ProbeScope::new(collection_id, collection_id);
+        let state = gate.observe(&scope, outcome).await;
+        tracing::info!(
+            target: "axis_diag",
+            site = "recall_observer.probe",
+            collection_id = collection_id,
+            mean_recall = mean_recall,
+            recall_floor = recall_floor,
+            outcome = ?outcome,
+            gate_open = state.gate_open,
+            consecutive_passes = state.consecutive_passes,
+            "recall probe observed"
+        );
+        Some(state)
+    }
+
     /// Set shared collection cache from VectorOperationsService
     pub fn set_shared_collection_cache(
         &mut self,
@@ -2711,6 +2780,32 @@ fn decide_quantized_route(gate_open: bool, has_quantized_storage: bool) -> bool 
     gate_open && has_quantized_storage
 }
 
+/// recall@k: fraction of the exact top-k that the approximate (quantized) top-k
+/// recovered. Order-independent set overlap divided by the effective k
+/// (`min(k, exact.len())`). Returns 1.0 when there is nothing to recall.
+fn recall_at_k(exact: &[String], approx: &[String], k: usize) -> f32 {
+    let eff_k = k.min(exact.len());
+    if eff_k == 0 {
+        return 1.0;
+    }
+    let exact_set: std::collections::HashSet<&String> = exact.iter().take(eff_k).collect();
+    let hits = approx
+        .iter()
+        .take(k)
+        .filter(|id| exact_set.contains(id))
+        .count();
+    hits as f32 / eff_k as f32
+}
+
+/// Probe outcome from a mean recall vs. the recall floor (Phase 5 observer).
+fn recall_outcome(mean_recall: f32, floor: f32) -> crate::catalog::ProbeOutcome {
+    if mean_recall >= floor {
+        crate::catalog::ProbeOutcome::Pass
+    } else {
+        crate::catalog::ProbeOutcome::Fail
+    }
+}
+
 /// Scored result with MVCC support
 #[derive(Debug, Clone)]
 pub struct ScoredResult {
@@ -3698,5 +3793,34 @@ mod adr011_routing_tests {
         // no quantized storage → exact regardless of gate
         assert!(!decide_quantized_route(true, false));
         assert!(!decide_quantized_route(false, false));
+    }
+
+    #[test]
+    fn recall_at_k_measures_set_overlap() {
+        use super::recall_at_k;
+        let id = |s: &str| s.to_string();
+        let exact = vec![id("a"), id("b"), id("c"), id("d")];
+        // perfect recall (same set, any order)
+        assert_eq!(
+            recall_at_k(&exact, &[id("d"), id("c"), id("b"), id("a")], 4),
+            1.0
+        );
+        // half the exact top-k recovered
+        assert_eq!(recall_at_k(&exact, &[id("a"), id("b"), id("x"), id("y")], 4), 0.5);
+        // disjoint → 0
+        assert_eq!(recall_at_k(&exact, &[id("x"), id("y")], 4), 0.0);
+        // empty exact (nothing to recall) → 1.0
+        assert_eq!(recall_at_k(&[], &[id("a")], 4), 1.0);
+        // k clipped to exact len
+        assert_eq!(recall_at_k(&[id("a")], &[id("a")], 10), 1.0);
+    }
+
+    #[test]
+    fn recall_outcome_thresholds_on_floor() {
+        use super::recall_outcome;
+        use crate::catalog::ProbeOutcome;
+        assert_eq!(recall_outcome(0.96, 0.95), ProbeOutcome::Pass);
+        assert_eq!(recall_outcome(0.95, 0.95), ProbeOutcome::Pass); // >= floor
+        assert_eq!(recall_outcome(0.94, 0.95), ProbeOutcome::Fail);
     }
 }

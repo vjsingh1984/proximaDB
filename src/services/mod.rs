@@ -180,6 +180,7 @@ pub mod graph_collection;
 pub mod operations;
 pub mod queue_fs_adapter;
 pub mod rank_profile_store;
+pub mod recall_observer;
 pub mod record_memtable;
 pub mod record_store;
 pub mod schema;

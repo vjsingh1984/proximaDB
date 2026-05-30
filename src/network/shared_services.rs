@@ -1437,6 +1437,26 @@ impl SharedServices {
             info!("✅ SharedServices: DiscoveryJobExecutor spawned (Phase 8 CS/CD loop)");
         }
         {
+            // Phase-5 recall observer (TD-075 / F2): periodically probes
+            // quantized-vs-exact recall per collection and feeds the shared
+            // RecallProbeGate, so the quantized IVF route opens once recall is
+            // verified. Always-on (the watch sender is intentionally leaked,
+            // matching the discovery executor).
+            let observer = Arc::new(crate::services::recall_observer::RecallObserver::new(
+                axis_manager.clone(),
+                vector_operations_service.clone(),
+            ));
+            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            std::mem::forget(shutdown_tx);
+            #[allow(clippy::let_underscore_future)]
+            let _ = crate::services::recall_observer::spawn_recall_observer(
+                observer,
+                shutdown_rx,
+                crate::services::recall_observer::DEFAULT_OBSERVE_INTERVAL,
+            );
+            info!("✅ SharedServices: RecallObserver spawned (Phase 5 recall gate)");
+        }
+        {
             // Trigger arm (T1.9): the write-volume drift watcher is the first
             // live producer — it compares each collection's manifest LSN against
             // its last completed recluster and auto-enqueues a recluster once the
@@ -1445,7 +1465,7 @@ impl SharedServices {
             let watcher = Arc::new(crate::services::discovery::DriftWatcher::new(
                 discovery_service.clone(),
                 snapshot_coordinator.clone(),
-                crate::services::discovery::DEFAULT_DRIFT_THRESHOLD_LSN,
+                crate::services::discovery::threshold_lsn_from_env(),
             ));
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
             std::mem::forget(shutdown_tx);
@@ -1453,7 +1473,7 @@ impl SharedServices {
             let _ = crate::services::discovery::spawn_drift_watcher(
                 watcher,
                 shutdown_rx,
-                crate::services::discovery::DEFAULT_DRIFT_INTERVAL,
+                crate::services::discovery::interval_from_env(),
             );
             info!(
                 "✅ SharedServices: DriftWatcher spawned (Phase 8 F1 trigger arm — write-volume drift)"
