@@ -121,6 +121,33 @@ pub async fn run(ctx: &PassContext) -> Result<DiscoveryJobResult> {
         "recluster_avg_intra_cluster".to_string(),
         m.avg_intra_cluster_similarity as f64,
     );
+
+    // Apply step (Phase 8 F1): rebuild + atomically swap the served IVF index so
+    // the loop improves *serving*, not just metrics. Only for IVF-served
+    // collections (HNSW graph rebuild is a follow-up). Non-fatal: a rebuild error
+    // is recorded but does not fail the job (the metrics pass already succeeded).
+    let axis = vector_ops.axis_index_manager();
+    let swapped = if axis.has_ivf_index(collection_id).await {
+        match axis.rebuild_and_swap_ivf_index(collection_id, &records).await {
+            Ok(applied) => applied,
+            Err(e) => {
+                tracing::warn!("recluster: IVF rebuild/swap failed for {collection_id}: {e:#}");
+                false
+            }
+        }
+    } else {
+        false
+    };
+    result.quality_metrics.insert(
+        "recluster_index_swapped".to_string(),
+        if swapped { 1.0 } else { 0.0 },
+    );
+    if swapped {
+        result.quality_metrics.insert(
+            "recluster_index_generation".to_string(),
+            axis.index_generation(collection_id).await as f64,
+        );
+    }
     Ok(result)
 }
 

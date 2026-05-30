@@ -266,6 +266,11 @@ pub struct AxisManager {
     /// Vectors are buffered here until we have enough for training (min_train_size)
     ivf_pending_vectors: Arc<RwLock<HashMap<String, Vec<(String, Vec<f32>)>>>>,
 
+    /// Per-collection served-index generation. Incremented whenever the served
+    /// index Arc is atomically rebuilt+swapped (Phase 8 F1 recluster apply-step).
+    /// Lets operators / tests observe that a swap happened.
+    index_generations: Arc<RwLock<HashMap<String, u64>>>,
+
     /// Exact vector records tracked per collection for correctness-first filtered search.
     /// This is the source of truth for metadata-aware fallback execution and MVCC timestamps.
     collection_vectors: Arc<RwLock<HashMap<String, HashMap<String, ProximaRecord>>>>,
@@ -412,6 +417,7 @@ impl AxisManager {
             hnsw_indexes: Arc::new(RwLock::new(HashMap::new())), // Real HNSW indexes per collection
             ivf_indexes: Arc::new(RwLock::new(HashMap::new())), // Real IVF indexes per collection (DEFAULT)
             ivf_pending_vectors: Arc::new(RwLock::new(HashMap::new())), // Buffer for IVF training
+            index_generations: Arc::new(RwLock::new(HashMap::new())), // Served-index swap generations
             collection_vectors: Arc::new(RwLock::new(HashMap::new())),
             // HMGI components initialized up front; collections are enabled on demand.
             hmgi_registry: Some(hmgi_registry),
@@ -2431,6 +2437,115 @@ impl AxisManager {
         Ok(())
     }
 
+    /// Whether `collection_id` currently has a served IVF index.
+    pub async fn has_ivf_index(&self, collection_id: &str) -> bool {
+        self.ivf_indexes.read().await.contains_key(collection_id)
+    }
+
+    /// Current served-index swap generation for `collection_id` (0 if never
+    /// rebuilt). Increments on each `rebuild_and_swap_ivf_index`.
+    pub async fn index_generation(&self, collection_id: &str) -> u64 {
+        self.index_generations
+            .read()
+            .await
+            .get(collection_id)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Phase 8 F1 recluster apply-step: rebuild a collection's IVF index from a
+    /// complete record set and **atomically swap** it in as the served index.
+    ///
+    /// Builds a *fresh* `UnifiedIvfIndex` (so the "already trained" guard never
+    /// applies), trains k-means over the records, populates posting lists, and
+    /// replaces the served Arc in `ivf_indexes` in one `HashMap::insert` — which
+    /// is the atomic swap (`query_ivf` reads the same map, so in-flight reads
+    /// finish on the old Arc and new reads see the rebuilt index). Bumps the
+    /// per-collection generation.
+    ///
+    /// Returns `Ok(false)` (no-op) when there are too few embedded vectors to
+    /// cluster. Distance metric is resolved per-collection (not hardcoded). The
+    /// rebuilt index does not yet repopulate filterable metadata — that is
+    /// rehydrated by subsequent inserts; a follow-up can carry it through.
+    pub async fn rebuild_and_swap_ivf_index(
+        &self,
+        collection_id: &str,
+        records: &[ProximaRecord],
+    ) -> Result<bool> {
+        use crate::compute::distance_computation::DistanceMetric;
+        use crate::index::axis::indexes::dual_store_ivf::{UnifiedIvfConfig, UnifiedIvfIndex};
+
+        // Extract (id, fp32), skipping empty ids / missing embeddings.
+        let mut training: Vec<(String, Vec<f32>)> = Vec::with_capacity(records.len());
+        for r in records {
+            if r.oid.is_empty() {
+                continue;
+            }
+            if let Some(e) = r.embeddings.first() {
+                let v = e.values.to_fp32_owned();
+                if !v.is_empty() {
+                    training.push((r.oid.clone(), v));
+                }
+            }
+        }
+        let dimension = training.first().map(|(_, v)| v.len()).unwrap_or(0);
+        // Need enough vectors to form clusters (mirrors the recluster floor and
+        // keeps k-means well-posed: n_clusters floor is 16).
+        if dimension == 0 || training.len() < 16 {
+            return Ok(false);
+        }
+
+        // Same nlist/nprobe heuristic the incremental IVF path uses.
+        let n_clusters = ((training.len() as f32).sqrt() as usize * 2).clamp(16, 256);
+        let n_probe = std::cmp::max(n_clusters / 2, ((n_clusters as f32).sqrt() * 3.0) as usize)
+            .min(n_clusters);
+        let metric = self
+            .get_collection_distance_metric(collection_id)
+            .await
+            .unwrap_or(DistanceMetric::Cosine);
+        let config = UnifiedIvfConfig {
+            n_clusters,
+            n_probe,
+            dimension,
+            distance_metric: metric,
+            min_train_size: 100,
+            ..Default::default()
+        };
+
+        let mut index = UnifiedIvfIndex::new(collection_id.to_string(), config)?;
+        index
+            .train(training.iter().map(|(_, v)| v.clone()).collect())
+            .await?;
+        for (id, v) in &training {
+            index.add_vector(id.clone(), v.clone(), None).await?;
+        }
+
+        // Atomic swap: replace the served Arc in one insert.
+        {
+            let mut indexes = self.ivf_indexes.write().await;
+            indexes.insert(
+                collection_id.to_string(),
+                Arc::new(tokio::sync::RwLock::new(index)),
+            );
+        }
+        // Observable generation bump.
+        let generation = {
+            let mut gens = self.index_generations.write().await;
+            let g = gens.entry(collection_id.to_string()).or_insert(0);
+            *g += 1;
+            *g
+        };
+
+        tracing::info!(
+            "✅ AXIS: rebuilt + swapped IVF index for collection {} ({} vectors, {} clusters, gen={})",
+            collection_id,
+            training.len(),
+            n_clusters,
+            generation
+        );
+        Ok(true)
+    }
+
     /// Index vectors using hybrid mode (adaptive based on batch size)
     pub async fn index_vectors_hybrid<R>(
         &self,
@@ -3822,5 +3937,91 @@ mod adr011_routing_tests {
         assert_eq!(recall_outcome(0.96, 0.95), ProbeOutcome::Pass);
         assert_eq!(recall_outcome(0.95, 0.95), ProbeOutcome::Pass); // >= floor
         assert_eq!(recall_outcome(0.94, 0.95), ProbeOutcome::Fail);
+    }
+}
+
+#[cfg(test)]
+mod recluster_apply_tests {
+    //! Phase 8 F1 apply-step: `rebuild_and_swap_ivf_index` rebuilds a
+    //! collection's IVF index and atomically swaps it as the served index.
+    use super::*;
+    use crate::index::axis::types::AxisConfig;
+    use proximadb_records::{EmbeddingCell, EmbeddingValues};
+
+    fn rec(id: &str, v: Vec<f32>) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "t".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: v.len() as u32,
+                values: EmbeddingValues::Fp32(v),
+                ..Default::default()
+            }],
+            ..ProximaRecord::default()
+        }
+    }
+
+    fn batch(prefix: &str, n: usize, dim: usize, shift: usize) -> Vec<ProximaRecord> {
+        (0..n)
+            .map(|i| {
+                let mut x = vec![0.0f32; dim];
+                x[i % dim] = 1.0;
+                x[(i / dim + shift) % dim] += 0.5;
+                rec(&format!("{prefix}{i}"), x)
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn rebuild_and_swap_serves_the_new_index() {
+        let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
+        let dim = 8;
+
+        // First rebuild: 40 vectors -> built, swapped, generation 1.
+        let v1 = batch("a", 40, dim, 1);
+        assert!(manager.rebuild_and_swap_ivf_index("col", &v1).await.unwrap());
+        assert_eq!(manager.index_generation("col").await, 1);
+        assert!(manager.has_ivf_index("col").await);
+
+        // The rebuilt index is populated + queryable.
+        let mut qv = vec![0.0f32; dim];
+        qv[0] = 1.0;
+        let q = AxisHybridQuery {
+            collection_id: "col".to_string(),
+            vector_query: Some(VectorQuery::Dense {
+                vector: qv,
+                similarity_threshold: 0.0,
+            }),
+            top_k: 5,
+            ..AxisHybridQuery::default()
+        };
+        let (r1, _) = manager.query_ivf("col", &q, false).await.unwrap();
+        assert!(!r1.is_empty(), "rebuilt index should be queryable");
+
+        // Second rebuild: 25 DIFFERENT vectors -> generation 2, and the served
+        // index's vector_count is now 25 (not 40) — proving the atomic swap
+        // replaced the served index that `query_ivf` reads.
+        let v2 = batch("b", 25, dim, 2);
+        assert!(manager.rebuild_and_swap_ivf_index("col", &v2).await.unwrap());
+        assert_eq!(manager.index_generation("col").await, 2);
+        {
+            let indexes = manager.ivf_indexes.read().await;
+            let idx = indexes.get("col").unwrap().read().await;
+            assert_eq!(
+                idx.stats().vector_count,
+                25,
+                "served index must be the V2 rebuild (atomic swap)"
+            );
+        }
+
+        // Too few vectors -> no-op: no swap, generation unchanged.
+        let tiny = batch("c", 5, dim, 1);
+        assert!(!manager.rebuild_and_swap_ivf_index("col", &tiny).await.unwrap());
+        assert_eq!(
+            manager.index_generation("col").await,
+            2,
+            "no-op rebuild must not bump the generation"
+        );
     }
 }
