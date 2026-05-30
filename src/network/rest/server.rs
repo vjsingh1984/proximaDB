@@ -352,6 +352,7 @@ impl RestServer {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -378,6 +379,9 @@ impl RestServer {
         queue_client: Option<Arc<proximadb_queue::QueueClient>>,
         fulltext_indexes: Option<crate::network::rest::v1::handlers::FullTextIndexMap>,
         discovery_service: Option<Arc<crate::services::discovery::DiscoveryService>>,
+        external_collection_service: Option<
+            Arc<crate::services::external_collection::ExternalCollectionService>,
+        >,
     ) -> Self {
         // Tier 1.2 (pre-release foundational plan 2026-05-26):
         // Warn loudly if a production-mode server is being constructed with
@@ -427,6 +431,11 @@ impl RestServer {
         // executor consumes (multi-port REST path).
         if let Some(discovery) = discovery_service {
             base_state = base_state.with_discovery_service(discovery);
+        }
+        // Phase 8 (F5): share the External Collection service so the v2
+        // `external-collections` endpoints reach the same registry.
+        if let Some(external) = external_collection_service {
+            base_state = base_state.with_external_collection_service(external);
         }
         let state = if let Some(p) = ports {
             let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);
@@ -656,6 +665,9 @@ impl RestServer {
         rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
         rank_profile_store: Option<Arc<dyn crate::services::RankProfileStore>>,
         discovery_service: Option<Arc<crate::services::discovery::DiscoveryService>>,
+        external_collection_service: Option<
+            Arc<crate::services::external_collection::ExternalCollectionService>,
+        >,
     ) -> Router {
         let mut base_state = AppState::new(
             request_handlers,
@@ -701,6 +713,11 @@ impl RestServer {
         // executor consumes.
         if let Some(discovery) = discovery_service {
             base_state = base_state.with_discovery_service(discovery);
+        }
+        // Phase 8 (F5): share the External Collection service so the v2
+        // `external-collections` endpoints reach the same registry.
+        if let Some(external) = external_collection_service {
+            base_state = base_state.with_external_collection_service(external);
         }
         let state = if let Some(p) = ports {
             let s = base_state.with_ports(p.doc_port, p.graph_port, p.obs_port);

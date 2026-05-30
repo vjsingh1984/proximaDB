@@ -132,6 +132,14 @@ pub struct AppState {
     /// `src/network/multi_server.rs` so the v2 `discovery-jobs` endpoints reach
     /// the same registry the background executor consumes.
     pub discovery_service: Option<Arc<crate::services::discovery::DiscoveryService>>,
+
+    /// Phase 8 (F5) External Collection service. Wired from
+    /// `SharedServices.external_collection_service` via
+    /// `with_external_collection_service` in `src/network/multi_server.rs` so the
+    /// v2 `external-collections` endpoints reach the same registry the service
+    /// owns. `None` when the service is not enabled (handlers return 501).
+    pub external_collection_service:
+        Option<Arc<crate::services::external_collection::ExternalCollectionService>>,
 }
 
 impl AppState {
@@ -185,6 +193,7 @@ impl AppState {
             rank_profile_store: None,
             recall_probe_gate: None,
             discovery_service: None,
+            external_collection_service: None,
         }
     }
 
@@ -306,6 +315,18 @@ impl AppState {
         discovery_service: Arc<crate::services::discovery::DiscoveryService>,
     ) -> Self {
         self.discovery_service = Some(discovery_service);
+        self
+    }
+
+    /// Inject the Phase 8 (F5) External Collection service so the v2
+    /// `external-collections` endpoints can register/build/search.
+    pub fn with_external_collection_service(
+        mut self,
+        external_collection_service: Arc<
+            crate::services::external_collection::ExternalCollectionService,
+        >,
+    ) -> Self {
+        self.external_collection_service = Some(external_collection_service);
         self
     }
 

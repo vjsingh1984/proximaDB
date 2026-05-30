@@ -44,6 +44,7 @@
 
 pub mod collections;
 pub mod discovery;
+pub mod external_collection;
 pub mod query;
 pub mod records;
 pub mod schema;
@@ -130,6 +131,24 @@ pub fn create_v2_router() -> Router<AppState> {
         .route(
             "/collections/:collection_id/discovery-jobs/:job_id",
             get(discovery::get_discovery_job_v2),
+        )
+        // Phase 8 (F5) — External Collections: index external lake data un-copied.
+        .route(
+            "/external-collections",
+            post(external_collection::register_external_collection_v2)
+                .get(external_collection::list_external_collections_v2),
+        )
+        .route(
+            "/external-collections/:id",
+            get(external_collection::get_external_collection_v2),
+        )
+        .route(
+            "/external-collections/:id/build",
+            post(external_collection::build_external_collection_v2),
+        )
+        .route(
+            "/external-collections/:id/search",
+            post(external_collection::search_external_collection_v2),
         )
         // Diagnostics — experimental capability contract endpoints.
         // Namespaced under `_diagnostics` while the shape stabilizes;

@@ -581,6 +581,11 @@ impl MultiServer {
                 None
             };
             let max_message_size = self.config.arrow_ipc_config.max_message_size;
+            // Slice 6.2 capture: same `Arc<PrimaryPodRegistry>` /
+            // pod-id pair the REST and gRPC v2 surfaces hold, so all
+            // three see identical routing decisions.
+            let primary_pod_registry = services.primary_pod_registry.clone();
+            let self_pod_id = services.self_pod_id.clone();
 
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::ArrowFlightServer;
@@ -589,6 +594,7 @@ impl MultiServer {
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
                     .with_max_message_size(max_message_size)
+                    .with_primary_pod_gate(primary_pod_registry, self_pod_id)
                     .start()
                     .await
                 {
@@ -635,6 +641,8 @@ impl MultiServer {
             // gets the same shared handle).
             let fulltext_indexes_for_rest = self.shared_services.fulltext_indexes.clone();
             let discovery_service_for_rest = self.shared_services.discovery_service.clone();
+            let external_collection_service_for_rest =
+                self.shared_services.external_collection_service.clone();
             let rest_handle = tokio::spawn(async move {
                 use crate::network::rest::server::{RestServer, RestServerSecurityConfig};
 
@@ -666,6 +674,7 @@ impl MultiServer {
                     queue_client_for_rest,
                     Some(fulltext_indexes_for_rest),
                     Some(discovery_service_for_rest),
+                    Some(external_collection_service_for_rest),
                 )
                 .start()
                 .await
@@ -700,6 +709,10 @@ impl MultiServer {
             let rank_services = services.rank_services.clone();
             let rank_profile_store = services.rank_profile_store.clone();
             let direct_write_services = self.build_direct_pgwire_write_services().await?;
+            // Slice 6.3 capture: clone the same registry + pod id
+            // pair the REST / gRPC v2 / Arrow Flight surfaces hold.
+            let primary_pod_registry = services.primary_pod_registry.clone();
+            let self_pod_id = services.self_pod_id.clone();
 
             let postgres_handle = tokio::spawn(async move {
                 use crate::network::postgres::PostgresServer;
@@ -716,6 +729,7 @@ impl MultiServer {
                     server = server.with_direct_write_services(direct_write_services);
                 }
                 server = server.with_rank_pipeline(rank_services, rank_profile_store);
+                server = server.with_primary_pod_gate(primary_pod_registry, self_pod_id);
                 if let Err(e) = server.start().await {
                     tracing::error!("❌ PostgreSQL Server error: {}", e);
                 }
@@ -862,6 +876,7 @@ impl MultiServer {
                 Some(services.rank_services.clone()),
                 Some(services.rank_profile_store.clone()),
                 Some(services.discovery_service.clone()),
+                Some(services.external_collection_service.clone()),
             );
 
             info!(
@@ -1060,6 +1075,13 @@ impl MultiServer {
                 server = server.with_rank_pipeline(
                     services.rank_services.clone(),
                     services.rank_profile_store.clone(),
+                );
+                // Slice 6.3: same gate the REST / gRPC v2 / Arrow
+                // Flight surfaces hold — pgwire DML uses the
+                // identical registry.
+                server = server.with_primary_pod_gate(
+                    services.primary_pod_registry.clone(),
+                    services.self_pod_id.clone(),
                 );
 
                 if let Err(e) = server.start().await {
@@ -1416,6 +1438,11 @@ impl MultiServer {
                 None
             };
             let max_message_size = self.config.arrow_ipc_config.max_message_size;
+            // Slice 6.2 capture: same `Arc<PrimaryPodRegistry>` /
+            // pod-id pair the REST and gRPC v2 surfaces hold, so all
+            // three see identical routing decisions.
+            let primary_pod_registry = services.primary_pod_registry.clone();
+            let self_pod_id = services.self_pod_id.clone();
 
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::ArrowFlightServer;
@@ -1424,6 +1451,7 @@ impl MultiServer {
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
                     .with_max_message_size(max_message_size)
+                    .with_primary_pod_gate(primary_pod_registry, self_pod_id)
                     .start()
                     .await
                 {
