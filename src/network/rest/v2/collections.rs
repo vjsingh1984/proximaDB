@@ -834,8 +834,72 @@ pub struct CollectionRouteHealthV2 {
     pub recall_probe: RecallProbeHealth,
     pub pinning: PinningHealth,
     pub discovery: DiscoveryHealth,
+    pub recall_drift: RecallDriftHealth,
 
     pub degraded_reasons: Vec<DegradedReason>,
+}
+
+/// Surface for `index::axis::management::recall_drift` on the
+/// route-health endpoint. Reports whether the AXIS HNSW params the
+/// index was built with still match the advisor's recommendation
+/// for the **current** corpus size + the operator's `recall_target`.
+///
+/// `wired = false` means the collection has no `recall_target:` tag
+/// — the advisor never had a recommendation to drift from. All
+/// other fields are `None` / `"unwired"` in that state.
+///
+/// When `wired = true`, the live fields populate. `kind` is one of:
+///   * `"none"`           — advised params unchanged; no action.
+///   * `"ef_search_only"` — only `ef_search` shifted; hot-swappable.
+///   * `"rebuild_required"` — `m` or `ef_construction` changed; a
+///     `/recluster` is the resolution.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct RecallDriftHealth {
+    /// True when the collection has a `recall_target:<float>` tag —
+    /// only then does the advisor have a baseline to drift from.
+    pub wired: bool,
+    /// The advisor's `recall_target` (parsed from tags). `None` when
+    /// `wired = false`.
+    pub recall_target: Option<f32>,
+    /// The N the advisor was sized against. Derived from the
+    /// `target_vector_count:` tag (operator-supplied steady-state
+    /// hint) — falls back to 100K (calibration anchor) when absent.
+    /// `None` when `wired = false`.
+    pub baseline_vector_count: Option<u64>,
+    /// Current vector count from the collection stats. `None` when
+    /// `wired = false`.
+    pub current_vector_count: Option<u64>,
+    /// One of "none" / "ef_search_only" / "rebuild_required" /
+    /// "unwired".
+    pub kind: &'static str,
+    /// True iff `kind = "rebuild_required"` — a hint that the
+    /// operator should call `/recluster` to realize the recall
+    /// target at the current N.
+    pub needs_rebuild: bool,
+    /// True iff `kind = "ef_search_only"` — a hint that
+    /// AXIS could fix the drift in-place by hot-swapping the live
+    /// `ef_search` (not yet wired; tracked as a follow-up).
+    pub hot_swap_possible: bool,
+    /// Free-text summary suitable for operator dashboards. Empty
+    /// string when `wired = false`.
+    pub summary: String,
+}
+
+impl RecallDriftHealth {
+    /// "wired = false" state — used when the collection has no
+    /// `recall_target:` tag so the advisor never had a baseline.
+    pub fn unwired() -> Self {
+        Self {
+            wired: false,
+            recall_target: None,
+            baseline_vector_count: None,
+            current_vector_count: None,
+            kind: "unwired",
+            needs_rebuild: false,
+            hot_swap_possible: false,
+            summary: String::new(),
+        }
+    }
 }
 
 /// Filtered-ANN capability state. Reflects the current AXIS HNSW predicate
@@ -1250,6 +1314,10 @@ fn build_route_health_with_live_state(
         // Default unwired; the async handler patches this with live
         // coordinator state. Builder callers (tests) get the unwired block.
         discovery: DiscoveryHealth::unwired(),
+        // Default unwired; the async handler patches when the
+        // collection has a `recall_target:` tag. Tests can patch via
+        // `health.recall_drift = …` directly.
+        recall_drift: RecallDriftHealth::unwired(),
         degraded_reasons,
     }
 }
@@ -1359,6 +1427,57 @@ pub async fn get_collection_route_health_v2(
         recall_probe_state,
         pin_state,
     );
+
+    // Patch the recall_drift block when the collection has a
+    // `recall_target:<float>` tag. Otherwise the builder default
+    // (RecallDriftHealth::unwired()) is correct.
+    if let Some(recall_target) =
+        crate::services::collection::recall_target::parse_recall_target(&config)
+    {
+        let baseline_n =
+            crate::services::collection::recall_target::parse_target_vector_count(&config)
+                .unwrap_or(100_000);
+        let current_n = non_negative_stat(stats.vector_count);
+        let metric = match config.distance_metric.and_then(|v| {
+            crate::proto::proximadb_v1::DistanceMetric::try_from(v).ok()
+        }) {
+            Some(crate::proto::proximadb_v1::DistanceMetric::Cosine) => {
+                crate::compute::distance_computation::DistanceMetric::Cosine
+            }
+            Some(crate::proto::proximadb_v1::DistanceMetric::Euclidean) => {
+                crate::compute::distance_computation::DistanceMetric::Euclidean
+            }
+            Some(crate::proto::proximadb_v1::DistanceMetric::DotProduct) => {
+                crate::compute::distance_computation::DistanceMetric::DotProduct
+            }
+            _ => crate::compute::distance_computation::DistanceMetric::Cosine,
+        };
+        let report = crate::index::axis::management::detect_recall_drift(
+            crate::index::axis::management::RecallDriftInput {
+                baseline_n,
+                current_n,
+                recall_target,
+                top_k: 10,
+                dimension: config.dimension,
+                distance_metric: metric,
+            },
+        );
+        let kind: &'static str = match report.drift_kind {
+            crate::index::axis::management::DriftKind::None => "none",
+            crate::index::axis::management::DriftKind::EfSearchOnly => "ef_search_only",
+            crate::index::axis::management::DriftKind::EfConstructionOrM => "rebuild_required",
+        };
+        health.recall_drift = RecallDriftHealth {
+            wired: true,
+            recall_target: Some(recall_target),
+            baseline_vector_count: Some(baseline_n),
+            current_vector_count: Some(current_n),
+            kind,
+            needs_rebuild: report.needs_rebuild(),
+            hot_swap_possible: report.hot_swap_possible(),
+            summary: report.summary,
+        };
+    }
 
     // Phase 8 (F1): patch the discovery block with live snapshot-coordinator
     // state (the discovery_active projection's freshness + lineage).
@@ -1717,6 +1836,7 @@ mod tests {
                 "index_size_bytes",
                 "object_economy",
                 "pinning",
+                "recall_drift",
                 "recall_probe",
                 "record_count",
                 "schema_version",
@@ -1725,6 +1845,56 @@ mod tests {
                 "writes",
             ]
         );
+    }
+
+    #[test]
+    fn route_health_recall_drift_unwired_by_default() {
+        // Without the live handler patching recall_drift (no
+        // recall_target: tag), the builder returns the unwired
+        // sentinel.
+        let h = build_route_health(
+            "c".to_string(),
+            "sst".to_string(),
+            128,
+            "cosine".to_string(),
+            0,
+            0,
+            0,
+        );
+        assert!(!h.recall_drift.wired);
+        assert_eq!(h.recall_drift.kind, "unwired");
+        assert!(!h.recall_drift.needs_rebuild);
+        assert!(!h.recall_drift.hot_swap_possible);
+        assert!(h.recall_drift.recall_target.is_none());
+        assert!(h.recall_drift.summary.is_empty());
+    }
+
+    #[test]
+    fn route_health_recall_drift_kind_strings_are_stable() {
+        // Wire enum-string mapping pinned so dashboards / SIEM
+        // filters can rely on the literals.
+        let kinds = vec![
+            ("unwired", false, false),
+            ("none", false, false),
+            ("ef_search_only", false, true),
+            ("rebuild_required", true, false),
+        ];
+        for (kind, needs_rebuild, hot_swap) in kinds {
+            let h = RecallDriftHealth {
+                wired: true,
+                recall_target: Some(0.95),
+                baseline_vector_count: Some(100_000),
+                current_vector_count: Some(250_000),
+                kind,
+                needs_rebuild,
+                hot_swap_possible: hot_swap,
+                summary: "test".to_string(),
+            };
+            let v = serde_json::to_value(&h).unwrap();
+            assert_eq!(v["kind"], kind);
+            assert_eq!(v["needs_rebuild"], needs_rebuild);
+            assert_eq!(v["hot_swap_possible"], hot_swap);
+        }
     }
 
     #[test]
