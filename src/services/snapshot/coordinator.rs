@@ -112,23 +112,25 @@ impl SnapshotPublishCoordinator {
         }
     }
 
-    /// Per-collection write *volume* since a cutoff: the number of *this*
-    /// collection's WAL manifest entries (flush batches) with `global_lsn`
-    /// strictly greater than `baseline_lsn`.
+    /// Per-collection write *volume* since a cutoff: the number of *records*
+    /// written to *this* collection across its WAL manifest entries with
+    /// `global_lsn` strictly greater than `baseline_lsn` (summing each batch's
+    /// `vector_count`).
     ///
-    /// This is the drift watcher's actual magnitude signal, deliberately a
-    /// **count of this collection's own batches** rather than a global-LSN delta.
-    /// The LSN allocator is global, so a delta of `global_lsn` values is inflated
-    /// by *other* collections' writes between this collection's flushes — a
-    /// low-traffic tenant in a busy system would over-recluster. A batch count is
-    /// a pure function of this collection's flushes, immune to that contamination
-    /// and intuitively calibratable ("recluster after N batches of drift").
+    /// This is the drift watcher's magnitude signal, deliberately a **record
+    /// count for this collection** rather than a global-LSN delta. The LSN
+    /// allocator is global, so a delta of `global_lsn` values is inflated by
+    /// *other* collections' writes between this collection's flushes — a
+    /// low-traffic tenant in a busy system would over-recluster. A per-collection
+    /// record count is immune to that and intuitively calibratable ("recluster
+    /// after N new records").
     ///
     /// `collection_id` must be the canonical internal id (see
     /// [`collection_write_lsn`]). Degrades to 0 without a live manifest.
-    /// Per-batch `vector_count` would give record-granular volume but is not
-    /// populated on the live flush path (passed 0 in the disk manager), so batch
-    /// count is the finest reliable per-collection signal today.
+    /// `vector_count` is populated on the live flush path (the disk manager
+    /// records each batch's `vector_records.len()`); older manifest entries
+    /// written before that wiring carry 0 and simply contribute nothing — a
+    /// conservative undercount that resolves as the baseline advances.
     ///
     /// [`collection_write_lsn`]: Self::collection_write_lsn
     pub async fn collection_writes_since(&self, collection_id: &str, baseline_lsn: u64) -> u64 {
@@ -138,7 +140,8 @@ impl SnapshotPublishCoordinator {
                 .await
                 .iter()
                 .filter(|e| e.global_lsn > baseline_lsn)
-                .count() as u64,
+                .map(|e| e.vector_count)
+                .sum(),
             None => 0,
         }
     }

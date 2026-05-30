@@ -1132,6 +1132,7 @@ mod tests {
                     &batch.batch_id,
                     &data,
                     SerializationFormat::ProtocolBuffers,
+                    1,
                 )
                 .await
                 .expect("Failed to write batch");

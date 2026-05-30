@@ -218,6 +218,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
                     &batch.batch_id,
                     &serialized,
                     SerializationFormat::ProtocolBuffers,
+                    batch.vector_records.len() as u64,
                     should_sync,
                 )
                 .await?;

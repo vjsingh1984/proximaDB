@@ -270,6 +270,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
                     &batch.batch_id,
                     &serialized,
                     SerializationFormat::Bincode,
+                    batch.vector_records.len() as u64,
                     should_sync,
                 )
                 .await?;

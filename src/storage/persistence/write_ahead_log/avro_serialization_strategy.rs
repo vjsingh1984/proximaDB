@@ -203,6 +203,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
                     &batch.batch_id,
                     &serialized,
                     SerializationFormat::Avro,
+                    batch.vector_records.len() as u64,
                     should_sync,
                 )
                 .await?;

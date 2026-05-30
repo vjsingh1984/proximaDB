@@ -169,9 +169,9 @@ async fn insert_varied(http: &reqwest::Client, base: &str, name: &str, range: st
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn drift_watcher_auto_reclusters_after_writes() {
-    // Drive the watcher fast: a single write batch past the last recluster,
-    // swept every 1s. Must be set before the server boots (SharedServices reads
-    // it at construction).
+    // Drive the watcher fast: a single record past the last recluster, swept
+    // every 1s. Must be set before the server boots (SharedServices reads it at
+    // construction).
     unsafe {
         std::env::set_var("PROXIMADB_DRIFT_THRESHOLD_WRITES", "1");
         std::env::set_var("PROXIMADB_DRIFT_INTERVAL_SECS", "1");

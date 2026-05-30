@@ -2,27 +2,28 @@
 //!
 //! The three named signal sources (RecallProbeGate, freshness SLA, AutoML) are
 //! not yet driven by live data (audited 2026-05-30 — none have production
-//! callers). Write volume, however, IS live. This watcher periodically counts
-//! *this collection's* write batches (WAL manifest entries) past the high-water
-//! mark captured at its last completed recluster and, once that count crosses a
-//! threshold, emits a `WorkloadDrift` signal — closing the flywheel on real data:
+//! callers). Write volume, however, IS live. This watcher periodically sums the
+//! *records* written to *this collection* (WAL manifest entries' `vector_count`)
+//! past the high-water mark captured at its last completed recluster and, once
+//! that count crosses a threshold, emits a `WorkloadDrift` signal — closing the
+//! flywheel on real data:
 //!
 //! ```text
 //! writes to THIS collection accumulate
-//!   -> collection_writes_since(@last_recluster) >= THRESHOLD batches
+//!   -> collection_writes_since(@last_recluster) >= THRESHOLD records
 //!   -> DiscoveryService::on_signal(coll, WorkloadDrift)
 //!   -> executor runs Recluster -> atomic republish
 //!   -> baseline (high-water mark) advances -> drift resets
 //! ```
 //!
-//! Per-collection precision (2026-05-30): the magnitude is a **count of this
-//! collection's own flush batches**, not a global-LSN delta. The LSN allocator
-//! is global, so a delta of `global_lsn` values is inflated by *other*
-//! collections' writes between this collection's flushes — a low-traffic tenant
-//! in a busy system would over-recluster. A batch count is immune to that. The
+//! Per-collection precision (2026-05-30): the magnitude is a **record count for
+//! this collection**, not a global-LSN delta. The LSN allocator is global, so a
+//! delta of `global_lsn` values is inflated by *other* collections' writes
+//! between this collection's flushes — a low-traffic tenant in a busy system
+//! would over-recluster. A per-collection record count is immune to that. The
 //! high-water mark (an LSN cutoff) only advances when *this* collection flushes,
 //! so a quiet collection never drifts. Considered by name (discovery keys
-//! jobs/pins by name); batches counted by internal id (the WAL manifest keys
+//! jobs/pins by name); records counted by internal id (the WAL manifest keys
 //! entries by uuid) — the catalog list supplies the name->id mapping.
 //!
 //! Coalescing (in `DiscoveryTrigger`) prevents a sustained drift from flooding
@@ -45,11 +46,11 @@ use super::service::DiscoveryService;
 use super::trigger::TriggerSignal;
 use crate::services::snapshot::SnapshotPublishCoordinator;
 
-/// Default number of *this collection's* write batches since the last recluster
-/// before drift triggers a new one. A per-collection batch count (not a
-/// global-LSN delta), so it isn't inflated by other collections' writes.
+/// Default number of *records* written to *this collection* since the last
+/// recluster before drift triggers a new one. A per-collection record count (not
+/// a global-LSN delta), so it isn't inflated by other collections' writes.
 /// Conservative starting heuristic; tune per workload (AutoML will subsume).
-pub const DEFAULT_DRIFT_THRESHOLD_WRITES: u64 = 64;
+pub const DEFAULT_DRIFT_THRESHOLD_WRITES: u64 = 10_000;
 /// Default interval between drift sweeps.
 pub const DEFAULT_DRIFT_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -84,9 +85,9 @@ fn parse_interval(raw: Option<String>) -> Duration {
         .unwrap_or(DEFAULT_DRIFT_INTERVAL)
 }
 
-/// True when `writes_since` (the count of this collection's write batches past
-/// its recluster baseline) crosses `threshold`. A zero count (never reclustered
-/// + no writes, or manifest absent) never signals.
+/// True when `writes_since` (the number of records written to this collection
+/// past its recluster baseline) crosses `threshold`. A zero count (never
+/// reclustered + no writes, or manifest absent) never signals.
 pub fn drift_exceeds(writes_since: u64, threshold: u64) -> bool {
     writes_since >= threshold && threshold > 0
 }
@@ -168,10 +169,10 @@ impl DriftWatcher {
         emitted
     }
 
-    /// Consider one collection: count *this* collection's write batches since its
-    /// recluster baseline (manifest entries keyed by `internal_id`, baseline
-    /// keyed by `name`), signal if that count crosses the threshold. A missing
-    /// manifest / unknown id yields 0 writes (no spurious signal).
+    /// Consider one collection: sum the records written to *this* collection
+    /// since its recluster baseline (manifest entries keyed by `internal_id`,
+    /// baseline keyed by `name`), signal if that count crosses the threshold. A
+    /// missing manifest / unknown id yields 0 writes (no spurious signal).
     async fn consider(&self, name: &str, internal_id: &str) -> Option<DiscoveryJob> {
         // Baseline is the per-collection write high-water-mark (an LSN cutoff)
         // captured at the last recluster; `None` => never reclustered => count
@@ -210,7 +211,7 @@ pub fn spawn_drift_watcher(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         info!(
-            "DriftWatcher started (interval = {interval:?}, threshold = {} writes)",
+            "DriftWatcher started (interval = {interval:?}, threshold = {} record writes)",
             watcher.threshold_writes
         );
         loop {
@@ -273,7 +274,7 @@ mod tests {
             registry.clone(),
             coordinator.clone(),
         ));
-        // Threshold = 10 write batches.
+        // Threshold = 10 record writes.
         (
             Arc::new(DriftWatcher::new(service, coordinator, 10)),
             registry,
@@ -283,14 +284,14 @@ mod tests {
     #[tokio::test]
     async fn signals_when_writes_exceed_threshold() {
         let (w, _r) = watcher().await;
-        // 20 write batches >= threshold 10 -> signal.
+        // 20 record writes >= threshold 10 -> signal.
         assert!(w.consider_with_writes("c1", 20).is_some());
     }
 
     #[tokio::test]
     async fn within_threshold_does_not_signal() {
         let (w, _r) = watcher().await;
-        // 5 write batches < threshold 10 -> no signal.
+        // 5 record writes < threshold 10 -> no signal.
         assert!(w.consider_with_writes("c1", 5).is_none());
     }
 

@@ -2225,6 +2225,7 @@ impl WriteAheadLogManager {
                     &native_batch.batch_id,
                     &serialized,
                     format,
+                    native_batch.vector_records.len() as u64,
                     should_sync,
                 )
                 .await
@@ -2386,6 +2387,7 @@ impl WriteAheadLogManager {
                     &batch.batch_id,
                     &serialized,
                     format,
+                    batch.vector_records.len() as u64,
                     should_sync,
                 )
                 .await
