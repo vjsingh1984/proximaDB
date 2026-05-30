@@ -64,6 +64,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use arrow::array::RecordBatch;
 use arrow::datatypes::Schema as ArrowSchema;
@@ -313,28 +314,30 @@ impl ProximaOutputFormat {
 /// ProximaDB RecordWriter - writes records to ProximaDB
 pub struct ProximaRecordWriter {
     /// Configuration
-    #[allow(dead_code)]
     config: HadoopShimConfig,
     /// Task ID
     #[allow(dead_code)]
     task_id: i32,
     /// Records written
-    #[allow(dead_code)]
     records_written: u64,
     /// Bytes written
     #[allow(dead_code)]
     bytes_written: u64,
     /// Batch buffer
-    #[allow(dead_code)]
     batch_buffer: Vec<HashMap<String, HadoopWritable>>,
     /// Batch size threshold
-    #[allow(dead_code)]
     batch_size: usize,
+    /// Shared HTTP client for the v2 batch endpoint.
+    http: reqwest::Client,
 }
 
 impl ProximaRecordWriter {
     /// Create new record writer
     pub fn new(config: HadoopShimConfig, task_id: i32) -> Self {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             config,
             task_id,
@@ -342,42 +345,89 @@ impl ProximaRecordWriter {
             bytes_written: 0,
             batch_buffer: Vec::new(),
             batch_size: 1000,
+            http,
         }
     }
 
-    /// Write a key-value pair
-    pub fn write(
+    /// Buffer a single Writable-shaped row without going through the
+    /// (key, value) Hadoop adapter. Public so the contract gate can seed
+    /// the buffer deterministically.
+    pub fn buffer_row(&mut self, row: HashMap<String, HadoopWritable>) {
+        self.batch_buffer.push(row);
+    }
+
+    /// Write a key-value pair. Buffers, and flushes once the buffer
+    /// reaches `batch_size`.
+    pub async fn write(
         &mut self,
         _key: &HadoopWritable,
         value: &HadoopWritable,
     ) -> Result<(), HadoopError> {
-        // Convert Writable to record and buffer
         if let HadoopWritable::MapWritable(map) = value {
             self.batch_buffer.push(map.clone());
 
             if self.batch_buffer.len() >= self.batch_size {
-                self.flush_batch()?;
+                self.flush_now().await?;
             }
         }
         Ok(())
     }
 
-    /// Flush buffered records to ProximaDB
-    fn flush_batch(&mut self) -> Result<(), HadoopError> {
+    /// Flush whatever's in the buffer right now (regardless of batch_size).
+    /// Posts to `POST /api/v2/collections/{collection_id}/records/batch`
+    /// (operationId `insertRecords`). Returns Ok(()) when the buffer is
+    /// empty.
+    pub async fn flush_now(&mut self) -> Result<(), HadoopError> {
         if self.batch_buffer.is_empty() {
             return Ok(());
         }
-
-        // Write: convert Hadoop Writable → Arrow batch → ProximaDB
-        self.records_written += self.batch_buffer.len() as u64;
+        let url = format!(
+            "http://{}:{}/api/v2/collections/{}/records/batch",
+            self.config.host, self.config.port, self.config.collection
+        );
+        let records: Vec<serde_json::Value> = self
+            .batch_buffer
+            .iter()
+            .map(|row| {
+                // Minimal lowering: name-as-id placeholder when no id field;
+                // richer Writable→ProximaRecord conversion is a follow-up.
+                let id = row
+                    .get("id")
+                    .and_then(|v| match v {
+                        HadoopWritable::Text(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                serde_json::json!({ "id": id })
+            })
+            .collect();
+        let body = serde_json::json!({ "records": records });
+        let resp = self
+            .http
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| HadoopError {
+                message: format!("POST {url}: {e}"),
+                code: HadoopErrorCode::Connection,
+            })?;
+        if !resp.status().is_success() {
+            return Err(HadoopError {
+                message: format!("POST {url} returned {}", resp.status()),
+                code: HadoopErrorCode::IO,
+            });
+        }
+        let n = self.batch_buffer.len() as u64;
+        self.records_written = self.records_written.saturating_add(n);
         self.batch_buffer.clear();
-
+        let _ = resp.bytes().await;
         Ok(())
     }
 
     /// Close the writer
-    pub fn close(&mut self) -> Result<(), HadoopError> {
-        self.flush_batch()
+    pub async fn close(&mut self) -> Result<(), HadoopError> {
+        self.flush_now().await
     }
 }
 

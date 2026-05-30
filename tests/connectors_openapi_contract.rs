@@ -29,7 +29,9 @@ use proximadb::connectors::duckdb::{
     DuckDBConnectorConfig, DuckDBInsert, DuckDBTableScan, DuckDBVectorSearch,
     DuckDBVectorSearchParams,
 };
+use proximadb::connectors::hadoop::{HadoopShimConfig, ProximaRecordWriter};
 use proximadb_distance_types::DistanceMetric;
+use std::collections::HashMap;
 
 // ---------------------------------------------------------------------------
 // Smoke test — proves the shared helpers wire up against the spec file.
@@ -169,6 +171,53 @@ async fn duckdb_insert_posts_v2_records_batch() {
 
     let result = svc.insert(&batch).await;
     assert!(result.is_ok(), "insert() must succeed: {result:?}");
+
+    mock.assert_async().await;
+}
+
+// ---------------------------------------------------------------------------
+// Hadoop connector
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn hadoop_flush_batch_posts_v2_records_batch() {
+    let spec = load_spec();
+    let op = operation(
+        &spec,
+        "/api/v2/collections/{collection_id}/records/batch",
+        "post",
+    );
+    assert_eq!(operation_id(op), "insertRecords");
+
+    let server = MockServer::start_async().await;
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v2/collections/hadoop_col/records/batch")
+                .header("content-type", "application/json")
+                .json_body_partial(r#"{"records":[]}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"success":true,"inserted":1,"results":[]}"#);
+        })
+        .await;
+
+    let config = HadoopShimConfig {
+        host: server.host(),
+        port: server.port(),
+        collection: "hadoop_col".to_string(),
+        ..HadoopShimConfig::default()
+    };
+    let mut writer = ProximaRecordWriter::new(config, 1);
+    // Seed one row via the public write path (which buffers + calls
+    // flush_batch when the threshold is hit). We call flush directly
+    // via the public force-flush method so the test isn't tied to the
+    // batch-size threshold.
+    let mut row = HashMap::new();
+    row.insert("id".to_string(), proximadb::connectors::hadoop::HadoopWritable::Text("r1".to_string()));
+    writer.buffer_row(row);
+    let result = writer.flush_now().await;
+    assert!(result.is_ok(), "flush_now() must succeed: {result:?}");
 
     mock.assert_async().await;
 }
