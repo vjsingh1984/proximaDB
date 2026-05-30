@@ -147,6 +147,21 @@ docs-claim-check:
 		exit 1; \
 	fi; \
 	echo "✅ No stale MVP/production claims in release-facing docs."
+	@echo "📝 Checking that internal marketing copy is not referenced from public docs (TD-085)..."
+	@xrefs=$$(grep -rnE "_internal/enterprise/|_internal/business/" docs/ \
+		--exclude-dir=_internal --exclude-dir=_archive \
+		--exclude=TECHNICAL_DEBT.adoc 2>/dev/null); \
+	if [ -n "$$xrefs" ]; then \
+		echo "❌ Public docs reference internal marketing copy:"; \
+		echo "$$xrefs"; \
+		echo ""; \
+		echo "Files under docs/_internal/enterprise/ and docs/_internal/business/"; \
+		echo "are sealed internal-only (TD-085). Move the referenced material out of"; \
+		echo "those directories, or remove the reference from the public doc."; \
+		echo "The Technical Debt Register is exempt from this rule (it tracks the work)."; \
+		exit 1; \
+	fi; \
+	echo "✅ No public-doc references to internal marketing copy."
 
 # Minimum smoke battery for the release cut. Each entry must be a non-ignored test
 # that exercises the canonical v2 record path or one of the diagnostic blocks

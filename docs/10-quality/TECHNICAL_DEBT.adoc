@@ -1177,10 +1177,10 @@ physical layouts.
 | Marketing copy in `docs/_internal/enterprise/` and `docs/_internal/business/` overclaims
 | P4
 | LOW
-| Open — owner: product
+| Engineering side resolved — product scrub still open
 | Round-2 audit (2026-05-28) found multiple overclaims that survived round-1 cleanup because the round-1 `docs-claim-check` allowlisted internal marketing paths. Examples: "85-96% cost reduction", "296% performance" competitor claims, "Industry-leading" superlatives.
 | 1 day
-| Out of scope for the engineering reconciliation. Acceptance: product owner reviews and either (a) scrubs the claims, (b) cites a published evidence source, or (c) scopes the directories to internal-only audiences.
+| **PARTIALLY RESOLVED 2026-05-30** by sealing the internal marketing copy: (1) both files (`docs/_internal/enterprise/README.adoc`, `docs/_internal/business/competitive_advantages.adoc`) now carry an **INTERNAL USE ONLY — DO NOT PUBLISH EXTERNALLY** banner forbidding quotation in customer-facing artifacts without product-owner sign-off and an evidence trail; (2) `make docs-claim-check` (Makefile) gained a rule that **hard-fails** if any path outside `docs/_internal/` references either `docs/_internal/enterprise/` or `docs/_internal/business/` (the Technical Debt Register is exempt because it tracks the work). The leakage risk is closed. **Remaining (product-owner scope)**: actually scrub the "85-96% cost reduction" / "296% performance" / etc. claims or cite a reproducible methodology, then the files can be moved out of `_internal/` if the underlying numbers survive scrutiny.
 
 | TD-086
 | Continuous Discovery surface + atomic snapshot republish (CS/CD loop)
