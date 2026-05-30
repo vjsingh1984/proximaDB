@@ -2,18 +2,26 @@
 //!
 //! The three named signal sources (RecallProbeGate, freshness SLA, AutoML) are
 //! not yet driven by live data (audited 2026-05-30 — none have production
-//! callers). Write volume, however, IS live: the global manifest LSN advances on
-//! every write. This watcher periodically compares a collection's current LSN
-//! against the `snapshot_to_lsn` of its last completed recluster and, once the
-//! delta crosses a threshold, emits a `WorkloadDrift` signal — closing the
-//! flywheel on real data:
+//! callers). Write volume, however, IS live. This watcher periodically compares
+//! a collection's **per-collection** write high-water-mark (the highest global
+//! LSN among *its own* manifest entries — not the global allocator, which
+//! advances on every collection's writes) against the high-water-mark captured
+//! at its last completed recluster and, once the delta crosses a threshold,
+//! emits a `WorkloadDrift` signal — closing the flywheel on real data:
 //!
 //! ```text
-//! writes accumulate -> current_lsn - last_recluster_lsn >= THRESHOLD
+//! writes to THIS collection accumulate
+//!   -> collection_write_lsn(now) - collection_write_lsn(@last_recluster) >= THRESHOLD
 //!   -> DiscoveryService::on_signal(coll, WorkloadDrift)
 //!   -> executor runs Recluster -> atomic republish
-//!   -> baseline (snapshot_to_lsn) advances -> drift resets
+//!   -> baseline advances -> drift resets
 //! ```
+//!
+//! Per-collection precision (2026-05-30): the watcher reads each collection's
+//! own manifest high-water-mark, so a *quiet* collection no longer reclusters
+//! just because *other* collections are writing. Considered by name (discovery
+//! keys jobs/pins by name); write volume read by internal id (the WAL manifest
+//! keys entries by uuid) — the catalog list supplies the name->id mapping.
 //!
 //! Coalescing (in `DiscoveryTrigger`) prevents a sustained drift from flooding
 //! the registry; a completed recluster advances the baseline. AutoML will later
@@ -118,34 +126,36 @@ impl DriftWatcher {
     }
 
     /// One sweep. Considers the union of (a) collections with discovery history
-    /// and (b) collections with a served index (so a never-reclustered
-    /// collection is picked up automatically). Returns the number of signals
-    /// emitted (coalesced considerations don't count).
+    /// and (b) every collection in the catalog (so a never-reclustered
+    /// collection is picked up automatically). Each is considered by **name**
+    /// (the discovery pipeline keys jobs/pins by name) but its write volume is
+    /// read by **internal id** (the WAL manifest keys entries by uuid) — hence
+    /// the (name, id) pairing. Returns the number of signals emitted (coalesced
+    /// considerations don't count).
     pub async fn tick(&self) -> usize {
-        let mut seen = std::collections::HashSet::new();
-        let mut collections: Vec<String> = Vec::new();
-        for c in self.service.registry().collections() {
-            if seen.insert(c.clone()) {
-                collections.push(c);
-            }
-        }
+        // name -> internal id. The id is used solely for the per-collection
+        // write-volume lookup; the catalog list is the authoritative source of
+        // the name->id mapping (proto `Collection` carries both).
+        let mut by_name: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         if let Some(source) = &self.collection_source {
             if let Ok(cols) = source.list_collections(None).await {
                 for c in cols {
-                    // proto `Collection` carries the name under `config`, not at
-                    // the top level (the discovery pipeline keys jobs/pins by name).
-                    if let Some(name) = c.config.as_ref().map(|cfg| cfg.name.clone())
-                        && seen.insert(name.clone())
-                    {
-                        collections.push(name);
+                    if let Some(name) = c.config.as_ref().map(|cfg| cfg.name.clone()) {
+                        by_name.entry(name).or_insert(c.id);
                     }
                 }
             }
         }
+        // History-only collections may not be in the catalog list; fall back to
+        // name-as-id (the manifest lookup then returns 0 — no spurious signal).
+        for c in self.service.registry().collections() {
+            by_name.entry(c.clone()).or_insert_with(|| c.clone());
+        }
 
         let mut emitted = 0;
-        for collection_id in collections {
-            if self.consider(&collection_id).await.is_some() {
+        for (name, internal_id) in by_name {
+            if self.consider(&name, &internal_id).await.is_some() {
                 emitted += 1;
             }
         }
@@ -155,23 +165,19 @@ impl DriftWatcher {
         emitted
     }
 
-    /// Consider one collection: read its current LSN (via the snapshot
-    /// coordinator's manifest pin), compare to its recluster baseline, signal if
-    /// drifted. Pin failure degrades to LSN 0 (no spurious signal).
-    async fn consider(&self, collection_id: &str) -> Option<DiscoveryJob> {
-        let current_lsn = self
-            .coordinator
-            .pin(collection_id)
-            .await
-            .ok()
-            .map(|p| p.to_lsn)
-            .unwrap_or(0);
-        self.consider_with_lsn(collection_id, current_lsn).await
+    /// Consider one collection: read *this* collection's write high-water-mark
+    /// (manifest entries keyed by `internal_id`), compare to its recluster
+    /// baseline (keyed by `name`), signal if drifted. A missing manifest /
+    /// unknown id degrades to LSN 0 (no spurious signal).
+    async fn consider(&self, name: &str, internal_id: &str) -> Option<DiscoveryJob> {
+        let current_lsn = self.coordinator.collection_write_lsn(internal_id).await;
+        self.consider_with_lsn(name, current_lsn).await
     }
 
     /// Testable decision core: decide using an explicit current LSN (no manifest
-    /// needed). Returns the enqueued job, or `None` if within threshold or
-    /// coalesced against an in-flight recluster.
+    /// needed). `collection_id` is the user-facing **name** (drift baseline +
+    /// `on_signal` key by name). Returns the enqueued job, or `None` if within
+    /// threshold or coalesced against an in-flight recluster.
     async fn consider_with_lsn(
         &self,
         collection_id: &str,
@@ -277,7 +283,9 @@ mod tests {
         let (w, registry) = watcher().await;
         let mut j = DiscoveryJob::new("c1", DiscoveryJobKind::Recluster);
         j.status = DiscoveryJobStatus::Complete;
-        j.snapshot_to_lsn = 100;
+        // Baseline is now the per-collection write high-water-mark, not the
+        // global snapshot upper bound.
+        j.collection_write_lsn = 100;
         registry.upsert(j);
         // 5 LSN past baseline 100 < threshold 10 -> no signal.
         assert!(w.consider_with_lsn("c1", 105).await.is_none());

@@ -66,6 +66,17 @@ impl DiscoveryJobExecutor {
         job.snapshot_from_lsn = pin.from_lsn;
         job.snapshot_to_lsn = pin.to_lsn;
         job.checkpoint_id = pin.checkpoint_id;
+        // Capture the per-collection write high-water-mark as the drift baseline.
+        // `pin.to_lsn` is dominated by the global allocator (other collections'
+        // writes), so it can't serve as a per-collection baseline; resolve the
+        // user-facing name to the internal id the WAL keys entries under and read
+        // *this* collection's manifest high-water-mark. No vector_ops (walking
+        // skeleton / lightweight tests) => baseline stays 0.
+        if let Some(vops) = self.vector_ops.as_ref() {
+            let internal_id = vops.resolve_collection_id(&job.collection_id).await;
+            job.collection_write_lsn =
+                self.coordinator.collection_write_lsn(&internal_id).await;
+        }
         self.registry.upsert(job.clone());
 
         // 2. Mark the discovery projection Updating (serving still reads prior).

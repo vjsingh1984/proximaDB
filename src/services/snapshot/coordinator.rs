@@ -82,6 +82,33 @@ impl SnapshotPublishCoordinator {
         })
     }
 
+    /// Per-collection write high-water-mark: the highest global LSN among *this
+    /// collection's* manifest entries — write progress for THIS collection
+    /// alone, deliberately **not** maxed with the global LSN allocator (which is
+    /// what [`pin`](Self::pin)'s `to_lsn` does for snapshot completeness).
+    ///
+    /// This is the drift watcher's signal: comparing it against the recluster
+    /// baseline measures writes to *this* collection, so a quiet collection no
+    /// longer drifts just because *other* collections are writing (the global
+    /// allocator advances on every write, collection-agnostic).
+    ///
+    /// `collection_id` must be the canonical internal id the WAL keys entries
+    /// under (resolve the user-facing name first via
+    /// `VectorOperationsService::resolve_collection_id`). Degrades to 0 without a
+    /// live manifest, so it stays testable in minimal harnesses.
+    pub async fn collection_write_lsn(&self, collection_id: &str) -> u64 {
+        match crate::storage::persistence::write_ahead_log::manifest::get_service() {
+            Some(svc) => svc
+                .get_collection_entries(collection_id)
+                .await
+                .iter()
+                .map(|e| e.global_lsn)
+                .max()
+                .unwrap_or(0),
+            None => 0,
+        }
+    }
+
     /// Begin a republish: mark the discovery projection `Updating`. Serving
     /// keeps reading the prior (Fresh) state until `commit_publish`.
     pub async fn begin_publish(&self, pin: &SnapshotPin) -> Result<()> {

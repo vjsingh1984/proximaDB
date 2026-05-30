@@ -57,9 +57,11 @@ impl DiscoveryService {
         self.registry.list_for_collection(collection_id)
     }
 
-    /// The `snapshot_to_lsn` of the collection's most recent *completed*
-    /// `Recluster` job, or `None` if it has never been reclustered. This is the
-    /// drift watcher's baseline — write volume past it measures staleness.
+    /// The per-collection write high-water-mark (`collection_write_lsn`) captured
+    /// at the collection's most recent *completed* `Recluster` job, or `None` if
+    /// it has never been reclustered. This is the drift watcher's baseline —
+    /// write volume to *this* collection past it measures staleness (vs the
+    /// global `snapshot_to_lsn`, which advances on every collection's writes).
     pub fn last_reclustered_lsn(&self, collection_id: &str) -> Option<u64> {
         self.registry
             .list_for_collection(collection_id)
@@ -68,7 +70,7 @@ impl DiscoveryService {
                 j.kind == DiscoveryJobKind::Recluster
                     && j.status == DiscoveryJobStatus::Complete
             })
-            .map(|j| j.snapshot_to_lsn)
+            .map(|j| j.collection_write_lsn)
     }
 
     /// Shared registry handle (used to construct the executor).

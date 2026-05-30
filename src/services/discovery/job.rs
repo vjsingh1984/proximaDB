@@ -56,6 +56,14 @@ pub struct DiscoveryJob {
     pub snapshot_from_lsn: u64,
     /// Pinned snapshot upper bound (global LSN).
     pub snapshot_to_lsn: u64,
+    /// Per-collection write high-water-mark at pin time: the highest global LSN
+    /// among *this collection's* WAL manifest entries (not the global
+    /// allocator). This is the drift baseline — write volume to *this*
+    /// collection past it measures per-collection staleness, so a quiet
+    /// collection does not drift on other collections' writes. `#[serde(default)]`
+    /// keeps older persisted jobs (without the field) deserializable as 0.
+    #[serde(default)]
+    pub collection_write_lsn: u64,
     /// Manifest checkpoint id at pin time.
     pub checkpoint_id: u64,
     /// Records considered (input to the refinement pass).
@@ -83,6 +91,7 @@ impl DiscoveryJob {
             completed_at_ms: None,
             snapshot_from_lsn: 0,
             snapshot_to_lsn: 0,
+            collection_write_lsn: 0,
             checkpoint_id: 0,
             input_record_count: 0,
             refined_record_count: 0,
