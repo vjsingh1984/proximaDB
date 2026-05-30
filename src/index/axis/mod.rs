@@ -158,6 +158,8 @@ pub use indexes::{
     LshStats,
     PostingListConfig,
     // IVF
+    SerializableIvfConfig,
+    SerializableIvfState,
     UnifiedIvfConfig,
     UnifiedIvfIndex,
     create_hnsw_index,

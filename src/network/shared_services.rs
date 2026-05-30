@@ -678,6 +678,11 @@ impl SharedServices {
         let mut axis_manager_inner =
             crate::index::AxisManager::new(crate::index::AxisConfig::default()).await?;
         axis_manager_inner.set_recall_probe_gate(recall_probe_gate.clone());
+        // TD-087 Slice B: persist trained IVF indexes under the data dir so a cold
+        // collection warms from disk on first query (no-op without a data dir).
+        if let Some(cfg) = opt_config {
+            axis_manager_inner.set_index_persist_dir(cfg.server.data_dir.join("axis_indexes"));
+        }
         let axis_manager = Arc::new(axis_manager_inner);
         debug!("✅ SharedServices::new - AxisManager created successfully");
 

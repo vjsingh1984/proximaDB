@@ -20,7 +20,10 @@
 //! with support for incremental updates and delta management.
 
 use crate::index::axis::filterable_metadata::FilterableHnswMetadata;
-use crate::index::axis::{AxisHnswConfig, AxisHnswIndex, UnifiedIvfConfig, UnifiedIvfIndex};
+use crate::index::axis::{
+    AxisHnswConfig, AxisHnswIndex, SerializableIvfState, UnifiedIvfIndex,
+};
+use std::path::Path;
 use bincode;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -305,9 +308,20 @@ impl IndexSerializer {
         Ok((index, header.metadata))
     }
 
-    /// Serialize IVF index to bytes
-    pub fn serialize_ivf(index: &UnifiedIvfIndex, collection_id: &str) -> Result<Vec<u8>> {
+    /// Serialize a trained IVF index to bytes (TD-087 Slice B). Async because
+    /// the IVF stores (`AdaptiveStore` posting lists + vector store) are async.
+    /// The payload is the `SerializableIvfState` (config essentials + centroids +
+    /// raw vectors); the header records vector count, dimension, and a binary-tier
+    /// marker in `custom_metadata`.
+    pub async fn serialize_ivf(index: &UnifiedIvfIndex, collection_id: &str) -> Result<Vec<u8>> {
         info!("Serializing IVF index for collection {}", collection_id);
+
+        let state = index
+            .export_state()
+            .await
+            .map_err(|e| SerializationError::Io(std::io::Error::other(e.to_string())))?;
+        let index_data = bincode::serialize(&state)?;
+        let checksum = proximadb_kernel::checksum::crc32_fast(&index_data);
 
         let metadata = AxisSerializedIndexMetadata {
             index_type: Index::Ivf,
@@ -315,29 +329,19 @@ impl IndexSerializer {
             num_vectors: index.len(),
             dimension: index.dimension(),
             timestamp: unix_now_secs(),
-            checksum: 0,
+            checksum,
             is_delta: false,
             base_checkpoint_id: None,
-            custom_metadata: None,
+            // Binary-tier marker (TD-087): 1 = the 1-bit tier is populated.
+            custom_metadata: Some(vec![u8::from(index.has_binary_tier())]),
         };
-
-        // Serialize index data
-        let index_data = index.serialize_internal()?;
-
-        // Calculate checksum
-        let checksum = proximadb_kernel::checksum::crc32_fast(&index_data);
-
-        // Create header with updated checksum
-        let mut final_metadata = metadata;
-        final_metadata.checksum = checksum;
 
         let header = IndexHeader {
             magic: *AXIS_MAGIC,
             version: VERSION,
-            metadata: final_metadata,
+            metadata,
         };
 
-        // Combine header and data
         let mut result = Vec::new();
         let header_bytes = bincode::serialize(&header)?;
         result.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
@@ -348,24 +352,22 @@ impl IndexSerializer {
         Ok(result)
     }
 
-    /// Deserialize IVF index from bytes
-    pub fn deserialize_ivf(
+    /// Deserialize a trained IVF index from bytes (TD-087 Slice B). The payload
+    /// is self-describing (embedded config), so no external config is needed:
+    /// the centroids are installed and `add_vector` is replayed to rebuild
+    /// posting lists, binary codes, PQ codes, and the vector store.
+    pub async fn deserialize_ivf(
         data: &[u8],
-        config: &UnifiedIvfConfig,
     ) -> Result<(UnifiedIvfIndex, AxisSerializedIndexMetadata)> {
         info!("Deserializing IVF index");
 
-        // Read header length
         if data.len() < 4 {
             return Err(SerializationError::Io(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
                 "Data too short",
             )));
         }
-
         let header_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-
-        // Read header
         if data.len() < 4 + header_len {
             return Err(SerializationError::Io(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
@@ -374,32 +376,56 @@ impl IndexSerializer {
         }
 
         let header: IndexHeader = bincode::deserialize(&data[4..4 + header_len])?;
-
-        // Validate magic and version
         if header.magic != *AXIS_MAGIC {
             return Err(SerializationError::InvalidMagic);
         }
-
         if header.version > VERSION {
             return Err(SerializationError::UnsupportedVersion(header.version));
         }
 
-        // Validate checksum
         let index_data = &data[4 + header_len..];
         let checksum = proximadb_kernel::checksum::crc32_fast(index_data);
-
         if checksum != header.metadata.checksum {
             return Err(SerializationError::ChecksumMismatch);
         }
 
-        // Deserialize index
-        let index = UnifiedIvfIndex::deserialize_internal(index_data, config)?;
+        let state: SerializableIvfState = bincode::deserialize(index_data)?;
+        let config = state.config.to_config();
+        let mut index = UnifiedIvfIndex::new(header.metadata.collection_id.clone(), config)
+            .map_err(|e| SerializationError::Io(std::io::Error::other(e.to_string())))?;
+        index
+            .restore_state(state)
+            .await
+            .map_err(|e| SerializationError::Io(std::io::Error::other(e.to_string())))?;
 
         info!(
             "Deserialized IVF index with {} vectors",
             header.metadata.num_vectors
         );
         Ok((index, header.metadata))
+    }
+
+    /// Persist a trained IVF index to `path` (creates parent dirs). Disk wrapper
+    /// around `serialize_ivf` (TD-087 Slice B).
+    pub async fn persist_ivf_index(
+        index: &UnifiedIvfIndex,
+        collection_id: &str,
+        path: &Path,
+    ) -> Result<()> {
+        let bytes = Self::serialize_ivf(index, collection_id).await?;
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::write(path, bytes).await?;
+        Ok(())
+    }
+
+    /// Load a trained IVF index from `path`. Disk wrapper around `deserialize_ivf`.
+    pub async fn load_ivf_index(
+        path: &Path,
+    ) -> Result<(UnifiedIvfIndex, AxisSerializedIndexMetadata)> {
+        let bytes = tokio::fs::read(path).await?;
+        Self::deserialize_ivf(&bytes).await
     }
 
     /// Create a checkpoint from current index state
@@ -767,56 +793,11 @@ impl AxisHnswIndex {
     }
 }
 
-/// Extension trait for IVF serialization
-impl SerializableIndex for UnifiedIvfIndex {
-    fn index_type(&self) -> Index {
-        Index::Ivf
-    }
-
-    fn serialize_to_bytes(&self, collection_id: &str) -> Result<Vec<u8>> {
-        IndexSerializer::serialize_ivf(self, collection_id)
-    }
-
-    fn len(&self) -> usize {
-        // This would call the actual IVF index method
-        0 // Placeholder
-    }
-
-    fn dimension(&self) -> usize {
-        // This would call the actual IVF index method
-        0 // Placeholder
-    }
-
-    fn serialize_internal(&self) -> Result<Vec<u8>> {
-        // Serialize IVF-specific data structures
-        // This would include:
-        // - Centroids
-        // - Posting lists
-        // - Vector assignments
-        // - Training data if needed
-
-        // For now, return placeholder
-        Ok(vec![])
-    }
-}
-
-/// Extension trait for IVF deserialization
-impl UnifiedIvfIndex {
-    fn deserialize_internal(_data: &[u8], config: &UnifiedIvfConfig) -> Result<Self> {
-        // Deserialize IVF-specific data structures
-        // This would reconstruct:
-        // - Centroids
-        // - Posting lists
-        // - Vector assignments
-
-        // For now, return placeholder with collection_id
-        let collection_id = "default_collection".to_string(); // Placeholder collection ID
-        match UnifiedIvfIndex::new(collection_id, config.clone()) {
-            Ok(index) => Ok(index),
-            Err(e) => Err(SerializationError::Io(std::io::Error::other(e.to_string()))),
-        }
-    }
-}
+// NOTE (TD-087 Slice B): IVF no longer implements the sync `SerializableIndex`
+// trait — its stores are async, so serialization goes through the async
+// `IndexSerializer::serialize_ivf`/`deserialize_ivf` + `UnifiedIvfIndex::
+// export_state`/`restore_state` instead. The previous trait impl was a stub
+// (empty bytes / empty index) and had no callers.
 
 /// Manager for delta updates
 pub struct DeltaManager {

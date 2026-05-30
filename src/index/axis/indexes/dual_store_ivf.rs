@@ -2002,6 +2002,171 @@ pub struct IvfStats {
     pub total_memory_bytes: usize,
 }
 
+// ===========================================================================
+// TD-087 Slice B: IVF index persistence
+//
+// A trained IVF index is fully determined by its centroids + the raw (id, fp32)
+// vectors: `add_vector` (which requires trained centroids) deterministically
+// re-derives cluster assignment, posting lists, binary codes, and PQ codes. So
+// the serialized form persists only the config essentials, centroids, and
+// vectors; restore sets the centroids trained and replays `add_vector`. This
+// reuses the live insert path and guarantees an identical reloaded index.
+// ===========================================================================
+
+/// Persisted config essentials (the file is self-describing so load-on-demand
+/// needs no external config — `n_clusters`/`n_probe` are not in the collection
+/// config). `distance_metric` is the proto `DistanceMetric` i32 code.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableIvfConfig {
+    pub n_clusters: usize,
+    pub n_probe: usize,
+    pub dimension: usize,
+    pub distance_metric: i32,
+    pub quantization_bits: usize,
+    pub use_pq: bool,
+    pub pq_subspaces: usize,
+    pub use_binary: bool,
+}
+
+impl SerializableIvfConfig {
+    fn from_config(c: &UnifiedIvfConfig) -> Self {
+        Self {
+            n_clusters: c.n_clusters,
+            n_probe: c.n_probe,
+            dimension: c.dimension,
+            distance_metric: c.distance_metric as i32,
+            quantization_bits: c.quantization_bits,
+            use_pq: c.use_pq,
+            pq_subspaces: c.pq_subspaces,
+            use_binary: c.use_binary,
+        }
+    }
+
+    /// Reconstruct a `UnifiedIvfConfig` (non-essential training knobs default).
+    pub fn to_config(&self) -> UnifiedIvfConfig {
+        let distance_metric =
+            DistanceMetric::try_from(self.distance_metric).unwrap_or(DistanceMetric::Cosine);
+        UnifiedIvfConfig {
+            n_clusters: self.n_clusters,
+            n_probe: self.n_probe,
+            dimension: self.dimension,
+            distance_metric,
+            quantization_bits: self.quantization_bits,
+            use_pq: self.use_pq,
+            pq_subspaces: self.pq_subspaces,
+            use_binary: self.use_binary,
+            ..UnifiedIvfConfig::default()
+        }
+    }
+}
+
+/// Serialized form of a trained `UnifiedIvfIndex` (bincode payload, wrapped by
+/// `IndexSerializer::serialize_ivf` with the header/magic/CRC framing).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableIvfState {
+    /// Format version for forward-compatible evolution.
+    pub version: u32,
+    /// Indexed vector count at serialize time (validation).
+    pub vector_count: usize,
+    /// Config essentials (self-describing reload).
+    pub config: SerializableIvfConfig,
+    /// Trained k-means centroids.
+    pub centroids: Vec<Vec<f32>>,
+    /// Raw `(id, fp32)` vectors — replayed through `add_vector` on restore.
+    pub vectors: Vec<(String, Vec<f32>)>,
+}
+
+/// Current `SerializableIvfState` version.
+pub const IVF_STATE_VERSION: u32 = 1;
+
+impl CentroidStore {
+    /// Reconstruct a trained centroid store from persisted centroids (cluster
+    /// stats/sizes start empty and are repopulated as `add_vector` replays).
+    fn restore(centroids: Vec<Vec<f32>>, dimension: usize) -> Self {
+        let n = centroids.len();
+        Self {
+            centroids: Arc::new(centroids),
+            dimension,
+            trained: true,
+            cluster_sizes: (0..n).map(|_| AtomicUsize::new(0)).collect(),
+            cluster_stats: vec![ClusterStats::default(); n],
+        }
+    }
+}
+
+impl UnifiedIvfIndex {
+    /// Number of indexed vectors (real `len()` for the serializer trait).
+    pub fn len(&self) -> usize {
+        self.vector_count.load(Ordering::Relaxed)
+    }
+
+    /// Whether the index is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Configured vector dimension.
+    pub fn dimension(&self) -> usize {
+        self.config.dimension
+    }
+
+    /// Whether the binary tier is populated (recorded in serialized metadata).
+    pub fn has_binary_tier(&self) -> bool {
+        !self.binary_codes.is_empty()
+    }
+
+    /// Capture the trained index as a `SerializableIvfState`: the config
+    /// essentials, centroids, and every `(id, fp32)` vector (enumerated via the
+    /// posting-list ids and read back from the vector store).
+    pub async fn export_state(&self) -> Result<SerializableIvfState> {
+        let centroids: Vec<Vec<f32>> = self.centroids.centroids.as_ref().clone();
+
+        // Collect all ids from the posting lists (every indexed vector lives in
+        // exactly one cluster's posting list).
+        let mut ids: Vec<String> = Vec::new();
+        for key in self.posting_lists.keys().await {
+            if let Some(posting_list) = self.posting_lists.get(&key).await {
+                ids.extend(posting_list.vector_ids.iter().cloned());
+            }
+        }
+
+        // Read each fp32 vector from the store (same access path as Stage-2 rerank).
+        let mut vectors: Vec<(String, Vec<f32>)> = Vec::with_capacity(ids.len());
+        if let Some(collection_entry) = self.vectors.get(&self.collection_id) {
+            let collection = collection_entry
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for id in ids {
+                if let Some(view) = collection.get(&id)
+                    && let Some(data) = view.as_f32()
+                {
+                    vectors.push((id, data.to_vec()));
+                }
+            }
+        }
+
+        Ok(SerializableIvfState {
+            version: IVF_STATE_VERSION,
+            vector_count: vectors.len(),
+            config: SerializableIvfConfig::from_config(&self.config),
+            centroids,
+            vectors,
+        })
+    }
+
+    /// Reconstruct a trained index from `state`: install the centroids (trained)
+    /// then replay `add_vector` for each vector so posting lists, binary codes,
+    /// PQ codes, and the vector store are rebuilt exactly as in the live path.
+    pub async fn restore_state(&mut self, state: SerializableIvfState) -> Result<()> {
+        let dimension = state.config.dimension;
+        self.centroids = CentroidStore::restore(state.centroids, dimension);
+        for (id, vector) in state.vectors {
+            self.add_vector(id, vector, None).await?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{IvfClusteringMethod, PartitionedKey};
@@ -2172,6 +2337,105 @@ mod tests {
             gated.iter().map(|(id, _)| id).collect::<Vec<_>>(),
             binary_ids
         );
+    }
+
+    // ─── TD-087 Slice B: serialization round-trip ───────────────────────────
+
+    #[tokio::test]
+    async fn serialize_roundtrip_preserves_search_topk() {
+        use crate::index::axis::storage::serialization::IndexSerializer;
+        let _ = proximadb_hardware::hardware_capabilities();
+        let mut index =
+            UnifiedIvfIndex::new("c_ser".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let data = mixed_sign_vectors();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+
+        let query = vec![0.9, -0.8, 1.1, -0.7];
+        let exact_before = index.search(&query, 3, None).await.unwrap();
+        let binary_before = index
+            .search_with_binary_acceleration(&query, 3, None)
+            .await
+            .unwrap();
+
+        // Serialize → deserialize into a fresh index (no retrain).
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_ser").await.unwrap();
+        let (restored, meta) = IndexSerializer::deserialize_ivf(&bytes).await.unwrap();
+        assert_eq!(meta.num_vectors, 8);
+        assert_eq!(meta.dimension, 4);
+        assert_eq!(restored.len(), 8);
+        assert!(restored.has_binary_tier(), "binary tier reconstructed on restore");
+
+        // The reloaded index returns identical top-k on both routes.
+        let ids = |v: &Vec<(String, f32)>| v.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>();
+        let exact_after = restored.search(&query, 3, None).await.unwrap();
+        let binary_after = restored
+            .search_with_binary_acceleration(&query, 3, None)
+            .await
+            .unwrap();
+        assert_eq!(ids(&exact_after), ids(&exact_before), "exact top-k identical after reload");
+        assert_eq!(
+            ids(&binary_after),
+            ids(&binary_before),
+            "binary two-stage top-k identical after reload"
+        );
+    }
+
+    #[tokio::test]
+    async fn deserialize_rejects_corrupted_or_truncated_bytes() {
+        use crate::index::axis::storage::serialization::IndexSerializer;
+        let _ = proximadb_hardware::hardware_capabilities();
+        let mut index =
+            UnifiedIvfIndex::new("c_corrupt".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let data = mixed_sign_vectors();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let mut bytes = IndexSerializer::serialize_ivf(&index, "c_corrupt").await.unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0xFF; // flip a payload byte → checksum mismatch
+        assert!(IndexSerializer::deserialize_ivf(&bytes).await.is_err());
+        assert!(IndexSerializer::deserialize_ivf(&bytes[..2]).await.is_err()); // truncated
+    }
+
+    #[tokio::test]
+    async fn persist_and_load_ivf_index_roundtrips_on_disk() {
+        use crate::index::axis::storage::serialization::IndexSerializer;
+        let _ = proximadb_hardware::hardware_capabilities();
+        let mut index =
+            UnifiedIvfIndex::new("c_disk".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let data = mixed_sign_vectors();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let path = std::env::temp_dir().join(format!(
+            "proximadb_ivf_persist_{}/ivf.bin",
+            uuid::Uuid::new_v4().simple()
+        ));
+        IndexSerializer::persist_ivf_index(&index, "c_disk", &path)
+            .await
+            .unwrap();
+        assert!(path.exists());
+        let (restored, _meta) = IndexSerializer::load_ivf_index(&path).await.unwrap();
+        let query = vec![0.9, -0.8, 1.1, -0.7];
+        assert_eq!(
+            restored.search(&query, 1, None).await.unwrap()[0].0,
+            index.search(&query, 1, None).await.unwrap()[0].0
+        );
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]

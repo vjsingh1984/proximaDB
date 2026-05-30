@@ -9,7 +9,8 @@ pub mod lsh_index;
 // Re-export main types
 pub use annoy_index::{AnnoyStats, AxisAnnoyConfig, AxisAnnoyIndex};
 pub use dual_store_ivf::{
-    CentroidConfig, IvfStats, PostingListConfig, UnifiedIvfConfig, UnifiedIvfIndex,
+    CentroidConfig, IvfStats, PostingListConfig, SerializableIvfConfig, SerializableIvfState,
+    UnifiedIvfConfig, UnifiedIvfIndex,
 };
 pub use global_id_index::{
     GlobalIdIndex, GlobalIdIndexConfig, GlobalIdIndexStats, StorageLocation,
