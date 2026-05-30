@@ -1478,10 +1478,17 @@ impl SharedServices {
             // RecallProbeGate, so the quantized IVF route opens once recall is
             // verified. Always-on (the watch sender is intentionally leaked,
             // matching the discovery executor).
-            let observer = Arc::new(crate::services::recall_observer::RecallObserver::new(
-                axis_manager.clone(),
-                vector_operations_service.clone(),
-            ));
+            let observer = Arc::new(
+                crate::services::recall_observer::RecallObserver::new(
+                    axis_manager.clone(),
+                    vector_operations_service.clone(),
+                )
+                // F1 trigger arm: a recall regression (gate open -> closed) is a
+                // quality-driven discovery signal orthogonal to write-volume
+                // drift — emit RecallDegraded so the index reclusters even when
+                // recall degrades without new writes (coalesced, non-mutating).
+                .with_discovery(discovery_service.clone()),
+            );
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
             std::mem::forget(shutdown_tx);
             #[allow(clippy::let_underscore_future)]
@@ -1490,7 +1497,7 @@ impl SharedServices {
                 shutdown_rx,
                 crate::services::recall_observer::DEFAULT_OBSERVE_INTERVAL,
             );
-            info!("✅ SharedServices: RecallObserver spawned (Phase 5 recall gate)");
+            info!("✅ SharedServices: RecallObserver spawned (Phase 5 recall gate + F1 recall-degradation trigger)");
         }
         {
             // Trigger arm (T1.9): the write-volume drift watcher is the first

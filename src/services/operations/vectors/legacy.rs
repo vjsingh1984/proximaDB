@@ -789,6 +789,16 @@ impl VectorOperationsService {
         }
     }
 
+    /// Reverse of [`resolve_collection_id`](Self::resolve_collection_id): resolve
+    /// an internal id (or name) to the user-facing collection **name**. Used by
+    /// the recall observer, which holds AxisManager index keys (uuids) but must
+    /// signal discovery by name (the discovery pipeline keys jobs/pins by name).
+    /// Returns `None` if the collection can't be loaded or carries no config.
+    pub async fn resolve_collection_name(&self, identifier: &str) -> Option<String> {
+        let collection = self.get_or_load_collection(identifier).await.ok()?;
+        collection.config.as_ref().map(|cfg| cfg.name.clone())
+    }
+
     /// Enumerate ALL records of a collection, including flushed/storage-resident
     /// ones (Phase 8 F1, storage-inclusive scan). Merges the WAL/memtable scan
     /// with the storage engine's `read_all_records`, keyed by `oid` with the
