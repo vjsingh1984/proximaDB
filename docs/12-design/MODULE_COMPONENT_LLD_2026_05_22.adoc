@@ -459,6 +459,63 @@ flowchart LR
 * Victor cross-file call centrality is not currently available; regenerate or fix Victor's
   cross-file resolution before using call PageRank as a release gate.
 
+=== Duplication / Name-Collision Watch (diagram-derived)
+
+Structural scan of `struct`/`enum` definitions across `src/` + `crates/` (verified 2026-05-29),
+cross-referenced with the proliferation audits. Distinguishes genuine duplication from canonical +
+edge-adapter patterns and from already-resolved items. "Target module" is where to start a
+convergence pass.
+
+[cols="2,1,4,3", options="header"]
+|===
+| Type name | Defs | Locations (canonical first) | Verdict / action
+
+| `QuantizationConfig` | 4
+| `proximadb-quantization-types/src/lib.rs:202` (canonical) · `proximadb-proto …v1.rs:2129` (proto
+  edge, expected) · `src/storage/background_flush_context.rs:72` · `src/storage/engines/nova/quantized_columns.rs:287`
+| GENUINE: the two storage-local defs are live proliferation. Converge onto quantization-types
+  (P1-B rename landed 2026-05-25). Target module: `src/storage`.
+
+| `HardwareCapabilities` | 3
+| `proximadb-hardware/src/lib.rs:30` (canonical, P1-A `8279d36af`) ·
+  `src/core/hardware_capabilities.rs:413` · `src/storage/engines/core/formats/columnar/strategy.rs:152`
+| VERIFY: P1-A consolidated to `proximadb-hardware`; the two remaining independent defs are either
+  intentional local shapes or unfinished convergence — confirm and migrate. Target: `src/core`,
+  `src/storage/engines/core`.
+
+| `StorageError` | 2
+| `proximadb-kernel/src/error.rs:98` (enum) · `proximadb-storage-common/src/storage_error.rs:38`
+  (struct)
+| GENUINE cross-layer name collision (P2, 2026-05-20): two different shapes under one name; callers
+  disambiguate by path. Action: rename one or document the layer split explicitly.
+
+| `CollectionMetadata` | 4
+| `src/cluster/metadata_service.rs:68` (pub) · `src/storage/engines/core/formats/proximablocks/header_metadata.rs:89`
+  (pub) · `src/core/search/smart_execution_strategy.rs:114` (private) · `src/query/sql_frontend/lowering.rs:33` (private)
+| NAME COLLISION, not duplication: four distinct concerns share one name. The two private locals are
+  low-risk; rename the public pair for clarity rather than merging.
+
+| `SearchRequest` | 2
+| `src/core/service_types.rs:741` (canonical edge DTO) · `src/index/axis/hmgi/coordinator.rs:65`
+| NAME COLLISION: the HMGI-internal struct shadows the public DTO name. Action: rename local to
+  `HmgiSearchRequest`.
+
+| `*ExecutionPlan` | 5
+| `query_optimizer.rs:296 UnifiedExecutionPlan` · `table_write_plan.rs:398 RoutedExecutionPlan`
+  (both canonical per ADR-004 / route mandate) · `nova/streaming_search.rs`, `zero_copy/orchestrator.rs`,
+  `impls_tests/nova` (engine-internal)
+| LEGITIMATELY DISTINCT (not duplication). Watch: new plans must reuse `RoutedExecutionPlan` at the
+  route boundary instead of adding parallel plan types (was P3 "6+ ExecutionPlan", 2026-05-20).
+
+| `apply_evolution` | 1
+| `proximadb-catalog/src/schema.rs:118`
+| RESOLVED: the former dual-impl (P1, 2026-05-20) has converged to a single canonical. No action.
+|===
+
+Highest-density target: the storage layer carries three of the live items
+(`QuantizationConfig`, `HardwareCapabilities`, `StorageError` all surface under `src/storage*`),
+so a single storage-layer convergence pass closes the most duplication per unit effort.
+
 == Per-Change LLD Checklist
 
 Every feature-level implementation should answer:
