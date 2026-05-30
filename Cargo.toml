@@ -459,6 +459,12 @@ tokio-postgres = "0.7"
 # workspace member; dev-dep here so we can drive it against an
 # in-process server fixture.
 proximadb-sdk = { path = "clients/rust", default-features = false, features = ["client"] }
+# OpenAPI contract gates for the Rust connectors (tests/connectors_openapi_contract.rs
+# and tests/connectors_flight_contract.rs). httpmock is the same crate the SDK
+# gate uses at clients/rust/tests/openapi_contract.rs; serde_yaml lets the
+# gates load docs/openapi/proximadb-openapi.yaml directly.
+httpmock = "0.7"
+serde_yaml = "0.9"
 
 [features]
 # Default feature set as of 2026-05-26 (ADR-020 Tier 2.2 / TD-065 default-enable).
