@@ -41,6 +41,37 @@ pub const DEFAULT_DRIFT_THRESHOLD_LSN: u64 = 10_000;
 /// Default interval between drift sweeps.
 pub const DEFAULT_DRIFT_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Env override for [`DEFAULT_DRIFT_THRESHOLD_LSN`] (used at watcher construction
+/// in `SharedServices`). Lets operators tune drift sensitivity, and lets the e2e
+/// drive the loop fast without a code change.
+pub const DRIFT_THRESHOLD_ENV: &str = "PROXIMADB_DRIFT_THRESHOLD_LSN";
+/// Env override (whole seconds) for [`DEFAULT_DRIFT_INTERVAL`].
+pub const DRIFT_INTERVAL_ENV: &str = "PROXIMADB_DRIFT_INTERVAL_SECS";
+
+/// Resolve the drift threshold from `PROXIMADB_DRIFT_THRESHOLD_LSN`, else default.
+pub fn threshold_lsn_from_env() -> u64 {
+    parse_threshold(std::env::var(DRIFT_THRESHOLD_ENV).ok())
+}
+
+/// Resolve the drift interval from `PROXIMADB_DRIFT_INTERVAL_SECS`, else default.
+pub fn interval_from_env() -> Duration {
+    parse_interval(std::env::var(DRIFT_INTERVAL_ENV).ok())
+}
+
+/// Pure parse of the threshold override (testable without touching the env).
+fn parse_threshold(raw: Option<String>) -> u64 {
+    raw.and_then(|v| v.trim().parse().ok())
+        .unwrap_or(DEFAULT_DRIFT_THRESHOLD_LSN)
+}
+
+/// Pure parse of the interval override. Non-positive / unparseable => default.
+fn parse_interval(raw: Option<String>) -> Duration {
+    raw.and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|s| *s > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_DRIFT_INTERVAL)
+}
+
 /// True when write volume since the last recluster crosses `threshold`.
 /// `baseline` is the last completed recluster's `snapshot_to_lsn` (`None` =>
 /// never reclustered, baseline 0). A current LSN below the baseline (e.g. clock
@@ -150,6 +181,24 @@ mod tests {
     use crate::services::discovery::{
         DiscoveryJob, DiscoveryJobKind, DiscoveryJobStatus, DiscoveryRegistry,
     };
+
+    #[test]
+    fn env_override_parsing() {
+        assert_eq!(super::parse_threshold(Some("1".to_string())), 1);
+        assert_eq!(super::parse_threshold(Some("  42 ".to_string())), 42);
+        assert_eq!(
+            super::parse_threshold(None),
+            super::DEFAULT_DRIFT_THRESHOLD_LSN
+        );
+        assert_eq!(
+            super::parse_threshold(Some("nope".to_string())),
+            super::DEFAULT_DRIFT_THRESHOLD_LSN
+        );
+        assert_eq!(super::parse_interval(Some("2".to_string())), Duration::from_secs(2));
+        // Zero / garbage fall back to the default (never a 0s busy-loop).
+        assert_eq!(super::parse_interval(Some("0".to_string())), super::DEFAULT_DRIFT_INTERVAL);
+        assert_eq!(super::parse_interval(None), super::DEFAULT_DRIFT_INTERVAL);
+    }
 
     #[test]
     fn drift_threshold_math() {

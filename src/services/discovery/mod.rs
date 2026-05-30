@@ -22,8 +22,8 @@ mod service;
 mod trigger;
 
 pub use drift::{
-    drift_exceeds, spawn_drift_watcher, DriftWatcher, DEFAULT_DRIFT_INTERVAL,
-    DEFAULT_DRIFT_THRESHOLD_LSN,
+    drift_exceeds, interval_from_env, spawn_drift_watcher, threshold_lsn_from_env, DriftWatcher,
+    DEFAULT_DRIFT_INTERVAL, DEFAULT_DRIFT_THRESHOLD_LSN,
 };
 pub use executor::{spawn_discovery_executor, DiscoveryJobExecutor, DEFAULT_POLL_INTERVAL};
 pub use job::{DiscoveryJob, DiscoveryJobKind, DiscoveryJobResult, DiscoveryJobStatus};
