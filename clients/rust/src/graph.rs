@@ -28,6 +28,7 @@
 //! // Add edges
 //! client.graph("knowledge")
 //!     .add_edge()
+//!     .id("edge_1")
 //!     .from("person_1")
 //!     .to("person_2")
 //!     .relationship("KNOWS")
@@ -214,28 +215,41 @@ impl<'a> GraphHandle<'a> {
         TraversalBuilder::new(self)
     }
 
-    /// Add a batch of nodes
+    /// Add a batch of nodes. Posts to the spec-defined batch endpoint
+    /// `POST /api/v2/graphs/{id}/nodes/batch` with body
+    /// `{nodes: [NodeInput, ...]}`. Each `GraphNode` is lowered to a
+    /// server-true `NodeInput` (label → labels, vector → embedding).
     #[cfg(feature = "client")]
     pub async fn add_nodes(&self, nodes: Vec<GraphNode>) -> Result<usize> {
-        let request = AddNodesRequest {
-            graph: self.name.clone(),
-            nodes,
-        };
-        let url = format!("{}/api/v2/graphs/{}/nodes", self.client.url(), self.name);
-        let response: AddNodesResponse = self.client.post(&url, &request).await?;
-        Ok(response.added_count)
+        let inputs: Vec<NodeInput> = nodes.into_iter().map(NodeInput::from_graph_node).collect();
+        let request = BatchNodesRequest { nodes: inputs };
+        let url = format!(
+            "{}/api/v2/graphs/{}/nodes/batch",
+            self.client.url(),
+            self.name
+        );
+        let response: BatchNodesResponse = self.client.post(&url, &request).await?;
+        Ok(response.added_count())
     }
 
-    /// Add a batch of edges
+    /// Add a batch of edges. Posts to the spec-defined batch endpoint
+    /// `POST /api/v2/graphs/{id}/edges/batch` with body
+    /// `{edges: [EdgeInput, ...]}`. Each `GraphEdge` is lowered to a
+    /// server-true `EdgeInput`. The `id` defaults to
+    /// `"{source}-{relationship}-{target}"` if not provided — callers
+    /// who need deterministic edge ids should pass them via the
+    /// per-edge builder instead.
     #[cfg(feature = "client")]
     pub async fn add_edges(&self, edges: Vec<GraphEdge>) -> Result<usize> {
-        let request = AddEdgesRequest {
-            graph: self.name.clone(),
-            edges,
-        };
-        let url = format!("{}/api/v2/graphs/{}/edges", self.client.url(), self.name);
-        let response: AddEdgesResponse = self.client.post(&url, &request).await?;
-        Ok(response.added_count)
+        let inputs: Vec<EdgeInput> = edges.into_iter().map(EdgeInput::from_graph_edge).collect();
+        let request = BatchEdgesRequest { edges: inputs };
+        let url = format!(
+            "{}/api/v2/graphs/{}/edges/batch",
+            self.client.url(),
+            self.name
+        );
+        let response: BatchEdgesResponse = self.client.post(&url, &request).await?;
+        Ok(response.added_count())
     }
 
     /// Get a node by ID
@@ -335,31 +349,42 @@ impl<'a> NodeBuilder<'a> {
         self
     }
 
-    /// Execute the node addition
+    /// Execute the node addition. Posts the spec-true wrapped envelope
+    /// `{node: NodeInput}` to `POST /api/v2/graphs/{id}/nodes`. The
+    /// SDK's `label` becomes `labels: [label]`, and `vector` is wrapped
+    /// in an `EmbeddingInput` so the body matches the OpenAPI contract.
     #[cfg(feature = "client")]
     pub async fn execute(self) -> Result<()> {
         let id = self
             .id
             .ok_or_else(|| ProximaError::Internal("Node ID is required".to_string()))?;
 
-        let node = GraphNode {
+        let labels = self.label.map(|l| vec![l]);
+        let embedding = self.vector.map(|v| EmbeddingInput {
+            vector: v,
+            model_id: None,
+            modality: None,
+        });
+
+        let node = NodeInput {
             id,
-            label: self.label,
-            properties: self.properties,
-            vector: self.vector,
+            labels,
+            properties: if self.properties.is_empty() {
+                None
+            } else {
+                Some(self.properties)
+            },
+            embedding,
         };
 
-        let request = AddNodesRequest {
-            graph: self.handle.name.clone(),
-            nodes: vec![node],
-        };
+        let request = CreateNodeRequest { node };
 
         let url = format!(
             "{}/api/v2/graphs/{}/nodes",
             self.handle.client.url(),
             self.handle.name
         );
-        let _response: AddNodesResponse = self.handle.client.post(&url, &request).await?;
+        let _response: serde_json::Value = self.handle.client.post(&url, &request).await?;
         Ok(())
     }
 }
@@ -367,6 +392,7 @@ impl<'a> NodeBuilder<'a> {
 /// Builder for adding edges
 pub struct EdgeBuilder<'a> {
     handle: &'a GraphHandle<'a>,
+    id: Option<String>,
     source: Option<String>,
     target: Option<String>,
     relationship: Option<String>,
@@ -378,12 +404,21 @@ impl<'a> EdgeBuilder<'a> {
     fn new(handle: &'a GraphHandle<'a>) -> Self {
         Self {
             handle,
+            id: None,
             source: None,
             target: None,
             relationship: None,
             properties: HashMap::new(),
             weight: None,
         }
+    }
+
+    /// Set an explicit edge ID. If not set, `execute()` synthesises one
+    /// from `{source}-{relationship}-{target}` to satisfy the spec's
+    /// `EdgeInput.id` requirement.
+    pub fn id(mut self, id: impl Into<String>) -> Self {
+        self.id = Some(id.into());
+        self
     }
 
     /// Set the source node ID
@@ -416,7 +451,10 @@ impl<'a> EdgeBuilder<'a> {
         self
     }
 
-    /// Execute the edge addition
+    /// Execute the edge addition. Posts the spec-true wrapped envelope
+    /// `{edge: EdgeInput}` with `id`, `from_node_id`, `to_node_id`, and
+    /// `edge_type` fields (server-true names) to
+    /// `POST /api/v2/graphs/{id}/edges`.
     #[cfg(feature = "client")]
     pub async fn execute(self) -> Result<()> {
         let source = self
@@ -428,26 +466,31 @@ impl<'a> EdgeBuilder<'a> {
         let relationship = self
             .relationship
             .ok_or_else(|| ProximaError::Internal("Relationship type is required".to_string()))?;
+        let id = self
+            .id
+            .unwrap_or_else(|| format!("{source}-{relationship}-{target}"));
 
-        let edge = GraphEdge {
-            source,
-            target,
-            relationship,
-            properties: self.properties,
+        let edge = EdgeInput {
+            id,
+            from_node_id: source,
+            to_node_id: target,
+            edge_type: relationship,
+            properties: if self.properties.is_empty() {
+                None
+            } else {
+                Some(self.properties)
+            },
             weight: self.weight,
         };
 
-        let request = AddEdgesRequest {
-            graph: self.handle.name.clone(),
-            edges: vec![edge],
-        };
+        let request = CreateEdgeRequest { edge };
 
         let url = format!(
             "{}/api/v2/graphs/{}/edges",
             self.handle.client.url(),
             self.handle.name
         );
-        let _response: AddEdgesResponse = self.handle.client.post(&url, &request).await?;
+        let _response: serde_json::Value = self.handle.client.post(&url, &request).await?;
         Ok(())
     }
 }
@@ -461,6 +504,8 @@ pub struct TraversalBuilder<'a> {
     max_depth: usize,
     limit: usize,
     filter: Option<String>,
+    node_labels: Vec<String>,
+    algorithm: Option<String>,
 }
 
 impl<'a> TraversalBuilder<'a> {
@@ -473,6 +518,8 @@ impl<'a> TraversalBuilder<'a> {
             max_depth: 3,
             limit: 100,
             filter: None,
+            node_labels: Vec::new(),
+            algorithm: None,
         }
     }
 
@@ -494,7 +541,10 @@ impl<'a> TraversalBuilder<'a> {
         self
     }
 
-    /// Set the traversal direction
+    /// Set the traversal direction. Stored locally for fluent
+    /// configuration, but **not** transmitted on the wire — the server's
+    /// `TraverseRequest` (per OpenAPI spec) does not accept a
+    /// `direction` field today. Tracked separately.
     pub fn direction(mut self, dir: TraversalDirection) -> Self {
         self.direction = dir;
         self
@@ -530,31 +580,53 @@ impl<'a> TraversalBuilder<'a> {
         self
     }
 
-    /// Add a filter expression for nodes
+    /// Add a filter expression for nodes. Kept for backwards source
+    /// compatibility, but not on the wire — see `direction()`.
     pub fn filter(mut self, filter: impl Into<String>) -> Self {
         self.filter = Some(filter.into());
         self
     }
 
-    /// Execute the traversal
+    /// Add a node label filter (server-true `node_labels`).
+    pub fn node_label(mut self, label: impl Into<String>) -> Self {
+        self.node_labels.push(label.into());
+        self
+    }
+
+    /// Add multiple node labels at once.
+    pub fn node_labels(mut self, labels: Vec<String>) -> Self {
+        self.node_labels.extend(labels);
+        self
+    }
+
+    /// Select the traversal algorithm (bfs | dfs | shortest_path). Maps
+    /// to the spec's optional `algorithm` field.
+    pub fn algorithm(mut self, alg: impl Into<String>) -> Self {
+        self.algorithm = Some(alg.into());
+        self
+    }
+
+    /// Execute the traversal. Posts the spec-true flat shape
+    /// `{start_node_id, max_depth, edge_types, node_labels?, algorithm?,
+    /// limit?}` to `POST /api/v2/graphs/{id}/traverse` — no `graph`
+    /// wrapper, server-true field names.
     #[cfg(feature = "client")]
     pub async fn execute(self) -> Result<TraversalResult> {
-        let start_node = self.start_node.ok_or_else(|| {
+        let start_node_id = self.start_node.ok_or_else(|| {
             ProximaError::Internal("Start node is required for traversal".to_string())
         })?;
 
         let request = TraversalRequest {
-            graph: self.handle.name.clone(),
-            start_node,
-            relationships: if self.relationships.is_empty() {
+            start_node_id,
+            max_depth: self.max_depth,
+            edge_types: self.relationships,
+            node_labels: if self.node_labels.is_empty() {
                 None
             } else {
-                Some(self.relationships)
+                Some(self.node_labels)
             },
-            direction: self.direction,
-            max_depth: self.max_depth,
-            limit: self.limit,
-            filter: self.filter,
+            algorithm: self.algorithm,
+            limit: Some(self.limit),
         };
 
         let url = format!(
@@ -570,19 +642,30 @@ impl<'a> TraversalBuilder<'a> {
 pub struct GraphBuilder<'a> {
     #[cfg(feature = "client")]
     client: &'a crate::client::ProximaClient,
-    name: String,
+    graph_id: String,
+    name: Option<String>,
     description: Option<String>,
 }
 
 impl<'a> GraphBuilder<'a> {
-    /// Create a new graph builder
+    /// Create a new graph builder. The supplied identifier is used as
+    /// the spec-required `graph_id`; call `.name(...)` to set an
+    /// optional human-readable name.
     #[cfg(feature = "client")]
-    pub fn new(client: &'a crate::client::ProximaClient, name: &str) -> Self {
+    pub fn new(client: &'a crate::client::ProximaClient, graph_id: &str) -> Self {
         Self {
             client,
-            name: name.to_string(),
+            graph_id: graph_id.to_string(),
+            name: None,
             description: None,
         }
+    }
+
+    /// Set the optional human-readable graph name (server defaults to
+    /// `graph_id` when omitted).
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
     }
 
     /// Set the graph description
@@ -591,10 +674,12 @@ impl<'a> GraphBuilder<'a> {
         self
     }
 
-    /// Execute the graph creation
+    /// Execute the graph creation. Posts the spec-true body
+    /// `{graph_id, name?, description?}` to `POST /api/v2/graphs`.
     #[cfg(feature = "client")]
     pub async fn execute(self) -> Result<()> {
         let request = CreateGraphRequest {
+            graph_id: self.graph_id,
             name: self.name,
             description: self.description,
         };
@@ -605,11 +690,14 @@ impl<'a> GraphBuilder<'a> {
     }
 }
 
-// Request/Response types for HTTP API
+// Request/Response types for HTTP API — mirror the OpenAPI v2 graph
+// schemas (`docs/openapi/proximadb-openapi.yaml`).
 
 #[derive(Debug, Serialize)]
 struct CreateGraphRequest {
-    name: String,
+    graph_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<String>,
 }
@@ -617,45 +705,160 @@ struct CreateGraphRequest {
 #[derive(Debug, Deserialize)]
 struct CreateGraphResponse {
     #[allow(dead_code)]
+    #[serde(default)]
     success: bool,
 }
 
+/// Spec-true node payload nested inside `CreateNodeRequest.node`.
 #[derive(Debug, Serialize)]
-struct AddNodesRequest {
-    #[allow(dead_code)]
-    graph: String,
-    nodes: Vec<GraphNode>,
+struct NodeInput {
+    id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    labels: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    properties: Option<HashMap<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    embedding: Option<EmbeddingInput>,
+}
+
+impl NodeInput {
+    fn from_graph_node(node: GraphNode) -> Self {
+        let labels = node.label.map(|l| vec![l]);
+        let embedding = node.vector.map(|v| EmbeddingInput {
+            vector: v,
+            model_id: None,
+            modality: None,
+        });
+        Self {
+            id: node.id,
+            labels,
+            properties: if node.properties.is_empty() {
+                None
+            } else {
+                Some(node.properties)
+            },
+            embedding,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct EmbeddingInput {
+    vector: Vec<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    model_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    modality: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct CreateNodeRequest {
+    node: NodeInput,
+}
+
+/// Spec-true edge payload nested inside `CreateEdgeRequest.edge`.
+#[derive(Debug, Serialize)]
+struct EdgeInput {
+    id: String,
+    from_node_id: String,
+    to_node_id: String,
+    edge_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    properties: Option<HashMap<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    weight: Option<f64>,
+}
+
+impl EdgeInput {
+    fn from_graph_edge(edge: GraphEdge) -> Self {
+        let id = format!("{}-{}-{}", edge.source, edge.relationship, edge.target);
+        Self {
+            id,
+            from_node_id: edge.source,
+            to_node_id: edge.target,
+            edge_type: edge.relationship,
+            properties: if edge.properties.is_empty() {
+                None
+            } else {
+                Some(edge.properties)
+            },
+            weight: edge.weight,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct CreateEdgeRequest {
+    edge: EdgeInput,
+}
+
+#[derive(Debug, Serialize)]
+struct BatchNodesRequest {
+    nodes: Vec<NodeInput>,
 }
 
 #[derive(Debug, Deserialize)]
-struct AddNodesResponse {
-    added_count: usize,
+struct BatchNodesResponse {
+    /// Server returns a `GraphResponse<BatchResults<Node>>` envelope.
+    /// `data.count` is the canonical added count; `added_count` is a
+    /// flatter legacy shape we still accept for back-compat with older
+    /// mocks.
+    #[serde(default)]
+    data: Option<BatchData>,
+    #[serde(default)]
+    added_count: Option<usize>,
+}
+
+impl BatchNodesResponse {
+    fn added_count(&self) -> usize {
+        self.data
+            .as_ref()
+            .and_then(|d| d.count)
+            .or(self.added_count)
+            .unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Serialize)]
-struct AddEdgesRequest {
-    #[allow(dead_code)]
-    graph: String,
-    edges: Vec<GraphEdge>,
+struct BatchEdgesRequest {
+    edges: Vec<EdgeInput>,
 }
 
 #[derive(Debug, Deserialize)]
-struct AddEdgesResponse {
-    added_count: usize,
+struct BatchEdgesResponse {
+    #[serde(default)]
+    data: Option<BatchData>,
+    #[serde(default)]
+    added_count: Option<usize>,
+}
+
+impl BatchEdgesResponse {
+    fn added_count(&self) -> usize {
+        self.data
+            .as_ref()
+            .and_then(|d| d.count)
+            .or(self.added_count)
+            .unwrap_or(0)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct BatchData {
+    #[serde(default)]
+    count: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
 struct TraversalRequest {
-    #[allow(dead_code)]
-    graph: String,
-    start_node: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    relationships: Option<Vec<String>>,
-    direction: TraversalDirection,
+    start_node_id: String,
     max_depth: usize,
-    limit: usize,
+    edge_types: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    filter: Option<String>,
+    node_labels: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    algorithm: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<usize>,
 }
 
 #[cfg(test)]
@@ -796,7 +999,10 @@ mod tests {
             .direction(TraversalDirection::Incoming)
             .max_depth(4)
             .limit(25)
-            .filter("age > 30");
+            .filter("age > 30")
+            .node_label("Person")
+            .node_labels(vec!["Org".to_string()])
+            .algorithm("bfs");
         assert_eq!(traversal.start_node.as_deref(), Some("person_1"));
         assert_eq!(
             traversal.relationships,
@@ -806,6 +1012,11 @@ mod tests {
         assert_eq!(traversal.max_depth, 4);
         assert_eq!(traversal.limit, 25);
         assert_eq!(traversal.filter.as_deref(), Some("age > 30"));
+        assert_eq!(
+            traversal.node_labels,
+            vec!["Person".to_string(), "Org".to_string()]
+        );
+        assert_eq!(traversal.algorithm.as_deref(), Some("bfs"));
     }
 
     #[tokio::test]
@@ -846,57 +1057,157 @@ mod tests {
     }
 
     #[test]
-    fn graph_request_response_dtos_match_api_shape() {
+    fn graph_request_dtos_serialize_spec_true_shapes() {
+        // CreateGraphRequest: {graph_id, name?, description?}
         let create = CreateGraphRequest {
-            name: "knowledge".to_string(),
+            graph_id: "knowledge".to_string(),
+            name: Some("Knowledge Graph".to_string()),
             description: Some("domain graph".to_string()),
         };
         assert_eq!(
             serde_json::to_value(create).unwrap(),
-            json!({"name": "knowledge", "description": "domain graph"})
+            json!({
+                "graph_id": "knowledge",
+                "name": "Knowledge Graph",
+                "description": "domain graph"
+            })
         );
 
-        let node_request = AddNodesRequest {
-            graph: "knowledge".to_string(),
-            nodes: vec![GraphNode::new("n1").with_label("Person")],
+        // Minimal CreateGraphRequest omits optional fields entirely.
+        let minimal = CreateGraphRequest {
+            graph_id: "k".to_string(),
+            name: None,
+            description: None,
         };
-        assert_eq!(node_request.graph, "knowledge");
-        assert_eq!(node_request.nodes[0].id, "n1");
+        assert_eq!(serde_json::to_value(minimal).unwrap(), json!({"graph_id": "k"}));
 
-        let edge_request = AddEdgesRequest {
-            graph: "knowledge".to_string(),
-            edges: vec![GraphEdge::new("a", "b", "KNOWS")],
+        // CreateNodeRequest: {node: NodeInput}
+        let node_request = CreateNodeRequest {
+            node: NodeInput {
+                id: "n1".to_string(),
+                labels: Some(vec!["Person".to_string()]),
+                properties: None,
+                embedding: Some(EmbeddingInput {
+                    vector: vec![0.5, 0.25],
+                    model_id: None,
+                    modality: None,
+                }),
+            },
         };
-        assert_eq!(edge_request.graph, "knowledge");
-        assert_eq!(edge_request.edges[0].relationship, "KNOWS");
+        assert_eq!(
+            serde_json::to_value(node_request).unwrap(),
+            json!({"node": {
+                "id": "n1",
+                "labels": ["Person"],
+                "embedding": {"vector": [0.5, 0.25]}
+            }})
+        );
 
+        // CreateEdgeRequest: {edge: EdgeInput}
+        let edge_request = CreateEdgeRequest {
+            edge: EdgeInput {
+                id: "e1".to_string(),
+                from_node_id: "a".to_string(),
+                to_node_id: "b".to_string(),
+                edge_type: "KNOWS".to_string(),
+                properties: None,
+                weight: Some(0.9),
+            },
+        };
+        assert_eq!(
+            serde_json::to_value(edge_request).unwrap(),
+            json!({"edge": {
+                "id": "e1",
+                "from_node_id": "a",
+                "to_node_id": "b",
+                "edge_type": "KNOWS",
+                "weight": 0.9
+            }})
+        );
+
+        // BatchCreateNodesRequest: {nodes: [NodeInput, ...]}
+        let batch_nodes = BatchNodesRequest {
+            nodes: vec![NodeInput {
+                id: "n1".to_string(),
+                labels: None,
+                properties: None,
+                embedding: None,
+            }],
+        };
+        assert_eq!(
+            serde_json::to_value(batch_nodes).unwrap(),
+            json!({"nodes": [{"id": "n1"}]})
+        );
+
+        // BatchCreateEdgesRequest: {edges: [EdgeInput, ...]}
+        let batch_edges = BatchEdgesRequest {
+            edges: vec![EdgeInput {
+                id: "e1".to_string(),
+                from_node_id: "a".to_string(),
+                to_node_id: "b".to_string(),
+                edge_type: "KNOWS".to_string(),
+                properties: None,
+                weight: None,
+            }],
+        };
+        assert_eq!(
+            serde_json::to_value(batch_edges).unwrap(),
+            json!({"edges": [{
+                "id": "e1",
+                "from_node_id": "a",
+                "to_node_id": "b",
+                "edge_type": "KNOWS"
+            }]})
+        );
+
+        // TraversalRequest: flat shape with start_node_id, no graph wrapper
         let traversal = TraversalRequest {
-            graph: "knowledge".to_string(),
-            start_node: "n1".to_string(),
-            relationships: None,
-            direction: TraversalDirection::Both,
+            start_node_id: "n1".to_string(),
             max_depth: 3,
-            limit: 10,
-            filter: None,
+            edge_types: vec!["KNOWS".to_string()],
+            node_labels: Some(vec!["Person".to_string()]),
+            algorithm: Some("bfs".to_string()),
+            limit: Some(10),
         };
         assert_eq!(
             serde_json::to_value(traversal).unwrap(),
             json!({
-                "graph": "knowledge",
-                "start_node": "n1",
-                "direction": "both",
+                "start_node_id": "n1",
                 "max_depth": 3,
+                "edge_types": ["KNOWS"],
+                "node_labels": ["Person"],
+                "algorithm": "bfs",
                 "limit": 10
             })
         );
 
+        // CreateGraphResponse tolerates the GraphResponse envelope.
         let created: CreateGraphResponse =
             serde_json::from_value(json!({"success": true})).unwrap();
         assert!(created.success);
-        let nodes: AddNodesResponse = serde_json::from_value(json!({"added_count": 2})).unwrap();
-        assert_eq!(nodes.added_count, 2);
-        let edges: AddEdgesResponse = serde_json::from_value(json!({"added_count": 1})).unwrap();
-        assert_eq!(edges.added_count, 1);
+    }
+
+    #[test]
+    fn batch_responses_accept_graph_response_envelope_and_legacy_added_count() {
+        // Spec envelope: {success, data: {results: [...], count: N}}
+        let nodes: BatchNodesResponse = serde_json::from_value(json!({
+            "success": true,
+            "data": {"results": [{"id": "n1"}], "count": 2}
+        }))
+        .unwrap();
+        assert_eq!(nodes.added_count(), 2);
+
+        // Legacy flat shape for back-compat.
+        let nodes_legacy: BatchNodesResponse =
+            serde_json::from_value(json!({"added_count": 3})).unwrap();
+        assert_eq!(nodes_legacy.added_count(), 3);
+
+        let edges: BatchEdgesResponse = serde_json::from_value(json!({
+            "success": true,
+            "data": {"results": [], "count": 1}
+        }))
+        .unwrap();
+        assert_eq!(edges.added_count(), 1);
     }
 
     #[test]
@@ -913,11 +1224,39 @@ mod tests {
     }
 
     #[test]
-    fn graph_builder_records_name_and_description() {
+    fn graph_builder_records_graph_id_name_and_description() {
         let client = ProximaClient::for_tests("http://localhost:5678");
-        let builder = GraphBuilder::new(&client, "knowledge").description("domain graph");
+        let builder = GraphBuilder::new(&client, "knowledge")
+            .name("Knowledge Graph")
+            .description("domain graph");
 
-        assert_eq!(builder.name, "knowledge");
+        assert_eq!(builder.graph_id, "knowledge");
+        assert_eq!(builder.name.as_deref(), Some("Knowledge Graph"));
         assert_eq!(builder.description.as_deref(), Some("domain graph"));
+    }
+
+    #[test]
+    fn node_input_lowering_maps_label_to_labels_and_vector_to_embedding() {
+        let node = GraphNode::new("n1")
+            .with_label("Person")
+            .with_property("name", "Alice")
+            .with_vector(vec![0.5, 0.25]);
+
+        let input = NodeInput::from_graph_node(node);
+        assert_eq!(input.id, "n1");
+        assert_eq!(input.labels.as_deref(), Some(&["Person".to_string()][..]));
+        assert_eq!(input.properties.as_ref().unwrap()["name"], json!("Alice"));
+        assert_eq!(input.embedding.as_ref().unwrap().vector, vec![0.5, 0.25]);
+    }
+
+    #[test]
+    fn edge_input_lowering_synthesises_deterministic_id_from_triple() {
+        let edge = GraphEdge::new("a", "b", "KNOWS").with_weight(0.42);
+        let input = EdgeInput::from_graph_edge(edge);
+        assert_eq!(input.id, "a-KNOWS-b");
+        assert_eq!(input.from_node_id, "a");
+        assert_eq!(input.to_node_id, "b");
+        assert_eq!(input.edge_type, "KNOWS");
+        assert_eq!(input.weight, Some(0.42));
     }
 }
