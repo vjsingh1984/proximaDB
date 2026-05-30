@@ -195,6 +195,36 @@ func (a *grpcAdapter) Health(ctx context.Context) (*HealthStatus, error) {
 	}, nil
 }
 
+// HealthLive issues a liveness probe. Not supported over gRPC; use REST.
+func (a *grpcAdapter) HealthLive(ctx context.Context) (*ProbeResponse, error) {
+	return nil, NewError(ErrCodeUnavailable, "HealthLive is not supported over gRPC; use the REST protocol")
+}
+
+// HealthReady issues a readiness probe. Not supported over gRPC; use REST.
+func (a *grpcAdapter) HealthReady(ctx context.Context) (*ProbeResponse, error) {
+	return nil, NewError(ErrCodeUnavailable, "HealthReady is not supported over gRPC; use the REST protocol")
+}
+
+// GetCollectionSchema is not supported over gRPC; use REST.
+func (a *grpcAdapter) GetCollectionSchema(ctx context.Context, collectionID string) (*SchemaResponse, error) {
+	return nil, NewError(ErrCodeUnavailable, "GetCollectionSchema is not supported over gRPC; use the REST protocol")
+}
+
+// UpdateCollectionSchema is not supported over gRPC; use REST.
+func (a *grpcAdapter) UpdateCollectionSchema(ctx context.Context, collectionID string, req *UpdateSchemaRequest) (*UpdateSchemaResponse, error) {
+	return nil, NewError(ErrCodeUnavailable, "UpdateCollectionSchema is not supported over gRPC; use the REST protocol")
+}
+
+// ExecuteQuery is not supported over gRPC; use REST.
+func (a *grpcAdapter) ExecuteQuery(ctx context.Context, req *QueryRequest) (QueryResponse, error) {
+	return nil, NewError(ErrCodeUnavailable, "ExecuteQuery is not supported over gRPC; use the REST protocol")
+}
+
+// ExplainQuery is not supported over gRPC; use REST.
+func (a *grpcAdapter) ExplainQuery(ctx context.Context, req *ExplainQueryRequest) (QueryResponse, error) {
+	return nil, NewError(ErrCodeUnavailable, "ExplainQuery is not supported over gRPC; use the REST protocol")
+}
+
 // Close closes the adapter and releases resources.
 func (a *grpcAdapter) Close() error {
 	return a.inner.Close()

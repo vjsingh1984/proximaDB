@@ -198,6 +198,95 @@ type HealthStatus struct {
 	Uptime float64 `json:"uptime_seconds"`
 }
 
+// ProbeResponse represents a Kubernetes-style liveness/readiness probe.
+type ProbeResponse struct {
+	// Status is the probe status (e.g., "ok", "ready").
+	Status string `json:"status"`
+}
+
+// ColumnDefinition declares a typed column in a SchemaDefinition.
+type ColumnDefinition struct {
+	Name            string `json:"name"`
+	DataType        string `json:"data_type"`
+	Nullable        *bool  `json:"nullable,omitempty"`
+	Indexed         *bool  `json:"indexed,omitempty"`
+	Filterable      *bool  `json:"filterable,omitempty"`
+	MaxLength       *int   `json:"max_length,omitempty"`
+	Precision       *int   `json:"precision,omitempty"`
+	Scale           *int   `json:"scale,omitempty"`
+	VectorDimension *int   `json:"vector_dimension,omitempty"`
+}
+
+// SchemaDefinition is a typed collection schema.
+type SchemaDefinition struct {
+	Columns               []ColumnDefinition `json:"columns"`
+	Enforcement           string             `json:"enforcement,omitempty"`
+	AllowAdditionalFields *bool              `json:"allow_additional_fields,omitempty"`
+}
+
+// SchemaResponse is the response of GetCollectionSchema.
+type SchemaResponse struct {
+	SchemaID       string           `json:"schema_id"`
+	SchemaVersion  string           `json:"schema_version"`
+	CollectionID   string           `json:"collection_id"`
+	Schema         SchemaDefinition `json:"schema"`
+	CreatedAt      string           `json:"created_at"`
+	UpdatedAt      *string          `json:"updated_at,omitempty"`
+	ParentSchemaID *string          `json:"parent_schema_id,omitempty"`
+}
+
+// UpdateSchemaRequest is the body sent to UpdateCollectionSchema.
+// It mirrors the OpenAPI `UpdateSchemaRequest` shape (SchemaDefinition + force).
+type UpdateSchemaRequest struct {
+	Columns               []ColumnDefinition `json:"columns"`
+	Enforcement           string             `json:"enforcement,omitempty"`
+	AllowAdditionalFields *bool              `json:"allow_additional_fields,omitempty"`
+	Force                 bool               `json:"force,omitempty"`
+}
+
+// UpdateSchemaResponse is the response from UpdateCollectionSchema.
+type UpdateSchemaResponse struct {
+	SchemaID         string                   `json:"schema_id"`
+	SchemaVersion    string                   `json:"schema_version"`
+	PreviousSchemaID string                   `json:"previous_schema_id"`
+	Changes          []map[string]interface{} `json:"changes"`
+	Warnings         []string                 `json:"warnings"`
+	UpdatedAt        string                   `json:"updated_at"`
+}
+
+// QueryLanguage indicates the dialect used for a query facade call.
+type QueryLanguage string
+
+const (
+	// QueryLanguageUQL is the unified query language.
+	QueryLanguageUQL QueryLanguage = "uql"
+	// QueryLanguageAQL is the ProximaDB AQL dialect.
+	QueryLanguageAQL QueryLanguage = "aql"
+	// QueryLanguageFederated routes through the federated planner.
+	QueryLanguageFederated QueryLanguage = "federated"
+)
+
+// QueryRequest is the request body for ExecuteQuery.
+type QueryRequest struct {
+	Language   QueryLanguage `json:"language"`
+	Query      string        `json:"query"`
+	Parameters []interface{} `json:"parameters,omitempty"`
+	Collection *string       `json:"collection,omitempty"`
+	Limit      *int          `json:"limit,omitempty"`
+}
+
+// ExplainQueryRequest is the request body for ExplainQuery.
+type ExplainQueryRequest struct {
+	Language   QueryLanguage `json:"language"`
+	Query      string        `json:"query"`
+	Collection *string       `json:"collection,omitempty"`
+}
+
+// QueryResponse is the open-shape response from the query facade endpoints.
+// The server is documented as returning records, total_count, metrics, plan, or
+// diagnostics depending on language/endpoint; the SDK passes it through.
+type QueryResponse map[string]interface{}
+
 // BatchInsertResult contains the result of a batch insert operation.
 type BatchInsertResult struct {
 	// InsertedCount is the number of successfully inserted vectors.

@@ -258,6 +258,79 @@ type HealthStatus struct {
 	Uptime  float64 `json:"uptime_seconds"`
 }
 
+// ProbeResponse represents a Kubernetes liveness/readiness probe response.
+type ProbeResponse struct {
+	Status string `json:"status"`
+}
+
+// ColumnDefinition represents a typed column in a SchemaDefinition.
+type ColumnDefinition struct {
+	Name            string `json:"name"`
+	DataType        string `json:"data_type"`
+	Nullable        *bool  `json:"nullable,omitempty"`
+	Indexed         *bool  `json:"indexed,omitempty"`
+	Filterable      *bool  `json:"filterable,omitempty"`
+	MaxLength       *int   `json:"max_length,omitempty"`
+	Precision       *int   `json:"precision,omitempty"`
+	Scale           *int   `json:"scale,omitempty"`
+	VectorDimension *int   `json:"vector_dimension,omitempty"`
+}
+
+// SchemaDefinition represents a typed collection schema.
+type SchemaDefinition struct {
+	Columns               []ColumnDefinition `json:"columns"`
+	Enforcement           string             `json:"enforcement,omitempty"`
+	AllowAdditionalFields *bool              `json:"allow_additional_fields,omitempty"`
+}
+
+// SchemaResponse represents the response from a get-schema call.
+type SchemaResponse struct {
+	SchemaID       string           `json:"schema_id"`
+	SchemaVersion  string           `json:"schema_version"`
+	CollectionID   string           `json:"collection_id"`
+	Schema         SchemaDefinition `json:"schema"`
+	CreatedAt      string           `json:"created_at"`
+	UpdatedAt      *string          `json:"updated_at,omitempty"`
+	ParentSchemaID *string          `json:"parent_schema_id,omitempty"`
+}
+
+// UpdateSchemaRequest represents the body for an update-schema call.
+type UpdateSchemaRequest struct {
+	Columns               []ColumnDefinition `json:"columns"`
+	Enforcement           string             `json:"enforcement,omitempty"`
+	AllowAdditionalFields *bool              `json:"allow_additional_fields,omitempty"`
+	Force                 bool               `json:"force,omitempty"`
+}
+
+// UpdateSchemaResponse represents the response from an update-schema call.
+type UpdateSchemaResponse struct {
+	SchemaID         string                   `json:"schema_id"`
+	SchemaVersion    string                   `json:"schema_version"`
+	PreviousSchemaID string                   `json:"previous_schema_id"`
+	Changes          []map[string]interface{} `json:"changes"`
+	Warnings         []string                 `json:"warnings"`
+	UpdatedAt        string                   `json:"updated_at"`
+}
+
+// QueryRequest is the request body for the executeQuery operation.
+type QueryRequest struct {
+	Language   string        `json:"language"`
+	Query      string        `json:"query"`
+	Parameters []interface{} `json:"parameters,omitempty"`
+	Collection *string       `json:"collection,omitempty"`
+	Limit      *int          `json:"limit,omitempty"`
+}
+
+// ExplainQueryRequest is the request body for the explainQuery operation.
+type ExplainQueryRequest struct {
+	Language   string  `json:"language"`
+	Query      string  `json:"query"`
+	Collection *string `json:"collection,omitempty"`
+}
+
+// QueryResponse is the (open-shape) response from executeQuery / explainQuery.
+type QueryResponse map[string]interface{}
+
 // CreateCollection creates a new vector collection.
 func (a *Adapter) CreateCollection(ctx context.Context, req *CreateCollectionRequest) (*CollectionInfo, error) {
 	url := fmt.Sprintf("%s/api/v2/collections", a.baseURL)
@@ -516,6 +589,99 @@ func (a *Adapter) Health(ctx context.Context) (*HealthStatus, error) {
 	}
 
 	return &result, nil
+}
+
+// HealthLive issues a Kubernetes liveness probe (GET /health/live).
+func (a *Adapter) HealthLive(ctx context.Context) (*ProbeResponse, error) {
+	endpoint := fmt.Sprintf("%s/health/live", a.baseURL)
+
+	var result ProbeResponse
+	if err := a.doRequest(ctx, http.MethodGet, endpoint, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// HealthReady issues a Kubernetes readiness probe (GET /health/ready).
+func (a *Adapter) HealthReady(ctx context.Context) (*ProbeResponse, error) {
+	endpoint := fmt.Sprintf("%s/health/ready", a.baseURL)
+
+	var result ProbeResponse
+	if err := a.doRequest(ctx, http.MethodGet, endpoint, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetCollectionSchema fetches the schema for a collection.
+func (a *Adapter) GetCollectionSchema(ctx context.Context, collectionID string) (*SchemaResponse, error) {
+	endpoint := fmt.Sprintf("%s/api/v2/collections/%s/schema", a.baseURL, url.PathEscape(collectionID))
+
+	var result SchemaResponse
+	if err := a.doRequest(ctx, http.MethodGet, endpoint, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// UpdateCollectionSchema updates the schema for a collection.
+func (a *Adapter) UpdateCollectionSchema(ctx context.Context, collectionID string, req *UpdateSchemaRequest) (*UpdateSchemaResponse, error) {
+	endpoint := fmt.Sprintf("%s/api/v2/collections/%s/schema", a.baseURL, url.PathEscape(collectionID))
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, &AdapterError{
+			Code:    ErrCodeInvalidArgument,
+			Message: "failed to marshal update-schema request",
+			Cause:   err,
+		}
+	}
+
+	var result UpdateSchemaResponse
+	if err := a.doRequest(ctx, http.MethodPut, endpoint, body, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ExecuteQuery executes an AQL/UQL/federated query via the shared query facade.
+func (a *Adapter) ExecuteQuery(ctx context.Context, req *QueryRequest) (QueryResponse, error) {
+	endpoint := fmt.Sprintf("%s/api/v2/query", a.baseURL)
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, &AdapterError{
+			Code:    ErrCodeInvalidArgument,
+			Message: "failed to marshal query request",
+			Cause:   err,
+		}
+	}
+
+	var result QueryResponse
+	if err := a.doRequest(ctx, http.MethodPost, endpoint, body, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// ExplainQuery returns the lowered plan / diagnostics for an AQL/UQL query.
+func (a *Adapter) ExplainQuery(ctx context.Context, req *ExplainQueryRequest) (QueryResponse, error) {
+	endpoint := fmt.Sprintf("%s/api/v2/query/explain", a.baseURL)
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, &AdapterError{
+			Code:    ErrCodeInvalidArgument,
+			Message: "failed to marshal explain-query request",
+			Cause:   err,
+		}
+	}
+
+	var result QueryResponse
+	if err := a.doRequest(ctx, http.MethodPost, endpoint, body, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // Close closes the adapter and releases resources.
