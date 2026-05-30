@@ -13,6 +13,7 @@
 //!
 //! See `docs/12-design/PHASE8_CONTINUOUS_LOOP_HLD_LLD_2026_05_28.adoc` (F1).
 
+mod drift;
 mod executor;
 mod job;
 pub mod passes;
@@ -20,6 +21,10 @@ mod registry;
 mod service;
 mod trigger;
 
+pub use drift::{
+    drift_exceeds, spawn_drift_watcher, DriftWatcher, DEFAULT_DRIFT_INTERVAL,
+    DEFAULT_DRIFT_THRESHOLD_LSN,
+};
 pub use executor::{spawn_discovery_executor, DiscoveryJobExecutor, DEFAULT_POLL_INTERVAL};
 pub use job::{DiscoveryJob, DiscoveryJobKind, DiscoveryJobResult, DiscoveryJobStatus};
 pub use registry::DiscoveryRegistry;

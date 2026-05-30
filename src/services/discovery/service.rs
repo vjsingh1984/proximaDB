@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use super::job::{DiscoveryJob, DiscoveryJobKind};
+use super::job::{DiscoveryJob, DiscoveryJobKind, DiscoveryJobStatus};
 use super::registry::DiscoveryRegistry;
 use super::trigger::{DiscoveryTrigger, TriggerSignal};
 use crate::services::snapshot::SnapshotPublishCoordinator;
@@ -55,6 +55,20 @@ impl DiscoveryService {
     /// All jobs for a collection (newest first).
     pub fn list_jobs(&self, collection_id: &str) -> Vec<DiscoveryJob> {
         self.registry.list_for_collection(collection_id)
+    }
+
+    /// The `snapshot_to_lsn` of the collection's most recent *completed*
+    /// `Recluster` job, or `None` if it has never been reclustered. This is the
+    /// drift watcher's baseline — write volume past it measures staleness.
+    pub fn last_reclustered_lsn(&self, collection_id: &str) -> Option<u64> {
+        self.registry
+            .list_for_collection(collection_id)
+            .into_iter()
+            .find(|j| {
+                j.kind == DiscoveryJobKind::Recluster
+                    && j.status == DiscoveryJobStatus::Complete
+            })
+            .map(|j| j.snapshot_to_lsn)
     }
 
     /// Shared registry handle (used to construct the executor).

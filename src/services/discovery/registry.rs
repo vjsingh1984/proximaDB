@@ -110,6 +110,19 @@ impl DiscoveryRegistry {
         self.jobs.iter().map(|e| e.value().clone()).collect()
     }
 
+    /// Distinct collection ids that have any discovery history. Used by the
+    /// drift watcher to decide which collections to sweep.
+    pub fn collections(&self) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        self.jobs
+            .iter()
+            .filter_map(|e| {
+                let id = e.value().collection_id.clone();
+                seen.insert(id.clone()).then_some(id)
+            })
+            .collect()
+    }
+
     /// Atomically claim the oldest `Scheduled` job, transitioning it to
     /// `Running`. Returns the claimed job, or `None` if none are pending.
     pub fn claim_next_scheduled(&self) -> Option<DiscoveryJob> {
