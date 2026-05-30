@@ -263,6 +263,12 @@ pub struct SharedServices {
     /// scheduled jobs from the same registry and republishes refined snapshots
     /// via `snapshot_coordinator`.
     pub discovery_service: Arc<crate::services::discovery::DiscoveryService>,
+
+    /// Phase 8 (F5) External Collection service: register external lake tables
+    /// un-copied and build/serve ProximaDB-owned indexes over them. Backs the
+    /// v2 `external-collections` endpoints.
+    pub external_collection_service:
+        Arc<crate::services::external_collection::ExternalCollectionService>,
 }
 
 impl SharedServices {
@@ -1413,6 +1419,36 @@ impl SharedServices {
             discovery_registry.clone(),
             snapshot_coordinator.clone(),
         ));
+        // Phase 8 (F5): external-collection registry + service. Durable JSON
+        // sidecar under the data dir (mirrors the discovery-job registry);
+        // in-memory for embedded/test harnesses without a data dir.
+        let external_collection_registry = match opt_config {
+            Some(cfg) => {
+                let path = cfg
+                    .server
+                    .data_dir
+                    .join("external_collections")
+                    .join("registry.json");
+                info!(
+                    "🔗 SharedServices: external-collection registry persistence at {}",
+                    path.display()
+                );
+                Arc::new(
+                    crate::services::external_collection::ExternalCollectionRegistry::load_or_create_at(
+                        path,
+                    ),
+                )
+            }
+            None => {
+                Arc::new(crate::services::external_collection::ExternalCollectionRegistry::new())
+            }
+        };
+        let external_collection_service =
+            Arc::new(crate::services::external_collection::ExternalCollectionService::new(
+                external_collection_registry,
+                catalog_manager.clone(),
+                axis_manager.clone(),
+            ));
         {
             let executor = Arc::new(
                 crate::services::discovery::DiscoveryJobExecutor::new(
@@ -1462,11 +1498,20 @@ impl SharedServices {
             // its last completed recluster and auto-enqueues a recluster once the
             // delta crosses the threshold. Coalescing bounds it; recluster is
             // non-mutating today, so this is safe on by default.
-            let watcher = Arc::new(crate::services::discovery::DriftWatcher::new(
-                discovery_service.clone(),
-                snapshot_coordinator.clone(),
-                crate::services::discovery::threshold_lsn_from_env(),
-            ));
+            let watcher = Arc::new(
+                crate::services::discovery::DriftWatcher::new(
+                    discovery_service.clone(),
+                    snapshot_coordinator.clone(),
+                    crate::services::discovery::threshold_lsn_from_env(),
+                )
+                // Sweep every collection (by name), not just those with prior
+                // discovery history — makes the loop autonomous for brand-new
+                // collections (no operator seed needed). Collections without
+                // enough indexed vectors no-op in the recluster pass.
+                .with_collection_source(
+                    collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>
+                ),
+            );
             let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
             std::mem::forget(shutdown_tx);
             #[allow(clippy::let_underscore_future)]
@@ -1583,6 +1628,7 @@ impl SharedServices {
                 // Discovery service. The background executor was spawned above.
                 snapshot_coordinator,
                 discovery_service,
+                external_collection_service,
             },
             collection_service,
         ))

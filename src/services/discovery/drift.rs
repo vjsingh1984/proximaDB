@@ -85,6 +85,11 @@ pub struct DriftWatcher {
     service: Arc<DiscoveryService>,
     coordinator: Arc<SnapshotPublishCoordinator>,
     threshold_lsn: u64,
+    /// Source of all collection names, swept even before a collection has any
+    /// discovery history (closes the bootstrap gap). `None` => history-only.
+    /// Collections with no / too-few indexed vectors simply no-op in the pass.
+    /// Names (not ids) — the discovery pipeline keys jobs/pins by name.
+    collection_source: Option<Arc<dyn proximadb_runtime::CollectionPort>>,
 }
 
 impl DriftWatcher {
@@ -97,14 +102,49 @@ impl DriftWatcher {
             service,
             coordinator,
             threshold_lsn,
+            collection_source: None,
         }
     }
 
-    /// One sweep over all collections with discovery history. Returns the number
-    /// of signals emitted (coalesced considerations don't count).
+    /// Attach a collection source so the watcher sweeps every collection by name
+    /// — not just those with prior discovery history. This is what makes the
+    /// loop autonomous for brand-new collections (no operator seed needed).
+    pub fn with_collection_source(
+        mut self,
+        source: Arc<dyn proximadb_runtime::CollectionPort>,
+    ) -> Self {
+        self.collection_source = Some(source);
+        self
+    }
+
+    /// One sweep. Considers the union of (a) collections with discovery history
+    /// and (b) collections with a served index (so a never-reclustered
+    /// collection is picked up automatically). Returns the number of signals
+    /// emitted (coalesced considerations don't count).
     pub async fn tick(&self) -> usize {
+        let mut seen = std::collections::HashSet::new();
+        let mut collections: Vec<String> = Vec::new();
+        for c in self.service.registry().collections() {
+            if seen.insert(c.clone()) {
+                collections.push(c);
+            }
+        }
+        if let Some(source) = &self.collection_source {
+            if let Ok(cols) = source.list_collections(None).await {
+                for c in cols {
+                    // proto `Collection` carries the name under `config`, not at
+                    // the top level (the discovery pipeline keys jobs/pins by name).
+                    if let Some(name) = c.config.as_ref().map(|cfg| cfg.name.clone())
+                        && seen.insert(name.clone())
+                    {
+                        collections.push(name);
+                    }
+                }
+            }
+        }
+
         let mut emitted = 0;
-        for collection_id in self.service.registry().collections() {
+        for collection_id in collections {
             if self.consider(&collection_id).await.is_some() {
                 emitted += 1;
             }

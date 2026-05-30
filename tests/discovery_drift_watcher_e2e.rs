@@ -262,4 +262,49 @@ async fn drift_watcher_auto_reclusters_after_writes() {
         }
         sleep(Duration::from_millis(500)).await;
     }
+
+    // ── Bootstrap: a collection that NEVER had a manual discovery job must still
+    //    be reclustered automatically once its vectors are indexed. This proves
+    //    the watcher sweeps served-index collections (not just those with prior
+    //    discovery history) — the autonomy gap that history-gating left open.
+    let fresh = format!("disc_bootstrap_{}", nanos());
+    let create = http
+        .post(format!("{base}/api/v2/collections"))
+        .json(&json!({
+            "name": fresh,
+            "dimension": dim,
+            "engine": "sst",
+            "distance_metric": "cosine",
+            "enable_proxima_record": false,
+        }))
+        .send()
+        .await
+        .expect("v2 create fresh");
+    assert!(
+        create.status().is_success(),
+        "v2 create fresh: {} {}",
+        create.status(),
+        create.text().await.unwrap_or_default()
+    );
+    // Index vectors only — no discovery job is ever scheduled for `fresh`.
+    insert_varied(&http, &base, &fresh, 0..24, dim).await;
+
+    let deadline = Instant::now() + Duration::from_secs(40);
+    loop {
+        if complete_recluster_count(&http, &base, &fresh).await >= 1 {
+            break;
+        }
+        if Instant::now() > deadline {
+            let resp = http
+                .get(format!("{base}/api/v2/collections/{fresh}/discovery-jobs"))
+                .send()
+                .await
+                .unwrap();
+            let body: serde_json::Value = resp.json().await.unwrap();
+            panic!(
+                "drift watcher did not bootstrap-recluster a never-seeded collection in 40s: {body}"
+            );
+        }
+        sleep(Duration::from_millis(500)).await;
+    }
 }
