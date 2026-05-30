@@ -2473,10 +2473,12 @@ impl AxisManager {
         records: &[ProximaRecord],
     ) -> Result<bool> {
         use crate::compute::distance_computation::DistanceMetric;
+        use crate::index::axis::index_factory::AxisVectorIndex;
         use crate::index::axis::indexes::dual_store_ivf::{UnifiedIvfConfig, UnifiedIvfIndex};
 
-        // Extract (id, fp32), skipping empty ids / missing embeddings.
-        let mut training: Vec<(String, Vec<f32>)> = Vec::with_capacity(records.len());
+        // Collect valid (record, fp32) — keep the record so its filterable
+        // metadata can be carried into the rebuilt index (predicate-aware search).
+        let mut valid: Vec<(&ProximaRecord, Vec<f32>)> = Vec::with_capacity(records.len());
         for r in records {
             if r.oid.is_empty() {
                 continue;
@@ -2484,19 +2486,19 @@ impl AxisManager {
             if let Some(e) = r.embeddings.first() {
                 let v = e.values.to_fp32_owned();
                 if !v.is_empty() {
-                    training.push((r.oid.clone(), v));
+                    valid.push((r, v));
                 }
             }
         }
-        let dimension = training.first().map(|(_, v)| v.len()).unwrap_or(0);
+        let dimension = valid.first().map(|(_, v)| v.len()).unwrap_or(0);
         // Need enough vectors to form clusters (mirrors the recluster floor and
         // keeps k-means well-posed: n_clusters floor is 16).
-        if dimension == 0 || training.len() < 16 {
+        if dimension == 0 || valid.len() < 16 {
             return Ok(false);
         }
 
         // Same nlist/nprobe heuristic the incremental IVF path uses.
-        let n_clusters = ((training.len() as f32).sqrt() as usize * 2).clamp(16, 256);
+        let n_clusters = ((valid.len() as f32).sqrt() as usize * 2).clamp(16, 256);
         let n_probe = std::cmp::max(n_clusters / 2, ((n_clusters as f32).sqrt() * 3.0) as usize)
             .min(n_clusters);
         let metric = self
@@ -2514,10 +2516,18 @@ impl AxisManager {
 
         let mut index = UnifiedIvfIndex::new(collection_id.to_string(), config)?;
         index
-            .train(training.iter().map(|(_, v)| v.clone()).collect())
+            .train(valid.iter().map(|(_, v)| v.clone()).collect())
             .await?;
-        for (id, v) in &training {
-            index.add_vector(id.clone(), v.clone(), None).await?;
+        let fields_config =
+            crate::index::axis::filterable_metadata::FilterableFieldsConfig::default();
+        for (r, v) in &valid {
+            let meta = crate::index::axis::filterable_metadata::extract_filterable_metadata(
+                r,
+                &fields_config,
+            );
+            index
+                .add_with_metadata(r.oid.clone(), v.clone(), &meta)
+                .await?;
         }
 
         // Atomic swap: replace the served Arc in one insert.
@@ -2539,7 +2549,7 @@ impl AxisManager {
         tracing::info!(
             "✅ AXIS: rebuilt + swapped IVF index for collection {} ({} vectors, {} clusters, gen={})",
             collection_id,
-            training.len(),
+            valid.len(),
             n_clusters,
             generation
         );
@@ -2567,9 +2577,12 @@ impl AxisManager {
         records: &[ProximaRecord],
     ) -> Result<bool> {
         use crate::compute::distance_computation::DistanceMetric;
+        use crate::index::axis::index_factory::AxisVectorIndex;
         use crate::index::axis::indexes::hnsw_index::{AxisHnswConfig, AxisHnswIndex};
 
-        let mut training: Vec<(String, Vec<f32>)> = Vec::with_capacity(records.len());
+        // Collect valid (record, fp32) — keep the record to carry filterable
+        // metadata into the rebuilt graph (predicate-aware search).
+        let mut valid: Vec<(&ProximaRecord, Vec<f32>)> = Vec::with_capacity(records.len());
         for r in records {
             if r.oid.is_empty() {
                 continue;
@@ -2577,12 +2590,12 @@ impl AxisManager {
             if let Some(e) = r.embeddings.first() {
                 let v = e.values.to_fp32_owned();
                 if !v.is_empty() {
-                    training.push((r.oid.clone(), v));
+                    valid.push((r, v));
                 }
             }
         }
-        let dimension = training.first().map(|(_, v)| v.len()).unwrap_or(0);
-        if dimension == 0 || training.is_empty() {
+        let dimension = valid.first().map(|(_, v)| v.len()).unwrap_or(0);
+        if dimension == 0 || valid.is_empty() {
             return Ok(false);
         }
 
@@ -2601,8 +2614,18 @@ impl AxisManager {
             config,
             dimension,
         )?;
-        let count = training.len();
-        index.add_vectors_from_event(training).await?;
+        let count = valid.len();
+        let fields_config =
+            crate::index::axis::filterable_metadata::FilterableFieldsConfig::default();
+        for (r, v) in &valid {
+            let meta = crate::index::axis::filterable_metadata::extract_filterable_metadata(
+                r,
+                &fields_config,
+            );
+            index
+                .add_with_metadata(r.oid.clone(), v.clone(), &meta)
+                .await?;
+        }
 
         // Atomic swap: replace the served Arc in one insert.
         {
@@ -4042,12 +4065,17 @@ mod recluster_apply_tests {
     //! Phase 8 F1 apply-step: `rebuild_and_swap_ivf_index` rebuilds a
     //! collection's IVF index and atomically swaps it as the served index.
     use super::*;
+    use crate::index::axis::index_factory::AxisVectorIndex;
     use crate::index::axis::types::AxisConfig;
     use proximadb_records::{EmbeddingCell, EmbeddingValues};
 
     fn rec(id: &str, v: Vec<f32>) -> ProximaRecord {
         ProximaRecord {
             oid: id.to_string(),
+            // A core filterable field so the rebuild has metadata to carry —
+            // lets `supports_predicate_search` distinguish add_with_metadata
+            // (used now) from a plain add (the gap this closes).
+            tenant_id: "t1".to_string(),
             embeddings: vec![EmbeddingCell {
                 model_id: "t".to_string(),
                 modality: "dense_vector".to_string(),
@@ -4110,6 +4138,12 @@ mod recluster_apply_tests {
                 25,
                 "served index must be the V2 rebuild (atomic swap)"
             );
+            // Predicate-aware search gap closed: the rebuild carried filterable
+            // metadata (add_with_metadata), so the index supports predicate search.
+            assert!(
+                idx.supports_predicate_search(),
+                "rebuilt IVF index must carry filterable metadata"
+            );
         }
 
         // Too few vectors -> no-op: no swap, generation unchanged.
@@ -4161,6 +4195,11 @@ mod recluster_apply_tests {
             let indexes = manager.hnsw_indexes.read().await;
             let idx = indexes.get("hcol").unwrap();
             assert_eq!(idx.size(), 25, "served HNSW index must be the V2 rebuild");
+            // Predicate-aware search gap closed: rebuilt graph carries metadata.
+            assert!(
+                idx.supports_predicate_search(),
+                "rebuilt HNSW index must carry filterable metadata"
+            );
         }
 
         // Orchestrator is a no-op for a collection with no served index.
