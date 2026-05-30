@@ -661,10 +661,18 @@ impl SharedServices {
         let sst_engine_for_documents: Arc<dyn crate::storage::traits::UnifiedStorageEngine> =
             sst_engine.clone();
 
+        // TD-075 / Phase 8 F2: the recall-probe gate is created here (rather than
+        // inline in the return struct) so the same instance is shared by the
+        // AxisManager (which consults it before the quantized route) and the
+        // SharedServices field that AppState/route-health read.
+        let recall_probe_gate = Arc::new(crate::catalog::RecallProbeGate::new());
+
         // Create AxisManager for index operations
         debug!("🔧 SharedServices::new - Creating AxisManager for index operations...");
-        let axis_manager =
-            Arc::new(crate::index::AxisManager::new(crate::index::AxisConfig::default()).await?);
+        let mut axis_manager_inner =
+            crate::index::AxisManager::new(crate::index::AxisConfig::default()).await?;
+        axis_manager_inner.set_recall_probe_gate(recall_probe_gate.clone());
+        let axis_manager = Arc::new(axis_manager_inner);
         debug!("✅ SharedServices::new - AxisManager created successfully");
 
         // Make AXIS manager available to graph-first entity store by default
@@ -1428,6 +1436,29 @@ impl SharedServices {
             );
             info!("✅ SharedServices: DiscoveryJobExecutor spawned (Phase 8 CS/CD loop)");
         }
+        {
+            // Trigger arm (T1.9): the write-volume drift watcher is the first
+            // live producer — it compares each collection's manifest LSN against
+            // its last completed recluster and auto-enqueues a recluster once the
+            // delta crosses the threshold. Coalescing bounds it; recluster is
+            // non-mutating today, so this is safe on by default.
+            let watcher = Arc::new(crate::services::discovery::DriftWatcher::new(
+                discovery_service.clone(),
+                snapshot_coordinator.clone(),
+                crate::services::discovery::DEFAULT_DRIFT_THRESHOLD_LSN,
+            ));
+            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            std::mem::forget(shutdown_tx);
+            #[allow(clippy::let_underscore_future)]
+            let _ = crate::services::discovery::spawn_drift_watcher(
+                watcher,
+                shutdown_rx,
+                crate::services::discovery::DEFAULT_DRIFT_INTERVAL,
+            );
+            info!(
+                "✅ SharedServices: DriftWatcher spawned (Phase 8 F1 trigger arm — write-volume drift)"
+            );
+        }
 
         info!(
             "✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)"
@@ -1522,7 +1553,7 @@ impl SharedServices {
                 // at startup; populated as the stats refresher / search path
                 // observe probe outcomes. Route-health surfaces per-scope
                 // state for operator visibility.
-                recall_probe_gate: Arc::new(crate::catalog::RecallProbeGate::new()),
+                recall_probe_gate,
                 // R-7c.3 production wiring: shared rank-pipeline singleton +
                 // durable rank-profile catalog. Both are built ahead of the
                 // FederatedQueryContext so SQL RERANK shares the registry.

@@ -1196,19 +1196,21 @@ fn build_route_health_with_live_state(
     };
     let recall_probe = RecallProbeHealth {
         implementation_present: true,
-        // Search code does not yet consult `RecallProbeGate::is_open` when
-        // choosing the quantized vs full-precision route — that wiring is
-        // its own follow-up. This route only proves the gate is reachable.
-        wired_to_query_path: false,
+        // TD-075 (Phase 8 F2): the AXIS IVF query path now consults
+        // `RecallProbeGate::is_open` before selecting the quantized route
+        // (`AxisManager::query` -> `query_ivf` -> `decide_quantized_route`).
+        wired_to_query_path: true,
         live_state_in_app_state: recall_probe_in_app_state,
         gate_open: recall_probe_gate_open,
         notes: if recall_probe_in_app_state {
-            "RecallProbeGate is reachable from AppState; gate_open reflects \
-             the most recent probe outcome for this (tenant, collection) \
-             scope. Search-path consultation is a separate follow-up."
+            "RecallProbeGate is reachable from AppState and consulted by the \
+             AXIS IVF query path (TD-075): a closed gate routes to exact \
+             search; an open gate enables the quantized accelerator. gate_open \
+             reflects the latest probe outcome for this scope. The production \
+             observer that feeds PASS/FAIL is a separate (Phase 5) follow-up."
         } else {
-            "RecallProbeGate state machine exists in catalog/recall_probe.rs \
-             but is not wired into AppState for this deployment."
+            "RecallProbeGate state machine exists and is consulted by the AXIS \
+             query path, but is not wired into AppState for this deployment."
         },
     };
 
@@ -1661,9 +1663,10 @@ mod tests {
     }
 
     #[test]
-    fn route_health_v1_degraded_reasons_are_the_expected_five() {
-        // Snapshot of the v1 reasons set. Adding/removing a reason without
-        // updating this assertion would silently change the contract.
+    fn route_health_degraded_reasons_are_the_expected_set() {
+        // Snapshot of the reasons set. Adding/removing a reason without updating
+        // this assertion would silently change the contract. RecallProbeNotWired
+        // dropped out once TD-075 wired the gate into the AXIS query path.
         let h = build_route_health(
             "c".to_string(),
             "sst".to_string(),
@@ -1675,7 +1678,6 @@ mod tests {
         );
         let expected = vec![
             DegradedReason::ObjectEconomyLiveStatusNotReachable,
-            DegradedReason::RecallProbeNotWired,
             DegradedReason::FreshnessModesNotCollectionLevel,
             DegradedReason::ConditionalWritesUnsupported,
             DegradedReason::FilterWritesUnsupported,
@@ -1782,10 +1784,10 @@ mod tests {
     // ------------------------------------------------------------------
     // RecallProbeLiveState branch coverage — exercises both the Unwired
     // path (default, no AppState slot) and the Wired path (gate reachable
-    // from AppState, per-scope `gate_open` resolved). `wired_to_query_path`
-    // intentionally stays `false` in both branches because no search code
-    // consults the gate yet — that's a separate follow-up, and flipping
-    // wired_to_query_path here would silently overclaim.
+    // from AppState, per-scope `gate_open` resolved). Since TD-075 wired the
+    // gate into the AXIS IVF query path, `wired_to_query_path` is now `true`
+    // and `RecallProbeNotWired` no longer fires — independent of AppState
+    // reachability (`live_state_in_app_state`), which only governs `gate_open`.
     // ------------------------------------------------------------------
 
     #[test]
@@ -1801,13 +1803,14 @@ mod tests {
         );
         assert!(!h.recall_probe.live_state_in_app_state);
         assert_eq!(h.recall_probe.gate_open, None);
-        // wired_to_query_path stays false until search code consults the gate.
-        assert!(!h.recall_probe.wired_to_query_path);
+        // TD-075: the AXIS query path consults the gate, so this is wired
+        // regardless of whether the gate is reachable from this AppState.
+        assert!(h.recall_probe.wired_to_query_path);
         assert!(
-            h.degraded_reasons
+            !h.degraded_reasons
                 .contains(&DegradedReason::RecallProbeNotWired),
-            "RecallProbeNotWired must remain in the v1 set until the search \
-             path consults the gate, regardless of AppState wiring"
+            "RecallProbeNotWired must not fire now that the search path \
+             consults the gate (TD-075)"
         );
     }
 
@@ -1827,14 +1830,12 @@ mod tests {
         );
         assert!(h.recall_probe.live_state_in_app_state);
         assert_eq!(h.recall_probe.gate_open, Some(true));
-        // Critical: AppState wiring alone does NOT flip wired_to_query_path.
-        // Search code must call gate.is_open before that flips.
-        assert!(!h.recall_probe.wired_to_query_path);
+        // TD-075: gate consulted by the AXIS query path.
+        assert!(h.recall_probe.wired_to_query_path);
         assert!(
-            h.degraded_reasons
+            !h.degraded_reasons
                 .contains(&DegradedReason::RecallProbeNotWired),
-            "AppState reachability is necessary but not sufficient for the \
-             gate to be considered fully wired"
+            "RecallProbeNotWired must not fire once the gate is query-path wired"
         );
     }
 

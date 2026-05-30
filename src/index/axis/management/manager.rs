@@ -225,6 +225,11 @@ pub struct AxisManager {
     /// Set via set_collection_service() after initialization
     collection_service: Option<Arc<crate::services::collection::manager::CollectionService>>,
 
+    /// TD-075 / Phase 8 F2 recall-probe gate. When set, the IVF query path
+    /// consults it before selecting the quantized route; a closed gate routes
+    /// to exact search. Set via set_recall_probe_gate().
+    recall_probe_gate: Option<Arc<crate::catalog::RecallProbeGate>>,
+
     /// Shared collection cache from VectorOperationsService (read-only access)
     /// This avoids duplicating collection metadata in memory
     /// Collections are cached by VectorOperationsService and shared here
@@ -402,6 +407,7 @@ impl AxisManager {
             config,
             metrics: Arc::new(RwLock::new(AxisMetrics::default())),
             collection_service: None, // Will be set later via set_collection_service
+            recall_probe_gate: None,  // Set later via set_recall_probe_gate (TD-075)
             shared_collection_cache: None, // Will be set via set_shared_collection_cache
             hnsw_indexes: Arc::new(RwLock::new(HashMap::new())), // Real HNSW indexes per collection
             ivf_indexes: Arc::new(RwLock::new(HashMap::new())), // Real IVF indexes per collection (DEFAULT)
@@ -424,6 +430,13 @@ impl AxisManager {
     ) {
         self.collection_service = Some(collection_service);
         tracing::info!("🔗 AXIS: Collection service set for IndexConfig retrieval");
+    }
+
+    /// Set the recall-probe gate (TD-075 / Phase 8 F2) so the IVF query path can
+    /// consult it before selecting the quantized route.
+    pub fn set_recall_probe_gate(&mut self, gate: Arc<crate::catalog::RecallProbeGate>) {
+        self.recall_probe_gate = Some(gate);
+        tracing::info!("🔗 AXIS: RecallProbeGate set for quantized-route gating (TD-075)");
     }
 
     /// Set shared collection cache from VectorOperationsService
@@ -681,6 +694,9 @@ impl AxisManager {
         // the fact that the HNSW cell wasn't actually exercising
         // query_hnsw at all (it was hitting an entirely different
         // path, presumably IVF or the empty-result fallback).
+        // TD-075: which IVF route ran — Some(true)=quantized accelerator used,
+        // Some(false)=quantized storage present but gate forced exact, None=n/a.
+        let mut quantized_route: Option<bool> = None;
         let results = if self.is_hmgi_enabled(collection_id).await && hmgi_query_safe {
             tracing::info!(
                 target: "axis_diag",
@@ -740,7 +756,20 @@ impl AxisManager {
                     collection_id = collection_id,
                     "query routed through IVF"
                 );
-                self.query_ivf(collection_id, &query).await?
+                // TD-075: consult the recall-probe gate before the IVF route may
+                // select quantized acceleration. Collection-scoped probe (no
+                // tenant in AxisHybridQuery yet — tenant threading is follow-up).
+                let gate_open = match &self.recall_probe_gate {
+                    Some(gate) => {
+                        gate.is_open(&crate::catalog::ProbeScope::new(collection_id, collection_id))
+                            .await
+                    }
+                    None => false,
+                };
+                let (ivf_results, route) =
+                    self.query_ivf(collection_id, &query, gate_open).await?;
+                quantized_route = route;
+                ivf_results
             } else {
                 tracing::info!(
                     target: "axis_diag",
@@ -775,6 +804,7 @@ impl AxisManager {
             execution_time_ms: start.elapsed().as_millis() as u64,
             predicate_shortfall,
             selected_filtering_mode,
+            quantized_route,
         })
     }
 
@@ -846,7 +876,8 @@ impl AxisManager {
                         "FIRST INSERT — routing through IVF/PQ"
                     );
                 }
-                self.insert_into_ivf(collection_id, vector).await
+                self.insert_into_ivf(collection_id, vector, Some(algorithm))
+                    .await
             }
             other => {
                 if first {
@@ -1280,7 +1311,12 @@ impl AxisManager {
     /// 2. Train index with buffered vectors to build centroids
     /// 3. Add all buffered vectors to trained index
     /// 4. Future inserts go directly to trained index
-    async fn insert_into_ivf(&self, collection_id: &str, vector: &ProximaRecord) -> Result<()> {
+    async fn insert_into_ivf(
+        &self,
+        collection_id: &str,
+        vector: &ProximaRecord,
+        algorithm: Option<&IndexAlgorithm>,
+    ) -> Result<()> {
         use crate::compute::distance_computation::DistanceMetric;
         use crate::index::axis::indexes::dual_store_ivf::{UnifiedIvfConfig, UnifiedIvfIndex};
 
@@ -1345,31 +1381,53 @@ impl AxisManager {
                 let training_vectors: Vec<(String, Vec<f32>)> = std::mem::take(buffer);
                 drop(pending); // Release the lock
 
-                // Calculate number of clusters: Use sqrt-based with min/max clamping
-                // Similar to block pruning mechanism - scales with data size
-                // n_clusters = clamp(sqrt(N) * 2, min=16, max=256)
-                let n_clusters = {
-                    let sqrt_based = (training_vectors.len() as f32).sqrt() as usize * 2;
-                    const MIN_CLUSTERS: usize = 16;
-                    const MAX_CLUSTERS: usize = 256;
-                    sqrt_based.clamp(MIN_CLUSTERS, MAX_CLUSTERS)
+                // **End-to-end IVF strategy-spec wiring (2026-05-30)**:
+                // when the caller passed an `IndexAlgorithm::IVF`
+                // spec (via update_collection_strategy or the
+                // catalog), honor its nlist / nprobe instead of the
+                // hardcoded sqrt-based formula. Without this, the
+                // strategy spec is silently dropped — analogous to
+                // the HNSW.ef_search bug fixed in 476dc951a. The
+                // sqrt-based formula is kept as a fallback for the
+                // adaptive-engine path that doesn't supply a spec.
+                let (n_clusters, n_probe) = match algorithm {
+                    Some(IndexAlgorithm::IVF { nlist, nprobe, .. }) => {
+                        (*nlist as usize, *nprobe as usize)
+                    }
+                    _ => {
+                        // Original incremental-training fallback:
+                        // n_clusters = clamp(sqrt(N) * 2, 16, 256)
+                        let n_clusters = {
+                            let sqrt_based =
+                                (training_vectors.len() as f32).sqrt() as usize * 2;
+                            const MIN_CLUSTERS: usize = 16;
+                            const MAX_CLUSTERS: usize = 256;
+                            sqrt_based.clamp(MIN_CLUSTERS, MAX_CLUSTERS)
+                        };
+                        // n_probe = max(n_clusters/2, sqrt(n_clusters)*3)
+                        let n_probe = {
+                            let half_clusters = n_clusters / 2;
+                            let sqrt_based =
+                                ((n_clusters as f32).sqrt() * 3.0) as usize;
+                            std::cmp::max(half_clusters, sqrt_based).min(n_clusters)
+                        };
+                        (n_clusters, n_probe)
+                    }
                 };
 
-                // Calculate n_probe: For incremental indexing where we train early with
-                // limited samples, we need to search more clusters. Use 50% of clusters
-                // minimum with sqrt-based scaling for larger cluster counts.
-                // Formula: max(n_clusters/2, sqrt(n_clusters)*3), clamped to n_clusters
-                let n_probe = {
-                    let half_clusters = n_clusters / 2;
-                    let sqrt_based = ((n_clusters as f32).sqrt() * 3.0) as usize;
-                    std::cmp::max(half_clusters, sqrt_based).min(n_clusters)
-                };
-
-                tracing::debug!(
-                    "🔧 AXIS: IVF config for collection {} - clusters: {}, n_probe: {} (sqrt-based)",
-                    collection_id,
-                    n_clusters,
-                    n_probe
+                tracing::info!(
+                    target: "axis_diag",
+                    site = "insert_into_ivf",
+                    collection_id = collection_id,
+                    n_clusters = n_clusters,
+                    n_probe = n_probe,
+                    training_size = training_vectors.len(),
+                    spec_source = if matches!(algorithm, Some(IndexAlgorithm::IVF { .. })) {
+                        "strategy"
+                    } else {
+                        "incremental_default"
+                    },
+                    "IVF config resolved"
                 );
 
                 // **Metric correctness (2026-05-29)**: previously
@@ -1469,7 +1527,8 @@ impl AxisManager {
         &self,
         collection_id: &str,
         query: &AxisHybridQuery,
-    ) -> Result<Vec<ScoredResult>> {
+        gate_open: bool,
+    ) -> Result<(Vec<ScoredResult>, Option<bool>)> {
         let indexes = self.ivf_indexes.read().await;
         if let Some(index_lock) = indexes.get(collection_id) {
             let index = index_lock.read().await;
@@ -1480,20 +1539,32 @@ impl AxisManager {
                     "🔍 AXIS: IVF index for collection {} not yet trained, returning empty results",
                     collection_id
                 );
-                return Ok(Vec::new());
+                return Ok((Vec::new(), None));
             }
 
             if let Some(VectorQuery::Dense { vector, .. }) = &query.vector_query {
                 let start = std::time::Instant::now();
-                let results = index.search(vector, query.top_k, None).await?;
+                // TD-075: route to the quantized accelerator only when the gate
+                // is open AND the index has quantized storage; otherwise exact.
+                let has_quantized = index.has_quantized_storage();
+                let use_quantized = decide_quantized_route(gate_open, has_quantized);
+                let route = if has_quantized { Some(use_quantized) } else { None };
+                let results = if use_quantized {
+                    index
+                        .search_with_quantized_acceleration(vector, query.top_k, None)
+                        .await?
+                } else {
+                    index.search(vector, query.top_k, None).await?
+                };
                 let search_time = start.elapsed();
 
                 tracing::info!(
-                    "🔍 AXIS: IVF search completed for collection {} - {} results in {:?} (top_k={})",
+                    "🔍 AXIS: IVF search completed for collection {} - {} results in {:?} (top_k={}, quantized={})",
                     collection_id,
                     results.len(),
                     search_time,
-                    query.top_k
+                    query.top_k,
+                    use_quantized
                 );
 
                 // Score-units conversion — see query_hnsw for rationale.
@@ -1503,7 +1574,7 @@ impl AxisManager {
                     DistanceMetricExt, SimilarityResult,
                 };
                 let metric = index.distance_metric();
-                return Ok(results
+                let scored: Vec<ScoredResult> = results
                     .into_iter()
                     .map(|(id, raw_distance)| {
                         let raw_for_similarity = if metric.is_similarity() {
@@ -1520,7 +1591,8 @@ impl AxisManager {
                             expires_at,
                         }
                     })
-                    .collect());
+                    .collect();
+                return Ok((scored, route));
             }
         } else {
             tracing::debug!(
@@ -1530,7 +1602,7 @@ impl AxisManager {
         }
 
         // Return empty if no index or no dense vector query
-        Ok(Vec::new())
+        Ok((Vec::new(), None))
     }
 
     /// Analyze collection and trigger migration if beneficial
@@ -2624,6 +2696,19 @@ pub struct AxisManagerQueryResult {
     /// routing was active (`ann_filtering_policy` + `estimated_selectivity`).
     /// `None` when the query had no filters and the unfiltered ANN path ran.
     pub selected_filtering_mode: Option<AnnFilteringMode>,
+    /// TD-075 / Phase 8 F2: which IVF route actually executed.
+    /// `Some(true)` = quantized accelerator used; `Some(false)` = quantized
+    /// storage present but the recall-probe gate forced exact (fallback);
+    /// `None` = no quantized storage, or a non-IVF route. EXPLAIN/route-health
+    /// surface this as the quantized-route decision.
+    pub quantized_route: Option<bool>,
+}
+
+/// TD-075 route decision: use the quantized accelerator only when the recall
+/// probe gate is open AND the index actually has quantized storage. A closed
+/// gate (recall not yet verified, or a FAIL streak) forces exact search.
+fn decide_quantized_route(gate_open: bool, has_quantized_storage: bool) -> bool {
+    gate_open && has_quantized_storage
 }
 
 /// Scored result with MVCC support
@@ -3601,5 +3686,17 @@ mod adr011_routing_tests {
         let q = AxisHybridQuery::default();
         assert!(q.ann_filtering_policy.is_none());
         assert!(q.estimated_selectivity.is_none());
+    }
+
+    #[test]
+    fn quantized_route_requires_open_gate_and_quantized_storage() {
+        use super::decide_quantized_route;
+        // gate open + quantized storage → use the quantized accelerator
+        assert!(decide_quantized_route(true, true));
+        // gate closed (recall unverified / FAIL streak) → exact fallback
+        assert!(!decide_quantized_route(false, true));
+        // no quantized storage → exact regardless of gate
+        assert!(!decide_quantized_route(true, false));
+        assert!(!decide_quantized_route(false, false));
     }
 }
