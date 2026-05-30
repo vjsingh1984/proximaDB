@@ -1267,11 +1267,28 @@ impl AxisManager {
                     n_probe
                 );
 
+                // **Metric correctness (2026-05-29)**: previously
+                // hardcoded `DistanceMetric::Cosine` for every
+                // collection. Now resolves from
+                // `get_collection_distance_metric` so Euclidean /
+                // DotProduct collections actually train and rank by
+                // their configured metric. Without this fix, my
+                // earlier change to `UnifiedIvfIndex::search`'s
+                // inner loop (which now uses
+                // `self.config.distance_metric`) silently used
+                // Cosine for ALL metrics — Euclidean collections
+                // saw recall drop from 1.000 to 0.55 because IVF
+                // ranked by cosine while the exact path ranked by
+                // euclidean.
+                let resolved_metric = self
+                    .get_collection_distance_metric(collection_id)
+                    .await
+                    .unwrap_or(DistanceMetric::Cosine);
                 let config = UnifiedIvfConfig {
                     n_clusters,
                     n_probe,
                     dimension,
-                    distance_metric: DistanceMetric::Cosine,
+                    distance_metric: resolved_metric,
                     min_train_size: MIN_TRAIN_SIZE,
                     ..Default::default()
                 };
@@ -2097,11 +2114,19 @@ impl AxisManager {
             n_probe
         );
 
+        // **Metric correctness (2026-05-29)**: see the equivalent
+        // fix in `insert_into_ivf` above. The batch-training site
+        // also previously hardcoded Cosine — same hazard for
+        // Euclidean / DotProduct collections.
+        let resolved_metric = self
+            .get_collection_distance_metric(collection_id)
+            .await
+            .unwrap_or(DistanceMetric::Cosine);
         let config = UnifiedIvfConfig {
             n_clusters,
             n_probe,
             dimension,
-            distance_metric: DistanceMetric::Cosine,
+            distance_metric: resolved_metric,
             min_train_size: 100, // Lower since we're batch training
             ..Default::default()
         };
@@ -2738,16 +2763,27 @@ impl AxisManager {
         collection_id: &str,
         vector_id: &str,
     ) -> Option<DateTime<Utc>> {
-        self.collection_vectors
-            .try_read()
-            .ok()
-            .and_then(|collections| collections.get(collection_id).cloned())
-            .and_then(|vectors| vectors.get(vector_id).cloned())
-            .and_then(|record| {
-                record
-                    .valid_to_ns
-                    .and_then(Self::datetime_from_timestamp_ns)
-            })
+        // **Perf bug (2026-05-29)**: this function used to do
+        //     `collections.get(collection_id).cloned()`
+        // which clones the ENTIRE HashMap<String, ProximaRecord> for
+        // the collection (every record at 10K, 25K, 100K scale),
+        // and then `.cloned()` again on the inner ProximaRecord.
+        // Called once per result × 10 results per query, the
+        // legacy HNSW path was paying O(N · k) record-clones per
+        // query — 100K clones at 10K vectors, 250K at 25K — which
+        // explained the bench's "HNSW path scales linearly" finding
+        // (vs HMGI's sub-linear) and the 45× latency gap between
+        // HMGI (0.7-1ms) and legacy HNSW (45ms) on identical data.
+        //
+        // The fix borrows through the read guard rather than cloning
+        // anything. valid_to_ns is a Copy `Option<i64>` so we only
+        // touch the few bytes we actually need.
+        let collections = self.collection_vectors.try_read().ok()?;
+        let vectors = collections.get(collection_id)?;
+        let record = vectors.get(vector_id)?;
+        record
+            .valid_to_ns
+            .and_then(Self::datetime_from_timestamp_ns)
     }
 }
 

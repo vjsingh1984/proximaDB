@@ -1301,6 +1301,17 @@ impl UnifiedIvfIndex {
         }
 
         // Step 4: Search posting lists (may trigger tier promotion)
+        //
+        // **Metric correctness (2026-05-28)**: this loop previously
+        // hardcoded `DistanceMetric::Euclidean` regardless of the
+        // collection's configured metric — explaining why
+        // `ivf_euclidean` recall@10 was perfect (1.000) while
+        // `ivf_cosine` and `ivf_dotproduct` plateaued at 0.55 / 0.42
+        // (IVF was ranking by Euclidean distance even for cosine
+        // collections). Now uses `self.config.distance_metric` so
+        // the score the IVF posting-list scan computes matches the
+        // metric the exact path uses for ground truth.
+        let metric = self.config.distance_metric;
         let mut candidates = Vec::new();
 
         for (cluster_id, _centroid_dist) in nearest_clusters {
@@ -1318,9 +1329,16 @@ impl UnifiedIvfIndex {
                         if let Some(view) = collection.get(vector_id)
                             && let Some(vector_data) = view.as_f32()
                         {
+                            // SimilarityResult.rank_value carries
+                            // lower-better distance for every metric
+                            // (DotProduct is already negated by
+                            // `SimilarityResult::new`), so the sort
+                            // below by ascending rank_value yields
+                            // correct nearest-first ordering across
+                            // all metrics.
                             let distance = self
                                 .distance_compute
-                                .calculate_distance(query, vector_data, &DistanceMetric::Euclidean)
+                                .calculate_distance(query, vector_data, &metric)
                                 .rank_value;
                             candidates.push((vector_id.clone(), distance));
                         }
