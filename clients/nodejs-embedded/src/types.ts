@@ -507,6 +507,54 @@ export interface GraphInfo {
   description?: string;
 }
 
+// ----------------------------------------------------------------------------
+// Server-true graph payload shapes (OpenAPI: docs/openapi/proximadb-openapi.yaml)
+//
+// These mirror the wire-level types the server actually accepts. The legacy
+// `GraphNode` / `GraphEdge` interfaces above remain as ergonomic SDK-facing
+// types; the SDK builders now lower them into the spec types below.
+// ----------------------------------------------------------------------------
+
+/**
+ * Embedding payload nested inside `NodeInput.embedding`.
+ *
+ * OpenAPI: `EmbeddingInput` — `{ vector, model_id?, modality? }`.
+ */
+export interface EmbeddingInput {
+  vector: number[];
+  model_id?: string;
+  modality?: string;
+}
+
+/**
+ * Node payload nested inside `CreateNodeRequest.node` and
+ * `BatchCreateNodesRequest.nodes[]`.
+ *
+ * OpenAPI: `NodeInput` — `{ id, labels?, properties?, embedding? }`.
+ */
+export interface NodeInput {
+  id: string;
+  labels?: string[];
+  properties?: Record<string, JsonValue>;
+  embedding?: EmbeddingInput;
+}
+
+/**
+ * Edge payload nested inside `CreateEdgeRequest.edge` and
+ * `BatchCreateEdgesRequest.edges[]`.
+ *
+ * OpenAPI: `EdgeInput` — `{ id, from_node_id, to_node_id, edge_type,
+ * properties?, weight? }`.
+ */
+export interface EdgeInput {
+  id: string;
+  from_node_id: string;
+  to_node_id: string;
+  edge_type: string;
+  properties?: Record<string, JsonValue>;
+  weight?: number;
+}
+
 // ============================================================================
 // CLIENT CONFIGURATION
 // ============================================================================

@@ -331,21 +331,16 @@ describe("OpenAPI contract gate", () => {
   // Graph operations (v2)
   //
   // The SDK was migrated from /api/v1/graphs/* (which never matched a real
-  // server route) to /api/v2/graphs/* in a prior change. URL + method are
-  // asserted against the OpenAPI spec for every covered op. The four graph
-  // POST ops below have known body-shape drift vs the corrected spec
-  // (reconciled 2026-05-30 against the live server handler in
-  // `crates/platform/proximadb-api/src/rest/v1/graph.rs`). They are
-  // `it.skip`'d pending the SDK body-shape rewrite tracked in TD-095
-  // (`docs/10-quality/TECHNICAL_DEBT.adoc`). GET / DELETE / listGraphs
-  // contract checks remain enabled — they only assert URL + method and the
-  // SDK shape is correct there.
+  // server route) to /api/v2/graphs/* in a prior change, and the four graph
+  // POST body shapes were reconciled against the live server handler
+  // (`crates/platform/proximadb-api/src/rest/v1/graph.rs`) and OpenAPI spec
+  // on 2026-05-30 (TD-095 closeout). All graph contract checks below assert
+  // both URL/method and (where applicable) server-true body shape.
   // -------------------------------------------------------------------------
 
-  // TD-095: SDK `GraphBuilder.execute()` posts `{name, description}` but
-  // the corrected spec requires `{graph_id, name?, description?}`. Unskip
-  // once the SDK body shape is fixed (see TD-095 acceptance).
-  it.skip("createGraph(...).execute() matches POST /api/v2/graphs (createGraph) [TD-095: SDK body drift]", async () => {
+  // TD-095 (resolved 2026-05-30): SDK `GraphBuilder.execute()` now posts
+  // `{ graph_id, name?, description? }` to match `CreateGraphRequest`.
+  it("createGraph(...).execute() matches POST /api/v2/graphs (createGraph)", async () => {
     const captured = installFetchStub({ graph_id: "g1", success: true });
     const client = makeClient();
 
@@ -412,13 +407,9 @@ describe("OpenAPI contract gate", () => {
     expect(captured.body).toBeNull();
   });
 
-  // TD-095: SDK `NodeBuilder.execute()` posts a batched
-  // `{ graph, nodes: [...] }` envelope but the corrected
-  // `CreateNodeRequest` requires the singleton wrapper `{ node: NodeInput }`
-  // (NodeInput = `{ id, labels?, properties?, embedding? }`). Server graph
-  // handler has no batch-create-nodes endpoint today. Unskip once the SDK
-  // is rewritten per TD-095 acceptance.
-  it.skip("addNode(...).execute() matches POST /api/v2/graphs/{graph_id}/nodes (createNode) [TD-095: SDK body drift]", async () => {
+  // TD-095 (resolved 2026-05-30): SDK `NodeBuilder.execute()` now posts the
+  // singleton wrapper `{ node: NodeInput }` per `CreateNodeRequest`.
+  it("addNode(...).execute() matches POST /api/v2/graphs/{graph_id}/nodes (createNode)", async () => {
     const captured = installFetchStub({ id: "n1" });
     const client = makeClient();
 
@@ -492,19 +483,17 @@ describe("OpenAPI contract gate", () => {
     expect(captured.body).toBeNull();
   });
 
-  // TD-095: SDK `EdgeBuilder.execute()` posts a batched
-  // `{ graph, edges: [...] }` envelope (with `source`/`target`/`relationship`
-  // keys per-edge) but the corrected `CreateEdgeRequest` requires the
-  // singleton wrapper `{ edge: EdgeInput }` where EdgeInput uses
-  // `{ id, from_node_id, to_node_id, edge_type, properties?, weight? }`.
-  // Unskip once the SDK is rewritten per TD-095 acceptance.
-  it.skip("addEdge(...).execute() matches POST /api/v2/graphs/{graph_id}/edges (createEdge) [TD-095: SDK body drift]", async () => {
+  // TD-095 (resolved 2026-05-30): SDK `EdgeBuilder.execute()` now posts the
+  // singleton wrapper `{ edge: EdgeInput }` per `CreateEdgeRequest`, with
+  // server-true keys `id` / `from_node_id` / `to_node_id` / `edge_type`.
+  it("addEdge(...).execute() matches POST /api/v2/graphs/{graph_id}/edges (createEdge)", async () => {
     const captured = installFetchStub({ id: "e1" });
     const client = makeClient();
 
     await client
       .graph("g1")
       .addEdge()
+      .id("e1")
       .from("n1")
       .to("n2")
       .relationship("KNOWS")
@@ -527,15 +516,22 @@ describe("OpenAPI contract gate", () => {
       expect(captured.body).not.toBeNull();
       expect(Object.keys(captured.body!)).toContain(key);
     }
+    // EdgeInput inner shape: server-true keys present.
+    const edge = (captured.body as Record<string, unknown>).edge as Record<
+      string,
+      unknown
+    >;
+    expect(edge.id).toBe("e1");
+    expect(edge.from_node_id).toBe("n1");
+    expect(edge.to_node_id).toBe("n2");
+    expect(edge.edge_type).toBe("KNOWS");
   });
 
-  // TD-095: SDK `TraversalBuilder.execute()` posts
-  // `{ graph, start_node, relationships, direction, max_depth, limit, filter }`
-  // but the corrected `TraverseRequest` is flat (no `graph` wrapper) and
-  // uses `start_node_id` (not `start_node`), drops `direction`, renames
-  // `relationships` to `edge_types`, and adds `node_labels`. Unskip once
-  // the SDK is rewritten per TD-095 acceptance.
-  it.skip("traverse(...).execute() matches POST /api/v2/graphs/{graph_id}/traverse (traverseGraph) [TD-095: SDK body drift]", async () => {
+  // TD-095 (resolved 2026-05-30): SDK `TraversalBuilder.execute()` now
+  // posts the flat `TraverseRequest` shape: `start_node_id` (not
+  // `start_node`), `edge_types` (not `relationships`), no `graph` wrapper,
+  // no `direction`.
+  it("traverse(...).execute() matches POST /api/v2/graphs/{graph_id}/traverse (traverseGraph)", async () => {
     const captured = installFetchStub({ nodes: [], edges: [], paths: [] });
     const client = makeClient();
 
@@ -560,5 +556,99 @@ describe("OpenAPI contract gate", () => {
       expect(captured.body).not.toBeNull();
       expect(Object.keys(captured.body!)).toContain(key);
     }
+    // Server-true flat shape: no `graph`, no `start_node`, no `direction`.
+    expect(captured.body!.start_node_id).toBe("n1");
+    expect(captured.body!.max_depth).toBe(2);
+    expect(captured.body).not.toHaveProperty("graph");
+    expect(captured.body).not.toHaveProperty("start_node");
+    expect(captured.body).not.toHaveProperty("direction");
+  });
+
+  // -------------------------------------------------------------------------
+  // Batch graph ops (added 2026-05-30 alongside TD-095 SDK rewrite).
+  // -------------------------------------------------------------------------
+
+  it("addNodes(...) matches POST /api/v2/graphs/{graph_id}/nodes/batch (batchCreateNodes)", async () => {
+    const captured = installFetchStub({
+      success: true,
+      data: { results: [], count: 2 },
+    });
+    const client = makeClient();
+
+    const added = await client.graph("g1").addNodes([
+      { id: "n1", labels: ["Person"], properties: { name: "Alice" } },
+      { id: "n2", labels: ["Person"] },
+    ]);
+
+    const op = operationFor(
+      SPEC,
+      "/api/v2/graphs/{graph_id}/nodes/batch",
+      "post",
+    );
+    expect(op.operationId).toBe("batchCreateNodes");
+    expect(captured.method).toBe("POST");
+    expect(captured.url).toBe(
+      "http://contract.test/api/v2/graphs/g1/nodes/batch",
+    );
+
+    const reqSchema = requestBodySchema(SPEC, op);
+    expect(reqSchema).not.toBeNull();
+    const requiredKeys = collectRequiredKeys(SPEC, reqSchema!);
+    expect(requiredKeys).toContain("nodes");
+    for (const key of requiredKeys) {
+      expect(captured.body).not.toBeNull();
+      expect(Object.keys(captured.body!)).toContain(key);
+    }
+    // No `graph` wrapper — graph_id is the URL path parameter.
+    expect(captured.body).not.toHaveProperty("graph");
+    const nodes = captured.body!.nodes as Array<Record<string, unknown>>;
+    expect(nodes).toHaveLength(2);
+    expect(nodes[0].id).toBe("n1");
+    expect(added).toBe(2);
+  });
+
+  it("addEdges(...) matches POST /api/v2/graphs/{graph_id}/edges/batch (batchCreateEdges)", async () => {
+    const captured = installFetchStub({
+      success: true,
+      data: { results: [], count: 1 },
+    });
+    const client = makeClient();
+
+    const added = await client.graph("g1").addEdges([
+      {
+        id: "e1",
+        from_node_id: "n1",
+        to_node_id: "n2",
+        edge_type: "KNOWS",
+      },
+    ]);
+
+    const op = operationFor(
+      SPEC,
+      "/api/v2/graphs/{graph_id}/edges/batch",
+      "post",
+    );
+    expect(op.operationId).toBe("batchCreateEdges");
+    expect(captured.method).toBe("POST");
+    expect(captured.url).toBe(
+      "http://contract.test/api/v2/graphs/g1/edges/batch",
+    );
+
+    const reqSchema = requestBodySchema(SPEC, op);
+    expect(reqSchema).not.toBeNull();
+    const requiredKeys = collectRequiredKeys(SPEC, reqSchema!);
+    expect(requiredKeys).toContain("edges");
+    for (const key of requiredKeys) {
+      expect(captured.body).not.toBeNull();
+      expect(Object.keys(captured.body!)).toContain(key);
+    }
+    expect(captured.body).not.toHaveProperty("graph");
+    const edges = captured.body!.edges as Array<Record<string, unknown>>;
+    expect(edges).toHaveLength(1);
+    expect(edges[0].id).toBe("e1");
+    expect(edges[0].from_node_id).toBe("n1");
+    expect(edges[0].to_node_id).toBe("n2");
+    expect(edges[0].edge_type).toBe("KNOWS");
+    expect(added).toBe(1);
   });
 });

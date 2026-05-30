@@ -15,6 +15,9 @@ import {
   TraversalDirection,
   JsonValue,
   GraphInfo,
+  NodeInput,
+  EdgeInput,
+  EmbeddingInput,
 } from "./types";
 
 /**
@@ -86,27 +89,34 @@ export class NodeBuilder {
   }
 
   /**
-   * Execute the node addition
+   * Execute the node addition.
+   *
+   * Wire endpoint: POST /api/v2/graphs/{graph_id}/nodes
+   * OpenAPI operationId: createNode
+   *
+   * Body shape (server-true, per `CreateNodeRequest`):
+   *   `{ node: NodeInput }` — NodeInput = `{ id, labels?, properties?, embedding? }`.
    */
   async execute(): Promise<void> {
     if (this.nodeId === null) {
       throw new Error("Node ID is required");
     }
 
-    const node: GraphNode = {
-      id: this.nodeId,
-      label: this.nodeLabel ?? undefined,
-      properties: this.nodeProperties,
-      vector: this.nodeVector ?? undefined,
-    };
+    const node: NodeInput = { id: this.nodeId };
+    if (this.nodeLabel !== null) {
+      node.labels = [this.nodeLabel];
+    }
+    if (Object.keys(this.nodeProperties).length > 0) {
+      node.properties = this.nodeProperties;
+    }
+    if (this.nodeVector !== null) {
+      const embedding: EmbeddingInput = { vector: this.nodeVector };
+      node.embedding = embedding;
+    }
 
-    const request = {
-      graph: this.handle.getName(),
-      nodes: [node],
-    };
-
+    const request = { node };
     const url = this.handle.getClient().url() + "/api/v2/graphs/" + this.handle.getName() + "/nodes";
-    await this.handle.getClient().post<{ added_count: number }>(url, request);
+    await this.handle.getClient().post<{ id: string }>(url, request);
   }
 
   /**
@@ -135,6 +145,7 @@ export class NodeBuilder {
  */
 export class EdgeBuilder {
   private handle: GraphHandle;
+  private edgeId: string | null = null;
   private sourceNode: string | null = null;
   private targetNode: string | null = null;
   private relationshipType: string | null = null;
@@ -143,6 +154,14 @@ export class EdgeBuilder {
 
   constructor(handle: GraphHandle) {
     this.handle = handle;
+  }
+
+  /**
+   * Set the edge ID (required by server `EdgeInput.id`).
+   */
+  id(edgeId: string): EdgeBuilder {
+    this.edgeId = edgeId;
+    return this;
   }
 
   /**
@@ -162,10 +181,18 @@ export class EdgeBuilder {
   }
 
   /**
-   * Set the relationship type
+   * Set the relationship / edge type (server field: `edge_type`).
    */
   relationship(relType: string): EdgeBuilder {
     this.relationshipType = relType;
+    return this;
+  }
+
+  /**
+   * Alias for `relationship(...)` matching the server-side field name.
+   */
+  edgeType(edgeType: string): EdgeBuilder {
+    this.relationshipType = edgeType;
     return this;
   }
 
@@ -194,9 +221,19 @@ export class EdgeBuilder {
   }
 
   /**
-   * Execute the edge addition
+   * Execute the edge addition.
+   *
+   * Wire endpoint: POST /api/v2/graphs/{graph_id}/edges
+   * OpenAPI operationId: createEdge
+   *
+   * Body shape (server-true, per `CreateEdgeRequest`):
+   *   `{ edge: EdgeInput }` — EdgeInput = `{ id, from_node_id, to_node_id,
+   *   edge_type, properties?, weight? }`.
    */
   async execute(): Promise<void> {
+    if (this.edgeId === null) {
+      throw new Error("Edge ID is required (call .id(...))");
+    }
     if (this.sourceNode === null) {
       throw new Error("Source node ID is required");
     }
@@ -204,24 +241,25 @@ export class EdgeBuilder {
       throw new Error("Target node ID is required");
     }
     if (this.relationshipType === null) {
-      throw new Error("Relationship type is required");
+      throw new Error("Edge type / relationship is required");
     }
 
-    const edge: GraphEdge = {
-      source: this.sourceNode,
-      target: this.targetNode,
-      relationship: this.relationshipType,
-      properties: this.edgeProperties,
-      weight: this.edgeWeight ?? undefined,
+    const edge: EdgeInput = {
+      id: this.edgeId,
+      from_node_id: this.sourceNode,
+      to_node_id: this.targetNode,
+      edge_type: this.relationshipType,
     };
+    if (Object.keys(this.edgeProperties).length > 0) {
+      edge.properties = this.edgeProperties;
+    }
+    if (this.edgeWeight !== null) {
+      edge.weight = this.edgeWeight;
+    }
 
-    const request = {
-      graph: this.handle.getName(),
-      edges: [edge],
-    };
-
+    const request = { edge };
     const url = this.handle.getClient().url() + "/api/v2/graphs/" + this.handle.getName() + "/edges";
-    await this.handle.getClient().post<{ added_count: number }>(url, request);
+    await this.handle.getClient().post<{ id: string }>(url, request);
   }
 
   /**
@@ -259,9 +297,11 @@ export class TraversalBuilder {
   private handle: GraphHandle;
   private startNodeId: string | null = null;
   private relationshipTypes: string[] = [];
+  private nodeLabelsList: string[] = [];
   private traversalDirection: TraversalDirection = TraversalDirection.Outgoing;
   private maxDepthValue: number = 3;
-  private limitValue: number = 100;
+  private limitValue: number | null = null;
+  private algorithmValue: string | null = null;
   private filterExpr: string | null = null;
 
   constructor(handle: GraphHandle) {
@@ -341,7 +381,31 @@ export class TraversalBuilder {
   }
 
   /**
-   * Add a filter expression for nodes
+   * Add a label to filter visited nodes by.
+   */
+  nodeLabel(label: string): TraversalBuilder {
+    this.nodeLabelsList.push(label);
+    return this;
+  }
+
+  /**
+   * Replace the set of node-label filters.
+   */
+  nodeLabels(labels: string[]): TraversalBuilder {
+    this.nodeLabelsList = [...labels];
+    return this;
+  }
+
+  /**
+   * Select traversal algorithm (server accepts `bfs`, `dfs`, or `shortest_path`).
+   */
+  algorithm(name: string): TraversalBuilder {
+    this.algorithmValue = name;
+    return this;
+  }
+
+  /**
+   * Add a filter expression for nodes (client-side helper, not sent on wire).
    */
   filter(filterStr: string): TraversalBuilder {
     this.filterExpr = filterStr;
@@ -349,22 +413,43 @@ export class TraversalBuilder {
   }
 
   /**
-   * Execute the traversal
+   * Execute the traversal.
+   *
+   * Wire endpoint: POST /api/v2/graphs/{graph_id}/traverse
+   * OpenAPI operationId: traverseGraph
+   *
+   * Body shape (server-true, per `TraverseRequest`):
+   *   `{ start_node_id, max_depth, edge_types?, node_labels?, algorithm?, limit? }`.
+   *   Note: spec is flat (no `graph` wrapper — `graph_id` is the URL path
+   *   parameter) and has no `direction` field; legacy `direction` /
+   *   `start_node` / `relationships` keys are intentionally not sent.
    */
   async execute(): Promise<TraversalResult> {
     if (this.startNodeId === null) {
       throw new Error("Start node is required for traversal");
     }
 
-    const request = {
-      graph: this.handle.getName(),
-      start_node: this.startNodeId,
-      relationships: this.relationshipTypes.length > 0 ? this.relationshipTypes : undefined,
-      direction: this.traversalDirection,
+    const request: Record<string, unknown> = {
+      start_node_id: this.startNodeId,
       max_depth: this.maxDepthValue,
-      limit: this.limitValue,
-      filter: this.filterExpr ?? undefined,
     };
+    if (this.relationshipTypes.length > 0) {
+      request.edge_types = this.relationshipTypes;
+    }
+    if (this.nodeLabelsList.length > 0) {
+      request.node_labels = this.nodeLabelsList;
+    }
+    if (this.algorithmValue !== null) {
+      request.algorithm = this.algorithmValue;
+    }
+    if (this.limitValue !== null) {
+      request.limit = this.limitValue;
+    }
+    // Note: direction (this.traversalDirection) and filter (this.filterExpr)
+    // are intentionally NOT sent — the server `TraverseRequest` does not
+    // accept them. The setters remain for SDK ergonomic continuity.
+    void this.traversalDirection;
+    void this.filterExpr;
 
     const url = this.handle.getClient().url() + "/api/v2/graphs/" + this.handle.getName() + "/traverse";
     return await this.handle.getClient().post<TraversalResult>(url, request);
@@ -423,29 +508,53 @@ export class GraphHandle {
   }
 
   /**
-   * Add a batch of nodes
+   * Add a batch of nodes.
+   *
+   * Wire endpoint: POST /api/v2/graphs/{graph_id}/nodes/batch
+   * OpenAPI operationId: batchCreateNodes
+   *
+   * Body shape (server-true, per `BatchCreateNodesRequest`):
+   *   `{ nodes: [NodeInput, ...] }`. `graph_id` lives in the URL path.
+   *
+   * Accepts either spec-true `NodeInput[]` or legacy `GraphNode[]`; the
+   * latter is normalized (singular `label` → `labels: [label]`,
+   * `vector` → `embedding.vector`).
    */
-  async addNodes(nodes: GraphNode[]): Promise<number> {
-    const request = {
-      graph: this.graphName,
-      nodes,
-    };
-    const url = this.client.url() + "/api/v2/graphs/" + this.graphName + "/nodes";
-    const response = await this.client.post<{ added_count: number }>(url, request);
-    return response.added_count;
+  async addNodes(nodes: NodeInput[] | GraphNode[]): Promise<number> {
+    const normalized: NodeInput[] = nodes.map(n => normalizeNodeInput(n));
+    const request = { nodes: normalized };
+    const url = this.client.url() + "/api/v2/graphs/" + this.graphName + "/nodes/batch";
+    const response = await this.client.post<{ data?: { count?: number }; count?: number }>(
+      url,
+      request,
+    );
+    return response.data?.count ?? response.count ?? normalized.length;
   }
 
   /**
-   * Add a batch of edges
+   * Add a batch of edges.
+   *
+   * Wire endpoint: POST /api/v2/graphs/{graph_id}/edges/batch
+   * OpenAPI operationId: batchCreateEdges
+   *
+   * Body shape (server-true, per `BatchCreateEdgesRequest`):
+   *   `{ edges: [EdgeInput, ...] }`. `graph_id` lives in the URL path.
+   *
+   * Accepts either spec-true `EdgeInput[]` or legacy `GraphEdge[]`; the
+   * latter is normalized (`source` → `from_node_id`, `target` →
+   * `to_node_id`, `relationship` → `edge_type`). Legacy `GraphEdge` has no
+   * `id` field; callers MUST upgrade to `EdgeInput` for batch use (the
+   * normalizer throws if `id` is missing).
    */
-  async addEdges(edges: GraphEdge[]): Promise<number> {
-    const request = {
-      graph: this.graphName,
-      edges,
-    };
-    const url = this.client.url() + "/api/v2/graphs/" + this.graphName + "/edges";
-    const response = await this.client.post<{ added_count: number }>(url, request);
-    return response.added_count;
+  async addEdges(edges: EdgeInput[] | GraphEdge[]): Promise<number> {
+    const normalized: EdgeInput[] = edges.map(e => normalizeEdgeInput(e));
+    const request = { edges: normalized };
+    const url = this.client.url() + "/api/v2/graphs/" + this.graphName + "/edges/batch";
+    const response = await this.client.post<{ data?: { count?: number }; count?: number }>(
+      url,
+      request,
+    );
+    return response.data?.count ?? response.count ?? normalized.length;
   }
 
   /**
@@ -498,12 +607,21 @@ export class GraphHandle {
  */
 export class GraphBuilder {
   private client: GraphHttpClient;
-  private graphName: string;
+  private graphId: string;
+  private graphDisplayName: string | null = null;
   private graphDescription: string | null = null;
 
-  constructor(client: GraphHttpClient, name: string) {
+  constructor(client: GraphHttpClient, graphId: string) {
     this.client = client;
-    this.graphName = name;
+    this.graphId = graphId;
+  }
+
+  /**
+   * Set an optional human-readable name (defaults server-side to graph_id).
+   */
+  name(displayName: string): GraphBuilder {
+    this.graphDisplayName = displayName;
+    return this;
   }
 
   /**
@@ -515,17 +633,85 @@ export class GraphBuilder {
   }
 
   /**
-   * Execute the graph creation
+   * Execute the graph creation.
+   *
+   * Wire endpoint: POST /api/v2/graphs
+   * OpenAPI operationId: createGraph
+   *
+   * Body shape (server-true, per `CreateGraphRequest`):
+   *   `{ graph_id, name?, description? }`.
    */
   async execute(): Promise<void> {
-    const request = {
-      name: this.graphName,
-      description: this.graphDescription ?? undefined,
-    };
+    const request: Record<string, unknown> = { graph_id: this.graphId };
+    if (this.graphDisplayName !== null) {
+      request.name = this.graphDisplayName;
+    }
+    if (this.graphDescription !== null) {
+      request.description = this.graphDescription;
+    }
 
     const url = this.client.url() + "/api/v2/graphs";
-    await this.client.post<{ success: boolean }>(url, request);
+    await this.client.post<{ graph_id?: string; success?: boolean }>(url, request);
   }
+}
+
+// ============================================================================
+// INTERNAL: legacy -> spec normalizers
+// ============================================================================
+
+function normalizeNodeInput(input: NodeInput | GraphNode): NodeInput {
+  // Distinguish legacy `GraphNode` (has singular `label` and/or `vector`) from
+  // spec-true `NodeInput` (has `labels[]` / `embedding`). Field absence is
+  // fine — `NodeInput` only requires `id`.
+  const out: NodeInput = { id: input.id };
+  // Inline structural check avoids a hard cross-cast.
+  const legacy = input as GraphNode;
+  const spec = input as NodeInput;
+  if (spec.labels !== undefined) {
+    out.labels = spec.labels;
+  } else if (legacy.label !== undefined) {
+    out.labels = [legacy.label];
+  }
+  if (spec.properties !== undefined) {
+    out.properties = spec.properties;
+  } else if (legacy.properties !== undefined) {
+    out.properties = legacy.properties;
+  }
+  if (spec.embedding !== undefined) {
+    out.embedding = spec.embedding;
+  } else if (legacy.vector !== undefined) {
+    out.embedding = { vector: legacy.vector };
+  }
+  return out;
+}
+
+function normalizeEdgeInput(input: EdgeInput | GraphEdge): EdgeInput {
+  const spec = input as EdgeInput;
+  const legacy = input as GraphEdge;
+  // Spec edge has `id` (required), legacy has none. If absent on a legacy
+  // value, surface a hard error — server `EdgeInput.id` is required.
+  if (spec.id === undefined) {
+    throw new Error(
+      "addEdges: edge.id is required by EdgeInput (legacy GraphEdge has no id; pass an EdgeInput)",
+    );
+  }
+  const out: EdgeInput = {
+    id: spec.id,
+    from_node_id: spec.from_node_id ?? legacy.source,
+    to_node_id: spec.to_node_id ?? legacy.target,
+    edge_type: spec.edge_type ?? legacy.relationship,
+  };
+  if (spec.properties !== undefined) {
+    out.properties = spec.properties;
+  } else if (legacy.properties !== undefined) {
+    out.properties = legacy.properties;
+  }
+  if (spec.weight !== undefined) {
+    out.weight = spec.weight;
+  } else if (legacy.weight !== undefined) {
+    out.weight = legacy.weight;
+  }
+  return out;
 }
 
 // ============================================================================

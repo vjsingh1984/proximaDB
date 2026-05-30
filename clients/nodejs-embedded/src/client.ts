@@ -345,10 +345,16 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
   }
 
   /**
-   * Create a graph builder
+   * Create a graph builder.
+   *
+   * Wire endpoint: POST /api/v2/graphs
+   * OpenAPI operationId: createGraph
+   *
+   * The argument is the server-true `graph_id` (unique identifier). Use
+   * `.name(...)` on the returned builder to set the optional display name.
    */
-  createGraph(name: string): GraphBuilder {
-    return new GraphBuilder(this, name);
+  createGraph(graphId: string): GraphBuilder {
+    return new GraphBuilder(this, graphId);
   }
 
   /**
