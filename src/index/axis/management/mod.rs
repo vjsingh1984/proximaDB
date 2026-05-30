@@ -2,6 +2,7 @@
 
 pub mod adaptive_engine;
 pub mod analyzer;
+pub mod hnsw_param_advisor;
 pub mod manager;
 pub mod migration_engine;
 pub mod monitor;
@@ -19,6 +20,9 @@ pub use adaptive_engine::{
 };
 
 pub use analyzer::CollectionAnalyzer;
+pub use hnsw_param_advisor::{
+    EF_SEARCH_MAX, EF_SEARCH_MIN, HnswSizingInput, HnswSizingOutput, advise_hnsw_params,
+};
 pub use migration_engine::{
     IndexMigrationEngine, MigrationComplexity, MigrationDecision, MigrationPhase, MigrationPlan,
 };
