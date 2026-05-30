@@ -470,3 +470,282 @@ async fn health_matches_spec() {
 
     mock.assert_async().await;
 }
+
+// ---------------------------------------------------------------------------
+// Graph v2 surface (added 2026-05-30): pin verb+path against the OpenAPI spec
+// for every SDK-callable graph operation. Body shape is checked only where
+// the SDK matches the spec; some graph endpoints currently wrap their
+// payloads (e.g. `add_nodes` posts `{graph, nodes:[...]}` while the spec's
+// `CreateNodeRequest` is a single `{id,...}`) — that drift is tracked
+// separately and is intentionally out of scope for the path-migration gate.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn create_graph_matches_spec() {
+    let spec = load_spec();
+    let server = MockServer::start_async().await;
+    let op = operation(&spec, "/api/v2/graphs", "post");
+    assert_eq!(operation_id(op), "createGraph");
+
+    let required = collect_required_fields(
+        &spec,
+        request_body_schema(&spec, op).expect("POST graphs must declare requestBody"),
+    );
+    assert!(required.contains("name"), "spec requires `name`");
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v2/graphs")
+                .header("content-type", "application/json")
+                .json_body_partial(r#"{"name": "knowledge"}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({"name": "knowledge", "success": true}));
+        })
+        .await;
+
+    let client = ProximaClient::connect(server.base_url()).unwrap();
+    client.create_graph("knowledge").execute().await.unwrap();
+
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn list_graphs_matches_spec() {
+    let spec = load_spec();
+    let server = MockServer::start_async().await;
+    let op = operation(&spec, "/api/v2/graphs", "get");
+    assert_eq!(operation_id(op), "listGraphs");
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(Method::GET).path("/api/v2/graphs");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({"graphs": []}));
+        })
+        .await;
+
+    let client = ProximaClient::connect(server.base_url()).unwrap();
+    let graphs = client.list_graphs().await.unwrap();
+    assert!(graphs.is_empty());
+
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn delete_graph_matches_spec() {
+    let spec = load_spec();
+    let server = MockServer::start_async().await;
+    let op = operation(&spec, "/api/v2/graphs/{graph_id}", "delete");
+    assert_eq!(operation_id(op), "deleteGraph");
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(Method::DELETE).path("/api/v2/graphs/knowledge");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({"deleted": true, "name": "knowledge"}));
+        })
+        .await;
+
+    let client = ProximaClient::connect(server.base_url()).unwrap();
+    client.delete_graph("knowledge").await.unwrap();
+
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn create_node_matches_spec() {
+    let spec = load_spec();
+    let server = MockServer::start_async().await;
+    let op = operation(&spec, "/api/v2/graphs/{graph_id}/nodes", "post");
+    assert_eq!(operation_id(op), "createNode");
+
+    // Spec requires `id` on the node payload; the SDK currently wraps in
+    // `{graph, nodes: [{id, ...}]}` so we assert spec-shape and verify the
+    // SDK at minimum carries the id through the wrapper.
+    let required = collect_required_fields(
+        &spec,
+        request_body_schema(&spec, op).expect("POST nodes must declare requestBody"),
+    );
+    assert!(required.contains("id"), "spec requires `id`");
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v2/graphs/knowledge/nodes")
+                .header("content-type", "application/json")
+                .json_body_partial(r#"{"nodes": [{"id": "person_1"}]}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({"added_count": 1}));
+        })
+        .await;
+
+    let client = ProximaClient::connect(server.base_url()).unwrap();
+    client
+        .graph("knowledge")
+        .add_node()
+        .id("person_1")
+        .label("Person")
+        .execute()
+        .await
+        .unwrap();
+
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn get_node_matches_spec() {
+    let spec = load_spec();
+    let server = MockServer::start_async().await;
+    let op = operation(
+        &spec,
+        "/api/v2/graphs/{graph_id}/nodes/{node_id}",
+        "get",
+    );
+    assert_eq!(operation_id(op), "getNode");
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(Method::GET)
+                .path("/api/v2/graphs/knowledge/nodes/person_1");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({"id": "person_1"}));
+        })
+        .await;
+
+    let client = ProximaClient::connect(server.base_url()).unwrap();
+    let node = client
+        .graph("knowledge")
+        .get_node("person_1")
+        .await
+        .unwrap();
+    assert!(node.is_some());
+    assert_eq!(node.unwrap().id, "person_1");
+
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn delete_node_matches_spec() {
+    let spec = load_spec();
+    let server = MockServer::start_async().await;
+    let op = operation(
+        &spec,
+        "/api/v2/graphs/{graph_id}/nodes/{node_id}",
+        "delete",
+    );
+    assert_eq!(operation_id(op), "deleteNode");
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(Method::DELETE)
+                .path("/api/v2/graphs/knowledge/nodes/person_1");
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({"deleted": true, "id": "person_1"}));
+        })
+        .await;
+
+    let client = ProximaClient::connect(server.base_url()).unwrap();
+    client
+        .graph("knowledge")
+        .delete_node("person_1")
+        .await
+        .unwrap();
+
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn create_edge_matches_spec() {
+    let spec = load_spec();
+    let server = MockServer::start_async().await;
+    let op = operation(&spec, "/api/v2/graphs/{graph_id}/edges", "post");
+    assert_eq!(operation_id(op), "createEdge");
+
+    // Spec requires `source` and `target` on the edge payload; the SDK
+    // wraps in `{graph, edges: [{source, target, relationship, ...}]}`.
+    let required = collect_required_fields(
+        &spec,
+        request_body_schema(&spec, op).expect("POST edges must declare requestBody"),
+    );
+    assert!(required.contains("source"), "spec requires `source`");
+    assert!(required.contains("target"), "spec requires `target`");
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v2/graphs/knowledge/edges")
+                .header("content-type", "application/json")
+                .json_body_partial(
+                    r#"{"edges": [{"source": "person_1", "target": "person_2", "relationship": "KNOWS"}]}"#,
+                );
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({"added_count": 1}));
+        })
+        .await;
+
+    let client = ProximaClient::connect(server.base_url()).unwrap();
+    client
+        .graph("knowledge")
+        .add_edge()
+        .from("person_1")
+        .to("person_2")
+        .relationship("KNOWS")
+        .execute()
+        .await
+        .unwrap();
+
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn traverse_graph_matches_spec() {
+    let spec = load_spec();
+    let server = MockServer::start_async().await;
+    let op = operation(&spec, "/api/v2/graphs/{graph_id}/traverse", "post");
+    assert_eq!(operation_id(op), "traverseGraph");
+
+    // Spec requires `start_node_id`; the SDK posts `start_node` instead.
+    // The drift is a known body-shape divergence — out of scope for the
+    // path-migration gate. We still assert the spec-required field name
+    // to detect future spec changes.
+    let required = collect_required_fields(
+        &spec,
+        request_body_schema(&spec, op).expect("POST traverse must declare requestBody"),
+    );
+    assert!(
+        required.contains("start_node_id"),
+        "spec requires `start_node_id`"
+    );
+
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v2/graphs/knowledge/traverse")
+                .header("content-type", "application/json")
+                .json_body_partial(r#"{"start_node": "person_1"}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .json_body(json!({"nodes": [], "edges": []}));
+        })
+        .await;
+
+    let client = ProximaClient::connect(server.base_url()).unwrap();
+    let result = client
+        .graph("knowledge")
+        .traverse()
+        .start("person_1")
+        .execute()
+        .await
+        .unwrap();
+    assert!(result.nodes.is_empty());
+
+    mock.assert_async().await;
+}

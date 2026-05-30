@@ -221,7 +221,7 @@ impl<'a> GraphHandle<'a> {
             graph: self.name.clone(),
             nodes,
         };
-        let url = format!("{}/api/v1/graphs/{}/nodes", self.client.url(), self.name);
+        let url = format!("{}/api/v2/graphs/{}/nodes", self.client.url(), self.name);
         let response: AddNodesResponse = self.client.post(&url, &request).await?;
         Ok(response.added_count)
     }
@@ -233,7 +233,7 @@ impl<'a> GraphHandle<'a> {
             graph: self.name.clone(),
             edges,
         };
-        let url = format!("{}/api/v1/graphs/{}/edges", self.client.url(), self.name);
+        let url = format!("{}/api/v2/graphs/{}/edges", self.client.url(), self.name);
         let response: AddEdgesResponse = self.client.post(&url, &request).await?;
         Ok(response.added_count)
     }
@@ -242,7 +242,7 @@ impl<'a> GraphHandle<'a> {
     #[cfg(feature = "client")]
     pub async fn get_node(&self, id: &str) -> Result<Option<GraphNode>> {
         let url = format!(
-            "{}/api/v1/graphs/{}/nodes/{}",
+            "{}/api/v2/graphs/{}/nodes/{}",
             self.client.url(),
             self.name,
             id
@@ -261,7 +261,7 @@ impl<'a> GraphHandle<'a> {
     #[cfg(feature = "client")]
     pub async fn delete_node(&self, id: &str) -> Result<()> {
         let url = format!(
-            "{}/api/v1/graphs/{}/nodes/{}",
+            "{}/api/v2/graphs/{}/nodes/{}",
             self.client.url(),
             self.name,
             id
@@ -270,11 +270,16 @@ impl<'a> GraphHandle<'a> {
         Ok(())
     }
 
-    /// Delete an edge
+    /// Delete an edge.
+    ///
+    /// TODO(graph-edge-delete-shape): the server route is
+    /// `DELETE /api/v2/graphs/{id}/edges/{edge_id}` with a single edge_id;
+    /// this SDK signature with (source, target, relationship) doesn't match.
+    /// Tracked separately.
     #[cfg(feature = "client")]
     pub async fn delete_edge(&self, source: &str, target: &str, relationship: &str) -> Result<()> {
         let url = format!(
-            "{}/api/v1/graphs/{}/edges/{}/{}/{}",
+            "{}/api/v2/graphs/{}/edges/{}/{}/{}",
             self.client.url(),
             self.name,
             source,
@@ -350,7 +355,7 @@ impl<'a> NodeBuilder<'a> {
         };
 
         let url = format!(
-            "{}/api/v1/graphs/{}/nodes",
+            "{}/api/v2/graphs/{}/nodes",
             self.handle.client.url(),
             self.handle.name
         );
@@ -438,7 +443,7 @@ impl<'a> EdgeBuilder<'a> {
         };
 
         let url = format!(
-            "{}/api/v1/graphs/{}/edges",
+            "{}/api/v2/graphs/{}/edges",
             self.handle.client.url(),
             self.handle.name
         );
@@ -553,7 +558,7 @@ impl<'a> TraversalBuilder<'a> {
         };
 
         let url = format!(
-            "{}/api/v1/graphs/{}/traverse",
+            "{}/api/v2/graphs/{}/traverse",
             self.handle.client.url(),
             self.handle.name
         );
@@ -594,7 +599,7 @@ impl<'a> GraphBuilder<'a> {
             description: self.description,
         };
 
-        let url = format!("{}/api/v1/graphs", self.client.url());
+        let url = format!("{}/api/v2/graphs", self.client.url());
         let _response: CreateGraphResponse = self.client.post(&url, &request).await?;
         Ok(())
     }

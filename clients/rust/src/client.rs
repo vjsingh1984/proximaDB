@@ -309,7 +309,7 @@ impl ProximaClient {
     /// Delete a graph
     #[cfg(feature = "client")]
     pub async fn delete_graph(&self, name: &str) -> Result<()> {
-        let url = format!("{}/api/v1/graphs/{}", self.inner.config.url, name);
+        let url = format!("{}/api/v2/graphs/{}", self.inner.config.url, name);
         self.delete::<serde_json::Value>(&url).await?;
         Ok(())
     }
@@ -317,7 +317,7 @@ impl ProximaClient {
     /// List all graphs
     #[cfg(feature = "client")]
     pub async fn list_graphs(&self) -> Result<Vec<GraphInfo>> {
-        let url = format!("{}/api/v1/graphs", self.inner.config.url);
+        let url = format!("{}/api/v2/graphs", self.inner.config.url);
         let response: ListGraphsResponse = self.get(&url).await?;
         Ok(response.graphs)
     }
