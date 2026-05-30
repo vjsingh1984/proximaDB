@@ -29,7 +29,7 @@
 //! ```
 
 use proximadb::compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute};
-use proximadb::core::search::{SearchMode, SearchParams};
+use proximadb::core::search::{BlockPruneConfig, SearchMode, SearchParams};
 use proximadb::proto::proximadb_v1::{Collection, CollectionConfig};
 use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
@@ -425,13 +425,30 @@ impl SetupResult {
                     use proximadb::index::axis::types::{
                         Data, IndexAlgorithm, IndexSelectionStrategy, IndexSpecification,
                     };
+                    // Adaptive IVF sizing (textbook: nlist = sqrt(N),
+                    // nprobe = sqrt(nlist) for ~95% recall trade-off):
+                    //
+                    //   N=10K   → nlist=100, nprobe=10
+                    //   N=25K   → nlist=158, nprobe=12
+                    //   N=100K  → nlist=316, nprobe=17
+                    //   N=1M    → nlist=1000, nprobe=31
+                    //
+                    // Floored at nlist=100 (sub-1K collections don't
+                    // benefit from finer partitioning and k-means
+                    // can't train with fewer clusters than samples).
+                    // Override via BENCH_IVF_NLIST / BENCH_IVF_NPROBE.
+                    let sqrt_n = (cfg.vector_count as f64).sqrt() as u32;
+                    let auto_nlist = sqrt_n.max(100);
+                    let auto_nprobe = (auto_nlist as f64).sqrt().ceil() as u32;
+                    let nlist = env_usize("BENCH_IVF_NLIST", auto_nlist as usize) as u32;
+                    let nprobe = env_usize("BENCH_IVF_NPROBE", auto_nprobe as usize) as u32;
                     let ivf_spec = IndexSpecification::new(
                         Data::DenseVector {
                             dimension: cfg.dimension,
                         },
                         IndexAlgorithm::IVF {
-                            nlist: 100,
-                            nprobe: 10,
+                            nlist,
+                            nprobe,
                             quantizer: None,
                         },
                     );
@@ -671,17 +688,27 @@ fn main() {
 #[derive(Debug)]
 struct RecallStats {
     /// ID-overlap recall@k per query — fraction of the AXIS top_k
-    /// IDs that ALSO appear in the exact top_k. Strictest measure;
-    /// sensitive to ties (multiple records with very similar
-    /// metric values).
+    /// IDs that ALSO appear in the **default-flat** top_k.
+    /// Strictest measure; sensitive to ties.
     id_overlap: Vec<f64>,
     /// Score-threshold recall@k per query — fraction of the AXIS
-    /// top_k whose true metric score is >= exact's k-th best score
-    /// (for "higher = better" metrics). Independent of how AXIS
-    /// reports score units; measures whether AXIS found candidates
-    /// that are at least as good as exact's worst top-K.
+    /// top_k whose true metric score is >= default-flat's k-th best
+    /// score. Independent of how AXIS reports score units.
     score_threshold: Vec<f64>,
-    /// How many of the queries returned identical top_k id sets.
+    /// **Shadow recall**: default-flat top_k vs true brute-force
+    /// (force_exact=true, no block pruning). When this is < 1.0 it
+    /// means default-flat itself is missing records the true exact
+    /// search would have returned — i.e. the bench's regular "exact"
+    /// baseline is approximate at this scale. Disclosed so callers
+    /// can multiply through to get axis_recall vs true ground truth.
+    flat_default_vs_force_exact: Vec<f64>,
+    /// **Shadow recall**: AXIS top_k vs true brute-force. This is
+    /// the absolute recall number — what the customer would observe
+    /// vs a no-pruning baseline. = id_overlap × flat_default_vs_force_exact
+    /// approximately, with cross-term corrections.
+    axis_vs_force_exact: Vec<f64>,
+    /// How many of the queries returned identical top_k id sets
+    /// (vs default-flat).
     perfect_matches: usize,
 }
 
@@ -777,7 +804,20 @@ async fn measure_recall(setup: &SetupResult, cfg: &BenchConfig, n_queries: usize
 
     let mut id_overlap = Vec::with_capacity(n_queries);
     let mut score_threshold = Vec::with_capacity(n_queries);
+    let mut flat_default_vs_force_exact = Vec::with_capacity(n_queries);
+    let mut axis_vs_force_exact = Vec::with_capacity(n_queries);
     let mut perfect_matches = 0usize;
+
+    // BlockPruneConfig with force_exact=true bypasses the centroid +
+    // sqrt-based block pruning that the default flat path uses at
+    // scale (~100+ blocks). This is the "true" brute-force baseline
+    // we compare both default-flat and AXIS against, so the recall
+    // numbers we report are absolute (vs no-pruning ground truth)
+    // and not just relative to ProximaDB's approximate flat path.
+    let force_exact_block_prune = BlockPruneConfig {
+        force_exact: true,
+        ..Default::default()
+    };
 
     for q_idx in 0..n_queries {
         // Vary the query per iteration so we don't measure recall on
@@ -791,7 +831,11 @@ async fn measure_recall(setup: &SetupResult, cfg: &BenchConfig, n_queries: usize
             .map(|j| pseudo_random_f32(10_000_000 + q_idx as u64, j))
             .collect();
 
-        // Ground truth: brute force over all SST blocks. Take top_k.
+        // **Default-flat baseline** (what the bench has always
+        // compared against): SearchMode::Exact with the default
+        // BlockPruneConfig. At small N this is true brute-force; at
+        // 100K+ where flat has ≥100 blocks, the default config
+        // applies sqrt-based centroid pruning and skips most blocks.
         let search_params = Arc::new(SearchParams {
             vector: Some(query_vector.clone()),
             top_k: Some(cfg.top_k),
@@ -817,6 +861,38 @@ async fn measure_recall(setup: &SetupResult, cfg: &BenchConfig, n_queries: usize
             .expect("exact search");
         let exact_ids: std::collections::HashSet<String> =
             exact.iter().map(|r| r.id.clone()).collect();
+
+        // **Force-exact shadow baseline** (true brute-force, no
+        // block pruning): same call as `exact` above but with a
+        // BlockPruneConfig that disables centroid + sqrt pruning.
+        // Used to measure how much recall the default-flat path is
+        // costing at scale.
+        let force_exact_params = Arc::new(SearchParams {
+            vector: Some(query_vector.clone()),
+            top_k: Some(cfg.top_k),
+            search_mode: SearchMode::Exact,
+            block_prune: force_exact_block_prune.clone(),
+            ..Default::default()
+        });
+        let force_exact_ctx =
+            StorageQueryContext::new(force_exact_params, Arc::clone(&setup.warm_collection));
+        let force_exact = setup
+            .warm_engine
+            .fallback_to_direct_search(
+                &force_exact_ctx,
+                &collection_id,
+                &storage_url,
+                &query_vector,
+                cfg.top_k,
+                distance_metric,
+                None,
+                true,
+                true,
+            )
+            .await
+            .expect("force_exact search");
+        let force_exact_ids: std::collections::HashSet<String> =
+            force_exact.iter().map(|r| r.id.clone()).collect();
 
         // AXIS HNSW: same query, but routed through
         // execute_orchestrated_search.
@@ -883,6 +959,19 @@ async fn measure_recall(setup: &SetupResult, cfg: &BenchConfig, n_queries: usize
             perfect_matches += 1;
         }
 
+        // Shadow comparison 1: default-flat top_k vs true brute-force.
+        // When < 1.0, default-flat is missing records the true exact
+        // would have returned — its pruning is costing recall.
+        let flat_vs_fe = exact_ids.intersection(&force_exact_ids).count() as f64
+            / cfg.top_k as f64;
+        flat_default_vs_force_exact.push(flat_vs_fe);
+
+        // Shadow comparison 2: AXIS top_k vs true brute-force. This
+        // is the absolute recall — what a customer would observe.
+        let axis_vs_fe = axis_ids.intersection(&force_exact_ids).count() as f64
+            / cfg.top_k as f64;
+        axis_vs_force_exact.push(axis_vs_fe);
+
         // Score-threshold recall: independent of how AXIS reports
         // similarity. Compute the TRUE score (per the configured
         // metric, "higher = better" normalization) for every record
@@ -911,6 +1000,8 @@ async fn measure_recall(setup: &SetupResult, cfg: &BenchConfig, n_queries: usize
     RecallStats {
         id_overlap,
         score_threshold,
+        flat_default_vs_force_exact,
+        axis_vs_force_exact,
         perfect_matches,
     }
 }
@@ -928,6 +1019,9 @@ fn print_recall_report(cfg: &BenchConfig, stats: &RecallStats) {
     };
     let (id_mean, id_min, id_max) = summarize(&stats.id_overlap);
     let (sc_mean, sc_min, sc_max) = summarize(&stats.score_threshold);
+    let (flat_fe_mean, flat_fe_min, flat_fe_max) =
+        summarize(&stats.flat_default_vs_force_exact);
+    let (axis_fe_mean, axis_fe_min, axis_fe_max) = summarize(&stats.axis_vs_force_exact);
 
     println!();
     println!("================================================================================");
@@ -935,11 +1029,23 @@ fn print_recall_report(cfg: &BenchConfig, stats: &RecallStats) {
     println!("================================================================================");
     println!();
     println!(
-        "  ID-overlap recall (exact-vs-AXIS top-k id intersection / k):"
+        "  ID-overlap recall (AXIS vs default-flat — what the bench has historically reported):"
     );
     println!(
         "      mean: {:.3}   min: {:.3}   max: {:.3}",
         id_mean, id_min, id_max
+    );
+    println!();
+    println!("  Shadow vs true brute-force (force_exact=true baseline):");
+    println!("      flat default vs force_exact:");
+    println!(
+        "          mean: {:.3}   min: {:.3}   max: {:.3}    (1.0 = pruning costs no recall)",
+        flat_fe_mean, flat_fe_min, flat_fe_max
+    );
+    println!("      AXIS vs force_exact (ABSOLUTE recall — customer-observed):");
+    println!(
+        "          mean: {:.3}   min: {:.3}   max: {:.3}",
+        axis_fe_mean, axis_fe_min, axis_fe_max
     );
     println!(
         "  Score-threshold recall (AXIS records whose true metric score >="

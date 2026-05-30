@@ -49,8 +49,15 @@ pub struct ProgressiveRecalls {
 /// approximate search (faster but potentially lower recall).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Default)]
 pub enum SearchMode {
-    /// Exact search with 100% recall - searches all partitions (current default behavior)
-    /// This is the safest option for accuracy-critical applications.
+    /// Exact search with 100% recall — searches all partitions and
+    /// **disables block-level centroid pruning** at request time
+    /// (since 2026-05-30: `SstEngine::fallback_to_direct_search`
+    /// auto-sets `BlockPruneConfig::force_exact = true` when
+    /// `SearchMode::Exact` is requested, even if the caller's
+    /// `block_prune` config didn't explicitly opt in).
+    ///
+    /// Use this for accuracy-critical applications where the
+    /// performance cost of a full block scan is acceptable.
     #[default]
     Exact,
 
@@ -382,9 +389,40 @@ pub struct UnifiedSearchParams {
 }
 
 /// Configuration for block-level centroid pruning.
+///
+/// # Recall vs latency trade-off
+///
+/// Block-centroid pruning scans only a subset of SSTable blocks based
+/// on each block's centroid distance to the query. This is fast
+/// (constant work regardless of N) but assumes blocks are spatially
+/// organized — records inside a block share spatial locality, and
+/// the centroid is a meaningful "summary" of the block.
+///
+/// **Current ProximaDB block layout** is sorted by record `oid`
+/// (lexicographic), not by spatial Z-order. Block centroids are
+/// statistical mixtures of unrelated records, not true cluster
+/// centers. Empirically this gives **~5% recall at 100K with the
+/// default Sqrt mode** vs a true brute-force scan — measurable via
+/// `bench_warm_path_profile`'s `flat_default_vs_force_exact` shadow
+/// metric. This is a known limitation pending a write-time Z-order
+/// sort (see roadmap TD-xxx).
+///
+/// # When to use each setting
+///
+/// | Use case | Setting |
+/// |---|---|
+/// | Customer asked for exact results | `force_exact = true` (or use `SearchMode::Exact`, which auto-sets this since 2026-05-30) |
+/// | Need >0.9 recall on a large collection | Use the AXIS index path (HNSW or IVF) instead of flat. Flat with default pruning gives low absolute recall on diffuse data. |
+/// | Need fast approximate scan with no AXIS | Keep `force_exact: false` and accept the recall floor (~5-50% depending on data layout) |
+/// | Tests / micro-benchmarks | `force_exact: true` for deterministic ground truth |
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BlockPruneConfig {
     /// Disable all block-level pruning (force brute-force scan).
+    ///
+    /// **Auto-set to `true` when `SearchMode::Exact` is requested**
+    /// (since 2026-05-30) — see `SstEngine::fallback_to_direct_search`.
+    /// Before that change, `SearchMode::Exact` silently allowed
+    /// sqrt-mode centroid pruning to drop recall to 5% at scale.
     pub force_exact: bool,
     /// Pruning mode: "sqrt" (default), "ratio", or "fixed".
     pub mode: BlockPruneMode,

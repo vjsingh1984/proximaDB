@@ -389,14 +389,38 @@ impl SstEngine {
         // When SearchMode is Approximate, uses centroid-based IVF-style optimization
         tracing::debug!(storage_url = %storage_url, "Discovering SSTable files");
         let search_mode = &ctx.search_params.search_mode;
-        let prune_config = &ctx.search_params.block_prune; // [AGENT_FIX] Get prune config
+
+        // **Honor SearchMode::Exact (2026-05-30)**: when the caller
+        // asked for an exact search, force `block_prune.force_exact = true`
+        // so the sqrt-based centroid block pruning doesn't silently
+        // drop recall. Without this override, an Exact search at 100K
+        // (where the SST has ≥100 blocks) keeps only `sqrt(num_blocks)`
+        // blocks via centroid distance — measured 5% recall vs true
+        // brute force on random data. Customers asking for `Exact` get
+        // approximate results otherwise.
+        //
+        // For `SearchMode::Approximate` and `SearchMode::Adaptive` the
+        // caller's `block_prune` config flows through unchanged.
+        let prune_config_owned;
+        let prune_config: &crate::core::search::BlockPruneConfig =
+            if matches!(search_mode, crate::core::search::SearchMode::Exact)
+                && !ctx.search_params.block_prune.force_exact
+            {
+                prune_config_owned = crate::core::search::BlockPruneConfig {
+                    force_exact: true,
+                    ..ctx.search_params.block_prune.clone()
+                };
+                &prune_config_owned
+            } else {
+                &ctx.search_params.block_prune
+            };
         let sstable_files = self
             .discover_sstable_files_with_centroid_pruning(
                 storage_url,
                 query_vector,
                 distance_metric,
                 search_mode,
-                prune_config, // [AGENT_FIX] Pass prune config down
+                prune_config,
             )
             .await?;
         let discovery_us = discovery_start.elapsed().as_micros() as u64;
@@ -422,10 +446,12 @@ impl SstEngine {
             collection_id
         );
 
-        // Search each SSTable file with block-level pruning
-        // Uses Z-order spatial codes and centroid distances for intelligent block selection
+        // Search each SSTable file with block-level pruning. Reuse the
+        // SearchMode::Exact-aware prune_config from above so the
+        // per-file scan also honors `force_exact` when the caller
+        // asked for an exact search.
         let scan_start = std::time::Instant::now();
-        let block_prune = &ctx.search_params.block_prune;
+        let block_prune = prune_config;
         for (file_idx, sstable_path) in sstable_files.iter().enumerate() {
             trace!(
                 "SST: Searching file [{}/{}]: {} (force_exact={})",
