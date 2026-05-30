@@ -18,7 +18,9 @@ mod source_reader;
 mod types;
 
 pub use registry::ExternalCollectionRegistry;
-pub use service::{ExternalCollectionService, EXTERNAL_INDEX_PROJECTION};
+pub use service::{
+    ExternalCollectionService, ExternalHit, RefreshOutcome, EXTERNAL_INDEX_PROJECTION,
+};
 pub use types::{
     ExternalCollection, ExternalCollectionSpec, ExternalCollectionStatus, ExternalFormat,
 };

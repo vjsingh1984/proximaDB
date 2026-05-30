@@ -17,8 +17,10 @@ use proximadb_catalog::{
     CatalogTableSchema, ProjectionFreshnessState,
 };
 
+use proximadb_records::ProximaRecord;
+
 use super::registry::ExternalCollectionRegistry;
-use super::source_reader::{read_external_records, snapshot_fingerprint};
+use super::source_reader::{read_external_records, read_records_by_ids, snapshot_fingerprint};
 use super::types::{ExternalCollection, ExternalCollectionSpec, ExternalCollectionStatus};
 use crate::catalog::CatalogManager;
 use crate::index::axis::management::manager::{AxisHybridQuery, VectorQuery};
@@ -28,6 +30,31 @@ use crate::index::AxisManager;
 /// Canonical name of the projection that tracks the ProximaDB-owned vector
 /// index built over the external source.
 pub const EXTERNAL_INDEX_PROJECTION: &str = "external_index";
+
+/// A scored search hit with the full record federated from the external source.
+#[derive(Debug, Clone)]
+pub struct ExternalHit {
+    /// Record id (the source `id_column` value).
+    pub id: String,
+    /// Similarity score from the vector index.
+    pub score: f32,
+    /// Full record fetched from the external source (props = non-vector columns;
+    /// empty if the source row could not be fetched).
+    pub record: ProximaRecord,
+}
+
+/// Outcome of an on-demand `refresh`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RefreshOutcome {
+    /// Whether the source changed since the last build (fingerprint mismatch).
+    pub stale_detected: bool,
+    /// Whether the index was rebuilt (true iff `stale_detected`).
+    pub rebuilt: bool,
+    /// The current snapshot fingerprint (new one if rebuilt, else unchanged).
+    pub snapshot_id: String,
+    /// Records indexed after a rebuild (unchanged if not rebuilt).
+    pub indexed_record_count: u64,
+}
 
 /// Control-plane facade for external collections.
 pub struct ExternalCollectionService {
@@ -155,6 +182,76 @@ impl ExternalCollectionService {
         }
     }
 
+    /// Whether the external source changed since the last build — recomputes the
+    /// source fingerprint and compares it to the stored snapshot id.
+    pub fn is_stale(&self, id: &str) -> Result<bool> {
+        let ec = self
+            .registry
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("external collection '{id}' not found"))?;
+        let current = snapshot_fingerprint(&ec.spec.location)?;
+        Ok(current != ec.snapshot_id)
+    }
+
+    /// On-demand staleness refresh: if the source changed, flip the projection to
+    /// `RebuildRequired` (observable), rebuild the index in place, then publish
+    /// `Fresh` with the new snapshot id. A no-op (`rebuilt = false`) when the
+    /// source is unchanged. This is the remediation for the advisory
+    /// `RebuildRequired` state; a future background sweep can call it.
+    pub async fn refresh(&self, id: &str) -> Result<RefreshOutcome> {
+        let mut ec = self
+            .registry
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("external collection '{id}' not found"))?;
+        let collection_id = ec.spec.name.clone();
+        let current = snapshot_fingerprint(&ec.spec.location)?;
+        if current == ec.snapshot_id {
+            return Ok(RefreshOutcome {
+                stale_detected: false,
+                rebuilt: false,
+                snapshot_id: ec.snapshot_id,
+                indexed_record_count: ec.indexed_record_count,
+            });
+        }
+
+        ec.status = ExternalCollectionStatus::Building;
+        self.registry.upsert(ec.clone());
+        // Observable: the index is known-stale until the rebuild completes.
+        self.set_projection_state(&collection_id, |p| {
+            p.freshness_state = ProjectionFreshnessState::RebuildRequired;
+        })
+        .await?;
+
+        match self.build_inner(&ec).await {
+            Ok(count) => {
+                ec.snapshot_id = current.clone();
+                ec.indexed_record_count = count as u64;
+                ec.status = ExternalCollectionStatus::Ready;
+                ec.error = None;
+                self.registry.upsert(ec);
+                let snap = current.clone();
+                self.set_projection_state(&collection_id, move |p| {
+                    p.freshness_state = ProjectionFreshnessState::Fresh;
+                    p.source_range = Some(snap.clone());
+                    p.last_included_position = Some(snap);
+                })
+                .await?;
+                Ok(RefreshOutcome {
+                    stale_detected: true,
+                    rebuilt: true,
+                    snapshot_id: current,
+                    indexed_record_count: count as u64,
+                })
+            }
+            Err(err) => {
+                ec.status = ExternalCollectionStatus::Failed;
+                ec.error = Some(format!("{err:#}"));
+                self.registry.upsert(ec);
+                Err(err)
+            }
+        }
+    }
+
     /// Read + build + register-strategy. Separated so `build` can centralize
     /// status/projection transitions around it.
     async fn build_inner(&self, ec: &ExternalCollection) -> Result<usize> {
@@ -203,14 +300,15 @@ impl ExternalCollectionService {
             .await
     }
 
-    /// Search the external collection's index, returning `(id, score)` pairs.
-    /// Delegates to the same `AxisManager::query` path native collections use.
-    pub async fn search(
-        &self,
-        id: &str,
-        query: Vec<f32>,
-        k: usize,
-    ) -> Result<Vec<(String, f32)>> {
+    /// Search the external collection's index and return scored hits with the
+    /// **full records federated from the external source** — ProximaDB owns the
+    /// index but not the records, so the text/metadata are fetched from the
+    /// source (un-copied) at retrieval time. Delegates the vector search to the
+    /// same `AxisManager::query` path native collections use, then joins the
+    /// top-k ids back to records via `read_records_by_ids`, preserving score
+    /// order. Ids with no matching source row (e.g. concurrently deleted) keep
+    /// an empty-props record so the score is still returned.
+    pub async fn search(&self, id: &str, query: Vec<f32>, k: usize) -> Result<Vec<ExternalHit>> {
         let ec = self
             .registry
             .get(id)
@@ -231,11 +329,31 @@ impl ExternalCollectionService {
             top_k: k,
             ..AxisHybridQuery::default()
         };
-        let result = self.axis_manager.query(q).await?;
-        Ok(result
+        let scored: Vec<(String, f32)> = self
+            .axis_manager
+            .query(q)
+            .await?
             .results
             .into_iter()
             .map(|r| (r.vector_id, r.similarity))
+            .collect();
+
+        let ids: Vec<String> = scored.iter().map(|(id, _)| id.clone()).collect();
+        let mut by_id: std::collections::HashMap<String, ProximaRecord> =
+            read_records_by_ids(&ec.spec, &ids)?
+                .into_iter()
+                .map(|r| (r.oid.clone(), r))
+                .collect();
+
+        Ok(scored
+            .into_iter()
+            .map(|(id, score)| {
+                let record = by_id.remove(&id).unwrap_or_else(|| ProximaRecord {
+                    oid: id.clone(),
+                    ..Default::default()
+                });
+                ExternalHit { id, score, record }
+            })
             .collect())
     }
 
@@ -377,6 +495,52 @@ mod tests {
         ))
     }
 
+    /// Like `write_parquet_fixture` but adds `text: Utf8` + `year: Int64` columns
+    /// so federated-fetch props can be asserted. One-hot directions, `dim >= n`.
+    fn write_meta_fixture(path: &std::path::Path, n: usize, dim: usize) {
+        use arrow_array::builder::{Int64Builder, StringBuilder};
+        assert!(dim >= n, "one-hot fixture requires dim >= n");
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("text", DataType::Utf8, false),
+            Field::new("year", DataType::Int64, false),
+            Field::new(
+                "vector",
+                DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), dim as i32),
+                false,
+            ),
+        ]));
+        let mut id_b = StringBuilder::new();
+        let mut text_b = StringBuilder::new();
+        let mut year_b = Int64Builder::new();
+        let mut vec_b = FixedSizeListBuilder::new(Float32Builder::new(), dim as i32);
+        for i in 0..n {
+            id_b.append_value(format!("row-{i}"));
+            text_b.append_value(format!("text-{i}"));
+            year_b.append_value(2000 + i as i64);
+            let mut v = vec![0.0f32; dim];
+            v[i] = 1.0 + (i as f32) * 0.001;
+            for x in &v {
+                vec_b.values().append_value(*x);
+            }
+            vec_b.append(true);
+        }
+        let batch = RecordBatch::try_new(
+            schema.clone(),
+            vec![
+                Arc::new(id_b.finish()),
+                Arc::new(text_b.finish()),
+                Arc::new(year_b.finish()),
+                Arc::new(vec_b.finish()),
+            ],
+        )
+        .unwrap();
+        let file = std::fs::File::create(path).unwrap();
+        let mut writer = ArrowWriter::try_new(file, schema, None).unwrap();
+        writer.write(&batch).unwrap();
+        writer.close().unwrap();
+    }
+
     #[tokio::test]
     async fn register_catalogs_federated_read_and_external_snapshot() {
         let path = fixture_path();
@@ -450,7 +614,7 @@ mod tests {
         let (qid, qvec) = &expect[5];
         let hits = svc.search(&ec.id, qvec.clone(), 3).await.unwrap();
         assert!(!hits.is_empty(), "external index must be queryable");
-        assert_eq!(&hits[0].0, qid, "top-1 must be the exact external row");
+        assert_eq!(&hits[0].id, qid, "top-1 must be the exact external row");
 
         let _ = std::fs::remove_file(&path);
     }
@@ -469,6 +633,81 @@ mod tests {
             ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20);
         let ec = svc.register(spec).await.unwrap();
         assert!(svc.search(&ec.id, vec![0.0; 20], 3).await.is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn search_returns_federated_props_from_source() {
+        let path = fixture_path();
+        write_meta_fixture(&path, 20, 20);
+        let cat = catalog_manager_with_default().await;
+        let svc = ExternalCollectionService::new(
+            Arc::new(ExternalCollectionRegistry::new()),
+            cat,
+            axis_manager().await,
+        );
+        let spec =
+            ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20);
+        let ec = svc.register(spec).await.unwrap();
+        svc.build(&ec.id).await.unwrap();
+
+        // Query row-3's own one-hot vector → top-1 is row-3 with its source props.
+        let mut q = vec![0.0f32; 20];
+        q[3] = 1.0;
+        let hits = svc.search(&ec.id, q, 3).await.unwrap();
+        assert_eq!(hits[0].id, "row-3");
+        let props = &hits[0].record.props;
+        match &props["text"] {
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                s,
+            )) => assert_eq!(s, "text-3"),
+            other => panic!("text prop wrong: {other:?}"),
+        }
+        match &props["year"] {
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::Int64(
+                y,
+            )) => assert_eq!(*y, 2003),
+            other => panic!("year prop wrong: {other:?}"),
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn refresh_rebuilds_only_when_source_changed() {
+        let path = fixture_path();
+        write_meta_fixture(&path, 20, 24);
+        let cat = catalog_manager_with_default().await;
+        let svc = ExternalCollectionService::new(
+            Arc::new(ExternalCollectionRegistry::new()),
+            cat,
+            axis_manager().await,
+        );
+        let spec =
+            ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 24);
+        let ec = svc.register(spec).await.unwrap();
+        svc.build(&ec.id).await.unwrap();
+        let snap0 = svc.get(&ec.id).unwrap().snapshot_id;
+
+        // Unchanged source → not stale, refresh is a no-op.
+        assert!(!svc.is_stale(&ec.id).unwrap());
+        let r0 = svc.refresh(&ec.id).await.unwrap();
+        assert!(!r0.stale_detected && !r0.rebuilt);
+        assert_eq!(r0.snapshot_id, snap0);
+
+        // Mutate the source (more rows → different fingerprint).
+        write_meta_fixture(&path, 24, 24);
+        assert!(svc.is_stale(&ec.id).unwrap());
+        let r1 = svc.refresh(&ec.id).await.unwrap();
+        assert!(r1.stale_detected && r1.rebuilt, "changed source must rebuild");
+        assert_eq!(r1.indexed_record_count, 24);
+        assert_ne!(r1.snapshot_id, snap0, "snapshot id must advance");
+
+        let got = svc.get(&ec.id).unwrap();
+        assert_eq!(got.status, ExternalCollectionStatus::Ready);
+        assert_eq!(got.indexed_record_count, 24);
+        let proj = svc.projection("ext_docs").await.unwrap().unwrap();
+        assert_eq!(proj.freshness_state, ProjectionFreshnessState::Fresh);
+        assert_eq!(proj.source_range.as_deref(), Some(r1.snapshot_id.as_str()));
         let _ = std::fs::remove_file(&path);
     }
 }

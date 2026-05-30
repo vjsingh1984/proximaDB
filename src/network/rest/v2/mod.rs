@@ -150,6 +150,10 @@ pub fn create_v2_router() -> Router<AppState> {
             "/external-collections/:id/search",
             post(external_collection::search_external_collection_v2),
         )
+        .route(
+            "/external-collections/:id/refresh",
+            post(external_collection::refresh_external_collection_v2),
+        )
         // Diagnostics — experimental capability contract endpoints.
         // Namespaced under `_diagnostics` while the shape stabilizes;
         // promotion to `/collections/:id/route-health` is intentional

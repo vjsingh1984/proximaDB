@@ -16,6 +16,8 @@
 //! Experimental, v2-only. Handlers reach the `ExternalCollectionService` via
 //! `AppState`. See `src/services/external_collection/`.
 
+use std::collections::HashMap;
+
 use axum::{
     extract::{Path, State},
     Json,
@@ -25,9 +27,11 @@ use tracing::info;
 
 use crate::errors::{ApiError, ApiResult};
 use crate::network::rest::v1::handlers::AppState;
+use crate::network::rest::v2::records::{proxima_value_to_rest_value, RestProximaValue};
 use crate::services::external_collection::{
     ExternalCollection, ExternalCollectionService, ExternalCollectionSpec, ExternalFormat,
 };
+use proximadb_records::ProximaTreeNode;
 
 /// Request body for registering an external collection.
 #[derive(Debug, Deserialize)]
@@ -78,11 +82,13 @@ pub struct BuildExternalCollectionResponse {
     pub indexed_record_count: usize,
 }
 
-/// One search hit.
+/// One search hit, carrying the full record federated from the external source
+/// (`props` = non-vector columns), matching the native v2 search-hit shape.
 #[derive(Debug, Serialize)]
 pub struct ExternalSearchHit {
     pub id: String,
     pub score: f32,
+    pub props: HashMap<String, RestProximaValue>,
 }
 
 /// Search response.
@@ -90,6 +96,14 @@ pub struct ExternalSearchHit {
 pub struct ExternalSearchResponse {
     pub id: String,
     pub hits: Vec<ExternalSearchHit>,
+}
+
+/// Refresh response (staleness check + optional rebuild).
+#[derive(Debug, Serialize)]
+pub struct RefreshExternalCollectionResponse {
+    pub collection: ExternalCollection,
+    pub stale_detected: bool,
+    pub rebuilt: bool,
 }
 
 fn service(state: &AppState) -> ApiResult<&std::sync::Arc<ExternalCollectionService>> {
@@ -186,7 +200,48 @@ pub async fn search_external_collection_v2(
         .await
         .map_err(|e| ApiError::Internal(format!("search external collection '{id}': {e:#}")))?
         .into_iter()
-        .map(|(id, score)| ExternalSearchHit { id, score })
+        .map(|hit| {
+            // Flatten the record's scalar props to the native RestProximaValue
+            // shape (nested Object nodes are dropped — handled in a later slice).
+            let props = hit
+                .record
+                .props
+                .iter()
+                .filter_map(|(k, node)| match node {
+                    ProximaTreeNode::Value(v) => {
+                        Some((k.clone(), proxima_value_to_rest_value(v)))
+                    }
+                    ProximaTreeNode::Object(_) => None,
+                })
+                .collect();
+            ExternalSearchHit {
+                id: hit.id,
+                score: hit.score,
+                props,
+            }
+        })
         .collect();
     Ok(Json(ExternalSearchResponse { id, hits }))
+}
+
+/// `POST /api/v2/external-collections/:id/refresh`
+pub async fn refresh_external_collection_v2(
+    Path(id): Path<String>,
+    State(state): State<AppState>,
+) -> ApiResult<Json<RefreshExternalCollectionResponse>> {
+    let svc = service(&state)?;
+    let outcome = svc
+        .refresh(&id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("refresh external collection '{id}': {e:#}")))?;
+    let collection = require(svc.get(&id), &id)?;
+    info!(
+        "V2 API: refreshed external collection '{}' (stale={}, rebuilt={})",
+        collection.spec.name, outcome.stale_detected, outcome.rebuilt
+    );
+    Ok(Json(RefreshExternalCollectionResponse {
+        collection,
+        stale_detected: outcome.stale_detected,
+        rebuilt: outcome.rebuilt,
+    }))
 }

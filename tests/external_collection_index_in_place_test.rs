@@ -28,12 +28,14 @@ use proximadb::services::external_collection::{
     ExternalCollectionStatus,
 };
 
-/// Write `n` vectors with unique directions (one-hot at position `i`, so under
-/// cosine each row's nearest neighbor is itself). Requires `dim >= n`.
+/// Write `n` rows with unique vector directions (one-hot at position `i`, so
+/// under cosine each row's nearest neighbor is itself) plus a `title: Utf8`
+/// metadata column for federated-fetch assertions. Requires `dim >= n`.
 fn write_external_parquet(path: &std::path::Path, n: usize, dim: usize) -> Vec<(String, Vec<f32>)> {
     assert!(dim >= n, "one-hot fixture requires dim >= n");
     let schema = Arc::new(Schema::new(vec![
         Field::new("id", DataType::Utf8, false),
+        Field::new("title", DataType::Utf8, false),
         Field::new(
             "vector",
             DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), dim as i32),
@@ -41,6 +43,7 @@ fn write_external_parquet(path: &std::path::Path, n: usize, dim: usize) -> Vec<(
         ),
     ]));
     let mut id_b = StringBuilder::new();
+    let mut title_b = StringBuilder::new();
     let mut vec_b = FixedSizeListBuilder::new(Float32Builder::new(), dim as i32);
     let mut expect = Vec::new();
     for i in 0..n {
@@ -48,6 +51,7 @@ fn write_external_parquet(path: &std::path::Path, n: usize, dim: usize) -> Vec<(
         let mut v = vec![0.0f32; dim];
         v[i] = 1.0 + (i as f32) * 0.01;
         id_b.append_value(&id);
+        title_b.append_value(format!("title-{i}"));
         for x in &v {
             vec_b.values().append_value(*x);
         }
@@ -56,7 +60,11 @@ fn write_external_parquet(path: &std::path::Path, n: usize, dim: usize) -> Vec<(
     }
     let batch = RecordBatch::try_new(
         schema.clone(),
-        vec![Arc::new(id_b.finish()), Arc::new(vec_b.finish())],
+        vec![
+            Arc::new(id_b.finish()),
+            Arc::new(title_b.finish()),
+            Arc::new(vec_b.finish()),
+        ],
     )
     .unwrap();
     let file = std::fs::File::create(path).unwrap();
@@ -83,7 +91,7 @@ async fn catalog_manager() -> Arc<CatalogManager> {
 
 #[tokio::test]
 async fn external_parquet_indexed_in_place_and_searchable_without_copy() {
-    let dim = 48;
+    let dim = 56;
     let parquet = std::env::temp_dir().join(format!(
         "proximadb_f5_it_{}.parquet",
         uuid::Uuid::new_v4().simple()
@@ -134,11 +142,18 @@ async fn external_parquet_indexed_in_place_and_searchable_without_copy() {
     assert_eq!(proj.freshness_state, ProjectionFreshnessState::Fresh);
     assert_eq!(proj.source_range.as_deref(), Some(ec.snapshot_id.as_str()));
 
-    // Search routes through the same AxisManager path and returns the exact row.
+    // Search routes through the same AxisManager path and returns the exact row
+    // WITH its full record federated from the source (Slice 2: props, not just id).
     let (qid, qvec) = &expect[7];
     let hits = svc.search(&ec.id, qvec.clone(), 5).await.unwrap();
     assert!(!hits.is_empty(), "external index must return hits");
-    assert_eq!(&hits[0].0, qid, "top-1 must be the exact external row");
+    assert_eq!(&hits[0].id, qid, "top-1 must be the exact external row");
+    match &hits[0].record.props["title"] {
+        proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+            s,
+        )) => assert_eq!(s, "title-7", "hit must carry the source's title metadata"),
+        other => panic!("title prop wrong: {other:?}"),
+    }
 
     // (b) No copy: the snapshot id is stable across register+build (build did
     // not rewrite the source) and the source file is still present. The index
@@ -149,6 +164,21 @@ async fn external_parquet_indexed_in_place_and_searchable_without_copy() {
         "snapshot id must be stable across register+build (source untouched)"
     );
     assert!(parquet.exists(), "external source must still be present");
+
+    // Slice 2 staleness-refresh: unchanged source is not stale; mutating the
+    // source (more rows) makes refresh rebuild in place and advance the snapshot.
+    assert!(!svc.is_stale(&ec.id).unwrap());
+    write_external_parquet(&parquet, 50, dim);
+    assert!(svc.is_stale(&ec.id).unwrap(), "changed source must be stale");
+    let outcome = svc.refresh(&ec.id).await.unwrap();
+    assert!(outcome.stale_detected && outcome.rebuilt, "stale source must rebuild");
+    assert_eq!(outcome.indexed_record_count, 50);
+    assert_ne!(outcome.snapshot_id, built.snapshot_id, "snapshot must advance");
+    let refreshed = svc.get(&ec.id).unwrap();
+    assert_eq!(refreshed.indexed_record_count, 50);
+    let proj2 = svc.projection("ext_papers").await.unwrap().unwrap();
+    assert_eq!(proj2.freshness_state, ProjectionFreshnessState::Fresh);
+    assert_eq!(proj2.source_range.as_deref(), Some(outcome.snapshot_id.as_str()));
 
     let _ = std::fs::remove_file(&parquet);
 }

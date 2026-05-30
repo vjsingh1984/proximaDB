@@ -692,7 +692,7 @@ fn parse_hex_16(type_name: &str, value: &serde_json::Value) -> Result<[u8; 16], 
     })
 }
 
-fn proxima_value_to_rest_value(value: &ProximaValue) -> RestProximaValue {
+pub(crate) fn proxima_value_to_rest_value(value: &ProximaValue) -> RestProximaValue {
     let typed = |type_name: &str, value: serde_json::Value| RestProximaValue::Typed {
         type_name: type_name.to_string(),
         value,
