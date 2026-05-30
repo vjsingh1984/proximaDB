@@ -276,6 +276,138 @@ export interface HealthStatus {
 }
 
 // ============================================================================
+// PROBE / SCHEMA / QUERY INTERFACES (v2 wire types — snake_case)
+// ============================================================================
+
+/**
+ * Kubernetes-style liveness/readiness probe response.
+ *
+ * Matches the `ProbeResponse` schema in docs/openapi/proximadb-openapi.yaml.
+ */
+export interface ProbeResponse {
+  /** Probe status (e.g. "ok", "ready") */
+  status: string;
+}
+
+/**
+ * Column definition for a typed schema.
+ *
+ * Field names are snake_case to wire-match the OpenAPI spec / Python SDK.
+ */
+export interface ColumnDefinition {
+  /** Column name */
+  name: string;
+  /** Column data type (see OpenAPI enum: text, integer, float, ...) */
+  data_type: string;
+  /** Whether the column is nullable */
+  nullable?: boolean;
+  /** Whether the column is indexed */
+  indexed?: boolean;
+  /** Whether the column is filterable */
+  filterable?: boolean;
+  /** Maximum length (for text types) */
+  max_length?: number;
+  /** Decimal precision */
+  precision?: number;
+  /** Decimal scale */
+  scale?: number;
+  /** Vector dimension (for `vector` columns) */
+  vector_dimension?: number;
+}
+
+/**
+ * Typed schema definition for a collection.
+ */
+export interface SchemaDefinition {
+  /** Column definitions */
+  columns: ColumnDefinition[];
+  /** Schema enforcement strategy */
+  enforcement?: "strict" | "flexible" | "hybrid";
+  /** Whether records may include fields beyond the declared columns */
+  allow_additional_fields?: boolean;
+}
+
+/**
+ * Response from GET /api/v2/collections/{id}/schema.
+ */
+export interface SchemaResponse {
+  schema_id: string;
+  schema_version: string;
+  collection_id: string;
+  schema: SchemaDefinition;
+  created_at: string;
+  updated_at?: string | null;
+  parent_schema_id?: string | null;
+}
+
+/**
+ * Request body for PUT /api/v2/collections/{id}/schema.
+ *
+ * Wire-encodes as a `SchemaDefinition` plus optional `force` flag.
+ */
+export interface UpdateSchemaRequest extends SchemaDefinition {
+  /** Allow incompatible schema changes */
+  force?: boolean;
+}
+
+/**
+ * Response from PUT /api/v2/collections/{id}/schema.
+ */
+export interface UpdateSchemaResponse {
+  schema_id: string;
+  schema_version: string;
+  previous_schema_id: string;
+  changes: unknown[];
+  warnings: unknown[];
+  updated_at: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Supported query languages for the shared query facade.
+ */
+export type QueryLanguage = "uql" | "aql" | "federated";
+
+/**
+ * Request body for POST /api/v2/query.
+ */
+export interface QueryRequest {
+  /** Query language */
+  language: QueryLanguage;
+  /** Query text (AQL / UQL) */
+  query: string;
+  /** Optional bound parameters (ProximaValue-encoded) */
+  parameters?: JsonValue[];
+  /** Optional default collection */
+  collection?: string | null;
+  /** Optional row-limit cap */
+  limit?: number | null;
+}
+
+/**
+ * Request body for POST /api/v2/query/explain.
+ */
+export interface ExplainQueryRequest {
+  /** Query language */
+  language: QueryLanguage;
+  /** Query text (AQL / UQL) */
+  query: string;
+  /** Optional default collection */
+  collection?: string | null;
+}
+
+/**
+ * Response from POST /api/v2/query and POST /api/v2/query/explain.
+ *
+ * Open shape per the OpenAPI contract — implementations typically return
+ * records / total_count / metrics / plan / diagnostics depending on the
+ * language and endpoint.
+ */
+export interface QueryResponse {
+  [key: string]: unknown;
+}
+
+// ============================================================================
 // FILTER INTERFACES
 // ============================================================================
 
