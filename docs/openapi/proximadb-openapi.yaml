@@ -1043,41 +1043,41 @@ components:
         code:
           type: string
     # ── Graph schemas (v2) ──────────────────────────────────────────
+    # Reconciled 2026-05-30 against
+    # `crates/platform/proximadb-api/src/rest/v1/graph.rs` (the live
+    # server handler) — the earlier additions had the wrong field
+    # names / wrapping / required-key set. Server is authoritative
+    # for the wire contract; SDKs must follow.
     CreateGraphRequest:
       type: object
-      required: [name]
+      required: [graph_id]
       properties:
-        name:
+        graph_id:
           type: string
           minLength: 1
+          description: Unique identifier for the new graph collection.
+        name:
+          type: string
+          nullable: true
+          description: Optional human-readable name (defaults to graph_id).
         description:
           type: string
-          nullable: true
-        engine:
-          type: string
-          nullable: true
-          description: |
-            Optional engine hint (orion, pulsar, quasar). Server picks a
-            default when omitted.
-        directed:
-          type: boolean
-          default: true
-        properties:
-          type: object
-          additionalProperties: true
           nullable: true
     GraphCollectionResponse:
       type: object
       additionalProperties: true
-      required: [name]
+      description: |
+        Server returns a `GraphResponse<T>` envelope around graph
+        collection metadata. The fields below are the common subset
+        SDKs rely on; extra server-side fields are passed through.
       properties:
+        graph_id:
+          type: string
         name:
           type: string
-        engine:
-          type: string
           nullable: true
-        directed:
-          type: boolean
+        description:
+          type: string
           nullable: true
         node_count:
           type: integer
@@ -1087,45 +1087,71 @@ components:
           nullable: true
     ListGraphsResponse:
       type: object
-      required: [graphs]
+      additionalProperties: true
+      description: |
+        Server returns a `GraphResponse<Vec<...>>` envelope with `data`
+        containing the graph collections.
       properties:
-        graphs:
+        data:
           type: array
           items:
             $ref: "#/components/schemas/GraphCollectionResponse"
-        count:
-          type: integer
-          nullable: true
+        success:
+          type: boolean
     DeleteGraphResponse:
       type: object
       additionalProperties: true
+      description: |
+        204 No Content on success with an empty `GraphResponse` envelope;
+        404 Not Found with an error envelope when the graph is missing.
       properties:
-        deleted:
+        success:
           type: boolean
-        name:
-          type: string
-    CreateNodeRequest:
+    NodeInput:
       type: object
       required: [id]
+      description: |
+        Node payload nested inside `CreateNodeRequest.node`. Matches
+        `RestNodeInput` in proximadb-api's graph handler.
       properties:
         id:
           type: string
           minLength: 1
         labels:
           type: array
-          nullable: true
           items:
             type: string
         properties:
           type: object
           additionalProperties: true
+        embedding:
+          $ref: "#/components/schemas/EmbeddingInput"
           nullable: true
+    EmbeddingInput:
+      type: object
+      required: [vector]
+      properties:
         vector:
           type: array
-          nullable: true
           items:
             type: number
             format: float
+        model_id:
+          type: string
+          nullable: true
+        modality:
+          type: string
+          nullable: true
+    CreateNodeRequest:
+      type: object
+      required: [node]
+      description: |
+        Wrapped envelope: server expects `{"node": NodeInput}`. The
+        outer wrapper exists because future variants (batch_create_nodes,
+        etc.) reuse the same handler shape.
+      properties:
+        node:
+          $ref: "#/components/schemas/NodeInput"
     NodeResponse:
       type: object
       additionalProperties: true
@@ -1146,43 +1172,53 @@ components:
       type: object
       additionalProperties: true
       properties:
-        deleted:
+        success:
           type: boolean
         id:
           type: string
-    CreateEdgeRequest:
+    EdgeInput:
       type: object
-      required: [source, target]
+      required: [id, from_node_id, to_node_id, edge_type]
+      description: |
+        Edge payload nested inside `CreateEdgeRequest.edge`. Matches
+        `RestEdgeInput` in proximadb-api's graph handler. Note:
+        `from_node_id` / `to_node_id` are the canonical server fields;
+        earlier spec versions used `source` / `target` (incorrect).
       properties:
         id:
           type: string
-          nullable: true
-        source:
+          minLength: 1
+        from_node_id:
           type: string
-        target:
+        to_node_id:
           type: string
         edge_type:
           type: string
-          nullable: true
         properties:
           type: object
           additionalProperties: true
-          nullable: true
         weight:
           type: number
           format: double
           nullable: true
+    CreateEdgeRequest:
+      type: object
+      required: [edge]
+      description: |
+        Wrapped envelope: server expects `{"edge": EdgeInput}`.
+      properties:
+        edge:
+          $ref: "#/components/schemas/EdgeInput"
     EdgeResponse:
       type: object
       additionalProperties: true
-      required: [source, target]
+      required: [id]
       properties:
         id:
           type: string
-          nullable: true
-        source:
+        from_node_id:
           type: string
-        target:
+        to_node_id:
           type: string
         edge_type:
           type: string
@@ -1198,30 +1234,32 @@ components:
     TraverseRequest:
       type: object
       required: [start_node_id]
+      description: |
+        Flat shape (no wrapper). Matches `RestTraversalRequest` in
+        proximadb-api.
       properties:
         start_node_id:
           type: string
+        max_depth:
+          type: integer
+          minimum: 1
+          default: 3
+        edge_types:
+          type: array
+          items:
+            type: string
+        node_labels:
+          type: array
+          items:
+            type: string
         algorithm:
           type: string
           nullable: true
           description: bfs | dfs | shortest_path
-        max_depth:
+        limit:
           type: integer
-          nullable: true
           minimum: 1
-        max_nodes:
-          type: integer
           nullable: true
-          minimum: 1
-        edge_types:
-          type: array
-          nullable: true
-          items:
-            type: string
-        direction:
-          type: string
-          nullable: true
-          description: outgoing | incoming | both
     TraverseResponse:
       type: object
       additionalProperties: true
