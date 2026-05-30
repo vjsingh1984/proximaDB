@@ -2,26 +2,28 @@
 //!
 //! The three named signal sources (RecallProbeGate, freshness SLA, AutoML) are
 //! not yet driven by live data (audited 2026-05-30 — none have production
-//! callers). Write volume, however, IS live. This watcher periodically compares
-//! a collection's **per-collection** write high-water-mark (the highest global
-//! LSN among *its own* manifest entries — not the global allocator, which
-//! advances on every collection's writes) against the high-water-mark captured
-//! at its last completed recluster and, once the delta crosses a threshold,
-//! emits a `WorkloadDrift` signal — closing the flywheel on real data:
+//! callers). Write volume, however, IS live. This watcher periodically counts
+//! *this collection's* write batches (WAL manifest entries) past the high-water
+//! mark captured at its last completed recluster and, once that count crosses a
+//! threshold, emits a `WorkloadDrift` signal — closing the flywheel on real data:
 //!
 //! ```text
 //! writes to THIS collection accumulate
-//!   -> collection_write_lsn(now) - collection_write_lsn(@last_recluster) >= THRESHOLD
+//!   -> collection_writes_since(@last_recluster) >= THRESHOLD batches
 //!   -> DiscoveryService::on_signal(coll, WorkloadDrift)
 //!   -> executor runs Recluster -> atomic republish
-//!   -> baseline advances -> drift resets
+//!   -> baseline (high-water mark) advances -> drift resets
 //! ```
 //!
-//! Per-collection precision (2026-05-30): the watcher reads each collection's
-//! own manifest high-water-mark, so a *quiet* collection no longer reclusters
-//! just because *other* collections are writing. Considered by name (discovery
-//! keys jobs/pins by name); write volume read by internal id (the WAL manifest
-//! keys entries by uuid) — the catalog list supplies the name->id mapping.
+//! Per-collection precision (2026-05-30): the magnitude is a **count of this
+//! collection's own flush batches**, not a global-LSN delta. The LSN allocator
+//! is global, so a delta of `global_lsn` values is inflated by *other*
+//! collections' writes between this collection's flushes — a low-traffic tenant
+//! in a busy system would over-recluster. A batch count is immune to that. The
+//! high-water mark (an LSN cutoff) only advances when *this* collection flushes,
+//! so a quiet collection never drifts. Considered by name (discovery keys
+//! jobs/pins by name); batches counted by internal id (the WAL manifest keys
+//! entries by uuid) — the catalog list supplies the name->id mapping.
 //!
 //! Coalescing (in `DiscoveryTrigger`) prevents a sustained drift from flooding
 //! the registry; a completed recluster advances the baseline. AutoML will later
@@ -43,21 +45,23 @@ use super::service::DiscoveryService;
 use super::trigger::TriggerSignal;
 use crate::services::snapshot::SnapshotPublishCoordinator;
 
-/// Default LSN delta since the last recluster before drift triggers a new one.
+/// Default number of *this collection's* write batches since the last recluster
+/// before drift triggers a new one. A per-collection batch count (not a
+/// global-LSN delta), so it isn't inflated by other collections' writes.
 /// Conservative starting heuristic; tune per workload (AutoML will subsume).
-pub const DEFAULT_DRIFT_THRESHOLD_LSN: u64 = 10_000;
+pub const DEFAULT_DRIFT_THRESHOLD_WRITES: u64 = 64;
 /// Default interval between drift sweeps.
 pub const DEFAULT_DRIFT_INTERVAL: Duration = Duration::from_secs(60);
 
-/// Env override for [`DEFAULT_DRIFT_THRESHOLD_LSN`] (used at watcher construction
-/// in `SharedServices`). Lets operators tune drift sensitivity, and lets the e2e
-/// drive the loop fast without a code change.
-pub const DRIFT_THRESHOLD_ENV: &str = "PROXIMADB_DRIFT_THRESHOLD_LSN";
+/// Env override for [`DEFAULT_DRIFT_THRESHOLD_WRITES`] (used at watcher
+/// construction in `SharedServices`). Lets operators tune drift sensitivity, and
+/// lets the e2e drive the loop fast without a code change.
+pub const DRIFT_THRESHOLD_ENV: &str = "PROXIMADB_DRIFT_THRESHOLD_WRITES";
 /// Env override (whole seconds) for [`DEFAULT_DRIFT_INTERVAL`].
 pub const DRIFT_INTERVAL_ENV: &str = "PROXIMADB_DRIFT_INTERVAL_SECS";
 
-/// Resolve the drift threshold from `PROXIMADB_DRIFT_THRESHOLD_LSN`, else default.
-pub fn threshold_lsn_from_env() -> u64 {
+/// Resolve the drift threshold from `PROXIMADB_DRIFT_THRESHOLD_WRITES`, else default.
+pub fn threshold_writes_from_env() -> u64 {
     parse_threshold(std::env::var(DRIFT_THRESHOLD_ENV).ok())
 }
 
@@ -69,7 +73,7 @@ pub fn interval_from_env() -> Duration {
 /// Pure parse of the threshold override (testable without touching the env).
 fn parse_threshold(raw: Option<String>) -> u64 {
     raw.and_then(|v| v.trim().parse().ok())
-        .unwrap_or(DEFAULT_DRIFT_THRESHOLD_LSN)
+        .unwrap_or(DEFAULT_DRIFT_THRESHOLD_WRITES)
 }
 
 /// Pure parse of the interval override. Non-positive / unparseable => default.
@@ -80,19 +84,18 @@ fn parse_interval(raw: Option<String>) -> Duration {
         .unwrap_or(DEFAULT_DRIFT_INTERVAL)
 }
 
-/// True when write volume since the last recluster crosses `threshold`.
-/// `baseline` is the last completed recluster's `snapshot_to_lsn` (`None` =>
-/// never reclustered, baseline 0). A current LSN below the baseline (e.g. clock
-/// skew / manifest reset) yields 0 drift, never a spurious signal.
-pub fn drift_exceeds(current_lsn: u64, baseline: Option<u64>, threshold: u64) -> bool {
-    current_lsn.saturating_sub(baseline.unwrap_or(0)) >= threshold
+/// True when `writes_since` (the count of this collection's write batches past
+/// its recluster baseline) crosses `threshold`. A zero count (never reclustered
+/// + no writes, or manifest absent) never signals.
+pub fn drift_exceeds(writes_since: u64, threshold: u64) -> bool {
+    writes_since >= threshold && threshold > 0
 }
 
 /// Background watcher that turns write-volume drift into recluster signals.
 pub struct DriftWatcher {
     service: Arc<DiscoveryService>,
     coordinator: Arc<SnapshotPublishCoordinator>,
-    threshold_lsn: u64,
+    threshold_writes: u64,
     /// Source of all collection names, swept even before a collection has any
     /// discovery history (closes the bootstrap gap). `None` => history-only.
     /// Collections with no / too-few indexed vectors simply no-op in the pass.
@@ -104,12 +107,12 @@ impl DriftWatcher {
     pub fn new(
         service: Arc<DiscoveryService>,
         coordinator: Arc<SnapshotPublishCoordinator>,
-        threshold_lsn: u64,
+        threshold_writes: u64,
     ) -> Self {
         Self {
             service,
             coordinator,
-            threshold_lsn,
+            threshold_writes,
             collection_source: None,
         }
     }
@@ -165,26 +168,32 @@ impl DriftWatcher {
         emitted
     }
 
-    /// Consider one collection: read *this* collection's write high-water-mark
-    /// (manifest entries keyed by `internal_id`), compare to its recluster
-    /// baseline (keyed by `name`), signal if drifted. A missing manifest /
-    /// unknown id degrades to LSN 0 (no spurious signal).
+    /// Consider one collection: count *this* collection's write batches since its
+    /// recluster baseline (manifest entries keyed by `internal_id`, baseline
+    /// keyed by `name`), signal if that count crosses the threshold. A missing
+    /// manifest / unknown id yields 0 writes (no spurious signal).
     async fn consider(&self, name: &str, internal_id: &str) -> Option<DiscoveryJob> {
-        let current_lsn = self.coordinator.collection_write_lsn(internal_id).await;
-        self.consider_with_lsn(name, current_lsn).await
+        // Baseline is the per-collection write high-water-mark (an LSN cutoff)
+        // captured at the last recluster; `None` => never reclustered => count
+        // all of this collection's writes as drift.
+        let baseline = self.service.last_reclustered_lsn(name).unwrap_or(0);
+        let writes_since = self
+            .coordinator
+            .collection_writes_since(internal_id, baseline)
+            .await;
+        self.consider_with_writes(name, writes_since)
     }
 
-    /// Testable decision core: decide using an explicit current LSN (no manifest
-    /// needed). `collection_id` is the user-facing **name** (drift baseline +
-    /// `on_signal` key by name). Returns the enqueued job, or `None` if within
+    /// Testable decision core: decide using an explicit per-collection write
+    /// count (no manifest needed). `collection_id` is the user-facing **name**
+    /// (`on_signal` keys by name). Returns the enqueued job, or `None` if within
     /// threshold or coalesced against an in-flight recluster.
-    async fn consider_with_lsn(
+    fn consider_with_writes(
         &self,
         collection_id: &str,
-        current_lsn: u64,
+        writes_since: u64,
     ) -> Option<DiscoveryJob> {
-        let baseline = self.service.last_reclustered_lsn(collection_id);
-        if drift_exceeds(current_lsn, baseline, self.threshold_lsn) {
+        if drift_exceeds(writes_since, self.threshold_writes) {
             self.service
                 .on_signal(collection_id, TriggerSignal::WorkloadDrift)
         } else {
@@ -201,8 +210,8 @@ pub fn spawn_drift_watcher(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         info!(
-            "DriftWatcher started (interval = {interval:?}, threshold = {} LSN)",
-            watcher.threshold_lsn
+            "DriftWatcher started (interval = {interval:?}, threshold = {} writes)",
+            watcher.threshold_writes
         );
         loop {
             tokio::select! {
@@ -224,9 +233,7 @@ pub fn spawn_drift_watcher(
 mod tests {
     use super::*;
     use crate::catalog::CatalogManager;
-    use crate::services::discovery::{
-        DiscoveryJob, DiscoveryJobKind, DiscoveryJobStatus, DiscoveryRegistry,
-    };
+    use crate::services::discovery::DiscoveryRegistry;
 
     #[test]
     fn env_override_parsing() {
@@ -234,11 +241,11 @@ mod tests {
         assert_eq!(super::parse_threshold(Some("  42 ".to_string())), 42);
         assert_eq!(
             super::parse_threshold(None),
-            super::DEFAULT_DRIFT_THRESHOLD_LSN
+            super::DEFAULT_DRIFT_THRESHOLD_WRITES
         );
         assert_eq!(
             super::parse_threshold(Some("nope".to_string())),
-            super::DEFAULT_DRIFT_THRESHOLD_LSN
+            super::DEFAULT_DRIFT_THRESHOLD_WRITES
         );
         assert_eq!(super::parse_interval(Some("2".to_string())), Duration::from_secs(2));
         // Zero / garbage fall back to the default (never a 0s busy-loop).
@@ -248,16 +255,16 @@ mod tests {
 
     #[test]
     fn drift_threshold_math() {
-        assert!(!drift_exceeds(5, Some(0), 10));
-        assert!(drift_exceeds(10, Some(0), 10));
-        assert!(drift_exceeds(100, None, 10)); // never reclustered, baseline 0
-        assert!(!drift_exceeds(105, Some(100), 10)); // only 5 since baseline
-        assert!(drift_exceeds(110, Some(100), 10)); // 10 since baseline
-        assert!(!drift_exceeds(50, Some(100), 10)); // current < baseline => 0 drift
+        assert!(!drift_exceeds(5, 10)); // 5 writes < threshold 10
+        assert!(drift_exceeds(10, 10)); // exactly at threshold
+        assert!(drift_exceeds(64, 10)); // well past
+        assert!(!drift_exceeds(0, 10)); // no writes => never
+        assert!(!drift_exceeds(100, 0)); // threshold 0 disables (never a 0-write loop)
     }
 
     async fn watcher() -> (Arc<DriftWatcher>, Arc<DiscoveryRegistry>) {
-        // consider_with_lsn never pins, so an empty in-memory catalog suffices.
+        // consider_with_writes never touches the manifest, so an empty in-memory
+        // catalog suffices for the pure threshold/coalescing core.
         let coordinator = Arc::new(SnapshotPublishCoordinator::new(Arc::new(
             CatalogManager::new(),
         )));
@@ -266,6 +273,7 @@ mod tests {
             registry.clone(),
             coordinator.clone(),
         ));
+        // Threshold = 10 write batches.
         (
             Arc::new(DriftWatcher::new(service, coordinator, 10)),
             registry,
@@ -273,32 +281,33 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn signals_when_never_reclustered_and_drift_exceeds() {
+    async fn signals_when_writes_exceed_threshold() {
         let (w, _r) = watcher().await;
-        assert!(w.consider_with_lsn("c1", 20).await.is_some());
+        // 20 write batches >= threshold 10 -> signal.
+        assert!(w.consider_with_writes("c1", 20).is_some());
     }
 
     #[tokio::test]
-    async fn respects_last_recluster_baseline() {
-        let (w, registry) = watcher().await;
-        let mut j = DiscoveryJob::new("c1", DiscoveryJobKind::Recluster);
-        j.status = DiscoveryJobStatus::Complete;
-        // Baseline is now the per-collection write high-water-mark, not the
-        // global snapshot upper bound.
-        j.collection_write_lsn = 100;
-        registry.upsert(j);
-        // 5 LSN past baseline 100 < threshold 10 -> no signal.
-        assert!(w.consider_with_lsn("c1", 105).await.is_none());
-        // 15 LSN past baseline -> signal.
-        assert!(w.consider_with_lsn("c1", 115).await.is_some());
+    async fn within_threshold_does_not_signal() {
+        let (w, _r) = watcher().await;
+        // 5 write batches < threshold 10 -> no signal.
+        assert!(w.consider_with_writes("c1", 5).is_none());
+    }
+
+    #[tokio::test]
+    async fn degrades_to_no_signal_without_manifest() {
+        // `consider` reads the manifest (absent here) -> 0 writes -> no signal,
+        // even for a never-reclustered collection. Proves the safe degradation.
+        let (w, _r) = watcher().await;
+        assert!(w.consider("c1", "c1-id").await.is_none());
     }
 
     #[tokio::test]
     async fn sustained_drift_is_coalesced_while_recluster_in_flight() {
         let (w, _r) = watcher().await;
-        assert!(w.consider_with_lsn("c1", 50).await.is_some(), "first drift enqueues");
+        assert!(w.consider_with_writes("c1", 50).is_some(), "first drift enqueues");
         assert!(
-            w.consider_with_lsn("c1", 60).await.is_none(),
+            w.consider_with_writes("c1", 60).is_none(),
             "still drifted but a recluster is in flight -> coalesced"
         );
     }

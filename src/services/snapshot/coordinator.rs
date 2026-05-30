@@ -87,15 +87,18 @@ impl SnapshotPublishCoordinator {
     /// alone, deliberately **not** maxed with the global LSN allocator (which is
     /// what [`pin`](Self::pin)'s `to_lsn` does for snapshot completeness).
     ///
-    /// This is the drift watcher's signal: comparing it against the recluster
-    /// baseline measures writes to *this* collection, so a quiet collection no
-    /// longer drifts just because *other* collections are writing (the global
-    /// allocator advances on every write, collection-agnostic).
+    /// Used as a stable *cutoff position* captured at recluster time: the drift
+    /// watcher records this on the completed job, then later counts the
+    /// collection's writes *past* it via [`collection_writes_since`]. A quiet
+    /// collection no longer drifts on other collections' writes because its HWM
+    /// only advances when *it* flushes a new entry.
     ///
     /// `collection_id` must be the canonical internal id the WAL keys entries
     /// under (resolve the user-facing name first via
     /// `VectorOperationsService::resolve_collection_id`). Degrades to 0 without a
     /// live manifest, so it stays testable in minimal harnesses.
+    ///
+    /// [`collection_writes_since`]: Self::collection_writes_since
     pub async fn collection_write_lsn(&self, collection_id: &str) -> u64 {
         match crate::storage::persistence::write_ahead_log::manifest::get_service() {
             Some(svc) => svc
@@ -105,6 +108,37 @@ impl SnapshotPublishCoordinator {
                 .map(|e| e.global_lsn)
                 .max()
                 .unwrap_or(0),
+            None => 0,
+        }
+    }
+
+    /// Per-collection write *volume* since a cutoff: the number of *this*
+    /// collection's WAL manifest entries (flush batches) with `global_lsn`
+    /// strictly greater than `baseline_lsn`.
+    ///
+    /// This is the drift watcher's actual magnitude signal, deliberately a
+    /// **count of this collection's own batches** rather than a global-LSN delta.
+    /// The LSN allocator is global, so a delta of `global_lsn` values is inflated
+    /// by *other* collections' writes between this collection's flushes — a
+    /// low-traffic tenant in a busy system would over-recluster. A batch count is
+    /// a pure function of this collection's flushes, immune to that contamination
+    /// and intuitively calibratable ("recluster after N batches of drift").
+    ///
+    /// `collection_id` must be the canonical internal id (see
+    /// [`collection_write_lsn`]). Degrades to 0 without a live manifest.
+    /// Per-batch `vector_count` would give record-granular volume but is not
+    /// populated on the live flush path (passed 0 in the disk manager), so batch
+    /// count is the finest reliable per-collection signal today.
+    ///
+    /// [`collection_write_lsn`]: Self::collection_write_lsn
+    pub async fn collection_writes_since(&self, collection_id: &str, baseline_lsn: u64) -> u64 {
+        match crate::storage::persistence::write_ahead_log::manifest::get_service() {
+            Some(svc) => svc
+                .get_collection_entries(collection_id)
+                .await
+                .iter()
+                .filter(|e| e.global_lsn > baseline_lsn)
+                .count() as u64,
             None => 0,
         }
     }

@@ -3,7 +3,7 @@
 //! no operator action.
 //!
 //! Boots a full DB with the drift knob driven tiny via env
-//! (`PROXIMADB_DRIFT_THRESHOLD_LSN=1`, `PROXIMADB_DRIFT_INTERVAL_SECS=1`) so the
+//! (`PROXIMADB_DRIFT_THRESHOLD_WRITES=1`, `PROXIMADB_DRIFT_INTERVAL_SECS=1`) so the
 //! background watcher fires fast, then:
 //!   1. inserts records and runs ONE recluster (seeds discovery history + the
 //!      LSN baseline — the watcher only sweeps collections that have history),
@@ -169,10 +169,11 @@ async fn insert_varied(http: &reqwest::Client, base: &str, name: &str, range: st
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn drift_watcher_auto_reclusters_after_writes() {
-    // Drive the watcher fast: any write past the last recluster, swept every 1s.
-    // Must be set before the server boots (SharedServices reads it at construction).
+    // Drive the watcher fast: a single write batch past the last recluster,
+    // swept every 1s. Must be set before the server boots (SharedServices reads
+    // it at construction).
     unsafe {
-        std::env::set_var("PROXIMADB_DRIFT_THRESHOLD_LSN", "1");
+        std::env::set_var("PROXIMADB_DRIFT_THRESHOLD_WRITES", "1");
         std::env::set_var("PROXIMADB_DRIFT_INTERVAL_SECS", "1");
     }
 

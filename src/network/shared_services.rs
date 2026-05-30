@@ -1494,15 +1494,16 @@ impl SharedServices {
         }
         {
             // Trigger arm (T1.9): the write-volume drift watcher is the first
-            // live producer — it compares each collection's manifest LSN against
-            // its last completed recluster and auto-enqueues a recluster once the
-            // delta crosses the threshold. Coalescing bounds it; recluster is
-            // non-mutating today, so this is safe on by default.
+            // live producer — it counts each collection's own write batches since
+            // its last completed recluster (per-collection, not a global-LSN
+            // delta) and auto-enqueues a recluster once that count crosses the
+            // threshold. Coalescing bounds it; recluster is non-mutating today,
+            // so this is safe on by default.
             let watcher = Arc::new(
                 crate::services::discovery::DriftWatcher::new(
                     discovery_service.clone(),
                     snapshot_coordinator.clone(),
-                    crate::services::discovery::threshold_lsn_from_env(),
+                    crate::services::discovery::threshold_writes_from_env(),
                 )
                 // Sweep every collection (by name), not just those with prior
                 // discovery history — makes the loop autonomous for brand-new
