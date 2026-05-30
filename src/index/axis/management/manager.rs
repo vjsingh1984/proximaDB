@@ -230,6 +230,12 @@ pub struct AxisManager {
     /// to exact search. Set via set_recall_probe_gate().
     recall_probe_gate: Option<Arc<crate::catalog::RecallProbeGate>>,
 
+    /// TD-087 Slice B: root directory for persisted IVF indexes. When set,
+    /// trained indexes are written to `<dir>/<collection_id>/ivf.bin` after each
+    /// rebuild and lazily reloaded on the first query for a cold collection.
+    /// `None` ⇒ persistence disabled (embedded/test harnesses without a data dir).
+    index_persist_dir: Option<std::path::PathBuf>,
+
     /// Shared collection cache from VectorOperationsService (read-only access)
     /// This avoids duplicating collection metadata in memory
     /// Collections are cached by VectorOperationsService and shared here
@@ -413,6 +419,7 @@ impl AxisManager {
             metrics: Arc::new(RwLock::new(AxisMetrics::default())),
             collection_service: None, // Will be set later via set_collection_service
             recall_probe_gate: None,  // Set later via set_recall_probe_gate (TD-075)
+            index_persist_dir: None,  // Set later via set_index_persist_dir (TD-087 Slice B)
             shared_collection_cache: None, // Will be set via set_shared_collection_cache
             hnsw_indexes: Arc::new(RwLock::new(HashMap::new())), // Real HNSW indexes per collection
             ivf_indexes: Arc::new(RwLock::new(HashMap::new())), // Real IVF indexes per collection (DEFAULT)
@@ -443,6 +450,124 @@ impl AxisManager {
     pub fn set_recall_probe_gate(&mut self, gate: Arc<crate::catalog::RecallProbeGate>) {
         self.recall_probe_gate = Some(gate);
         tracing::info!("🔗 AXIS: RecallProbeGate set for quantized-route gating (TD-075)");
+    }
+
+    /// Set the root directory for persisted IVF indexes (TD-087 Slice B). Once
+    /// set, trained indexes are written after each rebuild and lazily reloaded
+    /// on the first query for a collection with no in-memory index.
+    pub fn set_index_persist_dir(&mut self, dir: std::path::PathBuf) {
+        self.index_persist_dir = Some(dir);
+        tracing::info!("🔗 AXIS: IVF index persistence enabled (TD-087 Slice B)");
+    }
+
+    /// Resolve the on-disk path for a collection's persisted IVF index, or `None`
+    /// when persistence is disabled.
+    fn ivf_index_path(&self, collection_id: &str) -> Option<std::path::PathBuf> {
+        self.index_persist_dir
+            .as_ref()
+            .map(|dir| dir.join(collection_id).join("ivf.bin"))
+    }
+
+    /// Best-effort persist of a trained IVF index to disk. Logged, never fatal —
+    /// a persistence failure must not fail the build/rebuild.
+    async fn persist_ivf_index(
+        &self,
+        collection_id: &str,
+        index: &Arc<tokio::sync::RwLock<crate::index::axis::indexes::dual_store_ivf::UnifiedIvfIndex>>,
+    ) {
+        let Some(path) = self.ivf_index_path(collection_id) else {
+            return;
+        };
+        let guard = index.read().await;
+        match crate::index::axis::storage::serialization::IndexSerializer::persist_ivf_index(
+            &guard,
+            collection_id,
+            &path,
+        )
+        .await
+        {
+            Ok(()) => tracing::info!(
+                "💾 AXIS: persisted IVF index for '{}' → {}",
+                collection_id,
+                path.display()
+            ),
+            Err(e) => tracing::warn!(
+                "AXIS: failed to persist IVF index for '{}' ({}); index remains in-memory only",
+                collection_id,
+                e
+            ),
+        }
+    }
+
+    /// Lazily warm a collection's IVF index from disk on the first query (TD-087
+    /// Slice B). No-op when the index is already served, persistence is disabled,
+    /// or no persisted file exists. On a successful load the index is installed
+    /// in `ivf_indexes` and an IVF routing strategy is registered.
+    async fn ensure_ivf_index_loaded(&self, collection_id: &str) {
+        if self.has_ivf_index(collection_id).await {
+            return;
+        }
+        let Some(path) = self.ivf_index_path(collection_id) else {
+            return;
+        };
+        if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+            return;
+        }
+        match crate::index::axis::storage::serialization::IndexSerializer::load_ivf_index(&path)
+            .await
+        {
+            Ok((index, _meta)) => {
+                let dimension = index.dimension();
+                let n = index.len();
+                {
+                    let mut indexes = self.ivf_indexes.write().await;
+                    // Double-check: another task may have loaded it concurrently.
+                    if indexes.contains_key(collection_id) {
+                        return;
+                    }
+                    indexes.insert(
+                        collection_id.to_string(),
+                        Arc::new(tokio::sync::RwLock::new(index)),
+                    );
+                }
+                self.register_loaded_ivf_strategy(collection_id, dimension, n).await;
+                tracing::info!(
+                    "🔥 AXIS: warm-loaded IVF index for '{}' from {} ({} vectors)",
+                    collection_id,
+                    path.display(),
+                    n
+                );
+            }
+            Err(e) => tracing::warn!(
+                "AXIS: failed to load persisted IVF index for '{}' ({}); falling back to rebuild",
+                collection_id,
+                e
+            ),
+        }
+    }
+
+    /// Register an IVF routing strategy for a warm-loaded index so `query()`
+    /// routes it through the IVF path (mirrors the build-time strategy shape).
+    async fn register_loaded_ivf_strategy(&self, collection_id: &str, dimension: usize, n: usize) {
+        use crate::index::axis::types::{
+            Data, IndexAlgorithm, IndexSelectionStrategy, IndexSpecification,
+        };
+        let nlist = ((n as f32).sqrt() as usize * 2).clamp(16, 256) as u32;
+        let nprobe = (nlist / 2).max(1);
+        let strategy = IndexSelectionStrategy {
+            indexes: vec![IndexSpecification::new(
+                Data::DenseVector { dimension },
+                IndexAlgorithm::IVF {
+                    nlist,
+                    nprobe,
+                    quantizer: None,
+                },
+            )],
+            routing_rules: vec![],
+        };
+        let _ = self
+            .update_collection_strategy(collection_id, strategy)
+            .await;
     }
 
     /// Collection ids that have a trained IVF index with quantized storage —
@@ -719,6 +844,10 @@ impl AxisManager {
 
         // Execute query using current search_strategy
         let collection_id = &query.collection_id;
+
+        // TD-087 Slice B: lazily warm a cold collection's IVF index from disk
+        // before routing (no-op when already served or persistence is disabled).
+        self.ensure_ivf_index_loaded(collection_id).await;
 
         // Ensure we have a search_strategy for this collection
         self.ensure_collection_strategy(collection_id).await?;
@@ -1586,11 +1715,13 @@ impl AxisManager {
                 );
 
                 // Store the trained index
-                let mut indexes = self.ivf_indexes.write().await;
-                indexes.insert(
-                    collection_id.to_string(),
-                    Arc::new(tokio::sync::RwLock::new(index)),
-                );
+                let served = Arc::new(tokio::sync::RwLock::new(index));
+                {
+                    let mut indexes = self.ivf_indexes.write().await;
+                    indexes.insert(collection_id.to_string(), served.clone());
+                }
+                // TD-087 Slice B: persist the freshly trained index (best-effort).
+                self.persist_ivf_index(collection_id, &served).await;
             }
         }
 
@@ -1624,6 +1755,12 @@ impl AxisManager {
                 let has_quantized = index.has_quantized_storage();
                 let use_quantized = decide_quantized_route(gate_open, has_quantized);
                 let route = if has_quantized { Some(use_quantized) } else { None };
+                if has_quantized && !use_quantized {
+                    // TD-075 / F2: quantized storage exists but the recall-probe
+                    // gate forced exact — surface this degraded route to EXPLAIN
+                    // via the per-request diagnostics bus (no-op outside a scope).
+                    crate::observability::predicate_diagnostics::record_quantized_downgrade();
+                }
                 let results = if use_quantized {
                     index
                         .search_with_quantized_acceleration(vector, query.top_k, None)
@@ -1854,6 +1991,89 @@ impl AxisManager {
         let mut strategies = self.collection_strategies.write().await;
         strategies.insert(collection_id.to_string(), search_strategy);
         Ok(())
+    }
+
+    /// Hot-swap `ef_search` on every HNSW index in the collection's
+    /// active strategy without rebuilding the graph. Resolves
+    /// [`DriftKind::EfSearchOnly`] drift at zero rebuild cost — the
+    /// graph degree (`m`) and build-time quality (`ef_construction`)
+    /// are baked into the index structure, but `ef_search` is read
+    /// from the strategy on every query so this is a near-free
+    /// in-place tune.
+    ///
+    /// Returns [`HotSwapOutcome::Applied`] with `(previous_ef,
+    /// new_ef)` per touched spec; [`HotSwapOutcome::NotApplicable`]
+    /// when there's no active strategy, no HNSW spec, or every spec
+    /// already matches the requested ef.
+    ///
+    /// **Does NOT rebuild**. If the operator needs an `m` or
+    /// `ef_construction` change, they call the recluster path
+    /// instead (separate slice).
+    pub async fn apply_hnsw_ef_hot_swap(
+        &self,
+        collection_id: &str,
+        new_ef_search: u32,
+    ) -> Result<HotSwapOutcome> {
+        use crate::index::axis::types::IndexAlgorithm;
+
+        let mut strategies = self.collection_strategies.write().await;
+        let Some(strategy) = strategies.get_mut(collection_id) else {
+            return Ok(HotSwapOutcome::NotApplicable {
+                reason: format!(
+                    "no active strategy for collection '{}'",
+                    collection_id
+                ),
+            });
+        };
+
+        let mut changes: Vec<HotSwapEfChange> = Vec::new();
+        for spec in strategy.indexes.iter_mut() {
+            if let IndexAlgorithm::HNSW {
+                m,
+                ef_construction,
+                ef_search,
+                max_elements,
+            } = spec.algorithm
+            {
+                if ef_search == new_ef_search {
+                    continue;
+                }
+                changes.push(HotSwapEfChange {
+                    index_name: spec.name.clone(),
+                    previous_ef_search: ef_search,
+                    new_ef_search,
+                });
+                spec.algorithm = IndexAlgorithm::HNSW {
+                    m,
+                    ef_construction,
+                    ef_search: new_ef_search,
+                    max_elements,
+                };
+            }
+        }
+
+        if changes.is_empty() {
+            return Ok(HotSwapOutcome::NotApplicable {
+                reason: "no HNSW spec needed updating (none present, or all already at the requested ef_search)".to_string(),
+            });
+        }
+
+        // The strategy mutation is now in-place; the next query
+        // routed through this collection will pick up the new ef.
+        // emit a structured event so operator dashboards can verify.
+        for change in &changes {
+            tracing::info!(
+                target: "axis_diag",
+                site = "apply_hnsw_ef_hot_swap",
+                collection_id = collection_id,
+                index = change.index_name.as_deref().unwrap_or("unnamed"),
+                previous_ef_search = change.previous_ef_search,
+                new_ef_search = change.new_ef_search,
+                "hot-swapped HNSW ef_search"
+            );
+        }
+
+        Ok(HotSwapOutcome::Applied { changes })
     }
 
     /// Get the distance metric configured for a collection
@@ -2422,17 +2642,20 @@ impl AxisManager {
         );
 
         // Store the trained index
-        let mut indexes = self.ivf_indexes.write().await;
-        indexes.insert(
-            collection_id.to_string(),
-            Arc::new(tokio::sync::RwLock::new(index)),
-        );
+        let served = Arc::new(tokio::sync::RwLock::new(index));
+        {
+            let mut indexes = self.ivf_indexes.write().await;
+            indexes.insert(collection_id.to_string(), served.clone());
+        }
 
         // Clear pending vectors buffer since we've trained
         {
             let mut pending = self.ivf_pending_vectors.write().await;
             pending.remove(collection_id);
         }
+
+        // TD-087 Slice B: persist the batch-trained index (best-effort).
+        self.persist_ivf_index(collection_id, &served).await;
 
         Ok(())
     }
@@ -2531,12 +2754,10 @@ impl AxisManager {
         }
 
         // Atomic swap: replace the served Arc in one insert.
+        let served = Arc::new(tokio::sync::RwLock::new(index));
         {
             let mut indexes = self.ivf_indexes.write().await;
-            indexes.insert(
-                collection_id.to_string(),
-                Arc::new(tokio::sync::RwLock::new(index)),
-            );
+            indexes.insert(collection_id.to_string(), served.clone());
         }
         // Observable generation bump.
         let generation = {
@@ -2545,6 +2766,9 @@ impl AxisManager {
             *g += 1;
             *g
         };
+
+        // TD-087 Slice B: persist the rebuilt index to disk (best-effort).
+        self.persist_ivf_index(collection_id, &served).await;
 
         tracing::info!(
             "✅ AXIS: rebuilt + swapped IVF index for collection {} ({} vectors, {} clusters, gen={})",
@@ -2976,6 +3200,31 @@ pub enum FilterOperator {
     IsNull,
     /// Value is present and non-null.
     IsNotNull,
+}
+
+/// Outcome of [`AxisManager::apply_hnsw_ef_hot_swap`]. Either every
+/// HNSW spec in the active strategy had its `ef_search` swapped to
+/// the requested value (`Applied`), or there was nothing to do
+/// (`NotApplicable` — either no strategy, no HNSW indexes, or the
+/// requested ef was already in place).
+#[derive(Debug, Clone, PartialEq)]
+pub enum HotSwapOutcome {
+    /// One or more HNSW specs were updated. `changes` carries the
+    /// per-spec before/after for observability.
+    Applied { changes: Vec<HotSwapEfChange> },
+    /// No update was required. `reason` is a short operator-facing
+    /// string for logs / route-health.
+    NotApplicable { reason: String },
+}
+
+/// Per-spec record of an `ef_search` change, for structured event
+/// emission. `index_name` is `None` when the spec wasn't given a
+/// name in [`crate::index::axis::types::IndexSpecification::name`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct HotSwapEfChange {
+    pub index_name: Option<String>,
+    pub previous_ef_search: u32,
+    pub new_ef_search: u32,
 }
 
 /// Backwards-compat alias for [`AxisManagerQueryResult`].
@@ -4207,5 +4456,210 @@ mod recluster_apply_tests {
             .rebuild_and_swap_served_index("never_seen", &v2)
             .await
             .unwrap());
+    }
+
+    // ─── TD-087 Slice B: persist-after-train + load-on-demand ───────────────
+
+    #[tokio::test]
+    async fn ivf_index_persists_on_rebuild_and_warm_loads_on_query() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let dim = 8;
+        let v = batch("p", 40, dim, 1);
+
+        // Manager #1: persistence enabled → rebuild writes the index to disk.
+        let mut m1 = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m1.set_index_persist_dir(dir.path().to_path_buf());
+        assert!(m1.rebuild_and_swap_ivf_index("col", &v).await.unwrap());
+        let path = dir.path().join("col").join("ivf.bin");
+        assert!(path.exists(), "rebuild must persist the IVF index to disk");
+
+        let mut qv = vec![0.0f32; dim];
+        qv[3] = 1.0;
+        let mk_query = || AxisHybridQuery {
+            collection_id: "col".to_string(),
+            vector_query: Some(VectorQuery::Dense {
+                vector: qv.clone(),
+                similarity_threshold: 0.0,
+            }),
+            top_k: 3,
+            ..AxisHybridQuery::default()
+        };
+        let want = m1.query(mk_query()).await.unwrap();
+        let want_top: Vec<String> = want.results.iter().map(|r| r.vector_id.clone()).collect();
+        assert!(!want_top.is_empty());
+
+        // Manager #2: same dir, starts COLD (no in-memory index) → first query
+        // warm-loads the index from disk and serves identical top-k.
+        let mut m2 = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m2.set_index_persist_dir(dir.path().to_path_buf());
+        assert!(!m2.has_ivf_index("col").await, "fresh manager starts cold");
+        let got = m2.query(mk_query()).await.unwrap();
+        assert!(
+            m2.has_ivf_index("col").await,
+            "query must warm-load the IVF index from disk"
+        );
+        let got_top: Vec<String> = got.results.iter().map(|r| r.vector_id.clone()).collect();
+        assert_eq!(got_top, want_top, "warm-loaded index must serve identical top-k");
+    }
+
+    #[tokio::test]
+    async fn persistence_disabled_is_a_noop() {
+        // No persist dir set → rebuild succeeds and writes nothing (no panic/err).
+        let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
+        let v = batch("np", 40, 8, 1);
+        assert!(manager.rebuild_and_swap_ivf_index("col", &v).await.unwrap());
+        assert!(manager.ivf_index_path("col").is_none());
+    }
+}
+
+#[cfg(test)]
+mod hot_swap_ef_tests {
+    //! Tests for AxisManager::apply_hnsw_ef_hot_swap — the
+    //! zero-rebuild in-place ef_search tune that resolves
+    //! DriftKind::EfSearchOnly drift on the route-health surface.
+    use super::*;
+    use crate::index::axis::types::{
+        Data, IndexAlgorithm, IndexSelectionStrategy, IndexSpecification,
+    };
+
+    async fn make_manager() -> AxisManager {
+        AxisManager::new(AxisConfig::default())
+            .await
+            .expect("AxisManager::new")
+    }
+
+    fn hnsw_strategy(ef_search: u32, name: Option<&str>) -> IndexSelectionStrategy {
+        let mut spec = IndexSpecification::new(
+            Data::DenseVector { dimension: 128 },
+            IndexAlgorithm::HNSW {
+                m: 16,
+                ef_construction: 200,
+                ef_search,
+                max_elements: 1_000_000,
+            },
+        );
+        spec.name = name.map(String::from);
+        IndexSelectionStrategy {
+            indexes: vec![spec],
+            routing_rules: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn hot_swap_updates_ef_search_on_hnsw_spec() {
+        let manager = make_manager().await;
+        manager
+            .update_collection_strategy("c1", hnsw_strategy(100, Some("primary")))
+            .await
+            .unwrap();
+
+        let outcome = manager.apply_hnsw_ef_hot_swap("c1", 400).await.unwrap();
+        match outcome {
+            HotSwapOutcome::Applied { changes } => {
+                assert_eq!(changes.len(), 1);
+                assert_eq!(changes[0].previous_ef_search, 100);
+                assert_eq!(changes[0].new_ef_search, 400);
+                assert_eq!(changes[0].index_name.as_deref(), Some("primary"));
+            }
+            HotSwapOutcome::NotApplicable { reason } => {
+                panic!("expected Applied, got NotApplicable: {}", reason)
+            }
+        }
+
+        // The strategy must reflect the new ef on subsequent reads.
+        let updated = manager.get_collection_strategy("c1").await.unwrap();
+        match &updated.indexes[0].algorithm {
+            IndexAlgorithm::HNSW { ef_search, .. } => {
+                assert_eq!(*ef_search, 400, "ef_search must be live after hot-swap")
+            }
+            other => panic!("expected HNSW algorithm, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn hot_swap_preserves_m_and_ef_construction() {
+        let manager = make_manager().await;
+        manager
+            .update_collection_strategy("c1", hnsw_strategy(100, None))
+            .await
+            .unwrap();
+        let _ = manager.apply_hnsw_ef_hot_swap("c1", 400).await.unwrap();
+
+        let updated = manager.get_collection_strategy("c1").await.unwrap();
+        match &updated.indexes[0].algorithm {
+            IndexAlgorithm::HNSW {
+                m,
+                ef_construction,
+                ef_search,
+                ..
+            } => {
+                assert_eq!(*m, 16, "m must be untouched by hot-swap");
+                assert_eq!(
+                    *ef_construction, 200,
+                    "ef_construction must be untouched"
+                );
+                assert_eq!(*ef_search, 400);
+            }
+            _ => panic!("expected HNSW"),
+        }
+    }
+
+    #[tokio::test]
+    async fn hot_swap_with_no_strategy_returns_not_applicable() {
+        let manager = make_manager().await;
+        let outcome = manager
+            .apply_hnsw_ef_hot_swap("never_created", 400)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, HotSwapOutcome::NotApplicable { .. }));
+    }
+
+    #[tokio::test]
+    async fn hot_swap_with_matching_ef_is_noop() {
+        let manager = make_manager().await;
+        manager
+            .update_collection_strategy("c1", hnsw_strategy(400, None))
+            .await
+            .unwrap();
+        let outcome = manager.apply_hnsw_ef_hot_swap("c1", 400).await.unwrap();
+        match outcome {
+            HotSwapOutcome::NotApplicable { reason } => {
+                assert!(
+                    reason.contains("no HNSW spec needed updating"),
+                    "reason should explain why: {}",
+                    reason
+                );
+            }
+            HotSwapOutcome::Applied { changes } => {
+                panic!("expected NotApplicable for matching ef, got {} changes", changes.len())
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn hot_swap_skips_non_hnsw_specs() {
+        let manager = make_manager().await;
+        // IVF-only strategy — no HNSW spec to swap.
+        let ivf_spec = IndexSpecification::new(
+            Data::DenseVector { dimension: 128 },
+            IndexAlgorithm::IVF {
+                nlist: 100,
+                nprobe: 10,
+                quantizer: None,
+            },
+        );
+        manager
+            .update_collection_strategy(
+                "c1",
+                IndexSelectionStrategy {
+                    indexes: vec![ivf_spec],
+                    routing_rules: vec![],
+                },
+            )
+            .await
+            .unwrap();
+
+        let outcome = manager.apply_hnsw_ef_hot_swap("c1", 400).await.unwrap();
+        assert!(matches!(outcome, HotSwapOutcome::NotApplicable { .. }));
     }
 }

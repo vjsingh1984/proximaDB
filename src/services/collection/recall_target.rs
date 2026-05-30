@@ -42,9 +42,10 @@
 use crate::compute::distance_computation::DistanceMetric;
 use crate::index::axis::management::{HnswSizingInput, HnswSizingOutput, advise_hnsw_params};
 use crate::proto::proximadb_v1::{
-    CollectionConfig, DistanceMetric as ProtoDistanceMetric, HnswConfig, IndexConfig,
-    IndexingAlgorithm,
+    CollectionConfig, DistanceMetric as ProtoDistanceMetric, HnswConfig, IndexingAlgorithm,
 };
+#[cfg(test)]
+use crate::proto::proximadb_v1::IndexConfig;
 
 /// Tag key prefix used to encode `recall_target` on
 /// `CollectionConfig.tags`.
