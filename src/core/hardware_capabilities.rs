@@ -408,7 +408,13 @@ pub struct GpuDevice {
 /// Global hardware capabilities instance
 static HARDWARE_CAPABILITIES: OnceLock<Arc<HardwareCapabilities>> = OnceLock::new();
 
-/// Complete hardware capabilities detected at startup
+/// Complete hardware capabilities detected at startup.
+///
+/// NOTE (LLD duplication watch): this is a higher-level *aggregate* (CPU + GPU + memory
+/// + TOML config + detection timestamp) and is intentionally distinct from the foundation
+/// primitive `proximadb_hardware::HardwareCapabilities` (flat SIMD + memory detection).
+/// The names collide but the shapes and purposes differ; a rename to e.g.
+/// `SystemHardwareProfile` is deferred because this type has wide blast radius (~46 files).
 #[derive(Debug, Clone)]
 pub struct HardwareCapabilities {
     /// CPU features and SIMD support

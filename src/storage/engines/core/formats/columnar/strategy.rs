@@ -143,13 +143,18 @@ pub struct SerializationMetrics {
 /// Serialization strategy optimizer
 pub struct SerializationStrategyOptimizer {
     config: SerializationStrategyConfig,
-    hardware_capabilities: HardwareCapabilities,
+    hardware_capabilities: ColumnarSimdCapabilities,
     strategy_cache: HashMap<String, SerializationStrategy>,
 }
 
-/// Hardware capabilities detection
+/// SIMD + cache-geometry descriptor used for serialization-strategy selection.
+///
+/// Renamed from the former `HardwareCapabilities` to remove the collision with the
+/// canonical `proximadb_hardware::HardwareCapabilities` (its `Default` already derives
+/// values from `proximadb_hardware::best_simd_level()`). This is a local strategy
+/// descriptor, not the canonical detection type (see the LLD duplication watch).
 #[derive(Debug, Clone)]
-pub struct HardwareCapabilities {
+pub struct ColumnarSimdCapabilities {
     pub has_sse: bool,
     pub has_avx: bool,
     pub has_avx2: bool,
@@ -160,7 +165,7 @@ pub struct HardwareCapabilities {
     pub l2_cache_size: usize,
 }
 
-impl Default for HardwareCapabilities {
+impl Default for ColumnarSimdCapabilities {
     fn default() -> Self {
         let level = proximadb_hardware::best_simd_level();
         Self {
@@ -181,7 +186,7 @@ impl SerializationStrategyOptimizer {
     pub fn new(config: SerializationStrategyConfig) -> Self {
         Self {
             config,
-            hardware_capabilities: HardwareCapabilities::default(),
+            hardware_capabilities: ColumnarSimdCapabilities::default(),
             strategy_cache: HashMap::new(),
         }
     }

@@ -24,7 +24,7 @@ pub struct RowBasedHeader {
     pub engine_metadata: EngineMetadata,
 
     /// Collection information
-    pub collection_metadata: CollectionMetadata,
+    pub collection_metadata: ProximaBlockCollectionMetadata,
 
     /// File layout information
     pub layout_metadata: LayoutMetadata,
@@ -84,9 +84,12 @@ pub enum IOPatternHint {
     BatchOriented,
 }
 
-/// Collection-specific metadata
+/// Collection-specific metadata stored in a ProximaBlock file header.
+///
+/// Renamed from the former `CollectionMetadata` to disambiguate from the cluster-level
+/// `ClusterCollectionMetadata` and other same-named local structs (LLD duplication watch).
 #[derive(Debug, Clone)]
-pub struct CollectionMetadata {
+pub struct ProximaBlockCollectionMetadata {
     pub collection_id: String,
     pub collection_name: Option<String>,
     pub dimension: usize,
@@ -506,7 +509,7 @@ impl RowBasedHeader {
             timestamp: chrono::Utc::now().timestamp(),
             created_by: "SST Engine".to_string(),
             engine_metadata: EngineMetadata::new_sst(),
-            collection_metadata: CollectionMetadata::new(collection_id, dimension),
+            collection_metadata: ProximaBlockCollectionMetadata::new(collection_id, dimension),
             layout_metadata: LayoutMetadata::default(),
             index_metadata: BlockIndexMetadata::default(),
             compression_metadata: BlockCompressionMetadata::default(),
@@ -526,7 +529,7 @@ impl RowBasedHeader {
             timestamp: chrono::Utc::now().timestamp(),
             created_by: "SWIFT Engine".to_string(),
             engine_metadata: EngineMetadata::new_swift(),
-            collection_metadata: CollectionMetadata::new(collection_id, dimension),
+            collection_metadata: ProximaBlockCollectionMetadata::new(collection_id, dimension),
             layout_metadata: LayoutMetadata::default(),
             index_metadata: BlockIndexMetadata::default(),
             compression_metadata: BlockCompressionMetadata::default(),
@@ -614,7 +617,7 @@ impl EngineMetadata {
     }
 }
 
-impl CollectionMetadata {
+impl ProximaBlockCollectionMetadata {
     pub fn new(collection_id: String, dimension: usize) -> Self {
         Self {
             collection_id,

@@ -56,16 +56,20 @@ pub struct ClusterMetadata {
     /// Cluster version (incremented on each change)
     pub version: u64,
     /// Collection metadata map
-    pub collections: HashMap<String, CollectionMetadata>,
+    pub collections: HashMap<String, ClusterCollectionMetadata>,
     /// Shard placement information
     pub shard_placements: HashMap<String, ShardPlacement>,
     /// Cluster configuration
     pub config: ClusterConfiguration,
 }
 
-/// Metadata for a collection in the cluster
+/// Metadata for a collection in the cluster (membership/placement view).
+///
+/// Renamed from the former `CollectionMetadata` to disambiguate from the unrelated
+/// block-header `ProximaBlockCollectionMetadata` and other same-named local structs
+/// (see the LLD duplication watch).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CollectionMetadata {
+pub struct ClusterCollectionMetadata {
     /// Collection unique identifier
     pub collection_id: String,
     /// Collection name
@@ -162,13 +166,13 @@ impl MetadataService {
     }
 
     /// Get metadata for a specific collection
-    pub async fn get_collection(&self, collection_id: &str) -> Option<CollectionMetadata> {
+    pub async fn get_collection(&self, collection_id: &str) -> Option<ClusterCollectionMetadata> {
         let metadata = self.metadata.read().await;
         metadata.collections.get(collection_id).cloned()
     }
 
     /// Register a new collection
-    pub async fn register_collection(&self, collection: CollectionMetadata) -> Result<()> {
+    pub async fn register_collection(&self, collection: ClusterCollectionMetadata) -> Result<()> {
         let mut metadata = self.metadata.write().await;
         let next_version = self.version_counter.load(Ordering::Acquire) + 1;
 
@@ -187,7 +191,7 @@ impl MetadataService {
     }
 
     /// Update collection metadata
-    pub async fn update_collection(&self, collection: CollectionMetadata) -> Result<()> {
+    pub async fn update_collection(&self, collection: ClusterCollectionMetadata) -> Result<()> {
         let mut metadata = self.metadata.write().await;
 
         if !metadata.collections.contains_key(&collection.collection_id) {
@@ -258,7 +262,7 @@ impl MetadataService {
     }
 
     /// List all collections
-    pub async fn list_collections(&self) -> Vec<CollectionMetadata> {
+    pub async fn list_collections(&self) -> Vec<ClusterCollectionMetadata> {
         let metadata = self.metadata.read().await;
         metadata.collections.values().cloned().collect()
     }
@@ -279,7 +283,7 @@ mod tests {
     async fn test_collection_registration() {
         let service = MetadataService::new(MetadataServiceConfig::default()).unwrap();
 
-        let collection = CollectionMetadata {
+        let collection = ClusterCollectionMetadata {
             collection_id: "test-collection".to_string(),
             name: "Test Collection".to_string(),
             dimension: 128,
@@ -306,7 +310,7 @@ mod tests {
 
         assert_eq!(service.version().await, 0);
 
-        let collection = CollectionMetadata {
+        let collection = ClusterCollectionMetadata {
             collection_id: "test".to_string(),
             name: "Test".to_string(),
             dimension: 64,

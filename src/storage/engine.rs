@@ -8,8 +8,8 @@ use crate::storage::{
 };
 use proximadb_records::{EmbeddingCell, ProximaRecord};
 use proximadb_storage_common::storage_path::StoragePath;
-// Import CollectionMetadata from the appropriate location
-use crate::storage::engines::core::formats::proximablocks::header_metadata::CollectionMetadata;
+// Import ProximaBlockCollectionMetadata from the appropriate location
+use crate::storage::engines::core::formats::proximablocks::header_metadata::ProximaBlockCollectionMetadata;
 use dashmap::DashMap;
 use rand::seq::SliceRandom;
 use std::collections::HashMap;
@@ -1115,7 +1115,7 @@ impl StorageEngine {
         tracing::debug!("🧹 Starting storage cleanup for test scenarios");
 
         // Get list of all collections from metadata provider
-        let collections: Vec<CollectionMetadata> =
+        let collections: Vec<ProximaBlockCollectionMetadata> =
             match self.metadata_provider.read().await.as_ref() {
                 Some(_provider) => {
                     // Deferred: Add list_collections method to InternalCollectionProvider trait

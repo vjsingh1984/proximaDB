@@ -33,7 +33,13 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::io;
 
-/// The main storage error type that encompasses all storage-related errors
+/// The main storage error type that encompasses all storage-related errors.
+///
+/// NOTE (LLD duplication watch): this richer struct intentionally coexists with the
+/// lower-level `proximadb_kernel::error::StorageError` enum — the two form a deliberate
+/// two-layer design bridged by `impl From<proximadb_kernel::error::StorageError>` below.
+/// They share a name but not a shape; converging them is a separate workspace-wide effort
+/// (~293 references) and is deferred.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageError {
     /// The kind of error that occurred
