@@ -193,6 +193,10 @@ pub mod dr_metrics;
 pub mod exporters;
 pub mod query_service;
 pub mod schema;
+/// AXIS HNSW recall-target drift observability — one-hot status
+/// gauge + observation / hot-swap counters for /route-health +
+/// /recall-tune.
+pub mod recall_drift_metrics;
 pub mod store;
 /// TD-064 predicate-aware vector search shortfall counters.
 pub mod td064_metrics;

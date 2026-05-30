@@ -1477,6 +1477,17 @@ pub async fn get_collection_route_health_v2(
             hot_swap_possible: report.hot_swap_possible(),
             summary: report.summary,
         };
+        crate::metrics::recall_drift_metrics::record_recall_drift_observation(
+            &collection_id_for_discovery,
+            kind,
+        );
+    } else {
+        // No recall_target tag → emit the unwired one-hot so the
+        // gauge still surfaces this collection's state on dashboards.
+        crate::metrics::recall_drift_metrics::record_recall_drift_observation(
+            &collection_id_for_discovery,
+            "unwired",
+        );
     }
 
     // Phase 8 (F1): patch the discovery block with live snapshot-coordinator
@@ -1653,6 +1664,10 @@ pub async fn post_collection_recall_tune_v2(
         hot_swap_possible: drift.hot_swap_possible(),
         summary: drift.summary.clone(),
     };
+    crate::metrics::recall_drift_metrics::record_recall_drift_observation(
+        &collection_id,
+        kind_str,
+    );
 
     // No drift → confirm + exit.
     if matches!(
@@ -1701,17 +1716,22 @@ pub async fn post_collection_recall_tune_v2(
         .map_err(|e| ApiError::Internal(format!("hot-swap failed: {}", e)))?;
 
     let (action, applied_changes) = match outcome {
-        crate::index::axis::management::HotSwapOutcome::Applied { changes } => (
-            "applied_hot_swap",
-            changes
-                .into_iter()
-                .map(|c| RecallTuneEfChange {
-                    index_name: c.index_name,
-                    previous_ef_search: c.previous_ef_search,
-                    new_ef_search: c.new_ef_search,
-                })
-                .collect(),
-        ),
+        crate::index::axis::management::HotSwapOutcome::Applied { changes } => {
+            crate::metrics::recall_drift_metrics::record_recall_drift_hot_swap_applied(
+                &collection_id,
+            );
+            (
+                "applied_hot_swap",
+                changes
+                    .into_iter()
+                    .map(|c| RecallTuneEfChange {
+                        index_name: c.index_name,
+                        previous_ef_search: c.previous_ef_search,
+                        new_ef_search: c.new_ef_search,
+                    })
+                    .collect(),
+            )
+        }
         crate::index::axis::management::HotSwapOutcome::NotApplicable { .. } => {
             ("not_wired", Vec::new())
         }
