@@ -2,6 +2,7 @@
 //!
 //! Handles collection lifecycle, metadata, and configuration
 
+pub mod engine_selector;
 pub mod manager;
 pub mod security;
 

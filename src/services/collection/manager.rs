@@ -485,6 +485,33 @@ impl CollectionService {
             .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine);
         enriched_config.distance_metric = Some(resolved_distance_metric as i32);
 
+        // Heuristic engine routing: collections that don't pin a
+        // storage_engine fall through to the rules in
+        // crate::services::collection::engine_selector. Vector
+        // collections with neither an index nor quantization land on
+        // HELIX (Hilbert-sorted blocks → usable recall without an
+        // external index); everything else stays on SST. Caller-pinned
+        // engine choices are passed through untouched.
+        let (selected_engine, selection_reason) =
+            crate::services::collection::engine_selector::infer_storage_engine(&enriched_config);
+        let previous_engine_field = enriched_config.storage_engine;
+        enriched_config.storage_engine = Some(selected_engine as i32);
+        tracing::info!(
+            target: "collection.engine_selector",
+            collection = %enriched_config.name,
+            chosen_engine = ?selected_engine,
+            reason = selection_reason,
+            previous_field = ?previous_engine_field,
+            dimension = enriched_config.dimension,
+            has_index = !enriched_config.index_configs.is_empty(),
+            has_quantization = enriched_config
+                .quantization
+                .as_ref()
+                .and_then(|q| q.enabled)
+                .unwrap_or(false),
+            "auto-selected storage engine"
+        );
+
         // Resolve compression and storage configuration
 
         // NEW: Add tenant metadata to collection if tenant context is provided
