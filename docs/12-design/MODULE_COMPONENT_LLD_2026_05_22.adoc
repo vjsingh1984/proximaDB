@@ -463,8 +463,13 @@ flowchart LR
 
 Structural scan of `struct`/`enum` definitions across `src/` + `crates/` (verified 2026-05-29),
 cross-referenced with the proliferation audits. Distinguishes genuine duplication from canonical +
-edge-adapter patterns and from already-resolved items. "Target module" is where to start a
-convergence pass.
+edge-adapter patterns and from already-resolved items.
+
+RESOLUTION STATUS (2026-05-30): a convergence pass acted on this table. Crucially, *shape*
+verification showed most flagged items were NOT foldable duplicates — same name, genuinely
+different fields/purposes — so the correct fix was to rename the locals and reserve the canonical
+name, not merge. Small/localized collisions were renamed; large-blast-radius items that are
+legitimately distinct were documented and deferred. Verdict column updated below.
 
 [cols="2,1,4,3", options="header"]
 |===
@@ -473,32 +478,38 @@ convergence pass.
 | `QuantizationConfig` | 4
 | `proximadb-quantization-types/src/lib.rs:202` (canonical) · `proximadb-proto …v1.rs:2129` (proto
   edge, expected) · `src/storage/background_flush_context.rs:72` · `src/storage/engines/nova/quantized_columns.rs:287`
-| GENUINE: the two storage-local defs are live proliferation. Converge onto quantization-types
-  (P1-B rename landed 2026-05-25). Target module: `src/storage`.
+| RESOLVED by rename (2026-05-30). Shape check: the two storage-local defs have DIFFERENT fields
+  from the canonical (flush = enabled/string/bits/subspaces; nova = enable_binary/int8/pq/segments/bits)
+  — distinct configs, not foldable. Renamed to `FlushQuantizationConfig` and
+  `NovaQuantizationConfig`; canonical name reserved.
 
 | `HardwareCapabilities` | 3
 | `proximadb-hardware/src/lib.rs:30` (canonical, P1-A `8279d36af`) ·
   `src/core/hardware_capabilities.rs:413` · `src/storage/engines/core/formats/columnar/strategy.rs:152`
-| VERIFY: P1-A consolidated to `proximadb-hardware`; the two remaining independent defs are either
-  intentional local shapes or unfinished convergence — confirm and migrate. Target: `src/core`,
-  `src/storage/engines/core`.
+| PARTIALLY RESOLVED (2026-05-30). columnar `strategy.rs` def (SIMD+cache descriptor, 4 local refs)
+  renamed to `ColumnarSimdCapabilities`. `core::HardwareCapabilities` is a distinct higher-level
+  aggregate (CPU+GPU+memory+config+timestamp) vs the foundation primitive — JUSTIFIED + documented;
+  rename to e.g. `SystemHardwareProfile` deferred (~46-file blast radius).
 
 | `StorageError` | 2
 | `proximadb-kernel/src/error.rs:98` (enum) · `proximadb-storage-common/src/storage_error.rs:38`
   (struct)
-| GENUINE cross-layer name collision (P2, 2026-05-20): two different shapes under one name; callers
-  disambiguate by path. Action: rename one or document the layer split explicitly.
+| JUSTIFIED + documented (2026-05-30). The storage-common struct intentionally coexists with the
+  kernel enum — a deliberate two-layer design bridged by `impl From<proximadb_kernel::error::StorageError>`.
+  Doc notes added on both; a workspace-wide rename (~293 refs) is deferred as a separate effort.
 
 | `CollectionMetadata` | 4
 | `src/cluster/metadata_service.rs:68` (pub) · `src/storage/engines/core/formats/proximablocks/header_metadata.rs:89`
   (pub) · `src/core/search/smart_execution_strategy.rs:114` (private) · `src/query/sql_frontend/lowering.rs:33` (private)
-| NAME COLLISION, not duplication: four distinct concerns share one name. The two private locals are
-  low-risk; rename the public pair for clarity rather than merging.
+| RESOLVED (public pair, 2026-05-30). Renamed `cluster/metadata_service.rs` →
+  `ClusterCollectionMetadata` (file-local) and `proximablocks/header_metadata.rs` →
+  `ProximaBlockCollectionMetadata` (+ import in `src/storage/engine.rs`). The two private locals are
+  harmless and left as-is.
 
 | `SearchRequest` | 2
 | `src/core/service_types.rs:741` (canonical edge DTO) · `src/index/axis/hmgi/coordinator.rs:65`
-| NAME COLLISION: the HMGI-internal struct shadows the public DTO name. Action: rename local to
-  `HmgiSearchRequest`.
+| RESOLVED (2026-05-30). Renamed the HMGI-internal struct to `HmgiSearchRequest` (+ re-export updates
+  in `hmgi/mod.rs`, `axis/mod.rs`, `cluster/mod.rs`); the canonical edge DTO name is now unambiguous.
 
 | `*ExecutionPlan` | 5
 | `query_optimizer.rs:296 UnifiedExecutionPlan` · `table_write_plan.rs:398 RoutedExecutionPlan`
@@ -512,9 +523,12 @@ convergence pass.
 | RESOLVED: the former dual-impl (P1, 2026-05-20) has converged to a single canonical. No action.
 |===
 
-Highest-density target: the storage layer carries three of the live items
-(`QuantizationConfig`, `HardwareCapabilities`, `StorageError` all surface under `src/storage*`),
-so a single storage-layer convergence pass closes the most duplication per unit effort.
+Convergence pass outcome (2026-05-30): the localized collisions are resolved by rename
+(`QuantizationConfig`, `CollectionMetadata` public pair, `SearchRequest`, columnar
+`HardwareCapabilities`); root crate lib compiles. Two legitimately-distinct, high-blast-radius
+items remain documented-but-deferred as standalone efforts: `core::HardwareCapabilities` →
+`SystemHardwareProfile` (~46 files) and the `StorageError` two-layer rename (~293 refs). Pick these
+up as dedicated passes, not drive-by edits.
 
 == Per-Change LLD Checklist
 
