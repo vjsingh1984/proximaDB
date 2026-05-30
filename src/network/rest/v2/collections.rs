@@ -1499,6 +1499,233 @@ pub async fn get_collection_route_health_v2(
     Ok(Json(health))
 }
 
+/// Response body for `POST /api/v2/_diagnostics/collections/:id/recall-tune`.
+///
+/// The handler always returns the underlying drift `report` (so the
+/// caller sees the same numbers the route-health endpoint would
+/// surface) and a separate `action` block that says what actually
+/// happened — applied a hot-swap, declined because no drift,
+/// declined because the resolution requires a full rebuild, or
+/// declined because the collection has no `recall_target:` tag.
+#[derive(Debug, serde::Serialize, PartialEq)]
+pub struct RecallTuneResponse {
+    /// Stability of this surface — experimental until the
+    /// route-health contract stabilizes.
+    pub stability: &'static str,
+    /// Collection ID the tune ran against.
+    pub collection_id: String,
+    /// Mirrors the route-health block so callers don't need a second
+    /// GET. `wired = false` means the collection has no
+    /// `recall_target:` tag and there was nothing for the advisor to
+    /// drift from.
+    pub report: RecallDriftHealth,
+    /// What the handler actually did. One of:
+    /// * `"applied_hot_swap"` — `ef_search` updated in-place.
+    /// * `"no_drift"` — params already match the advisor.
+    /// * `"rebuild_required"` — `m` / `ef_construction` need a
+    ///   full rebuild; the operator must call the recluster path.
+    /// * `"not_wired"` — collection has no `recall_target:` tag.
+    pub action: &'static str,
+    /// When `action = "applied_hot_swap"`, the per-spec before/after
+    /// records. Empty otherwise.
+    pub applied_changes: Vec<RecallTuneEfChange>,
+}
+
+#[derive(Debug, serde::Serialize, PartialEq)]
+pub struct RecallTuneEfChange {
+    pub index_name: Option<String>,
+    pub previous_ef_search: u32,
+    pub new_ef_search: u32,
+}
+
+/// Adaptive recall tune handler.
+///
+/// Reads `recall_target:` from the collection's tags, runs
+/// `detect_recall_drift`, then:
+///
+/// * `DriftKind::None` → returns `action = "no_drift"`.
+/// * `DriftKind::EfSearchOnly` → calls
+///   `AxisManager::apply_hnsw_ef_hot_swap` with the advisor's
+///   current `ef_search`; returns the change list.
+/// * `DriftKind::EfConstructionOrM` → returns
+///   `action = "rebuild_required"`. The operator must drive the
+///   recluster (separate slice).
+///
+/// Returns `404` if the collection doesn't exist, `400` if the
+/// collection_id is empty.
+pub async fn post_collection_recall_tune_v2(
+    Path(collection_id): Path<String>,
+    Extension(tenant): Extension<TenantContext>,
+    State(state): State<AppState>,
+) -> ApiResult<Json<RecallTuneResponse>> {
+    debug!(
+        "V2 API: recall-tune for collection '{}' (experimental)",
+        collection_id
+    );
+
+    if collection_id.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
+    }
+
+    let request = CollectionRequest {
+        operation: CollectionOperation::CollectionGet as i32,
+        collection_id: Some(collection_id.clone()),
+        collection_config: None,
+        query_params: Default::default(),
+        options: Default::default(),
+        migration_config: Default::default(),
+    };
+
+    let resp = state
+        .request_handlers
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                ApiError::CollectionNotFound(collection_id.clone())
+            } else {
+                ApiError::Internal(format!("Failed to get collection: {}", e))
+            }
+        })?;
+
+    let collection = resp.collection.unwrap_or_default();
+    let config = collection.config.unwrap_or_default();
+    let stats = collection.stats.unwrap_or_default();
+
+    // No recall_target → no advisor baseline → nothing to do.
+    let Some(recall_target) =
+        crate::services::collection::recall_target::parse_recall_target(&config)
+    else {
+        return Ok(Json(RecallTuneResponse {
+            stability: "experimental",
+            collection_id,
+            report: RecallDriftHealth::unwired(),
+            action: "not_wired",
+            applied_changes: Vec::new(),
+        }));
+    };
+
+    let baseline_n =
+        crate::services::collection::recall_target::parse_target_vector_count(&config)
+            .unwrap_or(100_000);
+    let current_n = non_negative_stat(stats.vector_count);
+    let metric = match config.distance_metric.and_then(|v| {
+        crate::proto::proximadb_v1::DistanceMetric::try_from(v).ok()
+    }) {
+        Some(crate::proto::proximadb_v1::DistanceMetric::Cosine) => {
+            crate::compute::distance_computation::DistanceMetric::Cosine
+        }
+        Some(crate::proto::proximadb_v1::DistanceMetric::Euclidean) => {
+            crate::compute::distance_computation::DistanceMetric::Euclidean
+        }
+        Some(crate::proto::proximadb_v1::DistanceMetric::DotProduct) => {
+            crate::compute::distance_computation::DistanceMetric::DotProduct
+        }
+        _ => crate::compute::distance_computation::DistanceMetric::Cosine,
+    };
+
+    let drift = crate::index::axis::management::detect_recall_drift(
+        crate::index::axis::management::RecallDriftInput {
+            baseline_n,
+            current_n,
+            recall_target,
+            top_k: 10,
+            dimension: config.dimension,
+            distance_metric: metric,
+        },
+    );
+
+    let kind_str: &'static str = match drift.drift_kind {
+        crate::index::axis::management::DriftKind::None => "none",
+        crate::index::axis::management::DriftKind::EfSearchOnly => "ef_search_only",
+        crate::index::axis::management::DriftKind::EfConstructionOrM => "rebuild_required",
+    };
+
+    let report = RecallDriftHealth {
+        wired: true,
+        recall_target: Some(recall_target),
+        baseline_vector_count: Some(baseline_n),
+        current_vector_count: Some(current_n),
+        kind: kind_str,
+        needs_rebuild: drift.needs_rebuild(),
+        hot_swap_possible: drift.hot_swap_possible(),
+        summary: drift.summary.clone(),
+    };
+
+    // No drift → confirm + exit.
+    if matches!(
+        drift.drift_kind,
+        crate::index::axis::management::DriftKind::None
+    ) {
+        return Ok(Json(RecallTuneResponse {
+            stability: "experimental",
+            collection_id,
+            report,
+            action: "no_drift",
+            applied_changes: Vec::new(),
+        }));
+    }
+
+    // Rebuild required → the in-place tune can't fix it; the caller
+    // must drive the recluster.
+    if drift.needs_rebuild() {
+        return Ok(Json(RecallTuneResponse {
+            stability: "experimental",
+            collection_id,
+            report,
+            action: "rebuild_required",
+            applied_changes: Vec::new(),
+        }));
+    }
+
+    // EfSearchOnly → apply the hot-swap.
+    let Some(axis_manager) =
+        crate::storage::engines::sst::core::get_sst_axis_manager()
+    else {
+        // No AXIS manager registered (e.g., HELIX-only deployment).
+        // Report drift but flag that the surface isn't actionable.
+        return Ok(Json(RecallTuneResponse {
+            stability: "experimental",
+            collection_id,
+            report,
+            action: "not_wired",
+            applied_changes: Vec::new(),
+        }));
+    };
+
+    let outcome = axis_manager
+        .apply_hnsw_ef_hot_swap(&collection_id, drift.current_params.ef_search)
+        .await
+        .map_err(|e| ApiError::Internal(format!("hot-swap failed: {}", e)))?;
+
+    let (action, applied_changes) = match outcome {
+        crate::index::axis::management::HotSwapOutcome::Applied { changes } => (
+            "applied_hot_swap",
+            changes
+                .into_iter()
+                .map(|c| RecallTuneEfChange {
+                    index_name: c.index_name,
+                    previous_ef_search: c.previous_ef_search,
+                    new_ef_search: c.new_ef_search,
+                })
+                .collect(),
+        ),
+        crate::index::axis::management::HotSwapOutcome::NotApplicable { .. } => {
+            ("not_wired", Vec::new())
+        }
+    };
+
+    Ok(Json(RecallTuneResponse {
+        stability: "experimental",
+        collection_id,
+        report,
+        action,
+        applied_changes,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1867,6 +2094,54 @@ mod tests {
         assert!(!h.recall_drift.hot_swap_possible);
         assert!(h.recall_drift.recall_target.is_none());
         assert!(h.recall_drift.summary.is_empty());
+    }
+
+    #[test]
+    fn recall_tune_response_serializes_action_strings() {
+        // Pin the action enum-string mapping so dashboards / scripts
+        // can rely on the literals.
+        let actions: &[&'static str] = &[
+            "applied_hot_swap",
+            "no_drift",
+            "rebuild_required",
+            "not_wired",
+        ];
+        for action in actions {
+            let resp = RecallTuneResponse {
+                stability: "experimental",
+                collection_id: "c1".to_string(),
+                report: RecallDriftHealth::unwired(),
+                action,
+                applied_changes: Vec::new(),
+            };
+            let v = serde_json::to_value(&resp).unwrap();
+            assert_eq!(v["action"], *action);
+            assert_eq!(v["stability"], "experimental");
+            assert_eq!(v["collection_id"], "c1");
+            assert!(v["report"].is_object());
+            assert!(v["applied_changes"].is_array());
+        }
+    }
+
+    #[test]
+    fn recall_tune_response_applied_changes_serialize_with_ef_fields() {
+        let resp = RecallTuneResponse {
+            stability: "experimental",
+            collection_id: "c1".to_string(),
+            report: RecallDriftHealth::unwired(),
+            action: "applied_hot_swap",
+            applied_changes: vec![RecallTuneEfChange {
+                index_name: Some("primary".to_string()),
+                previous_ef_search: 100,
+                new_ef_search: 400,
+            }],
+        };
+        let v = serde_json::to_value(&resp).unwrap();
+        let changes = v["applied_changes"].as_array().unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0]["index_name"], "primary");
+        assert_eq!(changes[0]["previous_ef_search"], 100);
+        assert_eq!(changes[0]["new_ef_search"], 400);
     }
 
     #[test]

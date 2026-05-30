@@ -162,4 +162,12 @@ pub fn create_v2_router() -> Router<AppState> {
             "/_diagnostics/collections/:collection_id/route-health",
             get(collections::get_collection_route_health_v2),
         )
+        // Adaptive HNSW retune. POST resolves DriftKind::EfSearchOnly
+        // in-place via AxisManager::apply_hnsw_ef_hot_swap; reports
+        // DriftKind::EfConstructionOrM cases as "rebuild required"
+        // (operator must run /recluster — separate slice).
+        .route(
+            "/_diagnostics/collections/:collection_id/recall-tune",
+            axum::routing::post(collections::post_collection_recall_tune_v2),
+        )
 }
