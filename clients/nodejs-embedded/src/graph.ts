@@ -105,7 +105,7 @@ export class NodeBuilder {
       nodes: [node],
     };
 
-    const url = this.handle.getClient().url() + "/api/v1/graphs/" + this.handle.getName() + "/nodes";
+    const url = this.handle.getClient().url() + "/api/v2/graphs/" + this.handle.getName() + "/nodes";
     await this.handle.getClient().post<{ added_count: number }>(url, request);
   }
 
@@ -220,7 +220,7 @@ export class EdgeBuilder {
       edges: [edge],
     };
 
-    const url = this.handle.getClient().url() + "/api/v1/graphs/" + this.handle.getName() + "/edges";
+    const url = this.handle.getClient().url() + "/api/v2/graphs/" + this.handle.getName() + "/edges";
     await this.handle.getClient().post<{ added_count: number }>(url, request);
   }
 
@@ -366,7 +366,7 @@ export class TraversalBuilder {
       filter: this.filterExpr ?? undefined,
     };
 
-    const url = this.handle.getClient().url() + "/api/v1/graphs/" + this.handle.getName() + "/traverse";
+    const url = this.handle.getClient().url() + "/api/v2/graphs/" + this.handle.getName() + "/traverse";
     return await this.handle.getClient().post<TraversalResult>(url, request);
   }
 }
@@ -430,7 +430,7 @@ export class GraphHandle {
       graph: this.graphName,
       nodes,
     };
-    const url = this.client.url() + "/api/v1/graphs/" + this.graphName + "/nodes";
+    const url = this.client.url() + "/api/v2/graphs/" + this.graphName + "/nodes";
     const response = await this.client.post<{ added_count: number }>(url, request);
     return response.added_count;
   }
@@ -443,7 +443,7 @@ export class GraphHandle {
       graph: this.graphName,
       edges,
     };
-    const url = this.client.url() + "/api/v1/graphs/" + this.graphName + "/edges";
+    const url = this.client.url() + "/api/v2/graphs/" + this.graphName + "/edges";
     const response = await this.client.post<{ added_count: number }>(url, request);
     return response.added_count;
   }
@@ -453,7 +453,7 @@ export class GraphHandle {
    */
   async getNode(nodeId: string): Promise<GraphNode | null> {
     try {
-      const url = this.client.url() + "/api/v1/graphs/" + this.graphName + "/nodes/" + nodeId;
+      const url = this.client.url() + "/api/v2/graphs/" + this.graphName + "/nodes/" + nodeId;
       return await this.client.get<GraphNode>(url);
     } catch (e: unknown) {
       if (e instanceof Error && e.message.includes("404")) {
@@ -467,15 +467,16 @@ export class GraphHandle {
    * Delete a node by ID
    */
   async deleteNode(nodeId: string): Promise<void> {
-    const url = this.client.url() + "/api/v1/graphs/" + this.graphName + "/nodes/" + nodeId;
+    const url = this.client.url() + "/api/v2/graphs/" + this.graphName + "/nodes/" + nodeId;
     await this.client.delete<unknown>(url);
   }
 
+  // TODO(graph-edge-delete-shape): server route is DELETE /api/v2/graphs/{id}/edges/{edge_id} with a single edge_id; this SDK signature doesn't match. Tracked separately.
   /**
    * Delete an edge
    */
   async deleteEdge(source: string, target: string, relationship: string): Promise<void> {
-    const url = this.client.url() + "/api/v1/graphs/" + this.graphName + "/edges/" + source + "/" + target + "/" + relationship;
+    const url = this.client.url() + "/api/v2/graphs/" + this.graphName + "/edges/" + source + "/" + target + "/" + relationship;
     await this.client.delete<unknown>(url);
   }
 
@@ -483,7 +484,7 @@ export class GraphHandle {
    * Get graph statistics
    */
   async info(): Promise<GraphInfo> {
-    const url = this.client.url() + "/api/v1/graphs/" + this.graphName;
+    const url = this.client.url() + "/api/v2/graphs/" + this.graphName;
     return await this.client.get<GraphInfo>(url);
   }
 }
@@ -522,7 +523,7 @@ export class GraphBuilder {
       description: this.graphDescription ?? undefined,
     };
 
-    const url = this.client.url() + "/api/v1/graphs";
+    const url = this.client.url() + "/api/v2/graphs";
     await this.client.post<{ success: boolean }>(url, request);
   }
 }

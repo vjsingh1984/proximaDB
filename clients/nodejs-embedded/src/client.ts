@@ -353,17 +353,23 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
 
   /**
    * Delete a graph
+   *
+   * Wire endpoint: DELETE /api/v2/graphs/{graph_id}
+   * OpenAPI operationId: deleteGraph
    */
   async deleteGraph(name: string): Promise<void> {
-    const requestUrl = this.config.url + "/api/v1/graphs/" + name;
+    const requestUrl = this.config.url + "/api/v2/graphs/" + name;
     await this.delete<unknown>(requestUrl);
   }
 
   /**
    * List all graphs
+   *
+   * Wire endpoint: GET /api/v2/graphs
+   * OpenAPI operationId: listGraphs
    */
   async listGraphs(): Promise<GraphInfo[]> {
-    const requestUrl = this.config.url + "/api/v1/graphs";
+    const requestUrl = this.config.url + "/api/v2/graphs";
     const response = await this.get<{ graphs: GraphInfo[] }>(requestUrl);
     return response.graphs;
   }
