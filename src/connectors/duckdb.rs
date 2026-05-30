@@ -347,7 +347,8 @@ impl DuckDBTableScan {
 
     /// Bind phase - determine schema and collect metadata
     pub fn bind(&mut self, collection: &str) -> Result<DuckDBBindData, DuckDBError> {
-        // Schema query: via REST /api/v1/collections/{id}/schema
+        // Schema query: via REST GET /api/v2/collections/{collection_id}/schema
+        // (operationId `getCollectionSchema` in docs/openapi/proximadb-openapi.yaml).
         let schema = Arc::new(ArrowSchema::new(vec![
             Field::new("id", DataType::Utf8, false),
             Field::new(
@@ -453,7 +454,8 @@ impl DuckDBVectorSearch {
         &self,
         _params: &DuckDBVectorSearchParams,
     ) -> Result<Vec<RecordBatch>, DuckDBError> {
-        // Vector search: REST /api/v1/vector/search or gRPC VectorSearch
+        // Vector search: REST POST /api/v2/collections/{collection_id}/search
+        // (operationId `searchRecords`) or gRPC VectorSearch.
         Ok(Vec::new())
     }
 
@@ -512,7 +514,8 @@ impl DuckDBInsert {
 
     /// Insert a batch
     pub fn insert(&mut self, _batch: &RecordBatch) -> Result<usize, DuckDBError> {
-        // Insert: REST /api/v1/vectors/batch or Arrow Flight DoPut
+        // Insert: REST POST /api/v2/collections/{collection_id}/records/batch
+        // (operationId `insertRecords`) or Arrow Flight DoPut.
         Ok(0)
     }
 
