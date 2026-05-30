@@ -2546,6 +2546,103 @@ impl AxisManager {
         Ok(true)
     }
 
+    /// Whether `collection_id` currently has a served HNSW index.
+    pub async fn has_hnsw_index(&self, collection_id: &str) -> bool {
+        self.hnsw_indexes.read().await.contains_key(collection_id)
+    }
+
+    /// Phase 8 F1 recluster apply-step for HNSW-served collections: rebuild the
+    /// collection's HNSW graph from a complete record set and **atomically swap**
+    /// it in as the served index. Same atomic-swap pattern as the IVF path — a
+    /// fresh `AxisHnswIndex` is built and the served `Arc` in `hnsw_indexes` is
+    /// replaced in one `HashMap::insert` (`query_hnsw` reads the same map). Bumps
+    /// the per-collection generation. Returns `Ok(false)` for an empty record set.
+    ///
+    /// Rebuilding the graph from scratch reclaims quality lost to churn (deletes
+    /// / updates degrade an incrementally-built HNSW graph). Like the IVF path,
+    /// filterable metadata is not yet re-carried (rehydrated by later inserts).
+    pub async fn rebuild_and_swap_hnsw_index(
+        &self,
+        collection_id: &str,
+        records: &[ProximaRecord],
+    ) -> Result<bool> {
+        use crate::compute::distance_computation::DistanceMetric;
+        use crate::index::axis::indexes::hnsw_index::{AxisHnswConfig, AxisHnswIndex};
+
+        let mut training: Vec<(String, Vec<f32>)> = Vec::with_capacity(records.len());
+        for r in records {
+            if r.oid.is_empty() {
+                continue;
+            }
+            if let Some(e) = r.embeddings.first() {
+                let v = e.values.to_fp32_owned();
+                if !v.is_empty() {
+                    training.push((r.oid.clone(), v));
+                }
+            }
+        }
+        let dimension = training.first().map(|(_, v)| v.len()).unwrap_or(0);
+        if dimension == 0 || training.is_empty() {
+            return Ok(false);
+        }
+
+        // Match the collection's metric (the legacy HNSW path defaults to
+        // DotProduct for FAISS/bench compatibility).
+        let metric = self
+            .get_collection_distance_metric(collection_id)
+            .await
+            .unwrap_or(DistanceMetric::DotProduct);
+        let config = AxisHnswConfig {
+            distance_metric: metric,
+            ..Default::default()
+        };
+        let index = AxisHnswIndex::new_with_collection(
+            Some(collection_id.to_string()),
+            config,
+            dimension,
+        )?;
+        let count = training.len();
+        index.add_vectors_from_event(training).await?;
+
+        // Atomic swap: replace the served Arc in one insert.
+        {
+            let mut indexes = self.hnsw_indexes.write().await;
+            indexes.insert(collection_id.to_string(), Arc::new(index));
+        }
+        let generation = {
+            let mut gens = self.index_generations.write().await;
+            let g = gens.entry(collection_id.to_string()).or_insert(0);
+            *g += 1;
+            *g
+        };
+
+        tracing::info!(
+            "✅ AXIS: rebuilt + swapped HNSW index for collection {} ({} vectors, gen={})",
+            collection_id,
+            count,
+            generation
+        );
+        Ok(true)
+    }
+
+    /// Rebuild + atomically swap whichever served ANN index the collection uses
+    /// — IVF if present, else HNSW (the default). Returns `true` if a swap
+    /// happened, `false` if the collection has no served index or there were too
+    /// few vectors. This is what the recluster pass calls.
+    pub async fn rebuild_and_swap_served_index(
+        &self,
+        collection_id: &str,
+        records: &[ProximaRecord],
+    ) -> Result<bool> {
+        if self.has_ivf_index(collection_id).await {
+            self.rebuild_and_swap_ivf_index(collection_id, records).await
+        } else if self.has_hnsw_index(collection_id).await {
+            self.rebuild_and_swap_hnsw_index(collection_id, records).await
+        } else {
+            Ok(false)
+        }
+    }
+
     /// Index vectors using hybrid mode (adaptive based on batch size)
     pub async fn index_vectors_hybrid<R>(
         &self,
@@ -4023,5 +4120,53 @@ mod recluster_apply_tests {
             2,
             "no-op rebuild must not bump the generation"
         );
+    }
+
+    #[tokio::test]
+    async fn hnsw_rebuild_and_swap_serves_the_new_index() {
+        let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
+        let dim = 8;
+
+        // First rebuild: 40 vectors -> built, swapped, generation 1.
+        let v1 = batch("a", 40, dim, 1);
+        assert!(manager.rebuild_and_swap_hnsw_index("hcol", &v1).await.unwrap());
+        assert_eq!(manager.index_generation("hcol").await, 1);
+        assert!(manager.has_hnsw_index("hcol").await);
+
+        // The rebuilt graph is populated + queryable.
+        let mut qv = vec![0.0f32; dim];
+        qv[0] = 1.0;
+        let q = AxisHybridQuery {
+            collection_id: "hcol".to_string(),
+            vector_query: Some(VectorQuery::Dense {
+                vector: qv,
+                similarity_threshold: 0.0,
+            }),
+            top_k: 5,
+            ..AxisHybridQuery::default()
+        };
+        let r1 = manager.query_hnsw("hcol", &q).await.unwrap();
+        assert!(!r1.is_empty(), "rebuilt HNSW index should be queryable");
+
+        // Second rebuild via the unified orchestrator (routes to HNSW since the
+        // collection has no IVF index): 25 vectors -> generation 2, and the
+        // served graph's size is now 25 (not 40) — proving the atomic swap.
+        let v2 = batch("b", 25, dim, 2);
+        assert!(manager
+            .rebuild_and_swap_served_index("hcol", &v2)
+            .await
+            .unwrap());
+        assert_eq!(manager.index_generation("hcol").await, 2);
+        {
+            let indexes = manager.hnsw_indexes.read().await;
+            let idx = indexes.get("hcol").unwrap();
+            assert_eq!(idx.size(), 25, "served HNSW index must be the V2 rebuild");
+        }
+
+        // Orchestrator is a no-op for a collection with no served index.
+        assert!(!manager
+            .rebuild_and_swap_served_index("never_seen", &v2)
+            .await
+            .unwrap());
     }
 }
