@@ -449,17 +449,18 @@ impl SetupResult {
                 IndexType::Hnsw => {
                     // Force an explicit HNSW strategy. WITHOUT this,
                     // the adaptive engine's `recommend_strategy` for
-                    // a dense-vector collection returns IVF (see
-                    // src/index/axis/management/strategy_selector.rs)
-                    // and the bench silently exercises IVF instead
-                    // of HNSW — masking real HNSW behaviour. The
-                    // override mirrors what the IVF cell does just
-                    // above, with the canonical HNSW config (m=16,
-                    // ef_construction=200) that
-                    // `AxisHnswConfig::default()` carries.
+                    // a dense-vector collection returns IVF and the
+                    // bench silently exercises IVF instead of HNSW.
+                    //
+                    // `BENCH_HNSW_EF` (default 100) sets the search
+                    // beam width. Strategy spec → AxisHnswConfig.ef
+                    // wiring is end-to-end since the
+                    // `IndexAlgorithm::HNSW.ef_search`-plumbing
+                    // commit; no env override into HNSW code needed.
                     use proximadb::index::axis::types::{
                         Data, IndexAlgorithm, IndexSelectionStrategy, IndexSpecification,
                     };
+                    let ef_search = env_usize("BENCH_HNSW_EF", 100) as u32;
                     let hnsw_spec = IndexSpecification::new(
                         Data::DenseVector {
                             dimension: cfg.dimension,
@@ -467,7 +468,7 @@ impl SetupResult {
                         IndexAlgorithm::HNSW {
                             m: 16,
                             ef_construction: 200,
-                            ef_search: 50,
+                            ef_search,
                             max_elements: 1_000_000,
                         },
                     );

@@ -808,7 +808,8 @@ impl AxisManager {
                     "FIRST INSERT — routing through HMGI"
                 );
             }
-            self.insert_hmgi(collection_id, vector.clone()).await?;
+            self.insert_hmgi(collection_id, vector.clone(), Some(algorithm))
+                .await?;
             return Ok(());
         }
 
@@ -827,10 +828,12 @@ impl AxisManager {
                         site = "insert_dense_vector_index",
                         branch = "hnsw",
                         collection_id = collection_id,
+                        algorithm = ?algorithm,
                         "FIRST INSERT — routing through legacy HNSW"
                     );
                 }
-                self.insert_into_hnsw(collection_id, vector).await
+                self.insert_into_hnsw(collection_id, vector, Some(algorithm))
+                    .await
             }
             IndexAlgorithm::IVF { .. } | IndexAlgorithm::PQ { .. } => {
                 if first {
@@ -856,7 +859,10 @@ impl AxisManager {
                         "FIRST INSERT — algorithm not in match, falling back to HNSW"
                     );
                 }
-                self.insert_into_hnsw(collection_id, vector).await
+                // Non-HNSW algorithm asked to use HNSW — fall back
+                // with no spec to extract, so HNSW config uses its
+                // own defaults.
+                self.insert_into_hnsw(collection_id, vector, None).await
             }
         }
     }
@@ -893,7 +899,12 @@ impl AxisManager {
     }
 
     /// Insert a vector into the real HNSW index for a collection
-    async fn insert_into_hnsw(&self, collection_id: &str, vector: &ProximaRecord) -> Result<()> {
+    async fn insert_into_hnsw(
+        &self,
+        collection_id: &str,
+        vector: &ProximaRecord,
+        algorithm: Option<&IndexAlgorithm>,
+    ) -> Result<()> {
         use crate::compute::distance_computation::DistanceMetric;
         use crate::index::axis::index_factory::AxisVectorIndex;
         use crate::index::axis::indexes::hnsw_index::{AxisHnswConfig, AxisHnswIndex};
@@ -922,9 +933,41 @@ impl AxisManager {
                 let distance_metric =
                     resolved_metric.unwrap_or(DistanceMetric::DotProduct); // Default to DotProduct for compatibility with FAISS/benchmarks
 
-                // Create HNSW config with collection's distance metric
+                // **End-to-end ef_search wiring (2026-05-29)**: previously
+                // this site built `AxisHnswConfig { distance_metric,
+                // ..Default::default() }`, ignoring the strategy spec's
+                // m / ef_construction / ef_search entirely. Customers
+                // (and the bench) had to use the PROXIMADB_BENCH_HNSW_EF
+                // env override to influence search behaviour because
+                // the `IndexAlgorithm::HNSW { m, ef_construction,
+                // ef_search, max_elements }` fields they put in their
+                // catalog spec were silently dropped. Now those fields
+                // flow through into the partition config so DotProduct
+                // workloads (which need ef ~ 5×sqrt(N) for >0.90
+                // recall) can configure it without env vars.
+                let (config_m, config_ef_construction, config_ef_search) = match algorithm
+                {
+                    Some(IndexAlgorithm::HNSW {
+                        m,
+                        ef_construction,
+                        ef_search,
+                        ..
+                    }) => (*m, *ef_construction, *ef_search),
+                    _ => {
+                        let defaults = AxisHnswConfig::default();
+                        (
+                            defaults.m as u32,
+                            defaults.ef_construction as u32,
+                            defaults.ef as u32,
+                        )
+                    }
+                };
+
                 let config = AxisHnswConfig {
                     distance_metric,
+                    m: config_m as usize,
+                    ef_construction: config_ef_construction as usize,
+                    ef: config_ef_search as usize,
                     ..Default::default()
                 };
 
@@ -934,7 +977,11 @@ impl AxisManager {
                     collection_id = collection_id,
                     resolved_metric = ?resolved_metric,
                     using_metric = ?distance_metric,
-                    "legacy HNSW path resolved metric"
+                    m = config.m,
+                    ef_construction = config.ef_construction,
+                    ef_search = config.ef,
+                    spec_source = if algorithm.is_some() { "strategy" } else { "default" },
+                    "legacy HNSW path resolved config"
                 );
                 tracing::info!(
                     "🔗 AXIS: Creating HNSW index for collection {} with metric {:?}",
@@ -3051,7 +3098,12 @@ impl AxisManager {
     /// ## Returns
     ///
     /// The partition key the vector was inserted into
-    pub async fn insert_hmgi<R>(&self, collection_id: &str, record: R) -> Result<HmgiPartitionKey>
+    pub async fn insert_hmgi<R>(
+        &self,
+        collection_id: &str,
+        record: R,
+        algorithm: Option<&IndexAlgorithm>,
+    ) -> Result<HmgiPartitionKey>
     where
         R: Into<ProximaRecord>,
     {
@@ -3126,9 +3178,26 @@ impl AxisManager {
         let distance_metric = resolved_metric.unwrap_or(
             crate::compute::distance_computation::DistanceMetric::Cosine,
         );
+        // **End-to-end ef_search wiring**: extract HNSW knobs from
+        // the strategy spec when present, otherwise use the partition
+        // default. Same plumbing as `insert_into_hnsw` — see that
+        // function for the rationale.
+        let defaults = crate::index::axis::indexes::hnsw_index::AxisHnswConfig::default();
+        let (config_m, config_ef_construction, config_ef_search) = match algorithm {
+            Some(IndexAlgorithm::HNSW {
+                m,
+                ef_construction,
+                ef_search,
+                ..
+            }) => (*m as usize, *ef_construction as usize, *ef_search as usize),
+            _ => (defaults.m, defaults.ef_construction, defaults.ef),
+        };
         let config = crate::index::axis::indexes::hnsw_index::AxisHnswConfig {
             distance_metric,
-            ..crate::index::axis::indexes::hnsw_index::AxisHnswConfig::default()
+            m: config_m,
+            ef_construction: config_ef_construction,
+            ef: config_ef_search,
+            ..defaults
         };
         tracing::info!(
             target: "axis_diag",
@@ -3139,8 +3208,9 @@ impl AxisManager {
             using_metric = ?distance_metric,
             m = config.m,
             ef_construction = config.ef_construction,
-            ef = config.ef,
-            "HMGI partition HNSW config (metric resolved from collection config; falls back to Cosine when no cache/service wired)"
+            ef_search = config.ef,
+            spec_source = if algorithm.is_some() { "strategy" } else { "default" },
+            "HMGI partition HNSW config (metric + HNSW knobs)"
         );
         let index = registry
             .get_or_create_partition(partition_key.clone(), config, dimension)

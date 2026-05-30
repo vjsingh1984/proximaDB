@@ -1047,22 +1047,16 @@ impl AxisHnswIndex {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .len();
-        let size_aware_ef = ((collection_size as f64).sqrt() as usize).clamp(50, 500); // Clamp ef for small/large collections
-        // **Bench override**: PROXIMADB_BENCH_HNSW_EF=N pins the
-        // ef value for ef-sweep experiments. Read once per call via
-        // a OnceLock cache so the env lookup cost is amortized.
-        // When unset, the original `max(config.ef, sqrt(N), top_k)`
-        // formula stands — production behaviour unchanged.
-        static BENCH_EF_OVERRIDE: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
-        let override_ef = *BENCH_EF_OVERRIDE.get_or_init(|| {
-            std::env::var("PROXIMADB_BENCH_HNSW_EF")
-                .ok()
-                .and_then(|s| s.parse::<usize>().ok())
-        });
-        let search_ef = match override_ef {
-            Some(forced) => forced.max(top_k),
-            None => self.config.ef.max(size_aware_ef).max(top_k),
-        };
+        // size_aware_ef provides a sensible floor for collections
+        // that didn't set a strategy spec — production callers that
+        // care about recall should set `IndexAlgorithm::HNSW.ef_search`
+        // on the strategy spec, which now flows through to
+        // `AxisHnswConfig.ef` end-to-end (see insert_into_hnsw and
+        // insert_hmgi). The `max` below picks whichever is larger so
+        // a customer who explicitly asked for ef_search=500 on a 100K
+        // collection still gets 500 (not sqrt(100K)=316).
+        let size_aware_ef = ((collection_size as f64).sqrt() as usize).clamp(50, 500);
+        let search_ef = self.config.ef.max(size_aware_ef).max(top_k);
 
         tracing::debug!(
             "HNSW search: collection_size={}, size_aware_ef={}, config_ef={}, final_ef={}",
