@@ -20,8 +20,14 @@ mod helpers;
 use helpers::{collect_required_fields, load_spec, operation, operation_id, request_body_schema};
 
 use httpmock::{Method, MockServer};
+use std::sync::Arc;
+
+use arrow::array::{ArrayRef, StringArray};
+use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
+use arrow::record_batch::RecordBatch;
 use proximadb::connectors::duckdb::{
-    DuckDBConnectorConfig, DuckDBTableScan, DuckDBVectorSearch, DuckDBVectorSearchParams,
+    DuckDBConnectorConfig, DuckDBInsert, DuckDBTableScan, DuckDBVectorSearch,
+    DuckDBVectorSearchParams,
 };
 use proximadb_distance_types::DistanceMetric;
 
@@ -115,6 +121,54 @@ async fn duckdb_search_posts_v2_search_request() {
     };
     let result = svc.search(&params).await;
     assert!(result.is_ok(), "search() must succeed: {result:?}");
+
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn duckdb_insert_posts_v2_records_batch() {
+    let spec = load_spec();
+    let op = operation(
+        &spec,
+        "/api/v2/collections/{collection_id}/records/batch",
+        "post",
+    );
+    assert_eq!(operation_id(op), "insertRecords");
+
+    let required = collect_required_fields(
+        &spec,
+        request_body_schema(&spec, op).expect("insertRecords must declare requestBody"),
+    );
+    assert!(required.contains("records"), "spec requires `records`");
+
+    let server = MockServer::start_async().await;
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v2/collections/embeddings/records/batch")
+                .header("content-type", "application/json")
+                .json_body_partial(r#"{"records":[]}"#);
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"success":true,"inserted":2,"results":[]}"#);
+        })
+        .await;
+
+    let config = DuckDBConnectorConfig {
+        server_url: server.base_url(),
+        ..DuckDBConnectorConfig::default()
+    };
+    let mut svc = DuckDBInsert::new(config, "embeddings".to_string());
+
+    // Minimal RecordBatch — 2 rows, one `id` column. The connector
+    // synthesizes a `records` list of that length; the contract gate
+    // only validates that `records` is present.
+    let ids: ArrayRef = Arc::new(StringArray::from(vec!["r1", "r2"]));
+    let schema = Arc::new(ArrowSchema::new(vec![Field::new("id", DataType::Utf8, false)]));
+    let batch = RecordBatch::try_new(schema, vec![ids]).expect("batch builds");
+
+    let result = svc.insert(&batch).await;
+    assert!(result.is_ok(), "insert() must succeed: {result:?}");
 
     mock.assert_async().await;
 }

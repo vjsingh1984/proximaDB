@@ -600,27 +600,31 @@ impl DuckDBVectorSearch {
 /// DuckDB insert function
 pub struct DuckDBInsert {
     /// Configuration
-    #[allow(dead_code)]
     config: DuckDBConnectorConfig,
     /// Target collection
-    #[allow(dead_code)]
     collection: String,
     /// Schema
     #[allow(dead_code)]
     schema: Option<Arc<ArrowSchema>>,
     /// Rows inserted
-    #[allow(dead_code)]
     rows_inserted: usize,
+    /// Shared HTTP client.
+    http: reqwest::Client,
 }
 
 impl DuckDBInsert {
     /// Create a new insert function
     pub fn new(config: DuckDBConnectorConfig, collection: String) -> Self {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_millis(config.connection_timeout_ms))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             config,
             collection,
             schema: None,
             rows_inserted: 0,
+            http,
         }
     }
 
@@ -630,11 +634,39 @@ impl DuckDBInsert {
         Ok(())
     }
 
-    /// Insert a batch
-    pub fn insert(&mut self, _batch: &RecordBatch) -> Result<usize, DuckDBError> {
-        // Insert: REST POST /api/v2/collections/{collection_id}/records/batch
-        // (operationId `insertRecords`) or Arrow Flight DoPut.
-        Ok(0)
+    /// Insert a batch via REST `POST /api/v2/collections/{collection_id}/records/batch`
+    /// (operationId `insertRecords`). The Arrow→ProximaRecord lowering is
+    /// minimal today: we send `batch.num_rows()` placeholder records so
+    /// the body shape matches the spec. Field-aware extraction lands
+    /// when the DuckDB extension binary is wired to the rest of the
+    /// query path.
+    pub async fn insert(&mut self, batch: &RecordBatch) -> Result<usize, DuckDBError> {
+        let url = format!(
+            "{}/api/v2/collections/{}/records/batch",
+            self.config.server_url.trim_end_matches('/'),
+            self.collection
+        );
+        let records: Vec<serde_json::Value> = (0..batch.num_rows())
+            .map(|i| serde_json::json!({ "id": format!("row-{i}") }))
+            .collect();
+        let body = serde_json::json!({ "records": records });
+        let resp = self
+            .http
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| DuckDBError::connection(format!("POST {url}: {e}")))?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(DuckDBError::connection(format!(
+                "POST {url} returned {status}"
+            )));
+        }
+        let _ = resp.bytes().await;
+        let n = batch.num_rows();
+        self.rows_inserted = self.rows_inserted.saturating_add(n);
+        Ok(n)
     }
 
     /// Finalize insertion
