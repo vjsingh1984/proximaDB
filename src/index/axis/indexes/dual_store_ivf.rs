@@ -102,6 +102,9 @@ pub struct UnifiedIvfConfig {
     pub use_pq: bool,
     /// Number of PQ subspaces (subquantizers)
     pub pq_subspaces: usize,
+    /// TD-087: populate a 1-bit binary tier on insert to enable the binary-first
+    /// two-stage route (Hamming coarse filter → fp32 rerank).
+    pub use_binary: bool,
 
     // Training settings
     /// Clustering method for training
@@ -134,6 +137,7 @@ impl Default for UnifiedIvfConfig {
             quantization_bits: 8,
             use_pq: false,
             pq_subspaces: 8,
+            use_binary: false,
             clustering_method: IvfClusteringMethod::default(),
             train_on_insert: false,
             min_train_size: 1000,
@@ -650,6 +654,46 @@ pub struct UnifiedIvfIndex {
     /// Populated via `add_with_metadata` and consulted by the structured
     /// `search_with_predicate` trait override for early pruning.
     filterable_metadata: crate::index::axis::filterable_metadata::FilterableMetadataCache,
+
+    /// TD-087 binary tier: 1-bit sign-quantized codes per vector, populated on
+    /// `add_vector` when `config.use_binary`. Drives the binary-first two-stage
+    /// route (`search_with_binary_acceleration`): a Hamming coarse filter over
+    /// these codes, then fp32 rerank of the survivors.
+    binary_codes: Arc<DashMap<String, BinaryCode>>,
+}
+
+/// Stage-1 candidate multiplier for the binary two-stage route: the Hamming
+/// coarse filter keeps `k * BINARY_RERANK_EXPANSION` candidates before the fp32
+/// rerank trims to `k`.
+const BINARY_RERANK_EXPANSION: usize = 4;
+
+/// 1-bit sign-quantized vector (TD-087 binary tier). One bit per dimension
+/// (`>= 0.0`), packed 8 dims per byte. Self-contained to keep the index layer
+/// free of cross-crate quantization coupling.
+#[derive(Clone, Debug, PartialEq)]
+struct BinaryCode {
+    bits: Vec<u8>,
+}
+
+impl BinaryCode {
+    fn from_f32(vector: &[f32]) -> Self {
+        let mut bits = vec![0u8; vector.len().div_ceil(8)];
+        for (i, &x) in vector.iter().enumerate() {
+            if x >= 0.0 {
+                bits[i / 8] |= 1 << (i % 8);
+            }
+        }
+        Self { bits }
+    }
+
+    /// Hamming distance (XOR + popcount). Lower = more similar.
+    fn hamming(&self, other: &BinaryCode) -> u32 {
+        self.bits
+            .iter()
+            .zip(other.bits.iter())
+            .map(|(a, b)| (a ^ b).count_ones())
+            .sum()
+    }
 }
 
 impl UnifiedIvfIndex {
@@ -1090,6 +1134,7 @@ impl UnifiedIvfIndex {
             // NEW: Queue-based vector consumption - handled externally
             preferred_extraction_mode,
             quantized_vectors: Arc::new(DashMap::new()),
+            binary_codes: Arc::new(DashMap::new()),
 
             // TD-064: shared filterable-metadata cache
             filterable_metadata:
@@ -1183,6 +1228,13 @@ impl UnifiedIvfIndex {
         let cluster_id = self
             .centroids
             .find_nearest_centroid(&vector, &self.distance_compute);
+
+        // TD-087: populate the binary tier when enabled, for the binary-first
+        // two-stage route.
+        if self.config.use_binary {
+            self.binary_codes
+                .insert(id.clone(), BinaryCode::from_f32(&vector));
+        }
 
         // Update posting list
         let key = PartitionedKey::new(self.collection_id.clone(), cluster_id);
@@ -1684,9 +1736,73 @@ impl UnifiedIvfIndex {
         self.preferred_extraction_mode.clone()
     }
 
-    /// NEW: Check if quantized vectors are available for search acceleration
+    /// NEW: Check if quantized vectors are available for search acceleration.
+    /// True when either PQ codes (`quantized_vectors`) or the TD-087 binary tier
+    /// (`binary_codes`) are populated — both back the gated quantized route.
     pub fn has_quantized_storage(&self) -> bool {
-        !self.quantized_vectors.is_empty()
+        !self.quantized_vectors.is_empty() || !self.binary_codes.is_empty()
+    }
+
+    /// TD-087 binary-first two-stage search: Stage 1 filters candidates by
+    /// Hamming distance over the 1-bit binary tier (cheap, cache-friendly),
+    /// Stage 2 reranks the survivors with full fp32 distances. Falls back to
+    /// exact `search` when the binary tier is empty.
+    pub async fn search_with_binary_acceleration(
+        &self,
+        query: &[f32],
+        k: usize,
+        n_probe: Option<usize>,
+    ) -> Result<Vec<(String, f32)>> {
+        if self.binary_codes.is_empty() || !self.centroids.is_trained() {
+            return self.search(query, k, n_probe).await;
+        }
+        let n_probe = n_probe.unwrap_or(self.config.n_probe);
+        let bq = BinaryCode::from_f32(query);
+
+        // Stage 1: Hamming coarse filter over the probed clusters' candidates.
+        let nearest_clusters =
+            self.centroids
+                .find_nearest_centroids(query, n_probe, &self.distance_compute);
+        let mut coarse: Vec<(String, u32)> = Vec::new();
+        for (cluster_id, _centroid_dist) in nearest_clusters {
+            let key = PartitionedKey::new(self.collection_id.clone(), cluster_id);
+            if let Some(posting_list) = self.posting_lists.get(&key).await {
+                for vector_id in &posting_list.vector_ids {
+                    if let Some(code) = self.binary_codes.get(vector_id) {
+                        coarse.push((vector_id.clone(), bq.hamming(&code)));
+                    }
+                }
+            }
+        }
+        if coarse.is_empty() {
+            return self.search(query, k, Some(n_probe)).await;
+        }
+        let candidate_k = (k * BINARY_RERANK_EXPANSION).min(coarse.len());
+        coarse.sort_by_key(|(_, h)| *h);
+        coarse.truncate(candidate_k);
+
+        // Stage 2: fp32 rerank of the survivors (exact distance, same as `search`).
+        let metric = self.config.distance_metric;
+        let mut reranked: Vec<(String, f32)> = Vec::with_capacity(coarse.len());
+        if let Some(collection_entry) = self.vectors.get(&self.collection_id) {
+            let collection = collection_entry
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for (vector_id, _hamming) in coarse {
+                if let Some(view) = collection.get(&vector_id)
+                    && let Some(vector_data) = view.as_f32()
+                {
+                    let distance = self
+                        .distance_compute
+                        .calculate_distance(query, vector_data, &metric)
+                        .rank_value;
+                    reranked.push((vector_id, distance));
+                }
+            }
+        }
+        reranked.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        reranked.truncate(k);
+        Ok(reranked)
     }
 
     /// NEW: Accelerated search using quantized vectors for initial filtering
@@ -1697,6 +1813,12 @@ impl UnifiedIvfIndex {
         k: usize,
         n_probe: Option<usize>,
     ) -> Result<Vec<(String, f32)>> {
+        // TD-087: prefer the binary-first two-stage route when a binary tier is
+        // present (the gated quantized route the F2 recall observer probes).
+        if !self.binary_codes.is_empty() {
+            return self.search_with_binary_acceleration(query, k, n_probe).await;
+        }
+
         if !self.has_quantized_storage() || self.product_quantizer.is_none() {
             // No quantized vectors or PQ available, use standard search
             return self.search(query, k, n_probe).await;
@@ -1899,6 +2021,7 @@ mod tests {
             quantization_bits: 0,
             use_pq: false,
             pq_subspaces: 0,
+            use_binary: false,
             clustering_method: IvfClusteringMethod::KMeans,
             train_on_insert: false,
             min_train_size: 100,
@@ -1939,6 +2062,116 @@ mod tests {
             results.len()
         );
         assert_eq!(results[0].0, "vec1");
+    }
+
+    // ─── TD-087 binary tier + two-stage retrieval ───────────────────────────
+
+    #[test]
+    fn binary_code_signs_and_hamming() {
+        use super::BinaryCode;
+        // sign-quantization: x >= 0 → 1 bit
+        let a = BinaryCode::from_f32(&[1.0, -1.0, 1.0, -1.0]);
+        let b = BinaryCode::from_f32(&[-1.0, 1.0, -1.0, 1.0]);
+        assert_eq!(a.hamming(&a), 0);
+        assert_eq!(a.hamming(&b), 4); // all four signs differ
+        let near_a = BinaryCode::from_f32(&[0.9, -0.8, 1.1, -0.2]);
+        assert_eq!(a.hamming(&near_a), 0); // same sign pattern as a
+    }
+
+    fn binary_ivf_config(dim: usize, n_clusters: usize) -> UnifiedIvfConfig {
+        UnifiedIvfConfig {
+            n_clusters,
+            n_probe: n_clusters, // probe all clusters (no IVF pruning in the test)
+            dimension: dim,
+            distance_metric: DistanceMetric::Euclidean,
+            quantization_bits: 0,
+            use_pq: false,
+            pq_subspaces: 0,
+            use_binary: true,
+            clustering_method: IvfClusteringMethod::KMeans,
+            train_on_insert: false,
+            min_train_size: 100,
+            max_iterations: 20,
+            tolerance: 0.01,
+            n_init: 1,
+            centroid_config: CentroidConfig::default(),
+            posting_list_config: PostingListConfig::default(),
+        }
+    }
+
+    // 8 mixed-sign 4-d vectors so binary sign-quantization is discriminative.
+    fn mixed_sign_vectors() -> Vec<(String, Vec<f32>)> {
+        vec![
+            ("v0", vec![1.0, -1.0, 1.0, -1.0]),
+            ("v1", vec![-1.0, 1.0, -1.0, 1.0]),
+            ("v2", vec![1.0, 1.0, -1.0, -1.0]),
+            ("v3", vec![-1.0, -1.0, 1.0, 1.0]),
+            ("v4", vec![1.0, -1.0, -1.0, 1.0]),
+            ("v5", vec![-1.0, 1.0, 1.0, -1.0]),
+            ("v6", vec![1.0, 1.0, 1.0, 1.0]),
+            ("v7", vec![-1.0, -1.0, -1.0, -1.0]),
+        ]
+        .into_iter()
+        .map(|(id, v)| (id.to_string(), v))
+        .collect()
+    }
+
+    #[tokio::test]
+    async fn binary_storage_populates_on_add_and_gates_has_quantized() {
+        let _ = proximadb_hardware::hardware_capabilities();
+        let mut index =
+            UnifiedIvfIndex::new("c_bin".to_string(), binary_ivf_config(4, 2)).unwrap();
+        assert!(!index.has_quantized_storage(), "empty index has no binary tier");
+        let data = mixed_sign_vectors();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        assert!(
+            index.has_quantized_storage(),
+            "binary tier should be populated after add with use_binary"
+        );
+    }
+
+    #[tokio::test]
+    async fn binary_two_stage_matches_exact_topk() {
+        let _ = proximadb_hardware::hardware_capabilities();
+        let mut index =
+            UnifiedIvfIndex::new("c_bin2".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let data = mixed_sign_vectors();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+
+        // Query near v0; candidate_k = k*4 >= dataset, so the binary route reranks
+        // the full set → identical top-k to exact search (recall = 1.0).
+        let query = vec![0.9, -0.8, 1.1, -0.7];
+        let exact = index.search(&query, 3, None).await.unwrap();
+        let binary = index
+            .search_with_binary_acceleration(&query, 3, None)
+            .await
+            .unwrap();
+        assert_eq!(binary[0].0, "v0", "top-1 should be the nearest vector");
+        let exact_ids: Vec<&String> = exact.iter().map(|(id, _)| id).collect();
+        let binary_ids: Vec<&String> = binary.iter().map(|(id, _)| id).collect();
+        assert_eq!(binary_ids, exact_ids, "two-stage top-k must equal exact top-k");
+
+        // The gated quantized route delegates to the binary two-stage path.
+        let gated = index
+            .search_with_quantized_acceleration(&query, 3, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            gated.iter().map(|(id, _)| id).collect::<Vec<_>>(),
+            binary_ids
+        );
     }
 
     #[test]
