@@ -17,7 +17,12 @@
 #   BENCH_QUERIES  (default 20)
 #   OUT_DIR        (default /tmp/proximadb_bench_matrix)
 
-set -euo pipefail
+# NOTE: intentionally NOT enabling `pipefail`. The script uses
+# `ls -t ... | grep -v ... | head -1` and grep | head | sed extractors
+# in the summary block; `head -1` closes the pipe early which SIGPIPEs
+# the upstream and trips pipefail (silent exit 141). Each step checks
+# its own preconditions instead.
+set -eu
 
 VECTORS="${BENCH_VECTORS:-10000}"
 DIM="${BENCH_DIM:-128}"
