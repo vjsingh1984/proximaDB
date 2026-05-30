@@ -404,6 +404,9 @@ impl SetupResult {
             match cfg.index {
                 IndexType::Hmgi => {
                     use proximadb::index::axis::management::manager as axis_mgr;
+                    use proximadb::index::axis::types::{
+                        Data, IndexAlgorithm, IndexSelectionStrategy, IndexSpecification,
+                    };
                     // We must drive enable_hmgi via the SAME instance
                     // we'll later retrieve via get_sst_axis_manager,
                     // so wrap in Arc first.
@@ -418,6 +421,41 @@ impl SetupResult {
                         .enable_hmgi(&collection.id, None, oid)
                         .await
                         .expect("enable_hmgi");
+
+                    // **HMGI ef plumbing**: previously the HMGI cell
+                    // only called enable_hmgi and let
+                    // ensure_collection_strategy → recommend_strategy
+                    // pick the default (AxisHnswConfig::default().ef
+                    // = 50). That meant BENCH_HNSW_EF was ignored on
+                    // the HMGI path — measured at 10K, HMGI partitions
+                    // logged `ef_search=50` even when BENCH_HNSW_EF
+                    // was set to 500. Now we install an explicit
+                    // HNSW spec so insert_hmgi's
+                    // get_or_create_partition gets the right ef
+                    // (the spec flows through via insert_hmgi's
+                    // `Option<&IndexAlgorithm>` parameter committed
+                    // in 476dc951a).
+                    let ef_search = env_usize("BENCH_HNSW_EF", 100) as u32;
+                    let hnsw_spec = IndexSpecification::new(
+                        Data::DenseVector {
+                            dimension: cfg.dimension,
+                        },
+                        IndexAlgorithm::HNSW {
+                            m: 16,
+                            ef_construction: 200,
+                            ef_search,
+                            max_elements: 1_000_000,
+                        },
+                    );
+                    let strategy = IndexSelectionStrategy {
+                        indexes: vec![hnsw_spec],
+                        routing_rules: vec![],
+                    };
+                    axis_arc
+                        .update_collection_strategy(&collection.id, strategy)
+                        .await
+                        .expect("update_collection_strategy HMGI");
+
                     let _ = axis_mgr::AxisManager::new; // silence unused-import lint
                     proximadb::storage::engines::sst::core::set_sst_axis_manager(axis_arc);
                 }

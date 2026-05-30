@@ -27,7 +27,13 @@
 #   0 — all wiring checks pass
 #   1 — a wiring check failed (details printed to stderr)
 
-set -euo pipefail
+# NOTE: intentionally NOT enabling `pipefail`. The script uses many
+# `grep ... | head -1 | sed ...` pipelines to scrape ef values out of
+# bench stderr; `head -1` closes the pipe early which SIGPIPEs grep,
+# and pipefail would surface that as a spurious exit 141. We
+# explicitly check each extracted variable for the expected value
+# instead.
+set -eu
 
 BIN_GLOB="$(dirname "$0")/../target/release/deps/bench_warm_path_profile-*"
 BIN="$(ls -t $BIN_GLOB 2>/dev/null | grep -v '\.d$' | head -1)"
@@ -57,8 +63,9 @@ echo "  N:      $N vectors (small for fast iteration)"
 echo "  ef set: ${EF_VALUES[*]}"
 echo "-----------------------------------------------------------------"
 
+echo "  [BENCH_INDEX=hnsw] (legacy HNSW path: insert_into_hnsw)"
 for EF in "${EF_VALUES[@]}"; do
-  printf "  ef=%-4s  " "$EF"
+  printf "    ef=%-4s  " "$EF"
 
   BENCH_HNSW_EF=$EF \
   BENCH_VECTORS=$N BENCH_DIM=128 BENCH_QUERIES=1 \
@@ -69,21 +76,10 @@ for EF in "${EF_VALUES[@]}"; do
     continue
   }
 
-  # Check 1: strategy spec → AxisHnswConfig propagation
-  # `insert_into_hnsw` logs the resolved config once per collection
-  # (first insert). Field: ef_search=N.
   insert_ef=$(grep "site=insert_into_hnsw" "$LOG" | head -1 \
     | sed -nE 's/.*ef_search=([0-9]+).*/\1/p')
-
-  # Check 2: runtime search_ef in AxisHnswIndex::search_with_filter
-  # Field: search_ef=N. For N=1000, sqrt is ~31 (clamped to 50), so
-  # `max(config.ef, sqrt(N), top_k)` should equal max(ef, 50, 10) = ef
-  # when ef >= 50.
   search_ef=$(grep "site=AxisHnswIndex::search_with_filter" "$LOG" \
     | head -1 | sed -nE 's/.*search_ef=([0-9]+).*/\1/p')
-
-  # Check 3: spec_source confirms the strategy spec drove the config
-  # (not a fallback to AxisHnswConfig::default).
   spec_source=$(grep "site=insert_into_hnsw" "$LOG" | head -1 \
     | sed -nE 's/.*spec_source=([a-z_]+).*/\1/p')
 
@@ -92,6 +88,48 @@ for EF in "${EF_VALUES[@]}"; do
 
   if [ "$insert_ef" != "$EXPECTED" ]; then
     echo "FAIL: insert_into_hnsw.ef_search expected $EXPECTED, got '$insert_ef'"
+    FAIL=1
+  elif [ "$search_ef" != "$expected_search_ef" ]; then
+    echo "FAIL: search_with_filter.search_ef expected $expected_search_ef, got '$search_ef'"
+    FAIL=1
+  elif [ "$spec_source" != "strategy" ]; then
+    echo "FAIL: spec_source expected 'strategy', got '$spec_source'"
+    FAIL=1
+  else
+    echo "OK   (insert.ef_search=$insert_ef  runtime.search_ef=$search_ef  spec_source=$spec_source)"
+  fi
+done
+
+echo ""
+echo "  [BENCH_INDEX=hmgi] (HMGI partition: insert_hmgi)"
+# HMGI cell now also calls update_collection_strategy with the
+# BENCH_HNSW_EF spec, so the HMGI partition's HNSW config should
+# track the env var (was previously hardcoded to 50 via
+# AxisHnswConfig::default()).
+for EF in "${EF_VALUES[@]}"; do
+  printf "    ef=%-4s  " "$EF"
+
+  BENCH_HNSW_EF=$EF \
+  BENCH_VECTORS=$N BENCH_DIM=128 BENCH_QUERIES=1 \
+  BENCH_INDEX=hmgi BENCH_METRIC=cosine \
+  "$BIN" > "$LOG" 2>&1 || {
+    echo "FAIL: bench binary exited non-zero for ef=$EF" >&2
+    FAIL=1
+    continue
+  }
+
+  insert_ef=$(grep "site=insert_hmgi" "$LOG" | head -1 \
+    | sed -nE 's/.*ef_search=([0-9]+).*/\1/p')
+  search_ef=$(grep "site=AxisHnswIndex::search_with_filter" "$LOG" \
+    | head -1 | sed -nE 's/.*search_ef=([0-9]+).*/\1/p')
+  spec_source=$(grep "site=insert_hmgi" "$LOG" | head -1 \
+    | sed -nE 's/.*spec_source=([a-z_]+).*/\1/p')
+
+  EXPECTED=$EF
+  expected_search_ef=$([ "$EF" -lt 50 ] && echo "50" || echo "$EF")
+
+  if [ "$insert_ef" != "$EXPECTED" ]; then
+    echo "FAIL: insert_hmgi.ef_search expected $EXPECTED, got '$insert_ef'"
     FAIL=1
   elif [ "$search_ef" != "$expected_search_ef" ]; then
     echo "FAIL: search_with_filter.search_ef expected $expected_search_ef, got '$search_ef'"
