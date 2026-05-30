@@ -156,7 +156,9 @@ must not list them under "supported", "production", or "ready":
 * Full SQL parity (ADR-018 Phase 2/3 — Postgres parity).
 * External-table execution (Iceberg / Delta / Hudi as Proxima-owned hot authority).
 * Arrow Flight / gRPC service multiplexing as a customer-facing transport.
-* Trino / Spark compute adapters.
+* Trino / Spark compute adapters — _scaffolded_ (Spark JNI bridge per TD-097; Trino Flight per TD-098). Structural contract gates land in 2026-05-30 connector sprint (`tests/connectors_flight_contract.rs`); end-to-end wire impl deferred.
+* Hadoop InputFormat / OutputFormat — _write-side wire-true_ (`ProximaRecordWriter::flush_now` posts spec-true `/api/v2/.../records/batch`); read-side blocked on the records-scan endpoint gap tracked under TD-099.
+* DuckDB connector — _Rust-side wire-true for bind / search / insert_ (`src/connectors/duckdb.rs`); DuckDB extension binary compilation + scan-via-Flight are separate follow-ups.
 * All "Not Supported in v0.2" items above.
 
 == Positioning Guidance

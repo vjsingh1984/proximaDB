@@ -487,7 +487,7 @@ impl std::error::Error for SparkWriteError {}
 // JNI Bridge Functions (called from Java/Scala via JNI)
 // ============================================================================
 //
-// ⚠️  SCAFFOLD STATUS — TD-096
+// ⚠️  SCAFFOLD STATUS — TD-097
 //
 // Every `jni_*` function below is currently a placeholder. They return
 // minimal-shape strings / empty Vecs / 0 so the JNI ABI compiles, but
@@ -495,13 +495,13 @@ impl std::error::Error for SparkWriteError {}
 // them up requires a Java test environment (Spark + JVM) so the
 // contract-gate pattern used for DuckDB/Hadoop (`tests/connectors_openapi_contract.rs`)
 // can't drive these end-to-end. See `docs/10-quality/TECHNICAL_DEBT.adoc`
-// TD-096 for the full acceptance criteria + plan.
+// TD-097 for the full acceptance criteria + plan.
 
 /// JNI: Get table schema as JSON
 ///
 /// Called from Java: `native String getTableSchema(String tableName);`
 ///
-/// Scaffold — see module-level TD-096 note.
+/// Scaffold — see module-level TD-097 note.
 pub fn jni_get_table_schema(_table_name: &str) -> String {
     // Schema: ConnectorStorageAdapter.get_schema() via JNI bridge
     r#"{"type":"struct","fields":[]}"#.to_string()

@@ -581,7 +581,7 @@ pub enum TrinoErrorCode {
 // Arrow Flight Integration Points
 // ============================================================================
 //
-// ⚠️  SCAFFOLD STATUS — TD-097
+// ⚠️  SCAFFOLD STATUS — TD-098
 //
 // Every `flight_*` function below is currently a placeholder. They return
 // minimal-shape results so callers compile; none construct a
@@ -594,9 +594,9 @@ pub enum TrinoErrorCode {
 // functions need is already guarded by the contract gate at
 // `tests/connectors_flight_contract.rs`. The remaining work is wiring
 // the actual FlightClient calls; see `docs/10-quality/TECHNICAL_DEBT.adoc`
-// TD-097 for the acceptance criteria.
+// TD-098 for the acceptance criteria.
 
-/// Flight action for listing schemas. Scaffold — see TD-097.
+/// Flight action for listing schemas. Scaffold — see TD-098.
 pub fn flight_list_schemas(_catalog: &str) -> Vec<TrinoSchema> {
     // Schema listing: Arrow Flight ListFlights for available schemas
     vec![TrinoSchema {

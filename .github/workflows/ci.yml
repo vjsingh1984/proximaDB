@@ -67,6 +67,7 @@ jobs:
       rust_sdk: ${{ steps.filter.outputs.rust_sdk }}
       java_sdk: ${{ steps.filter.outputs.java_sdk }}
       openapi_spec: ${{ steps.filter.outputs.openapi_spec }}
+      src_connectors: ${{ steps.filter.outputs.src_connectors }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -132,6 +133,11 @@ jobs:
               - 'clients/java-embedded/**'
             openapi_spec:
               - 'docs/openapi/**'
+            src_connectors:
+              - 'src/connectors/**'
+              - 'tests/connectors_openapi_contract.rs'
+              - 'tests/connectors_flight_contract.rs'
+              - 'tests/openapi_helpers.rs'
 
   # ============================================================================
   # QUALITY CHECKS - Run in parallel, fast feedback
@@ -491,6 +497,53 @@ jobs:
         run: |
           npm ci
           npm test
+
+  # ===========================================================================
+  # CONNECTORS — OpenAPI + Flight contract gates (added 2026-05-30, TD-095 follow-up)
+  #
+  # The 4 Rust connectors at src/connectors/ (DuckDB, Spark, Hadoop, Trino)
+  # were scaffolded against /api/v1 paths and never wired to the real REST
+  # / Flight surface. After commit a30544f3b the REST-using connectors
+  # (DuckDB bind/search/insert + Hadoop flush_now) post spec-correct
+  # bodies against /api/v2 endpoints; the Flight-using connector
+  # (Trino) has its ticket + descriptor shapes contract-guarded even
+  # though the live FlightClient mount is still TD-097 work.
+  #
+  # Triggered when the OpenAPI spec OR any connector source / test
+  # changes. Two cells — REST + Flight — so a Flight-only proto bump
+  # doesn't spuriously fail the REST gate and vice versa.
+  # ===========================================================================
+  connectors-contract-gates:
+    name: Connectors Contract Gate (${{ matrix.kind }})
+    runs-on: ubuntu-latest
+    needs: changes
+    if: |
+      needs.changes.outputs.openapi_spec == 'true' ||
+      needs.changes.outputs.src_connectors == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [rest, flight]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-connectors-contract"
+
+      - name: REST contract gate
+        if: matrix.kind == 'rest'
+        run: |
+          cargo test --test connectors_openapi_contract -- --nocapture
+
+      - name: Flight contract gate
+        if: matrix.kind == 'flight'
+        run: |
+          cargo test --test connectors_flight_contract -- --nocapture
 
   sdk-security-scan:
     name: SDK Security Scan
@@ -1100,6 +1153,7 @@ jobs:
       - rust-sdk-lint
       - sdk-security-scan
       - sdk-contract-gates
+      - connectors-contract-gates
     if: always()
     steps:
       - name: Check Results
