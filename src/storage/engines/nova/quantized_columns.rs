@@ -279,12 +279,17 @@ impl QuantizedColumns {
 pub struct QuantizedColumnBuilder {
     vectors: Vec<Vec<f32>>,
     dimension: usize,
-    config: QuantizationConfig,
+    config: NovaQuantizationConfig,
     quantization_engine: Arc<UnifiedQuantizationEngine>,
 }
 
+/// NOVA quantized-column builder configuration (which quantization columns to emit).
+///
+/// Distinct from the canonical `proximadb_quantization_types::QuantizationConfig`;
+/// renamed from the former `QuantizationConfig` to remove the cross-module name
+/// collision (see the LLD duplication watch).
 #[derive(Debug, Clone)]
-pub struct QuantizationConfig {
+pub struct NovaQuantizationConfig {
     pub enable_binary: bool,
     pub enable_int8: bool,
     pub enable_pq: bool,
@@ -292,7 +297,7 @@ pub struct QuantizationConfig {
     pub pq_bits: i32,
 }
 
-impl Default for QuantizationConfig {
+impl Default for NovaQuantizationConfig {
     fn default() -> Self {
         Self {
             enable_binary: true,
@@ -308,7 +313,7 @@ impl QuantizedColumnBuilder {
     /// Create new builder with unified quantization engine
     pub fn new(
         vectors: Vec<Vec<f32>>,
-        config: QuantizationConfig,
+        config: NovaQuantizationConfig,
         quantization_engine: Arc<UnifiedQuantizationEngine>,
     ) -> Self {
         let dimension = vectors.first().map_or(0, |v| v.len());

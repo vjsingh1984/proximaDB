@@ -94,7 +94,7 @@ pub use crate::index::axis::hmgi::{
     ClusterMembership as HmgiClusterMembership, ClusterNode as HmgiClusterNode,
     ClusterNodeId as HmgiClusterNodeId, DistributedPartitionLocator as HmgiPartitionLocator,
     HmgiQueryCoordinator, HmgiRouteStats, NetworkService as HmgiNetworkService,
-    NodeState as HmgiNodeState, SearchRequest as HmgiSearchRequest,
+    HmgiSearchRequest, NodeState as HmgiNodeState,
 };
 
 // Re-export RPC abstractions for inter-node communication

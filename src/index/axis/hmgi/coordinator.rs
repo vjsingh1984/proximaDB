@@ -56,13 +56,13 @@ pub trait NetworkService: Send + Sync {
     async fn remote_search(
         &self,
         node_id: ClusterNodeId,
-        request: SearchRequest,
+        request: HmgiSearchRequest,
     ) -> Result<Vec<ScoredResult>>;
 }
 
 /// Search request for remote execution
 #[derive(Debug, Clone)]
-pub struct SearchRequest {
+pub struct HmgiSearchRequest {
     /// Partitions to search on the remote node
     pub partitions: Vec<HmgiPartitionKey>,
 
@@ -250,7 +250,7 @@ impl HmgiQueryCoordinator {
                     timeout,
                     network.remote_search(
                         node_id,
-                        SearchRequest {
+                        HmgiSearchRequest {
                             partitions: partitions_clone,
                             query_vector: query_vector_clone,
                             top_k,
@@ -304,7 +304,7 @@ impl NetworkService for MockNetworkService {
     async fn remote_search(
         &self,
         node_id: ClusterNodeId,
-        _request: SearchRequest,
+        _request: HmgiSearchRequest,
     ) -> Result<Vec<ScoredResult>> {
         // Simulate network delay
         tokio::time::sleep(self.simulated_delay).await;
@@ -367,7 +367,7 @@ mod tests {
         }];
         mock.mock_results.insert(1, results);
 
-        let request = SearchRequest {
+        let request = HmgiSearchRequest {
             partitions: vec![HmgiPartitionKey::new(123, 1, "text".to_string(), None)],
             query_vector: vec![0.1, 0.2],
             top_k: 10,
@@ -383,7 +383,7 @@ mod tests {
         let mut mock = MockNetworkService::default();
         mock.simulate_failure = true;
 
-        let request = SearchRequest {
+        let request = HmgiSearchRequest {
             partitions: vec![],
             query_vector: vec![],
             top_k: 10,

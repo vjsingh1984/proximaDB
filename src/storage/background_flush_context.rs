@@ -67,9 +67,13 @@ impl Default for BackgroundFlushCompressionConfig {
     }
 }
 
-/// Quantization configuration for vector compression
+/// Quantization configuration for vector compression during background flush.
+///
+/// Distinct from the canonical `proximadb_quantization_types::QuantizationConfig`;
+/// renamed from the former `QuantizationConfig` to remove the cross-module name
+/// collision (see the LLD duplication watch).
 #[derive(Debug, Clone)]
-pub struct QuantizationConfig {
+pub struct FlushQuantizationConfig {
     pub enabled: bool,
     pub quantization_type: String, // "product", "scalar", "binary"
     pub bits_per_component: u8,
@@ -118,7 +122,7 @@ pub struct BackgroundFlushContext {
 
     // === Performance Configuration ===
     /// Vector quantization settings (if enabled)
-    pub quantization: Option<QuantizationConfig>,
+    pub quantization: Option<FlushQuantizationConfig>,
     /// Suggested batch size for operations
     pub batch_size_hint: Option<usize>,
 
@@ -285,7 +289,7 @@ impl BackgroundFlushContext {
                 }
             };
 
-            QuantizationConfig {
+            FlushQuantizationConfig {
                 enabled: qc.enabled.unwrap_or(false),
                 quantization_type: quantization_type.to_string(),
                 bits_per_component: 8, // Default - could be extracted from specific quantization types

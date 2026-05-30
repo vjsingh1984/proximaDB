@@ -231,7 +231,7 @@ pub use hmgi::{
     DistributedPartitionLocator, EnablementReason, HmgiMigrationEngine, HmgiMigrationPhase,
     HmgiPartitionKey, HmgiQueryCoordinator, HmgiRegistry, HmgiRouteStats, HmgiRouter,
     HmgiTierPolicy, MigrationConfig, MigrationResult, MigrationState, ModalityDetector,
-    ModalityExtractor, NetworkService, NodeState, PartitionMetadata, PartitionSet, ResultMerger,
-    SearchRequest, TierChangeReason, TierChangeRecommendation, TierChangeResult,
+    HmgiSearchRequest, ModalityExtractor, NetworkService, NodeState, PartitionMetadata,
+    PartitionSet, ResultMerger, TierChangeReason, TierChangeRecommendation, TierChangeResult,
     VectorRecordSample,
 };
