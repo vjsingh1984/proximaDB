@@ -305,7 +305,7 @@ async fn test_axismanager_hmgi_insert() {
     let record = vector_record("vec1", vec![0.1, 0.2, 0.3], "text");
 
     // Insert with HMGI (this will route to the text partition)
-    let result = manager.insert_hmgi("test_collection", record).await;
+    let result = manager.insert_hmgi("test_collection", record, None).await;
 
     // Should succeed and return the partition key
     assert!(result.is_ok());
@@ -480,6 +480,7 @@ async fn test_axismanager_hmgi_query_routes_to_modality_partition() {
         .insert_hmgi(
             "query_collection",
             vector_record("text_vec", vec![1.0, 0.0, 0.0], "text"),
+            None,
         )
         .await
         .unwrap();
@@ -487,6 +488,7 @@ async fn test_axismanager_hmgi_query_routes_to_modality_partition() {
         .insert_hmgi(
             "query_collection",
             vector_record("image_vec", vec![0.0, 1.0, 0.0], "image"),
+            None,
         )
         .await
         .unwrap();

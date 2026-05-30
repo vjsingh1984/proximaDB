@@ -114,6 +114,7 @@ async fn test_create_collection() -> Result<()> {
         text_columns: vec![],
         text_storage_configs: vec![],
         enable_dual_use_embeddings: None,
+        canonical_embedding_precision: None,
     };
 
     let response = service.create_collection(&config).await?;
@@ -149,6 +150,7 @@ async fn test_get_collection() -> Result<()> {
         text_columns: vec![],
         text_storage_configs: vec![],
         enable_dual_use_embeddings: None,
+        canonical_embedding_precision: None,
     };
 
     let create_response = service.create_collection(&config).await?;
@@ -192,6 +194,7 @@ async fn test_list_collections() -> Result<()> {
             text_columns: vec![],
             text_storage_configs: vec![],
             enable_dual_use_embeddings: None,
+            canonical_embedding_precision: None,
         };
 
         let response = service.create_collection(&config).await?;
@@ -230,6 +233,7 @@ async fn test_delete_collection() -> Result<()> {
         text_columns: vec![],
         text_storage_configs: vec![],
         enable_dual_use_embeddings: None,
+        canonical_embedding_precision: None,
     };
 
     let create_response = service.create_collection(&config).await?;
@@ -273,6 +277,7 @@ async fn test_tenant_scoped_collection_access_and_delete() -> Result<()> {
         text_columns: vec![],
         text_storage_configs: vec![],
         enable_dual_use_embeddings: None,
+        canonical_embedding_precision: None,
     };
 
     let create_response = service
@@ -340,6 +345,7 @@ async fn test_tenant_collection_limit_enforced() -> Result<()> {
         text_columns: vec![],
         text_storage_configs: vec![],
         enable_dual_use_embeddings: None,
+        canonical_embedding_precision: None,
     };
 
     let config_two = CollectionConfig {
@@ -392,6 +398,7 @@ async fn test_tenant_scoped_collection_listing() -> Result<()> {
         text_columns: vec![],
         text_storage_configs: vec![],
         enable_dual_use_embeddings: None,
+        canonical_embedding_precision: None,
     };
 
     let config_b = CollectionConfig {
