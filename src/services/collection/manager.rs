@@ -512,6 +512,34 @@ impl CollectionService {
             "auto-selected storage engine"
         );
 
+        // Recall-target advisor wiring: when the caller asked for a
+        // specific recall (via a `recall_target:<f32>` tag), size
+        // every HNSW IndexConfig that wasn't already pinned by the
+        // caller. See crate::services::collection::recall_target for
+        // the parse + apply contract.
+        if let Some(recall_target) =
+            crate::services::collection::recall_target::parse_recall_target(&enriched_config)
+        {
+            let applied =
+                crate::services::collection::recall_target::apply_advisor_to_hnsw_indexes(
+                    &mut enriched_config,
+                    recall_target,
+                );
+            for (index_name, out) in &applied {
+                tracing::info!(
+                    target: "collection.recall_target",
+                    collection = %enriched_config.name,
+                    index = %index_name,
+                    recall_target = recall_target,
+                    m = out.m,
+                    ef_construction = out.ef_construction,
+                    ef_search = out.ef_search,
+                    rationale = %out.rationale,
+                    "auto-sized HNSW from recall_target"
+                );
+            }
+        }
+
         // Resolve compression and storage configuration
 
         // NEW: Add tenant metadata to collection if tenant context is provided

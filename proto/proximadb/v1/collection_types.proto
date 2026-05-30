@@ -48,6 +48,20 @@ message CollectionConfig {
   // (~50% byte reduction vs fp32). When unset / `FP32`, the legacy fp32 path
   // is used unchanged.
   optional EmbeddingPrecision canonical_embedding_precision = 26;
+
+  // NOTE on recall_target: stored as a tag on this collection via
+  // `tags`, with the convention "recall_target:<float in [0,1]>".
+  // The create-collection flow parses that tag and runs
+  // `index::axis::management::hnsw_param_advisor::advise_hnsw_params`
+  // to size m / ef_construction / ef_search; the AdaptiveIndexEngine
+  // re-evaluates as the index grows and surfaces drift via
+  // route-health + axis_diag tracing.
+  //
+  // Stored as a tag rather than a typed field because the proto
+  // regeneration pipeline is currently manual (see
+  // scripts/regenerate-proto.sh — the generated Rust is hand-
+  // committed). Promoting to a typed field is a clean follow-up
+  // once the regen pipeline is auto-wired into build.rs.
 }
 
 // Canonical scalar type for a collection's embedding column. Mirrors

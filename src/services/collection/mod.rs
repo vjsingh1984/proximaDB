@@ -4,6 +4,7 @@
 
 pub mod engine_selector;
 pub mod manager;
+pub mod recall_target;
 pub mod security;
 
 pub use manager::{
