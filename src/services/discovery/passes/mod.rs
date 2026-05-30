@@ -6,14 +6,17 @@
 //! owns only the refinement logic, so adding a pass is implementing one
 //! function plus one match arm — the executor never changes.
 //!
-//! `recluster` (k-means cluster-quality refinement) and `dedup` are real passes.
-//! `re_embed` / `quality` / `trajectory` are identity passes (republish
-//! unchanged) until implemented. A pass whose required capability is absent also
-//! returns an identity result rather than failing the job.
+//! `dedup`, `recluster`, `quality` (quality scan), and `trajectory` (trajectory
+//! analysis) are real passes. `re_embed` remains an identity pass (republish
+//! unchanged) until implemented — it needs an embedding model. A pass whose
+//! required capability is absent also returns an identity result rather than
+//! failing the job.
 
 mod context;
 pub mod dedup;
+pub mod quality;
 pub mod recluster;
+pub mod trajectory;
 
 pub use context::PassContext;
 
@@ -33,8 +36,9 @@ pub(crate) async fn run(
     match kind {
         DiscoveryJobKind::Dedup => dedup::run(ctx).await,
         DiscoveryJobKind::Recluster => recluster::run(ctx).await,
-        DiscoveryJobKind::ReEmbed
-        | DiscoveryJobKind::QualityScan
-        | DiscoveryJobKind::TrajectoryAnalysis => Ok(DiscoveryJobResult::default()),
+        DiscoveryJobKind::QualityScan => quality::run(ctx).await,
+        DiscoveryJobKind::TrajectoryAnalysis => trajectory::run(ctx).await,
+        // re_embed needs an embedding model — identity pass until implemented.
+        DiscoveryJobKind::ReEmbed => Ok(DiscoveryJobResult::default()),
     }
 }

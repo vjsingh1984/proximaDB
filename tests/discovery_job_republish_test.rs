@@ -395,3 +395,107 @@ async fn discovery_dedup_and_recluster_e2e() {
         "recluster should have clustered >= 16 vectors; got {vectors}: {final_job}"
     );
 }
+
+/// The two analysis-only passes (`quality_scan`, `trajectory_analysis`) must
+/// complete, remove nothing, and report their headline metric over the snapshot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn discovery_quality_and_trajectory_e2e() {
+    let server = DiscoveryServer::start().await.expect("server start");
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .no_proxy()
+        .build()
+        .unwrap();
+    let base = server.base_url();
+    let name = format!("disc_qt_{}", nanos());
+    let dim: usize = 8;
+
+    let create = http
+        .post(format!("{base}/api/v2/collections"))
+        .json(&json!({
+            "name": name,
+            "dimension": dim,
+            "engine": "sst",
+            "distance_metric": "cosine",
+            "enable_proxima_record": false,
+        }))
+        .send()
+        .await
+        .expect("v2 create");
+    assert!(create.status().is_success(), "v2 create: {}", create.status());
+
+    let records: Vec<serde_json::Value> = (0..20)
+        .map(|i| {
+            let mut v = vec![0.0f32; dim];
+            v[i % dim] = 1.0;
+            v[(i + 1) % dim] = 0.5;
+            json!({ "id": format!("rec-{i}"), "vector": v })
+        })
+        .collect();
+    let insert = http
+        .post(format!("{base}/api/v2/collections/{name}/records/batch"))
+        .json(&json!({ "records": records }))
+        .send()
+        .await
+        .expect("v2 insert");
+    assert!(insert.status().is_success(), "v2 insert: {}", insert.status());
+    sleep(Duration::from_millis(500)).await;
+
+    for (kind, headline) in [
+        ("quality_scan", "quality_input"),
+        ("trajectory_analysis", "trajectory_input"),
+    ] {
+        let job_resp = http
+            .post(format!("{base}/api/v2/collections/{name}/discovery-jobs"))
+            .json(&json!({ "kind": kind }))
+            .send()
+            .await
+            .expect("create discovery job");
+        assert!(
+            job_resp.status().is_success(),
+            "[{kind}] create job: {}",
+            job_resp.status()
+        );
+        let job_id = job_resp.json::<serde_json::Value>().await.unwrap()["job"]["job_id"]
+            .as_str()
+            .expect("job_id")
+            .to_string();
+
+        let deadline = Instant::now() + Duration::from_secs(25);
+        let final_job = loop {
+            let g = http
+                .get(format!(
+                    "{base}/api/v2/collections/{name}/discovery-jobs/{job_id}"
+                ))
+                .send()
+                .await
+                .expect("get discovery job");
+            let body: serde_json::Value = g.json().await.unwrap();
+            let status = body["job"]["status"].as_str().unwrap_or("").to_string();
+            if status == "complete" || status == "failed" {
+                break body;
+            }
+            if Instant::now() > deadline {
+                panic!("[{kind}] job {job_id} did not finish in 25s: {body}");
+            }
+            sleep(Duration::from_millis(500)).await;
+        };
+
+        let job = &final_job["job"];
+        assert_eq!(
+            job["status"].as_str(),
+            Some("complete"),
+            "[{kind}] job should complete: {final_job}"
+        );
+        assert_eq!(
+            job["removed_count"].as_u64(),
+            Some(0),
+            "[{kind}] analysis pass must not remove records: {final_job}"
+        );
+        let metric = job["quality_metrics"][headline].as_f64().unwrap_or(-1.0);
+        assert!(
+            metric >= 20.0,
+            "[{kind}] {headline} should be >= 20 (records analyzed); got {metric}: {final_job}"
+        );
+    }
+}
