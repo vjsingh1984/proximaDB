@@ -423,6 +423,59 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "404":
           $ref: "#/components/responses/NotFound"
+  /api/v2/graphs/{graph_id}/nodes/batch:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    post:
+      tags: [Graphs]
+      operationId: batchCreateNodes
+      summary: Create multiple nodes in a single call.
+      description: |
+        Batch counterpart to `createNode`. Use this on bulk-ingest paths
+        where individual round-trips would dominate latency.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchCreateNodesRequest"
+      responses:
+        "200":
+          description: Batch result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchNodesResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v2/graphs/{graph_id}/edges/batch:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    post:
+      tags: [Graphs]
+      operationId: batchCreateEdges
+      summary: Create multiple edges in a single call.
+      description: |
+        Batch counterpart to `createEdge`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchCreateEdgesRequest"
+      responses:
+        "200":
+          description: Batch result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchEdgesResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v2/graphs/{graph_id}/traverse:
     parameters:
       - $ref: "#/components/parameters/GraphId"
@@ -1290,3 +1343,63 @@ components:
           type: number
           format: double
           nullable: true
+    BatchCreateNodesRequest:
+      type: object
+      required: [nodes]
+      description: |
+        Body for `POST /api/v2/graphs/{id}/nodes/batch`. Matches
+        `BatchCreateNodesRequest` in proximadb-api's graph handler.
+      properties:
+        nodes:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/NodeInput"
+    BatchNodesResponse:
+      type: object
+      additionalProperties: true
+      description: |
+        Server returns a `GraphResponse<BatchResults<Node>>` envelope.
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          additionalProperties: true
+          properties:
+            results:
+              type: array
+              items:
+                $ref: "#/components/schemas/NodeResponse"
+            count:
+              type: integer
+    BatchCreateEdgesRequest:
+      type: object
+      required: [edges]
+      description: |
+        Body for `POST /api/v2/graphs/{id}/edges/batch`. Matches
+        `BatchCreateEdgesRequest` in proximadb-api's graph handler.
+      properties:
+        edges:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/EdgeInput"
+    BatchEdgesResponse:
+      type: object
+      additionalProperties: true
+      description: |
+        Server returns a `GraphResponse<BatchResults<Edge>>` envelope.
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          additionalProperties: true
+          properties:
+            results:
+              type: array
+              items:
+                $ref: "#/components/schemas/EdgeResponse"
+            count:
+              type: integer
