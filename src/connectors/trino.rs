@@ -580,8 +580,23 @@ pub enum TrinoErrorCode {
 // ============================================================================
 // Arrow Flight Integration Points
 // ============================================================================
+//
+// ⚠️  SCAFFOLD STATUS — TD-097
+//
+// Every `flight_*` function below is currently a placeholder. They return
+// minimal-shape results so callers compile; none construct a
+// `FlightServiceClient` or dial the live ProximaFlightService at
+// `src/network/arrow_ipc/service.rs`. Closing the gap requires a tonic
+// `Server::builder()` test fixture (see `tests/fp16_flight_e2e.rs` for
+// the pattern) PLUS a real client mount.
+//
+// The structural shape of the FlightDescriptors / ArrowFileTickets these
+// functions need is already guarded by the contract gate at
+// `tests/connectors_flight_contract.rs`. The remaining work is wiring
+// the actual FlightClient calls; see `docs/10-quality/TECHNICAL_DEBT.adoc`
+// TD-097 for the acceptance criteria.
 
-/// Flight action for listing schemas
+/// Flight action for listing schemas. Scaffold — see TD-097.
 pub fn flight_list_schemas(_catalog: &str) -> Vec<TrinoSchema> {
     // Schema listing: Arrow Flight ListFlights for available schemas
     vec![TrinoSchema {
