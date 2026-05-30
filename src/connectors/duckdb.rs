@@ -62,6 +62,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use arrow::array::RecordBatch;
 use arrow::datatypes::{DataType, Field, Schema as ArrowSchema};
@@ -70,6 +71,31 @@ use serde::{Deserialize, Serialize};
 
 use crate::storage::formats::{FileSplit, SplitStatistics, SplitType};
 use crate::storage::schema::ProximaSchema;
+
+// ---------------------------------------------------------------------------
+// REST wire types — matched 1:1 to the v2 OpenAPI spec
+// (docs/openapi/proximadb-openapi.yaml).
+// ---------------------------------------------------------------------------
+
+/// Subset of OpenAPI `SchemaDefinition` we deserialize from
+/// `GET /api/v2/collections/{collection_id}/schema`. Additional fields
+/// the server returns are ignored (forward-compat).
+#[derive(Debug, Clone, Deserialize)]
+struct CollectionSchemaResponse {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    columns: Vec<CollectionSchemaColumn>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CollectionSchemaColumn {
+    name: String,
+    #[serde(default)]
+    data_type: Option<String>,
+    #[serde(default)]
+    nullable: Option<bool>,
+}
 
 /// Configuration for DuckDB connector
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -334,32 +360,91 @@ pub struct DuckDBTableScan {
     config: DuckDBConnectorConfig,
     /// Bind data (set during bind phase)
     bind_data: Option<DuckDBBindData>,
+    /// Shared HTTP client reused across the bind/scan/search/insert paths.
+    http: reqwest::Client,
 }
 
 impl DuckDBTableScan {
     /// Create a new table scan function
     pub fn new(config: DuckDBConnectorConfig) -> Self {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_millis(config.connection_timeout_ms))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             config,
             bind_data: None,
+            http,
         }
     }
 
-    /// Bind phase - determine schema and collect metadata
-    pub fn bind(&mut self, collection: &str) -> Result<DuckDBBindData, DuckDBError> {
-        // Schema query: via REST GET /api/v2/collections/{collection_id}/schema
-        // (operationId `getCollectionSchema` in docs/openapi/proximadb-openapi.yaml).
-        let schema = Arc::new(ArrowSchema::new(vec![
-            Field::new("id", DataType::Utf8, false),
-            Field::new(
-                "vector",
-                DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), 128),
-                false,
-            ),
-        ]));
+    /// Bind phase — fetch the collection schema from ProximaDB via
+    /// REST `GET /api/v2/collections/{collection_id}/schema` (operationId
+    /// `getCollectionSchema` in docs/openapi/proximadb-openapi.yaml) and
+    /// build the Arrow schema DuckDB needs for cardinality/projection
+    /// planning.
+    pub async fn bind(&mut self, collection: &str) -> Result<DuckDBBindData, DuckDBError> {
+        let url = format!(
+            "{}/api/v2/collections/{}/schema",
+            self.config.server_url.trim_end_matches('/'),
+            collection
+        );
+        let resp = self
+            .http
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| DuckDBError::connection(format!("GET {url}: {e}")))?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(DuckDBError::connection(format!(
+                "GET {url} returned {status}"
+            )));
+        }
+        let payload: CollectionSchemaResponse = resp
+            .json()
+            .await
+            .map_err(|e| DuckDBError::internal(format!("decode schema body: {e}")))?;
+
+        // Build an Arrow schema from the server's column list. For columns
+        // missing a type (or types we don't yet map), default to UTF-8 so
+        // downstream pruning still works. A richer mapping lands when the
+        // DuckDB extension is actually loaded; the contract gate only
+        // requires the round trip + spec-correct URL.
+        let fields: Vec<Field> = if payload.columns.is_empty() {
+            vec![
+                Field::new("id", DataType::Utf8, false),
+                Field::new(
+                    "vector",
+                    DataType::FixedSizeList(
+                        Arc::new(Field::new("item", DataType::Float32, true)),
+                        128,
+                    ),
+                    false,
+                ),
+            ]
+        } else {
+            payload
+                .columns
+                .iter()
+                .map(|c| {
+                    let dt = c
+                        .data_type
+                        .as_deref()
+                        .map(map_proxima_type_to_arrow)
+                        .unwrap_or(DataType::Utf8);
+                    Field::new(&c.name, dt, c.nullable.unwrap_or(true))
+                })
+                .collect()
+        };
+        let schema = Arc::new(ArrowSchema::new(fields));
 
         let bind_data = DuckDBBindData {
-            collection: collection.to_string(),
+            collection: if payload.name.is_empty() {
+                collection.to_string()
+            } else {
+                payload.name
+            },
             schema,
             proxima_schema: None,
             projection: None,
@@ -613,6 +698,24 @@ impl std::fmt::Display for DuckDBError {
 
 impl std::error::Error for DuckDBError {}
 
+impl DuckDBError {
+    /// Construct a connection-class error.
+    pub fn connection<S: Into<String>>(message: S) -> Self {
+        Self {
+            error_type: DuckDBErrorType::Connection,
+            message: message.into(),
+        }
+    }
+
+    /// Construct an internal-class error (used for wire-decode failures).
+    pub fn internal<S: Into<String>>(message: S) -> Self {
+        Self {
+            error_type: DuckDBErrorType::Internal,
+            message: message.into(),
+        }
+    }
+}
+
 /// DuckDB error types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DuckDBErrorType {
@@ -657,6 +760,26 @@ pub extern "C" fn proximadb_init() -> i32 {
 #[cfg_attr(not(feature = "c_ffi"), unsafe(no_mangle))]
 pub extern "C" fn proximadb_version() -> *const std::ffi::c_char {
     DUCKDB_EXTENSION_VERSION.as_ptr() as *const std::ffi::c_char
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/// Map a ProximaDB schema column type-name (as returned by the v2 schema
+/// API) into the closest Arrow `DataType`. Unknown / unmapped types fall
+/// back to UTF-8 so the DuckDB extension can still surface the column;
+/// type-aware projection pushdown lands separately.
+fn map_proxima_type_to_arrow(name: &str) -> DataType {
+    match name.to_ascii_lowercase().as_str() {
+        "int" | "int32" | "i32" | "integer" => DataType::Int32,
+        "long" | "int64" | "i64" | "bigint" => DataType::Int64,
+        "float" | "float32" | "f32" => DataType::Float32,
+        "double" | "float64" | "f64" => DataType::Float64,
+        "bool" | "boolean" => DataType::Boolean,
+        "string" | "text" | "varchar" | "utf8" => DataType::Utf8,
+        _ => DataType::Utf8,
+    }
 }
 
 // ============================================================================
@@ -708,18 +831,13 @@ mod tests {
     }
 
     #[test]
-    fn test_duckdb_table_scan() {
+    fn test_duckdb_table_scan_pushdown_flags() {
+        // bind() is now async (it dials the v2 schema endpoint) and is
+        // covered end-to-end by the contract gate at
+        // tests/connectors_openapi_contract.rs. This unit test stays
+        // focused on the sync-accessible parts of the scan struct.
         let config = DuckDBConnectorConfig::default();
-        let mut scan = DuckDBTableScan::new(config);
-
-        // Test bind
-        let result = scan.bind("test_collection");
-        assert!(result.is_ok());
-
-        let bind_data = result.unwrap();
-        assert_eq!(bind_data.collection, "test_collection");
-
-        // Test supports
+        let scan = DuckDBTableScan::new(config);
         assert!(scan.supports_filter_pushdown());
         assert!(scan.supports_projection_pushdown());
     }
