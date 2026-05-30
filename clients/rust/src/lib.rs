@@ -231,7 +231,9 @@ pub use error::{
 
 #[cfg(feature = "client")]
 pub use client::{
-    ClientBuilder, ClientConfig, CollectionInfo, GraphInfo, HealthStatus, ProximaClient,
+    ClientBuilder, ClientConfig, CollectionInfo, ColumnDefinition, ExplainQueryRequest, GraphInfo,
+    HealthStatus, ProbeStatus, ProximaClient, QueryRequest, SchemaDefinition, SchemaResponse,
+    UpdateSchemaRequest, UpdateSchemaResponse,
 };
 
 #[allow(deprecated)]

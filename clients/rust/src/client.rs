@@ -6,6 +6,7 @@
 use crate::collection::CollectionHandle;
 use crate::error::{ConfigError, NetworkError, ProximaError, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -213,6 +214,73 @@ impl ProximaClient {
         Ok(response)
     }
 
+    /// Kubernetes liveness probe — `GET /health/live`. Mirrors the OpenAPI
+    /// `getLiveness` operation and the Python SDK `.live()` method.
+    #[cfg(feature = "client")]
+    pub async fn health_live(&self) -> Result<ProbeStatus> {
+        let url = format!("{}/health/live", self.inner.config.url);
+        self.get(&url).await
+    }
+
+    /// Kubernetes readiness probe — `GET /health/ready`. Mirrors the OpenAPI
+    /// `getReadiness` operation and the Python SDK `.ready()` method.
+    #[cfg(feature = "client")]
+    pub async fn health_ready(&self) -> Result<ProbeStatus> {
+        let url = format!("{}/health/ready", self.inner.config.url);
+        self.get(&url).await
+    }
+
+    /// Get a collection's schema — `GET /api/v2/collections/{id}/schema`.
+    /// Mirrors the OpenAPI `getCollectionSchema` operation.
+    #[cfg(feature = "client")]
+    pub async fn get_collection_schema(&self, collection_id: &str) -> Result<SchemaResponse> {
+        let url = format!(
+            "{}/api/v2/collections/{}/schema",
+            self.inner.config.url, collection_id
+        );
+        self.get(&url).await
+    }
+
+    /// Update a collection's schema — `PUT /api/v2/collections/{id}/schema`.
+    /// Mirrors the OpenAPI `updateCollectionSchema` operation. The request
+    /// body is the [`SchemaDefinition`] extended with an optional `force`
+    /// flag (see [`UpdateSchemaRequest`]).
+    #[cfg(feature = "client")]
+    pub async fn update_collection_schema(
+        &self,
+        collection_id: &str,
+        body: &UpdateSchemaRequest,
+    ) -> Result<UpdateSchemaResponse> {
+        let url = format!(
+            "{}/api/v2/collections/{}/schema",
+            self.inner.config.url, collection_id
+        );
+        self.put(&url, body).await
+    }
+
+    /// Execute an AQL/UQL/federated query — `POST /api/v2/query`. Mirrors
+    /// the OpenAPI `executeQuery` operation. The shared query facade lowers
+    /// the textual query through ProximaDB's logical query layer; SQL still
+    /// lands on pgwire.
+    #[cfg(feature = "client")]
+    pub async fn execute_query(&self, req: &QueryRequest) -> Result<serde_json::Value> {
+        let url = format!("{}/api/v2/query", self.inner.config.url);
+        self.post(&url, req).await
+    }
+
+    /// Explain an AQL/UQL query — `POST /api/v2/query/explain`. Mirrors the
+    /// OpenAPI `explainQuery` operation. Returns the plan and lowering
+    /// details as a free-form JSON document (the OpenAPI `QueryResponse`
+    /// schema is `additionalProperties: true`).
+    #[cfg(feature = "client")]
+    pub async fn explain_query(
+        &self,
+        req: &ExplainQueryRequest,
+    ) -> Result<serde_json::Value> {
+        let url = format!("{}/api/v2/query/explain", self.inner.config.url);
+        self.post(&url, req).await
+    }
+
     /// Create a collection builder
     pub fn create_collection(&self, name: &str) -> crate::collection::CollectionBuilder<'_> {
         crate::collection::CollectionBuilder::new(self, name)
@@ -283,6 +351,22 @@ impl ProximaClient {
         body: &B,
     ) -> Result<T> {
         let mut request = self.inner.http_client.post(url).json(body);
+
+        if let Some(ref api_key) = self.inner.config.api_key {
+            request = request.header("Authorization", format!("Bearer {api_key}"));
+        }
+
+        let response = request.send().await?;
+        self.handle_response(response).await
+    }
+
+    #[cfg(feature = "client")]
+    pub(crate) async fn put<T: for<'de> Deserialize<'de>, B: Serialize>(
+        &self,
+        url: &str,
+        body: &B,
+    ) -> Result<T> {
+        let mut request = self.inner.http_client.put(url).json(body);
 
         if let Some(ref api_key) = self.inner.config.api_key {
             request = request.header("Authorization", format!("Bearer {api_key}"));
@@ -442,6 +526,181 @@ pub struct GraphInfo {
 #[derive(Debug, Deserialize)]
 struct ListGraphsResponse {
     graphs: Vec<GraphInfo>,
+}
+
+/// Liveness / readiness probe payload.
+///
+/// Mirrors the OpenAPI `ProbeResponse` schema returned from
+/// `/health/live` and `/health/ready`. `status` is the only required
+/// field; servers may add additional diagnostic fields, which the SDK
+/// preserves via `extra` for forward compatibility.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProbeStatus {
+    /// Probe status string (typically `"ok"`, `"ready"`, or
+    /// `"not_ready"`).
+    pub status: String,
+    /// Forward-compat capture of any additional fields the server may
+    /// emit. The OpenAPI schema only declares `status`, but new
+    /// diagnostic fields shouldn't break older SDKs.
+    #[serde(flatten, default)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
+/// Column declaration within a [`SchemaDefinition`].
+///
+/// Mirrors the OpenAPI `ColumnDefinition` schema. Field names and
+/// allowed `data_type` values match the spec exactly.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnDefinition {
+    /// Column name.
+    pub name: String,
+    /// One of the OpenAPI-declared data types (`text`, `integer`,
+    /// `float`, `boolean`, `timestamp`, `vector`, etc.). Strings are
+    /// passed through verbatim; validation lives on the server side.
+    pub data_type: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nullable: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indexed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub filterable: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_length: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub precision: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vector_dimension: Option<u32>,
+}
+
+/// Collection schema definition.
+///
+/// Mirrors the OpenAPI `SchemaDefinition` schema. Used as the body of
+/// schema-update requests and as the nested `schema` payload returned
+/// from [`SchemaResponse`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaDefinition {
+    pub columns: Vec<ColumnDefinition>,
+    /// One of `strict`, `flexible`, `hybrid`. Defaults to `hybrid`
+    /// server-side; omitted from the wire payload when `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enforcement: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allow_additional_fields: Option<bool>,
+}
+
+/// Response from `GET /api/v2/collections/{id}/schema`.
+///
+/// Mirrors the OpenAPI `SchemaResponse` schema. Forward-compat fields
+/// are captured in `extra` so the SDK keeps deserialising successfully
+/// if the server starts emitting additional diagnostic fields.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaResponse {
+    pub schema_id: String,
+    pub schema_version: String,
+    pub collection_id: String,
+    pub schema: SchemaDefinition,
+    pub created_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_schema_id: Option<String>,
+    #[serde(flatten, default)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
+/// Request body for `PUT /api/v2/collections/{id}/schema`.
+///
+/// Mirrors the OpenAPI `UpdateSchemaRequest` schema, which is
+/// `SchemaDefinition` extended with an optional `force` flag. Flattened
+/// serialization so the wire payload matches the spec's `allOf` shape
+/// (columns/enforcement/allow_additional_fields at the top level, not
+/// nested under `schema`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateSchemaRequest {
+    #[serde(flatten)]
+    pub schema: SchemaDefinition,
+    /// When `true`, server bypasses backward-compatibility checks for
+    /// breaking schema changes. Defaults to `false` server-side.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force: Option<bool>,
+}
+
+/// Response from `PUT /api/v2/collections/{id}/schema`.
+///
+/// Mirrors the OpenAPI `UpdateSchemaResponse` schema. `changes` is
+/// `Vec<serde_json::Value>` because the OpenAPI spec declares each
+/// change entry as a free-form object with `additionalProperties: true`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateSchemaResponse {
+    pub schema_id: String,
+    pub schema_version: String,
+    pub previous_schema_id: String,
+    pub changes: Vec<serde_json::Value>,
+    pub warnings: Vec<String>,
+    pub updated_at: String,
+    #[serde(flatten, default)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
+/// Request body for `POST /api/v2/query`.
+///
+/// Mirrors the OpenAPI `QueryRequest` schema. `language` is one of
+/// `uql`, `aql`, `federated`. `parameters` is left as
+/// `Vec<serde_json::Value>` because the OpenAPI `ProximaValue` union
+/// admits null, bool, number, string, array, object, and tagged
+/// `{type, value}` forms — all expressible as raw JSON values.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryRequest {
+    /// One of `uql`, `aql`, `federated`.
+    pub language: String,
+    /// Query text (non-empty).
+    pub query: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<Vec<serde_json::Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+}
+
+impl QueryRequest {
+    /// Convenience constructor for the most common path (language +
+    /// query, no extras).
+    pub fn new(language: impl Into<String>, query: impl Into<String>) -> Self {
+        Self {
+            language: language.into(),
+            query: query.into(),
+            parameters: None,
+            collection: None,
+            limit: None,
+        }
+    }
+}
+
+/// Request body for `POST /api/v2/query/explain`.
+///
+/// Mirrors the OpenAPI `ExplainQueryRequest` schema. Strict subset of
+/// [`QueryRequest`] — no parameters, no limit (explain doesn't execute).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExplainQueryRequest {
+    /// One of `uql`, `aql`, `federated`.
+    pub language: String,
+    pub query: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collection: Option<String>,
+}
+
+impl ExplainQueryRequest {
+    /// Convenience constructor for the most common path.
+    pub fn new(language: impl Into<String>, query: impl Into<String>) -> Self {
+        Self {
+            language: language.into(),
+            query: query.into(),
+            collection: None,
+        }
+    }
 }
 
 #[cfg(test)]
