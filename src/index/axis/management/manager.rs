@@ -2872,6 +2872,183 @@ impl AxisManager {
         Ok(true)
     }
 
+    /// Rebuild the HNSW index using **advisor-recommended** m,
+    /// ef_construction, and ef_search at the current corpus size +
+    /// the operator's recall_target. This is the recall-aware
+    /// counterpart to [`Self::rebuild_and_swap_hnsw_index`] — same
+    /// atomic-swap semantics, but the new graph is sized for the
+    /// recall the collection actually committed to.
+    ///
+    /// Also updates the collection's active
+    /// [`IndexSelectionStrategy`] (via
+    /// [`Self::update_collection_strategy`]) so future queries see
+    /// the advised ef_search without an extra hot-swap call.
+    ///
+    /// Returns the [`HnswSizingOutput`] the rebuild was sized
+    /// against, including the rationale string — handy for
+    /// operator log lines and the recluster response body.
+    /// Returns `Ok(None)` if no vectors were supplied or the
+    /// records lacked usable embeddings.
+    pub async fn rebuild_and_swap_hnsw_index_for_recall_target(
+        &self,
+        collection_id: &str,
+        records: &[ProximaRecord],
+        recall_target: f32,
+    ) -> Result<Option<crate::index::axis::management::HnswSizingOutput>> {
+        use crate::compute::distance_computation::DistanceMetric;
+        use crate::index::axis::index_factory::AxisVectorIndex;
+        use crate::index::axis::indexes::hnsw_index::{AxisHnswConfig, AxisHnswIndex};
+        use crate::index::axis::management::{HnswSizingInput, advise_hnsw_params};
+
+        // Collect valid (record, fp32) like the legacy rebuild.
+        let mut valid: Vec<(&ProximaRecord, Vec<f32>)> = Vec::with_capacity(records.len());
+        for r in records {
+            if r.oid.is_empty() {
+                continue;
+            }
+            if let Some(e) = r.embeddings.first() {
+                let v = e.values.to_fp32_owned();
+                if !v.is_empty() {
+                    valid.push((r, v));
+                }
+            }
+        }
+        let dimension = valid.first().map(|(_, v)| v.len()).unwrap_or(0);
+        if dimension == 0 || valid.is_empty() {
+            return Ok(None);
+        }
+
+        let metric = self
+            .get_collection_distance_metric(collection_id)
+            .await
+            .unwrap_or(DistanceMetric::Cosine);
+
+        // Size from the actual rebuild corpus (records.len() — not
+        // some stale baseline_n). top_k=10 matches what the
+        // route-health drift detector uses; if a caller requires
+        // a different top_k they construct the strategy themselves.
+        let advised = advise_hnsw_params(HnswSizingInput {
+            vector_count: valid.len() as u64,
+            top_k: 10,
+            recall_target,
+            dimension: dimension as u32,
+            distance_metric: metric,
+        });
+
+        let config = AxisHnswConfig {
+            m: advised.m as usize,
+            ef_construction: advised.ef_construction as usize,
+            ef: advised.ef_search as usize,
+            distance_metric: metric,
+            ..Default::default()
+        };
+
+        tracing::info!(
+            target: "axis_diag",
+            site = "rebuild_and_swap_hnsw_index_for_recall_target",
+            collection_id = collection_id,
+            n = valid.len(),
+            recall_target = recall_target,
+            m = advised.m,
+            ef_construction = advised.ef_construction,
+            ef_search = advised.ef_search,
+            rationale = %advised.rationale,
+            "rebuilding HNSW with advisor-sized params"
+        );
+
+        let index = AxisHnswIndex::new_with_collection(
+            Some(collection_id.to_string()),
+            config,
+            dimension,
+        )?;
+        let count = valid.len();
+        let fields_config =
+            crate::index::axis::filterable_metadata::FilterableFieldsConfig::default();
+        for (r, v) in &valid {
+            let meta = crate::index::axis::filterable_metadata::extract_filterable_metadata(
+                r,
+                &fields_config,
+            );
+            index
+                .add_with_metadata(r.oid.clone(), v.clone(), &meta)
+                .await?;
+        }
+
+        // Atomic swap: replace the served Arc.
+        {
+            let mut indexes = self.hnsw_indexes.write().await;
+            indexes.insert(collection_id.to_string(), Arc::new(index));
+        }
+        let generation = {
+            let mut gens = self.index_generations.write().await;
+            let g = gens.entry(collection_id.to_string()).or_insert(0);
+            *g += 1;
+            *g
+        };
+
+        // Update the strategy so future queries pick up the new
+        // ef_search via the normal lookup path. If no strategy
+        // exists yet, build a fresh single-HNSW one — this is
+        // safe because we just rebuilt the index with these exact
+        // params.
+        use crate::index::axis::types::{
+            Data, IndexAlgorithm, IndexSelectionStrategy, IndexSpecification,
+        };
+        let spec = IndexSpecification::new(
+            Data::DenseVector { dimension },
+            IndexAlgorithm::HNSW {
+                m: advised.m,
+                ef_construction: advised.ef_construction,
+                ef_search: advised.ef_search,
+                max_elements: 1_000_000,
+            },
+        );
+        let new_strategy = {
+            let strategies = self.collection_strategies.read().await;
+            match strategies.get(collection_id).cloned() {
+                Some(mut existing) => {
+                    // Replace the first HNSW spec in place; if none
+                    // existed, append. Preserves non-HNSW indexes
+                    // (e.g. metadata or sparse).
+                    let mut replaced = false;
+                    for spec_slot in existing.indexes.iter_mut() {
+                        if matches!(spec_slot.algorithm, IndexAlgorithm::HNSW { .. }) {
+                            spec_slot.algorithm = IndexAlgorithm::HNSW {
+                                m: advised.m,
+                                ef_construction: advised.ef_construction,
+                                ef_search: advised.ef_search,
+                                max_elements: 1_000_000,
+                            };
+                            replaced = true;
+                            break;
+                        }
+                    }
+                    if !replaced {
+                        existing.indexes.push(spec);
+                    }
+                    existing
+                }
+                None => IndexSelectionStrategy {
+                    indexes: vec![spec],
+                    routing_rules: vec![],
+                },
+            }
+        };
+        self.update_collection_strategy(collection_id, new_strategy)
+            .await?;
+
+        tracing::info!(
+            "✅ AXIS: recall-aware HNSW rebuild for {} ({} vectors, gen={}, m={}, ef_construction={}, ef_search={})",
+            collection_id,
+            count,
+            generation,
+            advised.m,
+            advised.ef_construction,
+            advised.ef_search,
+        );
+        Ok(Some(advised))
+    }
+
     /// Rebuild + atomically swap whichever served ANN index the collection uses
     /// — IVF if present, else HNSW (the default). Returns `true` if a swap
     /// happened, `false` if the collection has no served index or there were too
@@ -4634,6 +4811,78 @@ mod hot_swap_ef_tests {
                 panic!("expected NotApplicable for matching ef, got {} changes", changes.len())
             }
         }
+    }
+
+    #[tokio::test]
+    async fn rebuild_for_recall_target_sizes_from_advisor() {
+        use proximadb_records::{EmbeddingCell, EmbeddingValues};
+
+        let manager = make_manager().await;
+
+        // Build N=200 records (well above the dimension=8 minimum)
+        // with simple unit vectors so the rebuild has real data.
+        let dim = 8usize;
+        let mut records: Vec<ProximaRecord> = Vec::with_capacity(200);
+        for i in 0..200 {
+            let mut v = vec![0.0_f32; dim];
+            v[i % dim] = 1.0;
+            let r = ProximaRecord {
+                oid: format!("v{i}"),
+                embeddings: vec![EmbeddingCell {
+                    model_id: "test".into(),
+                    modality: "dense_vector".into(),
+                    dim: dim as u32,
+                    values: EmbeddingValues::Fp32(v),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            };
+            records.push(r);
+        }
+
+        let advised = manager
+            .rebuild_and_swap_hnsw_index_for_recall_target("c_rebuild", &records, 0.95)
+            .await
+            .unwrap()
+            .expect("rebuild should return advisor output");
+
+        // recall_target=0.95 falls in the m=32 tier per the advisor.
+        assert_eq!(advised.m, 32);
+        assert_eq!(advised.ef_construction, 256);
+        assert!(advised.ef_search >= 16, "ef_search must clear the floor");
+
+        // The strategy must reflect the new sizing so subsequent
+        // queries see it via the standard lookup path.
+        let strategy = manager.get_collection_strategy("c_rebuild").await.unwrap();
+        let hnsw_count = strategy
+            .indexes
+            .iter()
+            .filter(|s| matches!(s.algorithm, IndexAlgorithm::HNSW { .. }))
+            .count();
+        assert_eq!(hnsw_count, 1, "strategy must carry one HNSW spec");
+        match &strategy.indexes[0].algorithm {
+            IndexAlgorithm::HNSW {
+                m,
+                ef_construction,
+                ef_search,
+                ..
+            } => {
+                assert_eq!(*m, advised.m);
+                assert_eq!(*ef_construction, advised.ef_construction);
+                assert_eq!(*ef_search, advised.ef_search);
+            }
+            other => panic!("expected HNSW, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn rebuild_for_recall_target_with_no_records_returns_none() {
+        let manager = make_manager().await;
+        let advised = manager
+            .rebuild_and_swap_hnsw_index_for_recall_target("c_empty", &[], 0.95)
+            .await
+            .unwrap();
+        assert!(advised.is_none(), "no records → no rebuild");
     }
 
     #[tokio::test]
