@@ -66,6 +66,7 @@ jobs:
       nodejs_sdk: ${{ steps.filter.outputs.nodejs_sdk }}
       rust_sdk: ${{ steps.filter.outputs.rust_sdk }}
       java_sdk: ${{ steps.filter.outputs.java_sdk }}
+      openapi_spec: ${{ steps.filter.outputs.openapi_spec }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -129,6 +130,8 @@ jobs:
               - 'clients/rust/**'
             java_sdk:
               - 'clients/java-embedded/**'
+            openapi_spec:
+              - 'docs/openapi/**'
 
   # ============================================================================
   # QUALITY CHECKS - Run in parallel, fast feedback
@@ -409,6 +412,85 @@ jobs:
       - name: Run clippy
         working-directory: clients/rust
         run: cargo clippy -- -D warnings
+
+  # ===========================================================================
+  # SDK OpenAPI CONTRACT GATES (added 2026-05-30, TD-079 follow-up)
+  #
+  # One job per SDK runs that SDK's contract-gate tests against the
+  # canonical spec at `docs/openapi/proximadb-openapi.yaml`. Any drift
+  # (SDK calls a path the spec doesn't declare, sends a body without the
+  # spec's required keys, uses the wrong verb, etc.) fails the matrix
+  # cell — fast feedback to the contributor without waiting for the full
+  # integration-test matrix.
+  #
+  # Triggered by changes to either the SDK source OR the OpenAPI spec.
+  # Python's gate is already covered by the `proto-compat` job (which
+  # runs `make proto-check` → `test_openapi_contract.py`), so the matrix
+  # below covers the three SDKs that gained their gates this round.
+  # ===========================================================================
+  sdk-contract-gates:
+    name: SDK OpenAPI Contract Gate (${{ matrix.sdk }})
+    runs-on: ubuntu-latest
+    needs: changes
+    if: |
+      needs.changes.outputs.openapi_spec == 'true' ||
+      needs.changes.outputs.rust_sdk == 'true' ||
+      needs.changes.outputs.go_sdk == 'true' ||
+      needs.changes.outputs.nodejs_sdk == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - sdk: rust
+            setup: rust
+          - sdk: go
+            setup: go
+          - sdk: typescript
+            setup: node
+    steps:
+      - uses: actions/checkout@v4
+
+      # Toolchain setup — one branch per matrix cell
+      - if: matrix.setup == 'rust'
+        uses: dtolnay/rust-toolchain@stable
+      - if: matrix.setup == 'rust'
+        uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-sdk-contract-rust"
+          workspaces: "clients/rust -> target"
+
+      - if: matrix.setup == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - if: matrix.setup == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: clients/nodejs-embedded/package-lock.json
+
+      # Per-SDK contract gate runs
+      - name: Rust contract gate
+        if: matrix.sdk == 'rust'
+        run: |
+          cargo test --manifest-path clients/rust/Cargo.toml --test openapi_contract \
+            -- --nocapture
+
+      - name: Go contract gate
+        if: matrix.sdk == 'go'
+        working-directory: clients/go
+        run: |
+          go test -v -count=1 -run '^TestOpenAPIContract|MatchesSpec|AllV2OperationsCovered' \
+            ./proximadb/internal/rest/...
+
+      - name: TypeScript contract gate
+        if: matrix.sdk == 'typescript'
+        working-directory: clients/nodejs-embedded
+        run: |
+          npm ci
+          npm test
 
   sdk-security-scan:
     name: SDK Security Scan
@@ -1017,6 +1099,7 @@ jobs:
       - nodejs-lint
       - rust-sdk-lint
       - sdk-security-scan
+      - sdk-contract-gates
     if: always()
     steps:
       - name: Check Results
