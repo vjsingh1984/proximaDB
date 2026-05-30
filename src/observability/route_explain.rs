@@ -61,6 +61,12 @@ pub mod hint {
     pub const CACHE_FALSE_HIT: &str = "cache_false_hit";
     pub const RECALL_PROBE_CLOSED: &str = "recall_probe_closed";
     pub const HIGH_DISAGREEMENT: &str = "high_sure_disagreement";
+    /// TD-075 / F2: the search actually downgraded from the quantized route to
+    /// exact because the recall-probe gate was closed. Unlike
+    /// [`RECALL_PROBE_CLOSED`] (which flags a *planned* quantized route against a
+    /// closed gate — a possible wiring inconsistency), this reflects the
+    /// AUTHORITATIVE execution-level decision recorded by `AxisManager`.
+    pub const QUANTIZED_ROUTE_DOWNGRADED: &str = "quantized_route_downgraded";
 }
 
 /// Inputs the explain builder consumes. The trace itself carries most
@@ -72,6 +78,10 @@ pub struct ExplainInputs<'a> {
     pub trace: &'a SearchPlanTrace,
     pub corpus_gb: f64,
     pub recall_probe_open: Option<bool>,
+    /// TD-075 / F2: the search downgraded from the quantized route to exact
+    /// because the recall-probe gate was closed (authoritative execution-level
+    /// signal from `AxisManager`, captured via the per-request diagnostics bus).
+    pub quantized_route_downgraded: bool,
 }
 
 /// Build the structured explain.
@@ -80,12 +90,12 @@ pub fn build(inputs: &ExplainInputs<'_>) -> RouteExplain {
 
     let summary = build_summary(trace, inputs.corpus_gb);
     let sections = vec![
-        plan_section(trace),
+        plan_section(trace, inputs.quantized_route_downgraded),
         cache_section(trace),
         execution_section(trace, inputs.corpus_gb),
         repair_section(trace),
     ];
-    let hints = build_hints(trace, inputs.corpus_gb, inputs.recall_probe_open);
+    let hints = build_hints(inputs);
 
     RouteExplain {
         summary,
@@ -118,7 +128,7 @@ fn build_summary(trace: &SearchPlanTrace, corpus_gb: f64) -> String {
     )
 }
 
-fn plan_section(trace: &SearchPlanTrace) -> ExplainSection {
+fn plan_section(trace: &SearchPlanTrace, quantized_route_downgraded: bool) -> ExplainSection {
     let mut lines = vec![
         format!(
             "filter strategy: {}",
@@ -126,6 +136,12 @@ fn plan_section(trace: &SearchPlanTrace) -> ExplainSection {
         ),
         format!("index route: {}", index_route_label(&trace.index_route)),
     ];
+    if quantized_route_downgraded {
+        // TD-075 / F2 success criterion: disclose the degraded route reason.
+        lines.push(
+            "quantized route downgraded to exact: recall-probe gate closed".to_string(),
+        );
+    }
     if let Some(est) = trace.estimated_selectivity {
         lines.push(format!("estimated selectivity: {:.4}", est));
     }
@@ -231,13 +247,10 @@ fn repair_section(trace: &SearchPlanTrace) -> ExplainSection {
     }
 }
 
-fn build_hints(
-    trace: &SearchPlanTrace,
-    corpus_gb: f64,
-    recall_probe_open: Option<bool>,
-) -> Vec<String> {
+fn build_hints(inputs: &ExplainInputs<'_>) -> Vec<String> {
+    let trace = inputs.trace;
     let mut hints: Vec<String> = Vec::new();
-    let frac = scan_fraction(trace.actual_scan_gb, corpus_gb);
+    let frac = scan_fraction(trace.actual_scan_gb, inputs.corpus_gb);
     if frac >= 0.5 {
         hints.push(hint::HIGH_SCAN_FRACTION.to_string());
     }
@@ -250,13 +263,18 @@ fn build_hints(
     if matches!(trace.cache_result, CacheResult::FalseHit) {
         hints.push(hint::CACHE_FALSE_HIT.to_string());
     }
-    if matches!(recall_probe_open, Some(false))
+    if matches!(inputs.recall_probe_open, Some(false))
         && matches!(trace.index_route, IndexRoute::QuantizedGraphThenExact)
     {
         // Inconsistent state — model wanted quantized but the gate is
         // closed. Worth surfacing because it means the gate isn't
         // wired up at the call site.
         hints.push(hint::RECALL_PROBE_CLOSED.to_string());
+    }
+    if inputs.quantized_route_downgraded {
+        // Authoritative execution-level downgrade (gate closed → exact). This is
+        // the degraded-route reason F2 success criterion #3 requires in EXPLAIN.
+        hints.push(hint::QUANTIZED_ROUTE_DOWNGRADED.to_string());
     }
     if trace.sure_signals.disagreement >= 0.5 {
         hints.push(hint::HIGH_DISAGREEMENT.to_string());
@@ -351,6 +369,7 @@ mod tests {
             trace,
             corpus_gb,
             recall_probe_open: None,
+            quantized_route_downgraded: false,
         }
     }
 
@@ -542,6 +561,37 @@ mod tests {
     }
 
     #[test]
+    fn hint_and_plan_line_on_quantized_route_downgrade() {
+        // Authoritative downgrade: even with a FullPrecisionGraph trace route
+        // (the exact search that actually ran), the downgrade flag drives both
+        // the hint and the Plan-section disclosure.
+        let t = trace_template();
+        let mut i = inputs(&t, 1.0);
+        i.quantized_route_downgraded = true;
+        let e = build(&i);
+        assert!(
+            e.hints.iter().any(|h| h == hint::QUANTIZED_ROUTE_DOWNGRADED),
+            "downgrade hint must fire"
+        );
+        let plan = e.sections.iter().find(|s| s.header == "Plan").unwrap();
+        assert!(
+            plan.lines
+                .iter()
+                .any(|l| l.contains("downgraded to exact") && l.contains("gate closed")),
+            "Plan section must disclose the degraded-route reason"
+        );
+    }
+
+    #[test]
+    fn no_downgrade_hint_when_flag_unset() {
+        let t = trace_template();
+        let e = build(&inputs(&t, 1.0));
+        assert!(!e.hints.iter().any(|h| h == hint::QUANTIZED_ROUTE_DOWNGRADED));
+        let plan = e.sections.iter().find(|s| s.header == "Plan").unwrap();
+        assert!(!plan.lines.iter().any(|l| l.contains("downgraded")));
+    }
+
+    #[test]
     fn hint_high_disagreement_at_threshold() {
         let mut t = trace_template();
         t.sure_signals.disagreement = 0.5;
@@ -589,6 +639,7 @@ mod tests {
             hint::FAILURE_RECORDED,
             hint::CACHE_FALSE_HIT,
             hint::RECALL_PROBE_CLOSED,
+            hint::QUANTIZED_ROUTE_DOWNGRADED,
             hint::HIGH_DISAGREEMENT,
         ] {
             assert!(!label.is_empty());

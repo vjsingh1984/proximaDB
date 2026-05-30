@@ -1502,13 +1502,20 @@ pub async fn search_with_typed_filters(
     // TD-064: wrap the search in a predicate-diagnostics scope so any
     // AxisManager-deep shortfall surfaces here without needing every
     // intermediate service/proto type to carry a predicate_shortfall field.
-    let search_outcome = crate::observability::predicate_diagnostics::scope(async {
-        state
-            .request_handlers
-            .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
-            .await
-    })
-    .await;
+    // Capture the quantized-route downgrade INSIDE the scope — the task-local
+    // binding ends when the scoped future completes, so it must be taken here
+    // (TD-075 / F2: surfaced in EXPLAIN below).
+    let (search_outcome, quantized_route_downgraded) =
+        crate::observability::predicate_diagnostics::scope(async {
+            let outcome = state
+                .request_handlers
+                .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
+                .await;
+            let downgraded =
+                crate::observability::predicate_diagnostics::take_quantized_downgrade();
+            (outcome, downgraded)
+        })
+        .await;
     let predicate_shortfall = crate::observability::predicate_diagnostics::take_shortfall();
 
     match search_outcome {
@@ -1699,6 +1706,7 @@ pub async fn search_with_typed_filters(
                         // collection-size hydration lands.
                         corpus_gb: 0.0,
                         recall_probe_open,
+                        quantized_route_downgraded,
                     },
                 );
                 (Some(trace.clone()), Some(explain))

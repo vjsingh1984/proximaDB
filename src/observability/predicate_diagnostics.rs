@@ -5,12 +5,18 @@
  * you may not use this file except in compliance with the License.
  */
 
-//! Per-request predicate-diagnostics bus (TD-064)
+//! Per-request search-diagnostics bus (TD-064, TD-075/F2)
 //!
-//! Carries `PredicateShortfall` from `AxisManager`-deep search paths up to
-//! the request handler that builds the `SearchPlanTrace`, without forcing
-//! every intermediate service / storage-engine / proto type to declare a
-//! `predicate_shortfall` field.
+//! Carries `AxisManager`-deep search diagnostics up to the request handler
+//! that builds the `SearchPlanTrace` / EXPLAIN, without forcing every
+//! intermediate service / storage-engine / proto type to declare a field for
+//! each signal. Today it carries two:
+//!
+//! * `PredicateShortfall` (TD-064) — predicate-aware search returned fewer
+//!   than `k` results.
+//! * a quantized-route **downgrade** flag (TD-075 / Phase 8 F2) — the index had
+//!   quantized storage but the recall-probe gate forced exact search, so the
+//!   degraded route can be disclosed in EXPLAIN.
 //!
 //! Concretely:
 //!
@@ -63,6 +69,9 @@ tokio::task_local! {
 #[derive(Debug, Default)]
 pub struct PredicateDiagnostics {
     shortfall: Mutex<Option<PredicateShortfall>>,
+    /// Set when a search downgraded from the quantized route to exact because
+    /// the recall-probe gate was closed (TD-075 / F2). Surfaced in EXPLAIN.
+    quantized_downgraded: Mutex<bool>,
 }
 
 impl PredicateDiagnostics {
@@ -89,6 +98,25 @@ impl PredicateDiagnostics {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .take()
+    }
+
+    /// Mark that the quantized route was downgraded to exact (gate closed).
+    /// Idempotent — repeated calls within a request keep the flag set.
+    pub fn record_quantized_downgrade(&self) {
+        *self
+            .quantized_downgraded
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = true;
+    }
+
+    /// Atomically take the downgrade flag, leaving the container cleared.
+    pub fn take_quantized_downgrade(&self) -> bool {
+        std::mem::take(
+            &mut *self
+                .quantized_downgraded
+                .lock()
+                .unwrap_or_else(|p| p.into_inner()),
+        )
     }
 }
 
@@ -121,6 +149,24 @@ pub fn take_shortfall() -> Option<PredicateShortfall> {
     PREDICATE_DIAGNOSTICS
         .try_with(|d| d.take_shortfall())
         .unwrap_or(None)
+}
+
+/// Record a quantized-route downgrade (gate closed → exact) into the active
+/// diagnostics container. Silently no-ops outside an active [`scope`].
+pub fn record_quantized_downgrade() {
+    let _ = PREDICATE_DIAGNOSTICS.try_with(|d| {
+        d.record_quantized_downgrade();
+    });
+}
+
+/// Take the quantized-route downgrade flag. Returns `false` when there's no
+/// active scope OR no downgrade was recorded. Must be called inside the
+/// [`scope`] that wrapped the search (the task-local binding ends when the
+/// scoped future completes).
+pub fn take_quantized_downgrade() -> bool {
+    PREDICATE_DIAGNOSTICS
+        .try_with(|d| d.take_quantized_downgrade())
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -178,6 +224,36 @@ mod tests {
         .await;
         assert!(first.is_some());
         assert!(second.is_none());
+    }
+
+    #[tokio::test]
+    async fn quantized_downgrade_records_and_takes_inside_scope() {
+        let taken = scope(async {
+            // Not yet recorded.
+            assert!(!take_quantized_downgrade());
+            record_quantized_downgrade();
+            take_quantized_downgrade()
+        })
+        .await;
+        assert!(taken, "downgrade recorded in-scope must be taken as true");
+    }
+
+    #[tokio::test]
+    async fn quantized_downgrade_outside_scope_is_false() {
+        // No scope wrapping — record no-ops, take yields false (never a panic).
+        record_quantized_downgrade();
+        assert!(!take_quantized_downgrade());
+    }
+
+    #[tokio::test]
+    async fn quantized_downgrade_take_clears() {
+        let (first, second) = scope(async {
+            record_quantized_downgrade();
+            (take_quantized_downgrade(), take_quantized_downgrade())
+        })
+        .await;
+        assert!(first);
+        assert!(!second, "take must clear the flag");
     }
 
     #[tokio::test]
