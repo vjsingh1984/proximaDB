@@ -92,6 +92,40 @@
 //! pins three current-baseline points so any regression in the
 //! table is caught at `cargo test`.
 //!
+//! ## Empirically observed: graph degree dominates ef
+//!
+//! A controlled `ef ∈ {100, 200, 300, 500}` sweep at
+//! `N=100K, m=16, ef_construction=200, k=10` revealed a STEPPED
+//! recall curve, not the smooth log curve the formula models:
+//!
+//! | ef  | cos recall | l2 recall | dot recall |
+//! |-----|------------|-----------|------------|
+//! | 100 | 0.575      | 0.600     | 0.245      |
+//! | 200 | 0.575      | 0.600     | 0.245      |
+//! | 300 | 0.575      | 0.600     | 0.245      |
+//! | 500 | 0.765      | 0.700     | 0.350      |
+//!
+//! At fixed `m=16` the graph **saturates** — pushing ef from 100→300
+//! buys zero recall. Only at ef=500 does the search escape the
+//! local-cluster ceiling. The advisor's m-tier logic is the correct
+//! response: a caller asking for `recall_target=0.95` lands on
+//! `m=32` (rebuild-required) rather than getting an inflated ef
+//! that won't deliver.
+//!
+//! **Implication for hot-swap drift**: the
+//! [`crate::index::axis::management::DriftKind::EfSearchOnly`] path
+//! is honest only when the **same** m-tier still satisfies the
+//! recall target. When the corpus has grown enough that the
+//! advisor's new recommendation also crosses an m boundary, the
+//! detector classifies it as `EfConstructionOrM` (rebuild required)
+//! — which is correct, since at the old m the new ef wouldn't
+//! deliver anyway.
+//!
+//! **Calibration follow-up needed**: the recall_factor table is
+//! anchored to a SINGLE empirical data point (N=100K, m=16,
+//! recall=0.575 at ef=100). A real m=32 / m=48 sweep would let us
+//! tune the table per-m-tier; tracked as task #76 / TD-(future).
+//!
 //! # Future
 //!
 //! This is the static heuristic baseline. The RL planner will
@@ -444,6 +478,42 @@ mod tests {
             }
             println!();
         }
+    }
+
+    /// Encodes the empirical "graph saturates at m=16, ef=100-300"
+    /// finding from the 100K BENCH_HNSW_EF sweep. The advisor
+    /// **must** route any recall target above ~0.85 to a higher
+    /// m-tier (m≥32) rather than try to recover via ef tuning at
+    /// m=16, because the bench showed ef-only tuning is a no-op
+    /// in that regime.
+    #[test]
+    fn recall_target_above_saturation_picks_higher_m() {
+        // At m=16, the observed recall ceiling at N=100K is ~0.575
+        // (cosine) / 0.600 (l2). Any recall_target meaningfully
+        // above that must land on m≥32, which forces a rebuild
+        // (DriftKind::EfConstructionOrM) rather than hot-swap.
+        let recall_target = 0.90;
+        let out = advise_hnsw_params(cosine_in(100_000, 10, recall_target));
+        assert!(
+            out.m >= 16,
+            "m must be at least 16 for recall_target {} (got {})",
+            recall_target,
+            out.m
+        );
+
+        // recall=0.95 sits decisively in the m=32 tier — the
+        // expensive-rebuild signal the advisor sends.
+        let out_95 = advise_hnsw_params(cosine_in(100_000, 10, 0.95));
+        assert_eq!(
+            out_95.m, 32,
+            "recall_target 0.95 must land on m=32 tier (not m=16); \
+             ef-only tuning at m=16 saturates at ~0.6 recall per the \
+             100K BENCH_HNSW_EF sweep"
+        );
+
+        // recall=0.99 sits in m=48 tier.
+        let out_99 = advise_hnsw_params(cosine_in(100_000, 10, 0.99));
+        assert_eq!(out_99.m, 48);
     }
 
     #[test]
