@@ -76,6 +76,24 @@ pub enum ApiError {
     /// Capability not supported by storage engine
     #[error("Capability not supported: {0}")]
     UnsupportedCapability(String),
+
+    /// Slice 4 of tenant-pod-affinity: the request landed on the
+    /// wrong pod. The primary-pod registry has a binding for this
+    /// `(tenant, collection)` that points at a different pod.
+    /// Mapped to HTTP 421 Misdirected Request — the canonical
+    /// semantics for "this server is not configured to serve this
+    /// authority." The target pod identifier is carried in the
+    /// error so the client SDK can retry against the right host.
+    #[error("Misdirected request: write must go to pod '{target_pod}'")]
+    Misdirected {
+        /// Primary pod for the requested `(tenant, collection)`.
+        target_pod: String,
+        /// The tenant the misroute applies to (echoed back for
+        /// audit / client-side logging).
+        tenant_id: String,
+        /// The collection the misroute applies to.
+        collection_id: String,
+    },
 }
 
 impl ApiError {
@@ -114,6 +132,33 @@ impl From<ApiError> for tonic::Status {
                 "Capability not supported: {}. Please check storage engine capabilities.",
                 msg
             )),
+            ApiError::Misdirected {
+                target_pod,
+                tenant_id,
+                collection_id,
+            } => {
+                // gRPC has no direct equivalent of HTTP 421; use
+                // FailedPrecondition with a structured message so the
+                // client SDK can parse the target pod out for retry.
+                let mut status = tonic::Status::failed_precondition(format!(
+                    "misdirected_request: write for ({}, {}) must go to pod '{}'",
+                    tenant_id, collection_id, target_pod
+                ));
+                // Trailing metadata makes the structured fields
+                // machine-readable without the client having to
+                // parse the human message.
+                let metadata = status.metadata_mut();
+                if let Ok(v) = target_pod.parse() {
+                    metadata.insert("x-primary-pod", v);
+                }
+                if let Ok(v) = tenant_id.parse() {
+                    metadata.insert("x-tenant-id", v);
+                }
+                if let Ok(v) = collection_id.parse() {
+                    metadata.insert("x-collection-id", v);
+                }
+                status
+            }
         }
     }
 }
@@ -147,7 +192,33 @@ impl IntoResponse for ApiError {
             ApiError::UnsupportedCapability(_) => {
                 (StatusCode::BAD_REQUEST, "unsupported_capability")
             }
+            ApiError::Misdirected { .. } => (StatusCode::MISDIRECTED_REQUEST, "misdirected_request"),
         };
+
+        // Misdirected requests get a structured body with the target
+        // pod so the client SDK can re-route. Other errors fall
+        // through to the generic JSON envelope below.
+        if let ApiError::Misdirected {
+            target_pod,
+            tenant_id,
+            collection_id,
+        } = &self
+        {
+            let body = Json(json!({
+                "error": {
+                    "type": "misdirected_request",
+                    "message": format!(
+                        "write for ({}, {}) must go to pod '{}'",
+                        tenant_id, collection_id, target_pod
+                    ),
+                    "code": status.as_u16(),
+                    "target_pod": target_pod,
+                    "tenant_id": tenant_id,
+                    "collection_id": collection_id,
+                }
+            }));
+            return (status, body).into_response();
+        }
 
         // Check if this is a capability error and use enhanced formatting
         let body = if matches!(&self, ApiError::UnsupportedCapability(_)) {

@@ -1284,16 +1284,25 @@ pub fn create_router(state: AppState) -> axum::Router {
         // SKS entity endpoints (storage-coupled path)
         .nest("/api", entities_router);
 
-    // Graph routes — port-backed (always wired in production since Phase 9.12)
+    // Graph routes — port-backed (always wired in production since Phase 9.12).
+    //
+    // The same router is mounted at two prefixes: `/api/v1/graph` (legacy
+    // mount kept for backwards compatibility with existing clients) and
+    // `/api/v2` (canonical v2 mount added 2026-05-29 to align with the
+    // v2 OpenAPI document — the spec paths are `/api/v2/graphs/...`).
+    // New SDK code should target the v2 mount.
     if let Some(ref gp) = state.graph_port {
         use proximadb_api::rest::{GraphRestState, create_graph_router};
-        router = router.nest(
-            "/api/v1/graph",
-            create_graph_router().with_state(GraphRestState {
-                graph_port: gp.clone(),
-            }),
-        );
-        info!("✅ Graph API routing via port-based handler (proximadb-api)");
+        let graph_state = GraphRestState {
+            graph_port: gp.clone(),
+        };
+        router = router
+            .nest(
+                "/api/v1/graph",
+                create_graph_router().with_state(graph_state.clone()),
+            )
+            .nest("/api/v2", create_graph_router().with_state(graph_state));
+        info!("✅ Graph API routing via port-based handler (proximadb-api) — mounted at /api/v1/graph (legacy) + /api/v2 (canonical)");
     }
 
     // Collection and vector routes via port-backed handlers (proximadb-api).

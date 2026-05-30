@@ -342,6 +342,7 @@ pub async fn put_primary_pod(
         // the REST contract guarantees "PUT-success means the binding
         // is in effect for routing". The catalog will catch up on
         // the next assign for this key.
+        crate::metrics::primary_pod_metrics::record_catalog_mirror_failure(failure.label());
         tracing::warn!(
             target = "proximadb.primary_pod.audit",
             tenant_id = %tenant_id,
@@ -387,6 +388,7 @@ pub async fn delete_primary_pod(
     {
         // Same policy as PUT: REST still succeeds, mirror lag is
         // logged for observability and reconciled on next write.
+        crate::metrics::primary_pod_metrics::record_catalog_mirror_failure(failure.label());
         tracing::warn!(
             target = "proximadb.primary_pod.audit",
             tenant_id = %tenant_id,

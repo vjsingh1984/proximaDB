@@ -1016,6 +1016,49 @@ pub async fn insert_records(
             "At least one record is required".to_string(),
         ));
     }
+
+    // Slice 4 of tenant-pod-affinity: gate writes against the
+    // primary-pod registry BEFORE any storage work. Two outcomes:
+    //
+    // * `Allow`: either no binding for (tenant, collection) — legacy
+    //   behavior — or the binding matches this pod. Increment the
+    //   appropriate `WRITES_ALLOWED_TOTAL` counter and proceed.
+    // * `Misrouted`: a binding exists pointing elsewhere. Return 421
+    //   Misdirected Request with the target pod so the client SDK
+    //   re-routes. Continuing here would land the write in this pod's
+    //   memtable where reads on the primary pod would never find it
+    //   (the 3-stage search at services/operations/vectors/legacy.rs
+    //   :2827-2858 is local-memtable-only on stage 1).
+    match crate::cluster::primary_pod_registry::consult_for_write(
+        &state.primary_pod_registry,
+        &state.self_pod_id,
+        &tenant.tenant_id,
+        &collection,
+    ) {
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Allow => {
+            if state.primary_pod_registry.is_assigned(&tenant.tenant_id, &collection) {
+                crate::metrics::primary_pod_metrics::record_allowed_bound(&tenant.tenant_id);
+            } else {
+                crate::metrics::primary_pod_metrics::record_allowed_unbounded(&tenant.tenant_id);
+            }
+        }
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Misrouted { target_pod } => {
+            crate::metrics::primary_pod_metrics::record_misrouted(&tenant.tenant_id);
+            tracing::warn!(
+                target = "proximadb.primary_pod.misroute",
+                self_pod = %state.self_pod_id,
+                target_pod = %target_pod,
+                tenant_id = %tenant.tenant_id,
+                collection_id = %collection,
+                "v2 insert misrouted — client SDK should retry against the primary pod"
+            );
+            return Err(ApiError::Misdirected {
+                target_pod,
+                tenant_id: tenant.tenant_id.clone(),
+                collection_id: collection,
+            });
+        }
+    }
     if let Some(Extension(capability)) = capability.as_ref() {
         capability
             .ensure_record_count(request.records.len())

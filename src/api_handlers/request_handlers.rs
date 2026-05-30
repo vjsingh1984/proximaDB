@@ -3874,38 +3874,10 @@ impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
 mod explain_prefix_tests {
     use super::UnifiedHandlers;
 
-    #[test]
-    fn strip_explain_returns_none_for_plain_select() {
-        assert!(UnifiedHandlers::strip_explain_prefix("SELECT 1").is_none());
-    }
-
-    #[test]
-    fn strip_explain_returns_inner_for_bare_explain() {
-        let inner = UnifiedHandlers::strip_explain_prefix("EXPLAIN INSERT INTO t SELECT * FROM s;");
-        assert_eq!(inner, Some("INSERT INTO t SELECT * FROM s;"));
-    }
-
-    #[test]
-    fn strip_explain_handles_format_json_option() {
-        let inner = UnifiedHandlers::strip_explain_prefix(
-            "EXPLAIN (FORMAT JSON) INSERT INTO t SELECT * FROM s;",
-        );
-        assert_eq!(inner, Some("INSERT INTO t SELECT * FROM s;"));
-    }
-
-    #[test]
-    fn strip_explain_case_insensitive() {
-        let inner = UnifiedHandlers::strip_explain_prefix("explain insert into t select 1;");
-        assert_eq!(inner, Some("insert into t select 1;"));
-    }
-
-    #[test]
-    fn strip_explain_handles_multiple_options() {
-        let inner = UnifiedHandlers::strip_explain_prefix(
-            "EXPLAIN (FORMAT JSON, ANALYZE) INSERT INTO t SELECT * FROM s;",
-        );
-        assert_eq!(inner, Some("INSERT INTO t SELECT * FROM s;"));
-    }
+    // Note: 5 prior tests for `UnifiedHandlers::strip_explain_prefix`
+    // were removed alongside the function itself in commit `555ed5b2a`
+    // (clippy cleanup batch 14). `parse_explain_kind` survives and is
+    // exercised below.
 
     #[test]
     fn parse_explain_kind_detects_bare_analyze() {

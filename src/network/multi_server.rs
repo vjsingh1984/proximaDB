@@ -508,7 +508,11 @@ impl MultiServer {
                 crate::network::grpc::v2::ProximaRecordServiceImpl::new(
                     services.request_handlers.clone(),
                 )
-                .with_segment_registry(services.segment_registry.clone());
+                .with_segment_registry(services.segment_registry.clone())
+                .with_primary_pod_gate(
+                    services.primary_pod_registry.clone(),
+                    services.self_pod_id.clone(),
+                );
             let proxima_record_service = proxima_record_service_impl.into_server();
 
             // Build server with all services
@@ -927,6 +931,10 @@ impl MultiServer {
                 services.request_handlers.clone(),
             )
             .with_segment_registry(services.segment_registry.clone())
+            .with_primary_pod_gate(
+                services.primary_pod_registry.clone(),
+                services.self_pod_id.clone(),
+            )
             .into_server();
 
             // Arrow Flight service (HTTP/2-based, shares internal gRPC server)
@@ -1309,6 +1317,10 @@ impl MultiServer {
                 services.request_handlers.clone(),
             )
             .with_segment_registry(services.segment_registry.clone())
+            .with_primary_pod_gate(
+                services.primary_pod_registry.clone(),
+                services.self_pod_id.clone(),
+            )
             .into_server();
 
             // Build cluster services

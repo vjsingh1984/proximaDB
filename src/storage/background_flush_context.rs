@@ -69,9 +69,10 @@ impl Default for BackgroundFlushCompressionConfig {
 
 /// Quantization configuration for vector compression during background flush.
 ///
-/// Distinct from the canonical `proximadb_quantization_types::QuantizationConfig`;
-/// renamed from the former `QuantizationConfig` to remove the cross-module name
-/// collision (see the LLD duplication watch).
+/// Distinct from the canonical `proximadb_quantization_types::QuantizationConfig`
+/// (which models quantization type/level/asymmetry/cache): this is the flush-context
+/// shape (enabled + string type + bit width + PQ subspaces). Renamed from the former
+/// `QuantizationConfig` to remove the cross-module name collision (LLD duplication watch).
 #[derive(Debug, Clone)]
 pub struct FlushQuantizationConfig {
     pub enabled: bool,

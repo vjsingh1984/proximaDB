@@ -195,6 +195,15 @@ pub struct SharedServices {
     /// and the xCatalog backing (Slice 5).
     pub primary_pod_registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
 
+    /// This pod's identity for primary-pod write-routing decisions
+    /// (Slice 6.1). Resolved once at boot via
+    /// [`crate::cluster::primary_pod_registry::resolve_self_pod_id`]
+    /// so REST AppState and the gRPC v2 service both see the same
+    /// value — if they diverged, the gate would flag legitimate
+    /// writes as misrouted whenever one resolver path picked a
+    /// different fallback.
+    pub self_pod_id: String,
+
     /// Shared canonical WAL appender at `<data_dir>/pgwire/canonical-records.wal`.
     ///
     /// Opened once in `SharedServices::new` (when `opt_config` is provided so
@@ -450,14 +459,20 @@ impl SharedServices {
         // add the REST endpoint, the gateway router consultation,
         // and the xCatalog backing (deferred from this slice to keep
         // merge surface small while Phase 7 settles).
+        let primary_pod_persistence_mode =
+            crate::cluster::primary_pod_registry::resolve_persistence_mode();
         let primary_pod_registry = match opt_config {
             Some(cfg) => {
                 let registry_path = cfg.server.data_dir.join("primary_pods").join("registry.json");
                 info!(
-                    "📍 SharedServices: primary-pod registry persistence enabled at {}",
-                    registry_path.display()
+                    "📍 SharedServices: primary-pod registry persistence at {} (mode={})",
+                    registry_path.display(),
+                    primary_pod_persistence_mode.label()
                 );
-                crate::cluster::primary_pod_registry::new_shared_at(registry_path)
+                crate::cluster::primary_pod_registry::new_shared_at_with_mode(
+                    registry_path,
+                    primary_pod_persistence_mode,
+                )
             }
             None => crate::cluster::primary_pod_registry::new_shared(),
         };
@@ -1492,6 +1507,11 @@ impl SharedServices {
                 // REST API, gateway write router, xCatalog backing
                 // — all hold the same `Arc`.
                 primary_pod_registry,
+                // Slice 6.1: resolved once here so REST AppState and
+                // the gRPC v2 service share the identical pod
+                // identity. Pulled from `PROXIMADB_POD_ID` env var
+                // with a `"self"` fallback for single-node setups.
+                self_pod_id: crate::cluster::primary_pod_registry::resolve_self_pod_id(None),
                 // T2.3 / TD-066 production wiring: the shared canonical
                 // WAL appender opened earlier (Some when opt_config is
                 // provided). Held here so multi_server.rs can clone it

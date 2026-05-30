@@ -57,6 +57,69 @@ pub struct ProximaRecordServiceImpl {
     /// flushed to a `.pax` file and the resulting `SegmentMeta` is registered here
     /// so the Iceberg REST server can serve accurate snapshot stats.
     segment_registry: Option<Arc<crate::catalog::SegmentRegistry>>,
+    /// Slice 6.1: primary-pod write router. When `Some`, `insert_records`
+    /// consults [`crate::cluster::primary_pod_registry::consult_for_write`]
+    /// before any storage work and returns `tonic::Status::failed_precondition`
+    /// (the gRPC analog of HTTP 421) when the write belongs on a different pod.
+    /// `None` keeps the legacy "no gate" behavior for embedded / unit-test
+    /// constructions that don't carry a SharedServices instance.
+    primary_pod_gate: Option<PrimaryPodGate>,
+}
+
+/// Bundle of primary-pod gate inputs so the constructor takes one
+/// argument and the field tells a clear story. Mirrors AppState's
+/// `primary_pod_registry` + `self_pod_id` pair from the REST side.
+#[derive(Clone)]
+struct PrimaryPodGate {
+    registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+    self_pod_id: String,
+}
+
+/// Slice 6.1 testable helper. Returns `Ok(())` when the request is
+/// allowed (either gate is unconfigured or the registry decides
+/// `Allow`), or the misrouted `tonic::Status` to return verbatim
+/// from the handler. Free function rather than method so unit tests
+/// don't have to construct a full `ProximaRecordServiceImpl`.
+fn check_primary_pod_gate(
+    gate: &Option<PrimaryPodGate>,
+    tenant_id: &str,
+    collection_id: &str,
+) -> Result<(), Status> {
+    let Some(gate) = gate else {
+        return Ok(());
+    };
+    match crate::cluster::primary_pod_registry::consult_for_write(
+        &gate.registry,
+        &gate.self_pod_id,
+        tenant_id,
+        collection_id,
+    ) {
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Allow => {
+            if gate.registry.is_assigned(tenant_id, collection_id) {
+                crate::metrics::primary_pod_metrics::record_allowed_bound(tenant_id);
+            } else {
+                crate::metrics::primary_pod_metrics::record_allowed_unbounded(tenant_id);
+            }
+            Ok(())
+        }
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Misrouted { target_pod } => {
+            crate::metrics::primary_pod_metrics::record_misrouted(tenant_id);
+            tracing::warn!(
+                target = "proximadb.primary_pod.misroute",
+                self_pod = %gate.self_pod_id,
+                target_pod = %target_pod,
+                tenant_id = %tenant_id,
+                collection_id = %collection_id,
+                "gRPC v2 insert_records misrouted — client SDK should retry against the primary pod"
+            );
+            let api_err = crate::errors::ApiError::Misdirected {
+                target_pod,
+                tenant_id: tenant_id.to_string(),
+                collection_id: collection_id.to_string(),
+            };
+            Err(api_err.into())
+        }
+    }
 }
 
 /// Streaming response type for SearchStream
@@ -372,6 +435,7 @@ impl ProximaRecordServiceImpl {
         Self {
             request_handlers,
             segment_registry: None,
+            primary_pod_gate: None,
         }
     }
 
@@ -380,6 +444,25 @@ impl ProximaRecordServiceImpl {
         self.segment_registry = Some(registry);
         self
     }
+
+    /// Slice 6.1: attach the primary-pod write router. Once set,
+    /// `insert_records` consults the registry on every call and
+    /// rejects misrouted writes with `Status::failed_precondition`
+    /// before any storage work. SharedServices passes the same
+    /// `Arc<PrimaryPodRegistry>` it gives to AppState so the REST
+    /// and gRPC surfaces see identical routing decisions.
+    pub fn with_primary_pod_gate(
+        mut self,
+        registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+        self_pod_id: String,
+    ) -> Self {
+        self.primary_pod_gate = Some(PrimaryPodGate {
+            registry,
+            self_pod_id,
+        });
+        self
+    }
+
 
     /// Convert to a tonic server
     pub fn into_server(self) -> ProximaRecordServiceServer<Self> {
@@ -688,6 +771,20 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                 "InsertRecords requires INSERT or UNSPECIFIED write mode",
             ));
         }
+
+        // Slice 6.1: primary-pod write-router gate. Symmetric with the
+        // REST v2 wiring at `src/network/rest/v2/records.rs:1032`. The
+        // gate runs AFTER auth + write-mode validation (so a malformed
+        // request still gets the right error) and BEFORE the lane
+        // router / storage path (so a misroute never touches the WAL).
+        // ApiError → tonic::Status conversion at `src/errors/mod.rs:135`
+        // adds `x-primary-pod` / `x-tenant-id` / `x-collection-id`
+        // trailing metadata so SDKs can parse the redirect target.
+        check_primary_pod_gate(
+            &self.primary_pod_gate,
+            tenant_id.as_deref().unwrap_or(""),
+            &batch.collection_id,
+        )?;
 
         let record_ids: Vec<String> = batch
             .records
@@ -1966,5 +2063,88 @@ mod tests {
         assert!(DELAY_LOW_MS < DELAY_MEDIUM_MS);
         assert!(DELAY_MEDIUM_MS < DELAY_HIGH_MS);
         assert!(DELAY_HIGH_MS < DELAY_CRITICAL_MS);
+    }
+
+    // ── Slice 6.1: primary-pod gate ─────────────────────────────────
+
+    use crate::cluster::primary_pod_registry::{
+        AssignmentReason, PrimaryPodRegistry,
+    };
+
+    fn gate(registry: Arc<PrimaryPodRegistry>, self_pod_id: &str) -> Option<PrimaryPodGate> {
+        Some(PrimaryPodGate {
+            registry,
+            self_pod_id: self_pod_id.to_string(),
+        })
+    }
+
+    #[test]
+    fn gate_unconfigured_allows_writes() {
+        // Legacy / embedded mode: ProximaRecordServiceImpl::new without
+        // with_primary_pod_gate must NOT reject any write. Locks
+        // backwards-compat for paths that bypass SharedServices.
+        assert!(check_primary_pod_gate(&None, "tenant-a", "coll-1").is_ok());
+    }
+
+    #[test]
+    fn gate_allows_when_no_binding_exists() {
+        let registry = Arc::new(PrimaryPodRegistry::new());
+        let g = gate(registry, "pod-self");
+        assert!(check_primary_pod_gate(&g, "tenant-a", "coll-1").is_ok());
+    }
+
+    #[test]
+    fn gate_allows_when_binding_matches_self_pod() {
+        let registry = Arc::new(PrimaryPodRegistry::new());
+        registry.assign("tenant-a", "coll-1", "pod-self", AssignmentReason::Create);
+        let g = gate(registry, "pod-self");
+        assert!(check_primary_pod_gate(&g, "tenant-a", "coll-1").is_ok());
+    }
+
+    #[test]
+    fn gate_rejects_misrouted_write_with_failed_precondition_and_metadata() {
+        let registry = Arc::new(PrimaryPodRegistry::new());
+        registry.assign(
+            "tenant-a",
+            "coll-1",
+            "pod-other",
+            AssignmentReason::Operator,
+        );
+        let g = gate(registry, "pod-self");
+        let status = check_primary_pod_gate(&g, "tenant-a", "coll-1")
+            .expect_err("must reject misrouted write");
+
+        // Code: gRPC FailedPrecondition is the chosen analog of HTTP 421.
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+
+        // Trailing metadata: client SDKs parse these to re-route
+        // without scraping the human message. Locking each header in
+        // catches any future refactor of the ApiError → Status adapter
+        // that would silently drop one.
+        let md = status.metadata();
+        assert_eq!(md.get("x-primary-pod").unwrap().to_str().unwrap(), "pod-other");
+        assert_eq!(md.get("x-tenant-id").unwrap().to_str().unwrap(), "tenant-a");
+        assert_eq!(md.get("x-collection-id").unwrap().to_str().unwrap(), "coll-1");
+    }
+
+    #[test]
+    fn gate_scopes_per_tenant_collection_pair() {
+        // Bind (tenant-a, coll-1) elsewhere. A write to
+        // (tenant-a, coll-2) or (tenant-b, coll-1) must still pass —
+        // bindings don't bleed across the composite key.
+        let registry = Arc::new(PrimaryPodRegistry::new());
+        registry.assign(
+            "tenant-a",
+            "coll-1",
+            "pod-other",
+            AssignmentReason::Operator,
+        );
+        let g = gate(registry, "pod-self");
+
+        assert!(check_primary_pod_gate(&g, "tenant-a", "coll-2").is_ok());
+        assert!(check_primary_pod_gate(&g, "tenant-b", "coll-1").is_ok());
+        // And the original combination still rejects, to prove the
+        // first two passes aren't a global "gate always allows" bug.
+        assert!(check_primary_pod_gate(&g, "tenant-a", "coll-1").is_err());
     }
 }

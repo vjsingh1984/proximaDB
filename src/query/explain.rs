@@ -721,6 +721,13 @@ pub struct VectorHints {
     /// ADR-011 ANN filtering mode chosen by the planner: "PreFilter", "Inline", or "PostFilter".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ann_filtering_mode: Option<String>,
+    /// Estimated fraction of records matching the scalar filter that drove
+    /// ADR-011 route selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ann_filtering_selectivity: Option<f64>,
+    /// Source of the selectivity estimate, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ann_filtering_selectivity_source: Option<String>,
     /// Why the planner chose this mode (selectivity estimate, policy override, degradation).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ann_mode_reason: Option<String>,
@@ -728,6 +735,21 @@ pub struct VectorHints {
 
 impl From<&crate::services::operations::vectors::SearchPlanHints> for VectorHints {
     fn from(h: &crate::services::operations::vectors::SearchPlanHints) -> Self {
+        let ann_mode_reason = match (
+            h.ann_filtering_mode.as_deref(),
+            h.ann_filtering_selectivity,
+            h.ann_filtering_selectivity_source.as_deref(),
+        ) {
+            (Some(mode), Some(selectivity), Some(source)) => Some(format!(
+                "{mode} selected from {source} selectivity={selectivity:.6}"
+            )),
+            (Some(mode), Some(selectivity), None) => {
+                Some(format!("{mode} selected from selectivity={selectivity:.6}"))
+            }
+            (Some(mode), None, _) => Some(format!("{mode} selected without selectivity estimate")),
+            _ => None,
+        };
+
         Self {
             cache_hit: h.cache_hit,
             pruned_files: h.pruned_files,
@@ -737,6 +759,9 @@ impl From<&crate::services::operations::vectors::SearchPlanHints> for VectorHint
             progressive_stages: h.progressive_stages.clone(),
             recall_estimates: h.recall_estimates.clone(),
             ann_filtering_mode: h.ann_filtering_mode.clone(),
+            ann_filtering_selectivity: h.ann_filtering_selectivity,
+            ann_filtering_selectivity_source: h.ann_filtering_selectivity_source.clone(),
+            ann_mode_reason,
             // index_type, quantization_level, estimated_*_cost populated by engine layer
             ..Default::default()
         }
@@ -1825,6 +1850,32 @@ mod tests {
         assert!(plan.is_cross_model());
         assert_eq!(plan.optimization_rules_applied.len(), 1);
         assert_eq!(plan.parallelization_opportunities.len(), 1);
+    }
+
+    #[test]
+    fn vector_hints_from_search_plan_hints_preserves_ann_reason() {
+        let hints = crate::services::operations::vectors::SearchPlanHints {
+            ann_filtering_mode: Some("PostFilter".to_string()),
+            ann_filtering_selectivity: Some(0.9),
+            ann_filtering_selectivity_source: Some("cost_analysis".to_string()),
+            ..Default::default()
+        };
+
+        let vector_hints = VectorHints::from(&hints);
+
+        assert_eq!(
+            vector_hints.ann_filtering_mode.as_deref(),
+            Some("PostFilter")
+        );
+        assert_eq!(vector_hints.ann_filtering_selectivity, Some(0.9));
+        assert_eq!(
+            vector_hints.ann_filtering_selectivity_source.as_deref(),
+            Some("cost_analysis")
+        );
+        assert_eq!(
+            vector_hints.ann_mode_reason.as_deref(),
+            Some("PostFilter selected from cost_analysis selectivity=0.900000")
+        );
     }
 
     #[test]

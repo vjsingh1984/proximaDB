@@ -266,10 +266,7 @@ fn lower_select(
         GroupByExpr::Expressions(exprs, _) => exprs.clone(),
     };
     let has_group_by = !group_keys.is_empty();
-    let has_aggregate_in_projection = select
-        .projection
-        .iter()
-        .any(projection_contains_aggregate);
+    let has_aggregate_in_projection = select.projection.iter().any(projection_contains_aggregate);
     let has_having = select.having.is_some();
     let needs_aggregate = has_group_by || has_aggregate_in_projection || has_having;
 

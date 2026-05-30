@@ -628,6 +628,24 @@ impl Catalog for NativeCatalog {
         Ok(meta.schema)
     }
 
+    async fn set_primary_pod(
+        &self,
+        identifier: &TableIdentifier,
+        primary: Option<crate::CatalogPrimaryPod>,
+    ) -> Result<()> {
+        // Read-modify-write the per-table metadata. Mirrors the
+        // evolve_schema pattern: load (cache or disk), mutate, persist,
+        // invalidate. The `updated_at` bump matters so downstream
+        // consumers that watch the catalog cache see the new state.
+        let mut meta = self.load_table(identifier).await?;
+        meta.schema.primary_pod = primary;
+        meta.updated_at = Self::now_millis();
+        self.save_table(&meta).await?;
+        self.cache
+            .invalidate_table_in_catalog(&self.name, identifier);
+        Ok(())
+    }
+
     async fn get_schema_version(&self, identifier: &TableIdentifier) -> Result<i32> {
         let meta = self.load_table(identifier).await?;
         Ok(meta.schema.schema_version)
@@ -884,5 +902,112 @@ mod tests {
     fn test_parse_storage_url_plain_path() {
         let path = NativeCatalog::parse_storage_url("/tmp/catalog").unwrap();
         assert_eq!(path, PathBuf::from("/tmp/catalog"));
+    }
+
+    // ── Slice 5b.1: set_primary_pod (NativeCatalog override) ─────────
+    //
+    // Each test owns a fresh `TempDir` so the JSON sidecars don't
+    // collide. The setup helper also creates the namespace required by
+    // `create_table`.
+
+    async fn fresh_catalog(tmp: &tempfile::TempDir) -> NativeCatalog {
+        let config = NativeCatalogConfig {
+            storage_url: tmp.path().to_string_lossy().to_string(),
+            metadata_format: "json".into(),
+            versioned: false,
+            max_versions: 100,
+        };
+        let cache = Arc::new(crate::cache::CatalogCache::new(64, 60));
+        NativeCatalog::new("test".into(), config, cache)
+            .await
+            .expect("construct catalog")
+    }
+
+    async fn make_table(cat: &NativeCatalog, table: &str) -> TableIdentifier {
+        let ns = vec!["tenant_a".to_string()];
+        cat.create_namespace(&ns, HashMap::new())
+            .await
+            .expect("namespace");
+        let id = TableIdentifier::new(ns, table);
+        // validate_schema rejects empty-column schemas, so seed one
+        // benign Int64 column — the column choice is irrelevant to
+        // the primary_pod field under test.
+        let schema = crate::CatalogTableSchema::new(table).with_column(crate::CatalogColumn::new(
+            1,
+            "id",
+            crate::CatalogDataType::Int64,
+        ));
+        cat.create_table(&id, schema).await.expect("create table");
+        id
+    }
+
+    #[tokio::test]
+    async fn set_primary_pod_writes_field_to_schema() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+        let id = make_table(&cat, "users").await;
+
+        let pod = crate::CatalogPrimaryPod::now("pod-a", crate::CatalogPrimaryPodReason::Create);
+        cat.set_primary_pod(&id, Some(pod.clone()))
+            .await
+            .expect("set succeeds on existing table");
+
+        let read = cat.get_table(&id).await.expect("read back");
+        assert_eq!(read.primary_pod.as_ref().unwrap().pod, "pod-a");
+        assert!(matches!(
+            read.primary_pod.as_ref().unwrap().reason,
+            crate::CatalogPrimaryPodReason::Create
+        ));
+    }
+
+    #[tokio::test]
+    async fn set_primary_pod_with_none_clears_existing_binding() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+        let id = make_table(&cat, "orders").await;
+
+        let pod = crate::CatalogPrimaryPod::now("pod-b", crate::CatalogPrimaryPodReason::Operator);
+        cat.set_primary_pod(&id, Some(pod)).await.unwrap();
+        cat.set_primary_pod(&id, None).await.expect("clear");
+
+        let read = cat.get_table(&id).await.unwrap();
+        assert!(read.primary_pod.is_none(), "None must clear the field");
+    }
+
+    #[tokio::test]
+    async fn set_primary_pod_returns_err_for_unknown_table() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cat = fresh_catalog(&tmp).await;
+
+        let id = TableIdentifier::new(vec!["nope".to_string()], "ghost");
+        let pod = crate::CatalogPrimaryPod::now("pod-c", crate::CatalogPrimaryPodReason::Failover);
+        let res = cat.set_primary_pod(&id, Some(pod)).await;
+        assert!(res.is_err(), "missing table must error, got: {:?}", res);
+    }
+
+    #[tokio::test]
+    async fn set_primary_pod_persists_across_reload() {
+        // Reloading the catalog drops the in-memory cache and forces a
+        // disk read on the next get_table — verifies save_table is the
+        // real persistence path, not just a cache write.
+        let tmp = tempfile::tempdir().unwrap();
+        let id = {
+            let cat = fresh_catalog(&tmp).await;
+            let id = make_table(&cat, "events").await;
+            let pod = crate::CatalogPrimaryPod::now(
+                "pod-d",
+                crate::CatalogPrimaryPodReason::Rebalance,
+            );
+            cat.set_primary_pod(&id, Some(pod)).await.unwrap();
+            id
+        };
+
+        let cat2 = fresh_catalog(&tmp).await;
+        let read = cat2.get_table(&id).await.expect("reload table");
+        assert_eq!(read.primary_pod.as_ref().unwrap().pod, "pod-d");
+        assert!(matches!(
+            read.primary_pod.as_ref().unwrap().reason,
+            crate::CatalogPrimaryPodReason::Rebalance
+        ));
     }
 }

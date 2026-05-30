@@ -287,7 +287,7 @@ pub struct QuantizedColumnBuilder {
 ///
 /// Distinct from the canonical `proximadb_quantization_types::QuantizationConfig`;
 /// renamed from the former `QuantizationConfig` to remove the cross-module name
-/// collision (see the LLD duplication watch).
+/// collision (LLD duplication watch).
 #[derive(Debug, Clone)]
 pub struct NovaQuantizationConfig {
     pub enable_binary: bool,

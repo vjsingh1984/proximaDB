@@ -183,6 +183,9 @@ pub mod cache;
 /// Collection pin-registry observability — currently-pinned gauge per
 /// target tier + pin/unpin operation counters.
 pub mod collection_pin_metrics;
+/// Primary-pod write-router observability — counters for the
+/// gateway gate's allow/misroute decisions per tenant.
+pub mod primary_pod_metrics;
 pub mod collectors;
 pub mod compression;
 /// Prometheus bridge for `proximadb_catalog::dr_reconciler::DrMetrics`.

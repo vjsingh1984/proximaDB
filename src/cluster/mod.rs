@@ -53,6 +53,10 @@ pub mod consensus;
 pub mod distributed_ops;
 pub mod metadata_service;
 pub mod node_registry;
+/// Write-side affinity for (tenant_id, collection_id) → primary_pod
+/// bindings. Complementary to [`cache_affinity`]: durable, authoritative,
+/// drives write routing. See module doc for the read/write split.
+pub mod primary_pod_registry;
 pub mod replication;
 pub mod routing;
 pub mod shard;
@@ -67,6 +71,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
 pub use cache_affinity::{AffinityEntry, CacheAffinityRegistry};
+pub use primary_pod_registry::{
+    AssignmentReason, PrimaryPod, PrimaryPodRegistry, WriteRoutingDecision, consult_for_write,
+    resolve_self_pod_id,
+};
 pub use consensus::{ConsensusConfig, ConsensusState, RaftConsensus};
 /// Backwards-compat alias for the per-shard SearchResult re-exported from distributed_ops.
 pub use distributed_ops::ShardSearchResult as SearchResult;

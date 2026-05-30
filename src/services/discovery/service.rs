@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use super::job::{DiscoveryJob, DiscoveryJobKind};
 use super::registry::DiscoveryRegistry;
+use super::trigger::{DiscoveryTrigger, TriggerSignal};
 use crate::services::snapshot::SnapshotPublishCoordinator;
 
 /// Control-plane facade: create / inspect discovery jobs. The background
@@ -32,6 +33,18 @@ impl DiscoveryService {
     ) -> DiscoveryJob {
         self.registry
             .schedule(DiscoveryJob::new(collection_id, kind))
+    }
+
+    /// Feedback arm: turn a serving-side signal into a scheduled discovery job,
+    /// coalescing against any in-flight job of the same kind for the collection.
+    /// Signal sources (RecallProbeGate, freshness state machine, AutoML drift)
+    /// call this; returns the enqueued job, or `None` if coalesced.
+    pub fn on_signal(
+        &self,
+        collection_id: &str,
+        signal: TriggerSignal,
+    ) -> Option<DiscoveryJob> {
+        DiscoveryTrigger::new(self.registry.clone()).on_signal(collection_id, signal)
     }
 
     /// Look up a job by id.

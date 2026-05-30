@@ -507,6 +507,23 @@ pub struct CatalogTableSchema {
     #[serde(default)]
     pub branch_merge_policy: CatalogBranchMergePolicy,
 
+    /// Slice 5 of tenant-pod-affinity: the catalog-authoritative
+    /// primary pod for writes to this collection. `None` means
+    /// "unbounded" — the gateway routes by its default policy and
+    /// reads on any pod may miss the freshest writes that landed
+    /// elsewhere. When set, writes for `(tenant_id, this collection)`
+    /// MUST be served by the named pod; misrouted writes are
+    /// rejected with HTTP 421 Misdirected Request (see
+    /// `src/cluster/primary_pod_registry.rs::consult_for_write`).
+    ///
+    /// Persisted here so the binding survives process restarts and
+    /// is consistent across pods. The local in-memory
+    /// `PrimaryPodRegistry` is a write-through cache on top of this
+    /// field; in steady state the two are in sync, and on cold
+    /// start the registry hydrates from this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub primary_pod: Option<CatalogPrimaryPod>,
+
     // === Embedding-precision rollout (PR 6 of EMBEDDING_PRECISION_LLD_2026_05_22) ===
     /// Reference to the precision policy row in `embedding_precision_policy`.
     /// `None` = inherit the cluster's `GLOBAL_DEFAULT_POLICY_ID` seed.
@@ -569,6 +586,10 @@ impl Default for CatalogTableSchema {
             observability_compression: None,
             compression_stats_profiles: Vec::new(),
             branch_merge_policy: CatalogBranchMergePolicy::default(),
+            // Slice 5: no catalog-bound primary by default. Operators
+            // opt in by PUT-ing through the REST API, which writes
+            // both the in-memory registry and this catalog field.
+            primary_pod: None,
             // PR 6: inherit cluster default policy; fp32-only baseline.
             embedding_precision_policy_id: None,
             embedding_precision_policy_version: None,
@@ -676,6 +697,16 @@ impl CatalogTableSchema {
     /// Set the ADR-012 graph branch merge policy.
     pub fn with_branch_merge_policy(mut self, policy: CatalogBranchMergePolicy) -> Self {
         self.branch_merge_policy = policy;
+        self
+    }
+
+    /// Slice 5 of tenant-pod-affinity: bind this collection to a
+    /// primary pod for write routing. Pass `None` to clear an
+    /// existing binding ("unbind"). When set, writes for this
+    /// collection MUST be served by the named pod or rejected with
+    /// HTTP 421 (see `consult_for_write` in the runtime registry).
+    pub fn with_primary_pod(mut self, primary: Option<CatalogPrimaryPod>) -> Self {
+        self.primary_pod = primary;
         self
     }
 }
@@ -834,6 +865,98 @@ fn catalog_branch_merge_policy_add_wins() -> CatalogBranchMergeResolution {
 
 fn catalog_branch_merge_policy_lww_per_key() -> CatalogBranchMergeResolution {
     CatalogBranchMergeResolution::LastWriteWinsPerKey
+}
+
+/// Slice 5 of tenant-pod-affinity: catalog-authoritative primary-pod
+/// binding for a `(tenant, collection)` pair. Persisted on the
+/// owning [`CatalogTableSchema`] and consumed by the in-process
+/// [`PrimaryPodRegistry`] as the durable source of truth.
+///
+/// Why a separate catalog type (rather than re-exporting the
+/// in-process `PrimaryPod`):
+///
+/// * The catalog crate is a foundation layer — depending on the
+///   root crate's `cluster::primary_pod_registry::PrimaryPod` would
+///   invert the dependency arrow.
+/// * The on-disk encoding belongs to the catalog (`assigned_at_ms`
+///   millisecond unit matches the rest of `CatalogTableSchema`),
+///   while the in-process registry uses `assigned_at_ns` to match
+///   `SystemTime::now()` ergonomics. The conversion is one
+///   multiplication.
+/// * Decoupling means future catalog-only fields can land here
+///   without forcing the root crate to recompile.
+///
+/// Conversion shims live in the root crate where both types are in
+/// scope, mirroring the pattern used for other catalog ↔ runtime
+/// type pairs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogPrimaryPod {
+    /// Pod identifier — typically a k8s pod name like
+    /// `proximadb-write-0`. Free-form; the catalog doesn't validate
+    /// reachability or naming convention.
+    pub pod: String,
+    /// Millis since epoch when this assignment was last set.
+    /// Reassignments advance this so dashboards can show
+    /// "primary changed N seconds ago" without a separate history
+    /// table.
+    pub assigned_at_ms: i64,
+    /// Why the assignment happened. Lives as an enum so future
+    /// variants land via a compile error rather than a silent
+    /// dashboard break.
+    pub reason: CatalogPrimaryPodReason,
+}
+
+impl CatalogPrimaryPod {
+    /// Construct with current wall-clock millis. Useful at REST
+    /// PUT time where the caller doesn't carry a millisecond
+    /// timestamp around.
+    pub fn now(pod: impl Into<String>, reason: CatalogPrimaryPodReason) -> Self {
+        let assigned_at_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        Self {
+            pod: pod.into(),
+            assigned_at_ms,
+            reason,
+        }
+    }
+}
+
+/// Why a primary-pod assignment was made. Mirrors the in-process
+/// `AssignmentReason` enum one-to-one so the conversion shim is
+/// trivial. Stable lowercase labels for catalog JSON, REST payloads,
+/// and Prometheus alerts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CatalogPrimaryPodReason {
+    /// Initial assignment at collection-create time.
+    Create,
+    /// Explicit operator decision (REST PATCH or admin tool).
+    Operator,
+    /// Failover after the previous primary became unreachable.
+    Failover,
+    /// Planned rebalance — capacity / latency tuning, not a fault.
+    Rebalance,
+    /// Catalog reconciliation pulled the assignment from xCatalog
+    /// after a process restart. Used when the in-process registry
+    /// hydrates from the catalog on cold start, NOT when the
+    /// catalog itself loads from durable storage.
+    CatalogReplay,
+}
+
+impl CatalogPrimaryPodReason {
+    /// Stable lowercase label, matching the in-process enum's label
+    /// surface. Locked in by a roundtrip test in this module.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Create => "create",
+            Self::Operator => "operator",
+            Self::Failover => "failover",
+            Self::Rebalance => "rebalance",
+            Self::CatalogReplay => "catalog_replay",
+        }
+    }
 }
 
 /// xCatalog rejected codec candidate recorded from profiling.
@@ -3286,6 +3409,122 @@ mod tests {
             Some(embedding_precision_policy::PrecisionMigrationState::ShadowingTarget)
         );
     }
+
+    // ── Slice 5: primary_pod catalog field tests ────────────────────
+
+    #[test]
+    fn primary_pod_defaults_to_none_for_new_schema() {
+        // Legacy schemas + new schemas alike must default to "no
+        // binding". The gateway treats `None` as the legacy
+        // unbounded case where writes can land on any pod.
+        let schema = CatalogTableSchema::new("collection-x");
+        assert!(schema.primary_pod.is_none());
+    }
+
+    #[test]
+    fn with_primary_pod_sets_and_clears() {
+        // Builder must support both setting a binding and clearing
+        // it back to `None` — operators occasionally unbind to
+        // return a collection to default routing during planned
+        // maintenance.
+        let bound = CatalogPrimaryPod::now("pod-a", CatalogPrimaryPodReason::Create);
+        let schema = CatalogTableSchema::new("c")
+            .with_primary_pod(Some(bound.clone()));
+        assert_eq!(schema.primary_pod.as_ref().unwrap().pod, "pod-a");
+
+        let cleared = schema.with_primary_pod(None);
+        assert!(cleared.primary_pod.is_none());
+    }
+
+    #[test]
+    fn primary_pod_serde_roundtrip_preserves_all_fields() {
+        let original = CatalogPrimaryPod {
+            pod: "proximadb-write-3".to_string(),
+            assigned_at_ms: 1_711_500_000_000,
+            reason: CatalogPrimaryPodReason::Failover,
+        };
+        let json = serde_json::to_string(&original).expect("serialize");
+        let back: CatalogPrimaryPod = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back, original);
+    }
+
+    #[test]
+    fn primary_pod_absent_from_json_when_unset() {
+        // `skip_serializing_if = "Option::is_none"` matters for both
+        // backwards-compat (old readers ignore the field) and
+        // human-readable JSON dumps (no `primary_pod: null` noise on
+        // every collection).
+        let schema = CatalogTableSchema::new("c");
+        let json = serde_json::to_string(&schema).expect("serialize");
+        assert!(
+            !json.contains("primary_pod"),
+            "absent primary_pod must not appear in JSON; got: {}",
+            json
+        );
+    }
+
+    #[test]
+    fn legacy_schema_without_primary_pod_deserializes_to_none() {
+        // Old catalog records (pre-Slice-5) must deserialize cleanly.
+        // We construct a minimal JSON payload missing the field and
+        // confirm `primary_pod` defaults to `None` via #[serde(default)].
+        let minimal_json = r#"{
+            "name": "legacy_collection",
+            "columns": [],
+            "primary_key": [],
+            "indexes": [],
+            "schema_version": 1,
+            "properties": {},
+            "location": null,
+            "created_at_ms": 0,
+            "updated_at_ms": 0
+        }"#;
+        let schema: CatalogTableSchema =
+            serde_json::from_str(minimal_json).expect("legacy schema must deserialize");
+        assert!(schema.primary_pod.is_none(), "missing field → None");
+    }
+
+    #[test]
+    fn primary_pod_reason_labels_are_stable() {
+        // Operators wire dashboards against these strings. Lock them
+        // in here so a rename is caught at test time, not at
+        // 3am-page time.
+        assert_eq!(CatalogPrimaryPodReason::Create.label(), "create");
+        assert_eq!(CatalogPrimaryPodReason::Operator.label(), "operator");
+        assert_eq!(CatalogPrimaryPodReason::Failover.label(), "failover");
+        assert_eq!(CatalogPrimaryPodReason::Rebalance.label(), "rebalance");
+        assert_eq!(
+            CatalogPrimaryPodReason::CatalogReplay.label(),
+            "catalog_replay"
+        );
+    }
+
+    #[test]
+    fn primary_pod_now_uses_current_wall_clock() {
+        // Sanity check that `now()` lands somewhere recent. Use a
+        // generous lower bound (year 2024 = ~1.7e12 ms) to avoid
+        // false failures from clock skew while still catching the
+        // "we serialized a zero" regression.
+        let p = CatalogPrimaryPod::now("pod-a", CatalogPrimaryPodReason::Operator);
+        assert!(
+            p.assigned_at_ms > 1_700_000_000_000,
+            "assigned_at_ms must be recent wall-clock millis, got {}",
+            p.assigned_at_ms
+        );
+        assert_eq!(p.pod, "pod-a");
+        assert_eq!(p.reason, CatalogPrimaryPodReason::Operator);
+    }
+
+    #[test]
+    fn primary_pod_reason_serde_uses_snake_case() {
+        // REST payloads and catalog JSON both speak snake_case for
+        // operator-facing enums. Lock in the wire format so a future
+        // serde rename doesn't silently break dashboards.
+        let json = serde_json::to_string(&CatalogPrimaryPodReason::Failover).unwrap();
+        assert_eq!(json, "\"failover\"");
+        let json = serde_json::to_string(&CatalogPrimaryPodReason::CatalogReplay).unwrap();
+        assert_eq!(json, "\"catalog_replay\"");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3512,6 +3751,26 @@ pub trait Catalog: Send + Sync {
         let _ = (identifier, order);
         Err(anyhow::anyhow!(
             "sort order updates not supported by this catalog"
+        ))
+    }
+
+    // Primary-pod binding (Slice 5b.1 of tenant-pod affinity)
+    //
+    // Records which pod is the write authority for a (tenant, collection)
+    // pair. `Some(_)` binds; `None` clears. Default impl rejects so that
+    // any catalog backend not aware of primary_pod bookkeeping surfaces
+    // a clear "not supported" rather than silently dropping the field.
+    // NativeCatalog (the SharedServices default) overrides this; the
+    // lakehouse backends opt in as their write-side affinity story
+    // matures.
+    async fn set_primary_pod(
+        &self,
+        identifier: &TableIdentifier,
+        primary: Option<CatalogPrimaryPod>,
+    ) -> anyhow::Result<()> {
+        let _ = (identifier, primary);
+        Err(anyhow::anyhow!(
+            "primary_pod binding not supported by this catalog"
         ))
     }
 

@@ -28,6 +28,9 @@ pub mod observability;
 pub mod pinning;
 /// Phase 7.2.4: per-collection cache-affinity operator API.
 pub mod affinity;
+/// Slice 3 of tenant-pod-affinity: per-(tenant, collection) primary-pod
+/// operator API. Auth-gated to `SystemAdmin` or `ConfigureSystem`.
+pub mod primary_pod;
 /// REST DTOs + handler for the multi-phase rank pipeline (R-7b)
 pub mod rank;
 /// Production `HybridSearchBackend` impl backing `RankServices` retrieval (R-7c.2)

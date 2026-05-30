@@ -280,6 +280,185 @@ paths:
                 $ref: "#/components/schemas/QueryResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+  # ── Graph surface (v2) ─────────────────────────────────────────────
+  # The graph router is reused under both /api/v1/graph (legacy mount)
+  # and /api/v2 (canonical v2 mount, added 2026-05-29). SDKs should
+  # target /api/v2/graphs/* for new code; the v1 mount stays for
+  # backwards compatibility with existing clients.
+  /api/v2/graphs:
+    post:
+      tags: [Graphs]
+      operationId: createGraph
+      summary: Create a graph collection.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateGraphRequest"
+      responses:
+        "200":
+          description: Graph collection metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphCollectionResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+    get:
+      tags: [Graphs]
+      operationId: listGraphs
+      summary: List graph collections.
+      responses:
+        "200":
+          description: Graph collection listing.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListGraphsResponse"
+  /api/v2/graphs/{graph_id}:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    get:
+      tags: [Graphs]
+      operationId: getGraph
+      summary: Get a graph collection by id.
+      responses:
+        "200":
+          description: Graph collection metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphCollectionResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Graphs]
+      operationId: deleteGraph
+      summary: Delete a graph collection.
+      responses:
+        "200":
+          description: Deletion acknowledged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteGraphResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v2/graphs/{graph_id}/nodes:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    post:
+      tags: [Graphs]
+      operationId: createNode
+      summary: Create a node in a graph.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateNodeRequest"
+      responses:
+        "200":
+          description: Created node.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v2/graphs/{graph_id}/nodes/{node_id}:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+      - $ref: "#/components/parameters/NodeId"
+    get:
+      tags: [Graphs]
+      operationId: getNode
+      summary: Get a node by id.
+      responses:
+        "200":
+          description: Node payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NodeResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Graphs]
+      operationId: deleteNode
+      summary: Delete a node by id.
+      responses:
+        "200":
+          description: Deletion acknowledged.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteNodeResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v2/graphs/{graph_id}/edges:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    post:
+      tags: [Graphs]
+      operationId: createEdge
+      summary: Create an edge in a graph.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEdgeRequest"
+      responses:
+        "200":
+          description: Created edge.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EdgeResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v2/graphs/{graph_id}/traverse:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    post:
+      tags: [Graphs]
+      operationId: traverseGraph
+      summary: Traverse a graph from a start node.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TraverseRequest"
+      responses:
+        "200":
+          description: Traversal result.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TraverseResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /api/v2/graphs/{graph_id}/stats:
+    parameters:
+      - $ref: "#/components/parameters/GraphId"
+    get:
+      tags: [Graphs]
+      operationId: getGraphStats
+      summary: Get graph statistics.
+      responses:
+        "200":
+          description: Graph statistics.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GraphStatsResponse"
 components:
   securitySchemes:
     bearerAuth:
@@ -296,6 +475,20 @@ components:
         minLength: 1
     RecordId:
       name: record_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    GraphId:
+      name: graph_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+    NodeId:
+      name: node_id
       in: path
       required: true
       schema:
@@ -849,3 +1042,213 @@ components:
           type: string
         code:
           type: string
+    # ── Graph schemas (v2) ──────────────────────────────────────────
+    CreateGraphRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+          nullable: true
+        engine:
+          type: string
+          nullable: true
+          description: |
+            Optional engine hint (orion, pulsar, quasar). Server picks a
+            default when omitted.
+        directed:
+          type: boolean
+          default: true
+        properties:
+          type: object
+          additionalProperties: true
+          nullable: true
+    GraphCollectionResponse:
+      type: object
+      additionalProperties: true
+      required: [name]
+      properties:
+        name:
+          type: string
+        engine:
+          type: string
+          nullable: true
+        directed:
+          type: boolean
+          nullable: true
+        node_count:
+          type: integer
+          nullable: true
+        edge_count:
+          type: integer
+          nullable: true
+    ListGraphsResponse:
+      type: object
+      required: [graphs]
+      properties:
+        graphs:
+          type: array
+          items:
+            $ref: "#/components/schemas/GraphCollectionResponse"
+        count:
+          type: integer
+          nullable: true
+    DeleteGraphResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        deleted:
+          type: boolean
+        name:
+          type: string
+    CreateNodeRequest:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+          minLength: 1
+        labels:
+          type: array
+          nullable: true
+          items:
+            type: string
+        properties:
+          type: object
+          additionalProperties: true
+          nullable: true
+        vector:
+          type: array
+          nullable: true
+          items:
+            type: number
+            format: float
+    NodeResponse:
+      type: object
+      additionalProperties: true
+      required: [id]
+      properties:
+        id:
+          type: string
+        labels:
+          type: array
+          nullable: true
+          items:
+            type: string
+        properties:
+          type: object
+          additionalProperties: true
+          nullable: true
+    DeleteNodeResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        deleted:
+          type: boolean
+        id:
+          type: string
+    CreateEdgeRequest:
+      type: object
+      required: [source, target]
+      properties:
+        id:
+          type: string
+          nullable: true
+        source:
+          type: string
+        target:
+          type: string
+        edge_type:
+          type: string
+          nullable: true
+        properties:
+          type: object
+          additionalProperties: true
+          nullable: true
+        weight:
+          type: number
+          format: double
+          nullable: true
+    EdgeResponse:
+      type: object
+      additionalProperties: true
+      required: [source, target]
+      properties:
+        id:
+          type: string
+          nullable: true
+        source:
+          type: string
+        target:
+          type: string
+        edge_type:
+          type: string
+          nullable: true
+        properties:
+          type: object
+          additionalProperties: true
+          nullable: true
+        weight:
+          type: number
+          format: double
+          nullable: true
+    TraverseRequest:
+      type: object
+      required: [start_node_id]
+      properties:
+        start_node_id:
+          type: string
+        algorithm:
+          type: string
+          nullable: true
+          description: bfs | dfs | shortest_path
+        max_depth:
+          type: integer
+          nullable: true
+          minimum: 1
+        max_nodes:
+          type: integer
+          nullable: true
+          minimum: 1
+        edge_types:
+          type: array
+          nullable: true
+          items:
+            type: string
+        direction:
+          type: string
+          nullable: true
+          description: outgoing | incoming | both
+    TraverseResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/NodeResponse"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/EdgeResponse"
+        paths:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+    GraphStatsResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        node_count:
+          type: integer
+        edge_count:
+          type: integer
+        density:
+          type: number
+          format: double
+          nullable: true
