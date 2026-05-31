@@ -297,6 +297,19 @@ grep -A1 "AXIS vs force_exact" /tmp/bench_output.txt | tail -1
   m-tier bonus; very different distributions (e.g. heavily clustered
   vs uniform) may see ±10% drift from the predicted recall.
 
+* **m=48 build cost is significant**: ~40 min for 100K vectors at
+  m=48 on a single dev machine (vs ~5 min at m=32). A `/recluster`
+  on a collection sized for `recall_target ≥ 0.97` will block on
+  CPU for that duration. Time the call during a low-traffic window
+  if the collection is heavily queried. The new graph is published
+  via atomic swap at the end — readers see the old graph until then.
+
+* **Preliminary m=48 sweep finding** (in flight, cell-1 of 10):
+  ef=400 at m=48 delivered recall=0.995 — significantly higher
+  than the advisor's prediction of 0.975 at ef=568. The advisor
+  appears to **over-provision** at m=48; expect a follow-up
+  recalibration once the full sweep lands.
+
 * `target_vector_count:` defaults to 100K. A collection projected to
   grow to 10M without setting the tag will get under-sized initial
   params; the drift sweeper will surface the gap within minutes and
