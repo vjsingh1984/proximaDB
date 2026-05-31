@@ -127,6 +127,26 @@ pub struct UnifiedIvfConfig {
     pub posting_list_config: PostingListConfig,
 }
 
+/// Env knob (TD-087 / F2 cold path) gating the 1-bit binary tier. Off by default
+/// so existing deployments are unchanged; when enabled, `add_vector` populates
+/// `binary_codes` and the gated binary-first two-stage route becomes reachable
+/// (the `RecallProbeGate` still decides whether it actually serves). Accepts
+/// `1`/`true`/`yes`/`on` (case-insensitive); anything else is off.
+pub const BINARY_TIER_ENV: &str = "PROXIMADB_IVF_BINARY_TIER";
+
+/// Resolve the binary-tier toggle from [`BINARY_TIER_ENV`], else `false`.
+pub fn binary_tier_enabled_from_env() -> bool {
+    parse_binary_tier_enabled(std::env::var(BINARY_TIER_ENV).ok())
+}
+
+/// Pure parse of the binary-tier toggle (testable without touching the env).
+fn parse_binary_tier_enabled(raw: Option<String>) -> bool {
+    matches!(
+        raw.as_deref().map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
 impl Default for UnifiedIvfConfig {
     fn default() -> Self {
         Self {
@@ -137,7 +157,8 @@ impl Default for UnifiedIvfConfig {
             quantization_bits: 8,
             use_pq: false,
             pq_subspaces: 8,
-            use_binary: false,
+            // TD-087 / F2: opt-in via env; default deployments stay binary-tier-off.
+            use_binary: binary_tier_enabled_from_env(),
             clustering_method: IvfClusteringMethod::default(),
             train_on_insert: false,
             min_train_size: 1000,
@@ -2172,6 +2193,20 @@ mod tests {
     use super::{IvfClusteringMethod, PartitionedKey};
     use crate::compute::distance_computation::DistanceMetric;
     use crate::index::axis::*;
+
+    #[test]
+    fn binary_tier_env_parsing() {
+        use super::parse_binary_tier_enabled;
+        // Truthy values (case- and whitespace-insensitive).
+        for v in ["1", "true", "TRUE", " yes ", "On"] {
+            assert!(parse_binary_tier_enabled(Some(v.to_string())), "{v:?} should enable");
+        }
+        // Everything else is off — including unset, empty, and stray values.
+        for v in ["0", "false", "no", "off", "", "2", "enabled"] {
+            assert!(!parse_binary_tier_enabled(Some(v.to_string())), "{v:?} should NOT enable");
+        }
+        assert!(!parse_binary_tier_enabled(None), "unset => off (default unchanged)");
+    }
 
     #[tokio::test]
     async fn test_unified_ivf_basic() {
