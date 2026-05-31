@@ -892,6 +892,29 @@ pub struct RecallDriftHealth {
     /// `wired = false`. Compare with `baseline_params` to see
     /// exactly which knob drifted.
     pub current_params: Option<RecallAdvisedParams>,
+    /// Operator-facing **next-step pointer**. One of:
+    ///
+    /// * `"none"` — no drift, no action.
+    /// * `"call_recall_tune"` — `ef_search_only` drift; POST
+    ///   `/api/v2/_diagnostics/collections/:id/recall-tune` resolves
+    ///   in-place at zero rebuild cost. (The RecallDriftSweeper
+    ///   already does this automatically every 5 min by default;
+    ///   the action is the explicit knob for operators who want
+    ///   to drive it sooner.)
+    /// * `"call_recluster"` — `rebuild_required` drift; POST
+    ///   `/api/v2/_diagnostics/collections/:id/recluster` to
+    ///   trigger the recall-aware HNSW rebuild. This path is **not**
+    ///   automated — the rebuild reads every record and consumes
+    ///   minutes of CPU + memory, so an operator drives it.
+    /// * `"set_recall_target_tag"` — collection has no
+    ///   `recall_target:` tag; the adaptive stack is dormant.
+    ///   Add the tag (e.g. `recall_target:0.95`) and the next
+    ///   create-collection / drift sweep will start populating.
+    ///
+    /// The literals are stable identifiers — dashboard / runbook
+    /// templates can switch on them without parsing the human
+    /// `summary`.
+    pub recommended_action: &'static str,
 }
 
 /// Snapshot of `(m, ef_construction, ef_search)` exposed on the
@@ -919,7 +942,20 @@ impl RecallDriftHealth {
             summary: String::new(),
             baseline_params: None,
             current_params: None,
+            recommended_action: "set_recall_target_tag",
         }
+    }
+}
+
+/// Map a drift `kind` string to the operator-facing next-step
+/// pointer. Shared by route-health and recall-tune so both surfaces
+/// agree on the recommended path.
+pub(super) fn recommended_action_for_kind(kind: &str) -> &'static str {
+    match kind {
+        "none" => "none",
+        "ef_search_only" => "call_recall_tune",
+        "rebuild_required" => "call_recluster",
+        _ => "set_recall_target_tag",
     }
 }
 
@@ -1567,6 +1603,7 @@ pub async fn get_collection_route_health_v2(
             summary: report.summary,
             baseline_params,
             current_params,
+            recommended_action: recommended_action_for_kind(kind),
         };
         crate::metrics::recall_drift_metrics::record_recall_drift_observation(
             &collection_id_for_discovery,
@@ -1810,6 +1847,7 @@ pub async fn post_collection_recall_tune_v2(
             ef_construction: drift.current_params.ef_construction,
             ef_search: drift.current_params.ef_search,
         }),
+        recommended_action: recommended_action_for_kind(kind_str),
     };
     crate::metrics::recall_drift_metrics::record_recall_drift_observation(&collection_id, kind_str);
 
@@ -2816,6 +2854,7 @@ mod tests {
                 ef_construction: 256,
                 ef_search: 622,
             }),
+            recommended_action: "call_recall_tune",
         };
         let v = serde_json::to_value(&h).unwrap();
         assert_eq!(v["baseline_params"]["m"], 32);
@@ -2825,6 +2864,42 @@ mod tests {
         assert_eq!(v["current_params"]["ef_search"], 622);
         // The ef_search delta is the actionable signal — operators
         // can compute it inline (409 → 622) without a second call.
+    }
+
+    #[test]
+    fn recommended_action_pins_kind_to_next_step() {
+        // Stable mapping — dashboard / runbook templates can
+        // switch on these literals.
+        assert_eq!(recommended_action_for_kind("none"), "none");
+        assert_eq!(
+            recommended_action_for_kind("ef_search_only"),
+            "call_recall_tune"
+        );
+        assert_eq!(
+            recommended_action_for_kind("rebuild_required"),
+            "call_recluster"
+        );
+        // Anything else (including "unwired") points operators
+        // back to the entry-point — set the tag.
+        assert_eq!(
+            recommended_action_for_kind("unwired"),
+            "set_recall_target_tag"
+        );
+        assert_eq!(
+            recommended_action_for_kind("garbage_value"),
+            "set_recall_target_tag"
+        );
+    }
+
+    #[test]
+    fn recall_drift_unwired_recommends_setting_tag() {
+        // Default unwired() must carry the "set the tag" hint
+        // so freshly-created collections without a recall_target:
+        // tag get a clear next step on /route-health.
+        let h = RecallDriftHealth::unwired();
+        assert_eq!(h.recommended_action, "set_recall_target_tag");
+        let v = serde_json::to_value(&h).unwrap();
+        assert_eq!(v["recommended_action"], "set_recall_target_tag");
     }
 
     #[test]
@@ -2849,6 +2924,7 @@ mod tests {
                 summary: "test".to_string(),
                 baseline_params: None,
                 current_params: None,
+                recommended_action: recommended_action_for_kind(kind),
             };
             let v = serde_json::to_value(&h).unwrap();
             assert_eq!(v["kind"], kind);
