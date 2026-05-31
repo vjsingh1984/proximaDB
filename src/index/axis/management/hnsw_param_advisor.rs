@@ -53,22 +53,19 @@
 //!    ```
 //!
 //!    `recall_factor(r)` is a small lookup table calibrated against
-//!    the in-repo matrix bench: anchor point is
-//!    `N=100K, k=10, m=16, ef=100, cosine → recall=0.575`. From
-//!    that pivot we project to other recall targets using the
-//!    exponential recall model
-//!    `1 - recall ≈ exp(-c · factor)`, giving:
+//!    a direct m=32 sweep at N=100K, cosine, k=10:
 //!
-//!    | recall_target | factor |
-//!    |---------------|--------|
-//!    | 0.80          | 0.14   |
-//!    | 0.85          | 0.20   |
-//!    | 0.90          | 0.26   |
-//!    | 0.92          | 0.30   |
-//!    | 0.95          | 0.37   |
-//!    | 0.97          | 0.44   |
-//!    | 0.99          | 0.55   |
-//!    | 0.995         | 0.63   |
+//!    | recall_target | factor | predicted ef@100K |
+//!    |---------------|--------|-------------------|
+//!    | 0.75          | 0.12   | 131               |
+//!    | 0.80          | 0.14   | 153               |
+//!    | 0.85          | 0.16   | 175               |
+//!    | 0.90          | 0.18   | 197               |
+//!    | 0.92          | 0.25   | 273               |
+//!    | 0.95          | 0.37   | 405               |
+//!    | 0.975         | 0.55   | 602               |
+//!    | 0.99          | 0.82   | 898               |
+//!    | 0.995         | 1.10   | 1204              |
 //!
 //!    The 2048 ceiling exists because beyond that point, an exact
 //!    flat scan with SIMD typically wins on both latency and recall.
@@ -111,6 +108,24 @@
 //! response: a caller asking for `recall_target=0.95` lands on
 //! `m=32` (rebuild-required) rather than getting an inflated ef
 //! that won't deliver.
+//!
+//! A follow-up m=32 sweep at the same N + metric confirmed the
+//! advisor's tier promotion is the right call:
+//!
+//! | ef   | m=16 recall | m=32 recall |
+//! |------|-------------|-------------|
+//! | 200  | 0.575       | 0.900       |
+//! | 400  | (sat)       | 0.950       |
+//! | 600  | (sat)       | 0.975       |
+//! | 900  | (sat)       | 0.990       |
+//!
+//! Two consequences for the heuristic:
+//! 1. **m-tier boundaries tightened** — any recall_target ≥ 0.85
+//!    routes to m=32 (was 0.92). m=16 simply can't deliver
+//!    recall ≥ 0.85 at any ef.
+//! 2. **recall_factor recalibrated** from the m=32 data points,
+//!    fixing the prior table's under-prediction at the high-recall
+//!    tail (0.97/0.99 needed 50–80% more ef than predicted).
 //!
 //! **Implication for hot-swap drift**: the
 //! [`crate::index::axis::management::DriftKind::EfSearchOnly`] path
@@ -182,9 +197,15 @@ pub fn advise_hnsw_params(input: HnswSizingInput) -> HnswSizingOutput {
     let r = input.recall_target.clamp(0.50, 0.999);
 
     // (1) m — picked by recall tier, with high-dim bonus.
-    let mut m: u32 = if r < 0.85 {
+    // Tier boundaries tightened after the 100K sweeps measured the
+    // per-m graph-quality ceilings: m=16 plateaus around recall
+    // ~0.78 at high ef, so any caller asking for r ≥ 0.85 must
+    // route to m=32 (which empirically reaches 0.95 at ef≈400 and
+    // 0.99 at ef≈900). See module docs "Empirically observed"
+    // section + the m=32 sweep table.
+    let mut m: u32 = if r < 0.75 {
         8
-    } else if r < 0.92 {
+    } else if r < 0.85 {
         16
     } else if r < 0.97 {
         32
@@ -246,26 +267,39 @@ fn recall_factor(target: f32) -> f64 {
     // Piecewise-linear interpolation between calibrated points keeps
     // the formula monotonic and avoids unrealistic jumps when a
     // caller asks for an in-between recall like 0.93.
-    // Calibrated against the in-repo matrix bench. Anchor: N=100K,
-    // k=10, ef=100, cosine → recall=0.575. With raw_ef = k *
-    // log2(N) * log2(N/1000) * factor = 10 * 16.6 * 6.6 * factor,
-    // that anchor implies factor(0.575) ≈ 0.091. The rest of the
-    // table follows from the exponential recall model
-    //   1 - recall = exp(-c · factor)
-    //   factor(r) = factor(0.575) · ln(1-r) / ln(1-0.575)
-    // Verification: at N=100K → ef ≈ {219, 350, 537} for r ∈
-    // {0.85, 0.95, 0.99}; at N=10K → ef ≈ {88, 140, 215} for the
-    // same targets — consistent with the matrix bench's observed
-    // recall ≈ 0.78 at ef=100, N=10K.
+    // Recalibrated against the m=32 sweep at N=100K, cosine:
+    //   ef=200 → recall=0.900
+    //   ef=400 → recall=0.950   ← spot-on with the prior table
+    //   ef=600 → recall=0.975
+    //   ef=900 → recall=0.990
+    //
+    // With raw_ef = k · log2(N) · log2(N/1000) · factor at
+    // N=100K, k=10, the multiplier is 10·16.6·6.6 ≈ 1095. The
+    // observed factors invert to:
+    //   factor(0.90) = 200/1095 ≈ 0.18
+    //   factor(0.95) = 400/1095 ≈ 0.37
+    //   factor(0.975) = 600/1095 ≈ 0.55
+    //   factor(0.99) = 900/1095 ≈ 0.82
+    //
+    // The pre-recalibration table had 0.97→0.44 / 0.99→0.55 which
+    // under-predicted the ef needed at very high recall (operators
+    // would get 0.95 instead of 0.99). The new table extrapolates
+    // 0.995→1.10 from the same exponential curve.
+    //
+    // The low-recall tail (≤0.85) is held at conservative values
+    // because m=16 is the active tier there and the m=16 graph
+    // saturates around recall=0.78 regardless of ef — the
+    // recall_factor is mostly notional for that range.
     const TABLE: &[(f32, f64)] = &[
+        (0.75, 0.12),
         (0.80, 0.14),
-        (0.85, 0.20),
-        (0.90, 0.26),
-        (0.92, 0.30),
+        (0.85, 0.16),
+        (0.90, 0.18),
+        (0.92, 0.25),
         (0.95, 0.37),
-        (0.97, 0.44),
-        (0.99, 0.55),
-        (0.995, 0.63),
+        (0.975, 0.55),
+        (0.99, 0.82),
+        (0.995, 1.10),
     ];
     if target <= TABLE[0].0 {
         return TABLE[0].1;
@@ -301,12 +335,19 @@ mod tests {
 
     #[test]
     fn m_grows_with_recall_target() {
+        // Post-recalibration tier boundaries:
+        //   r < 0.75 → m=8
+        //   0.75 ≤ r < 0.85 → m=16  (ceiling around 0.78 per data)
+        //   0.85 ≤ r < 0.97 → m=32
+        //   r ≥ 0.97 → m=48
+        let very_lo = advise_hnsw_params(cosine_in(10_000, 10, 0.70));
         let lo = advise_hnsw_params(cosine_in(10_000, 10, 0.80));
         let mid = advise_hnsw_params(cosine_in(10_000, 10, 0.90));
         let hi = advise_hnsw_params(cosine_in(10_000, 10, 0.95));
         let max = advise_hnsw_params(cosine_in(10_000, 10, 0.99));
-        assert_eq!(lo.m, 8);
-        assert_eq!(mid.m, 16);
+        assert_eq!(very_lo.m, 8);
+        assert_eq!(lo.m, 16);
+        assert_eq!(mid.m, 32);
         assert_eq!(hi.m, 32);
         assert_eq!(max.m, 48);
     }
@@ -322,7 +363,7 @@ mod tests {
 
     #[test]
     fn ef_construction_is_max_of_100_and_8m() {
-        let small_m = advise_hnsw_params(cosine_in(10_000, 10, 0.80)); // m=8
+        let small_m = advise_hnsw_params(cosine_in(10_000, 10, 0.70)); // m=8
         let big_m = advise_hnsw_params(cosine_in(10_000, 10, 0.99)); // m=48
         assert_eq!(small_m.ef_construction, 100); // max(100, 8*8=64)
         assert_eq!(big_m.ef_construction, 384); // max(100, 8*48=384)
@@ -393,22 +434,20 @@ mod tests {
 
     #[test]
     fn matches_observed_baseline() {
-        // Pin three points from the in-repo matrix bench. These are
-        // the values the recall_factor table was calibrated against;
-        // if someone edits the table the table-vs-formula contract
-        // is what this test guards.
+        // Pinned against the m=32 100K sweep — the recall_factor
+        // table is calibrated to match the observed (ef → recall)
+        // curve at the empirically-measured tier:
         //
-        // Anchor: N=100K, k=10, m=16, dim=128, cosine, ef=100 →
-        // recall=0.575 (observed). Using the exponential model
-        // 1-r = exp(-c·factor) and projecting to higher recall:
+        //   ef=200 → recall=0.900  (advisor returns ~175)
+        //   ef=400 → recall=0.950  (advisor returns ~405)  ← anchor
+        //   ef=600 → recall=0.975  (advisor returns ~602)
+        //   ef=900 → recall=0.990  (advisor returns ~898)
         //
-        //   r=0.85 → ef ≈ 219    (acceptable: 170-280)
-        //   r=0.95 → ef ≈ 405    (acceptable: 320-490)
-        //   r=0.99 → ef ≈ 603    (acceptable: 480-730)
+        // Allowed bands are ±20 % of the predicted ef.
         let out_85 = advise_hnsw_params(cosine_in(100_000, 10, 0.85));
         assert!(
-            (170..=280).contains(&out_85.ef_search),
-            "ef@0.85/100K drifted off baseline: got {} (expected 170-280)",
+            (140..=220).contains(&out_85.ef_search),
+            "ef@0.85/100K drifted off baseline: got {} (expected 140-220)",
             out_85.ef_search
         );
 
@@ -421,8 +460,8 @@ mod tests {
 
         let out_99 = advise_hnsw_params(cosine_in(100_000, 10, 0.99));
         assert!(
-            (480..=730).contains(&out_99.ef_search),
-            "ef@0.99/100K drifted off baseline: got {} (expected 480-730)",
+            (720..=1080).contains(&out_99.ef_search),
+            "ef@0.99/100K drifted off baseline: got {} (expected 720-1080)",
             out_99.ef_search
         );
 
