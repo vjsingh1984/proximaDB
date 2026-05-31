@@ -34,7 +34,7 @@ This audit complements (does not replace) `link:DOCUMENTATION_CONSOLIDATION_AND_
 ** **N/A** — convention/index doc, no code expected.
 * **Cluster** — semantic grouping for consolidation review (see <<consolidation-clusters>>).
 
-== docs/12-design top-level (23 files)
+== docs/12-design top-level (28 files)
 
 [cols="3,1,1,1,3", options="header"]
 |===
@@ -172,16 +172,46 @@ This audit complements (does not replace) `link:DOCUMENTATION_CONSOLIDATION_AND_
 | Search
 | TD-064 active blueprint. ADR-011 policy and HNSW predicate primitive exist, but metadata predicates are still being wired into record-aware candidate generation and EXPLAIN fallback disclosure.
 
+| TURBOQUANT_HLD_2026_05_30.adoc
+| Pending
+| NOT_WIRED
+| Quantization
+| Data-oblivious vector quantizer + in-kernel allowlist HLD. Paired with TURBOQUANT_LLD and ADR-021. P1-P9 phased implementation tracked in the LLD's Implementation Status table. Gated by `experimental-turboquant` feature flag.
+
+| TURBOQUANT_LLD_2026_05_30.adoc
+| Pending
+| NOT_WIRED
+| Quantization
+| Byte-exact `.tq` wire format, locked type signatures (`QuantizationLevel::TurboQuant`, `TurboQuantVectorData`, `CandidateMaskSet`), per-phase Implementation Status table updated by each implementation session.
+
 | VECTOR_OBJECT_ECONOMY_ROUTE_HLD_LLD_2026_05_27.adoc
 | Active
 | WIRED
 | Storage
 | Object-storage vector economics blueprint. SST/HELIX centroid block pruning, cache-affinity routing, cataloged vector access-method projections. Governs vector route optimization for cloud-cost competition.
+
+| SYSTEM_MAP_2026_05_30.adoc
+| Active
+| N/A
+| Atlas
+| **Apex single-pane-of-glass index** (2026-05-30). Recursive whole-system map (workspace layers → src modules → engines → write/read paths → facade→authority convergence). Subordinates the three prior maps (ARCHITECTURE_ATLAS, MODULE_COMPONENT_LLD, concepts/architecture) as feeders. New whole-system diagrams go here, not in a 4th map.
+
+| AGENT_MEMORY_LAYER_HLD_2026_05_30.adoc
+| Pending
+| NOT_WIRED
+| Agentic
+| Agent-memory layer HLD. Paired with ADR-022. Capability-to-primitive mapping (AQL/RGL/RERANK/fusion/`memory_type`/pgvector), memory write+read path diagrams, phased plan TD-100…TD-103. mem0/agentmemory positioned as consumers.
+
+| CONVERGENCE_AUDIT_2026_05_30.adoc
+| Active
+| N/A
+| Convention
+| Live divergent-seam catalog (S1 Phase 9 extraction, S2 gRPC shims, S3 proto-v1 mirrors, S4 config scatter, S6 catalog shims) + by-design separations + the **Convergence Gate** governance rule. Reconcile work queued as TD-104…TD-108.
 |===
 
-== docs/12-design/adr (21 ADRs)
+== docs/12-design/adr (23 ADRs)
 
-All ADRs are **Accepted**. Wiring breakdown:
+20 ADRs **Accepted**, 2 **Proposed** (ADR-021 TurboQuant, ADR-022 Agent Memory Layer — both pending implementation). Wiring breakdown:
 
 [cols="1,3,1,3,3", options="header"]
 |===
@@ -207,9 +237,11 @@ All ADRs are **Accepted**. Wiring breakdown:
 | 018 | pgwire/SQL Parity | **PARTIAL** | Phase 1 done; Phase 2 in flight; Phase 3 planned | ORDER BY single-col + IF EXISTS still pending.
 | 019 | Relational Query Architecture | WIRED (infrastructure) | 6 crates: `proximadb-relational-{algebra,engine,executor,frontend,planner,reader}` (9,817 LOC) | **Re-audit 2026-05-26**: original audit said "architecture sketched; executor incomplete" — that was conservative. All 6 layer crates are landed and substantive. Specific operator/access-path gaps may remain (audit didn't enumerate at operator granularity); the L1-L5 infrastructure itself is real. ADR-018 governs the pgwire-front portion of this — see its PARTIAL Phase 2/3 note for the remaining surface gap.
 | 020 | Canonical WAL Authority Model | WIRED (T2.2 default-enable landed; T2.3+ deferred) | `Cargo.toml:464` default features include `canonical-document-store`; per-TD decisions in ADR govern TD-065/066/067/068 | **Landed 2026-05-26**: Tier 2 of pre-release plan. TD-065 Resolved via default-enable; TD-066/067/068 resolved-by-decision with implementation deferred to follow-up sessions per the ADR's per-TD remediation. Recovery semantics now uniform across modalities (single contract).
+| 021 | TurboQuant Quantizer + In-Kernel Allowlist | NOT_WIRED (Proposed) | `crates/modalities/proximadb-vector/src/quantization/` (target); `src/core/search/filter_contract.rs` (target) | **Proposed 2026-05-30**: data-oblivious quantizer + packed-bitmask CandidateSet. Paired with `TURBOQUANT_HLD_2026_05_30` and `TURBOQUANT_LLD_2026_05_30`. P1-P9 phased; gated by `experimental-turboquant`. Promotion to Accepted gated on P9 recall validation.
+| 022 | Agent Memory Layer | NOT_WIRED (Proposed) | `src/query/aql/`, `src/graph/rag/`, `crates/modalities/proximadb-rank-*`, `ProximaRecord.memory_type` (reuse targets) | **Proposed 2026-05-30**: native agent-memory facade reusing AQL/RGL/RERANK/fusion/`memory_type`; mem0 + agentmemory as compatible consumers (pgwire 5433 / VectorStoreBase). Paired with `AGENT_MEMORY_LAYER_HLD_2026_05_30`. Phased TD-100…TD-103; Phase-6 gates TD-052/053/054.
 |===
 
-**ADR wiring summary (after TD-064 re-audit 2026-05-27)**: 21 ADRs total — 17 fully WIRED, 3 PARTIAL (011 filtered-ANN metadata predicate bridge incomplete; 012 graph-branch-merge logic absent; 018 pgwire/SQL Phase 2/3 pending), 1 Tier-2 deferred (020 canonical WAL authority default-enabled; per-callsite cleanup deferred per ADR decision). Earlier re-audit upgraded ADR-007 + ADR-019 from PARTIAL → WIRED. No Proposed, Rejected, or Superseded ADRs.
+**ADR wiring summary (after ADR-021 proposal 2026-05-30)**: 22 ADRs total — 17 fully WIRED, 3 PARTIAL (011 filtered-ANN metadata predicate bridge incomplete; 012 graph-branch-merge logic absent; 018 pgwire/SQL Phase 2/3 pending), 1 Tier-2 deferred (020 canonical WAL authority default-enabled; per-callsite cleanup deferred per ADR decision), 1 Proposed (021 TurboQuant — pending P1+ implementation). Earlier re-audit upgraded ADR-007 + ADR-019 from PARTIAL → WIRED. No Rejected or Superseded ADRs.
 
 [[consolidation-clusters]]
 == Consolidation clusters
