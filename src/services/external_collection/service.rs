@@ -329,6 +329,16 @@ impl ExternalCollectionService {
             .unwrap_or(false)
     }
 
+    /// Idempotently build the BM25 fulltext index for `spec`. No-op when
+    /// it already exists — survives restarts where the in-memory map
+    /// dropped but the source data is still on disk.
+    fn ensure_fulltext_index(&self, spec: &ExternalCollectionSpec) -> Result<()> {
+        if self.has_fulltext_index(&spec.name) {
+            return Ok(());
+        }
+        self.build_fulltext_index(spec)
+    }
+
     /// Register the IVF routing strategy so `AxisManager::query` routes this
     /// collection to its (already-built) IVF index. The nlist/nprobe here are
     /// routing hints; the served index keeps the parameters it was built with.
@@ -390,6 +400,15 @@ impl ExternalCollectionService {
         // Oversample each side so fusion has overlap to work with.
         let pool = (k * HYBRID_POOL_FACTOR).max(k);
         let vector_hits = self.vector_hits(&ec, query, pool).await?;
+
+        // Lazily (re)build the BM25 index when a text query is supplied and the
+        // in-memory index is absent — e.g. after a restart, where the registry +
+        // the persisted IVF survive but the in-memory BM25 does not. Rebuilt from
+        // the (un-copied) source on the first hybrid query, mirroring the IVF
+        // load-on-demand path.
+        if text_query.as_deref().map(|t| !t.trim().is_empty()).unwrap_or(false) {
+            self.ensure_fulltext_index(&ec.spec)?;
+        }
 
         // Fuse only with a non-empty text query AND a built BM25 index; otherwise
         // return vector-only (current behaviour).
@@ -954,6 +973,43 @@ mod tests {
         // Hits still carry federated props.
         let row7 = hybrid.iter().find(|h| h.id == "row-7").unwrap();
         assert!(row7.record.props.contains_key("text"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn hybrid_search_lazily_rebuilds_bm25_after_restart() {
+        let path = fixture_path();
+        write_meta_fixture(&path, 20, 20);
+        let cat = catalog_manager_with_default().await;
+        let registry = Arc::new(ExternalCollectionRegistry::new());
+        let axis = axis_manager().await;
+
+        // Build with the first service (BM25 populated in its in-memory map).
+        let svc1 = ExternalCollectionService::new(registry.clone(), cat.clone(), axis.clone());
+        let spec = ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20)
+            .with_text_column("text");
+        let ec = svc1.register(spec).await.unwrap();
+        svc1.build(&ec.id).await.unwrap();
+
+        // Simulate a restart: a fresh service shares the durable registry + the
+        // (still-resident) IVF index, but starts with an EMPTY BM25 map.
+        let svc2 = ExternalCollectionService::new(registry, cat, axis);
+        assert!(!svc2.has_fulltext_index("ext_docs"), "fresh service starts without BM25");
+
+        let mut qv = vec![0.0f32; 20];
+        qv[3] = 1.0;
+        let hybrid = svc2
+            .hybrid_search(&ec.id, qv, Some("text-7".to_string()), 5)
+            .await
+            .unwrap();
+
+        // The first hybrid query lazily rebuilt the BM25 index from the source,
+        // so fusion still surfaces the lexical-only match.
+        assert!(svc2.has_fulltext_index("ext_docs"), "first hybrid query rebuilt the BM25 index");
+        let ids: Vec<&str> = hybrid.iter().map(|h| h.id.as_str()).collect();
+        assert!(ids.contains(&"row-7"), "lazily-rebuilt BM25 fused the lexical match: {ids:?}");
+        assert!(ids.contains(&"row-3"), "vector match retained: {ids:?}");
 
         let _ = std::fs::remove_file(&path);
     }
