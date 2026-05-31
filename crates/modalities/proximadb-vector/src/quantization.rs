@@ -24,6 +24,13 @@ pub mod scalar;
 pub mod sign_magnitude;
 pub mod smart_defaults;
 
+/// TurboQuant data-oblivious quantizer (ADR-021, arXiv:2504.19874).
+/// See `docs/12-design/TURBOQUANT_HLD_2026_05_30.adoc` and
+/// `docs/12-design/TURBOQUANT_LLD_2026_05_30.adoc` for design intent and
+/// per-phase status. Implementation lands across P2-P4.
+#[cfg(feature = "experimental-turboquant")]
+pub mod turboquant;
+
 use serde::{Deserialize, Serialize};
 
 // Re-export proto types for compatibility
