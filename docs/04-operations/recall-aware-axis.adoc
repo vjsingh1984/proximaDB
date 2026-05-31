@@ -1,0 +1,324 @@
+= Recall-Aware AXIS: Operator Runbook
+:toc:
+:toc-placement: preamble
+:source-highlighter: highlight.js
+
+Adaptive HNSW sizing, drift detection, and self-healing for the AXIS vector
+index. Operators get one knob (`recall_target`); the system picks
+`(m, ef_construction, ef_search)`, observes drift as the collection grows,
+auto-heals the cheap case, and surfaces a clear next step for the expensive
+case.
+
+== TL;DR
+
+[source,bash]
+----
+# 1. Create with a recall target
+curl -X POST http://localhost:5678/api/v1/collections \
+  -d '{
+    "name": "my_vec_collection",
+    "dimension": 768,
+    "tags": ["recall_target:0.95"]
+  }'
+
+# 2. Watch drift (passive — auto every 5 min via RecallDriftSweeper)
+curl http://localhost:5678/api/v2/_diagnostics/collections/my_vec_collection/route-health \
+  | jq .recall_drift
+
+# 3. Or alert in Prometheus
+# axis_recall_drift_status{kind="rebuild_required"} == 1
+
+# 4. Apply the recommended_action when route-health says so
+curl -X POST http://localhost:5678/api/v2/_diagnostics/collections/my_vec_collection/recall-tune
+# OR (for rebuild_required)
+curl -X POST http://localhost:5678/api/v2/_diagnostics/collections/my_vec_collection/recluster
+----
+
+== The one knob: `recall_target`
+
+A `recall_target:<float>` tag on a collection opts it into the adaptive
+stack. Valid range: `[0.50, 0.999]`.
+
+[source,json]
+----
+{
+  "name": "products",
+  "dimension": 768,
+  "tags": [
+    "recall_target:0.95",
+    "target_vector_count:5000000",  // optional steady-state hint
+    "target_top_k:50"                // optional if you query non-default k
+  ]
+}
+----
+
+What the server does on `CREATE`:
+
+. `engine_selector` sees `recall_target` → routes to **SST**
+  (recall-aware path needs HNSW; HELIX has no ef/m surface).
+. If no HNSW `IndexConfig` was provided, synthesizes one named
+  `auto_hnsw_recall_target`.
+. `hnsw_param_advisor` sizes `(m, ef_construction, ef_search)` from
+  `(N=target_vector_count, k=target_top_k, recall_target, dim, metric)`.
+. Stamps the result into the `IndexConfig.hnsw_config` block.
+. Emits a structured log on `collection.recall_target` target with the
+  chosen params and rationale.
+
+Optional tags:
+
+* `target_vector_count:<u64>` (default 100K — the calibration anchor).
+  Tells the advisor what steady-state size to size for. Clamped to
+  `[1_000, 1_000_000_000]`.
+* `target_top_k:<u32>` (default 10). The advisor scales `ef ∝ k`, so a
+  workload that consistently queries `k=100` needs more ef than one that
+  queries `k=10`. Clamped to `[1, 1000]`.
+
+== Sizing reference
+
+(N=100K, dim=128, cosine, k=10 — the calibration anchor.)
+
+|===
+| recall_target | m | ef_construction | ef_search | empirically delivers
+
+| 0.85 | 32 | 256 | 177 | ≥ 0.90 (sweep at ef=200)
+| 0.90 | 32 | 256 | 199 | ≥ 0.90
+| 0.95 | 32 | 256 | 409 | 0.950 ✓ exact (anchor)
+| 0.975 | 48 | 384 | 568 | 0.975 ✓ (sweep at ef=600)
+| 0.99 | 48 | 384 | 905 | 0.990 ✓ (sweep at ef=900)
+| 0.995 | 48 | 384 | 1214 | extrapolated (approaching 2048 ef ceiling)
+|===
+
+Scaling rules built into the formula:
+
+* `ef_search` grows ∝ `k · log₂(N) · log₂(N / 1000) · recall_factor(r)`.
+  Doubling N roughly doubles ef.
+* `m` is picked by recall tier: `r < 0.75 → 8`, `0.75–0.85 → 16`,
+  `0.85–0.97 → 32`, `≥ 0.97 → 48`. Plus `+8` if `dim > 512`.
+* `ef_construction = max(100, 8·m)`.
+* DotProduct gets a `+15%` ef penalty (unbounded raw scores).
+* Hard ceiling: `ef_search ≤ 2048` — past that, switch to exact search.
+
+== Watching drift
+
+=== Route-health (one-shot)
+
+[source,bash]
+----
+curl http://localhost:5678/api/v2/_diagnostics/collections/:id/route-health \
+  | jq .recall_drift
+----
+
+[source,json]
+----
+{
+  "wired": true,
+  "recall_target": 0.95,
+  "baseline_vector_count": 100000,
+  "current_vector_count": 250000,
+  "kind": "ef_search_only",
+  "needs_rebuild": false,
+  "hot_swap_possible": true,
+  "summary": "ef_search 409→622 (m=32, efc=256 unchanged) — hot-swap possible",
+  "baseline_params": { "m": 32, "ef_construction": 256, "ef_search": 409 },
+  "current_params":  { "m": 32, "ef_construction": 256, "ef_search": 622 },
+  "recommended_action": "call_recall_tune"
+}
+----
+
+=== Prometheus (continuous)
+
+[source,promql]
+----
+# Critical: collections needing operator-driven rebuild
+axis_recall_drift_status{kind="rebuild_required"} == 1
+
+# Warning: drift detected but self-healing
+axis_recall_drift_status{kind="ef_search_only"} == 1
+
+# Visibility: who's calling the route-health / recall-tune endpoints
+rate(axis_recall_drift_observations_total[5m])
+
+# Visibility: who's resolving drift, and how
+rate(axis_recall_drift_hot_swap_applied_total{trigger="operator"}[5m])
+rate(axis_recall_drift_hot_swap_applied_total{trigger="sweeper"}[5m])
+----
+
+`RecallDriftSweeper` walks every collection every 5 min, emits the
+gauges, and **auto-applies hot-swaps** for `EfSearchOnly` drift.
+Rebuilds stay operator-driven.
+
+== Resolving drift
+
+The `recommended_action` field on `recall_drift` tells you exactly what
+to do:
+
+|===
+| recommended_action | What to do
+
+| `"none"` | Nothing — no drift detected.
+| `"call_recall_tune"` | `POST /api/v2/_diagnostics/collections/:id/recall-tune` — in-memory only, ~ms latency, no IO. The sweeper also does this automatically every 5 min by default.
+| `"call_recluster"` | `POST /api/v2/_diagnostics/collections/:id/recluster` — reads every record, rebuilds HNSW. Minutes of CPU + memory. Operator-driven only.
+| `"set_recall_target_tag"` | Collection isn't opted in. Add a `recall_target:<float>` tag to enable.
+|===
+
+Both mutation endpoints require `SystemAdmin` or `ConfigureSystem`
+permission (same operator gate as `primary_pod`).
+
+=== `/recall-tune` — zero-rebuild ef_search adjustment
+
+[source,bash]
+----
+$ curl -X POST -H "Authorization: Bearer $OP_TOKEN" \
+    http://localhost:5678/api/v2/_diagnostics/collections/my_col/recall-tune
+
+{
+  "stability": "experimental",
+  "collection_id": "my_col",
+  "action": "applied_hot_swap",
+  "report": { ...same shape as route-health recall_drift... },
+  "applied_changes": [
+    { "index_name": "auto_hnsw_recall_target",
+      "previous_ef_search": 409,
+      "new_ef_search": 622 }
+  ]
+}
+----
+
+`action` literal values: `"applied_hot_swap"`, `"no_drift"`,
+`"rebuild_required"`, `"not_wired"`.
+
+=== `/recluster` — recall-aware HNSW rebuild
+
+[source,bash]
+----
+$ curl -X POST -H "Authorization: Bearer $OP_TOKEN" \
+    http://localhost:5678/api/v2/_diagnostics/collections/my_col/recluster
+
+{
+  "stability": "experimental",
+  "collection_id": "my_col",
+  "applied": true,
+  "reason": "tier r=0.99 → m=48 (dim_bonus=0), efc=384, ef=905 ...",
+  "rebuilt_vector_count": 1234567,
+  "sized": {
+    "recall_target": 0.99,
+    "m": 48,
+    "ef_construction": 384,
+    "ef_search": 905,
+    "rationale": "..."
+  }
+}
+----
+
+After a successful rebuild the drift gauge clears to `kind="none"`
+immediately — no need to wait for the next sweeper tick.
+
+== Wire-path diagram
+
+[source]
+----
+                 ┌──────────────────────────────────┐
+   CREATE        │ services::collection::manager    │
+   ─────────────►│  create_collection_with_tenant   │
+   tags=[        │    ↓                             │
+    recall_      │  engine_selector::infer_storage_engine
+    target:.95]  │    ↓ "recall_target_route_sst"   │
+                 │  recall_target::apply_advisor_to_hnsw_indexes
+                 │    ↓ stamps m/efc/ef             │
+                 │    └── hnsw_param_advisor::advise_hnsw_params
+                 └──────────────────────────────────┘
+
+                 ┌──────────────────────────────────┐
+   OBSERVE       │ services::recall_drift_sweeper   │  every 5 min
+   ─────────────►│  sweep_once()                    │
+                 │    ↓                             │
+                 │  detect_recall_drift             │
+                 │    ↓ emits                       │
+                 │  axis_recall_drift_status gauge  │
+                 │  axis_recall_drift_obs counter   │
+                 │    ↓ if EfSearchOnly             │
+                 │  auto-applies hot_swap           │
+                 └──────────────────────────────────┘
+
+                 ┌──────────────────────────────────┐
+   TUNE          │ rest::v2::collections            │
+   ─────────────►│  post_collection_recall_tune_v2  │
+   POST          │    ↓                             │
+   /recall-tune  │  AxisManager::apply_hnsw_ef_hot_swap
+                 │    ↓ updates IndexSelectionStrategy
+                 │  axis_recall_drift_hot_swap{trigger="operator"}++
+                 └──────────────────────────────────┘
+
+                 ┌──────────────────────────────────┐
+   REBUILD       │ rest::v2::collections            │
+   ─────────────►│  post_collection_recluster_v2    │
+   POST          │    ↓ reads every record          │
+   /recluster    │  vector_ops::list_all_records    │
+                 │    ↓                             │
+                 │  AxisManager::rebuild_and_swap_hnsw_index_for_recall_target
+                 │    ↓ advisor + atomic swap       │
+                 │  axis_recall_drift_status → "none" gauge
+                 └──────────────────────────────────┘
+----
+
+== Calibration provenance
+
+The `recall_factor` table at `index::axis::management::hnsw_param_advisor`
+is calibrated against:
+
+* **m=16 sweep** (commit `ca2d5620f`): showed graph saturation at recall
+  ~0.78 regardless of ef. Drove the tier-boundary tightening (m=16 only
+  valid for recall < 0.85).
+* **m=32 sweep** (commit `8b54d721c`): ef ∈ {200, 400, 600, 900} at
+  N=100K cosine → recall ∈ {0.90, 0.95, 0.975, 0.99}. The current
+  table fits these endpoints.
+* **m=48 sweep** (in flight): validates the highest tier.
+
+Re-calibration procedure:
+
+[source,bash]
+----
+# 1. Sweep at the corpus size of interest
+BENCH_HNSW_M=32 BENCH_HNSW_EF=400 BENCH_VECTORS=100000 \
+  cargo bench --bench bench_warm_path_profile
+
+# 2. Read recall from the bench output
+grep -A1 "AXIS vs force_exact" /tmp/bench_output.txt | tail -1
+
+# 3. Fit factor = ef / (k · log2(N) · log2(N/1000))
+# 4. Update TABLE in hnsw_param_advisor.rs
+# 5. Update matches_observed_baseline test ranges
+----
+
+== Caveats
+
+* The advisor's `recall_factor` table is calibrated at `dim=128,
+  cosine, k=10`. High-dimensional collections (`dim > 512`) get a `+8`
+  m-tier bonus; very different distributions (e.g. heavily clustered
+  vs uniform) may see ±10% drift from the predicted recall.
+
+* `target_vector_count:` defaults to 100K. A collection projected to
+  grow to 10M without setting the tag will get under-sized initial
+  params; the drift sweeper will surface the gap within minutes and
+  auto-apply hot-swaps as N crosses tier boundaries.
+
+* DotProduct on random unit vectors has no meaningful ranking
+  structure — bench numbers for that metric are noisy. Cosine + L2
+  match the advisor's predictions well.
+
+* The `auto_hnsw_recall_target` synthesized IndexConfig has no
+  filterable columns by default. If you need predicate-aware search,
+  attach an explicit `IndexConfig` with the columns you want to
+  filter on; the advisor will fill its `hnsw_config` block but won't
+  add a second auto-index.
+
+== Related ADRs / commits
+
+* Heuristic: `src/index/axis/management/hnsw_param_advisor.rs`
+* Drift detector: `src/index/axis/management/recall_drift.rs`
+* Sweeper: `src/services/recall_drift_sweeper.rs`
+* Hot-swap: `AxisManager::apply_hnsw_ef_hot_swap`
+* Rebuild: `AxisManager::rebuild_and_swap_hnsw_index_for_recall_target`
+* Metrics: `src/metrics/recall_drift_metrics.rs`
+* REST: `src/network/rest/v2/collections.rs`
+* Engine routing: `src/services/collection/engine_selector.rs`
