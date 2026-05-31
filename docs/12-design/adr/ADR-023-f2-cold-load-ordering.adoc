@@ -128,4 +128,37 @@ The gate + EXPLAIN surfaces already exist:
 * **Warm-tier load latency dominates.** If the fp32 tier load is slow, queries spend a long time in `ColdBinaryOnly`. Mitigation: per-cluster lazy load (load only the fp32 of probed clusters first) — a T-E refinement, not a blocker.
 * **Calibration coupling with F1.** The `RecallObserver` interval (default 300s) gates when two-stage becomes "verified"; a freshly warmed index may serve Stage-1-only longer than necessary. Trigger an immediate probe on warm-tier completion.
 
-_Maps to_: TD-087 · Phase 8 F2 · builds on the binary-route activation (`d0f67c42c`), the gate/observer (F1 trigger arm), and the `QUANTIZED_ROUTE_DOWNGRADED` EXPLAIN disclosure (F2 T2.4).
+== Literature review (2026-05-31) — revisions from the arxive corpus
+
+A design review against six recent ANN papers (full text read via `pdftotext`; arXiv ids in brackets) validated the two-tier / load-cold-first architecture but surfaced three places the *current* implementation is suboptimal. None require abandoning the two-blob / IVF / reuse-first commitments above.
+
+**External validation of the thesis.** *Onyx* [2604.20401] independently arrives at our exact structure — a "compact intermediate representation that proactively prunes the majority of bandwidth-intensive full-precision accesses," with a layout that co-locates the coarse hints (fetched first) and stores full-precision separately (fetched only for survivors). It reports **5× ANN bandwidth reduction at ≤15% more accesses**. *d-HNSW* [2505.11783] keeps a ~0.4 MB representative index resident and fetches the bulk on demand — confirming our centroids+COLD-resident / WARM-fetched split (our COLD at ~1/32 is generous, not tight).
+
+=== R1 — COLD codes: codebook-free *rotated-residual* 1-bit, not naive sign (HIGHEST LEVERAGE)
+
+Our `BinaryCode` is a raw per-dimension sign bit: no random rotation, no renormalization, no distortion bound. *Block-Sphere VQ* [2605.19972] Table 1 shows rotation-based 1-bit quantizers (EDEN / RabitQ / TurboQuant) achieve bounded **MSE ≈ 0.363** and **inner-product distortion ≈ 0.571/(d−1)**; naive sign has *no* such bound and is the dominated corner. *IVF-TQ* [2605.17415] quantizes the **residual to the IVF centroid** (which we already keep resident) with a fixed rotation + a data-independent Lloyd–Max quantizer and measures **+17.9pp recall** over IVF-PQ on streaming SIFT-10M at matched memory. Same ~1/32 byte budget; directly raises the Stage-1-only recall floor flagged below. **It also resolves the F1↔F2 coupling**: codebook-free codes need *no re-encode* when F1 reclusters the coarse partition, and IVF-TQ proves per-batch retraining does not even recover the streaming gap (paired-t p>0.28; ~0.15pp for 309s compute). IVF-RaBitQ already ships in Milvus / cuVS / LanceDB / Weaviate. **Action:** make the COLD tier the rotated-residual 1-bit code from the in-repo TurboQuant work (ADR-021), not naive sign — a new task **T-G** (COLD-tier quantizer upgrade), sequenced before T-F so the benchmark measures the real representation.
+
+=== R2 — adaptive Stage-1 candidate count + early-termination, not fixed `candidate_k = 4·k`
+
+*AQR-HNSW* [2602.21600] uses a multi-stage rerank that runs fp32 distance "only when necessary," with a per-target-recall candidate schedule and a gap/ratio **early-termination gate** that skips the exact stage when the top-k is already well-separated (it cites pure 1-bit FAISS binary at ~75–80% recall — our Stage-1-only prior). **Action (folds into T-D/T-E):** replace the fixed `BINARY_RERANK_EXPANSION = 4` with a recall-targeted candidate count, and use the separation gap as a *per-query* confidence signal for when `ColdBinaryOnly` is trustworthy enough to skip/defer fp32 rerank — sharpening the T-E upgrade decision and the recall-envelope disclosure.
+
+=== R3 — WARM loading: per-cluster, survivor-aware, de-duplicated, I/O-overlapped — not whole-tier eager
+
+Onyx fetches full-precision **only for query survivors**; d-HNSW fetches each partition's fp32 **once per batch** with a contiguous per-partition layout (single range-read). *LIOS* [2605.19335] harvests the >40% of ANN CPU time spent stalled on I/O to run background work via `io_uring`, under a single user-facing latency-degradation bound θ. **Action (refines T-C/T-E):** (a) lay WARM out **per-IVF-cluster contiguously** (also answers the T-C open question — COLD blob first, then per-cluster WARM extents), (b) fetch a cluster's fp32 on first probe and share it across concurrent cold-path queries, (c) overlap that fetch with Stage-1 serving via stall-harvesting bounded by θ, rather than an eager whole-tier loader competing for bandwidth.
+
+=== R4 — optional 3-tier ladder (measured fallback)
+
+Onyx argues a *coarse* hint alone barely reduces bandwidth and a *medium*-precision hint does the pruning work; Block-Sphere shows 2-bit codes cut MSE ~3× at 1/16 of fp32. **Action:** keep a 2-bit (or asymmetric reconstructed-distance) MID tier as a *measured* fallback gated on T-F — only if R1's rotated 1-bit Stage-1 recall is still too low to disclose honestly. Not a v1 commitment (reuse-first).
+
+== Risks
+
+* **Stage-1-only recall floor unknown.** Hamming-only recall@k over a real corpus is not yet measured; T-F must quantify it so the disclosed envelope is honest. AQR-HNSW's ~75–80% figure for naive 1-bit binary is the prior; R1 (rotated-residual codes) is expected to lift it materially. If still too low, fall back to `FullEager` (policy switch) or the R4 MID tier.
+* **Warm-tier load latency dominates.** If the fp32 tier load is slow, queries spend a long time in `ColdBinaryOnly`. Mitigation: R3 — per-cluster survivor-aware lazy load with stall-overlapped I/O under a bounded degradation budget.
+* **Calibration coupling with F1.** The `RecallObserver` interval (default 300s) gates when two-stage becomes "verified"; a freshly warmed index may serve Stage-1-only longer than necessary. Trigger an immediate probe on warm-tier completion. R1 (codebook-free codes) removes the re-encode-on-recluster half of this coupling entirely.
+
+== Tasks (literature-driven additions)
+
+* [ ] *T-G* COLD-tier quantizer upgrade: rotated-residual codebook-free 1-bit (reuse the ADR-021 TurboQuant quantizer; quantize the residual to the IVF centroid) replacing naive `BinaryCode` sign bits. Sequence before T-F. → R1
+* [ ] *T-H* Recall-targeted adaptive Stage-1 candidate count + gap-based early-termination (folds into T-D/T-E, replaces fixed `BINARY_RERANK_EXPANSION`). → R2
+
+_Maps to_: TD-087 · Phase 8 F2 · builds on the binary-route activation (`d0f67c42c`), the gate/observer (F1 trigger arm), and the `QUANTIZED_ROUTE_DOWNGRADED` EXPLAIN disclosure (F2 T2.4). Literature review against [2604.20401] Onyx, [2602.21600] AQR-HNSW, [2605.19972] Block-Sphere VQ, [2605.17415] IVF-TQ, [2605.19335] LIOS, [2505.11783] d-HNSW.
