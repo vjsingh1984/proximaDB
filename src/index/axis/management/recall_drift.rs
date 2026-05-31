@@ -144,11 +144,7 @@ fn classify(baseline: &HnswSizingOutput, current: &HnswSizingOutput) -> DriftKin
     DriftKind::None
 }
 
-fn summarize(
-    baseline: &HnswSizingOutput,
-    current: &HnswSizingOutput,
-    kind: DriftKind,
-) -> String {
+fn summarize(baseline: &HnswSizingOutput, current: &HnswSizingOutput, kind: DriftKind) -> String {
     match kind {
         DriftKind::None => format!(
             "no drift (m={}, efc={}, ef={})",
@@ -213,30 +209,16 @@ mod tests {
 
     #[test]
     fn recall_tier_jump_requires_rebuild() {
-        // Same N, but the operator bumped recall_target — different
-        // recall tier triggers m change. Simulate by setting baseline
-        // recall=0.85 (m=16) vs current recall=0.95 (m=32) via two
-        // independent advisor calls inline.
-        //
-        // The detector itself only reads one recall_target so we
-        // verify the rebuild path via the natural N-driven mechanism
-        // instead: 10K → 10M at recall=0.95 — advisor moves from
-        // m=32 ef=164 → m=32 ef=1144 — same m, but ef_construction
-        // also matches → would be EfSearchOnly. We need a case where
-        // m actually changes.
-        //
-        // The m-changing trigger is the recall_target itself. To
-        // build a unit test for that, we drive two different
-        // recall_targets across the *same* baseline & current N.
-        // Since detect_recall_drift takes one target, we cheat by
-        // running it twice and asserting m changes between the runs.
-        let low = detect_recall_drift(input(100_000, 100_000, 0.85));
-        let high = detect_recall_drift(input(100_000, 100_000, 0.95));
+        // The detector takes one recall_target per call, so we
+        // verify the rebuild path by running it twice across an
+        // m-tier boundary (post-recalibration the boundaries are
+        // 0.75 / 0.85 / 0.97). Picking r=0.80 (m=16) vs r=0.90
+        // (m=32) — the user-visible behaviour ("changing target
+        // needs rebuild") is the callsite's responsibility; the
+        // detector just classifies the per-target before/after.
+        let low = detect_recall_drift(input(100_000, 100_000, 0.80));
+        let high = detect_recall_drift(input(100_000, 100_000, 0.90));
         assert!(high.current_params.m > low.current_params.m);
-        // Within-N drift on the high call is None, but the actual
-        // user-visible behaviour ("changing target needs rebuild")
-        // is the responsibility of the *callsite* — the detector
-        // just classifies the per-target before/after.
     }
 
     #[test]
@@ -257,15 +239,16 @@ mod tests {
 
     #[test]
     fn dramatic_growth_requires_rebuild() {
-        // 10K → 100M at recall=0.95: m grows 32→32 (same), but the
-        // advisor still keeps m the same since 0.95 maps to m=32
-        // across both tiers. So this case is EfSearchOnly. To force
-        // EfConstructionOrM we need to cross an m tier — use
-        // recall=0.92 (m=32) baseline + check at recall threshold.
-        // Easier: test that two recall targets near a tier boundary
-        // produce different m, which exercises the rebuild path.
-        let just_below = detect_recall_drift(input(100_000, 100_000, 0.91));
-        let just_above = detect_recall_drift(input(100_000, 100_000, 0.93));
+        // Two recall targets straddling the m=32 → m=48 boundary
+        // (0.97 per the post-8b54d721c recalibration). The detector
+        // doesn't change m for a fixed target as N grows past the
+        // anchor (the ef-only path) — the actual m bump comes from
+        // the operator raising recall_target. This test guards that
+        // tier-crossing targets really do pick different m.
+        let just_below = detect_recall_drift(input(100_000, 100_000, 0.96));
+        let just_above = detect_recall_drift(input(100_000, 100_000, 0.98));
         assert_ne!(just_below.current_params.m, just_above.current_params.m);
+        assert_eq!(just_below.current_params.m, 32);
+        assert_eq!(just_above.current_params.m, 48);
     }
 }
