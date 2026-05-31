@@ -464,8 +464,8 @@ mod tests {
             "0"
         }
 
-        fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
-            crate::storage::traits::StorageEngineStrategy::Sst
+        fn strategy(&self) -> crate::storage::traits::StorageFormatStrategy {
+            crate::storage::traits::StorageFormatStrategy::Sst
         }
 
         async fn do_flush(

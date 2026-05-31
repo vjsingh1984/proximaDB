@@ -48,7 +48,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::compute::quantization::QuantizationLevel;
 use crate::storage::formats::FileSplit;
-use crate::storage::traits::StorageEngineStrategy;
+use crate::storage::traits::StorageFormatStrategy;
 
 // ============================================================================
 // Engine Type Enumeration
@@ -73,29 +73,29 @@ pub enum EngineType {
     Raptor,
 }
 
-impl From<StorageEngineStrategy> for EngineType {
-    fn from(strategy: StorageEngineStrategy) -> Self {
+impl From<StorageFormatStrategy> for EngineType {
+    fn from(strategy: StorageFormatStrategy) -> Self {
         match strategy {
-            StorageEngineStrategy::Sst => EngineType::Sst,
-            StorageEngineStrategy::Helix => EngineType::Helix,
-            StorageEngineStrategy::Swift => EngineType::Swift,
-            StorageEngineStrategy::Nova => EngineType::Nova,
-            StorageEngineStrategy::Viper => EngineType::Viper,
-            StorageEngineStrategy::Raptor => EngineType::Raptor,
-            StorageEngineStrategy::Hybrid => EngineType::Viper, // Default to VIPER for hybrid
+            StorageFormatStrategy::Sst => EngineType::Sst,
+            StorageFormatStrategy::Helix => EngineType::Helix,
+            StorageFormatStrategy::Swift => EngineType::Swift,
+            StorageFormatStrategy::Nova => EngineType::Nova,
+            StorageFormatStrategy::Viper => EngineType::Viper,
+            StorageFormatStrategy::Raptor => EngineType::Raptor,
+            StorageFormatStrategy::Hybrid => EngineType::Viper, // Default to VIPER for hybrid
         }
     }
 }
 
-impl From<EngineType> for StorageEngineStrategy {
+impl From<EngineType> for StorageFormatStrategy {
     fn from(engine: EngineType) -> Self {
         match engine {
-            EngineType::Sst => StorageEngineStrategy::Sst,
-            EngineType::Helix => StorageEngineStrategy::Helix,
-            EngineType::Swift => StorageEngineStrategy::Swift,
-            EngineType::Nova => StorageEngineStrategy::Nova,
-            EngineType::Viper => StorageEngineStrategy::Viper,
-            EngineType::Raptor => StorageEngineStrategy::Raptor,
+            EngineType::Sst => StorageFormatStrategy::Sst,
+            EngineType::Helix => StorageFormatStrategy::Helix,
+            EngineType::Swift => StorageFormatStrategy::Swift,
+            EngineType::Nova => StorageFormatStrategy::Nova,
+            EngineType::Viper => StorageFormatStrategy::Viper,
+            EngineType::Raptor => StorageFormatStrategy::Raptor,
         }
     }
 }
@@ -484,16 +484,16 @@ mod tests {
     #[test]
     fn test_engine_type_conversion() {
         assert_eq!(
-            EngineType::from(StorageEngineStrategy::Sst),
+            EngineType::from(StorageFormatStrategy::Sst),
             EngineType::Sst
         );
         assert_eq!(
-            EngineType::from(StorageEngineStrategy::Viper),
+            EngineType::from(StorageFormatStrategy::Viper),
             EngineType::Viper
         );
         assert_eq!(
-            StorageEngineStrategy::from(EngineType::Nova),
-            StorageEngineStrategy::Nova
+            StorageFormatStrategy::from(EngineType::Nova),
+            StorageFormatStrategy::Nova
         );
     }
 

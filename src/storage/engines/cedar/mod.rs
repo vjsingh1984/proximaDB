@@ -34,7 +34,7 @@ use crate::storage::document::{
 };
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{
-    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
+    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageFormatStrategy,
     StorageQueryContext, UnifiedStorageEngine,
 };
 use proximadb_records::{ProximaRecord, RecordKey, RecordScan, RecordStore, RecordStoreResult};
@@ -392,8 +392,8 @@ impl UnifiedStorageEngine for CedarEngine {
         "0.1.0"
     }
 
-    fn strategy(&self) -> StorageEngineStrategy {
-        StorageEngineStrategy::Cedar
+    fn strategy(&self) -> StorageFormatStrategy {
+        StorageFormatStrategy::Cedar
     }
 
     fn get_filesystem_factory(&self) -> &FilesystemFactory {
@@ -469,7 +469,7 @@ mod tests {
     #[test]
     fn test_cedar_strategy() {
         let engine = CedarEngine::new().unwrap();
-        assert_eq!(engine.strategy(), StorageEngineStrategy::Cedar);
+        assert_eq!(engine.strategy(), StorageFormatStrategy::Cedar);
     }
 
     #[tokio::test]

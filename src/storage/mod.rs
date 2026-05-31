@@ -263,7 +263,7 @@ pub use types::StorageEngineType;
 // Strategy pattern exports
 pub use traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
-    FlushResult as TraitFlushResult, StorageEngineStrategy, UnifiedStorageEngine,
+    FlushResult as TraitFlushResult, StorageFormatStrategy, UnifiedStorageEngine,
 };
 
 // New decomposed trait hierarchy (ISP-compliant)

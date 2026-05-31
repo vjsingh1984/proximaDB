@@ -20,7 +20,7 @@ use tracing::debug;
 
 use crate::storage::engines::viper::ViperEngine;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::traits::{FlushParameters, StorageEngineStrategy, UnifiedStorageEngine};
+use crate::storage::traits::{FlushParameters, StorageFormatStrategy, UnifiedStorageEngine};
 
 // ============================================================================
 // ENGINE CREATION & INITIALIZATION TESTS (2 tests)
@@ -52,7 +52,7 @@ async fn test_viper_unified_storage_engine_traits() -> Result<()> {
         viper_engine.engine_version(),
         crate::version::PROXIMADB_VERSION
     );
-    assert_eq!(viper_engine.strategy(), StorageEngineStrategy::Viper);
+    assert_eq!(viper_engine.strategy(), StorageFormatStrategy::Viper);
 
     // Test engine capabilities
     assert!(viper_engine.supports_collection_level_operations());

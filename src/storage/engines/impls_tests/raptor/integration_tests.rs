@@ -32,7 +32,7 @@ async fn test_engine_basic_info() -> Result<()> {
     assert_eq!(engine.engine_version(), "1.0.0");
     assert_eq!(
         engine.strategy(),
-        crate::storage::traits::StorageEngineStrategy::Raptor
+        crate::storage::traits::StorageFormatStrategy::Raptor
     );
 
     Ok(())
@@ -770,7 +770,7 @@ async fn test_raptor_large_scale_search_benchmark() -> Result<()> {
         has_quantization: false,
         dimension,
         distance_metric: crate::compute::distance_computation::DistanceMetric::Euclidean,
-        storage_strategy: crate::storage::traits::StorageEngineStrategy::Raptor,
+        storage_strategy: crate::storage::traits::StorageFormatStrategy::Raptor,
         storage_path: storage_path.clone(), // CRITICAL: This tells RAPTOR where to find files
         quantization_config: None,
         estimated_vector_count: num_vectors as u64,

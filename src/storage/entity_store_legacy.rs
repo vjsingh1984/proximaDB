@@ -1334,8 +1334,8 @@ mod tests {
         fn engine_version(&self) -> &'static str {
             "0"
         }
-        fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
-            crate::storage::traits::StorageEngineStrategy::Viper
+        fn strategy(&self) -> crate::storage::traits::StorageFormatStrategy {
+            crate::storage::traits::StorageFormatStrategy::Viper
         }
         async fn do_flush(
             &self,

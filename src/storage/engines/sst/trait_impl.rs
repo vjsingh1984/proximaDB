@@ -27,7 +27,7 @@ use tracing::{debug, info};
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::engines::sst::core::SstEngine;
 use crate::storage::traits::{
-    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
+    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageFormatStrategy,
     StorageQueryContext, UnifiedStorageEngine,
 };
 
@@ -41,8 +41,8 @@ impl UnifiedStorageEngine for SstEngine {
         crate::version::PROXIMADB_VERSION
     }
 
-    fn strategy(&self) -> StorageEngineStrategy {
-        StorageEngineStrategy::Sst
+    fn strategy(&self) -> StorageFormatStrategy {
+        StorageFormatStrategy::Sst
     }
 
     fn get_filesystem_factory(
@@ -255,7 +255,7 @@ impl UnifiedStorageEngine for SstEngine {
         Ok(crate::storage::traits::CollectionStats {
             row_count: estimated_row_count,
             avg_vector_bytes: if file_count > 0 { 512 } else { 0 },
-            engine_strategy: StorageEngineStrategy::Sst,
+            engine_strategy: StorageFormatStrategy::Sst,
             has_metadata_index: true, // SST always has bloom filters
             has_hnsw_index: self.axis_manager().is_some(),
             total_bytes,
@@ -439,7 +439,7 @@ mod tests {
     #[tokio::test]
     async fn test_engine_strategy() {
         let engine = create_test_engine().await;
-        assert!(matches!(engine.strategy(), StorageEngineStrategy::Sst));
+        assert!(matches!(engine.strategy(), StorageFormatStrategy::Sst));
     }
 
     #[tokio::test]

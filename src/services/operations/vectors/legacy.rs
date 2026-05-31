@@ -3622,7 +3622,7 @@ impl VectorOperationsService {
 
         // Create the appropriate engine
         let engine =
-            crate::storage::engines::factory::StorageEngineFactory::create_from_proto_async(
+            crate::storage::engines::factory::StorageFormatFactory::create_from_proto_async(
                 engine_type,
             )
             .await?;

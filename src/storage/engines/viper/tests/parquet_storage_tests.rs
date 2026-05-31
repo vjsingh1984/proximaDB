@@ -13,7 +13,7 @@ use tokio;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::viper::ViperEngine;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use crate::storage::traits::{FlushParameters, StorageEngineStrategy, UnifiedStorageEngine};
+use crate::storage::traits::{FlushParameters, StorageFormatStrategy, UnifiedStorageEngine};
 use crate::storage::transaction_coordinator::{
     TransactionCoordinator, ViperTransactionalOperations,
 };
@@ -103,7 +103,7 @@ async fn test_viper_unified_storage_engine_traits() -> Result<()> {
         viper_engine.engine_version(),
         crate::version::PROXIMADB_VERSION
     );
-    assert_eq!(viper_engine.strategy(), StorageEngineStrategy::Viper);
+    assert_eq!(viper_engine.strategy(), StorageFormatStrategy::Viper);
 
     // Test engine capabilities
     assert!(viper_engine.supports_collection_level_operations());

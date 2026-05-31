@@ -48,7 +48,7 @@ use std::collections::HashMap;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{
-    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
+    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageFormatStrategy,
     StorageQueryContext, UnifiedStorageEngine,
 };
 
@@ -89,8 +89,8 @@ impl UnifiedStorageEngine for TitanEngine {
         "0.1.0"
     }
 
-    fn strategy(&self) -> StorageEngineStrategy {
-        StorageEngineStrategy::Sst
+    fn strategy(&self) -> StorageFormatStrategy {
+        StorageFormatStrategy::Sst
     }
 
     fn get_filesystem_factory(&self) -> &FilesystemFactory {
@@ -169,7 +169,7 @@ mod tests {
     #[test]
     fn test_titan_engine_strategy() {
         let engine = TitanEngine::new();
-        assert_eq!(engine.strategy(), StorageEngineStrategy::Sst);
+        assert_eq!(engine.strategy(), StorageFormatStrategy::Sst);
     }
 
     #[tokio::test]

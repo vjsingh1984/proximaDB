@@ -15,8 +15,8 @@
 //! Previously, capabilities were checked via match on engine strategy:
 //! ```rust,ignore
 //! match self.strategy() {
-//!     StorageEngineStrategy::Sst => ScanCapabilities { ... },
-//!     StorageEngineStrategy::Viper => ScanCapabilities { ... },
+//!     StorageFormatStrategy::Sst => ScanCapabilities { ... },
+//!     StorageFormatStrategy::Viper => ScanCapabilities { ... },
 //!     // Adding new engine requires modifying this match!
 //! }
 //! ```
@@ -492,18 +492,18 @@ pub struct CapabilityFactory;
 impl CapabilityFactory {
     /// Create capabilities for a given engine strategy
     pub fn create(
-        strategy: crate::storage::traits::StorageEngineStrategy,
+        strategy: crate::storage::traits::StorageFormatStrategy,
     ) -> Box<dyn EngineCapabilities> {
-        use crate::storage::traits::StorageEngineStrategy;
+        use crate::storage::traits::StorageFormatStrategy;
 
         match strategy {
-            StorageEngineStrategy::Sst => Box::new(SstCapabilities),
-            StorageEngineStrategy::Helix => Box::new(HelixCapabilities),
-            StorageEngineStrategy::Viper => Box::new(ViperCapabilities),
-            StorageEngineStrategy::Swift => Box::new(SwiftCapabilities),
-            StorageEngineStrategy::Nova => Box::new(NovaCapabilities),
-            StorageEngineStrategy::TimeSeries => Box::new(TstCapabilities),
-            StorageEngineStrategy::Raptor => Box::new(RaptorCapabilities),
+            StorageFormatStrategy::Sst => Box::new(SstCapabilities),
+            StorageFormatStrategy::Helix => Box::new(HelixCapabilities),
+            StorageFormatStrategy::Viper => Box::new(ViperCapabilities),
+            StorageFormatStrategy::Swift => Box::new(SwiftCapabilities),
+            StorageFormatStrategy::Nova => Box::new(NovaCapabilities),
+            StorageFormatStrategy::TimeSeries => Box::new(TstCapabilities),
+            StorageFormatStrategy::Raptor => Box::new(RaptorCapabilities),
             // Default to SST capabilities for unknown strategies
             _ => Box::new(SstCapabilities),
         }
@@ -604,12 +604,12 @@ mod tests {
 
     #[test]
     fn test_capability_factory() {
-        use crate::storage::traits::StorageEngineStrategy;
+        use crate::storage::traits::StorageFormatStrategy;
 
-        let sst_caps = CapabilityFactory::create(StorageEngineStrategy::Sst);
+        let sst_caps = CapabilityFactory::create(StorageFormatStrategy::Sst);
         assert_eq!(sst_caps.engine_name(), "SST");
 
-        let helix_caps = CapabilityFactory::create(StorageEngineStrategy::Helix);
+        let helix_caps = CapabilityFactory::create(StorageFormatStrategy::Helix);
         assert_eq!(helix_caps.engine_name(), "HELIX");
     }
 

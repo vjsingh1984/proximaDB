@@ -128,7 +128,7 @@ use crate::storage::common::compaction_orchestrator::FilenameCodec;
 use crate::storage::engines::constants::{ENGINE_HELIX, HELIX_FILE_EXT, HELIX_MAGIC};
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::traits::{
-    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
+    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageFormatStrategy,
     StorageQueryContext, UnifiedStorageEngine,
 };
 use proximadb_records::conversions::proxima_record_to_vector;
@@ -1223,8 +1223,8 @@ impl UnifiedStorageEngine for HelixEngine {
         "1.0.0"
     }
 
-    fn strategy(&self) -> StorageEngineStrategy {
-        StorageEngineStrategy::Helix
+    fn strategy(&self) -> StorageFormatStrategy {
+        StorageFormatStrategy::Helix
     }
 
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
@@ -2172,7 +2172,7 @@ impl UnifiedStorageEngine for HelixEngine {
         Ok(crate::storage::traits::CollectionStats {
             row_count: total_vectors,
             avg_vector_bytes,
-            engine_strategy: crate::storage::traits::StorageEngineStrategy::Helix,
+            engine_strategy: crate::storage::traits::StorageFormatStrategy::Helix,
             has_metadata_index: true,
             has_hnsw_index: false,
             total_bytes,

@@ -11,7 +11,7 @@ use super::{
     MigrationConfig, MigrationEvent, MigrationEventType, MigrationStatus, MigrationStrategy,
 };
 use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
-use crate::storage::engines::factory::StorageEngineFactory;
+use crate::storage::engines::factory::StorageFormatFactory;
 use crate::storage::traits::UnifiedStorageEngine;
 
 /// Engine migrator for moving data between storage engines
@@ -132,9 +132,9 @@ impl EngineMigrator {
     pub async fn new(config: MigrationConfig) -> Result<Self> {
         // Create source and target engines using async versions for test compatibility
         let source_engine =
-            StorageEngineFactory::create_from_proto_async(config.source_engine).await?;
+            StorageFormatFactory::create_from_proto_async(config.source_engine).await?;
         let target_engine =
-            StorageEngineFactory::create_from_proto_async(config.target_engine).await?;
+            StorageFormatFactory::create_from_proto_async(config.target_engine).await?;
 
         let semaphore = Arc::new(Semaphore::new(config.performance.parallel_workers));
 

@@ -445,7 +445,7 @@ impl StorageEngine {
 
             // Create storage engine for this collection
             // Note: Engines are stateless - collection-specific config is passed during operations
-            match crate::storage::engines::factory::StorageEngineFactory::create_from_proto_async(
+            match crate::storage::engines::factory::StorageFormatFactory::create_from_proto_async(
                 proto_engine,
             )
             .await

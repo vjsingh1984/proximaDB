@@ -615,7 +615,7 @@ mod tests {
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::traits::{
         CompactionParameters, CompactionResult, FlushParameters, FlushResult,
-        StorageEngineStrategy, UnifiedStorageEngine,
+        StorageFormatStrategy, UnifiedStorageEngine,
     };
     use chrono::Utc;
     use std::collections::HashMap;
@@ -831,8 +831,8 @@ mod tests {
             "1.0.0"
         }
 
-        fn strategy(&self) -> StorageEngineStrategy {
-            StorageEngineStrategy::Viper
+        fn strategy(&self) -> StorageFormatStrategy {
+            StorageFormatStrategy::Viper
         }
 
         async fn do_flush(&self, _params: &FlushParameters) -> Result<FlushResult> {

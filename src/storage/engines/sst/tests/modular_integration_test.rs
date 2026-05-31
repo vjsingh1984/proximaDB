@@ -180,7 +180,7 @@ mod tests {
         let strategy = engine.strategy();
         assert!(matches!(
             strategy,
-            crate::storage::traits::StorageEngineStrategy::Sst
+            crate::storage::traits::StorageFormatStrategy::Sst
         ));
 
         // Test that basic trait methods work

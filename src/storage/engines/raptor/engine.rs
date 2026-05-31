@@ -2171,8 +2171,8 @@ impl UnifiedStorageEngine for RaptorEngine {
         "1.0.0"
     }
 
-    fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
-        crate::storage::traits::StorageEngineStrategy::Raptor
+    fn strategy(&self) -> crate::storage::traits::StorageFormatStrategy {
+        crate::storage::traits::StorageFormatStrategy::Raptor
     }
 
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {

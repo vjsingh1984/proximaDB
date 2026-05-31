@@ -57,7 +57,7 @@ use super::traits::{
     ReadContext, RecordBatchStream, StorageFormat, VectorBatch, VectorBatchStream,
     VectorReadContext, VectorWriteContext, WriteContext, WriteResult,
 };
-use crate::storage::traits::{StorageEngineStrategy, UnifiedStorageEngine};
+use crate::storage::traits::{StorageFormatStrategy, UnifiedStorageEngine};
 
 // ============================================================================
 // Internal Format Adapter
@@ -103,16 +103,16 @@ impl<E: UnifiedStorageEngine> InternalFormatAdapter<E> {
     /// Get the format type based on engine strategy
     fn get_format_type(&self) -> FormatType {
         match self.engine.strategy() {
-            StorageEngineStrategy::Sst => FormatType::Sst,
-            StorageEngineStrategy::Helix => FormatType::Helix,
-            StorageEngineStrategy::Viper => FormatType::Viper,
-            StorageEngineStrategy::Nova => FormatType::Nova,
-            StorageEngineStrategy::Swift => FormatType::Swift,
-            StorageEngineStrategy::Raptor => FormatType::Raptor,
-            StorageEngineStrategy::Hybrid => FormatType::Sst,
-            StorageEngineStrategy::TimeSeries => FormatType::Sst,
-            StorageEngineStrategy::Cedar => FormatType::Sst, // CEDAR uses SST-like block format
-            StorageEngineStrategy::Chrono => FormatType::Sst, // CHRONO uses time-partitioned blocks
+            StorageFormatStrategy::Sst => FormatType::Sst,
+            StorageFormatStrategy::Helix => FormatType::Helix,
+            StorageFormatStrategy::Viper => FormatType::Viper,
+            StorageFormatStrategy::Nova => FormatType::Nova,
+            StorageFormatStrategy::Swift => FormatType::Swift,
+            StorageFormatStrategy::Raptor => FormatType::Raptor,
+            StorageFormatStrategy::Hybrid => FormatType::Sst,
+            StorageFormatStrategy::TimeSeries => FormatType::Sst,
+            StorageFormatStrategy::Cedar => FormatType::Sst, // CEDAR uses SST-like block format
+            StorageFormatStrategy::Chrono => FormatType::Sst, // CHRONO uses time-partitioned blocks
         }
     }
 }
@@ -203,17 +203,17 @@ impl<E: UnifiedStorageEngine + 'static> StorageFormat for InternalFormatAdapter<
             "quantization" => self.engine.supports_feature("quantization"),
             "bloom_filters" => matches!(
                 self.engine.strategy(),
-                StorageEngineStrategy::Sst | StorageEngineStrategy::Swift
+                StorageFormatStrategy::Sst | StorageFormatStrategy::Swift
             ),
             "columnar_storage" => matches!(
                 self.engine.strategy(),
-                StorageEngineStrategy::Viper | StorageEngineStrategy::Nova
+                StorageFormatStrategy::Viper | StorageFormatStrategy::Nova
             ),
             "progressive_search" => matches!(
                 self.engine.strategy(),
-                StorageEngineStrategy::Sst
-                    | StorageEngineStrategy::Nova
-                    | StorageEngineStrategy::Helix
+                StorageFormatStrategy::Sst
+                    | StorageFormatStrategy::Nova
+                    | StorageFormatStrategy::Helix
             ),
             _ => self.engine.supports_feature(feature),
         }
@@ -408,17 +408,17 @@ impl<E: UnifiedStorageEngine + 'static> InternalFormat for InternalFormatAdapter
     fn should_compact(&self, stats: &FormatStatistics) -> bool {
         // Use engine-specific heuristics
         match self.engine.strategy() {
-            StorageEngineStrategy::Sst => {
+            StorageFormatStrategy::Sst => {
                 // SST: Compact when file count is high
                 stats.file_count > 10
             }
-            StorageEngineStrategy::Viper | StorageEngineStrategy::Nova => {
+            StorageFormatStrategy::Viper | StorageFormatStrategy::Nova => {
                 // Columnar: Compact when many small files
                 let small_file_threshold: u64 = 64 * 1024 * 1024;
                 stats.file_count > 5
                     && (stats.size_bytes / stats.file_count as u64) < small_file_threshold
             }
-            StorageEngineStrategy::Helix => {
+            StorageFormatStrategy::Helix => {
                 // Helix: Compact based on locality
                 stats.file_count > 8
             }
@@ -486,7 +486,7 @@ impl<E: UnifiedStorageEngine + 'static> InternalFormat for InternalFormatAdapter
         // Bloom filters are engine-specific
         // SST and SWIFT engines have bloom filter support
         match self.engine.strategy() {
-            StorageEngineStrategy::Sst | StorageEngineStrategy::Swift => {
+            StorageFormatStrategy::Sst | StorageFormatStrategy::Swift => {
                 // These engines support bloom filters, but we need engine-specific access
                 // For now, return None - real implementation would access engine internals
                 Ok(None)

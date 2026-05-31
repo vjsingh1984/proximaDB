@@ -1177,7 +1177,7 @@ mod tests {
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use crate::storage::traits::{
             CompactionParameters, CompactionResult, FlushParameters, FlushResult,
-            StorageEngineStrategy, UnifiedStorageEngine,
+            StorageFormatStrategy, UnifiedStorageEngine,
         };
         use async_trait::async_trait;
         use std::collections::HashMap;
@@ -1197,8 +1197,8 @@ mod tests {
                 "1.0.0"
             }
 
-            fn strategy(&self) -> StorageEngineStrategy {
-                StorageEngineStrategy::Sst
+            fn strategy(&self) -> StorageFormatStrategy {
+                StorageFormatStrategy::Sst
             }
 
             async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {

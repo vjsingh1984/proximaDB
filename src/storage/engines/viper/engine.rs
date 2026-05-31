@@ -1886,8 +1886,8 @@ impl UnifiedStorageEngine for ViperEngine {
         crate::version::PROXIMADB_VERSION
     }
 
-    fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
-        crate::storage::traits::StorageEngineStrategy::Viper
+    fn strategy(&self) -> crate::storage::traits::StorageFormatStrategy {
+        crate::storage::traits::StorageFormatStrategy::Viper
     }
 
     async fn do_flush(
@@ -2897,7 +2897,7 @@ impl UnifiedStorageEngine for ViperEngine {
         Ok(crate::storage::traits::CollectionStats {
             row_count: total_vectors,
             avg_vector_bytes,
-            engine_strategy: crate::storage::traits::StorageEngineStrategy::Viper,
+            engine_strategy: crate::storage::traits::StorageFormatStrategy::Viper,
             has_metadata_index: true, // VIPER has Parquet predicate pushdown
             has_hnsw_index: false,
             total_bytes: total_storage,

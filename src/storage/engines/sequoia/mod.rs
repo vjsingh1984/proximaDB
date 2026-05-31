@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{
-    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
+    CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageFormatStrategy,
     StorageQueryContext, UnifiedStorageEngine,
 };
 
@@ -608,9 +608,9 @@ impl UnifiedStorageEngine for SequoiaEngine {
         "0.1.0"
     }
 
-    fn strategy(&self) -> StorageEngineStrategy {
+    fn strategy(&self) -> StorageFormatStrategy {
         // No Sequoia variant yet; use Sst as the closest match.
-        StorageEngineStrategy::Sst
+        StorageFormatStrategy::Sst
     }
 
     fn get_filesystem_factory(&self) -> &FilesystemFactory {
@@ -1005,6 +1005,6 @@ mod tests {
         let engine = SequoiaEngine::new();
         assert_eq!(UnifiedStorageEngine::engine_name(&engine), "sequoia");
         assert_eq!(engine.engine_version(), "0.1.0");
-        assert_eq!(engine.strategy(), StorageEngineStrategy::Sst);
+        assert_eq!(engine.strategy(), StorageFormatStrategy::Sst);
     }
 }

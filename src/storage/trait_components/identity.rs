@@ -5,7 +5,7 @@
 //! on engine identification and capability reporting.
 
 use crate::index::axis::eventlog::StorageEngineType;
-use crate::storage::traits::StorageEngineStrategy;
+use crate::storage::traits::StorageFormatStrategy;
 
 /// Core identity trait for storage engines
 ///
@@ -18,7 +18,7 @@ use crate::storage::traits::StorageEngineStrategy;
 /// impl StorageIdentity for SstEngine {
 ///     fn engine_name(&self) -> &'static str { "SST" }
 ///     fn engine_version(&self) -> &'static str { "1.0.0" }
-///     fn strategy(&self) -> StorageEngineStrategy { StorageEngineStrategy::Sst }
+///     fn strategy(&self) -> StorageFormatStrategy { StorageFormatStrategy::Sst }
 /// }
 /// ```
 pub trait StorageIdentity: Send + Sync {
@@ -29,7 +29,7 @@ pub trait StorageIdentity: Send + Sync {
     fn engine_version(&self) -> &'static str;
 
     /// Storage strategy this engine implements
-    fn strategy(&self) -> StorageEngineStrategy;
+    fn strategy(&self) -> StorageFormatStrategy;
 
     /// Get the storage engine type for AXIS indexing and event logging
     ///
@@ -39,13 +39,13 @@ pub trait StorageIdentity: Send + Sync {
     fn engine_type(&self) -> StorageEngineType {
         // Default implementation maps from strategy for backward compatibility
         match self.strategy() {
-            StorageEngineStrategy::Sst => StorageEngineType::SST,
-            StorageEngineStrategy::Viper => StorageEngineType::VIPER,
-            StorageEngineStrategy::Helix => StorageEngineType::HELIX,
-            StorageEngineStrategy::Nova => StorageEngineType::NOVA,
-            StorageEngineStrategy::Swift => StorageEngineType::SWIFT,
-            StorageEngineStrategy::Raptor => StorageEngineType::RAPTOR,
-            StorageEngineStrategy::TimeSeries => StorageEngineType::TST,
+            StorageFormatStrategy::Sst => StorageEngineType::SST,
+            StorageFormatStrategy::Viper => StorageEngineType::VIPER,
+            StorageFormatStrategy::Helix => StorageEngineType::HELIX,
+            StorageFormatStrategy::Nova => StorageEngineType::NOVA,
+            StorageFormatStrategy::Swift => StorageEngineType::SWIFT,
+            StorageFormatStrategy::Raptor => StorageEngineType::RAPTOR,
+            StorageFormatStrategy::TimeSeries => StorageEngineType::TST,
             // Future engines should override this method
             _ => StorageEngineType::SST,
         }
@@ -56,7 +56,7 @@ pub trait StorageIdentity: Send + Sync {
     /// Engines that return false operate on the entire database.
     fn supports_collection_level_operations(&self) -> bool {
         match self.strategy() {
-            StorageEngineStrategy::Sst => false, // SST operates on entire tree
+            StorageFormatStrategy::Sst => false, // SST operates on entire tree
             _ => true,
         }
     }
@@ -66,8 +66,8 @@ pub trait StorageIdentity: Send + Sync {
     /// Atomic operations guarantee all-or-nothing semantics.
     fn supports_atomic_operations(&self) -> bool {
         match self.strategy() {
-            StorageEngineStrategy::Sst => false,    // Eventual consistency
-            StorageEngineStrategy::Raptor => false, // Eventual consistency
+            StorageFormatStrategy::Sst => false,    // Eventual consistency
+            StorageFormatStrategy::Raptor => false, // Eventual consistency
             _ => true,
         }
     }

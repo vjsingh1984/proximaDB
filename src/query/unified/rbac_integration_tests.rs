@@ -28,9 +28,9 @@ use crate::storage::document::DocumentService;
 
 /// Helper function to create a mock storage engine for testing
 async fn create_mock_storage_engine() -> Arc<dyn crate::storage::traits::UnifiedStorageEngine> {
-    use crate::storage::engines::factory::StorageEngineFactory;
+    use crate::storage::engines::factory::StorageFormatFactory;
 
-    StorageEngineFactory::create_sst_async().await.unwrap()
+    StorageFormatFactory::create_sst_async().await.unwrap()
 }
 
 /// Helper function to create a test user context

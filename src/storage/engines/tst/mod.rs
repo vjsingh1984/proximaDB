@@ -119,7 +119,7 @@ use tokio::sync::RwLock;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::index::axis::eventlog::StorageEngineType;
 use crate::proto::proximadb_v1::{Collection, VectorRecord};
-use crate::storage::StorageEngineStrategy;
+use crate::storage::StorageFormatStrategy;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::scan_strategy::ScanIterator;
 use crate::storage::traits::EngineHealth;
@@ -1081,8 +1081,8 @@ impl StorageIdentity for TimeSeriesEngine {
         "0.1.0"
     }
 
-    fn strategy(&self) -> StorageEngineStrategy {
-        StorageEngineStrategy::TimeSeries
+    fn strategy(&self) -> StorageFormatStrategy {
+        StorageFormatStrategy::TimeSeries
     }
 
     fn engine_type(&self) -> StorageEngineType {
@@ -1308,8 +1308,8 @@ impl UnifiedStorageEngine for TimeSeriesEngine {
         "0.1.0"
     }
 
-    fn strategy(&self) -> StorageEngineStrategy {
-        StorageEngineStrategy::TimeSeries
+    fn strategy(&self) -> StorageFormatStrategy {
+        StorageFormatStrategy::TimeSeries
     }
 
     async fn collect_engine_metrics(

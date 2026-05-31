@@ -2068,7 +2068,7 @@ impl EmbeddedProximaDB {
                     collection_id, engine_name
                 );
 
-                let storage_engine = match crate::storage::engines::factory::StorageEngineFactory::create_from_proto_async(proto_engine).await {
+                let storage_engine = match crate::storage::engines::factory::StorageFormatFactory::create_from_proto_async(proto_engine).await {
                     Ok(engine) => engine,
                     Err(e) => {
                         tracing::warn!(

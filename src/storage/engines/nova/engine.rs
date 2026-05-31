@@ -1338,8 +1338,8 @@ impl UnifiedStorageEngine for NovaEngine {
         "1.0.0" // Release 1 version
     }
 
-    fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
-        crate::storage::traits::StorageEngineStrategy::Nova
+    fn strategy(&self) -> crate::storage::traits::StorageFormatStrategy {
+        crate::storage::traits::StorageFormatStrategy::Nova
     }
 
     /// Read ALL records of a collection from persisted Parquet files (Phase 8
@@ -1508,7 +1508,7 @@ impl UnifiedStorageEngine for NovaEngine {
         Ok(crate::storage::traits::CollectionStats {
             row_count: estimated_row_count,
             avg_vector_bytes: avg_record_bytes,
-            engine_strategy: crate::storage::traits::StorageEngineStrategy::Nova,
+            engine_strategy: crate::storage::traits::StorageFormatStrategy::Nova,
             has_metadata_index: true, // NOVA has zone maps and bloom filters
             has_hnsw_index: false,
             total_bytes: per_collection_bytes,

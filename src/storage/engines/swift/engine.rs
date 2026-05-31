@@ -29,7 +29,7 @@ use crate::index::axis::management::manager::{
 };
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
-    FlushResult, StorageEngineStrategy, UnifiedStorageEngine,
+    FlushResult, StorageFormatStrategy, UnifiedStorageEngine,
 };
 use proximadb_records::ProximaRecord;
 // Removed unused import: IndexingAlgorithm
@@ -1097,9 +1097,9 @@ impl UnifiedStorageEngine for SwiftEngine {
         "1.0.0"
     }
 
-    fn strategy(&self) -> StorageEngineStrategy {
+    fn strategy(&self) -> StorageFormatStrategy {
         // SWIFT is a hierarchical superblock strategy with row-based optimization
-        StorageEngineStrategy::Swift
+        StorageFormatStrategy::Swift
     }
 
     fn get_filesystem_factory(
@@ -2179,7 +2179,7 @@ mod tests {
     async fn test_swift_engine_strategy() {
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = SwiftEngine::new().await.unwrap();
-        assert_eq!(engine.strategy(), StorageEngineStrategy::Swift);
+        assert_eq!(engine.strategy(), StorageFormatStrategy::Swift);
     }
 
     #[tokio::test]

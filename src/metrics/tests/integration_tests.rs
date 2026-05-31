@@ -124,8 +124,8 @@ mod tests {
             "integration-test-1.0"
         }
 
-        fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
-            crate::storage::traits::StorageEngineStrategy::Viper
+        fn strategy(&self) -> crate::storage::traits::StorageFormatStrategy {
+            crate::storage::traits::StorageFormatStrategy::Viper
         }
 
         async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {

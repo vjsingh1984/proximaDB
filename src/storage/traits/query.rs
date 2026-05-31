@@ -10,7 +10,7 @@ pub use proximadb_quantization_types::QuantizationType;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use super::{PerformanceTier, StorageEngineStrategy};
+use super::{PerformanceTier, StorageFormatStrategy};
 
 /// Predicate evaluated by the storage engine at scan time for row-level security.
 ///
@@ -109,7 +109,7 @@ pub struct StorageQueryMetadata {
     pub distance_metric: crate::compute::distance_computation::DistanceMetric,
 
     /// Storage engine strategy for this collection
-    pub storage_strategy: StorageEngineStrategy,
+    pub storage_strategy: StorageFormatStrategy,
 
     /// Base storage path for this collection (extracted from storage_assignment)
     pub storage_path: String,
@@ -270,23 +270,23 @@ impl StorageQueryContext {
         let storage_strategy = config
             .and_then(|c| c.storage_engine)
             .and_then(|e| crate::proto::proximadb_v1::StorageEngine::try_from(e).ok())
-            .map_or(StorageEngineStrategy::Sst, |engine| match engine {
-                crate::proto::proximadb_v1::StorageEngine::Viper => StorageEngineStrategy::Viper,
-                crate::proto::proximadb_v1::StorageEngine::Sst => StorageEngineStrategy::Sst,
-                crate::proto::proximadb_v1::StorageEngine::Nova => StorageEngineStrategy::Nova,
-                crate::proto::proximadb_v1::StorageEngine::Helix => StorageEngineStrategy::Helix,
-                crate::proto::proximadb_v1::StorageEngine::Swift => StorageEngineStrategy::Swift,
-                crate::proto::proximadb_v1::StorageEngine::Raptor => StorageEngineStrategy::Raptor,
-                crate::proto::proximadb_v1::StorageEngine::Tst => StorageEngineStrategy::TimeSeries,
-                _ => StorageEngineStrategy::Sst,
+            .map_or(StorageFormatStrategy::Sst, |engine| match engine {
+                crate::proto::proximadb_v1::StorageEngine::Viper => StorageFormatStrategy::Viper,
+                crate::proto::proximadb_v1::StorageEngine::Sst => StorageFormatStrategy::Sst,
+                crate::proto::proximadb_v1::StorageEngine::Nova => StorageFormatStrategy::Nova,
+                crate::proto::proximadb_v1::StorageEngine::Helix => StorageFormatStrategy::Helix,
+                crate::proto::proximadb_v1::StorageEngine::Swift => StorageFormatStrategy::Swift,
+                crate::proto::proximadb_v1::StorageEngine::Raptor => StorageFormatStrategy::Raptor,
+                crate::proto::proximadb_v1::StorageEngine::Tst => StorageFormatStrategy::TimeSeries,
+                _ => StorageFormatStrategy::Sst,
             });
 
         let mut adjusted_params = (*search_params).clone();
         if matches!(
             storage_strategy,
-            StorageEngineStrategy::Viper
-                | StorageEngineStrategy::Nova
-                | StorageEngineStrategy::Raptor
+            StorageFormatStrategy::Viper
+                | StorageFormatStrategy::Nova
+                | StorageFormatStrategy::Raptor
         ) {
             adjusted_params.block_prune.force_exact = true;
             adjusted_params.block_prune.mode = BlockPruneMode::Sqrt;
@@ -464,7 +464,7 @@ impl StorageQueryContext {
     }
 
     /// Get storage strategy (pre-computed).
-    pub fn storage_strategy(&self) -> StorageEngineStrategy {
+    pub fn storage_strategy(&self) -> StorageFormatStrategy {
         self.metadata.storage_strategy
     }
 
