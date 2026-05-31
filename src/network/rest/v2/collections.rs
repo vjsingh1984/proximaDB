@@ -1861,6 +1861,7 @@ pub async fn post_collection_recall_tune_v2(
         crate::index::axis::management::HotSwapOutcome::Applied { changes } => {
             crate::metrics::recall_drift_metrics::record_recall_drift_hot_swap_applied(
                 &collection_id,
+                crate::metrics::recall_drift_metrics::HOT_SWAP_TRIGGER_OPERATOR,
             );
             (
                 "applied_hot_swap",

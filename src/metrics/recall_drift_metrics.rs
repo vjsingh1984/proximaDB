@@ -98,18 +98,29 @@ lazy_static! {
         &["collection"],
     );
 
-    /// Successful in-place ef_search hot-swaps via the
-    /// `/recall-tune` endpoint. Operators chart this to see how
-    /// often drift self-heals without rebuild.
+    /// Successful in-place ef_search hot-swaps. Distinguished by
+    /// the `trigger` label: `"operator"` (POST /recall-tune) or
+    /// `"sweeper"` (RecallDriftSweeper auto-apply). Operators chart
+    /// this to see how often drift self-heals without rebuild and
+    /// who's driving the heal.
     pub static ref AXIS_RECALL_DRIFT_HOT_SWAP_APPLIED_TOTAL: CounterVec =
         register_counter_vec_safe(
             "axis_recall_drift_hot_swap_applied_total",
-            "Count of successful hot-swap apply operations via \
-             /recall-tune. Each operation may have multiple per-spec \
-             changes — this counter is per request, not per spec.",
-            &["collection"],
+            "Count of successful hot-swap apply operations. The \
+             `trigger` label distinguishes operator-driven \
+             (via POST /recall-tune) from sweeper-driven \
+             (automatic RecallDriftSweeper apply). Each operation \
+             may have multiple per-spec changes — this counter is \
+             per apply call, not per spec.",
+            &["collection", "trigger"],
         );
 }
+
+/// Stable label values for the `trigger` dimension on
+/// [`AXIS_RECALL_DRIFT_HOT_SWAP_APPLIED_TOTAL`]. Exported so
+/// callers + dashboards reference the same literals.
+pub const HOT_SWAP_TRIGGER_OPERATOR: &str = "operator";
+pub const HOT_SWAP_TRIGGER_SWEEPER: &str = "sweeper";
 
 /// Record an observation of drift state for a collection. Updates
 /// the one-hot gauge so the chosen `kind` is 1 and the other three
@@ -136,12 +147,14 @@ pub fn record_recall_drift_observation(collection: &str, kind: &str) {
         .inc();
 }
 
-/// Record that the `/recall-tune` endpoint successfully applied a
-/// hot-swap for a collection. One increment per request, not per
-/// spec — see the metric help text.
-pub fn record_recall_drift_hot_swap_applied(collection: &str) {
+/// Record a successful hot-swap apply for a collection. `trigger`
+/// must be one of [`HOT_SWAP_TRIGGER_OPERATOR`] /
+/// [`HOT_SWAP_TRIGGER_SWEEPER`] — keeps dashboards able to
+/// distinguish manual from automatic resolution. One increment per
+/// apply call, not per spec touched.
+pub fn record_recall_drift_hot_swap_applied(collection: &str, trigger: &str) {
     AXIS_RECALL_DRIFT_HOT_SWAP_APPLIED_TOTAL
-        .with_label_values(&[collection])
+        .with_label_values(&[collection, trigger])
         .inc();
 }
 
@@ -242,16 +255,24 @@ mod tests {
     }
 
     #[test]
-    fn hot_swap_counter_increments() {
+    fn hot_swap_counter_increments_per_trigger() {
         let collection = "test_hot_swap_counter_unique_collection_name";
-        let before = AXIS_RECALL_DRIFT_HOT_SWAP_APPLIED_TOTAL
-            .with_label_values(&[collection])
+        let op_before = AXIS_RECALL_DRIFT_HOT_SWAP_APPLIED_TOTAL
+            .with_label_values(&[collection, HOT_SWAP_TRIGGER_OPERATOR])
             .get();
-        record_recall_drift_hot_swap_applied(collection);
-        record_recall_drift_hot_swap_applied(collection);
-        let after = AXIS_RECALL_DRIFT_HOT_SWAP_APPLIED_TOTAL
-            .with_label_values(&[collection])
+        let sw_before = AXIS_RECALL_DRIFT_HOT_SWAP_APPLIED_TOTAL
+            .with_label_values(&[collection, HOT_SWAP_TRIGGER_SWEEPER])
             .get();
-        assert_eq!(after - before, 2.0);
+        record_recall_drift_hot_swap_applied(collection, HOT_SWAP_TRIGGER_OPERATOR);
+        record_recall_drift_hot_swap_applied(collection, HOT_SWAP_TRIGGER_SWEEPER);
+        record_recall_drift_hot_swap_applied(collection, HOT_SWAP_TRIGGER_SWEEPER);
+        let op_after = AXIS_RECALL_DRIFT_HOT_SWAP_APPLIED_TOTAL
+            .with_label_values(&[collection, HOT_SWAP_TRIGGER_OPERATOR])
+            .get();
+        let sw_after = AXIS_RECALL_DRIFT_HOT_SWAP_APPLIED_TOTAL
+            .with_label_values(&[collection, HOT_SWAP_TRIGGER_SWEEPER])
+            .get();
+        assert_eq!(op_after - op_before, 1.0);
+        assert_eq!(sw_after - sw_before, 2.0);
     }
 }

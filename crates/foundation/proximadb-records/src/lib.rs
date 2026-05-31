@@ -28,8 +28,14 @@
 
 use std::collections::HashMap;
 
-use proximadb_data_model::{MemoryType, ProximaValue};
+use proximadb_data_model::MemoryType;
 use serde::{Deserialize, Serialize};
+
+/// Re-export so consumers can write `proximadb_records::ProximaValue`
+/// without taking a direct dependency on `proximadb-data-model`.
+/// Matches the existing re-export pattern this crate uses for other
+/// data-model types.
+pub use proximadb_data_model::ProximaValue;
 
 pub mod conversions;
 pub mod proto_v2;

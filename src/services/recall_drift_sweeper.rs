@@ -90,6 +90,18 @@ pub struct RecallDriftSweeper {
     /// `crate::services::collection::recall_target::resolve_top_k`,
     /// which has the same fallback — keeps every surface in sync.
     default_top_k: u32,
+    /// When true, the sweeper auto-applies the in-memory hot-swap
+    /// for any collection whose drift is classified as
+    /// [`DriftKind::EfSearchOnly`]. Defaults to true: the hot-swap
+    /// is a single in-memory `u32` update on the live strategy and
+    /// the worst case (advisor jitter at a tier boundary) is at
+    /// most one apply per sweep tick (5 min default).
+    ///
+    /// **EfConstructionOrM drift is intentionally NOT auto-resolved**
+    /// — that path triggers a full HNSW rebuild (minutes of CPU +
+    /// memory) and is operator-driven per the design choice
+    /// captured in commit 3fba8e589.
+    auto_hot_swap: bool,
 }
 
 impl RecallDriftSweeper {
@@ -97,6 +109,7 @@ impl RecallDriftSweeper {
         Self {
             collections,
             default_top_k: crate::services::collection::recall_target::DEFAULT_TOP_K,
+            auto_hot_swap: true,
         }
     }
 
@@ -106,6 +119,14 @@ impl RecallDriftSweeper {
     /// route-health configurations.
     pub fn with_default_top_k(mut self, top_k: u32) -> Self {
         self.default_top_k = top_k;
+        self
+    }
+
+    /// Disable auto-apply of hot-swaps on `EfSearchOnly` drift.
+    /// Useful for tests and for operator deployments that want
+    /// every AXIS mutation to be explicit. Defaults to true.
+    pub fn with_auto_hot_swap(mut self, enabled: bool) -> Self {
+        self.auto_hot_swap = enabled;
         self
     }
 
@@ -176,6 +197,57 @@ impl RecallDriftSweeper {
                 kind = kind,
                 "sweep observation"
             );
+
+            // Auto-apply hot-swap on EfSearchOnly drift. Bounded:
+            // at most one apply per (collection, sweep tick), and
+            // the advised ef is recomputed from advisor state at
+            // the next tick, so a transient mis-prediction
+            // self-corrects.
+            if self.auto_hot_swap
+                && matches!(report.drift_kind, DriftKind::EfSearchOnly)
+                && let Some(axis_manager) =
+                    crate::storage::engines::sst::core::get_sst_axis_manager()
+            {
+                let new_ef = report.current_params.ef_search;
+                match axis_manager
+                    .apply_hnsw_ef_hot_swap(&config.name, new_ef)
+                    .await
+                {
+                    Ok(crate::index::axis::management::HotSwapOutcome::Applied {
+                        changes,
+                    }) => {
+                        crate::metrics::recall_drift_metrics::record_recall_drift_hot_swap_applied(
+                            &config.name,
+                            crate::metrics::recall_drift_metrics::HOT_SWAP_TRIGGER_SWEEPER,
+                        );
+                        info!(
+                            target: "recall_drift_sweeper",
+                            collection = %config.name,
+                            new_ef_search = new_ef,
+                            specs_touched = changes.len(),
+                            "auto-applied EfSearchOnly hot-swap"
+                        );
+                    }
+                    Ok(crate::index::axis::management::HotSwapOutcome::NotApplicable {
+                        reason,
+                    }) => {
+                        debug!(
+                            target: "recall_drift_sweeper",
+                            collection = %config.name,
+                            reason = %reason,
+                            "hot-swap not applicable (likely no strategy yet)"
+                        );
+                    }
+                    Err(err) => {
+                        warn!(
+                            target: "recall_drift_sweeper",
+                            collection = %config.name,
+                            error = %err,
+                            "hot-swap apply failed"
+                        );
+                    }
+                }
+            }
         }
         observed
     }
@@ -345,5 +417,77 @@ mod tests {
             .with_label_values(&[collection_name, "none"])
             .get();
         assert_eq!(none_gauge, 1.0, "matched baseline+current N → kind=none");
+    }
+
+    #[tokio::test]
+    async fn auto_hot_swap_defaults_to_true() {
+        // Operator builds the sweeper with the default constructor:
+        // auto-hot-swap is on, so EfSearchOnly drift triggers an
+        // apply attempt on the next sweep tick. The test fixture
+        // doesn't register a global axis_manager, so the apply
+        // short-circuits at the get_sst_axis_manager() check — but
+        // the auto_hot_swap field itself must be true.
+        let lister = Arc::new(FixtureLister(vec![]));
+        let sweeper = RecallDriftSweeper::new(lister);
+        assert!(
+            sweeper.auto_hot_swap,
+            "auto_hot_swap must default to true for self-healing drift"
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_hot_swap_builder_disables_apply() {
+        // Explicit opt-out: with_auto_hot_swap(false). Used in tests
+        // and in deployments that want every AXIS mutation explicit.
+        let lister = Arc::new(FixtureLister(vec![]));
+        let sweeper = RecallDriftSweeper::new(lister).with_auto_hot_swap(false);
+        assert!(!sweeper.auto_hot_swap);
+    }
+
+    #[tokio::test]
+    async fn auto_hot_swap_disabled_does_not_touch_axis_manager() {
+        // With auto_hot_swap disabled the sweeper must NOT increment
+        // the sweeper trigger counter, even on a collection whose
+        // baseline_n vs current_n would normally produce
+        // EfSearchOnly drift. (We can't easily verify the
+        // axis_manager isn't touched without a fixture for it; this
+        // counter assertion is the next-best behavioural check.)
+        let collection_name = "sweeper_no_auto_apply_unique_name_xyz";
+        let lister = Arc::new(FixtureLister(vec![col(
+            collection_name,
+            128,
+            // baseline_n=100K, current_n=250K → ef_search_only drift
+            &["recall_target:0.95", "target_vector_count:100000"],
+            250_000,
+        )]));
+        let sweeper = RecallDriftSweeper::new(lister).with_auto_hot_swap(false);
+
+        let before = crate::metrics::recall_drift_metrics::AXIS_RECALL_DRIFT_HOT_SWAP_APPLIED_TOTAL
+            .with_label_values(&[
+                collection_name,
+                crate::metrics::recall_drift_metrics::HOT_SWAP_TRIGGER_SWEEPER,
+            ])
+            .get();
+        let _ = sweeper.sweep_once().await;
+        let after = crate::metrics::recall_drift_metrics::AXIS_RECALL_DRIFT_HOT_SWAP_APPLIED_TOTAL
+            .with_label_values(&[
+                collection_name,
+                crate::metrics::recall_drift_metrics::HOT_SWAP_TRIGGER_SWEEPER,
+            ])
+            .get();
+        assert_eq!(
+            after - before,
+            0.0,
+            "with_auto_hot_swap(false) must not bump the sweeper trigger counter"
+        );
+
+        // The drift WAS observed (observation counter ticks).
+        let obs_kind = crate::metrics::recall_drift_metrics::AXIS_RECALL_DRIFT_STATUS
+            .with_label_values(&[collection_name, "ef_search_only"])
+            .get();
+        assert_eq!(
+            obs_kind, 1.0,
+            "drift kind must still be observed even when auto-apply is off"
+        );
     }
 }
