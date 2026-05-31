@@ -73,7 +73,7 @@ pub use query::{
 pub use results::{CompactionResult, EngineHealth, EngineStatistics, FlushResult};
 pub use types::{
     CompactionParameters, FlushParameters, OperationPriority, PerformanceTier,
-    StorageEngineStrategy,
+    StorageEngineStrategy, StorageFormatStrategy,
 };
 
 use crate::proto::proximadb_v1::Collection;
@@ -1768,9 +1768,38 @@ pub trait UnifiedStorageEngine: Send + Sync {
     }
 }
 
+/// Backwards-compat **format** alias for [`UnifiedStorageEngine`] (engines →
+/// formats convergence). ProximaDB's storage "engines" (SST/VIPER/HELIX/NOVA/…)
+/// are format/layout specializations, aligning the runtime with the catalog's
+/// `CatalogPhysicalFormat`/`CatalogStorageLayoutKind` vocabulary. New code may
+/// use `UnifiedStorageFormat`; `UnifiedStorageEngine` remains during the
+/// migration window (see `docs/12-design/NAMING_CONVENTIONS.adoc`). This is a
+/// re-export, so `dyn UnifiedStorageFormat` is the same trait object as
+/// `dyn UnifiedStorageEngine`.
+pub use self::UnifiedStorageEngine as UnifiedStorageFormat;
+
 // ---------------------------------------------------------------------------
 // Phase E RLS scaffold tests
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod format_alias_tests {
+    use super::{UnifiedStorageEngine, UnifiedStorageFormat};
+
+    // Compile-level proof that the format alias is the *same* trait as the
+    // engine trait: a `&dyn UnifiedStorageFormat` is returnable as a
+    // `&dyn UnifiedStorageEngine` with no cast. This only compiles if the two
+    // names resolve to one trait (engines → formats convergence).
+    #[allow(dead_code)]
+    fn coerce(x: &dyn UnifiedStorageFormat) -> &dyn UnifiedStorageEngine {
+        x
+    }
+
+    #[test]
+    fn unified_storage_format_alias_is_the_engine_trait() {
+        let _ = coerce as fn(&dyn UnifiedStorageFormat) -> &dyn UnifiedStorageEngine;
+    }
+}
 
 #[cfg(test)]
 mod rls_tests {

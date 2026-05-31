@@ -99,6 +99,44 @@ remove aliases ~6 months after the disambiguation rename ships and
 all callers have migrated to the new name.
 ====
 
+== Engines → formats convergence
+
+ProximaDB's storage "engines" (SST, VIPER, HELIX, NOVA, SWIFT, RAPTOR,
+…) are conceptually *format/layout specializations*. The catalog layer
+already speaks this vocabulary (`CatalogPhysicalFormat`,
+`CatalogStorageLayoutKind`); the runtime is converging on it. Following
+the alias pattern above, the runtime now ships **format aliases** next
+to the existing engine names (back-compat, zero call-site churn):
+
+[cols="1,1", options="header"]
+|===
+| Engine name (legacy) | Format alias (new)
+
+| `UnifiedStorageEngine` (trait, `storage/traits/mod.rs`)
+| `UnifiedStorageFormat`
+
+| `StorageEngineStrategy` (enum, `storage/traits/types.rs`)
+| `StorageFormatStrategy`
+
+| `StorageEngineFactory` (`storage/engines/factory.rs`)
+| `StorageFormatFactory`
+|===
+
+New code should prefer the format names; the engine names remain during
+the migration window and are migrated opportunistically.
+
+*Explicitly preserved (wire-breaking — do NOT rename):* the proto
+`StorageEngine` enum and the `storage_engine` gRPC/JSON/REST collection
+field are client-visible contract and stay as-is.
+
+*Deferred (high churn):* the directory rename `src/storage/engines/` →
+`src/storage/formats/` (~385 files, and it name-collides with the
+existing `engines/core/formats/` on-disk-format subtree), plus
+migration of the ~421 `UnifiedStorageEngine` / ~262
+`StorageEngineStrategy` call sites. Unrelated `*Engine`/`*EngineType`
+enums (metrics, RL planner, storage-common) and the graph ORION/PULSAR
+engine subsystem are out of scope.
+
 == Substring-regression hazard
 
 When using `replace_all` on a short type name, watch out for sibling

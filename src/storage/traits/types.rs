@@ -222,9 +222,29 @@ pub enum StorageEngineStrategy {
     Chrono,
 }
 
+/// Backwards-compat **format** alias for [`StorageEngineStrategy`] (engines →
+/// formats convergence). Variants are reached through the alias, e.g.
+/// `StorageFormatStrategy::Sst`. New code may use this name;
+/// `StorageEngineStrategy` remains during the migration window (see
+/// `docs/12-design/NAMING_CONVENTIONS.adoc`).
+pub type StorageFormatStrategy = StorageEngineStrategy;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn storage_format_strategy_alias_is_interchangeable() {
+        // The format alias names the same type — default + variants match.
+        assert_eq!(StorageFormatStrategy::default(), StorageEngineStrategy::Sst);
+        let s: StorageFormatStrategy = StorageEngineStrategy::Viper;
+        assert_eq!(s, StorageEngineStrategy::Viper);
+        // And serializes identically (same type, no wire change).
+        assert_eq!(
+            serde_json::to_string(&StorageFormatStrategy::Helix).unwrap(),
+            serde_json::to_string(&StorageEngineStrategy::Helix).unwrap()
+        );
+    }
 
     #[test]
     fn test_flush_parameters_default() {

@@ -155,6 +155,12 @@ fn register_engine_capabilities(engine: &Arc<dyn UnifiedStorageEngine>) {
 /// concurrent access across multiple tokio tasks.
 pub struct StorageEngineFactory;
 
+/// Backwards-compat **format** alias for [`StorageEngineFactory`] (engines →
+/// formats convergence). New code may use `StorageFormatFactory`;
+/// `StorageEngineFactory` remains during the migration window (see
+/// `docs/12-design/NAMING_CONVENTIONS.adoc`).
+pub type StorageFormatFactory = StorageEngineFactory;
+
 impl StorageEngineFactory {
     /// Create a storage engine from proto enum
     ///

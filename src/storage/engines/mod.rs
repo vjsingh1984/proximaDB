@@ -155,6 +155,11 @@ pub use constants::*;
 // Re-export factory
 pub use factory::{EngineComparison, EngineRequirements, StorageEngineFactory, WorkloadType};
 
+// Engines → formats convergence: surface the back-compat format aliases at the
+// same paths the engine names are reached (see NAMING_CONVENTIONS.adoc).
+pub use crate::storage::traits::{StorageFormatStrategy, UnifiedStorageFormat};
+pub use factory::StorageFormatFactory;
+
 // Re-export universal adapter
 pub use universal::{
     CandidateVector, DistanceComputationRequest, DistanceComputationResult,
