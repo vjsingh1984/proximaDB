@@ -236,6 +236,12 @@ pub struct AxisManager {
     /// `None` ⇒ persistence disabled (embedded/test harnesses without a data dir).
     index_persist_dir: Option<std::path::PathBuf>,
 
+    /// Phase 8 F4a (TD-094): collections whose in-memory IVF index was evicted by
+    /// `suspend_collection` to free memory. The persisted `ivf.bin` remains, so
+    /// the next query (or `resume_collection`) warm-loads it; the marker is
+    /// cleared on that warm-load. Surfaced in route-health.
+    suspended_collections: Arc<RwLock<std::collections::HashSet<String>>>,
+
     /// Shared collection cache from VectorOperationsService (read-only access)
     /// This avoids duplicating collection metadata in memory
     /// Collections are cached by VectorOperationsService and shared here
@@ -420,6 +426,7 @@ impl AxisManager {
             collection_service: None, // Will be set later via set_collection_service
             recall_probe_gate: None,  // Set later via set_recall_probe_gate (TD-075)
             index_persist_dir: None,  // Set later via set_index_persist_dir (TD-087 Slice B)
+            suspended_collections: Arc::new(RwLock::new(std::collections::HashSet::new())), // F4a
             shared_collection_cache: None, // Will be set via set_shared_collection_cache
             hnsw_indexes: Arc::new(RwLock::new(HashMap::new())), // Real HNSW indexes per collection
             ivf_indexes: Arc::new(RwLock::new(HashMap::new())), // Real IVF indexes per collection (DEFAULT)
@@ -473,7 +480,9 @@ impl AxisManager {
     async fn persist_ivf_index(
         &self,
         collection_id: &str,
-        index: &Arc<tokio::sync::RwLock<crate::index::axis::indexes::dual_store_ivf::UnifiedIvfIndex>>,
+        index: &Arc<
+            tokio::sync::RwLock<crate::index::axis::indexes::dual_store_ivf::UnifiedIvfIndex>,
+        >,
     ) {
         let Some(path) = self.ivf_index_path(collection_id) else {
             return;
@@ -530,7 +539,13 @@ impl AxisManager {
                         Arc::new(tokio::sync::RwLock::new(index)),
                     );
                 }
-                self.register_loaded_ivf_strategy(collection_id, dimension, n).await;
+                self.register_loaded_ivf_strategy(collection_id, dimension, n)
+                    .await;
+                // F4a: a warm-load resumes a suspended collection — clear the marker.
+                self.suspended_collections
+                    .write()
+                    .await
+                    .remove(collection_id);
                 tracing::info!(
                     "🔥 AXIS: warm-loaded IVF index for '{}' from {} ({} vectors)",
                     collection_id,
@@ -568,6 +583,75 @@ impl AxisManager {
         let _ = self
             .update_collection_strategy(collection_id, strategy)
             .await;
+    }
+
+    /// Phase 8 F4a (TD-094): suspend a collection — evict its in-memory IVF index
+    /// to free memory while keeping the persisted `ivf.bin`, the routing strategy,
+    /// and the metadata indexes so the catalog stays queryable. The next query
+    /// (or `resume_collection`) warm-loads it from disk. Errors when persistence
+    /// is disabled (the index could not be resumed) or there is no in-memory IVF
+    /// index to evict.
+    pub async fn suspend_collection(&self, collection_id: &str) -> Result<()> {
+        if self.index_persist_dir.is_none() {
+            anyhow::bail!(
+                "cannot suspend '{collection_id}': index persistence is not enabled \
+                 (no in-memory eviction without a resumable on-disk copy)"
+            );
+        }
+        if !self.has_ivf_index(collection_id).await {
+            anyhow::bail!(
+                "cannot suspend '{collection_id}': no in-memory IVF index to evict \
+                 (not an IVF collection, or already suspended)"
+            );
+        }
+
+        // Persist the current in-memory index so the on-disk copy is up to date,
+        // then evict it. The evicted Arc is the sole long-lived holder, so its
+        // memory (centroids / posting lists / vectors) is freed on drop.
+        let served = {
+            let indexes = self.ivf_indexes.read().await;
+            indexes.get(collection_id).cloned()
+        };
+        if let Some(index) = served {
+            self.persist_ivf_index(collection_id, &index).await;
+        }
+        self.ivf_indexes.write().await.remove(collection_id);
+        self.suspended_collections
+            .write()
+            .await
+            .insert(collection_id.to_string());
+
+        tracing::info!(
+            "❄️ AXIS: suspended collection '{}' (IVF index evicted, metadata retained)",
+            collection_id
+        );
+        Ok(())
+    }
+
+    /// Phase 8 F4a: eagerly resume a suspended collection by warm-loading its IVF
+    /// index from disk now (rather than waiting for the next query). Returns
+    /// whether an index is served afterward. Lazy resume still happens on `query`.
+    pub async fn resume_collection(&self, collection_id: &str) -> Result<bool> {
+        self.ensure_ivf_index_loaded(collection_id).await;
+        Ok(self.has_ivf_index(collection_id).await)
+    }
+
+    /// Phase 8 F4a: whether `collection_id` is currently suspended (its IVF index
+    /// was evicted and not yet warm-loaded back).
+    pub async fn is_suspended(&self, collection_id: &str) -> bool {
+        self.suspended_collections
+            .read()
+            .await
+            .contains(collection_id)
+    }
+
+    /// Whether a persisted IVF index exists on disk for `collection_id` (the
+    /// resumability signal surfaced in route-health).
+    pub async fn has_persisted_ivf_index(&self, collection_id: &str) -> bool {
+        match self.ivf_index_path(collection_id) {
+            Some(path) => tokio::fs::try_exists(&path).await.unwrap_or(false),
+            None => false,
+        }
     }
 
     /// Collection ids that have a trained IVF index with quantized storage —
@@ -965,13 +1049,15 @@ impl AxisManager {
                 // tenant in AxisHybridQuery yet — tenant threading is follow-up).
                 let gate_open = match &self.recall_probe_gate {
                     Some(gate) => {
-                        gate.is_open(&crate::catalog::ProbeScope::new(collection_id, collection_id))
-                            .await
+                        gate.is_open(&crate::catalog::ProbeScope::new(
+                            collection_id,
+                            collection_id,
+                        ))
+                        .await
                     }
                     None => false,
                 };
-                let (ivf_results, route) =
-                    self.query_ivf(collection_id, &query, gate_open).await?;
+                let (ivf_results, route) = self.query_ivf(collection_id, &query, gate_open).await?;
                 quantized_route = route;
                 ivf_results
             } else {
@@ -1163,10 +1249,8 @@ impl AxisManager {
 
                 // Get collection's distance metric from its config
                 // This ensures HNSW uses the same metric as the collection
-                let resolved_metric =
-                    self.get_collection_distance_metric(collection_id).await;
-                let distance_metric =
-                    resolved_metric.unwrap_or(DistanceMetric::DotProduct); // Default to DotProduct for compatibility with FAISS/benchmarks
+                let resolved_metric = self.get_collection_distance_metric(collection_id).await;
+                let distance_metric = resolved_metric.unwrap_or(DistanceMetric::DotProduct); // Default to DotProduct for compatibility with FAISS/benchmarks
 
                 // **End-to-end ef_search wiring (2026-05-29)**: previously
                 // this site built `AxisHnswConfig { distance_metric,
@@ -1180,8 +1264,7 @@ impl AxisManager {
                 // flow through into the partition config so DotProduct
                 // workloads (which need ef ~ 5×sqrt(N) for >0.90
                 // recall) can configure it without env vars.
-                let (config_m, config_ef_construction, config_ef_search) = match algorithm
-                {
+                let (config_m, config_ef_construction, config_ef_search) = match algorithm {
                     Some(IndexAlgorithm::HNSW {
                         m,
                         ef_construction,
@@ -1279,9 +1362,7 @@ impl AxisManager {
         collection_id: &str,
         query: &AxisHybridQuery,
     ) -> Result<Vec<ScoredResult>> {
-        use crate::compute::distance_computation::engine::{
-            DistanceMetricExt, SimilarityResult,
-        };
+        use crate::compute::distance_computation::engine::{DistanceMetricExt, SimilarityResult};
         use crate::index::axis::index_factory::AxisVectorIndex;
 
         let indexes = self.hnsw_indexes.read().await;
@@ -1298,8 +1379,8 @@ impl AxisManager {
                         } else {
                             raw_distance
                         };
-                        let similarity = SimilarityResult::new(raw_for_similarity, metric)
-                            .normalized_score;
+                        let similarity =
+                            SimilarityResult::new(raw_for_similarity, metric).normalized_score;
                         let expires_at = self.lookup_record_expiration(collection_id, &id);
                         ScoredResult {
                             vector_id: id,
@@ -1422,9 +1503,7 @@ impl AxisManager {
         // out of HNSW are lower-better metric-native distances; we
         // convert through SimilarityResult so ScoredResult.similarity
         // honors the higher=better contract.
-        use crate::compute::distance_computation::engine::{
-            DistanceMetricExt, SimilarityResult,
-        };
+        use crate::compute::distance_computation::engine::{DistanceMetricExt, SimilarityResult};
         let metric = index.distance_metric();
         let results: Vec<ScoredResult> = raw
             .into_iter()
@@ -1449,8 +1528,7 @@ impl AxisManager {
                 } else {
                     raw_distance
                 };
-                let similarity =
-                    SimilarityResult::new(raw_for_similarity, metric).normalized_score;
+                let similarity = SimilarityResult::new(raw_for_similarity, metric).normalized_score;
                 let expires_at = self.lookup_record_expiration(collection_id, &id);
                 ScoredResult {
                     vector_id: id,
@@ -1602,8 +1680,7 @@ impl AxisManager {
                         // Original incremental-training fallback:
                         // n_clusters = clamp(sqrt(N) * 2, 16, 256)
                         let n_clusters = {
-                            let sqrt_based =
-                                (training_vectors.len() as f32).sqrt() as usize * 2;
+                            let sqrt_based = (training_vectors.len() as f32).sqrt() as usize * 2;
                             const MIN_CLUSTERS: usize = 16;
                             const MAX_CLUSTERS: usize = 256;
                             sqrt_based.clamp(MIN_CLUSTERS, MAX_CLUSTERS)
@@ -1611,8 +1688,7 @@ impl AxisManager {
                         // n_probe = max(n_clusters/2, sqrt(n_clusters)*3)
                         let n_probe = {
                             let half_clusters = n_clusters / 2;
-                            let sqrt_based =
-                                ((n_clusters as f32).sqrt() * 3.0) as usize;
+                            let sqrt_based = ((n_clusters as f32).sqrt() * 3.0) as usize;
                             std::cmp::max(half_clusters, sqrt_based).min(n_clusters)
                         };
                         (n_clusters, n_probe)
@@ -1754,7 +1830,11 @@ impl AxisManager {
                 // is open AND the index has quantized storage; otherwise exact.
                 let has_quantized = index.has_quantized_storage();
                 let use_quantized = decide_quantized_route(gate_open, has_quantized);
-                let route = if has_quantized { Some(use_quantized) } else { None };
+                let route = if has_quantized {
+                    Some(use_quantized)
+                } else {
+                    None
+                };
                 if has_quantized && !use_quantized {
                     // TD-075 / F2: quantized storage exists but the recall-probe
                     // gate forced exact — surface this degraded route to EXPLAIN
@@ -1794,8 +1874,8 @@ impl AxisManager {
                         } else {
                             raw_distance
                         };
-                        let similarity = SimilarityResult::new(raw_for_similarity, metric)
-                            .normalized_score;
+                        let similarity =
+                            SimilarityResult::new(raw_for_similarity, metric).normalized_score;
                         let expires_at = self.lookup_record_expiration(collection_id, &id);
                         ScoredResult {
                             vector_id: id,
@@ -2019,10 +2099,7 @@ impl AxisManager {
         let mut strategies = self.collection_strategies.write().await;
         let Some(strategy) = strategies.get_mut(collection_id) else {
             return Ok(HotSwapOutcome::NotApplicable {
-                reason: format!(
-                    "no active strategy for collection '{}'",
-                    collection_id
-                ),
+                reason: format!("no active strategy for collection '{}'", collection_id),
             });
         };
 
@@ -2833,11 +2910,8 @@ impl AxisManager {
             distance_metric: metric,
             ..Default::default()
         };
-        let index = AxisHnswIndex::new_with_collection(
-            Some(collection_id.to_string()),
-            config,
-            dimension,
-        )?;
+        let index =
+            AxisHnswIndex::new_with_collection(Some(collection_id.to_string()), config, dimension)?;
         let count = valid.len();
         let fields_config =
             crate::index::axis::filterable_metadata::FilterableFieldsConfig::default();
@@ -2889,11 +2963,20 @@ impl AxisManager {
     /// operator log lines and the recluster response body.
     /// Returns `Ok(None)` if no vectors were supplied or the
     /// records lacked usable embeddings.
+    ///
+    /// `top_k` is the steady-state top-k the collection's workload
+    /// expects to request — typically pulled from the
+    /// `target_top_k:` tag via
+    /// `crate::services::collection::recall_target::resolve_top_k`.
+    /// The advisor scales `ef ∝ k`, so a workload that consistently
+    /// runs `k=100` and supplies `top_k=10` would get an under-sized
+    /// graph.
     pub async fn rebuild_and_swap_hnsw_index_for_recall_target(
         &self,
         collection_id: &str,
         records: &[ProximaRecord],
         recall_target: f32,
+        top_k: u32,
     ) -> Result<Option<crate::index::axis::management::HnswSizingOutput>> {
         use crate::compute::distance_computation::DistanceMetric;
         use crate::index::axis::index_factory::AxisVectorIndex;
@@ -2924,12 +3007,13 @@ impl AxisManager {
             .unwrap_or(DistanceMetric::Cosine);
 
         // Size from the actual rebuild corpus (records.len() — not
-        // some stale baseline_n). top_k=10 matches what the
-        // route-health drift detector uses; if a caller requires
-        // a different top_k they construct the strategy themselves.
+        // some stale baseline_n). top_k flows in from the caller
+        // (typically resolved via
+        // services::collection::recall_target::resolve_top_k) so
+        // the rebuild reflects the workload's steady-state k.
         let advised = advise_hnsw_params(HnswSizingInput {
             vector_count: valid.len() as u64,
-            top_k: 10,
+            top_k,
             recall_target,
             dimension: dimension as u32,
             distance_metric: metric,
@@ -2956,11 +3040,8 @@ impl AxisManager {
             "rebuilding HNSW with advisor-sized params"
         );
 
-        let index = AxisHnswIndex::new_with_collection(
-            Some(collection_id.to_string()),
-            config,
-            dimension,
-        )?;
+        let index =
+            AxisHnswIndex::new_with_collection(Some(collection_id.to_string()), config, dimension)?;
         let count = valid.len();
         let fields_config =
             crate::index::axis::filterable_metadata::FilterableFieldsConfig::default();
@@ -3059,9 +3140,11 @@ impl AxisManager {
         records: &[ProximaRecord],
     ) -> Result<bool> {
         if self.has_ivf_index(collection_id).await {
-            self.rebuild_and_swap_ivf_index(collection_id, records).await
+            self.rebuild_and_swap_ivf_index(collection_id, records)
+                .await
         } else if self.has_hnsw_index(collection_id).await {
-            self.rebuild_and_swap_hnsw_index(collection_id, records).await
+            self.rebuild_and_swap_hnsw_index(collection_id, records)
+                .await
         } else {
             Ok(false)
         }
@@ -4016,9 +4099,8 @@ impl AxisManager {
         // `get_collection_distance_metric` here makes the HMGI
         // partition mirror the collection's contract.
         let resolved_metric = self.get_collection_distance_metric(collection_id).await;
-        let distance_metric = resolved_metric.unwrap_or(
-            crate::compute::distance_computation::DistanceMetric::Cosine,
-        );
+        let distance_metric =
+            resolved_metric.unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
         // **End-to-end ef_search wiring**: extract HNSW knobs from
         // the strategy spec when present, otherwise use the partition
         // default. Same plumbing as `insert_into_hnsw` — see that
@@ -4467,7 +4549,10 @@ mod adr011_routing_tests {
             1.0
         );
         // half the exact top-k recovered
-        assert_eq!(recall_at_k(&exact, &[id("a"), id("b"), id("x"), id("y")], 4), 0.5);
+        assert_eq!(
+            recall_at_k(&exact, &[id("a"), id("b"), id("x"), id("y")], 4),
+            0.5
+        );
         // disjoint → 0
         assert_eq!(recall_at_k(&exact, &[id("x"), id("y")], 4), 0.0);
         // empty exact (nothing to recall) → 1.0
@@ -4531,7 +4616,12 @@ mod recluster_apply_tests {
 
         // First rebuild: 40 vectors -> built, swapped, generation 1.
         let v1 = batch("a", 40, dim, 1);
-        assert!(manager.rebuild_and_swap_ivf_index("col", &v1).await.unwrap());
+        assert!(
+            manager
+                .rebuild_and_swap_ivf_index("col", &v1)
+                .await
+                .unwrap()
+        );
         assert_eq!(manager.index_generation("col").await, 1);
         assert!(manager.has_ivf_index("col").await);
 
@@ -4554,7 +4644,12 @@ mod recluster_apply_tests {
         // index's vector_count is now 25 (not 40) — proving the atomic swap
         // replaced the served index that `query_ivf` reads.
         let v2 = batch("b", 25, dim, 2);
-        assert!(manager.rebuild_and_swap_ivf_index("col", &v2).await.unwrap());
+        assert!(
+            manager
+                .rebuild_and_swap_ivf_index("col", &v2)
+                .await
+                .unwrap()
+        );
         assert_eq!(manager.index_generation("col").await, 2);
         {
             let indexes = manager.ivf_indexes.read().await;
@@ -4574,7 +4669,12 @@ mod recluster_apply_tests {
 
         // Too few vectors -> no-op: no swap, generation unchanged.
         let tiny = batch("c", 5, dim, 1);
-        assert!(!manager.rebuild_and_swap_ivf_index("col", &tiny).await.unwrap());
+        assert!(
+            !manager
+                .rebuild_and_swap_ivf_index("col", &tiny)
+                .await
+                .unwrap()
+        );
         assert_eq!(
             manager.index_generation("col").await,
             2,
@@ -4589,7 +4689,12 @@ mod recluster_apply_tests {
 
         // First rebuild: 40 vectors -> built, swapped, generation 1.
         let v1 = batch("a", 40, dim, 1);
-        assert!(manager.rebuild_and_swap_hnsw_index("hcol", &v1).await.unwrap());
+        assert!(
+            manager
+                .rebuild_and_swap_hnsw_index("hcol", &v1)
+                .await
+                .unwrap()
+        );
         assert_eq!(manager.index_generation("hcol").await, 1);
         assert!(manager.has_hnsw_index("hcol").await);
 
@@ -4612,10 +4717,12 @@ mod recluster_apply_tests {
         // collection has no IVF index): 25 vectors -> generation 2, and the
         // served graph's size is now 25 (not 40) — proving the atomic swap.
         let v2 = batch("b", 25, dim, 2);
-        assert!(manager
-            .rebuild_and_swap_served_index("hcol", &v2)
-            .await
-            .unwrap());
+        assert!(
+            manager
+                .rebuild_and_swap_served_index("hcol", &v2)
+                .await
+                .unwrap()
+        );
         assert_eq!(manager.index_generation("hcol").await, 2);
         {
             let indexes = manager.hnsw_indexes.read().await;
@@ -4629,10 +4736,12 @@ mod recluster_apply_tests {
         }
 
         // Orchestrator is a no-op for a collection with no served index.
-        assert!(!manager
-            .rebuild_and_swap_served_index("never_seen", &v2)
-            .await
-            .unwrap());
+        assert!(
+            !manager
+                .rebuild_and_swap_served_index("never_seen", &v2)
+                .await
+                .unwrap()
+        );
     }
 
     // ─── TD-087 Slice B: persist-after-train + load-on-demand ───────────────
@@ -4676,7 +4785,10 @@ mod recluster_apply_tests {
             "query must warm-load the IVF index from disk"
         );
         let got_top: Vec<String> = got.results.iter().map(|r| r.vector_id.clone()).collect();
-        assert_eq!(got_top, want_top, "warm-loaded index must serve identical top-k");
+        assert_eq!(
+            got_top, want_top,
+            "warm-loaded index must serve identical top-k"
+        );
     }
 
     #[tokio::test]
@@ -4686,6 +4798,102 @@ mod recluster_apply_tests {
         let v = batch("np", 40, 8, 1);
         assert!(manager.rebuild_and_swap_ivf_index("col", &v).await.unwrap());
         assert!(manager.ivf_index_path("col").is_none());
+    }
+
+    // ─── Phase 8 F4a: suspend / resume ──────────────────────────────────────
+
+    fn suspend_query(dim: usize) -> AxisHybridQuery {
+        let mut qv = vec![0.0f32; dim];
+        qv[3] = 1.0;
+        AxisHybridQuery {
+            collection_id: "col".to_string(),
+            vector_query: Some(VectorQuery::Dense {
+                vector: qv,
+                similarity_threshold: 0.0,
+            }),
+            top_k: 3,
+            ..AxisHybridQuery::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn suspend_evicts_then_query_lazily_resumes() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let dim = 8;
+        let mut m = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m.set_index_persist_dir(dir.path().to_path_buf());
+        assert!(
+            m.rebuild_and_swap_ivf_index("col", &batch("s", 40, dim, 1))
+                .await
+                .unwrap()
+        );
+        let top = |r: &AxisManagerQueryResult| {
+            r.results
+                .iter()
+                .map(|x| x.vector_id.clone())
+                .collect::<Vec<_>>()
+        };
+        let before = top(&m.query(suspend_query(dim)).await.unwrap());
+
+        // Suspend: in-memory index evicted; file + strategy retained; marked.
+        m.suspend_collection("col").await.unwrap();
+        assert!(!m.has_ivf_index("col").await, "index evicted from memory");
+        assert!(m.is_suspended("col").await);
+        assert!(
+            dir.path().join("col").join("ivf.bin").exists(),
+            "persisted copy kept"
+        );
+        assert!(
+            m.get_collection_strategy("col").await.is_ok(),
+            "routing strategy retained across suspend"
+        );
+
+        // A query lazily warm-resumes from disk; identical top-k; marker cleared.
+        let after = top(&m.query(suspend_query(dim)).await.unwrap());
+        assert!(m.has_ivf_index("col").await, "query warm-loaded the index");
+        assert!(
+            !m.is_suspended("col").await,
+            "warm-load cleared the suspend marker"
+        );
+        assert_eq!(after, before, "resumed index serves identical top-k");
+    }
+
+    #[tokio::test]
+    async fn suspend_requires_persistence_and_an_in_memory_index() {
+        // No persist dir → suspend errors (could not resume).
+        let m = AxisManager::new(AxisConfig::default()).await.unwrap();
+        assert!(
+            m.rebuild_and_swap_ivf_index("col", &batch("s2", 40, 8, 1))
+                .await
+                .unwrap()
+        );
+        assert!(m.suspend_collection("col").await.is_err());
+
+        // Persist dir set, but no in-memory index for the id → error.
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut m2 = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m2.set_index_persist_dir(dir.path().to_path_buf());
+        assert!(m2.suspend_collection("never").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn resume_collection_eagerly_warms_from_disk() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let mut m = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m.set_index_persist_dir(dir.path().to_path_buf());
+        assert!(
+            m.rebuild_and_swap_ivf_index("col", &batch("r", 40, 8, 1))
+                .await
+                .unwrap()
+        );
+        m.suspend_collection("col").await.unwrap();
+        assert!(!m.has_ivf_index("col").await);
+        assert!(
+            m.resume_collection("col").await.unwrap(),
+            "eager resume serves the index"
+        );
+        assert!(m.has_ivf_index("col").await);
+        assert!(!m.is_suspended("col").await);
     }
 }
 
@@ -4771,10 +4979,7 @@ mod hot_swap_ef_tests {
                 ..
             } => {
                 assert_eq!(*m, 16, "m must be untouched by hot-swap");
-                assert_eq!(
-                    *ef_construction, 200,
-                    "ef_construction must be untouched"
-                );
+                assert_eq!(*ef_construction, 200, "ef_construction must be untouched");
                 assert_eq!(*ef_search, 400);
             }
             _ => panic!("expected HNSW"),
@@ -4808,7 +5013,10 @@ mod hot_swap_ef_tests {
                 );
             }
             HotSwapOutcome::Applied { changes } => {
-                panic!("expected NotApplicable for matching ef, got {} changes", changes.len())
+                panic!(
+                    "expected NotApplicable for matching ef, got {} changes",
+                    changes.len()
+                )
             }
         }
     }
@@ -4841,7 +5049,7 @@ mod hot_swap_ef_tests {
         }
 
         let advised = manager
-            .rebuild_and_swap_hnsw_index_for_recall_target("c_rebuild", &records, 0.95)
+            .rebuild_and_swap_hnsw_index_for_recall_target("c_rebuild", &records, 0.95, 10)
             .await
             .unwrap()
             .expect("rebuild should return advisor output");
@@ -4879,7 +5087,7 @@ mod hot_swap_ef_tests {
     async fn rebuild_for_recall_target_with_no_records_returns_none() {
         let manager = make_manager().await;
         let advised = manager
-            .rebuild_and_swap_hnsw_index_for_recall_target("c_empty", &[], 0.95)
+            .rebuild_and_swap_hnsw_index_for_recall_target("c_empty", &[], 0.95, 10)
             .await
             .unwrap();
         assert!(advised.is_none(), "no records → no rebuild");

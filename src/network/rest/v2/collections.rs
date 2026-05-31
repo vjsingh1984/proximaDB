@@ -1515,9 +1515,10 @@ pub async fn get_collection_route_health_v2(
             crate::services::collection::recall_target::parse_target_vector_count(&config)
                 .unwrap_or(100_000);
         let current_n = non_negative_stat(stats.vector_count);
-        let metric = match config.distance_metric.and_then(|v| {
-            crate::proto::proximadb_v1::DistanceMetric::try_from(v).ok()
-        }) {
+        let metric = match config
+            .distance_metric
+            .and_then(|v| crate::proto::proximadb_v1::DistanceMetric::try_from(v).ok())
+        {
             Some(crate::proto::proximadb_v1::DistanceMetric::Cosine) => {
                 crate::compute::distance_computation::DistanceMetric::Cosine
             }
@@ -1529,12 +1530,13 @@ pub async fn get_collection_route_health_v2(
             }
             _ => crate::compute::distance_computation::DistanceMetric::Cosine,
         };
+        let top_k = crate::services::collection::recall_target::resolve_top_k(&config);
         let report = crate::index::axis::management::detect_recall_drift(
             crate::index::axis::management::RecallDriftInput {
                 baseline_n,
                 current_n,
                 recall_target,
-                top_k: 10,
+                top_k,
                 dimension: config.dimension,
                 distance_metric: metric,
             },
@@ -1698,9 +1700,7 @@ pub struct RecallTuneEfChange {
 pub async fn post_collection_recall_tune_v2(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,
-    Extension(user_context): Extension<
-        Option<crate::security::rbac_service::UnifiedUserContext>,
-    >,
+    Extension(user_context): Extension<Option<crate::security::rbac_service::UnifiedUserContext>>,
     State(state): State<AppState>,
 ) -> ApiResult<Json<RecallTuneResponse>> {
     debug!(
@@ -1754,13 +1754,13 @@ pub async fn post_collection_recall_tune_v2(
         }));
     };
 
-    let baseline_n =
-        crate::services::collection::recall_target::parse_target_vector_count(&config)
-            .unwrap_or(100_000);
+    let baseline_n = crate::services::collection::recall_target::parse_target_vector_count(&config)
+        .unwrap_or(100_000);
     let current_n = non_negative_stat(stats.vector_count);
-    let metric = match config.distance_metric.and_then(|v| {
-        crate::proto::proximadb_v1::DistanceMetric::try_from(v).ok()
-    }) {
+    let metric = match config
+        .distance_metric
+        .and_then(|v| crate::proto::proximadb_v1::DistanceMetric::try_from(v).ok())
+    {
         Some(crate::proto::proximadb_v1::DistanceMetric::Cosine) => {
             crate::compute::distance_computation::DistanceMetric::Cosine
         }
@@ -1773,12 +1773,13 @@ pub async fn post_collection_recall_tune_v2(
         _ => crate::compute::distance_computation::DistanceMetric::Cosine,
     };
 
+    let top_k = crate::services::collection::recall_target::resolve_top_k(&config);
     let drift = crate::index::axis::management::detect_recall_drift(
         crate::index::axis::management::RecallDriftInput {
             baseline_n,
             current_n,
             recall_target,
-            top_k: 10,
+            top_k,
             dimension: config.dimension,
             distance_metric: metric,
         },
@@ -1810,10 +1811,7 @@ pub async fn post_collection_recall_tune_v2(
             ef_search: drift.current_params.ef_search,
         }),
     };
-    crate::metrics::recall_drift_metrics::record_recall_drift_observation(
-        &collection_id,
-        kind_str,
-    );
+    crate::metrics::recall_drift_metrics::record_recall_drift_observation(&collection_id, kind_str);
 
     // No drift → confirm + exit.
     if matches!(
@@ -1842,9 +1840,7 @@ pub async fn post_collection_recall_tune_v2(
     }
 
     // EfSearchOnly → apply the hot-swap.
-    let Some(axis_manager) =
-        crate::storage::engines::sst::core::get_sst_axis_manager()
-    else {
+    let Some(axis_manager) = crate::storage::engines::sst::core::get_sst_axis_manager() else {
         // No AXIS manager registered (e.g., HELIX-only deployment).
         // Report drift but flag that the surface isn't actionable.
         return Ok(Json(RecallTuneResponse {
@@ -1977,20 +1973,21 @@ async fn ensure_collection_exists(
 pub async fn post_collection_suspend_v2(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,
-    Extension(user_context): Extension<
-        Option<crate::security::rbac_service::UnifiedUserContext>,
-    >,
+    Extension(user_context): Extension<Option<crate::security::rbac_service::UnifiedUserContext>>,
     State(state): State<AppState>,
 ) -> ApiResult<Json<SuspendResponse>> {
     if collection_id.is_empty() {
-        return Err(ApiError::InvalidArgument("Collection ID is required".to_string()));
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
     }
     require_recall_admin(user_context.as_ref(), "suspend")?;
     ensure_collection_exists(&state, &collection_id, &tenant).await?;
 
     let Some(axis) = crate::storage::engines::sst::core::get_sst_axis_manager() else {
         return Err(ApiError::NotImplemented(
-            "suspend requires the AXIS index manager (not available in this deployment)".to_string(),
+            "suspend requires the AXIS index manager (not available in this deployment)"
+                .to_string(),
         ));
     };
     axis.suspend_collection(&collection_id)
@@ -2009,13 +2006,13 @@ pub async fn post_collection_suspend_v2(
 pub async fn post_collection_resume_v2(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,
-    Extension(user_context): Extension<
-        Option<crate::security::rbac_service::UnifiedUserContext>,
-    >,
+    Extension(user_context): Extension<Option<crate::security::rbac_service::UnifiedUserContext>>,
     State(state): State<AppState>,
 ) -> ApiResult<Json<ResumeResponse>> {
     if collection_id.is_empty() {
-        return Err(ApiError::InvalidArgument("Collection ID is required".to_string()));
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
     }
     require_recall_admin(user_context.as_ref(), "resume")?;
     ensure_collection_exists(&state, &collection_id, &tenant).await?;
@@ -2029,7 +2026,10 @@ pub async fn post_collection_resume_v2(
         .resume_collection(&collection_id)
         .await
         .map_err(|e| ApiError::Internal(format!("resume '{collection_id}': {e:#}")))?;
-    info!("V2 API: resumed collection '{}' (served={})", collection_id, resumed);
+    info!(
+        "V2 API: resumed collection '{}' (served={})",
+        collection_id, resumed
+    );
     Ok(Json(ResumeResponse {
         collection_id,
         resumed,
@@ -2063,9 +2063,7 @@ pub async fn post_collection_resume_v2(
 pub async fn post_collection_recluster_v2(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,
-    Extension(user_context): Extension<
-        Option<crate::security::rbac_service::UnifiedUserContext>,
-    >,
+    Extension(user_context): Extension<Option<crate::security::rbac_service::UnifiedUserContext>>,
     State(state): State<AppState>,
 ) -> ApiResult<Json<RecallReclusterResponse>> {
     debug!(
@@ -2112,16 +2110,13 @@ pub async fn post_collection_recluster_v2(
             stability: "experimental",
             collection_id,
             applied: false,
-            reason: "collection has no recall_target: tag — nothing to size against"
-                .to_string(),
+            reason: "collection has no recall_target: tag — nothing to size against".to_string(),
             rebuilt_vector_count: None,
             sized: None,
         }));
     };
 
-    let Some(axis_manager) =
-        crate::storage::engines::sst::core::get_sst_axis_manager()
-    else {
+    let Some(axis_manager) = crate::storage::engines::sst::core::get_sst_axis_manager() else {
         return Ok(Json(RecallReclusterResponse {
             stability: "experimental",
             collection_id,
@@ -2139,9 +2134,7 @@ pub async fn post_collection_recluster_v2(
     let records = vector_ops
         .list_all_records_with_tenant_context(internal_id.as_str(), None)
         .await
-        .map_err(|e| {
-            ApiError::Internal(format!("Failed to list records: {}", e))
-        })?;
+        .map_err(|e| ApiError::Internal(format!("Failed to list records: {}", e)))?;
 
     if records.is_empty() {
         return Ok(Json(RecallReclusterResponse {
@@ -2155,6 +2148,7 @@ pub async fn post_collection_recluster_v2(
     }
 
     let count = records.len() as u64;
+    let top_k = crate::services::collection::recall_target::resolve_top_k(&config);
 
     // (3) Rebuild + atomic swap.
     let advised = axis_manager
@@ -2162,11 +2156,10 @@ pub async fn post_collection_recluster_v2(
             internal_id.as_str(),
             &records,
             recall_target,
+            top_k,
         )
         .await
-        .map_err(|e| {
-            ApiError::Internal(format!("HNSW rebuild failed: {}", e))
-        })?;
+        .map_err(|e| ApiError::Internal(format!("HNSW rebuild failed: {}", e)))?;
 
     let Some(advised) = advised else {
         return Ok(Json(RecallReclusterResponse {
@@ -2184,10 +2177,7 @@ pub async fn post_collection_recluster_v2(
     // current advised params). Reflect that on the gauge so
     // dashboards / alerts clear immediately rather than waiting
     // for the next route-health GET or sweep tick.
-    crate::metrics::recall_drift_metrics::record_recall_drift_observation(
-        &collection_id,
-        "none",
-    );
+    crate::metrics::recall_drift_metrics::record_recall_drift_observation(&collection_id, "none");
 
     let rationale = advised.rationale.clone();
     Ok(Json(RecallReclusterResponse {
@@ -2477,13 +2467,24 @@ mod tests {
     fn route_health_suspension_block_defaults_unobservable_in_builder() {
         // The pure builder has no AXIS manager handle, so the suspension block
         // defaults to unobservable; the async handler patches it with live state.
-        let h = build_route_health("c".to_string(), "sst".to_string(), 8, "cosine".to_string(), 0, 0, 0);
+        let h = build_route_health(
+            "c".to_string(),
+            "sst".to_string(),
+            8,
+            "cosine".to_string(),
+            0,
+            0,
+            0,
+        );
         assert!(!h.suspension.observable);
         assert!(!h.suspension.suspended);
         assert!(!h.suspension.in_memory_index);
         // Serializes as a nested object on the route-health contract.
         let json = serde_json::to_value(&h).unwrap();
-        assert!(json.get("suspension").is_some(), "suspension block present in contract");
+        assert!(
+            json.get("suspension").is_some(),
+            "suspension block present in contract"
+        );
     }
 
     #[test]
@@ -2562,6 +2563,7 @@ mod tests {
                 "schema_version",
                 "stability",
                 "storage_size_bytes",
+                "suspension",
                 "writes",
             ]
         );
@@ -2672,8 +2674,7 @@ mod tests {
         let ctx = ctx_with_permissions(vec![
             crate::security::rbac_service::UnifiedPermission::SystemAdmin,
         ]);
-        let user_id = require_recall_admin(Some(&ctx), "recluster")
-            .expect("SystemAdmin must pass");
+        let user_id = require_recall_admin(Some(&ctx), "recluster").expect("SystemAdmin must pass");
         assert_eq!(user_id, "test_user", "returned id is audit-log friendly");
     }
 
@@ -2684,8 +2685,8 @@ mod tests {
         let ctx = ctx_with_permissions(vec![
             crate::security::rbac_service::UnifiedPermission::ConfigureSystem,
         ]);
-        let user_id = require_recall_admin(Some(&ctx), "recall-tune")
-            .expect("ConfigureSystem must pass");
+        let user_id =
+            require_recall_admin(Some(&ctx), "recall-tune").expect("ConfigureSystem must pass");
         assert_eq!(user_id, "test_user");
     }
 
@@ -2756,12 +2757,7 @@ mod tests {
         assert_eq!(v["applied"], false);
         assert!(v["sized"].is_null());
         assert!(v["rebuilt_vector_count"].is_null());
-        assert!(
-            v["reason"]
-                .as_str()
-                .unwrap()
-                .contains("recall_target")
-        );
+        assert!(v["reason"].as_str().unwrap().contains("recall_target"));
     }
 
     #[test]

@@ -180,4 +180,13 @@ pub fn create_v2_router() -> Router<AppState> {
             "/_diagnostics/collections/:collection_id/recluster",
             axum::routing::post(collections::post_collection_recluster_v2),
         )
+        // Phase 8 (F4a) — single-node collection suspend/resume (TD-094).
+        .route(
+            "/collections/:collection_id/suspend",
+            post(collections::post_collection_suspend_v2),
+        )
+        .route(
+            "/collections/:collection_id/resume",
+            post(collections::post_collection_resume_v2),
+        )
 }
