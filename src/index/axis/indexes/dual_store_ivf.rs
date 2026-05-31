@@ -129,8 +129,8 @@ pub struct UnifiedIvfConfig {
     /// ADR-023 T-H: target recall for the binary two-stage route, in `(0, 1]`.
     /// Drives the Stage-1 survivor count (higher → rerank more candidates) and
     /// the gap-based early-termination bar (higher → skip the fp32 rerank less
-    /// often). `1.0` disables early termination (always full rerank). Runtime
-    /// tuning knob; not persisted (defaults on restore).
+    /// often). `1.0` disables early termination (always full rerank). Persisted
+    /// in `SerializableIvfConfig` so a reloaded index keeps its tuned target.
     pub recall_target: f32,
 }
 
@@ -2253,6 +2253,9 @@ pub struct SerializableIvfConfig {
     pub use_pq: bool,
     pub pq_subspaces: usize,
     pub use_binary: bool,
+    /// ADR-023 T-H: persisted so a reloaded index keeps its tuned recall target
+    /// (otherwise it resets to the default and may early-terminate differently).
+    pub recall_target: f32,
 }
 
 impl SerializableIvfConfig {
@@ -2266,6 +2269,7 @@ impl SerializableIvfConfig {
             use_pq: c.use_pq,
             pq_subspaces: c.pq_subspaces,
             use_binary: c.use_binary,
+            recall_target: c.recall_target,
         }
     }
 
@@ -2282,6 +2286,7 @@ impl SerializableIvfConfig {
             use_pq: self.use_pq,
             pq_subspaces: self.pq_subspaces,
             use_binary: self.use_binary,
+            recall_target: self.recall_target,
             ..UnifiedIvfConfig::default()
         }
     }

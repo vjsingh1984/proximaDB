@@ -423,6 +423,16 @@ impl IndexSerializer {
             .await
             .map_err(|e| SerializationError::Io(std::io::Error::other(e.to_string())))?;
 
+        // ADR-023 T-C: the cold-first (v2) layout carries posting-list membership
+        // only inside the binary tier `(id, code, cluster_id)`. A collection with
+        // no binary tier (use_binary off) has no membership to range-read, so
+        // cold-first can't rebuild its posting lists and there's no Stage-1
+        // benefit anyway — serialize it in the legacy v1 single-blob layout
+        // (full restore via `add_vector` replay rebuilds membership).
+        if state.binary_tier.is_empty() {
+            return Self::serialize_ivf_v1_legacy(&state, collection_id, index);
+        }
+
         // ADR-023 T-C cold-first layout: split the body into a COLD blob
         // (config + centroids + 1-bit codes) written FIRST, then a WARM blob
         // (fp32 vectors). A cold-first loader range-reads `[header][COLD]` and
@@ -477,6 +487,47 @@ impl IndexSerializer {
         result.extend_from_slice(&warm_bytes); // WARM second (deferrable)
 
         info!("Serialized IVF index: {} bytes", result.len());
+        Ok(result)
+    }
+
+    /// Legacy v1 single-blob layout (ADR-023 T-C): the whole `SerializableIvfState`
+    /// as one bincode body, restored via `add_vector` replay (which rebuilds
+    /// posting-list membership). Used for collections with no binary tier, whose
+    /// COLD tier carries no membership to range-read.
+    fn serialize_ivf_v1_legacy(
+        state: &SerializableIvfState,
+        collection_id: &str,
+        index: &UnifiedIvfIndex,
+    ) -> Result<Vec<u8>> {
+        let body = bincode::serialize(state)?;
+        let checksum = proximadb_kernel::checksum::crc32_fast(&body);
+        let profile = ColdPathProfile {
+            has_binary_tier: false,
+            cold_tier_bytes: 0,
+            warm_tier_bytes: body.len() as u64,
+            warm_checksum: 0,
+        };
+        let metadata = AxisSerializedIndexMetadata {
+            index_type: Index::Ivf,
+            collection_id: collection_id.to_string(),
+            num_vectors: index.len(),
+            dimension: index.dimension(),
+            timestamp: unix_now_secs(),
+            checksum,
+            is_delta: false,
+            base_checkpoint_id: None,
+            custom_metadata: Some(bincode::serialize(&profile)?),
+        };
+        let header = IndexHeader {
+            magic: *AXIS_MAGIC,
+            version: 1, // legacy single-blob layout
+            metadata,
+        };
+        let mut result = Vec::new();
+        let header_bytes = bincode::serialize(&header)?;
+        result.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
+        result.extend_from_slice(&header_bytes);
+        result.extend_from_slice(&body);
         Ok(result)
     }
 
