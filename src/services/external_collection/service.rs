@@ -375,15 +375,36 @@ impl ExternalCollectionService {
     }
 
     /// Hybrid search (F5 Slice 3): vector (IVF) results fused with BM25 lexical
-    /// results via reciprocal-rank fusion. When `text_query` is `None` or the
-    /// collection has no BM25 index, this is vector-only. The join key is the
-    /// external row id; records for fused-in BM25-only hits are fetched lazily.
+    /// results via reciprocal-rank fusion (the default). When `text_query` is
+    /// `None` or the collection has no BM25 index, this is vector-only.
     pub async fn hybrid_search(
         &self,
         id: &str,
         query: Vec<f32>,
         text_query: Option<String>,
         k: usize,
+    ) -> Result<Vec<ExternalHit>> {
+        self.hybrid_search_with_fusion(
+            id,
+            query,
+            text_query,
+            k,
+            FusionStrategy::ReciprocalRank { k: HYBRID_RRF_K },
+        )
+        .await
+    }
+
+    /// Hybrid search with an explicit fusion strategy (e.g. weighted-linear).
+    /// Same as [`Self::hybrid_search`] but the caller picks how BM25 and vector
+    /// results are combined. The join key is the external row id; records for
+    /// fused-in BM25-only hits are fetched lazily.
+    pub async fn hybrid_search_with_fusion(
+        &self,
+        id: &str,
+        query: Vec<f32>,
+        text_query: Option<String>,
+        k: usize,
+        fusion: FusionStrategy,
     ) -> Result<Vec<ExternalHit>> {
         let ec = self
             .registry
@@ -457,7 +478,7 @@ impl ExternalCollectionService {
             })
             .collect();
 
-        let fused = HybridFusionEngine::new(FusionStrategy::ReciprocalRank { k: HYBRID_RRF_K })
+        let fused = HybridFusionEngine::new(fusion)
             .with_top_k(k)
             .fuse(bm25_results, vector_results)
             .map_err(|e| anyhow::anyhow!("hybrid fusion failed: {e}"))?;
@@ -1009,6 +1030,46 @@ mod tests {
         assert!(svc2.has_fulltext_index("ext_docs"), "first hybrid query rebuilt the BM25 index");
         let ids: Vec<&str> = hybrid.iter().map(|h| h.id.as_str()).collect();
         assert!(ids.contains(&"row-7"), "lazily-rebuilt BM25 fused the lexical match: {ids:?}");
+        assert!(ids.contains(&"row-3"), "vector match retained: {ids:?}");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn hybrid_search_with_weighted_fusion_returns_fused_hits() {
+        use crate::core::search::hybrid::FusionStrategy;
+        let path = fixture_path();
+        write_meta_fixture(&path, 20, 20);
+        let cat = catalog_manager_with_default().await;
+        let svc = ExternalCollectionService::new(
+            Arc::new(ExternalCollectionRegistry::new()),
+            cat,
+            axis_manager().await,
+        );
+        let spec = ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20)
+            .with_text_column("text");
+        let ec = svc.register(spec).await.unwrap();
+        svc.build(&ec.id).await.unwrap();
+
+        let mut qv = vec![0.0f32; 20];
+        qv[3] = 1.0;
+        // Weighted-linear (50/50) fusion also surfaces the lexical match.
+        let hits = svc
+            .hybrid_search_with_fusion(
+                &ec.id,
+                qv,
+                Some("text-7".to_string()),
+                5,
+                FusionStrategy::WeightedLinear {
+                    alpha: 0.5,
+                    bm25_normalize: true,
+                    vector_normalize: true,
+                },
+            )
+            .await
+            .unwrap();
+        let ids: Vec<&str> = hits.iter().map(|h| h.id.as_str()).collect();
+        assert!(ids.contains(&"row-7"), "weighted fusion surfaces the lexical match: {ids:?}");
         assert!(ids.contains(&"row-3"), "vector match retained: {ids:?}");
 
         let _ = std::fs::remove_file(&path);

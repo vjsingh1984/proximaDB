@@ -63,6 +63,13 @@ pub struct ExternalSearchRequest {
     pub k: usize,
     #[serde(default)]
     pub text: Option<String>,
+    /// Fusion strategy for the hybrid (text) path: "rrf" (default,
+    /// reciprocal-rank) or "weighted" (weighted-linear, uses `alpha`).
+    #[serde(default)]
+    pub fusion: Option<String>,
+    /// BM25 weight for the "weighted" strategy (0.0..=1.0; vector gets 1-alpha).
+    #[serde(default)]
+    pub alpha: Option<f64>,
 }
 
 fn default_k() -> usize {
@@ -202,8 +209,23 @@ pub async fn search_external_collection_v2(
             "query vector is required".to_string(),
         ));
     }
+    let fusion = match req.fusion.as_deref() {
+        Some("weighted") => crate::core::search::hybrid::FusionStrategy::WeightedLinear {
+            alpha: req.alpha.unwrap_or(0.5).clamp(0.0, 1.0),
+            bm25_normalize: true,
+            vector_normalize: true,
+        },
+        Some("rrf") | None => {
+            crate::core::search::hybrid::FusionStrategy::ReciprocalRank { k: 60 }
+        }
+        Some(other) => {
+            return Err(ApiError::InvalidArgument(format!(
+                "unknown fusion strategy '{other}' (expected 'rrf' or 'weighted')"
+            )));
+        }
+    };
     let hits = service(&state)?
-        .hybrid_search(&id, req.vector, req.text, req.k)
+        .hybrid_search_with_fusion(&id, req.vector, req.text, req.k, fusion)
         .await
         .map_err(|e| ApiError::Internal(format!("search external collection '{id}': {e:#}")))?
         .into_iter()
