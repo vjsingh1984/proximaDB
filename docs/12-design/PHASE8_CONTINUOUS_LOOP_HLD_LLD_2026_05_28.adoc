@@ -349,6 +349,8 @@ EXPLAIN degraded-route reason.
 
 _Maps to_: TD-087 (and closes TD-075) · Roadmap Phase 8 / Elastic Compute And Scale-To-Zero.
 
+NOTE: As of 2026-05-30, criterion #3 is met (gate consultation + `QUANTIZED_ROUTE_DOWNGRADED` EXPLAIN disclosure) and the binary two-stage route is activated (`PROXIMADB_IVF_BINARY_TIER`, commit `d0f67c42c`). The remaining cold-*load* ordering (criteria #1/#4 — load the ~1/32 binary tier first and serve Stage-1-only before the fp32 tier arrives) is designed in `adr/ADR-023-f2-cold-load-ordering.adoc` (tasks T-A..T-F).
+
 == F3 — Point-read-optimized lake layout (I/O amplification) (TD-088) [DEEP]
 
 === HLD
