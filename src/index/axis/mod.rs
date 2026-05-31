@@ -160,6 +160,7 @@ pub use indexes::{
     // IVF
     SerializableIvfConfig,
     SerializableIvfState,
+    SerializableIvfStateV1,
     UnifiedIvfConfig,
     UnifiedIvfIndex,
     create_hnsw_index,
@@ -232,8 +233,8 @@ pub use hmgi::{
     ClusterMembership, ClusterNode, ClusterNodeId, CollectionTransition, DetectionResult,
     DistributedPartitionLocator, EnablementReason, HmgiMigrationEngine, HmgiMigrationPhase,
     HmgiPartitionKey, HmgiQueryCoordinator, HmgiRegistry, HmgiRouteStats, HmgiRouter,
-    HmgiTierPolicy, MigrationConfig, MigrationResult, MigrationState, ModalityDetector,
-    HmgiSearchRequest, ModalityExtractor, NetworkService, NodeState, PartitionMetadata,
+    HmgiSearchRequest, HmgiTierPolicy, MigrationConfig, MigrationResult, MigrationState,
+    ModalityDetector, ModalityExtractor, NetworkService, NodeState, PartitionMetadata,
     PartitionSet, ResultMerger, TierChangeReason, TierChangeRecommendation, TierChangeResult,
     VectorRecordSample,
 };

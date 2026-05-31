@@ -10,7 +10,7 @@ pub mod lsh_index;
 pub use annoy_index::{AnnoyStats, AxisAnnoyConfig, AxisAnnoyIndex};
 pub use dual_store_ivf::{
     CentroidConfig, IvfStats, PostingListConfig, SerializableIvfConfig, SerializableIvfState,
-    UnifiedIvfConfig, UnifiedIvfIndex,
+    SerializableIvfStateV1, UnifiedIvfConfig, UnifiedIvfIndex,
 };
 pub use global_id_index::{
     GlobalIdIndex, GlobalIdIndexConfig, GlobalIdIndexStats, StorageLocation,

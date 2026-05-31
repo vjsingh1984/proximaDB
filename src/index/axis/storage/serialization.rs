@@ -21,11 +21,11 @@
 
 use crate::index::axis::filterable_metadata::FilterableHnswMetadata;
 use crate::index::axis::{
-    AxisHnswConfig, AxisHnswIndex, SerializableIvfState, UnifiedIvfIndex,
+    AxisHnswConfig, AxisHnswIndex, SerializableIvfState, SerializableIvfStateV1, UnifiedIvfIndex,
 };
-use std::path::Path;
 use bincode;
 use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, info, warn};
 
@@ -38,6 +38,31 @@ fn unix_now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or_default()
+}
+
+/// Decode an IVF body, tolerating both the ADR-023 v2 layout (with the COLD
+/// `binary_tier`) and the legacy v1 layout (no binary tier).
+///
+/// v2 is attempted first. This is sound because a v1 payload has no trailing
+/// bytes for `binary_tier`, so the v2 decode hits EOF and we fall through to v1;
+/// a v2 payload always decodes as v2 before the fallback is reached. A v1 body
+/// yields an empty `binary_tier` (the index reconstructs binary codes from fp32
+/// on restore, as it did before ADR-023).
+fn decode_ivf_state(index_data: &[u8]) -> Result<SerializableIvfState> {
+    match bincode::deserialize::<SerializableIvfState>(index_data) {
+        Ok(state) => Ok(state),
+        Err(_) => {
+            let v1: SerializableIvfStateV1 = bincode::deserialize(index_data)?;
+            Ok(SerializableIvfState {
+                version: v1.version,
+                vector_count: v1.vector_count,
+                config: v1.config,
+                centroids: v1.centroids,
+                vectors: v1.vectors,
+                binary_tier: Vec::new(),
+            })
+        }
+    }
 }
 
 fn unix_now_millis() -> u128 {
@@ -131,6 +156,32 @@ pub struct AxisSerializedIndexMetadata {
 
     /// Custom metadata
     pub custom_metadata: Option<Vec<u8>>,
+}
+
+/// Cold-path tier profile (ADR-023 / F2 T-A), carried in
+/// [`AxisSerializedIndexMetadata::custom_metadata`] as a bincode blob. Lets the
+/// cold-load policy decide binary-first ordering and lets operators see the
+/// cold/warm split (success criterion #1: cold tier should be ≈ 1/32 of warm).
+/// Held in `custom_metadata` (an opaque `Option<Vec<u8>>`) rather than as new
+/// header fields so pre-ADR-023 serialized indexes still deserialize unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ColdPathProfile {
+    /// Whether the 1-bit COLD tier is populated.
+    pub has_binary_tier: bool,
+    /// Serialized bytes of the COLD tier (centroids + binary codes) — loads first.
+    pub cold_tier_bytes: u64,
+    /// Serialized bytes of the WARM tier (fp32 vectors) — lazy / Stage-2 rerank.
+    pub warm_tier_bytes: u64,
+}
+
+impl AxisSerializedIndexMetadata {
+    /// Decode the [`ColdPathProfile`] from `custom_metadata`, if present and in
+    /// the ADR-023 format. Returns `None` for indexes serialized before ADR-023
+    /// (whose `custom_metadata` held a 1-byte binary-tier marker or was absent).
+    pub fn cold_path_profile(&self) -> Option<ColdPathProfile> {
+        let bytes = self.custom_metadata.as_ref()?;
+        bincode::deserialize::<ColdPathProfile>(bytes).ok()
+    }
 }
 
 /// Header for serialized index file
@@ -323,6 +374,17 @@ impl IndexSerializer {
         let index_data = bincode::serialize(&state)?;
         let checksum = proximadb_kernel::checksum::crc32_fast(&index_data);
 
+        // ADR-023 cold-path profile: the COLD tier (centroids + 1-bit codes) vs
+        // the WARM tier (fp32). Sized from the same payload the body encodes.
+        let cold_tier_bytes = bincode::serialized_size(&state.centroids)?
+            + bincode::serialized_size(&state.binary_tier)?;
+        let warm_tier_bytes = bincode::serialized_size(&state.vectors)?;
+        let profile = ColdPathProfile {
+            has_binary_tier: !state.binary_tier.is_empty(),
+            cold_tier_bytes,
+            warm_tier_bytes,
+        };
+
         let metadata = AxisSerializedIndexMetadata {
             index_type: Index::Ivf,
             collection_id: collection_id.to_string(),
@@ -332,8 +394,8 @@ impl IndexSerializer {
             checksum,
             is_delta: false,
             base_checkpoint_id: None,
-            // Binary-tier marker (TD-087): 1 = the 1-bit tier is populated.
-            custom_metadata: Some(vec![u8::from(index.has_binary_tier())]),
+            // ADR-023: the cold-path tier profile (supersedes the 1-byte marker).
+            custom_metadata: Some(bincode::serialize(&profile)?),
         };
 
         let header = IndexHeader {
@@ -389,7 +451,7 @@ impl IndexSerializer {
             return Err(SerializationError::ChecksumMismatch);
         }
 
-        let state: SerializableIvfState = bincode::deserialize(index_data)?;
+        let state = decode_ivf_state(index_data)?;
         let config = state.config.to_config();
         let mut index = UnifiedIvfIndex::new(header.metadata.collection_id.clone(), config)
             .map_err(|e| SerializationError::Io(std::io::Error::other(e.to_string())))?;
@@ -908,6 +970,58 @@ mod tests {
         assert_eq!(metadata.collection_id, deserialized.collection_id);
         assert_eq!(metadata.num_vectors, deserialized.num_vectors);
         assert_eq!(metadata.checksum, deserialized.checksum);
+    }
+
+    #[tokio::test]
+    async fn decode_ivf_state_tolerates_v1_and_v2() {
+        // ADR-023 T-A: the v2 decoder reads v2 payloads (with the COLD binary
+        // tier) and falls back to legacy v1 payloads (without it).
+        let _ = proximadb_hardware::hardware_capabilities();
+        let config = UnifiedIvfConfig {
+            dimension: 4,
+            n_clusters: 2,
+            min_train_size: 2,
+            use_binary: true,
+            ..Default::default()
+        };
+        let mut index = UnifiedIvfIndex::new("c_v1".to_string(), config).unwrap();
+        let data = [
+            vec![1.0f32, -1.0, 1.0, -1.0],
+            vec![-1.0, 1.0, -1.0, 1.0],
+            vec![1.0, 1.0, -1.0, -1.0],
+            vec![-1.0, -1.0, 1.0, 1.0],
+        ];
+        index.train(data.to_vec()).await.unwrap();
+        for (i, v) in data.iter().enumerate() {
+            index
+                .add_vector(format!("v{i}"), v.clone(), None)
+                .await
+                .unwrap();
+        }
+        let v2 = index.export_state().await.unwrap();
+        assert!(!v2.binary_tier.is_empty(), "v2 state carries a COLD tier");
+
+        // A v2 body decodes as v2 — the COLD tier survives.
+        let v2_bytes = bincode::serialize(&v2).unwrap();
+        let decoded_v2 = super::decode_ivf_state(&v2_bytes).unwrap();
+        assert_eq!(decoded_v2.binary_tier.len(), v2.binary_tier.len());
+
+        // A v1 body (struct without `binary_tier`) decodes via fallback to an
+        // empty COLD tier — pre-ADR-023 indexes still load.
+        let v1 = SerializableIvfStateV1 {
+            version: 1,
+            vector_count: v2.vector_count,
+            config: v2.config.clone(),
+            centroids: v2.centroids.clone(),
+            vectors: v2.vectors.clone(),
+        };
+        let v1_bytes = bincode::serialize(&v1).unwrap();
+        let decoded_v1 = super::decode_ivf_state(&v1_bytes).unwrap();
+        assert!(
+            decoded_v1.binary_tier.is_empty(),
+            "v1 fallback yields an empty COLD tier"
+        );
+        assert_eq!(decoded_v1.vectors.len(), v2.vectors.len());
     }
 
     #[test]

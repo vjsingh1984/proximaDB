@@ -142,7 +142,9 @@ pub fn binary_tier_enabled_from_env() -> bool {
 /// Pure parse of the binary-tier toggle (testable without touching the env).
 fn parse_binary_tier_enabled(raw: Option<String>) -> bool {
     matches!(
-        raw.as_deref().map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        raw.as_deref()
+            .map(|v| v.trim().to_ascii_lowercase())
+            .as_deref(),
         Some("1" | "true" | "yes" | "on")
     )
 }
@@ -704,6 +706,11 @@ impl BinaryCode {
                 bits[i / 8] |= 1 << (i % 8);
             }
         }
+        Self { bits }
+    }
+
+    /// Reconstruct from packed sign bits (ADR-023 COLD-tier restore).
+    fn from_bits(bits: Vec<u8>) -> Self {
         Self { bits }
     }
 
@@ -1837,7 +1844,9 @@ impl UnifiedIvfIndex {
         // TD-087: prefer the binary-first two-stage route when a binary tier is
         // present (the gated quantized route the F2 recall observer probes).
         if !self.binary_codes.is_empty() {
-            return self.search_with_binary_acceleration(query, k, n_probe).await;
+            return self
+                .search_with_binary_acceleration(query, k, n_probe)
+                .await;
         }
 
         if !self.has_quantized_storage() || self.product_quantizer.is_none() {
@@ -2083,6 +2092,13 @@ impl SerializableIvfConfig {
 
 /// Serialized form of a trained `UnifiedIvfIndex` (bincode payload, wrapped by
 /// `IndexSerializer::serialize_ivf` with the header/magic/CRC framing).
+///
+/// ADR-023 (F2 cold-load ordering) splits the payload into two separable tiers:
+/// a **WARM** tier (`vectors`, the fp32 set for Stage-2 rerank / full
+/// reconstruction) and a **COLD** tier (`binary_tier`, the ~1/32 1-bit
+/// representation that loads first for binary-first cold start). `binary_tier`
+/// is appended last so a v1 payload (without it) is distinguishable on decode —
+/// see `IndexSerializer::deserialize_ivf`'s v2-then-v1 fallback.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableIvfState {
     /// Format version for forward-compatible evolution.
@@ -2091,14 +2107,35 @@ pub struct SerializableIvfState {
     pub vector_count: usize,
     /// Config essentials (self-describing reload).
     pub config: SerializableIvfConfig,
-    /// Trained k-means centroids.
+    /// Trained k-means centroids (shared by both tiers).
     pub centroids: Vec<Vec<f32>>,
-    /// Raw `(id, fp32)` vectors — replayed through `add_vector` on restore.
+    /// WARM tier: raw `(id, fp32)` vectors — replayed through `add_vector` on
+    /// restore (rebuilds posting lists, the fp32 store, binary + PQ codes).
+    pub vectors: Vec<(String, Vec<f32>)>,
+    /// COLD tier (ADR-023): `(id, packed 1-bit sign code, cluster_id)` — the
+    /// compact, independently-loadable representation that backs Stage-1 Hamming
+    /// search without the fp32 tier. Empty when the binary tier is not populated
+    /// (`use_binary` off). Consumed by the cold-only restore path (ADR-023 T-B).
+    pub binary_tier: Vec<(String, Vec<u8>, u32)>,
+}
+
+/// Legacy (v1) serialized IVF state — no separable `binary_tier`. Retained so
+/// indexes serialized before ADR-023 still load via `deserialize_ivf`'s
+/// fallback. The `Serialize` derive supports the v2→v1 round-trip test
+/// in `crate::index::axis::storage::serialization::tests`; production
+/// only ever reads v1 blobs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableIvfStateV1 {
+    pub version: u32,
+    pub vector_count: usize,
+    pub config: SerializableIvfConfig,
+    pub centroids: Vec<Vec<f32>>,
     pub vectors: Vec<(String, Vec<f32>)>,
 }
 
-/// Current `SerializableIvfState` version.
-pub const IVF_STATE_VERSION: u32 = 1;
+/// Current `SerializableIvfState` version. v2 (ADR-023) adds the COLD
+/// `binary_tier`; v1 payloads still load via fallback.
+pub const IVF_STATE_VERSION: u32 = 2;
 
 impl CentroidStore {
     /// Reconstruct a trained centroid store from persisted centroids (cluster
@@ -2143,11 +2180,19 @@ impl UnifiedIvfIndex {
         let centroids: Vec<Vec<f32>> = self.centroids.centroids.as_ref().clone();
 
         // Collect all ids from the posting lists (every indexed vector lives in
-        // exactly one cluster's posting list).
+        // exactly one cluster's posting list), and build the COLD binary tier
+        // (id, packed sign bits, cluster_id) alongside — ADR-023 T-A.
         let mut ids: Vec<String> = Vec::new();
+        let mut binary_tier: Vec<(String, Vec<u8>, u32)> = Vec::new();
         for key in self.posting_lists.keys().await {
             if let Some(posting_list) = self.posting_lists.get(&key).await {
-                ids.extend(posting_list.vector_ids.iter().cloned());
+                let cluster_id = posting_list.cluster_id as u32;
+                for vid in &posting_list.vector_ids {
+                    if let Some(code) = self.binary_codes.get(vid) {
+                        binary_tier.push((vid.clone(), code.bits.clone(), cluster_id));
+                    }
+                    ids.push(vid.clone());
+                }
             }
         }
 
@@ -2172,17 +2217,37 @@ impl UnifiedIvfIndex {
             config: SerializableIvfConfig::from_config(&self.config),
             centroids,
             vectors,
+            binary_tier,
         })
     }
 
     /// Reconstruct a trained index from `state`: install the centroids (trained)
-    /// then replay `add_vector` for each vector so posting lists, binary codes,
-    /// PQ codes, and the vector store are rebuilt exactly as in the live path.
+    /// then replay `add_vector` for each fp32 vector so posting lists, PQ codes,
+    /// and the vector store are rebuilt exactly as in the live path.
+    ///
+    /// ADR-023: when the COLD `binary_tier` is present (v2 payload), it is the
+    /// authoritative source for binary codes — installed directly and the
+    /// redundant per-vector recompute during replay is suppressed. A v1 payload
+    /// (empty `binary_tier`) keeps the original behavior: replay recomputes the
+    /// binary codes from fp32 when `use_binary` is set.
     pub async fn restore_state(&mut self, state: SerializableIvfState) -> Result<()> {
         let dimension = state.config.dimension;
         self.centroids = CentroidStore::restore(state.centroids, dimension);
+
+        // COLD tier is authoritative when present: skip the binary recompute that
+        // `add_vector` would otherwise do, then install codes from the tier.
+        let cold_present = !state.binary_tier.is_empty();
+        let want_binary = self.config.use_binary;
+        if cold_present {
+            self.config.use_binary = false;
+        }
         for (id, vector) in state.vectors {
             self.add_vector(id, vector, None).await?;
+        }
+        self.config.use_binary = want_binary;
+
+        for (id, bits, _cluster_id) in state.binary_tier {
+            self.binary_codes.insert(id, BinaryCode::from_bits(bits));
         }
         Ok(())
     }
@@ -2199,13 +2264,22 @@ mod tests {
         use super::parse_binary_tier_enabled;
         // Truthy values (case- and whitespace-insensitive).
         for v in ["1", "true", "TRUE", " yes ", "On"] {
-            assert!(parse_binary_tier_enabled(Some(v.to_string())), "{v:?} should enable");
+            assert!(
+                parse_binary_tier_enabled(Some(v.to_string())),
+                "{v:?} should enable"
+            );
         }
         // Everything else is off — including unset, empty, and stray values.
         for v in ["0", "false", "no", "off", "", "2", "enabled"] {
-            assert!(!parse_binary_tier_enabled(Some(v.to_string())), "{v:?} should NOT enable");
+            assert!(
+                !parse_binary_tier_enabled(Some(v.to_string())),
+                "{v:?} should NOT enable"
+            );
         }
-        assert!(!parse_binary_tier_enabled(None), "unset => off (default unchanged)");
+        assert!(
+            !parse_binary_tier_enabled(None),
+            "unset => off (default unchanged)"
+        );
     }
 
     #[tokio::test]
@@ -2319,9 +2393,11 @@ mod tests {
     #[tokio::test]
     async fn binary_storage_populates_on_add_and_gates_has_quantized() {
         let _ = proximadb_hardware::hardware_capabilities();
-        let mut index =
-            UnifiedIvfIndex::new("c_bin".to_string(), binary_ivf_config(4, 2)).unwrap();
-        assert!(!index.has_quantized_storage(), "empty index has no binary tier");
+        let mut index = UnifiedIvfIndex::new("c_bin".to_string(), binary_ivf_config(4, 2)).unwrap();
+        assert!(
+            !index.has_quantized_storage(),
+            "empty index has no binary tier"
+        );
         let data = mixed_sign_vectors();
         index
             .train(data.iter().map(|(_, v)| v.clone()).collect())
@@ -2361,7 +2437,10 @@ mod tests {
         assert_eq!(binary[0].0, "v0", "top-1 should be the nearest vector");
         let exact_ids: Vec<&String> = exact.iter().map(|(id, _)| id).collect();
         let binary_ids: Vec<&String> = binary.iter().map(|(id, _)| id).collect();
-        assert_eq!(binary_ids, exact_ids, "two-stage top-k must equal exact top-k");
+        assert_eq!(
+            binary_ids, exact_ids,
+            "two-stage top-k must equal exact top-k"
+        );
 
         // The gated quantized route delegates to the binary two-stage path.
         let gated = index
@@ -2377,11 +2456,102 @@ mod tests {
     // ─── TD-087 Slice B: serialization round-trip ───────────────────────────
 
     #[tokio::test]
-    async fn serialize_roundtrip_preserves_search_topk() {
+    async fn export_state_emits_separable_cold_binary_tier() {
+        // ADR-023 T-A: export carries the COLD tier (id, packed bits, cluster_id)
+        // separately from the WARM fp32 tier, one entry per indexed vector.
+        let _ = proximadb_hardware::hardware_capabilities();
+        let mut index =
+            UnifiedIvfIndex::new("c_cold".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let data = mixed_sign_vectors();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+
+        let state = index.export_state().await.unwrap();
+        assert_eq!(
+            state.binary_tier.len(),
+            data.len(),
+            "one COLD entry per indexed vector"
+        );
+        for (id, bits, cluster) in &state.binary_tier {
+            assert!(
+                (*cluster as usize) < state.centroids.len(),
+                "cluster_id {cluster} in range for {id}"
+            );
+            assert_eq!(bits.len(), 4usize.div_ceil(8), "1 byte packs 4 sign bits");
+        }
+        // WARM tier still carries every fp32 vector.
+        assert_eq!(state.vectors.len(), data.len());
+    }
+
+    #[tokio::test]
+    async fn restore_uses_cold_tier_and_preserves_binary_topk() {
+        // ADR-023 T-A: a v2 round-trip installs binary codes from the COLD tier
+        // (authoritative) and the binary two-stage route is unchanged.
         use crate::index::axis::storage::serialization::IndexSerializer;
         let _ = proximadb_hardware::hardware_capabilities();
         let mut index =
-            UnifiedIvfIndex::new("c_ser".to_string(), binary_ivf_config(4, 2)).unwrap();
+            UnifiedIvfIndex::new("c_cold_rt".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let data = mixed_sign_vectors();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let query = vec![0.9, -0.8, 1.1, -0.7];
+        let before = index
+            .search_with_binary_acceleration(&query, 3, None)
+            .await
+            .unwrap();
+
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_cold_rt").await.unwrap();
+        let (restored, _meta) = IndexSerializer::deserialize_ivf(&bytes).await.unwrap();
+        assert!(restored.has_binary_tier(), "COLD tier installed on restore");
+        let after = restored
+            .search_with_binary_acceleration(&query, 3, None)
+            .await
+            .unwrap();
+        let ids = |v: &Vec<(String, f32)>| v.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>();
+        assert_eq!(ids(&after), ids(&before), "binary top-k identical after COLD restore");
+    }
+
+    #[tokio::test]
+    async fn serialize_ivf_writes_cold_path_profile() {
+        // ADR-023 T-A: the serialized metadata carries a decodable cold-path
+        // profile (has_binary_tier + per-tier byte sizes).
+        use crate::index::axis::storage::serialization::IndexSerializer;
+        let _ = proximadb_hardware::hardware_capabilities();
+        let mut index =
+            UnifiedIvfIndex::new("c_prof".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let data = mixed_sign_vectors();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_prof").await.unwrap();
+        let (_restored, meta) = IndexSerializer::deserialize_ivf(&bytes).await.unwrap();
+        let profile = meta
+            .cold_path_profile()
+            .expect("ADR-023 cold-path profile present in metadata");
+        assert!(profile.has_binary_tier, "binary tier populated");
+        assert!(profile.cold_tier_bytes > 0 && profile.warm_tier_bytes > 0);
+    }
+
+    #[tokio::test]
+    async fn serialize_roundtrip_preserves_search_topk() {
+        use crate::index::axis::storage::serialization::IndexSerializer;
+        let _ = proximadb_hardware::hardware_capabilities();
+        let mut index = UnifiedIvfIndex::new("c_ser".to_string(), binary_ivf_config(4, 2)).unwrap();
         let data = mixed_sign_vectors();
         index
             .train(data.iter().map(|(_, v)| v.clone()).collect())
@@ -2399,12 +2569,17 @@ mod tests {
             .unwrap();
 
         // Serialize → deserialize into a fresh index (no retrain).
-        let bytes = IndexSerializer::serialize_ivf(&index, "c_ser").await.unwrap();
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_ser")
+            .await
+            .unwrap();
         let (restored, meta) = IndexSerializer::deserialize_ivf(&bytes).await.unwrap();
         assert_eq!(meta.num_vectors, 8);
         assert_eq!(meta.dimension, 4);
         assert_eq!(restored.len(), 8);
-        assert!(restored.has_binary_tier(), "binary tier reconstructed on restore");
+        assert!(
+            restored.has_binary_tier(),
+            "binary tier reconstructed on restore"
+        );
 
         // The reloaded index returns identical top-k on both routes.
         let ids = |v: &Vec<(String, f32)>| v.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>();
@@ -2413,7 +2588,11 @@ mod tests {
             .search_with_binary_acceleration(&query, 3, None)
             .await
             .unwrap();
-        assert_eq!(ids(&exact_after), ids(&exact_before), "exact top-k identical after reload");
+        assert_eq!(
+            ids(&exact_after),
+            ids(&exact_before),
+            "exact top-k identical after reload"
+        );
         assert_eq!(
             ids(&binary_after),
             ids(&binary_before),
@@ -2435,7 +2614,9 @@ mod tests {
         for (id, v) in &data {
             index.add_vector(id.clone(), v.clone(), None).await.unwrap();
         }
-        let mut bytes = IndexSerializer::serialize_ivf(&index, "c_corrupt").await.unwrap();
+        let mut bytes = IndexSerializer::serialize_ivf(&index, "c_corrupt")
+            .await
+            .unwrap();
         let last = bytes.len() - 1;
         bytes[last] ^= 0xFF; // flip a payload byte → checksum mismatch
         assert!(IndexSerializer::deserialize_ivf(&bytes).await.is_err());
