@@ -49,12 +49,8 @@ use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::index::axis::management::{
-    DriftKind, RecallDriftInput, detect_recall_drift,
-};
-use crate::services::collection::recall_target::{
-    parse_recall_target, parse_target_vector_count,
-};
+use crate::index::axis::management::{DriftKind, RecallDriftInput, detect_recall_drift};
+use crate::services::collection::recall_target::{parse_recall_target, parse_target_vector_count};
 
 /// Default sweep cadence. 5 minutes matches `RecallObserver` and is
 /// the lowest cadence at which Prometheus scrapes typically pick up
@@ -88,25 +84,28 @@ impl CollectionLister for crate::services::collection::Collections {
 /// metrics for every collection with a `recall_target:` tag.
 pub struct RecallDriftSweeper {
     collections: Arc<dyn CollectionLister>,
-    /// `top_k` used by the advisor when computing the drift report.
-    /// Matches the route-health handler's default — keeps both
-    /// surfaces reporting identical numbers.
-    top_k: u32,
+    /// Fallback `top_k` used when the per-collection
+    /// `target_top_k:` tag is absent. The route-health, recall-tune,
+    /// recluster, and create-time wiring all resolve through
+    /// `crate::services::collection::recall_target::resolve_top_k`,
+    /// which has the same fallback — keeps every surface in sync.
+    default_top_k: u32,
 }
 
 impl RecallDriftSweeper {
     pub fn new(collections: Arc<dyn CollectionLister>) -> Self {
         Self {
             collections,
-            top_k: 10,
+            default_top_k: crate::services::collection::recall_target::DEFAULT_TOP_K,
         }
     }
 
-    /// Override the `top_k` the advisor uses (default 10). The
-    /// route-health handler hard-codes 10; if you change it here,
-    /// keep the two surfaces aligned.
-    pub fn with_top_k(mut self, top_k: u32) -> Self {
-        self.top_k = top_k;
+    /// Override the fallback `top_k` used when the per-collection
+    /// `target_top_k:` tag is absent. Production deployments should
+    /// rarely change this — it exists for parity with custom
+    /// route-health configurations.
+    pub fn with_default_top_k(mut self, top_k: u32) -> Self {
+        self.default_top_k = top_k;
         self
     }
 
@@ -148,12 +147,16 @@ impl RecallDriftSweeper {
                 .map(|s| s.vector_count.max(0) as u64)
                 .unwrap_or(0);
             let metric = convert_distance_metric(config.distance_metric);
+            // Per-collection target_top_k tag wins; sweeper-level
+            // default is the fallback.
+            let top_k = crate::services::collection::recall_target::parse_target_top_k(config)
+                .unwrap_or(self.default_top_k);
 
             let report = detect_recall_drift(RecallDriftInput {
                 baseline_n,
                 current_n,
                 recall_target,
-                top_k: self.top_k,
+                top_k,
                 dimension: config.dimension,
                 distance_metric: metric,
             });
@@ -205,9 +208,7 @@ pub fn spawn_recall_drift_sweeper(
     interval: Duration,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        info!(
-            "RecallDriftSweeper started (poll interval = {interval:?})"
-        );
+        info!("RecallDriftSweeper started (poll interval = {interval:?})");
         loop {
             tokio::select! {
                 changed = shutdown.changed() => {
@@ -292,14 +293,8 @@ mod tests {
 
     #[tokio::test]
     async fn sweep_emits_metric_for_unwired_collections() {
-        let collection_name =
-            "sweeper_unwired_test_collection_unique_name_xyz";
-        let lister = Arc::new(FixtureLister(vec![col(
-            collection_name,
-            128,
-            &[],
-            10_000,
-        )]));
+        let collection_name = "sweeper_unwired_test_collection_unique_name_xyz";
+        let lister = Arc::new(FixtureLister(vec![col(collection_name, 128, &[], 10_000)]));
         let sweeper = RecallDriftSweeper::new(lister);
 
         let before = crate::metrics::recall_drift_metrics::AXIS_RECALL_DRIFT_OBSERVATIONS_TOTAL

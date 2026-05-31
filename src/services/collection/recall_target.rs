@@ -41,11 +41,11 @@
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::index::axis::management::{HnswSizingInput, HnswSizingOutput, advise_hnsw_params};
+#[cfg(test)]
+use crate::proto::proximadb_v1::IndexConfig;
 use crate::proto::proximadb_v1::{
     CollectionConfig, DistanceMetric as ProtoDistanceMetric, HnswConfig, IndexingAlgorithm,
 };
-#[cfg(test)]
-use crate::proto::proximadb_v1::IndexConfig;
 
 /// Tag key prefix used to encode `recall_target` on
 /// `CollectionConfig.tags`.
@@ -105,6 +105,7 @@ pub fn apply_advisor_to_hnsw_indexes(
     // reasonable cold-start estimate; the AdaptiveIndexEngine retunes
     // as the real corpus grows past tier boundaries.
     let target_n = parse_target_vector_count(config).unwrap_or(100_000);
+    let top_k = resolve_top_k(config);
 
     // Auto-add a stub HNSW IndexConfig when the caller asked for a
     // recall_target but didn't attach an HNSW index. The advisor
@@ -134,16 +135,17 @@ pub fn apply_advisor_to_hnsw_indexes(
 
         // Respect caller-pinned HNSW params — if any of m / efc /
         // ef_search is set, do nothing.
-        let already_pinned = idx.hnsw_config.as_ref().is_some_and(|h| {
-            h.m.is_some() || h.ef_construction.is_some() || h.ef_search.is_some()
-        });
+        let already_pinned = idx
+            .hnsw_config
+            .as_ref()
+            .is_some_and(|h| h.m.is_some() || h.ef_construction.is_some() || h.ef_search.is_some());
         if already_pinned {
             continue;
         }
 
         let out = advise_hnsw_params(HnswSizingInput {
             vector_count: target_n,
-            top_k: 10, // common default; advisor floor still applies if caller asks for higher k
+            top_k,
             recall_target,
             dimension,
             distance_metric: metric,
@@ -183,6 +185,44 @@ pub fn parse_target_vector_count(config: &CollectionConfig) -> Option<u64> {
         }
     }
     latest
+}
+
+/// Default `top_k` the advisor + drift detector use when the
+/// collection doesn't specify a `target_top_k:` tag. 10 matches the
+/// historical hard-coded value across the route-health, recall-tune,
+/// recluster, and sweeper surfaces — kept as the named constant so a
+/// future change updates every site in lockstep.
+pub const DEFAULT_TOP_K: u32 = 10;
+
+/// Optional advisor `top_k` hint via `target_top_k:` tag. Workloads
+/// that consistently request `top_k > 10` need a higher `ef_search`
+/// floor to maintain recall — the advisor scales `ef ∝ k`, so the
+/// recommendation goes from "fine at k=10" to "noticeably low at
+/// k=100". Letting the operator declare the steady-state k as a tag
+/// fixes the sizing without per-query plumbing.
+///
+/// Clamps to `[1, 1000]` — values outside that band are either
+/// degenerate (`k=0`) or beyond the advisor's calibration envelope.
+pub fn parse_target_top_k(config: &CollectionConfig) -> Option<u32> {
+    const TAG: &str = "target_top_k:";
+    let mut latest: Option<u32> = None;
+    for tag in &config.tags {
+        if let Some(rest) = tag.strip_prefix(TAG)
+            && let Ok(v) = rest.trim().parse::<u32>()
+        {
+            latest = Some(v.clamp(1, 1000));
+        }
+    }
+    latest
+}
+
+/// Resolve the advisor `top_k` for a collection: tag if present,
+/// otherwise the `DEFAULT_TOP_K` constant. Every consumer of the
+/// advisor (route-health, recall-tune, recluster, sweeper, create-
+/// time wiring) routes through this helper so the resolution rule
+/// stays in one place.
+pub fn resolve_top_k(config: &CollectionConfig) -> u32 {
+    parse_target_top_k(config).unwrap_or(DEFAULT_TOP_K)
 }
 
 fn convert_distance_metric(raw: Option<i32>) -> DistanceMetric {
@@ -241,11 +281,7 @@ mod tests {
 
     #[test]
     fn parse_recall_target_last_one_wins() {
-        let c = cfg(
-            "c",
-            128,
-            &["recall_target:0.85", "recall_target:0.95"],
-        );
+        let c = cfg("c", 128, &["recall_target:0.85", "recall_target:0.95"]);
         assert_eq!(parse_recall_target(&c), Some(0.95));
     }
 
@@ -297,10 +333,7 @@ mod tests {
         assert_eq!(applied.len(), 1, "advisor must stamp the auto-added index");
         assert_eq!(c.index_configs.len(), 1);
         assert_eq!(c.index_configs[0].index_name, AUTO_HNSW_INDEX_NAME);
-        assert_eq!(
-            c.index_configs[0].algorithm,
-            IndexingAlgorithm::Hnsw as i32
-        );
+        assert_eq!(c.index_configs[0].algorithm, IndexingAlgorithm::Hnsw as i32);
 
         let h = c.index_configs[0].hnsw_config.as_ref().unwrap();
         assert!(h.m.is_some());
@@ -315,19 +348,17 @@ mod tests {
         // collection is a no-op today; that's the caller's
         // signal that they accept it.)
         let mut c = cfg("c_ivf", 128, &["recall_target:0.95"]);
-        c.index_configs.push(crate::proto::proximadb_v1::IndexConfig {
-            index_name: "explicit_ivf".to_string(),
-            algorithm: IndexingAlgorithm::Ivf as i32,
-            ..Default::default()
-        });
+        c.index_configs
+            .push(crate::proto::proximadb_v1::IndexConfig {
+                index_name: "explicit_ivf".to_string(),
+                algorithm: IndexingAlgorithm::Ivf as i32,
+                ..Default::default()
+            });
 
         let applied = apply_advisor_to_hnsw_indexes(&mut c, 0.95);
         assert_eq!(applied.len(), 0, "no HNSW to stamp");
         assert_eq!(c.index_configs.len(), 1, "no auto-HNSW added");
-        assert_eq!(
-            c.index_configs[0].algorithm,
-            IndexingAlgorithm::Ivf as i32
-        );
+        assert_eq!(c.index_configs[0].algorithm, IndexingAlgorithm::Ivf as i32);
     }
 
     #[test]
@@ -367,17 +398,75 @@ mod tests {
     }
 
     #[test]
+    fn parse_target_top_k_happy_path() {
+        let c = cfg("c", 128, &["target_top_k:100"]);
+        assert_eq!(parse_target_top_k(&c), Some(100));
+    }
+
+    #[test]
+    fn parse_target_top_k_missing_returns_none() {
+        let c = cfg("c", 128, &["recall_target:0.95"]);
+        assert_eq!(parse_target_top_k(&c), None);
+    }
+
+    #[test]
+    fn parse_target_top_k_clamps_extremes() {
+        // 0 → clamps to floor (1)
+        assert_eq!(
+            parse_target_top_k(&cfg("c", 128, &["target_top_k:0"])),
+            Some(1)
+        );
+        // 100K → clamps to ceiling (1000)
+        assert_eq!(
+            parse_target_top_k(&cfg("c", 128, &["target_top_k:100000"])),
+            Some(1000)
+        );
+    }
+
+    #[test]
+    fn resolve_top_k_uses_tag_when_present() {
+        let c = cfg("c", 128, &["target_top_k:50"]);
+        assert_eq!(resolve_top_k(&c), 50);
+    }
+
+    #[test]
+    fn resolve_top_k_falls_back_to_default() {
+        let c = cfg("c", 128, &["recall_target:0.95"]);
+        assert_eq!(resolve_top_k(&c), DEFAULT_TOP_K);
+        assert_eq!(DEFAULT_TOP_K, 10, "DEFAULT_TOP_K pinned at 10");
+    }
+
+    #[test]
+    fn target_top_k_changes_advised_ef() {
+        // Pinning the same N + recall_target, a larger k should
+        // push the advisor toward a larger ef_search recommendation
+        // (advisor: ef ∝ k).
+        let mut c_small = cfg("small", 128, &["recall_target:0.95", "target_top_k:10"]);
+        c_small.index_configs.push(hnsw_idx("p"));
+        let small = apply_advisor_to_hnsw_indexes(&mut c_small, 0.95);
+
+        let mut c_large = cfg("large", 128, &["recall_target:0.95", "target_top_k:100"]);
+        c_large.index_configs.push(hnsw_idx("p"));
+        let large = apply_advisor_to_hnsw_indexes(&mut c_large, 0.95);
+
+        let ef_small = small[0].1.ef_search;
+        let ef_large = large[0].1.ef_search;
+        assert!(
+            ef_large > ef_small,
+            "target_top_k=100 must drive a larger ef than k=10 (small={}, large={})",
+            ef_small,
+            ef_large
+        );
+    }
+
+    #[test]
     fn parse_target_vector_count_clamps() {
         assert_eq!(
             parse_target_vector_count(&cfg("c", 128, &["target_vector_count:50"])),
             Some(1_000)
         );
         assert_eq!(
-            parse_target_vector_count(&cfg(
-                "c",
-                128,
-                &["target_vector_count:50000000000"]
-            )),
+            parse_target_vector_count(&cfg("c", 128, &["target_vector_count:50000000000"])),
             Some(1_000_000_000)
         );
     }
