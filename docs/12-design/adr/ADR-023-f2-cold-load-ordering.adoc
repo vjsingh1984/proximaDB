@@ -158,7 +158,7 @@ Onyx argues a *coarse* hint alone barely reduces bandwidth and a *medium*-precis
 
 == Tasks (literature-driven additions)
 
-* [ ] *T-G* COLD-tier quantizer upgrade: rotated-residual codebook-free 1-bit (reuse the ADR-021 TurboQuant quantizer; quantize the residual to the IVF centroid) replacing naive `BinaryCode` sign bits. Sequence before T-F. → R1
+* [x] *T-G* (DONE, commit `9dc50d7bf`, 2026-05-31) COLD codes are now `sign(H·D·(x − c_assigned))` — residual to the assigned IVF centroid, randomly rotated. Self-contained randomized Hadamard rotation (splitmix64 ±1 sign vector `D` + in-place Walsh–Hadamard `H`, O(d log d), no RNG dep / no cross-crate coupling). Fixed `COLD_ROTATION_SEED` + persisted dimension determine the rotation → insert/query/restart consistent, no per-index seed stored. Codebook-free → no re-encode on F1 recluster. Did NOT reuse the ADR-021 turboquant matrix (`make_rotation_matrix`) — it's O(d²) and the binary cold path must stay default-built (turboquant is `experimental-turboquant`-gated); the RHT is the same family, cheaper, self-contained. 4 tests (determinism/self-consistency, cold-only exact-match, round-trips). → R1
 * [ ] *T-H* Recall-targeted adaptive Stage-1 candidate count + gap-based early-termination (folds into T-D/T-E, replaces fixed `BINARY_RERANK_EXPANSION`). → R2
 
 _Maps to_: TD-087 · Phase 8 F2 · builds on the binary-route activation (`d0f67c42c`), the gate/observer (F1 trigger arm), and the `QUANTIZED_ROUTE_DOWNGRADED` EXPLAIN disclosure (F2 T2.4). Literature review against [2604.20401] Onyx, [2602.21600] AQR-HNSW, [2605.19972] Block-Sphere VQ, [2605.17415] IVF-TQ, [2605.19335] LIOS, [2505.11783] d-HNSW.
