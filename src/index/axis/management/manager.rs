@@ -522,22 +522,31 @@ impl AxisManager {
         if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
             return;
         }
-        match crate::index::axis::storage::serialization::IndexSerializer::load_ivf_index(&path)
-            .await
-        {
-            Ok((index, _meta)) => {
+        use crate::index::axis::storage::serialization::{ColdLoadResult, IndexSerializer};
+        let bytes = match tokio::fs::read(&path).await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("AXIS: read IVF index for '{}' failed ({})", collection_id, e);
+                return;
+            }
+        };
+        // ADR-023 T-E: cold-first load. A binary-tier index loads its ~1/32 COLD
+        // tier and serves Stage-1 immediately; the WARM fp32 tier is applied in
+        // the background to upgrade ColdBinaryOnly → FullTwoStage. Non-binary /
+        // v1 indexes load fully (FullEager) as before.
+        match IndexSerializer::load_ivf_cold_path(&bytes).await {
+            Ok(ColdLoadResult { index, metadata: _, warm }) => {
                 let dimension = index.dimension();
                 let n = index.len();
+                let cold_first = warm.is_some();
+                let index_arc = Arc::new(tokio::sync::RwLock::new(index));
                 {
                     let mut indexes = self.ivf_indexes.write().await;
                     // Double-check: another task may have loaded it concurrently.
                     if indexes.contains_key(collection_id) {
                         return;
                     }
-                    indexes.insert(
-                        collection_id.to_string(),
-                        Arc::new(tokio::sync::RwLock::new(index)),
-                    );
+                    indexes.insert(collection_id.to_string(), index_arc.clone());
                 }
                 self.register_loaded_ivf_strategy(collection_id, dimension, n)
                     .await;
@@ -546,8 +555,36 @@ impl AxisManager {
                     .write()
                     .await
                     .remove(collection_id);
+                // ADR-023 T-E: apply the deferred WARM tier off the critical path.
+                if let Some(warm_bytes) = warm {
+                    let coll = collection_id.to_string();
+                    tokio::spawn(async move {
+                        match IndexSerializer::decode_warm_tier(&warm_bytes) {
+                            Ok(vectors) => {
+                                let mut g = index_arc.write().await;
+                                match g.restore_warm_tier(vectors) {
+                                    Ok(()) => tracing::info!(
+                                        "🔥 AXIS: warm tier applied for '{}' → FullTwoStage",
+                                        coll
+                                    ),
+                                    Err(e) => tracing::warn!(
+                                        "AXIS: warm-tier upgrade failed for '{}': {}",
+                                        coll,
+                                        e
+                                    ),
+                                }
+                            }
+                            Err(e) => tracing::warn!(
+                                "AXIS: decode warm tier failed for '{}': {}",
+                                coll,
+                                e
+                            ),
+                        }
+                    });
+                }
                 tracing::info!(
-                    "🔥 AXIS: warm-loaded IVF index for '{}' from {} ({} vectors)",
+                    "🔥 AXIS: {}-loaded IVF index for '{}' from {} ({} vectors)",
+                    if cold_first { "cold-first" } else { "warm" },
                     collection_id,
                     path.display(),
                     n

@@ -693,6 +693,26 @@ impl IndexSerializer {
         Self::deserialize_ivf(&bytes).await
     }
 
+    /// ADR-023 T-E cold-path auto-load: pick `BinaryFirstThenRerank` when the file
+    /// has a populated COLD tier (Stage-1 can serve while the WARM tier is
+    /// deferred), else `FullEager` (v1 / non-binary collections — no Stage-1
+    /// benefit, and their posting-list membership lives only in the full body).
+    pub async fn load_ivf_cold_path(data: &[u8]) -> Result<ColdLoadResult> {
+        let (header, _) = split_header(data)?;
+        let cold_first = header.version >= 2
+            && header
+                .metadata
+                .cold_path_profile()
+                .map(|p| p.has_binary_tier)
+                .unwrap_or(false);
+        let policy = if cold_first {
+            ColdPathLoadPolicy::BinaryFirstThenRerank
+        } else {
+            ColdPathLoadPolicy::FullEager
+        };
+        Self::load_ivf_with_policy(data, policy).await
+    }
+
     /// Create a checkpoint from current index state
     pub fn create_checkpoint(
         index_type: Index,

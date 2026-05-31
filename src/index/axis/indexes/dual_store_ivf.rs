@@ -3036,6 +3036,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn load_ivf_cold_path_auto_selects_policy() {
+        // ADR-023 T-E: a binary-tier index loads cold-first (WARM deferred); a
+        // non-binary index loads fully (WARM None), since its membership lives
+        // only in the full body.
+        use crate::index::axis::storage::serialization::IndexSerializer;
+        let _ = proximadb_hardware::hardware_capabilities();
+        let data = mixed_sign_vectors();
+
+        // Binary collection → v2 cold-first.
+        let mut bin = UnifiedIvfIndex::new("c_b".to_string(), binary_ivf_config(4, 2)).unwrap();
+        bin.train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            bin.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let bin_bytes = IndexSerializer::serialize_ivf(&bin, "c_b").await.unwrap();
+        let bin_load = IndexSerializer::load_ivf_cold_path(&bin_bytes).await.unwrap();
+        assert!(bin_load.warm.is_some(), "binary index loads cold-first");
+        assert_eq!(bin_load.index.serving_state(), IvfServingState::ColdBinaryOnly);
+
+        // Non-binary collection → v1 full eager.
+        let mut cfg = binary_ivf_config(4, 2);
+        cfg.use_binary = false;
+        let mut plain = UnifiedIvfIndex::new("c_p".to_string(), cfg).unwrap();
+        plain
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            plain.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let plain_bytes = IndexSerializer::serialize_ivf(&plain, "c_p").await.unwrap();
+        let plain_load = IndexSerializer::load_ivf_cold_path(&plain_bytes).await.unwrap();
+        assert!(plain_load.warm.is_none(), "non-binary index loads fully");
+        assert_eq!(plain_load.index.serving_state(), IvfServingState::FullTwoStage);
+        // And it serves exact results immediately (full eager).
+        let q = data[0].1.clone();
+        assert_eq!(plain_load.index.search(&q, 1, None).await.unwrap()[0].0, "v0");
+    }
+
+    #[tokio::test]
     async fn serialize_ivf_writes_cold_path_profile() {
         // ADR-023 T-A: the serialized metadata carries a decodable cold-path
         // profile (has_binary_tier + per-tier byte sizes).
