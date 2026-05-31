@@ -533,12 +533,12 @@ mod duckdb_tests {
         assert_eq!(config.max_threads, 8);
     }
 
-    #[test]
-    fn test_duckdb_table_scan_bind() {
+    #[tokio::test]
+    async fn test_duckdb_table_scan_bind() {
         let config = DuckDBConnectorConfig::default();
         let mut scan = DuckDBTableScan::new(config);
 
-        let result = scan.bind("test_collection");
+        let result = scan.bind("test_collection").await;
         assert!(result.is_ok());
 
         let bind_data = result.unwrap();
