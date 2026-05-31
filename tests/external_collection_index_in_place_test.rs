@@ -14,8 +14,8 @@
 
 use std::sync::Arc;
 
-use arrow_array::builder::{FixedSizeListBuilder, Float32Builder, StringBuilder};
 use arrow_array::RecordBatch;
+use arrow_array::builder::{FixedSizeListBuilder, Float32Builder, StringBuilder};
 use arrow_schema::{DataType, Field, Schema};
 use parquet::arrow::ArrowWriter;
 
@@ -38,7 +38,10 @@ fn write_external_parquet(path: &std::path::Path, n: usize, dim: usize) -> Vec<(
         Field::new("title", DataType::Utf8, false),
         Field::new(
             "vector",
-            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), dim as i32),
+            DataType::FixedSizeList(
+                Arc::new(Field::new("item", DataType::Float32, true)),
+                dim as i32,
+            ),
             false,
         ),
     ]));
@@ -169,16 +172,69 @@ async fn external_parquet_indexed_in_place_and_searchable_without_copy() {
     // source (more rows) makes refresh rebuild in place and advance the snapshot.
     assert!(!svc.is_stale(&ec.id).unwrap());
     write_external_parquet(&parquet, 50, dim);
-    assert!(svc.is_stale(&ec.id).unwrap(), "changed source must be stale");
+    assert!(
+        svc.is_stale(&ec.id).unwrap(),
+        "changed source must be stale"
+    );
     let outcome = svc.refresh(&ec.id).await.unwrap();
-    assert!(outcome.stale_detected && outcome.rebuilt, "stale source must rebuild");
+    assert!(
+        outcome.stale_detected && outcome.rebuilt,
+        "stale source must rebuild"
+    );
     assert_eq!(outcome.indexed_record_count, 50);
-    assert_ne!(outcome.snapshot_id, built.snapshot_id, "snapshot must advance");
+    assert_ne!(
+        outcome.snapshot_id, built.snapshot_id,
+        "snapshot must advance"
+    );
     let refreshed = svc.get(&ec.id).unwrap();
     assert_eq!(refreshed.indexed_record_count, 50);
     let proj2 = svc.projection("ext_papers").await.unwrap().unwrap();
     assert_eq!(proj2.freshness_state, ProjectionFreshnessState::Fresh);
-    assert_eq!(proj2.source_range.as_deref(), Some(outcome.snapshot_id.as_str()));
+    assert_eq!(
+        proj2.source_range.as_deref(),
+        Some(outcome.snapshot_id.as_str())
+    );
+
+    let _ = std::fs::remove_file(&parquet);
+}
+
+/// F5 Slice 3: register with a BM25 text column → build → hybrid (vector + text)
+/// search fuses a lexical-only match in alongside the vector match.
+#[tokio::test]
+async fn external_hybrid_search_fuses_text_and_vector() {
+    let dim = 48;
+    let parquet = std::env::temp_dir().join(format!(
+        "proximadb_f5_hyb_{}.parquet",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let expect = write_external_parquet(&parquet, 40, dim);
+
+    let cat = catalog_manager().await;
+    let axis = Arc::new(AxisManager::new(AxisConfig::default()).await.unwrap());
+    let svc = ExternalCollectionService::new(
+        Arc::new(ExternalCollectionRegistry::new()),
+        cat,
+        axis,
+    );
+
+    let spec = ExternalCollectionSpec::parquet("ext_hybrid", parquet.to_str().unwrap(), "id", "vector", dim)
+        .with_text_column("title");
+    let ec = svc.register(spec).await.unwrap();
+    svc.build(&ec.id).await.unwrap();
+    assert!(svc.has_fulltext_index("ext_hybrid"), "BM25 index built over the title column");
+
+    // Vector query points at doc-3; lexical query is doc-7's title.
+    let (_qid, qvec) = &expect[3];
+    let hybrid = svc
+        .hybrid_search(&ec.id, qvec.clone(), Some("title-7".to_string()), 5)
+        .await
+        .unwrap();
+    let ids: Vec<&str> = hybrid.iter().map(|h| h.id.as_str()).collect();
+    assert!(ids.contains(&"doc-7"), "lexical match fused in: {ids:?}");
+    assert!(ids.contains(&"doc-3"), "vector match retained: {ids:?}");
+    // Fused hits still carry federated props from the source.
+    let d7 = hybrid.iter().find(|h| h.id == "doc-7").unwrap();
+    assert!(d7.record.props.contains_key("title"));
 
     let _ = std::fs::remove_file(&parquet);
 }

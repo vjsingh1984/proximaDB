@@ -9,7 +9,8 @@
 //! `Fresh` with the snapshot fingerprint as lineage. Search delegates to the
 //! same `AxisManager::query` path native collections use.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, Result};
 use proximadb_catalog::{
@@ -20,12 +21,25 @@ use proximadb_catalog::{
 use proximadb_records::ProximaRecord;
 
 use super::registry::ExternalCollectionRegistry;
-use super::source_reader::{read_external_records, read_records_by_ids, snapshot_fingerprint};
+use super::source_reader::{
+    read_external_records, read_external_text, read_records_by_ids, snapshot_fingerprint,
+};
 use super::types::{ExternalCollection, ExternalCollectionSpec, ExternalCollectionStatus};
 use crate::catalog::CatalogManager;
+use crate::core::search::hybrid::{BM25Result, FusionStrategy, HybridFusionEngine, VectorResult};
+use crate::index::AxisManager;
 use crate::index::axis::management::manager::{AxisHybridQuery, VectorQuery};
 use crate::index::axis::types::{Data, IndexAlgorithm, IndexSelectionStrategy, IndexSpecification};
-use crate::index::AxisManager;
+use crate::storage::engines::core::formats::columnar::fulltext_index::{
+    FullTextIndex, TokenizerConfig,
+};
+
+/// Reciprocal-rank-fusion constant for external hybrid search (the native
+/// default). Rank-based, so robust to the BM25-vs-cosine score-scale mismatch.
+const HYBRID_RRF_K: usize = 60;
+/// Candidate-pool multiplier per side before fusion (oversample so fusion has
+/// enough overlap to work with).
+const HYBRID_POOL_FACTOR: usize = 5;
 
 /// Canonical name of the projection that tracks the ProximaDB-owned vector
 /// index built over the external source.
@@ -61,6 +75,9 @@ pub struct ExternalCollectionService {
     registry: Arc<ExternalCollectionRegistry>,
     catalog_manager: Arc<CatalogManager>,
     axis_manager: Arc<AxisManager>,
+    /// F5 Slice 3: per-collection BM25 inverted index over the source text
+    /// column (keyed by collection name). In-memory; built on `build`/`refresh`.
+    fulltext_indexes: Arc<RwLock<HashMap<String, FullTextIndex>>>,
 }
 
 impl ExternalCollectionService {
@@ -73,6 +90,7 @@ impl ExternalCollectionService {
             registry,
             catalog_manager,
             axis_manager,
+            fulltext_indexes: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -124,7 +142,11 @@ impl ExternalCollectionService {
             .properties
             .insert("dimension".to_string(), spec.dimension.to_string());
         let mut schema = CatalogTableSchema::new(spec.name.clone())
-            .with_column(CatalogColumn::new(0, &spec.id_column, CatalogDataType::String))
+            .with_column(CatalogColumn::new(
+                0,
+                &spec.id_column,
+                CatalogDataType::String,
+            ))
             .with_column(vector_col)
             .with_projection(projection);
         // `CatalogTableSchema::default()` seeds one `InternalCanonical` layout;
@@ -270,7 +292,41 @@ impl ExternalCollectionService {
         }
         self.register_ivf_strategy(&ec.spec.name, ec.spec.dimension, count)
             .await?;
+
+        // F5 Slice 3: build the BM25 inverted index over the text column (if
+        // configured) so search can fuse lexical + vector results.
+        self.build_fulltext_index(&ec.spec)?;
         Ok(count)
+    }
+
+    /// Build (or rebuild) the per-collection BM25 index from the source text
+    /// column. No-op when `text_column` is unset. Errors propagate to the build.
+    fn build_fulltext_index(&self, spec: &ExternalCollectionSpec) -> Result<()> {
+        if spec.text_column.is_none() {
+            return Ok(());
+        }
+        let docs = read_external_text(spec)?;
+        let mut index = FullTextIndex::new(TokenizerConfig::for_keyword_search());
+        for (oid, text) in docs {
+            if index.contains_document(&oid) {
+                continue;
+            }
+            // Tokenizer/store errors on a single doc shouldn't fail the build.
+            let _ = index.add_document(&oid, &text);
+        }
+        self.fulltext_indexes
+            .write()
+            .map_err(|_| anyhow::anyhow!("fulltext index lock poisoned"))?
+            .insert(spec.name.clone(), index);
+        Ok(())
+    }
+
+    /// Whether `collection_id` (by name) has a built BM25 index.
+    pub fn has_fulltext_index(&self, collection_name: &str) -> bool {
+        self.fulltext_indexes
+            .read()
+            .map(|m| m.contains_key(collection_name))
+            .unwrap_or(false)
     }
 
     /// Register the IVF routing strategy so `AxisManager::query` routes this
@@ -300,15 +356,25 @@ impl ExternalCollectionService {
             .await
     }
 
-    /// Search the external collection's index and return scored hits with the
-    /// **full records federated from the external source** — ProximaDB owns the
-    /// index but not the records, so the text/metadata are fetched from the
-    /// source (un-copied) at retrieval time. Delegates the vector search to the
-    /// same `AxisManager::query` path native collections use, then joins the
-    /// top-k ids back to records via `read_records_by_ids`, preserving score
-    /// order. Ids with no matching source row (e.g. concurrently deleted) keep
-    /// an empty-props record so the score is still returned.
+    /// Vector-only search: returns scored hits with the **full records federated
+    /// from the external source** (ProximaDB owns the index, not the records, so
+    /// the text/metadata are fetched un-copied at retrieval time). Delegates the
+    /// vector search to the same `AxisManager::query` path native collections use.
     pub async fn search(&self, id: &str, query: Vec<f32>, k: usize) -> Result<Vec<ExternalHit>> {
+        self.hybrid_search(id, query, None, k).await
+    }
+
+    /// Hybrid search (F5 Slice 3): vector (IVF) results fused with BM25 lexical
+    /// results via reciprocal-rank fusion. When `text_query` is `None` or the
+    /// collection has no BM25 index, this is vector-only. The join key is the
+    /// external row id; records for fused-in BM25-only hits are fetched lazily.
+    pub async fn hybrid_search(
+        &self,
+        id: &str,
+        query: Vec<f32>,
+        text_query: Option<String>,
+        k: usize,
+    ) -> Result<Vec<ExternalHit>> {
         let ec = self
             .registry
             .get(id)
@@ -320,6 +386,103 @@ impl ExternalCollectionService {
                 ec.status
             );
         }
+
+        // Oversample each side so fusion has overlap to work with.
+        let pool = (k * HYBRID_POOL_FACTOR).max(k);
+        let vector_hits = self.vector_hits(&ec, query, pool).await?;
+
+        // Fuse only with a non-empty text query AND a built BM25 index; otherwise
+        // return vector-only (current behaviour).
+        let text_query = match text_query {
+            Some(t)
+                if !t.trim().is_empty() && self.has_fulltext_index(&ec.spec.name) =>
+            {
+                t
+            }
+            _ => {
+                let mut hits = vector_hits;
+                hits.truncate(k);
+                return Ok(hits);
+            }
+        };
+
+        // BM25 side.
+        let bm25_results: Vec<BM25Result> = {
+            let guard = self
+                .fulltext_indexes
+                .read()
+                .map_err(|_| anyhow::anyhow!("fulltext index lock poisoned"))?;
+            let index = guard
+                .get(&ec.spec.name)
+                .ok_or_else(|| anyhow::anyhow!("BM25 index missing for '{}'", ec.spec.name))?;
+            index
+                .search(&text_query, pool)
+                .into_iter()
+                .map(|r| BM25Result {
+                    doc_id: r.doc_id,
+                    score: r.score,
+                    highlights: None,
+                    metadata: HashMap::new(),
+                })
+                .collect()
+        };
+
+        // Vector side (RRF is rank-based, so the f32→f64 score cast is fine).
+        let vector_results: Vec<VectorResult> = vector_hits
+            .iter()
+            .map(|h| VectorResult {
+                doc_id: h.id.clone(),
+                score: h.score as f64,
+                distance: 0.0,
+                metadata: HashMap::new(),
+            })
+            .collect();
+
+        let fused = HybridFusionEngine::new(FusionStrategy::ReciprocalRank { k: HYBRID_RRF_K })
+            .with_top_k(k)
+            .fuse(bm25_results, vector_results)
+            .map_err(|e| anyhow::anyhow!("hybrid fusion failed: {e}"))?;
+
+        // Assemble records: reuse the vector hits' records; fetch any BM25-only ids.
+        let mut by_id: std::collections::HashMap<String, ProximaRecord> = vector_hits
+            .into_iter()
+            .map(|h| (h.id, h.record))
+            .collect();
+        let missing: Vec<String> = fused
+            .iter()
+            .filter(|f| !by_id.contains_key(&f.doc_id))
+            .map(|f| f.doc_id.clone())
+            .collect();
+        if !missing.is_empty() {
+            for r in read_records_by_ids(&ec.spec, &missing)? {
+                by_id.insert(r.oid.clone(), r);
+            }
+        }
+
+        Ok(fused
+            .into_iter()
+            .map(|f| {
+                let record = by_id.remove(&f.doc_id).unwrap_or_else(|| ProximaRecord {
+                    oid: f.doc_id.clone(),
+                    ..Default::default()
+                });
+                ExternalHit {
+                    id: f.doc_id,
+                    score: f.fused_score as f32,
+                    record,
+                }
+            })
+            .collect())
+    }
+
+    /// Run the IVF vector search and federate full records — the shared vector
+    /// half of `search`/`hybrid_search`.
+    async fn vector_hits(
+        &self,
+        ec: &ExternalCollection,
+        query: Vec<f32>,
+        k: usize,
+    ) -> Result<Vec<ExternalHit>> {
         let q = AxisHybridQuery {
             collection_id: ec.spec.name.clone(),
             vector_query: Some(VectorQuery::Dense {
@@ -418,8 +581,8 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use arrow_array::builder::{FixedSizeListBuilder, Float32Builder, StringBuilder};
     use arrow_array::RecordBatch;
+    use arrow_array::builder::{FixedSizeListBuilder, Float32Builder, StringBuilder};
     use arrow_schema::{DataType, Field, Schema};
     use parquet::arrow::ArrowWriter;
 
@@ -449,7 +612,11 @@ mod tests {
     /// Write `n` vectors with **unique directions** (one-hot at position `i`,
     /// so under cosine each row's nearest neighbor is itself). Requires
     /// `dim >= n`. Rebuild needs >= 16 vectors to cluster.
-    fn write_parquet_fixture(path: &std::path::Path, n: usize, dim: usize) -> Vec<(String, Vec<f32>)> {
+    fn write_parquet_fixture(
+        path: &std::path::Path,
+        n: usize,
+        dim: usize,
+    ) -> Vec<(String, Vec<f32>)> {
         assert!(dim >= n, "one-hot fixture requires dim >= n");
         let schema = Arc::new(Schema::new(vec![
             Field::new("id", DataType::Utf8, false),
@@ -506,7 +673,10 @@ mod tests {
             Field::new("year", DataType::Int64, false),
             Field::new(
                 "vector",
-                DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), dim as i32),
+                DataType::FixedSizeList(
+                    Arc::new(Field::new("item", DataType::Float32, true)),
+                    dim as i32,
+                ),
                 false,
             ),
         ]));
@@ -658,15 +828,15 @@ mod tests {
         assert_eq!(hits[0].id, "row-3");
         let props = &hits[0].record.props;
         match &props["text"] {
-            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
-                s,
-            )) => assert_eq!(s, "text-3"),
+            proximadb_records::ProximaTreeNode::Value(
+                proximadb_data_model::ProximaValue::String(s),
+            ) => assert_eq!(s, "text-3"),
             other => panic!("text prop wrong: {other:?}"),
         }
         match &props["year"] {
-            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::Int64(
-                y,
-            )) => assert_eq!(*y, 2003),
+            proximadb_records::ProximaTreeNode::Value(
+                proximadb_data_model::ProximaValue::Int64(y),
+            ) => assert_eq!(*y, 2003),
             other => panic!("year prop wrong: {other:?}"),
         }
         let _ = std::fs::remove_file(&path);
@@ -698,7 +868,10 @@ mod tests {
         write_meta_fixture(&path, 24, 24);
         assert!(svc.is_stale(&ec.id).unwrap());
         let r1 = svc.refresh(&ec.id).await.unwrap();
-        assert!(r1.stale_detected && r1.rebuilt, "changed source must rebuild");
+        assert!(
+            r1.stale_detected && r1.rebuilt,
+            "changed source must rebuild"
+        );
         assert_eq!(r1.indexed_record_count, 24);
         assert_ne!(r1.snapshot_id, snap0, "snapshot id must advance");
 
@@ -708,6 +881,80 @@ mod tests {
         let proj = svc.projection("ext_docs").await.unwrap().unwrap();
         assert_eq!(proj.freshness_state, ProjectionFreshnessState::Fresh);
         assert_eq!(proj.source_range.as_deref(), Some(r1.snapshot_id.as_str()));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // ─── F5 Slice 3: BM25 + hybrid ──────────────────────────────────────────
+
+    #[tokio::test]
+    async fn build_populates_bm25_index_only_when_text_column_set() {
+        let path = fixture_path();
+        write_meta_fixture(&path, 20, 20);
+        let cat = catalog_manager_with_default().await;
+
+        // With text_column → BM25 index built.
+        let svc = ExternalCollectionService::new(
+            Arc::new(ExternalCollectionRegistry::new()),
+            cat.clone(),
+            axis_manager().await,
+        );
+        let spec = ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20)
+            .with_text_column("text");
+        let ec = svc.register(spec).await.unwrap();
+        svc.build(&ec.id).await.unwrap();
+        assert!(svc.has_fulltext_index("ext_docs"));
+
+        // Without text_column → no BM25 index.
+        let svc2 = ExternalCollectionService::new(
+            Arc::new(ExternalCollectionRegistry::new()),
+            catalog_manager_with_default().await,
+            axis_manager().await,
+        );
+        let spec2 =
+            ExternalCollectionSpec::parquet("ext_plain", path.to_str().unwrap(), "id", "vector", 20);
+        let ec2 = svc2.register(spec2).await.unwrap();
+        svc2.build(&ec2.id).await.unwrap();
+        assert!(!svc2.has_fulltext_index("ext_plain"));
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[tokio::test]
+    async fn hybrid_search_fuses_lexical_match_with_vector() {
+        let path = fixture_path();
+        // row-i: one-hot vector at i, text "text-i".
+        write_meta_fixture(&path, 20, 20);
+        let cat = catalog_manager_with_default().await;
+        let svc = ExternalCollectionService::new(
+            Arc::new(ExternalCollectionRegistry::new()),
+            cat,
+            axis_manager().await,
+        );
+        let spec = ExternalCollectionSpec::parquet("ext_docs", path.to_str().unwrap(), "id", "vector", 20)
+            .with_text_column("text");
+        let ec = svc.register(spec).await.unwrap();
+        svc.build(&ec.id).await.unwrap();
+
+        // Vector query points at row-3; lexical query is row-7's own text.
+        let mut qv = vec![0.0f32; 20];
+        qv[3] = 1.0;
+
+        // Vector-only: nearest is row-3.
+        let vonly = svc.search(&ec.id, qv.clone(), 5).await.unwrap();
+        assert_eq!(vonly[0].id, "row-3", "vector-only top-1 is the nearest vector");
+
+        // Hybrid: fusion pulls in the lexical-only match (row-7) alongside row-3.
+        let hybrid = svc
+            .hybrid_search(&ec.id, qv, Some("text-7".to_string()), 5)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = hybrid.iter().map(|h| h.id.as_str()).collect();
+        assert!(ids.contains(&"row-7"), "BM25 brought the lexical match into fused results: {ids:?}");
+        assert!(ids.contains(&"row-3"), "vector match retained in fused results: {ids:?}");
+        // Hits still carry federated props.
+        let row7 = hybrid.iter().find(|h| h.id == "row-7").unwrap();
+        assert!(row7.record.props.contains_key("text"));
+
         let _ = std::fs::remove_file(&path);
     }
 }

@@ -74,6 +74,68 @@ pub fn read_records_by_ids(
     Ok(out)
 }
 
+/// Read `(oid, text)` pairs for every row from the external source's configured
+/// `text_column` (F5 Slice 3) — the BM25 build input. Rows with a null id or
+/// text are skipped. Errors if no `text_column` is configured.
+pub fn read_external_text(spec: &ExternalCollectionSpec) -> Result<Vec<(String, String)>> {
+    let text_column = spec.text_column.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "external collection '{}': no text_column configured for BM25",
+            spec.name
+        )
+    })?;
+    let files = list_parquet_files(&spec.location)?;
+    let projection = [spec.id_column.clone(), text_column.clone()];
+    let mut out = Vec::new();
+    for file in &files {
+        for batch in read_parquet_batches(file, Some(projection.as_slice()))? {
+            extract_text(&batch, &spec.id_column, text_column, &mut out)?;
+        }
+    }
+    Ok(out)
+}
+
+/// Extract `(oid, text)` rows from one batch (Utf8/LargeUtf8 text column).
+fn extract_text(
+    batch: &RecordBatch,
+    id_column: &str,
+    text_column: &str,
+    out: &mut Vec<(String, String)>,
+) -> Result<()> {
+    let num_rows = batch.num_rows();
+    if num_rows == 0 {
+        return Ok(());
+    }
+    let ids = batch
+        .column_by_name(id_column)
+        .ok_or_else(|| anyhow::anyhow!("id column '{id_column}' missing in source"))?
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .ok_or_else(|| anyhow::anyhow!("id column '{id_column}' is not Utf8"))?;
+    let text_col = batch
+        .column_by_name(text_column)
+        .ok_or_else(|| anyhow::anyhow!("text column '{text_column}' missing in source"))?;
+
+    let read_text: Box<dyn Fn(usize) -> Option<String>> =
+        if let Some(a) = text_col.as_any().downcast_ref::<StringArray>() {
+            Box::new(move |row| (!a.is_null(row)).then(|| a.value(row).to_string()))
+        } else if let Some(a) = text_col.as_any().downcast_ref::<LargeStringArray>() {
+            Box::new(move |row| (!a.is_null(row)).then(|| a.value(row).to_string()))
+        } else {
+            anyhow::bail!("text column '{text_column}' is not Utf8/LargeUtf8");
+        };
+
+    for row in 0..num_rows {
+        if ids.is_null(row) {
+            continue;
+        }
+        if let Some(text) = read_text(row) {
+            out.push((ids.value(row).to_string(), text));
+        }
+    }
+    Ok(())
+}
+
 /// Stable content fingerprint of the external source: an FNV-1a hash over the
 /// sorted `(file_name, len, mtime_nanos)` tuples. Deterministic across runs so
 /// Slice 2 can detect source-commit advance by recomputing and comparing.
@@ -150,8 +212,7 @@ fn read_parquet_batches(
                 .iter()
                 .filter_map(|name| schema.index_of(name).ok())
                 .collect();
-            let mask =
-                parquet::arrow::ProjectionMask::roots(builder.parquet_schema(), indices);
+            let mask = parquet::arrow::ProjectionMask::roots(builder.parquet_schema(), indices);
             builder.with_projection(mask).build()?
         }
         None => builder.build()?,
@@ -306,7 +367,9 @@ fn extract_vectors(
             .values()
             .as_any()
             .downcast_ref::<Float32Array>()
-            .ok_or_else(|| anyhow::anyhow!("vector column '{column_name}' values are not Float32"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("vector column '{column_name}' values are not Float32")
+            })?;
         let dim = fixed.value_length() as usize;
         let mut out = Vec::with_capacity(num_rows);
         for i in 0..num_rows {
@@ -318,10 +381,9 @@ fn extract_vectors(
         let mut out = Vec::with_capacity(num_rows);
         for i in 0..num_rows {
             let arr = list.value(i);
-            let floats = arr
-                .as_any()
-                .downcast_ref::<Float32Array>()
-                .ok_or_else(|| anyhow::anyhow!("vector column '{column_name}' values are not Float32"))?;
+            let floats = arr.as_any().downcast_ref::<Float32Array>().ok_or_else(|| {
+                anyhow::anyhow!("vector column '{column_name}' values are not Float32")
+            })?;
             out.push((0..floats.len()).map(|j| floats.value(j)).collect());
         }
         Ok(out)
@@ -345,10 +407,7 @@ mod tests {
             Field::new("id", DataType::Utf8, false),
             Field::new(
                 "vector",
-                DataType::FixedSizeList(
-                    Arc::new(Field::new("item", DataType::Float32, true)),
-                    dim,
-                ),
+                DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), dim),
                 false,
             ),
         ]));
@@ -367,7 +426,10 @@ mod tests {
 
         let batch = RecordBatch::try_new(
             schema.clone(),
-            vec![Arc::new(id_builder.finish()), Arc::new(vec_builder.finish())],
+            vec![
+                Arc::new(id_builder.finish()),
+                Arc::new(vec_builder.finish()),
+            ],
         )
         .unwrap();
 
@@ -444,11 +506,15 @@ mod tests {
             ],
             2,
         );
-        let spec = ExternalCollectionSpec::parquet("docs", path.to_str().unwrap(), "id", "vector", 2);
+        let spec =
+            ExternalCollectionSpec::parquet("docs", path.to_str().unwrap(), "id", "vector", 2);
 
         // Fetch a subset; "zzz" is unknown and must be skipped.
-        let recs = read_records_by_ids(&spec, &["c".to_string(), "a".to_string(), "zzz".to_string()])
-            .unwrap();
+        let recs = read_records_by_ids(
+            &spec,
+            &["c".to_string(), "a".to_string(), "zzz".to_string()],
+        )
+        .unwrap();
         assert_eq!(recs.len(), 2);
 
         let by_id: std::collections::HashMap<_, _> =
@@ -475,8 +541,34 @@ mod tests {
     fn read_records_by_ids_empty_input_is_empty() {
         let path = tmp_path("empty");
         write_parquet_with_meta(&path, &[("a", "alpha", 1, vec![1.0, 0.0])], 2);
-        let spec = ExternalCollectionSpec::parquet("docs", path.to_str().unwrap(), "id", "vector", 2);
+        let spec =
+            ExternalCollectionSpec::parquet("docs", path.to_str().unwrap(), "id", "vector", 2);
         assert!(read_records_by_ids(&spec, &[]).unwrap().is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn read_external_text_returns_id_text_pairs() {
+        let path = tmp_path("text");
+        write_parquet_with_meta(
+            &path,
+            &[("a", "alpha bravo", 1, vec![1.0, 0.0]), ("b", "charlie", 2, vec![0.0, 1.0])],
+            2,
+        );
+        let spec = ExternalCollectionSpec::parquet("docs", path.to_str().unwrap(), "id", "vector", 2)
+            .with_text_column("text");
+        let pairs = read_external_text(&spec).unwrap();
+        assert_eq!(
+            pairs,
+            vec![
+                ("a".to_string(), "alpha bravo".to_string()),
+                ("b".to_string(), "charlie".to_string()),
+            ]
+        );
+        // No text_column → error.
+        let no_text =
+            ExternalCollectionSpec::parquet("docs", path.to_str().unwrap(), "id", "vector", 2);
+        assert!(read_external_text(&no_text).is_err());
         let _ = std::fs::remove_file(&path);
     }
 
@@ -491,13 +583,8 @@ mod tests {
         ];
         write_parquet(&path, &ids, &vectors, 4);
 
-        let spec = ExternalCollectionSpec::parquet(
-            "docs",
-            path.to_str().unwrap(),
-            "id",
-            "vector",
-            4,
-        );
+        let spec =
+            ExternalCollectionSpec::parquet("docs", path.to_str().unwrap(), "id", "vector", 4);
         let records = read_external_records(&spec).unwrap();
         assert_eq!(records.len(), 3);
         assert_eq!(records[0].oid, "a");

@@ -19,15 +19,15 @@
 use std::collections::HashMap;
 
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
 use crate::errors::{ApiError, ApiResult};
 use crate::network::rest::v1::handlers::AppState;
-use crate::network::rest::v2::records::{proxima_value_to_rest_value, RestProximaValue};
+use crate::network::rest::v2::records::{RestProximaValue, proxima_value_to_rest_value};
 use crate::services::external_collection::{
     ExternalCollection, ExternalCollectionService, ExternalCollectionSpec, ExternalFormat,
 };
@@ -45,18 +45,24 @@ pub struct RegisterExternalCollectionRequest {
     pub dimension: usize,
     #[serde(default = "default_metric")]
     pub distance_metric: String,
+    /// Optional Utf8 column to build a BM25 index over (enables hybrid search).
+    #[serde(default)]
+    pub text_column: Option<String>,
 }
 
 fn default_metric() -> String {
     "cosine".to_string()
 }
 
-/// Request body for searching an external collection.
+/// Request body for searching an external collection. `text` (optional) enables
+/// hybrid (vector + BM25) retrieval when the collection has a `text_column`.
 #[derive(Debug, Deserialize)]
 pub struct ExternalSearchRequest {
     pub vector: Vec<f32>,
     #[serde(default = "default_k")]
     pub k: usize,
+    #[serde(default)]
+    pub text: Option<String>,
 }
 
 fn default_k() -> usize {
@@ -134,6 +140,7 @@ pub async fn register_external_collection_v2(
         vector_column: req.vector_column,
         dimension: req.dimension,
         distance_metric: req.distance_metric,
+        text_column: req.text_column,
     };
     let collection = service(&state)?
         .register(spec)
@@ -196,7 +203,7 @@ pub async fn search_external_collection_v2(
         ));
     }
     let hits = service(&state)?
-        .search(&id, req.vector, req.k)
+        .hybrid_search(&id, req.vector, req.text, req.k)
         .await
         .map_err(|e| ApiError::Internal(format!("search external collection '{id}': {e:#}")))?
         .into_iter()
@@ -208,9 +215,7 @@ pub async fn search_external_collection_v2(
                 .props
                 .iter()
                 .filter_map(|(k, node)| match node {
-                    ProximaTreeNode::Value(v) => {
-                        Some((k.clone(), proxima_value_to_rest_value(v)))
-                    }
+                    ProximaTreeNode::Value(v) => Some((k.clone(), proxima_value_to_rest_value(v))),
                     ProximaTreeNode::Object(_) => None,
                 })
                 .collect();

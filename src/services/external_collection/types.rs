@@ -62,6 +62,11 @@ pub struct ExternalCollectionSpec {
     pub dimension: usize,
     /// Distance metric for the built index (catalog-style string, e.g. "cosine").
     pub distance_metric: String,
+    /// Optional Utf8 column to build a BM25 inverted index over (F5 Slice 3).
+    /// When set, search supports hybrid (vector + lexical) retrieval. `None` ⇒
+    /// vector-only. `#[serde(default)]` keeps older registry records readable.
+    #[serde(default)]
+    pub text_column: Option<String>,
 }
 
 impl ExternalCollectionSpec {
@@ -81,7 +86,14 @@ impl ExternalCollectionSpec {
             vector_column: vector_column.into(),
             dimension,
             distance_metric: "cosine".to_string(),
+            text_column: None,
         }
+    }
+
+    /// Set the BM25 text column (builder).
+    pub fn with_text_column(mut self, text_column: impl Into<String>) -> Self {
+        self.text_column = Some(text_column.into());
+        self
     }
 }
 
