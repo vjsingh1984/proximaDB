@@ -80,6 +80,11 @@ pub mod config;
 pub mod edr;
 /// Geo-spatial indexing (geohash-based).
 pub mod geo;
+/// TurboQuant root-crate bridge: `CandidateSet` → `TurboQuantStore`
+/// dispatch + EXPLAIN hint set. ADR-021 / TURBOQUANT_LLD §"xCatalog &
+/// EXPLAIN Wiring". Gated by `experimental-turboquant`.
+#[cfg(feature = "experimental-turboquant")]
+pub mod turboquant_bridge;
 
 // Note: `src/index/{hnsw,ivf,diskann,sparse_hnsw}` were removed 2026-05-27.
 // They were orphan duplicates of AXIS-native indexes — see

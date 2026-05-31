@@ -183,20 +183,20 @@ pub mod cache;
 /// Collection pin-registry observability — currently-pinned gauge per
 /// target tier + pin/unpin operation counters.
 pub mod collection_pin_metrics;
-/// Primary-pod write-router observability — counters for the
-/// gateway gate's allow/misroute decisions per tenant.
-pub mod primary_pod_metrics;
 pub mod collectors;
 pub mod compression;
 /// Prometheus bridge for `proximadb_catalog::dr_reconciler::DrMetrics`.
 pub mod dr_metrics;
 pub mod exporters;
+/// Primary-pod write-router observability — counters for the
+/// gateway gate's allow/misroute decisions per tenant.
+pub mod primary_pod_metrics;
 pub mod query_service;
-pub mod schema;
 /// AXIS HNSW recall-target drift observability — one-hot status
 /// gauge + observation / hot-swap counters for /route-health +
 /// /recall-tune.
 pub mod recall_drift_metrics;
+pub mod schema;
 pub mod store;
 /// TD-064 predicate-aware vector search shortfall counters.
 pub mod td064_metrics;
@@ -206,6 +206,10 @@ pub mod td066_metrics;
 /// Tier-migration pipeline observability — counters + bytes + duration
 /// histogram + in-flight gauge for `TierMigrationExecutor` operations.
 pub mod tier_migration_metrics;
+/// TurboQuant scoring-kernel metrics (P8.A — ADR-021). Counts blocks
+/// skipped by the in-kernel allowlist mask. Gated by feature flag.
+#[cfg(feature = "experimental-turboquant")]
+pub mod turboquant_metrics;
 pub mod updater;
 
 #[cfg(test)]
