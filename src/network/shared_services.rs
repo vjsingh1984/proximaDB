@@ -1537,6 +1537,32 @@ impl SharedServices {
                 "✅ SharedServices: DriftWatcher spawned (Phase 8 F1 trigger arm — write-volume drift)"
             );
         }
+        {
+            // Recall-drift sweeper: every 5 min, walk every
+            // collection with a `recall_target:` tag and emit a
+            // Prometheus drift observation
+            // (axis_recall_drift_status / _observations_total).
+            // Read-only — never mutates AXIS state; the operator
+            // drives hot-swaps via POST /recall-tune and rebuilds
+            // via /recluster (forthcoming).
+            let sweeper = Arc::new(
+                crate::services::recall_drift_sweeper::RecallDriftSweeper::new(
+                    collection_service.clone()
+                        as Arc<dyn crate::services::recall_drift_sweeper::CollectionLister>,
+                ),
+            );
+            let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+            std::mem::forget(shutdown_tx);
+            #[allow(clippy::let_underscore_future)]
+            let _ = crate::services::recall_drift_sweeper::spawn_recall_drift_sweeper(
+                sweeper,
+                shutdown_rx,
+                crate::services::recall_drift_sweeper::DEFAULT_SWEEP_INTERVAL,
+            );
+            info!(
+                "✅ SharedServices: RecallDriftSweeper spawned (axis_recall_drift_* metrics heartbeat)"
+            );
+        }
 
         info!(
             "✅ SharedServices: Business logic hub ready for ALL protocols (gRPC, REST, WebSocket, etc.)"
