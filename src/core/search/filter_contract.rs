@@ -45,9 +45,12 @@
 
 use anyhow::Result;
 use arrow::array::BooleanArray;
+use std::any::Any;
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::hash::Hash;
+#[cfg(feature = "experimental-turboquant")]
+use std::sync::Arc;
 use tracing::debug;
 
 use crate::core::search::{ComparisonOperator, FilterExpression};
@@ -245,6 +248,17 @@ pub trait CandidateSet: Send + Sync + Debug {
 
     /// Clone the candidate set
     fn clone_box(&self) -> Box<dyn CandidateSet>;
+
+    /// Concrete-type downcast support. AXIS adapters (P6 per
+    /// `TURBOQUANT_LLD_2026_05_30.adoc`) inspect this to recognise
+    /// a [`CandidateMaskSet`] and forward its packed bitmap directly into
+    /// the scoring kernel, avoiding the string-id round trip.
+    ///
+    /// Existing impls return `self`; new impls should mirror that
+    /// boilerplate. The default body is intentionally omitted so adding
+    /// `CandidateSet` to a new type is a compile-time prompt to think
+    /// about kernel-level filtering.
+    fn as_any(&self) -> &dyn Any;
 }
 
 impl Clone for Box<dyn CandidateSet> {
@@ -625,6 +639,328 @@ impl CandidateSet for MemoryCandidateSet {
     fn clone_box(&self) -> Box<dyn CandidateSet> {
         Box::new(self.clone())
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+// ============================================================================
+// CandidateMaskSet — packed-bitmask candidate set (ADR-021)
+// ============================================================================
+//
+// New `CandidateSet` implementation gated by `experimental-turboquant`.
+// Bitmap-backed (one bit per slot), constructed by AXIS adapters and
+// recognised at the scoring kernel via `CandidateSet::as_any().downcast_ref()`.
+// Set operations work at u64 word granularity when both operands are
+// `CandidateMaskSet`s with the same `n_slots`; otherwise they fall back to
+// the slow path via the string-id `to_vec`/`contains` trait methods.
+//
+// Spec source: `docs/12-design/TURBOQUANT_LLD_2026_05_30.adoc`
+// §"Locked Type Signatures" + §"Open Risks" (mismatched-slot-count case).
+
+/// Resolve between positional slot indices and external string IDs.
+///
+/// AXIS adapters that own a stable slot ordering — Annoy's tree, HNSW's
+/// graph nodes, IVF's per-list arrays — supply an implementation so the
+/// `CandidateMaskSet` can serve `CandidateSet`'s string-id contract
+/// (`add_candidate(id)`, `contains(id)`, `to_vec()`) without changing
+/// the trait.
+#[cfg(feature = "experimental-turboquant")]
+pub trait SlotIdResolver: Send + Sync + std::fmt::Debug {
+    /// External string id at `slot`, or `None` when the slot is out of
+    /// range / not currently populated.
+    fn id_for_slot(&self, slot: usize) -> Option<String>;
+
+    /// Positional slot for an external string id, or `None` when the id
+    /// is not currently in the index.
+    fn slot_for_id(&self, id: &str) -> Option<usize>;
+}
+
+/// Packed-bitmask candidate set. Bit `i` of `bitmap[i >> 6]` is set when
+/// slot `i` is allowed; the kernel reads `&[u64]` directly.
+///
+/// Adapter integration (P6): `CandidateSet::as_any().downcast_ref::<CandidateMaskSet>()`
+/// returns the bitmap-backed concrete type. The kernel then calls
+/// [`CandidateMaskSet::bitmap`] and forwards into the scoring loop's
+/// `block_has_allowed` / `mask_allows` helpers.
+#[cfg(feature = "experimental-turboquant")]
+pub struct CandidateMaskSet {
+    bitmap: Vec<u64>,
+    n_set: usize,
+    n_slots: usize,
+    id_resolver: Arc<dyn SlotIdResolver>,
+}
+
+#[cfg(feature = "experimental-turboquant")]
+impl std::fmt::Debug for CandidateMaskSet {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CandidateMaskSet")
+            .field("n_set", &self.n_set)
+            .field("n_slots", &self.n_slots)
+            .field("bitmap_words", &self.bitmap.len())
+            .finish()
+    }
+}
+
+#[cfg(feature = "experimental-turboquant")]
+impl Clone for CandidateMaskSet {
+    fn clone(&self) -> Self {
+        Self {
+            bitmap: self.bitmap.clone(),
+            n_set: self.n_set,
+            n_slots: self.n_slots,
+            id_resolver: Arc::clone(&self.id_resolver),
+        }
+    }
+}
+
+#[cfg(feature = "experimental-turboquant")]
+impl CandidateMaskSet {
+    /// Construct an empty bitmap covering `n_slots` candidate slots.
+    pub fn new(n_slots: usize, id_resolver: Arc<dyn SlotIdResolver>) -> Self {
+        let n_words = n_slots.div_ceil(64);
+        Self {
+            bitmap: vec![0u64; n_words],
+            n_set: 0,
+            n_slots,
+            id_resolver,
+        }
+    }
+
+    /// Borrow the packed bitmap. The kernel forwards this slice into its
+    /// `block_has_allowed` / `mask_allows` primitives.
+    pub fn bitmap(&self) -> &[u64] {
+        &self.bitmap
+    }
+
+    /// Total slot capacity (independent of how many are currently set).
+    pub fn n_slots(&self) -> usize {
+        self.n_slots
+    }
+
+    /// Set the bit for slot `slot` and increment `n_set` if it wasn't
+    /// already set. Out-of-range slots are silently dropped; callers that
+    /// need a strict variant can check via `n_slots()` first.
+    pub fn set_slot(&mut self, slot: usize) {
+        if slot >= self.n_slots {
+            return;
+        }
+        let word = slot >> 6;
+        let bit = 1u64 << (slot & 63);
+        if self.bitmap[word] & bit == 0 {
+            self.bitmap[word] |= bit;
+            self.n_set += 1;
+        }
+    }
+
+    /// True iff slot `slot` is set.
+    pub fn contains_slot(&self, slot: usize) -> bool {
+        if slot >= self.n_slots {
+            return false;
+        }
+        (self.bitmap[slot >> 6] >> (slot & 63)) & 1 != 0
+    }
+}
+
+#[cfg(feature = "experimental-turboquant")]
+impl CandidateSet for CandidateMaskSet {
+    fn add_candidate(&mut self, id: String) -> Result<()> {
+        if let Some(slot) = self.id_resolver.slot_for_id(&id) {
+            self.set_slot(slot);
+        }
+        // Unknown ids are silently dropped — matches `MemoryCandidateSet`'s
+        // "no error on duplicate" semantics.
+        Ok(())
+    }
+
+    fn contains(&self, id: &str) -> bool {
+        self.id_resolver
+            .slot_for_id(id)
+            .map(|s| self.contains_slot(s))
+            .unwrap_or(false)
+    }
+
+    fn len(&self) -> usize {
+        self.n_set
+    }
+
+    fn is_empty(&self) -> bool {
+        self.n_set == 0
+    }
+
+    fn clear(&mut self) {
+        for w in self.bitmap.iter_mut() {
+            *w = 0;
+        }
+        self.n_set = 0;
+    }
+
+    fn to_vec(&self) -> Vec<String> {
+        let mut out = Vec::with_capacity(self.n_set);
+        for word_idx in 0..self.bitmap.len() {
+            let mut word = self.bitmap[word_idx];
+            while word != 0 {
+                let bit = word.trailing_zeros() as usize;
+                word &= word - 1;
+                let slot = (word_idx << 6) | bit;
+                if slot >= self.n_slots {
+                    break;
+                }
+                if let Some(id) = self.id_resolver.id_for_slot(slot) {
+                    out.push(id);
+                }
+            }
+        }
+        out
+    }
+
+    fn filter(
+        &self,
+        contract: &dyn FilterContract,
+        metadata_lookup: &dyn MetadataLookup,
+    ) -> Result<Box<dyn CandidateSet>> {
+        // Reuse the string-id filter path for now — bitmap-native filter
+        // requires a metadata-by-slot lookup which the trait doesn't
+        // expose. Future optimisation: extend `MetadataLookup` with a
+        // batch-by-slot method when AXIS integration in P6 demands it.
+        let ids = self.to_vec();
+        let batch = if metadata_lookup.supports_batch_lookup() {
+            metadata_lookup.get_metadata_batch(&ids)?
+        } else {
+            ids.iter()
+                .map(|id| metadata_lookup.get_metadata(id).unwrap_or(None))
+                .collect()
+        };
+        let values: Vec<serde_json::Value> = batch.into_iter().flatten().collect();
+        let results = contract.evaluate_batch(&values)?;
+
+        let mut out = CandidateMaskSet::new(self.n_slots, Arc::clone(&self.id_resolver));
+        for (idx, passes) in results.iter().enumerate() {
+            if passes.unwrap_or(false) {
+                if let Some(slot) = self.id_resolver.slot_for_id(&ids[idx]) {
+                    out.set_slot(slot);
+                }
+            }
+        }
+        debug!(
+            "CandidateMaskSet::filter reduced {} → {}",
+            self.n_set, out.n_set
+        );
+        Ok(Box::new(out))
+    }
+
+    fn top_k(&self, k: usize, scores: &[f32]) -> Result<Box<dyn CandidateSet>> {
+        // `scores` is per-set-slot in the iteration order produced by
+        // `to_vec`. Sort indices by descending score; take the first `k`;
+        // emit a new mask over the same `n_slots` containing only those.
+        let n_set = self.n_set;
+        if scores.len() != n_set {
+            return Err(anyhow::anyhow!(
+                "CandidateMaskSet::top_k: scores.len() {} != n_set {}",
+                scores.len(),
+                n_set,
+            ));
+        }
+        let mut indexed: Vec<(usize, f32)> =
+            scores.iter().enumerate().map(|(i, &s)| (i, s)).collect();
+        indexed.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        let keep: HashSet<usize> = indexed.iter().take(k).map(|(i, _)| *i).collect();
+
+        let mut out = CandidateMaskSet::new(self.n_slots, Arc::clone(&self.id_resolver));
+        let mut visit_idx = 0usize;
+        for word_idx in 0..self.bitmap.len() {
+            let mut word = self.bitmap[word_idx];
+            while word != 0 {
+                let bit = word.trailing_zeros() as usize;
+                word &= word - 1;
+                let slot = (word_idx << 6) | bit;
+                if slot >= self.n_slots {
+                    break;
+                }
+                if keep.contains(&visit_idx) {
+                    out.set_slot(slot);
+                }
+                visit_idx += 1;
+            }
+        }
+        Ok(Box::new(out))
+    }
+
+    fn union(&self, other: &dyn CandidateSet) -> Result<Box<dyn CandidateSet>> {
+        // Fast path: both are `CandidateMaskSet` over the same `n_slots`
+        // → u64-wise OR. Mismatched slot counts must error explicitly per
+        // LLD §"Open Risks": silently truncating would produce results
+        // misaligned with the underlying slot layout.
+        if let Some(other_mask) = other.as_any().downcast_ref::<CandidateMaskSet>() {
+            if other_mask.n_slots != self.n_slots {
+                return Err(anyhow::anyhow!(
+                    "CandidateMaskSet::union: n_slots mismatch ({} vs {})",
+                    self.n_slots,
+                    other_mask.n_slots,
+                ));
+            }
+            let mut out = self.clone();
+            let mut n_set = 0usize;
+            for (i, w) in out.bitmap.iter_mut().enumerate() {
+                *w |= other_mask.bitmap[i];
+                n_set += w.count_ones() as usize;
+            }
+            out.n_set = n_set;
+            return Ok(Box::new(out));
+        }
+        // Slow path: iterate other's ids and add via the trait API.
+        let mut out = self.clone();
+        for id in other.to_vec() {
+            out.add_candidate(id)?;
+        }
+        Ok(Box::new(out))
+    }
+
+    fn intersect(&self, other: &dyn CandidateSet) -> Result<Box<dyn CandidateSet>> {
+        if let Some(other_mask) = other.as_any().downcast_ref::<CandidateMaskSet>() {
+            if other_mask.n_slots != self.n_slots {
+                return Err(anyhow::anyhow!(
+                    "CandidateMaskSet::intersect: n_slots mismatch ({} vs {})",
+                    self.n_slots,
+                    other_mask.n_slots,
+                ));
+            }
+            let mut out = self.clone();
+            let mut n_set = 0usize;
+            for (i, w) in out.bitmap.iter_mut().enumerate() {
+                *w &= other_mask.bitmap[i];
+                n_set += w.count_ones() as usize;
+            }
+            out.n_set = n_set;
+            return Ok(Box::new(out));
+        }
+        // Slow path: iterate self's ids and keep those `other` contains.
+        let mut out = CandidateMaskSet::new(self.n_slots, Arc::clone(&self.id_resolver));
+        for id in self.to_vec() {
+            if other.contains(&id) {
+                out.add_candidate(id)?;
+            }
+        }
+        Ok(Box::new(out))
+    }
+
+    fn clone_box(&self) -> Box<dyn CandidateSet> {
+        Box::new(self.clone())
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+/// Convenience constructor for a packed-bitmask candidate set.
+#[cfg(feature = "experimental-turboquant")]
+pub fn create_candidate_mask_set(
+    n_slots: usize,
+    id_resolver: Arc<dyn SlotIdResolver>,
+) -> Box<dyn CandidateSet> {
+    Box::new(CandidateMaskSet::new(n_slots, id_resolver))
 }
 
 /// Convenience function to create a normalized filter
@@ -889,5 +1225,230 @@ mod tests {
         }
         let stub = Stub;
         assert!(stub.as_filter_expression().is_none());
+    }
+
+    // -------------------------------------------------------------
+    // CandidateMaskSet (P5 — ADR-021 / TURBOQUANT_LLD_2026_05_30)
+    // -------------------------------------------------------------
+
+    /// Trivial slot↔id resolver where `slot_for_id("slot-N") -> Some(N)`
+    /// and `id_for_slot(N) -> Some("slot-N")`. Adequate for unit tests
+    /// of the bitmap-native paths.
+    #[cfg(feature = "experimental-turboquant")]
+    #[derive(Debug)]
+    struct TestResolver {
+        capacity: usize,
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    impl SlotIdResolver for TestResolver {
+        fn id_for_slot(&self, slot: usize) -> Option<String> {
+            if slot < self.capacity {
+                Some(format!("slot-{slot}"))
+            } else {
+                None
+            }
+        }
+        fn slot_for_id(&self, id: &str) -> Option<usize> {
+            let n: usize = id.strip_prefix("slot-")?.parse().ok()?;
+            if n < self.capacity { Some(n) } else { None }
+        }
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    fn resolver(n: usize) -> Arc<dyn SlotIdResolver> {
+        Arc::new(TestResolver { capacity: n })
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn mask_new_is_empty() {
+        let m = CandidateMaskSet::new(64, resolver(64));
+        assert_eq!(m.len(), 0);
+        assert_eq!(m.n_slots(), 64);
+        assert!(m.is_empty());
+        assert!(m.bitmap().iter().all(|&w| w == 0));
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn mask_set_slot_increments_count_once() {
+        let mut m = CandidateMaskSet::new(128, resolver(128));
+        m.set_slot(5);
+        m.set_slot(5); // re-set should not double-count
+        m.set_slot(100);
+        assert_eq!(m.len(), 2);
+        assert!(m.contains_slot(5));
+        assert!(m.contains_slot(100));
+        assert!(!m.contains_slot(6));
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn mask_set_slot_out_of_range_is_silent() {
+        let mut m = CandidateMaskSet::new(64, resolver(64));
+        m.set_slot(100); // out of range
+        assert_eq!(m.len(), 0);
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn mask_add_candidate_routes_via_resolver() {
+        let mut m = CandidateMaskSet::new(64, resolver(64));
+        m.add_candidate("slot-7".into()).unwrap();
+        m.add_candidate("slot-42".into()).unwrap();
+        // Unknown id silently dropped — matches MemoryCandidateSet semantics.
+        m.add_candidate("not-in-resolver".into()).unwrap();
+        assert_eq!(m.len(), 2);
+        assert!(m.contains("slot-7"));
+        assert!(m.contains("slot-42"));
+        assert!(!m.contains("slot-0"));
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn mask_to_vec_yields_set_ids_in_slot_order() {
+        let mut m = CandidateMaskSet::new(128, resolver(128));
+        m.set_slot(3);
+        m.set_slot(65);
+        m.set_slot(7);
+        let ids = m.to_vec();
+        assert_eq!(ids, vec!["slot-3", "slot-7", "slot-65"]);
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn mask_clear_resets_state() {
+        let mut m = CandidateMaskSet::new(64, resolver(64));
+        m.set_slot(1);
+        m.set_slot(2);
+        assert_eq!(m.len(), 2);
+        m.clear();
+        assert_eq!(m.len(), 0);
+        assert!(m.is_empty());
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn mask_union_bitmap_native() {
+        let mut a = CandidateMaskSet::new(128, resolver(128));
+        a.set_slot(5);
+        a.set_slot(70);
+        let mut b = CandidateMaskSet::new(128, resolver(128));
+        b.set_slot(70);
+        b.set_slot(100);
+        let u = a.union(&b).unwrap();
+        assert_eq!(u.len(), 3);
+        let mut ids = u.to_vec();
+        ids.sort();
+        assert_eq!(ids, vec!["slot-100", "slot-5", "slot-70"]);
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn mask_intersect_bitmap_native() {
+        let mut a = CandidateMaskSet::new(128, resolver(128));
+        a.set_slot(5);
+        a.set_slot(70);
+        a.set_slot(100);
+        let mut b = CandidateMaskSet::new(128, resolver(128));
+        b.set_slot(70);
+        b.set_slot(100);
+        let i = a.intersect(&b).unwrap();
+        assert_eq!(i.len(), 2);
+        let mut ids = i.to_vec();
+        ids.sort();
+        assert_eq!(ids, vec!["slot-100", "slot-70"]);
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn mask_union_mismatched_slot_count_errors() {
+        let a = CandidateMaskSet::new(128, resolver(128));
+        let b = CandidateMaskSet::new(64, resolver(64));
+        assert!(a.union(&b).is_err());
+        assert!(a.intersect(&b).is_err());
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn mask_intersect_with_non_mask_set_falls_back_to_id_path() {
+        let mut a = CandidateMaskSet::new(128, resolver(128));
+        a.set_slot(5);
+        a.set_slot(70);
+
+        // MemoryCandidateSet is not a CandidateMaskSet — exercises the
+        // slow path in CandidateMaskSet::intersect.
+        let mut b = MemoryCandidateSet::new();
+        b.add_candidate("slot-70".into()).unwrap();
+        b.add_candidate("slot-999".into()).unwrap();
+        let i = a.intersect(&b).unwrap();
+        let mut ids = i.to_vec();
+        ids.sort();
+        assert_eq!(ids, vec!["slot-70"]);
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn mask_top_k_filters_to_highest_scores() {
+        let mut m = CandidateMaskSet::new(128, resolver(128));
+        m.set_slot(5);
+        m.set_slot(10);
+        m.set_slot(70);
+        // Scores are aligned with to_vec()'s iteration order (slot
+        // ascending), so this maps to [slot-5: 0.1, slot-10: 0.9, slot-70: 0.5].
+        let scores = [0.1f32, 0.9, 0.5];
+        let out = m.top_k(2, &scores).unwrap();
+        let mut ids = out.to_vec();
+        ids.sort();
+        assert_eq!(ids, vec!["slot-10", "slot-70"]);
+        assert_eq!(out.len(), 2);
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn mask_top_k_score_count_mismatch_errors() {
+        let mut m = CandidateMaskSet::new(64, resolver(64));
+        m.set_slot(1);
+        m.set_slot(2);
+        let scores = [0.5f32];
+        assert!(m.top_k(1, &scores).is_err());
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn mask_clone_box_is_independent_copy() {
+        let mut m = CandidateMaskSet::new(64, resolver(64));
+        m.set_slot(3);
+        let cloned: Box<dyn CandidateSet> = m.clone_box();
+        m.set_slot(20);
+        assert_eq!(m.len(), 2);
+        assert_eq!(cloned.len(), 1);
+        assert!(cloned.contains("slot-3"));
+        assert!(!cloned.contains("slot-20"));
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn mask_as_any_downcasts() {
+        let m = CandidateMaskSet::new(64, resolver(64));
+        let boxed: Box<dyn CandidateSet> = Box::new(m);
+        // The adapter (P6) will do this exact downcast.
+        assert!(boxed.as_any().downcast_ref::<CandidateMaskSet>().is_some());
+
+        let mem: Box<dyn CandidateSet> = Box::new(MemoryCandidateSet::new());
+        assert!(mem.as_any().downcast_ref::<CandidateMaskSet>().is_none());
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn mask_factory_returns_empty_set() {
+        let s = create_candidate_mask_set(32, resolver(32));
+        assert!(s.is_empty());
+        // Factory return type is &dyn CandidateSet under a Box, so the
+        // bitmap-native check goes through downcast.
+        let m = s.as_any().downcast_ref::<CandidateMaskSet>().unwrap();
+        assert_eq!(m.n_slots(), 32);
+        assert_eq!(m.bitmap().len(), 1);
     }
 }
