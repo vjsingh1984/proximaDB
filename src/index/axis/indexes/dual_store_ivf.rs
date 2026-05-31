@@ -2346,6 +2346,29 @@ pub struct SerializableIvfColdTier {
     pub binary_tier: Vec<(String, Vec<u8>, u32)>,
 }
 
+/// WARM-tier payload (ADR-023 T-C): the fp32 vectors for Stage-2 rerank, written
+/// as a SEPARATE blob AFTER the COLD blob so the cold-first loader can range-read
+/// the COLD tier without pulling the fp32.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableIvfWarmTier {
+    /// Format version (shares `IVF_STATE_VERSION`).
+    pub version: u32,
+    /// `(id, fp32)` vectors — installed into a `ColdBinaryOnly` index to upgrade
+    /// it to `FullTwoStage`.
+    pub vectors: Vec<(String, Vec<f32>)>,
+}
+
+/// ADR-023 T-C cold-load policy: how an IVF index is read from object storage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColdPathLoadPolicy {
+    /// Load both tiers before serving (small indexes / back-compat / warm pools).
+    FullEager,
+    /// Load the COLD tier first and serve Stage-1 immediately; the WARM fp32 tier
+    /// is deferred (scale-to-zero cold start). The loader returns the WARM bytes
+    /// for the caller to apply via `restore_warm_tier` (ADR-023 T-E).
+    BinaryFirstThenRerank,
+}
+
 /// Current `SerializableIvfState` version. v2 (ADR-023) adds the COLD
 /// `binary_tier`; v1 payloads still load via fallback.
 pub const IVF_STATE_VERSION: u32 = 2;
@@ -2534,6 +2557,34 @@ impl UnifiedIvfIndex {
                 .await?;
         }
         self.serving_state = IvfServingState::ColdBinaryOnly;
+        Ok(())
+    }
+
+    /// Install the WARM fp32 tier and upgrade a `ColdBinaryOnly` index to
+    /// `FullTwoStage` (ADR-023 T-C/T-E). Centroids, posting-list membership, and
+    /// binary codes are already present (from `restore_cold_only`); this only
+    /// populates the fp32 store that Stage-2 rerank reads. Idempotent-safe to call
+    /// once after the cold-first load completes the warm fetch.
+    pub fn restore_warm_tier(&mut self, vectors: Vec<(String, Vec<f32>)>) -> Result<()> {
+        {
+            let collection = self
+                .vectors
+                .entry(self.collection_id.clone())
+                .or_insert_with(|| {
+                    let cfg = CollectionConfig::fp32(self.config.dimension);
+                    Arc::new(RwLock::new(ZeroOverheadCollection::with_capacity(
+                        cfg,
+                        vectors.len().max(1),
+                    )))
+                });
+            let mut coll = collection
+                .write()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            for (id, v) in &vectors {
+                coll.add_fp32(id.clone(), v)?;
+            }
+        }
+        self.serving_state = IvfServingState::FullTwoStage;
         Ok(())
     }
 }
@@ -2922,6 +2973,61 @@ mod tests {
         assert!(!results.is_empty(), "cold-only serves Stage-1 results");
         assert!(results.len() <= 3);
         assert_eq!(results[0].0, "v0", "exact-match query ranks first (Hamming 0)");
+    }
+
+    #[tokio::test]
+    async fn cold_first_load_serves_stage1_then_upgrades_to_full() {
+        // ADR-023 T-C: load the COLD blob first → ColdBinaryOnly serving, with the
+        // WARM fp32 tier deferred; then apply WARM → FullTwoStage exact search.
+        use crate::index::axis::storage::serialization::IndexSerializer;
+        use crate::index::axis::ColdPathLoadPolicy;
+        let _ = proximadb_hardware::hardware_capabilities();
+        let mut index =
+            UnifiedIvfIndex::new("c_cf".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let data = mixed_sign_vectors();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_cf").await.unwrap();
+
+        // BinaryFirstThenRerank: COLD only → ColdBinaryOnly + deferred WARM.
+        let mut loaded =
+            IndexSerializer::load_ivf_with_policy(&bytes, ColdPathLoadPolicy::BinaryFirstThenRerank)
+                .await
+                .unwrap();
+        assert_eq!(loaded.index.serving_state(), IvfServingState::ColdBinaryOnly);
+        assert!(loaded.warm.is_some(), "WARM bytes deferred");
+        assert_eq!(loaded.index.len(), data.len());
+        let profile = loaded.metadata.cold_path_profile().unwrap();
+        assert!(profile.cold_tier_bytes > 0 && profile.warm_tier_bytes > 0);
+
+        // Stage-1 serves immediately (exact-vector query → Hamming 0 → top-1).
+        let q = data[0].1.clone();
+        let s1 = loaded
+            .index
+            .search_with_binary_acceleration(&q, 3, None)
+            .await
+            .unwrap();
+        assert_eq!(s1[0].0, "v0");
+
+        // Apply the deferred WARM tier → FullTwoStage; exact search now works.
+        let warm = IndexSerializer::decode_warm_tier(loaded.warm.as_ref().unwrap()).unwrap();
+        assert_eq!(warm.len(), data.len());
+        loaded.index.restore_warm_tier(warm).unwrap();
+        assert_eq!(loaded.index.serving_state(), IvfServingState::FullTwoStage);
+        assert_eq!(loaded.index.search(&q, 1, None).await.unwrap()[0].0, "v0");
+
+        // FullEager loads both tiers at once → FullTwoStage, no deferred WARM.
+        let eager =
+            IndexSerializer::load_ivf_with_policy(&bytes, ColdPathLoadPolicy::FullEager)
+                .await
+                .unwrap();
+        assert_eq!(eager.index.serving_state(), IvfServingState::FullTwoStage);
+        assert!(eager.warm.is_none());
     }
 
     #[tokio::test]

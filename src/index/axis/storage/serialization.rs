@@ -21,7 +21,8 @@
 
 use crate::index::axis::filterable_metadata::FilterableHnswMetadata;
 use crate::index::axis::{
-    AxisHnswConfig, AxisHnswIndex, SerializableIvfState, SerializableIvfStateV1, UnifiedIvfIndex,
+    AxisHnswConfig, AxisHnswIndex, ColdPathLoadPolicy, SerializableIvfColdTier,
+    SerializableIvfState, SerializableIvfStateV1, SerializableIvfWarmTier, UnifiedIvfIndex,
 };
 use bincode;
 use serde::{Deserialize, Serialize};
@@ -31,7 +32,12 @@ use tracing::{debug, info, warn};
 
 /// Magic bytes for index format identification
 const AXIS_MAGIC: &[u8; 4] = b"AXIS";
-const VERSION: u16 = 1;
+/// File-layout version. v1 = single `SerializableIvfState` body. v2 (ADR-023
+/// T-C) = cold-first two-blob body `[COLD][WARM]` so the COLD tier is
+/// range-readable without the fp32. v1 files still load via the legacy path.
+const VERSION: u16 = 2;
+/// IVF tier-payload version (shares the value used by `SerializableIvf*`).
+const IVF_TIER_VERSION: u32 = 2;
 
 fn unix_now_secs() -> u64 {
     SystemTime::now()
@@ -63,6 +69,33 @@ fn decode_ivf_state(index_data: &[u8]) -> Result<SerializableIvfState> {
             })
         }
     }
+}
+
+/// Split a framed index blob into its `IndexHeader` and the trailing body bytes
+/// (after the `[u32 header_len][header]` prefix). Validates magic + that the
+/// file-layout version is not newer than this build understands.
+fn split_header(data: &[u8]) -> Result<(IndexHeader, &[u8])> {
+    if data.len() < 4 {
+        return Err(SerializationError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "Data too short",
+        )));
+    }
+    let header_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    if data.len() < 4 + header_len {
+        return Err(SerializationError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "Header incomplete",
+        )));
+    }
+    let header: IndexHeader = bincode::deserialize(&data[4..4 + header_len])?;
+    if header.magic != *AXIS_MAGIC {
+        return Err(SerializationError::InvalidMagic);
+    }
+    if header.version > VERSION {
+        return Err(SerializationError::UnsupportedVersion(header.version));
+    }
+    Ok((header, &data[4 + header_len..]))
 }
 
 fn unix_now_millis() -> u128 {
@@ -168,10 +201,14 @@ pub struct AxisSerializedIndexMetadata {
 pub struct ColdPathProfile {
     /// Whether the 1-bit COLD tier is populated.
     pub has_binary_tier: bool,
-    /// Serialized bytes of the COLD tier (centroids + binary codes) — loads first.
+    /// Serialized bytes of the COLD tier (config + centroids + binary codes) — the
+    /// leading blob; also the byte offset of the WARM blob (ADR-023 T-C layout).
     pub cold_tier_bytes: u64,
-    /// Serialized bytes of the WARM tier (fp32 vectors) — lazy / Stage-2 rerank.
+    /// Serialized bytes of the WARM tier (fp32 vectors) — the trailing blob.
     pub warm_tier_bytes: u64,
+    /// CRC32 of the WARM blob (the COLD blob's CRC is `metadata.checksum`, so a
+    /// cold-first read validates the COLD tier without touching the WARM bytes).
+    pub warm_checksum: u32,
 }
 
 impl AxisSerializedIndexMetadata {
@@ -182,6 +219,20 @@ impl AxisSerializedIndexMetadata {
         let bytes = self.custom_metadata.as_ref()?;
         bincode::deserialize::<ColdPathProfile>(bytes).ok()
     }
+}
+
+/// Result of an ADR-023 T-C cold-load. Carries the (possibly `ColdBinaryOnly`)
+/// index plus, for `BinaryFirstThenRerank`, the deferred WARM bytes to apply once
+/// the fp32 tier is fetched (`IndexSerializer::decode_warm_tier` +
+/// `UnifiedIvfIndex::restore_warm_tier`).
+pub struct ColdLoadResult {
+    /// The loaded index — `ColdBinaryOnly` (Stage-1-only) when `warm` is `Some`,
+    /// else `FullTwoStage`.
+    pub index: UnifiedIvfIndex,
+    /// The deserialized header metadata (cold-path profile, vector count, …).
+    pub metadata: AxisSerializedIndexMetadata,
+    /// Deferred WARM fp32 blob (`Some` only for `BinaryFirstThenRerank`).
+    pub warm: Option<Vec<u8>>,
 }
 
 /// Header for serialized index file
@@ -371,18 +422,32 @@ impl IndexSerializer {
             .export_state()
             .await
             .map_err(|e| SerializationError::Io(std::io::Error::other(e.to_string())))?;
-        let index_data = bincode::serialize(&state)?;
-        let checksum = proximadb_kernel::checksum::crc32_fast(&index_data);
 
-        // ADR-023 cold-path profile: the COLD tier (centroids + 1-bit codes) vs
-        // the WARM tier (fp32). Sized from the same payload the body encodes.
-        let cold_tier_bytes = bincode::serialized_size(&state.centroids)?
-            + bincode::serialized_size(&state.binary_tier)?;
-        let warm_tier_bytes = bincode::serialized_size(&state.vectors)?;
+        // ADR-023 T-C cold-first layout: split the body into a COLD blob
+        // (config + centroids + 1-bit codes) written FIRST, then a WARM blob
+        // (fp32 vectors). A cold-first loader range-reads `[header][COLD]` and
+        // serves Stage-1 without the fp32. `metadata.checksum` covers the COLD
+        // blob; `profile.warm_checksum` covers the WARM blob.
+        let cold = SerializableIvfColdTier {
+            version: IVF_TIER_VERSION,
+            config: state.config.clone(),
+            centroids: state.centroids.clone(),
+            binary_tier: state.binary_tier,
+        };
+        let warm = SerializableIvfWarmTier {
+            version: IVF_TIER_VERSION,
+            vectors: state.vectors,
+        };
+        let cold_bytes = bincode::serialize(&cold)?;
+        let warm_bytes = bincode::serialize(&warm)?;
+        let cold_checksum = proximadb_kernel::checksum::crc32_fast(&cold_bytes);
+        let warm_checksum = proximadb_kernel::checksum::crc32_fast(&warm_bytes);
+
         let profile = ColdPathProfile {
-            has_binary_tier: !state.binary_tier.is_empty(),
-            cold_tier_bytes,
-            warm_tier_bytes,
+            has_binary_tier: !cold.binary_tier.is_empty(),
+            cold_tier_bytes: cold_bytes.len() as u64,
+            warm_tier_bytes: warm_bytes.len() as u64,
+            warm_checksum,
         };
 
         let metadata = AxisSerializedIndexMetadata {
@@ -391,10 +456,10 @@ impl IndexSerializer {
             num_vectors: index.len(),
             dimension: index.dimension(),
             timestamp: unix_now_secs(),
-            checksum,
+            checksum: cold_checksum, // COLD blob CRC (validated on cold-first read)
             is_delta: false,
             base_checkpoint_id: None,
-            // ADR-023: the cold-path tier profile (supersedes the 1-byte marker).
+            // ADR-023: cold-path tier profile (offsets + warm CRC) drives load.
             custom_metadata: Some(bincode::serialize(&profile)?),
         };
 
@@ -408,7 +473,8 @@ impl IndexSerializer {
         let header_bytes = bincode::serialize(&header)?;
         result.extend_from_slice(&(header_bytes.len() as u32).to_le_bytes());
         result.extend_from_slice(&header_bytes);
-        result.extend_from_slice(&index_data);
+        result.extend_from_slice(&cold_bytes); // COLD first (range-readable)
+        result.extend_from_slice(&warm_bytes); // WARM second (deferrable)
 
         info!("Serialized IVF index: {} bytes", result.len());
         Ok(result)
@@ -422,36 +488,31 @@ impl IndexSerializer {
         data: &[u8],
     ) -> Result<(UnifiedIvfIndex, AxisSerializedIndexMetadata)> {
         info!("Deserializing IVF index");
+        let (header, body) = split_header(data)?;
 
-        if data.len() < 4 {
-            return Err(SerializationError::Io(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "Data too short",
-            )));
-        }
-        let header_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
-        if data.len() < 4 + header_len {
-            return Err(SerializationError::Io(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "Header incomplete",
-            )));
-        }
-
-        let header: IndexHeader = bincode::deserialize(&data[4..4 + header_len])?;
-        if header.magic != *AXIS_MAGIC {
-            return Err(SerializationError::InvalidMagic);
-        }
-        if header.version > VERSION {
-            return Err(SerializationError::UnsupportedVersion(header.version));
+        if header.version >= 2 {
+            // ADR-023 T-C cold-first layout: `[COLD][WARM]`. Load both for a full
+            // (FullTwoStage) index — restore COLD then install WARM.
+            let (cold, warm_bytes) = Self::read_cold_blob(&header, body)?;
+            // Validate the WARM blob too (full read).
+            let profile = Self::cold_profile(&header)?;
+            if proximadb_kernel::checksum::crc32_fast(warm_bytes) != profile.warm_checksum {
+                return Err(SerializationError::ChecksumMismatch);
+            }
+            let warm: SerializableIvfWarmTier = bincode::deserialize(warm_bytes)?;
+            let mut index = Self::new_cold_index(&header, cold).await?;
+            index
+                .restore_warm_tier(warm.vectors)
+                .map_err(|e| SerializationError::Io(std::io::Error::other(e.to_string())))?;
+            info!("Deserialized IVF index with {} vectors", header.metadata.num_vectors);
+            return Ok((index, header.metadata));
         }
 
-        let index_data = &data[4 + header_len..];
-        let checksum = proximadb_kernel::checksum::crc32_fast(index_data);
-        if checksum != header.metadata.checksum {
+        // Legacy v1 single-blob layout.
+        if proximadb_kernel::checksum::crc32_fast(body) != header.metadata.checksum {
             return Err(SerializationError::ChecksumMismatch);
         }
-
-        let state = decode_ivf_state(index_data)?;
+        let state = decode_ivf_state(body)?;
         let config = state.config.to_config();
         let mut index = UnifiedIvfIndex::new(header.metadata.collection_id.clone(), config)
             .map_err(|e| SerializationError::Io(std::io::Error::other(e.to_string())))?;
@@ -459,12 +520,103 @@ impl IndexSerializer {
             .restore_state(state)
             .await
             .map_err(|e| SerializationError::Io(std::io::Error::other(e.to_string())))?;
-
-        info!(
-            "Deserialized IVF index with {} vectors",
-            header.metadata.num_vectors
-        );
+        info!("Deserialized IVF index with {} vectors", header.metadata.num_vectors);
         Ok((index, header.metadata))
+    }
+
+    /// Read + validate the cold-path profile from a v2 header.
+    fn cold_profile(header: &IndexHeader) -> Result<ColdPathProfile> {
+        header.metadata.cold_path_profile().ok_or_else(|| {
+            SerializationError::Io(std::io::Error::other(
+                "cold-first (v2) IVF index missing its cold-path profile",
+            ))
+        })
+    }
+
+    /// Split a v2 body into its COLD blob (validated against `metadata.checksum`)
+    /// and the trailing WARM bytes (validated by the caller when needed).
+    fn read_cold_blob<'a>(
+        header: &IndexHeader,
+        body: &'a [u8],
+    ) -> Result<(SerializableIvfColdTier, &'a [u8])> {
+        let profile = Self::cold_profile(header)?;
+        let cold_len = profile.cold_tier_bytes as usize;
+        if body.len() < cold_len {
+            return Err(SerializationError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "cold blob truncated",
+            )));
+        }
+        let cold_bytes = &body[..cold_len];
+        if proximadb_kernel::checksum::crc32_fast(cold_bytes) != header.metadata.checksum {
+            return Err(SerializationError::ChecksumMismatch);
+        }
+        let cold: SerializableIvfColdTier = bincode::deserialize(cold_bytes)?;
+        Ok((cold, &body[cold_len..]))
+    }
+
+    /// Construct a `ColdBinaryOnly` index from a decoded COLD tier.
+    async fn new_cold_index(
+        header: &IndexHeader,
+        cold: SerializableIvfColdTier,
+    ) -> Result<UnifiedIvfIndex> {
+        let config = cold.config.to_config();
+        let mut index = UnifiedIvfIndex::new(header.metadata.collection_id.clone(), config)
+            .map_err(|e| SerializationError::Io(std::io::Error::other(e.to_string())))?;
+        index
+            .restore_cold_only(cold)
+            .await
+            .map_err(|e| SerializationError::Io(std::io::Error::other(e.to_string())))?;
+        Ok(index)
+    }
+
+    /// ADR-023 T-C cold-first load: read ONLY the COLD blob (range
+    /// `[header][COLD]`), returning a `ColdBinaryOnly` index that serves Stage-1
+    /// immediately plus the deferred WARM bytes. Apply the WARM tier later with
+    /// [`decode_warm_tier`](Self::decode_warm_tier) + `restore_warm_tier` (T-E).
+    /// v1 (legacy) files have no separable COLD tier, so they fall back to a full
+    /// eager load with `warm = None`.
+    pub async fn deserialize_ivf_cold_only(data: &[u8]) -> Result<ColdLoadResult> {
+        let (header, body) = split_header(data)?;
+        if header.version < 2 {
+            let (index, metadata) = Self::deserialize_ivf(data).await?;
+            return Ok(ColdLoadResult { index, metadata, warm: None });
+        }
+        let (cold, warm_bytes) = Self::read_cold_blob(&header, body)?;
+        let warm = Some(warm_bytes.to_vec());
+        let index = Self::new_cold_index(&header, cold).await?;
+        info!(
+            "Cold-first load: {} vectors served Stage-1 ({} cold bytes, {} warm deferred)",
+            header.metadata.num_vectors,
+            header.metadata.cold_path_profile().map(|p| p.cold_tier_bytes).unwrap_or(0),
+            warm_bytes.len(),
+        );
+        Ok(ColdLoadResult { index, metadata: header.metadata, warm })
+    }
+
+    /// Load an IVF index under a [`ColdPathLoadPolicy`] (ADR-023 T-C). `FullEager`
+    /// loads both tiers; `BinaryFirstThenRerank` loads the COLD tier first and
+    /// defers the WARM bytes in the result.
+    pub async fn load_ivf_with_policy(
+        data: &[u8],
+        policy: ColdPathLoadPolicy,
+    ) -> Result<ColdLoadResult> {
+        match policy {
+            ColdPathLoadPolicy::FullEager => {
+                let (index, metadata) = Self::deserialize_ivf(data).await?;
+                Ok(ColdLoadResult { index, metadata, warm: None })
+            }
+            ColdPathLoadPolicy::BinaryFirstThenRerank => {
+                Self::deserialize_ivf_cold_only(data).await
+            }
+        }
+    }
+
+    /// Decode the deferred WARM bytes from a cold-first load into the fp32 vectors
+    /// to hand to `UnifiedIvfIndex::restore_warm_tier` (ADR-023 T-E).
+    pub fn decode_warm_tier(warm_bytes: &[u8]) -> Result<Vec<(String, Vec<f32>)>> {
+        let warm: SerializableIvfWarmTier = bincode::deserialize(warm_bytes)?;
+        Ok(warm.vectors)
     }
 
     /// Persist a trained IVF index to `path` (creates parent dirs). Disk wrapper

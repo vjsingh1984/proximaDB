@@ -158,11 +158,13 @@ pub use indexes::{
     LshStats,
     PostingListConfig,
     // IVF
+    ColdPathLoadPolicy,
     IvfServingState,
     SerializableIvfColdTier,
     SerializableIvfConfig,
     SerializableIvfState,
     SerializableIvfStateV1,
+    SerializableIvfWarmTier,
     UnifiedIvfConfig,
     UnifiedIvfIndex,
     create_hnsw_index,
