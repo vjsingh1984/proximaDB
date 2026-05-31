@@ -158,6 +158,8 @@ pub use indexes::{
     LshStats,
     PostingListConfig,
     // IVF
+    IvfServingState,
+    SerializableIvfColdTier,
     SerializableIvfConfig,
     SerializableIvfState,
     SerializableIvfStateV1,

@@ -632,6 +632,18 @@ fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
 
 /// Unified IVF index with dual stores
 /// NOW SUPPORTS: Queue-based consumption of vectors with quantized/fp32/both representations
+/// Serving state for the ADR-023 cold path. A normally-built or fully-restored
+/// index is `FullTwoStage`; an index restored from only the COLD tier (centroids
+/// + 1-bit codes, no fp32) is `ColdBinaryOnly` and serves Stage-1 Hamming results
+/// without rerank until the WARM fp32 tier loads (ADR-023 T-D/T-E).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IvfServingState {
+    /// Both tiers present: Stage-1 Hamming filter → Stage-2 fp32 rerank.
+    FullTwoStage,
+    /// Only the COLD tier loaded: Stage-1 Hamming only (fp32 absent, cold start).
+    ColdBinaryOnly,
+}
+
 pub struct UnifiedIvfIndex {
     /// Collection identifier for partitioning
     collection_id: String,
@@ -683,6 +695,10 @@ pub struct UnifiedIvfIndex {
     /// route (`search_with_binary_acceleration`): a Hamming coarse filter over
     /// these codes, then fp32 rerank of the survivors.
     binary_codes: Arc<DashMap<String, BinaryCode>>,
+
+    /// ADR-023 cold-path serving state. `FullTwoStage` normally; `ColdBinaryOnly`
+    /// after a `restore_cold_only` until the WARM fp32 tier loads.
+    serving_state: IvfServingState,
 }
 
 /// Stage-1 candidate multiplier for the binary two-stage route: the Hamming
@@ -1167,6 +1183,9 @@ impl UnifiedIvfIndex {
             // TD-064: shared filterable-metadata cache
             filterable_metadata:
                 crate::index::axis::filterable_metadata::FilterableMetadataCache::new(),
+
+            // ADR-023: a freshly-built index has both tiers.
+            serving_state: IvfServingState::FullTwoStage,
         })
     }
 
@@ -1809,6 +1828,18 @@ impl UnifiedIvfIndex {
         coarse.sort_by_key(|(_, h)| *h);
         coarse.truncate(candidate_k);
 
+        // ADR-023 T-D: Stage-1-only serving. When only the COLD tier is loaded
+        // (cold start, no fp32), there is nothing to rerank — return the
+        // Hamming-ranked top-k directly. The Hamming count is a lower-better rank
+        // value (coarse; the recall envelope is reduced and disclosed by T-E).
+        if self.serving_state == IvfServingState::ColdBinaryOnly {
+            coarse.truncate(k);
+            return Ok(coarse
+                .into_iter()
+                .map(|(id, hamming)| (id, hamming as f32))
+                .collect());
+        }
+
         // Stage 2: fp32 rerank of the survivors (exact distance, same as `search`).
         let metric = self.config.distance_metric;
         let mut reranked: Vec<(String, f32)> = Vec::with_capacity(coarse.len());
@@ -2133,6 +2164,22 @@ pub struct SerializableIvfStateV1 {
     pub vectors: Vec<(String, Vec<f32>)>,
 }
 
+/// COLD-tier-only payload (ADR-023 T-B): centroids + 1-bit codes (with cluster
+/// membership) — sufficient for Stage-1 Hamming search with **no fp32**. This is
+/// the ~1/32 blob the cold-load policy (T-C) reads first to begin serving before
+/// the WARM fp32 tier arrives. Self-describing via the embedded config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableIvfColdTier {
+    /// Format version (shares `IVF_STATE_VERSION`).
+    pub version: u32,
+    /// Config essentials (dimension, n_clusters, metric, …) for self-describing load.
+    pub config: SerializableIvfConfig,
+    /// Trained k-means centroids.
+    pub centroids: Vec<Vec<f32>>,
+    /// `(id, packed 1-bit sign code, cluster_id)` for every indexed vector.
+    pub binary_tier: Vec<(String, Vec<u8>, u32)>,
+}
+
 /// Current `SerializableIvfState` version. v2 (ADR-023) adds the COLD
 /// `binary_tier`; v1 payloads still load via fallback.
 pub const IVF_STATE_VERSION: u32 = 2;
@@ -2171,6 +2218,11 @@ impl UnifiedIvfIndex {
     /// Whether the binary tier is populated (recorded in serialized metadata).
     pub fn has_binary_tier(&self) -> bool {
         !self.binary_codes.is_empty()
+    }
+
+    /// ADR-023 cold-path serving state (`FullTwoStage` / `ColdBinaryOnly`).
+    pub fn serving_state(&self) -> IvfServingState {
+        self.serving_state
     }
 
     /// Capture the trained index as a `SerializableIvfState`: the config
@@ -2249,6 +2301,73 @@ impl UnifiedIvfIndex {
         for (id, bits, _cluster_id) in state.binary_tier {
             self.binary_codes.insert(id, BinaryCode::from_bits(bits));
         }
+        self.serving_state = IvfServingState::FullTwoStage;
+        Ok(())
+    }
+
+    /// Export only the COLD tier (ADR-023 T-B): centroids + 1-bit codes with
+    /// cluster membership — the ~1/32 blob a cold start loads first.
+    pub async fn export_cold_tier(&self) -> Result<SerializableIvfColdTier> {
+        let centroids: Vec<Vec<f32>> = self.centroids.centroids.as_ref().clone();
+        let mut binary_tier: Vec<(String, Vec<u8>, u32)> = Vec::new();
+        for key in self.posting_lists.keys().await {
+            if let Some(posting_list) = self.posting_lists.get(&key).await {
+                let cluster_id = posting_list.cluster_id as u32;
+                for vid in &posting_list.vector_ids {
+                    if let Some(code) = self.binary_codes.get(vid) {
+                        binary_tier.push((vid.clone(), code.bits.clone(), cluster_id));
+                    }
+                }
+            }
+        }
+        Ok(SerializableIvfColdTier {
+            version: IVF_STATE_VERSION,
+            config: SerializableIvfConfig::from_config(&self.config),
+            centroids,
+            binary_tier,
+        })
+    }
+
+    /// Restore an index from **only** the COLD tier (ADR-023 T-B): install the
+    /// centroids (trained), rebuild posting-list membership from the codes'
+    /// `cluster_id`, and install the 1-bit codes — with **no fp32 vector store**.
+    /// Sets `serving_state = ColdBinaryOnly`, so the binary route serves Stage-1
+    /// Hamming results without rerank until the WARM tier loads.
+    ///
+    /// The caller must construct the index with a matching config
+    /// (`cold.config.to_config()`); this consumes the cold blob.
+    pub async fn restore_cold_only(&mut self, cold: SerializableIvfColdTier) -> Result<()> {
+        let dimension = cold.config.dimension;
+        self.centroids = CentroidStore::restore(cold.centroids, dimension);
+
+        // Group ids by cluster to build posting lists (membership only — no fp32),
+        // and install the binary codes.
+        let mut by_cluster: HashMap<usize, Vec<String>> = HashMap::new();
+        for (id, bits, cluster_id) in cold.binary_tier {
+            by_cluster
+                .entry(cluster_id as usize)
+                .or_default()
+                .push(id.clone());
+            self.binary_codes.insert(id, BinaryCode::from_bits(bits));
+            self.vector_count.fetch_add(1, Ordering::Relaxed);
+        }
+        for (cluster_id, vector_ids) in by_cluster {
+            let key = PartitionedKey::new(self.collection_id.clone(), cluster_id);
+            self.posting_lists
+                .insert(
+                    key,
+                    TieredPostingList {
+                        cluster_id,
+                        vector_ids,
+                        vectors: None, // cold tier carries no fp32
+                        quantized_vectors: None,
+                        last_access: 0,
+                        access_count: 0,
+                    },
+                )
+                .await?;
+        }
+        self.serving_state = IvfServingState::ColdBinaryOnly;
         Ok(())
     }
 }
@@ -2519,6 +2638,46 @@ mod tests {
             .unwrap();
         let ids = |v: &Vec<(String, f32)>| v.iter().map(|(id, _)| id.clone()).collect::<Vec<_>>();
         assert_eq!(ids(&after), ids(&before), "binary top-k identical after COLD restore");
+    }
+
+    #[tokio::test]
+    async fn cold_only_restore_serves_stage1_without_fp32() {
+        // ADR-023 T-B/T-D: restore from JUST the COLD tier (no fp32) and serve
+        // Stage-1 Hamming results. Proves the ~1/32 blob is independently
+        // sufficient for cold-start serving.
+        let _ = proximadb_hardware::hardware_capabilities();
+        let mut full =
+            UnifiedIvfIndex::new("c_full".to_string(), binary_ivf_config(4, 2)).unwrap();
+        let data = mixed_sign_vectors();
+        full.train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            full.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        assert_eq!(full.serving_state(), IvfServingState::FullTwoStage);
+
+        let cold = full.export_cold_tier().await.unwrap();
+        assert_eq!(cold.binary_tier.len(), data.len());
+
+        // Build a fresh index from ONLY the cold tier (no fp32 ever inserted).
+        let mut cold_idx =
+            UnifiedIvfIndex::new("c_cold_only".to_string(), cold.config.to_config()).unwrap();
+        cold_idx.restore_cold_only(cold).await.unwrap();
+        assert_eq!(cold_idx.serving_state(), IvfServingState::ColdBinaryOnly);
+        assert!(cold_idx.has_binary_tier());
+        assert_eq!(cold_idx.len(), data.len());
+
+        // Stage-1-only search returns Hamming-ranked candidates without any fp32
+        // rerank — v0 shares the query's sign pattern, so it ranks first.
+        let query = vec![0.9, -0.8, 1.1, -0.7];
+        let results = cold_idx
+            .search_with_binary_acceleration(&query, 3, None)
+            .await
+            .unwrap();
+        assert!(!results.is_empty(), "cold-only serves Stage-1 results");
+        assert!(results.len() <= 3);
+        assert_eq!(results[0].0, "v0", "nearest-by-Hamming ranks first");
     }
 
     #[tokio::test]
