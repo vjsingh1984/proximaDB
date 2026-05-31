@@ -170,4 +170,14 @@ pub fn create_v2_router() -> Router<AppState> {
             "/_diagnostics/collections/:collection_id/recall-tune",
             axum::routing::post(collections::post_collection_recall_tune_v2),
         )
+        // Recall-aware HNSW rebuild. POST reads every record for the
+        // collection, runs the advisor at the live N, and atomically
+        // swaps in a new HNSW graph sized for the recall_target tag.
+        // This is the rebuild_required arm of the recall-drift
+        // workflow — the only path that resolves m / ef_construction
+        // drift (hot-swap handles ef_search alone).
+        .route(
+            "/_diagnostics/collections/:collection_id/recluster",
+            axum::routing::post(collections::post_collection_recluster_v2),
+        )
 }

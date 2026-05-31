@@ -1746,6 +1746,200 @@ pub async fn post_collection_recall_tune_v2(
     }))
 }
 
+/// Response body for `POST /api/v2/_diagnostics/collections/:id/recluster`.
+///
+/// The handler always returns `applied = bool` plus a structured
+/// `sized` block carrying the advisor's chosen (m, ef_construction,
+/// ef_search) and rationale string. When `applied = false`,
+/// `reason` explains why — typically "no recall_target tag",
+/// "no records" (empty collection), or "axis manager not wired".
+#[derive(Debug, serde::Serialize, PartialEq)]
+pub struct RecallReclusterResponse {
+    pub stability: &'static str,
+    pub collection_id: String,
+    pub applied: bool,
+    /// Human-readable reason populated when `applied = false`, or
+    /// the rebuild's summary line when `applied = true`. Empty
+    /// string when there's nothing useful to say.
+    pub reason: String,
+    /// Number of records the rebuild ingested. `None` when the
+    /// rebuild didn't run (no recall_target, no axis, etc.).
+    pub rebuilt_vector_count: Option<u64>,
+    /// The advisor's sizing decision for the rebuilt graph. `None`
+    /// when the rebuild didn't run.
+    pub sized: Option<RecallReclusterSized>,
+}
+
+#[derive(Debug, serde::Serialize, PartialEq)]
+pub struct RecallReclusterSized {
+    pub recall_target: f32,
+    pub m: u32,
+    pub ef_construction: u32,
+    pub ef_search: u32,
+    /// Advisor's free-text rationale string — for operator dashboards.
+    pub rationale: String,
+}
+
+/// Recall-aware HNSW rebuild handler.
+///
+/// Resolves the `DriftKind::EfConstructionOrM` arm of recall drift:
+///
+/// 1. Reads the collection — short-circuits if the collection has
+///    no `recall_target:<float>` tag (caller never opted in).
+/// 2. Reads every record via
+///    `VectorOperationsService::list_all_records_with_tenant_context`
+///    (same path the recluster + dedup discovery passes use).
+/// 3. Calls
+///    `AxisManager::rebuild_and_swap_hnsw_index_for_recall_target`
+///    with the records + recall_target — atomic swap, also updates
+///    the live strategy so post-rebuild queries pick up the new
+///    `ef_search`.
+/// 4. Returns the advisor's sizing decision so the operator sees
+///    exactly what was built.
+///
+/// Returns `404` for missing collection, `400` for empty
+/// collection_id.
+pub async fn post_collection_recluster_v2(
+    Path(collection_id): Path<String>,
+    Extension(tenant): Extension<TenantContext>,
+    State(state): State<AppState>,
+) -> ApiResult<Json<RecallReclusterResponse>> {
+    debug!(
+        "V2 API: recluster for collection '{}' (experimental, recall-aware)",
+        collection_id
+    );
+
+    if collection_id.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
+    }
+
+    // (1) Fetch collection config to read the recall_target tag.
+    let request = CollectionRequest {
+        operation: CollectionOperation::CollectionGet as i32,
+        collection_id: Some(collection_id.clone()),
+        collection_config: None,
+        query_params: Default::default(),
+        options: Default::default(),
+        migration_config: Default::default(),
+    };
+    let resp = state
+        .request_handlers
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                ApiError::CollectionNotFound(collection_id.clone())
+            } else {
+                ApiError::Internal(format!("Failed to get collection: {}", e))
+            }
+        })?;
+
+    let collection = resp.collection.unwrap_or_default();
+    let config = collection.config.unwrap_or_default();
+
+    let Some(recall_target) =
+        crate::services::collection::recall_target::parse_recall_target(&config)
+    else {
+        return Ok(Json(RecallReclusterResponse {
+            stability: "experimental",
+            collection_id,
+            applied: false,
+            reason: "collection has no recall_target: tag — nothing to size against"
+                .to_string(),
+            rebuilt_vector_count: None,
+            sized: None,
+        }));
+    };
+
+    let Some(axis_manager) =
+        crate::storage::engines::sst::core::get_sst_axis_manager()
+    else {
+        return Ok(Json(RecallReclusterResponse {
+            stability: "experimental",
+            collection_id,
+            applied: false,
+            reason: "AXIS manager not registered for this deployment".to_string(),
+            rebuilt_vector_count: None,
+            sized: None,
+        }));
+    };
+
+    // (2) Read every record. Resolves the user-facing name to the
+    // canonical internal id (same as the discovery recluster pass).
+    let vector_ops = &state.request_handlers.vector_operations_service;
+    let internal_id = vector_ops.resolve_collection_id(&collection_id).await;
+    let records = vector_ops
+        .list_all_records_with_tenant_context(internal_id.as_str(), None)
+        .await
+        .map_err(|e| {
+            ApiError::Internal(format!("Failed to list records: {}", e))
+        })?;
+
+    if records.is_empty() {
+        return Ok(Json(RecallReclusterResponse {
+            stability: "experimental",
+            collection_id,
+            applied: false,
+            reason: "collection has no records to rebuild".to_string(),
+            rebuilt_vector_count: Some(0),
+            sized: None,
+        }));
+    }
+
+    let count = records.len() as u64;
+
+    // (3) Rebuild + atomic swap.
+    let advised = axis_manager
+        .rebuild_and_swap_hnsw_index_for_recall_target(
+            internal_id.as_str(),
+            &records,
+            recall_target,
+        )
+        .await
+        .map_err(|e| {
+            ApiError::Internal(format!("HNSW rebuild failed: {}", e))
+        })?;
+
+    let Some(advised) = advised else {
+        return Ok(Json(RecallReclusterResponse {
+            stability: "experimental",
+            collection_id,
+            applied: false,
+            reason: "no usable embeddings in record set".to_string(),
+            rebuilt_vector_count: Some(count),
+            sized: None,
+        }));
+    };
+
+    // After a rebuild the recall-drift state collapses to "none"
+    // for this collection (the new graph is sized exactly to the
+    // current advised params). Reflect that on the gauge so
+    // dashboards / alerts clear immediately rather than waiting
+    // for the next route-health GET or sweep tick.
+    crate::metrics::recall_drift_metrics::record_recall_drift_observation(
+        &collection_id,
+        "none",
+    );
+
+    let rationale = advised.rationale.clone();
+    Ok(Json(RecallReclusterResponse {
+        stability: "experimental",
+        collection_id,
+        applied: true,
+        reason: rationale.clone(),
+        rebuilt_vector_count: Some(count),
+        sized: Some(RecallReclusterSized {
+            recall_target,
+            m: advised.m,
+            ef_construction: advised.ef_construction,
+            ef_search: advised.ef_search,
+            rationale,
+        }),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2141,6 +2335,65 @@ mod tests {
             assert!(v["report"].is_object());
             assert!(v["applied_changes"].is_array());
         }
+    }
+
+    #[test]
+    fn recluster_response_applied_serializes_sizing() {
+        let resp = RecallReclusterResponse {
+            stability: "experimental",
+            collection_id: "products".to_string(),
+            applied: true,
+            reason: "tier r=0.95 → m=32 ...".to_string(),
+            rebuilt_vector_count: Some(123_456),
+            sized: Some(RecallReclusterSized {
+                recall_target: 0.95,
+                m: 32,
+                ef_construction: 256,
+                ef_search: 409,
+                rationale: "tier r=0.95 → m=32 ...".to_string(),
+            }),
+        };
+        let v = serde_json::to_value(&resp).unwrap();
+        assert_eq!(v["applied"], true);
+        assert_eq!(v["collection_id"], "products");
+        assert_eq!(v["stability"], "experimental");
+        assert_eq!(v["rebuilt_vector_count"], 123_456);
+        // f32 → JSON Number → ~0.949999...; compare within 1e-3
+        // for the float field, exact for the integer fields.
+        let rt = v["sized"]["recall_target"].as_f64().unwrap();
+        assert!((rt - 0.95).abs() < 1e-3, "recall_target ≈ 0.95, got {}", rt);
+        assert_eq!(v["sized"]["m"], 32);
+        assert_eq!(v["sized"]["ef_construction"], 256);
+        assert_eq!(v["sized"]["ef_search"], 409);
+        assert!(
+            v["sized"]["rationale"]
+                .as_str()
+                .unwrap()
+                .contains("tier r=0.95"),
+            "rationale must surface advisor's tier label"
+        );
+    }
+
+    #[test]
+    fn recluster_response_not_applied_omits_sizing() {
+        let resp = RecallReclusterResponse {
+            stability: "experimental",
+            collection_id: "c1".to_string(),
+            applied: false,
+            reason: "collection has no recall_target: tag".to_string(),
+            rebuilt_vector_count: None,
+            sized: None,
+        };
+        let v = serde_json::to_value(&resp).unwrap();
+        assert_eq!(v["applied"], false);
+        assert!(v["sized"].is_null());
+        assert!(v["rebuilt_vector_count"].is_null());
+        assert!(
+            v["reason"]
+                .as_str()
+                .unwrap()
+                .contains("recall_target")
+        );
     }
 
     #[test]
