@@ -1510,6 +1510,45 @@ pub async fn get_collection_route_health_v2(
     Ok(Json(health))
 }
 
+/// Operator-permission gate shared by the AXIS mutation endpoints
+/// (`/recall-tune`, `/recluster`). Mirrors
+/// `crate::network::rest::v1::primary_pod::authorize_operator`: a
+/// caller must present a [`UnifiedUserContext`] with either
+/// `SystemAdmin` or `ConfigureSystem` in their effective
+/// permissions. Failure surfaces as `ApiError::Unauthorized` (401)
+/// when no context was attached and `ApiError::Forbidden` (403)
+/// when the context exists but lacks the needed permission — same
+/// envelope as the rest of the v2 surface.
+///
+/// `endpoint` is the operator-facing label used in the error
+/// message + audit log so the caller can tell which mutation was
+/// rejected.
+fn require_recall_admin(
+    user_context: Option<&crate::security::rbac_service::UnifiedUserContext>,
+    endpoint: &'static str,
+) -> ApiResult<String> {
+    use crate::security::rbac_service::UnifiedPermission;
+
+    let Some(ctx) = user_context else {
+        return Err(ApiError::Unauthorized(format!(
+            "{endpoint}: missing auth context — middleware misconfigured"
+        )));
+    };
+    let allowed = ctx
+        .effective_permissions
+        .contains(&UnifiedPermission::SystemAdmin)
+        || ctx
+            .effective_permissions
+            .contains(&UnifiedPermission::ConfigureSystem);
+    if allowed {
+        Ok(ctx.user_id.clone())
+    } else {
+        Err(ApiError::Forbidden(format!(
+            "{endpoint}: requires SystemAdmin or ConfigureSystem permission"
+        )))
+    }
+}
+
 /// Response body for `POST /api/v2/_diagnostics/collections/:id/recall-tune`.
 ///
 /// The handler always returns the underlying drift `report` (so the
@@ -1563,10 +1602,16 @@ pub struct RecallTuneEfChange {
 ///   recluster (separate slice).
 ///
 /// Returns `404` if the collection doesn't exist, `400` if the
-/// collection_id is empty.
+/// collection_id is empty, `401`/`403` if the caller lacks
+/// `SystemAdmin` or `ConfigureSystem` permission. The auth gate
+/// matches `primary_pod::authorize_operator` because this endpoint
+/// **mutates** the live AXIS strategy.
 pub async fn post_collection_recall_tune_v2(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,
+    Extension(user_context): Extension<
+        Option<crate::security::rbac_service::UnifiedUserContext>,
+    >,
     State(state): State<AppState>,
 ) -> ApiResult<Json<RecallTuneResponse>> {
     debug!(
@@ -1579,6 +1624,8 @@ pub async fn post_collection_recall_tune_v2(
             "Collection ID is required".to_string(),
         ));
     }
+
+    require_recall_admin(user_context.as_ref(), "recall-tune")?;
 
     let request = CollectionRequest {
         operation: CollectionOperation::CollectionGet as i32,
@@ -1798,10 +1845,17 @@ pub struct RecallReclusterSized {
 ///    exactly what was built.
 ///
 /// Returns `404` for missing collection, `400` for empty
-/// collection_id.
+/// collection_id, `401`/`403` for missing/insufficient operator
+/// permission. Recluster reads the entire collection and rebuilds
+/// the HNSW graph — non-trivial CPU + memory — so it sits behind
+/// the same `SystemAdmin` / `ConfigureSystem` gate as
+/// `primary_pod`.
 pub async fn post_collection_recluster_v2(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,
+    Extension(user_context): Extension<
+        Option<crate::security::rbac_service::UnifiedUserContext>,
+    >,
     State(state): State<AppState>,
 ) -> ApiResult<Json<RecallReclusterResponse>> {
     debug!(
@@ -1814,6 +1868,8 @@ pub async fn post_collection_recluster_v2(
             "Collection ID is required".to_string(),
         ));
     }
+
+    require_recall_admin(user_context.as_ref(), "recluster")?;
 
     // (1) Fetch collection config to read the recall_target tag.
     let request = CollectionRequest {
@@ -2335,6 +2391,95 @@ mod tests {
             assert!(v["report"].is_object());
             assert!(v["applied_changes"].is_array());
         }
+    }
+
+    fn ctx_with_permissions(
+        perms: Vec<crate::security::rbac_service::UnifiedPermission>,
+    ) -> crate::security::rbac_service::UnifiedUserContext {
+        use chrono::Utc;
+        crate::security::rbac_service::UnifiedUserContext {
+            user_id: "test_user".to_string(),
+            tenant_id: None,
+            roles: Vec::new(),
+            effective_permissions: perms.into_iter().collect(),
+            auth_method: crate::security::rbac_service::UnifiedAuthMethod::Internal,
+            session_id: "test_session".to_string(),
+            expires_at: None,
+            created_at: Utc::now(),
+            metadata: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn require_recall_admin_rejects_missing_context() {
+        let res = require_recall_admin(None, "recall-tune");
+        let err = res.expect_err("missing context must be rejected");
+        match err {
+            ApiError::Unauthorized(msg) => {
+                assert!(msg.contains("recall-tune"));
+                assert!(msg.contains("missing auth context"));
+            }
+            other => panic!("expected Unauthorized, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn require_recall_admin_rejects_insufficient_permissions() {
+        // A user with TenantRead only must be 403'd — the AXIS
+        // mutation endpoints are explicitly operator-scoped, not
+        // tenant-scoped, even when the caller has tenant read.
+        let ctx = ctx_with_permissions(vec![
+            crate::security::rbac_service::UnifiedPermission::TenantRead,
+            crate::security::rbac_service::UnifiedPermission::ListCollections,
+        ]);
+        let res = require_recall_admin(Some(&ctx), "recluster");
+        let err = res.expect_err("tenant-read-only ctx must be rejected");
+        match err {
+            ApiError::Forbidden(msg) => {
+                assert!(msg.contains("recluster"));
+                assert!(msg.contains("SystemAdmin"));
+                assert!(msg.contains("ConfigureSystem"));
+            }
+            other => panic!("expected Forbidden, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn require_recall_admin_accepts_system_admin() {
+        let ctx = ctx_with_permissions(vec![
+            crate::security::rbac_service::UnifiedPermission::SystemAdmin,
+        ]);
+        let user_id = require_recall_admin(Some(&ctx), "recluster")
+            .expect("SystemAdmin must pass");
+        assert_eq!(user_id, "test_user", "returned id is audit-log friendly");
+    }
+
+    #[test]
+    fn require_recall_admin_accepts_configure_system() {
+        // ConfigureSystem alone is also sufficient — matches the
+        // primary_pod operator gate.
+        let ctx = ctx_with_permissions(vec![
+            crate::security::rbac_service::UnifiedPermission::ConfigureSystem,
+        ]);
+        let user_id = require_recall_admin(Some(&ctx), "recall-tune")
+            .expect("ConfigureSystem must pass");
+        assert_eq!(user_id, "test_user");
+    }
+
+    #[test]
+    fn require_recall_admin_rejects_tenant_admin() {
+        // TenantAdmin is *not* sufficient — AXIS mutations are
+        // cross-tenant infrastructure decisions. A tenant admin
+        // can't reshape another tenant's index. Same boundary as
+        // primary_pod operator endpoints.
+        let ctx = ctx_with_permissions(vec![
+            crate::security::rbac_service::UnifiedPermission::TenantAdmin,
+        ]);
+        let res = require_recall_admin(Some(&ctx), "recluster");
+        assert!(
+            matches!(res, Err(ApiError::Forbidden(_))),
+            "TenantAdmin must NOT bypass operator gate"
+        );
     }
 
     #[test]
