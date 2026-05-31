@@ -436,13 +436,16 @@ impl SetupResult {
                     // `Option<&IndexAlgorithm>` parameter committed
                     // in 476dc951a).
                     let ef_search = env_usize("BENCH_HNSW_EF", 100) as u32;
+                    let m = env_usize("BENCH_HNSW_M", 16) as u32;
+                    let ef_construction =
+                        env_usize("BENCH_HNSW_EF_CONSTRUCTION", 200) as u32;
                     let hnsw_spec = IndexSpecification::new(
                         Data::DenseVector {
                             dimension: cfg.dimension,
                         },
                         IndexAlgorithm::HNSW {
-                            m: 16,
-                            ef_construction: 200,
+                            m,
+                            ef_construction,
                             ef_search,
                             max_elements: 1_000_000,
                         },
@@ -516,13 +519,16 @@ impl SetupResult {
                         Data, IndexAlgorithm, IndexSelectionStrategy, IndexSpecification,
                     };
                     let ef_search = env_usize("BENCH_HNSW_EF", 100) as u32;
+                    let m = env_usize("BENCH_HNSW_M", 16) as u32;
+                    let ef_construction =
+                        env_usize("BENCH_HNSW_EF_CONSTRUCTION", 200) as u32;
                     let hnsw_spec = IndexSpecification::new(
                         Data::DenseVector {
                             dimension: cfg.dimension,
                         },
                         IndexAlgorithm::HNSW {
-                            m: 16,
-                            ef_construction: 200,
+                            m,
+                            ef_construction,
                             ef_search,
                             max_elements: 1_000_000,
                         },

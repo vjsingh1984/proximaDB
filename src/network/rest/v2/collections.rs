@@ -835,6 +835,7 @@ pub struct CollectionRouteHealthV2 {
     pub pinning: PinningHealth,
     pub discovery: DiscoveryHealth,
     pub recall_drift: RecallDriftHealth,
+    pub suspension: SuspensionHealth,
 
     pub degraded_reasons: Vec<DegradedReason>,
 }
@@ -883,6 +884,24 @@ pub struct RecallDriftHealth {
     /// Free-text summary suitable for operator dashboards. Empty
     /// string when `wired = false`.
     pub summary: String,
+    /// Advisor's recommendation for the **baseline** N (what the
+    /// index *was* sized against). `None` when `wired = false`.
+    pub baseline_params: Option<RecallAdvisedParams>,
+    /// Advisor's recommendation for the **current** N (what the
+    /// index *should* be sized against now). `None` when
+    /// `wired = false`. Compare with `baseline_params` to see
+    /// exactly which knob drifted.
+    pub current_params: Option<RecallAdvisedParams>,
+}
+
+/// Snapshot of `(m, ef_construction, ef_search)` exposed on the
+/// route-health endpoint. Lets operators see the advisor's
+/// recommendation without an extra POST /recall-tune.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct RecallAdvisedParams {
+    pub m: u32,
+    pub ef_construction: u32,
+    pub ef_search: u32,
 }
 
 impl RecallDriftHealth {
@@ -898,6 +917,8 @@ impl RecallDriftHealth {
             needs_rebuild: false,
             hot_swap_possible: false,
             summary: String::new(),
+            baseline_params: None,
+            current_params: None,
         }
     }
 }
@@ -1007,6 +1028,37 @@ pub struct PinDetails {
     /// Wall-clock nanoseconds when the pin was last applied. Lets
     /// dashboards render "pinned X minutes ago" without re-querying.
     pub pinned_at_ns: i64,
+}
+
+/// Phase 8 F4a (TD-094) suspend-resume state. A suspended collection has had its
+/// in-memory IVF index evicted to free memory while its persisted `ivf.bin` +
+/// catalog metadata remain; the next query (or an explicit resume) warm-loads it.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct SuspensionHealth {
+    /// Whether suspend/resume state is observable for this deployment (the AXIS
+    /// manager is reachable). `false` ⇒ the other fields are best-effort defaults.
+    pub observable: bool,
+    /// Whether the collection is currently suspended (index evicted, not yet
+    /// warm-loaded back).
+    pub suspended: bool,
+    /// Whether an IVF index is currently resident in memory for this collection.
+    pub in_memory_index: bool,
+    /// Whether a persisted `ivf.bin` exists on disk (the resumability signal).
+    pub resumable_from_disk: bool,
+    pub notes: &'static str,
+}
+
+impl SuspensionHealth {
+    /// Default block when the AXIS manager is not reachable (e.g. HELIX-only).
+    fn unobservable() -> Self {
+        Self {
+            observable: false,
+            suspended: false,
+            in_memory_index: false,
+            resumable_from_disk: false,
+            notes: "AXIS manager not reachable; suspend/resume state unavailable",
+        }
+    }
 }
 
 /// Object-economy directory state. The directory format and sidecar live in
@@ -1318,6 +1370,9 @@ fn build_route_health_with_live_state(
         // collection has a `recall_target:` tag. Tests can patch via
         // `health.recall_drift = …` directly.
         recall_drift: RecallDriftHealth::unwired(),
+        // Default unobservable; the async handler patches this with live
+        // suspend/resume state from the AXIS manager (F4a).
+        suspension: SuspensionHealth::unobservable(),
         degraded_reasons,
     }
 }
@@ -1428,6 +1483,28 @@ pub async fn get_collection_route_health_v2(
         pin_state,
     );
 
+    // Phase 8 F4a: patch the suspension block with live AXIS state (the index
+    // manager is reached via the same global the recall-tune endpoint uses).
+    health.suspension = match crate::storage::engines::sst::core::get_sst_axis_manager() {
+        Some(axis) => {
+            let suspended = axis.is_suspended(&collection_id_for_discovery).await;
+            SuspensionHealth {
+                observable: true,
+                suspended,
+                in_memory_index: axis.has_ivf_index(&collection_id_for_discovery).await,
+                resumable_from_disk: axis
+                    .has_persisted_ivf_index(&collection_id_for_discovery)
+                    .await,
+                notes: if suspended {
+                    "index evicted to free memory; warm-loads from disk on next query"
+                } else {
+                    "active (or never suspended)"
+                },
+            }
+        }
+        None => SuspensionHealth::unobservable(),
+    };
+
     // Patch the recall_drift block when the collection has a
     // `recall_target:<float>` tag. Otherwise the builder default
     // (RecallDriftHealth::unwired()) is correct.
@@ -1467,6 +1544,16 @@ pub async fn get_collection_route_health_v2(
             crate::index::axis::management::DriftKind::EfSearchOnly => "ef_search_only",
             crate::index::axis::management::DriftKind::EfConstructionOrM => "rebuild_required",
         };
+        let baseline_params = Some(RecallAdvisedParams {
+            m: report.baseline_params.m,
+            ef_construction: report.baseline_params.ef_construction,
+            ef_search: report.baseline_params.ef_search,
+        });
+        let current_params = Some(RecallAdvisedParams {
+            m: report.current_params.m,
+            ef_construction: report.current_params.ef_construction,
+            ef_search: report.current_params.ef_search,
+        });
         health.recall_drift = RecallDriftHealth {
             wired: true,
             recall_target: Some(recall_target),
@@ -1476,6 +1563,8 @@ pub async fn get_collection_route_health_v2(
             needs_rebuild: report.needs_rebuild(),
             hot_swap_possible: report.hot_swap_possible(),
             summary: report.summary,
+            baseline_params,
+            current_params,
         };
         crate::metrics::recall_drift_metrics::record_recall_drift_observation(
             &collection_id_for_discovery,
@@ -1710,6 +1799,16 @@ pub async fn post_collection_recall_tune_v2(
         needs_rebuild: drift.needs_rebuild(),
         hot_swap_possible: drift.hot_swap_possible(),
         summary: drift.summary.clone(),
+        baseline_params: Some(RecallAdvisedParams {
+            m: drift.baseline_params.m,
+            ef_construction: drift.baseline_params.ef_construction,
+            ef_search: drift.baseline_params.ef_search,
+        }),
+        current_params: Some(RecallAdvisedParams {
+            m: drift.current_params.m,
+            ef_construction: drift.current_params.ef_construction,
+            ef_search: drift.current_params.ef_search,
+        }),
     };
     crate::metrics::recall_drift_metrics::record_recall_drift_observation(
         &collection_id,
@@ -1825,6 +1924,117 @@ pub struct RecallReclusterSized {
     pub ef_search: u32,
     /// Advisor's free-text rationale string — for operator dashboards.
     pub rationale: String,
+}
+
+// ─── Phase 8 F4a (TD-094): collection suspend / resume ──────────────────────
+
+/// Response for `POST /api/v2/collections/:id/suspend`.
+#[derive(Debug, Serialize)]
+pub struct SuspendResponse {
+    pub collection_id: String,
+    pub suspended: bool,
+}
+
+/// Response for `POST /api/v2/collections/:id/resume`.
+#[derive(Debug, Serialize)]
+pub struct ResumeResponse {
+    pub collection_id: String,
+    pub resumed: bool,
+    pub in_memory_index: bool,
+}
+
+/// 404 a missing collection (tenant-scoped) before mutating index state.
+async fn ensure_collection_exists(
+    state: &AppState,
+    collection_id: &str,
+    tenant: &TenantContext,
+) -> ApiResult<()> {
+    let request = CollectionRequest {
+        operation: CollectionOperation::CollectionGet as i32,
+        collection_id: Some(collection_id.to_string()),
+        collection_config: None,
+        query_params: Default::default(),
+        options: Default::default(),
+        migration_config: Default::default(),
+    };
+    state
+        .request_handlers
+        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                ApiError::CollectionNotFound(collection_id.to_string())
+            } else {
+                ApiError::Internal(format!("Failed to get collection: {e}"))
+            }
+        })?;
+    Ok(())
+}
+
+/// `POST /api/v2/collections/:id/suspend` — Phase 8 F4a. Evicts the collection's
+/// in-memory IVF index to free memory (the persisted `ivf.bin` + catalog
+/// metadata stay); the next query (or `/resume`) warm-loads it. Admin-gated.
+pub async fn post_collection_suspend_v2(
+    Path(collection_id): Path<String>,
+    Extension(tenant): Extension<TenantContext>,
+    Extension(user_context): Extension<
+        Option<crate::security::rbac_service::UnifiedUserContext>,
+    >,
+    State(state): State<AppState>,
+) -> ApiResult<Json<SuspendResponse>> {
+    if collection_id.is_empty() {
+        return Err(ApiError::InvalidArgument("Collection ID is required".to_string()));
+    }
+    require_recall_admin(user_context.as_ref(), "suspend")?;
+    ensure_collection_exists(&state, &collection_id, &tenant).await?;
+
+    let Some(axis) = crate::storage::engines::sst::core::get_sst_axis_manager() else {
+        return Err(ApiError::NotImplemented(
+            "suspend requires the AXIS index manager (not available in this deployment)".to_string(),
+        ));
+    };
+    axis.suspend_collection(&collection_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("suspend '{collection_id}': {e:#}")))?;
+    info!("V2 API: suspended collection '{}'", collection_id);
+    Ok(Json(SuspendResponse {
+        collection_id,
+        suspended: true,
+    }))
+}
+
+/// `POST /api/v2/collections/:id/resume` — Phase 8 F4a. Eagerly warm-loads a
+/// suspended collection's IVF index from disk now (lazy resume also happens on
+/// the next query). Admin-gated.
+pub async fn post_collection_resume_v2(
+    Path(collection_id): Path<String>,
+    Extension(tenant): Extension<TenantContext>,
+    Extension(user_context): Extension<
+        Option<crate::security::rbac_service::UnifiedUserContext>,
+    >,
+    State(state): State<AppState>,
+) -> ApiResult<Json<ResumeResponse>> {
+    if collection_id.is_empty() {
+        return Err(ApiError::InvalidArgument("Collection ID is required".to_string()));
+    }
+    require_recall_admin(user_context.as_ref(), "resume")?;
+    ensure_collection_exists(&state, &collection_id, &tenant).await?;
+
+    let Some(axis) = crate::storage::engines::sst::core::get_sst_axis_manager() else {
+        return Err(ApiError::NotImplemented(
+            "resume requires the AXIS index manager (not available in this deployment)".to_string(),
+        ));
+    };
+    let resumed = axis
+        .resume_collection(&collection_id)
+        .await
+        .map_err(|e| ApiError::Internal(format!("resume '{collection_id}': {e:#}")))?;
+    info!("V2 API: resumed collection '{}' (served={})", collection_id, resumed);
+    Ok(Json(ResumeResponse {
+        collection_id,
+        resumed,
+        in_memory_index: resumed,
+    }))
 }
 
 /// Recall-aware HNSW rebuild handler.
@@ -2264,6 +2474,19 @@ mod tests {
     }
 
     #[test]
+    fn route_health_suspension_block_defaults_unobservable_in_builder() {
+        // The pure builder has no AXIS manager handle, so the suspension block
+        // defaults to unobservable; the async handler patches it with live state.
+        let h = build_route_health("c".to_string(), "sst".to_string(), 8, "cosine".to_string(), 0, 0, 0);
+        assert!(!h.suspension.observable);
+        assert!(!h.suspension.suspended);
+        assert!(!h.suspension.in_memory_index);
+        // Serializes as a nested object on the route-health contract.
+        let json = serde_json::to_value(&h).unwrap();
+        assert!(json.get("suspension").is_some(), "suspension block present in contract");
+    }
+
+    #[test]
     fn route_health_degraded_reasons_serialize_as_screaming_snake() {
         let reasons = vec![
             DegradedReason::FilteredAnnRecordPredicateBridgePartial,
@@ -2563,6 +2786,51 @@ mod tests {
     }
 
     #[test]
+    fn recall_drift_unwired_omits_advised_params() {
+        // unwired() must leave baseline_params + current_params as
+        // None so the JSON serializes the absence (no misleading
+        // zeros).
+        let h = RecallDriftHealth::unwired();
+        assert!(h.baseline_params.is_none());
+        assert!(h.current_params.is_none());
+        let v = serde_json::to_value(&h).unwrap();
+        assert!(v["baseline_params"].is_null());
+        assert!(v["current_params"].is_null());
+    }
+
+    #[test]
+    fn recall_drift_wired_serializes_advised_params() {
+        let h = RecallDriftHealth {
+            wired: true,
+            recall_target: Some(0.95),
+            baseline_vector_count: Some(100_000),
+            current_vector_count: Some(250_000),
+            kind: "ef_search_only",
+            needs_rebuild: false,
+            hot_swap_possible: true,
+            summary: "test".to_string(),
+            baseline_params: Some(RecallAdvisedParams {
+                m: 32,
+                ef_construction: 256,
+                ef_search: 409,
+            }),
+            current_params: Some(RecallAdvisedParams {
+                m: 32,
+                ef_construction: 256,
+                ef_search: 622,
+            }),
+        };
+        let v = serde_json::to_value(&h).unwrap();
+        assert_eq!(v["baseline_params"]["m"], 32);
+        assert_eq!(v["baseline_params"]["ef_construction"], 256);
+        assert_eq!(v["baseline_params"]["ef_search"], 409);
+        assert_eq!(v["current_params"]["m"], 32);
+        assert_eq!(v["current_params"]["ef_search"], 622);
+        // The ef_search delta is the actionable signal — operators
+        // can compute it inline (409 → 622) without a second call.
+    }
+
+    #[test]
     fn route_health_recall_drift_kind_strings_are_stable() {
         // Wire enum-string mapping pinned so dashboards / SIEM
         // filters can rely on the literals.
@@ -2582,6 +2850,8 @@ mod tests {
                 needs_rebuild,
                 hot_swap_possible: hot_swap,
                 summary: "test".to_string(),
+                baseline_params: None,
+                current_params: None,
             };
             let v = serde_json::to_value(&h).unwrap();
             assert_eq!(v["kind"], kind);
