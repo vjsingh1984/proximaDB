@@ -315,13 +315,14 @@ mod tests {
     use proximadb_vector_query::{DistanceMetric as ContractMetric, VectorQueryRequest};
 
     fn vector_record(id: &str, values: Vec<f32>) -> ProximaRecord {
+        let dim = values.len() as u32;
         ProximaRecord {
             oid: id.to_string(),
             embeddings: vec![EmbeddingCell {
                 model_id: "test-model".to_string(),
                 modality: "vector".to_string(),
-                dim: values.len() as u32,
-                values,
+                dim,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
                 ..Default::default()
             }],
             ..Default::default()
