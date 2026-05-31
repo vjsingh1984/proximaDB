@@ -699,6 +699,12 @@ pub struct UnifiedIvfIndex {
     /// ADR-023 cold-path serving state. `FullTwoStage` normally; `ColdBinaryOnly`
     /// after a `restore_cold_only` until the WARM fp32 tier loads.
     serving_state: IvfServingState,
+
+    /// ADR-023 R1: the fixed `D` sign vector of the randomized Hadamard rotation
+    /// applied to residuals before sign-quantizing the COLD tier. Length =
+    /// `next_pow2(dimension)`; derived deterministically from `COLD_ROTATION_SEED`
+    /// at construction, so insert/query/restart all rotate identically.
+    rotation_signs: Vec<f32>,
 }
 
 /// Stage-1 candidate multiplier for the binary two-stage route: the Hamming
@@ -706,15 +712,90 @@ pub struct UnifiedIvfIndex {
 /// rerank trims to `k`.
 const BINARY_RERANK_EXPANSION: usize = 4;
 
-/// 1-bit sign-quantized vector (TD-087 binary tier). One bit per dimension
-/// (`>= 0.0`), packed 8 dims per byte. Self-contained to keep the index layer
-/// free of cross-crate quantization coupling.
+/// Fixed seed for the COLD-tier rotation (ADR-023 R1). A single global constant
+/// is sufficient: the rotation only needs to be *consistent within a collection*
+/// (same at insert, query, and after restart) and reproducible from `(seed,
+/// dim)` — not unique per collection. Codes therefore need no per-index seed
+/// persisted; the dimension (already in the config) fully determines it.
+const COLD_ROTATION_SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+
+/// Next power of two ≥ `n` (the randomized Hadamard transform needs a pow2
+/// length; the residual is zero-padded up to it). `0 -> 0`.
+fn next_pow2(n: usize) -> usize {
+    if n == 0 {
+        0
+    } else {
+        n.next_power_of_two()
+    }
+}
+
+/// Deterministic ±1 sign vector of length `n` (the `D` of the randomized
+/// Hadamard rotation `H·D`). Pure splitmix64 over `(seed, i)` — no RNG crate, so
+/// `BinaryCode` stays self-contained and the rotation is byte-for-byte stable
+/// across builds/restarts.
+fn rotation_signs(n: usize, seed: u64) -> Vec<f32> {
+    (0..n)
+        .map(|i| {
+            let mut z = seed.wrapping_add((i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^= z >> 31;
+            if z & 1 == 0 { 1.0 } else { -1.0 }
+        })
+        .collect()
+}
+
+/// In-place unnormalized Walsh–Hadamard transform (`len` must be a power of 2).
+/// We only take the sign of the result, so the `1/√n` normalization is omitted.
+fn walsh_hadamard_in_place(a: &mut [f32]) {
+    let n = a.len();
+    let mut h = 1;
+    while h < n {
+        let mut i = 0;
+        while i < n {
+            for j in i..i + h {
+                let x = a[j];
+                let y = a[j + h];
+                a[j] = x + y;
+                a[j + h] = x - y;
+            }
+            i += 2 * h;
+        }
+        h *= 2;
+    }
+}
+
+/// Rotate the residual `vector - centroid` via the randomized Hadamard transform
+/// `H·D` (ADR-023 R1). Zero-pads to the next power of two, applies the fixed sign
+/// vector `signs` (= `D`), then the Walsh–Hadamard transform (`H`). Returns the
+/// rotated residual; the caller sign-quantizes it. `signs.len()` is the padded
+/// length; `vector`/`centroid` are the unpadded `dim`-length vectors.
+fn rotate_residual(vector: &[f32], centroid: &[f32], signs: &[f32]) -> Vec<f32> {
+    let n = signs.len();
+    let mut out = vec![0.0f32; n];
+    let dim = vector.len().min(centroid.len()).min(n);
+    for i in 0..dim {
+        out[i] = (vector[i] - centroid[i]) * signs[i];
+    }
+    // Padded positions: residual 0, already 0.
+    walsh_hadamard_in_place(&mut out);
+    out
+}
+
+/// 1-bit sign-quantized vector (TD-087 binary tier; ADR-023 R1 cold-path code).
+/// One bit per (rotated) dimension (`>= 0.0`), packed 8 dims per byte.
+/// Self-contained to keep the index layer free of cross-crate quantization
+/// coupling. Codes are now `sign(H·D·(x − centroid))` — the residual to the
+/// assigned IVF centroid, randomly rotated — so 1-bit Hamming is a far better
+/// coarse ranker than raw sign bits (IVF-RaBitQ/TurboQuant family; see ADR-023).
 #[derive(Clone, Debug, PartialEq)]
 struct BinaryCode {
     bits: Vec<u8>,
 }
 
 impl BinaryCode {
+    /// Sign-quantize a vector directly (primitive; used by tests and by
+    /// [`from_rotated_residual`](Self::from_rotated_residual) after rotation).
     fn from_f32(vector: &[f32]) -> Self {
         let mut bits = vec![0u8; vector.len().div_ceil(8)];
         for (i, &x) in vector.iter().enumerate() {
@@ -723,6 +804,12 @@ impl BinaryCode {
             }
         }
         Self { bits }
+    }
+
+    /// ADR-023 R1 COLD code: sign bits of the randomly-rotated residual
+    /// `H·D·(vector − centroid)`. `signs` is the per-index fixed `D` vector.
+    fn from_rotated_residual(vector: &[f32], centroid: &[f32], signs: &[f32]) -> Self {
+        Self::from_f32(&rotate_residual(vector, centroid, signs))
     }
 
     /// Reconstruct from packed sign bits (ADR-023 COLD-tier restore).
@@ -1039,6 +1126,9 @@ impl UnifiedIvfIndex {
             collection_id, config.n_clusters, config.n_probe, preferred_extraction_mode
         );
 
+        // Captured before `config` is moved into the struct (ADR-023 R1 rotation).
+        let config_dimension = config.dimension;
+
         // Create inelastic centroid store
         let centroids = CentroidStore::new(config.n_clusters, config.dimension);
 
@@ -1186,6 +1276,9 @@ impl UnifiedIvfIndex {
 
             // ADR-023: a freshly-built index has both tiers.
             serving_state: IvfServingState::FullTwoStage,
+
+            // ADR-023 R1: fixed rotation derived from the dimension + global seed.
+            rotation_signs: rotation_signs(next_pow2(config_dimension), COLD_ROTATION_SEED),
         })
     }
 
@@ -1276,11 +1369,14 @@ impl UnifiedIvfIndex {
             .centroids
             .find_nearest_centroid(&vector, &self.distance_compute);
 
-        // TD-087: populate the binary tier when enabled, for the binary-first
-        // two-stage route.
+        // TD-087 / ADR-023 R1: populate the binary tier with the rotated residual
+        // to the assigned centroid (sign(H·D·(x − c_cluster))), not raw signs.
         if self.config.use_binary {
-            self.binary_codes
-                .insert(id.clone(), BinaryCode::from_f32(&vector));
+            let centroid = &self.centroids.centroids[cluster_id];
+            self.binary_codes.insert(
+                id.clone(),
+                BinaryCode::from_rotated_residual(&vector, centroid, &self.rotation_signs),
+            );
         }
 
         // Update posting list
@@ -1804,7 +1900,6 @@ impl UnifiedIvfIndex {
             return self.search(query, k, n_probe).await;
         }
         let n_probe = n_probe.unwrap_or(self.config.n_probe);
-        let bq = BinaryCode::from_f32(query);
 
         // Stage 1: Hamming coarse filter over the probed clusters' candidates.
         let nearest_clusters =
@@ -1812,6 +1907,11 @@ impl UnifiedIvfIndex {
                 .find_nearest_centroids(query, n_probe, &self.distance_compute);
         let mut coarse: Vec<(String, u32)> = Vec::new();
         for (cluster_id, _centroid_dist) in nearest_clusters {
+            // ADR-023 R1: the query code is the rotated residual to THIS cluster's
+            // centroid — the same transform the stored codes used at insert, so
+            // Hamming is meaningful within the cluster.
+            let centroid = &self.centroids.centroids[cluster_id];
+            let bq = BinaryCode::from_rotated_residual(query, centroid, &self.rotation_signs);
             let key = PartitionedKey::new(self.collection_id.clone(), cluster_id);
             if let Some(posting_list) = self.posting_lists.get(&key).await {
                 for vector_id in &posting_list.vector_ids {
@@ -2471,6 +2571,31 @@ mod tests {
         assert_eq!(a.hamming(&near_a), 0); // same sign pattern as a
     }
 
+    #[test]
+    fn rotated_residual_code_is_deterministic_and_self_consistent() {
+        use super::{rotation_signs, BinaryCode, COLD_ROTATION_SEED};
+        // dim=6 → padded to next_pow2 = 8; exercises zero-padding + WHT.
+        let signs = rotation_signs(8, COLD_ROTATION_SEED);
+        let centroid = vec![0.1, 0.2, -0.3, 0.4, -0.5, 0.6];
+        let x = vec![0.9, -0.8, 0.7, -0.6, 0.5, -0.4];
+
+        // Deterministic: same inputs → identical bits.
+        let c1 = BinaryCode::from_rotated_residual(&x, &centroid, &signs);
+        let c2 = BinaryCode::from_rotated_residual(&x, &centroid, &signs);
+        assert_eq!(c1, c2);
+
+        // Self-consistent: a "query" equal to the stored vector (same residual to
+        // the same centroid) yields Hamming 0 — the invariant the search relies on.
+        let q = x.clone();
+        let cq = BinaryCode::from_rotated_residual(&q, &centroid, &signs);
+        assert_eq!(c1.hamming(&cq), 0);
+
+        // A different vector almost surely differs in at least one rotated sign.
+        let y = vec![-0.9, 0.8, -0.7, 0.6, -0.5, 0.4];
+        let cy = BinaryCode::from_rotated_residual(&y, &centroid, &signs);
+        assert!(c1.hamming(&cy) > 0);
+    }
+
     fn binary_ivf_config(dim: usize, n_clusters: usize) -> UnifiedIvfConfig {
         UnifiedIvfConfig {
             n_clusters,
@@ -2669,15 +2794,16 @@ mod tests {
         assert_eq!(cold_idx.len(), data.len());
 
         // Stage-1-only search returns Hamming-ranked candidates without any fp32
-        // rerank — v0 shares the query's sign pattern, so it ranks first.
-        let query = vec![0.9, -0.8, 1.1, -0.7];
+        // rerank. Query an EXACT indexed vector: its rotated residual matches the
+        // stored code (Hamming 0), so it ranks first regardless of the rotation.
+        let query = data[0].1.clone(); // == "v0"
         let results = cold_idx
             .search_with_binary_acceleration(&query, 3, None)
             .await
             .unwrap();
         assert!(!results.is_empty(), "cold-only serves Stage-1 results");
         assert!(results.len() <= 3);
-        assert_eq!(results[0].0, "v0", "nearest-by-Hamming ranks first");
+        assert_eq!(results[0].0, "v0", "exact-match query ranks first (Hamming 0)");
     }
 
     #[tokio::test]
