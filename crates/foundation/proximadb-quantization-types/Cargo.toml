@@ -9,6 +9,12 @@ repository.workspace = true
 homepage = "https://github.com/vjsingh1984/proximadb"
 description = "Foundation quantization types for ProximaDB"
 
+[features]
+# Per ADR-021 + TURBOQUANT_LLD_2026_05_30 Q1. Gates the TurboQuant type
+# discriminant and related calibration mode enum. Default off; promoted to
+# beta after P9 recall validation closes.
+experimental-turboquant = []
+
 [dependencies]
 serde.workspace = true
 thiserror.workspace = true

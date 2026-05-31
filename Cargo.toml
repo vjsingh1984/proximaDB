@@ -171,6 +171,11 @@ snap = "1.1"
 xz2 = "0.1"
 zstd = "0.13"
 
+# TurboQuant numerics (ADR-021, gated by `experimental-turboquant`).
+# Kept here so future modality + benchmark consumers share a single version.
+faer = { version = "0.20", default-features = false, features = ["std"] }
+statrs = "0.17"
+
 [[bin]]
 name = "simple-perf-bench"
 path = "benches/simple_perf_bench.rs"
@@ -486,6 +491,15 @@ licensing_surface = []
 experimental-engines = []
 # Experimental SIMD path; not enabled by default
 simd-experimental = []
+# TurboQuant data-oblivious quantizer + in-kernel allowlist (ADR-021).
+# Gates the QuantizationLevel::TurboQuant variant in proximadb-vector + the
+# TurboQuantVectorData struct in src/compute/distance_computation/quantized.rs.
+# Tracked in docs/12-design/TURBOQUANT_LLD_2026_05_30.adoc; promoted to beta
+# after P9 recall validation closes.
+experimental-turboquant = [
+    "proximadb-quantization-types/experimental-turboquant",
+    "proximadb-vector/experimental-turboquant",
+]
 # AVX512 intrinsics (requires nightly Rust, disabled by default for CI compatibility)
 avx512 = []
 distributed = []

@@ -36,6 +36,8 @@ use std::str::FromStr;
 /// - `Scalar` - Scalar quantization (per-vector scalar quantization)
 /// - `Product` - Product quantization (PQ)
 /// - `Binary` - Binary quantization
+/// - `TurboQuant` (feature `experimental-turboquant`) - Data-oblivious scalar
+///   quantizer per ADR-021. Online ingest, no codebook training.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum QuantizationType {
@@ -57,6 +59,11 @@ pub enum QuantizationType {
     ///
     /// Also known as: Binary, BitQuantization
     Binary,
+
+    /// TurboQuant — data-oblivious scalar quantizer (ADR-021, arXiv:2504.19874).
+    /// Online ingest, no codebook training. See TURBOQUANT_HLD_2026_05_30.
+    #[cfg(feature = "experimental-turboquant")]
+    TurboQuant,
 }
 
 impl fmt::Display for QuantizationType {
@@ -66,6 +73,8 @@ impl fmt::Display for QuantizationType {
             Self::Scalar => write!(f, "scalar"),
             Self::Product => write!(f, "product"),
             Self::Binary => write!(f, "binary"),
+            #[cfg(feature = "experimental-turboquant")]
+            Self::TurboQuant => write!(f, "turboquant"),
         }
     }
 }
@@ -87,6 +96,8 @@ impl FromStr for QuantizationType {
             "scalar" | "int8" | "uint8" | "scalarquantization" => Some(Self::Scalar),
             "product" | "pq" | "productquantization" => Some(Self::Product),
             "binary" | "bit" | "binaryquantization" => Some(Self::Binary),
+            #[cfg(feature = "experimental-turboquant")]
+            "turboquant" | "tq" | "tq+" | "turbo" => Some(Self::TurboQuant),
             _ => None,
         }
         .ok_or(())
@@ -96,7 +107,15 @@ impl FromStr for QuantizationType {
 impl QuantizationType {
     /// Check if this quantization type uses fixed-point arithmetic
     pub fn is_fixed_point(&self) -> bool {
-        matches!(self, Self::Scalar | Self::Binary)
+        #[cfg(feature = "experimental-turboquant")]
+        {
+            // TurboQuant codes are 2/3/4-bit integers — fixed-point.
+            return matches!(self, Self::Scalar | Self::Binary | Self::TurboQuant);
+        }
+        #[cfg(not(feature = "experimental-turboquant"))]
+        {
+            matches!(self, Self::Scalar | Self::Binary)
+        }
     }
 
     /// Check if this quantization type uses floating-point arithmetic
@@ -281,6 +300,79 @@ impl QuantizationConfig {
     pub fn quantization_level(&self) -> QuantizationLevel {
         self.quantization_level
     }
+}
+
+// ============================================================================
+// TurboQuant types (ADR-021, TURBOQUANT_LLD_2026_05_30)
+// ============================================================================
+//
+// Gated by `experimental-turboquant`. These types are the foundation surface
+// used by the modality crate's `QuantizationLevel::TurboQuant` variant and
+// the root crate's `TurboQuantVectorData` struct. They are intentionally
+// minimal: bit-width, calibration mode discriminator, and per-collection
+// rotation seed. All algorithm logic (Lloyd-Max, rotation, encode pipeline,
+// SIMD kernels) lives in `crates/modalities/proximadb-vector/src/quantization/
+// turboquant/` and lands in P2+.
+
+/// Per-coordinate calibration mode for TurboQuant. See LLD §6 (Q6, Q7).
+#[cfg(feature = "experimental-turboquant")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CalibrationMode {
+    /// Identity calibration — no TQ+ per-coord adjustment. Used when the first
+    /// batch is below `TQPLUS_MIN_SAMPLES` (1000), or when the operator
+    /// explicitly opts out. EXPLAIN surfaces `calibration_mode="identity"`.
+    #[default]
+    Identity,
+
+    /// TQ+ per-coord `(shift, scale)` fit from empirical 5/95% quantiles of
+    /// the first qualifying batch. Frozen after the first fit so all future
+    /// adds quantize against the same target distribution. See LLD §6.
+    TqPlus,
+}
+
+#[cfg(feature = "experimental-turboquant")]
+impl fmt::Display for CalibrationMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Identity => write!(f, "identity"),
+            Self::TqPlus => write!(f, "tq_plus"),
+        }
+    }
+}
+
+#[cfg(feature = "experimental-turboquant")]
+impl FromStr for CalibrationMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "identity" | "none" | "off" => Ok(Self::Identity),
+            "tq_plus" | "tqplus" | "tq+" | "plus" => Ok(Self::TqPlus),
+            _ => Err(()),
+        }
+    }
+}
+
+/// Derive the per-collection TurboQuant rotation seed from a collection id.
+///
+/// Per LLD Q3: `seed = u64::from_le_bytes(blake3("turboquant.v1.rotation" ||
+/// collection_id).as_bytes()[0..8])`. Implemented here with a simple FNV-1a
+/// hash to avoid pulling blake3 into the foundation crate; P8 may swap in
+/// blake3 when the xCatalog wiring lands and the dependency is paid elsewhere.
+///
+/// The exact hash function is part of the wire contract — changing it
+/// requires re-encoding every collection's codes. Mark this as load-bearing.
+#[cfg(feature = "experimental-turboquant")]
+pub fn derive_rotation_seed(collection_id: &str) -> u64 {
+    // FNV-1a 64-bit. Deterministic, stdlib-only.
+    let prefix = b"turboquant.v1.rotation:";
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in prefix.iter().chain(collection_id.as_bytes()) {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
 }
 
 // ============================================================================
@@ -507,5 +599,84 @@ mod tests {
         let config: QuantizationConfig = legacy.into();
         assert_eq!(config.quantization_type(), QuantizationType::Scalar);
         assert_eq!(config.quantization_level(), QuantizationLevel::Int8);
+    }
+
+    // ------------------------------------------------------------------
+    // TurboQuant types (P1 — ADR-021 / TURBOQUANT_LLD_2026_05_30)
+    // ------------------------------------------------------------------
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn test_turboquant_type_display_and_parse() {
+        assert_eq!(QuantizationType::TurboQuant.to_string(), "turboquant");
+        assert_eq!(
+            QuantizationType::from_str("turboquant"),
+            Some(QuantizationType::TurboQuant)
+        );
+        assert_eq!(
+            QuantizationType::from_str("tq"),
+            Some(QuantizationType::TurboQuant)
+        );
+        assert_eq!(
+            QuantizationType::from_str("TURBOQUANT"),
+            Some(QuantizationType::TurboQuant)
+        );
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn test_turboquant_is_fixed_point() {
+        assert!(QuantizationType::TurboQuant.is_fixed_point());
+        // is_floating_point is the negation, so this must be false.
+        assert!(!QuantizationType::TurboQuant.is_floating_point());
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn test_calibration_mode_default_is_identity() {
+        assert_eq!(CalibrationMode::default(), CalibrationMode::Identity);
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn test_calibration_mode_display_and_parse() {
+        assert_eq!(CalibrationMode::Identity.to_string(), "identity");
+        assert_eq!(CalibrationMode::TqPlus.to_string(), "tq_plus");
+        assert_eq!(
+            CalibrationMode::from_str("identity"),
+            Ok(CalibrationMode::Identity)
+        );
+        assert_eq!(
+            CalibrationMode::from_str("tq+"),
+            Ok(CalibrationMode::TqPlus)
+        );
+        assert_eq!(CalibrationMode::from_str("nonsense"), Err(()));
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn test_calibration_mode_serde_snake_case() {
+        let s = serde_json::to_string(&CalibrationMode::TqPlus).unwrap();
+        assert_eq!(s, "\"tq_plus\"");
+        let v: CalibrationMode = serde_json::from_str("\"identity\"").unwrap();
+        assert_eq!(v, CalibrationMode::Identity);
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn test_derive_rotation_seed_is_deterministic_and_collision_resistant() {
+        // Determinism: same id → same seed across calls.
+        let a1 = derive_rotation_seed("col-abc");
+        let a2 = derive_rotation_seed("col-abc");
+        assert_eq!(a1, a2);
+        // Multi-tenant: different ids → different seeds. With 64-bit output,
+        // birthday-paradox risk at any realistic collection count is zero;
+        // for FNV-1a these short distinct inputs are practically guaranteed
+        // to land on different seeds.
+        let b = derive_rotation_seed("col-def");
+        assert_ne!(a1, b);
+        // Spot-check that an empty collection id still produces a stable
+        // (non-zero) seed.
+        assert_ne!(derive_rotation_seed(""), 0);
     }
 }
