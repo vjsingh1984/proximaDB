@@ -125,6 +125,13 @@ pub struct UnifiedIvfConfig {
 
     /// Posting list store configuration (elastic, evictable under memory pressure).
     pub posting_list_config: PostingListConfig,
+
+    /// ADR-023 T-H: target recall for the binary two-stage route, in `(0, 1]`.
+    /// Drives the Stage-1 survivor count (higher → rerank more candidates) and
+    /// the gap-based early-termination bar (higher → skip the fp32 rerank less
+    /// often). `1.0` disables early termination (always full rerank). Runtime
+    /// tuning knob; not persisted (defaults on restore).
+    pub recall_target: f32,
 }
 
 /// Env knob (TD-087 / F2 cold path) gating the 1-bit binary tier. Off by default
@@ -169,6 +176,7 @@ impl Default for UnifiedIvfConfig {
             n_init: 3, // Run clustering 3 times for stability
             centroid_config: CentroidConfig::default(),
             posting_list_config: PostingListConfig::default(),
+            recall_target: DEFAULT_RECALL_TARGET,
         }
     }
 }
@@ -707,10 +715,51 @@ pub struct UnifiedIvfIndex {
     rotation_signs: Vec<f32>,
 }
 
-/// Stage-1 candidate multiplier for the binary two-stage route: the Hamming
-/// coarse filter keeps `k * BINARY_RERANK_EXPANSION` candidates before the fp32
-/// rerank trims to `k`.
-const BINARY_RERANK_EXPANSION: usize = 4;
+/// Default target recall for the binary two-stage route (ADR-023 T-H). A
+/// vector-DB-appropriate conservative default: early termination only fires on
+/// strong separation; the warm path stays near-exact. Operators dial it down for
+/// speed. Calibration of the exact curve is a follow-up (cf. the drift knob).
+const DEFAULT_RECALL_TARGET: f32 = 0.95;
+
+/// Floor on Stage-1 survivors reranked, so small-`k` queries still rerank a
+/// meaningful pool (cf. AQR-HNSW's `N_rerank ∈ [15,30]`).
+const MIN_RERANK_CANDIDATES: usize = 16;
+
+/// Recall-targeted Stage-1 survivor count (ADR-023 T-H / AQR-HNSW), replacing a
+/// fixed multiplier: higher `recall_target` reranks more candidates. Floored at
+/// [`MIN_RERANK_CANDIDATES`]; the caller clamps to the available candidate count.
+fn adaptive_candidate_k(k: usize, recall_target: f32) -> usize {
+    let expansion = if recall_target >= 0.97 {
+        8
+    } else if recall_target >= 0.93 {
+        6
+    } else if recall_target >= 0.88 {
+        4
+    } else {
+        3
+    };
+    (k * expansion).max(MIN_RERANK_CANDIDATES)
+}
+
+/// AQR-HNSW separation gap at the top-`k` boundary over the ascending-distance
+/// candidate list: `(d_{k+1} − d_k) / (d_{k+1} + ε) ∈ [0, 1)`. Large ⇒ the
+/// top-`k` is well separated from the rest. `0` when there is no `(k+1)`-th
+/// candidate (nothing to separate from → never early-terminate).
+fn separation_gap(sorted_ascending: &[(String, u32)], k: usize) -> f32 {
+    if k == 0 || sorted_ascending.len() <= k {
+        return 0.0;
+    }
+    let d_k = sorted_ascending[k - 1].1 as f32;
+    let d_k1 = sorted_ascending[k].1 as f32;
+    (d_k1 - d_k) / (d_k1 + f32::EPSILON)
+}
+
+/// Early-terminate (skip the fp32 rerank) when the Stage-1 top-`k` is separated
+/// past the `recall_target` bar. `recall_target >= 1.0` never terminates early
+/// (the gap is always `< 1`), giving exact two-stage results.
+fn should_early_terminate(gap: f32, recall_target: f32) -> bool {
+    recall_target < 1.0 && gap >= recall_target
+}
 
 /// Fixed seed for the COLD-tier rotation (ADR-023 R1). A single global constant
 /// is sufficient: the rotation only needs to be *consistent within a collection*
@@ -1924,9 +1973,7 @@ impl UnifiedIvfIndex {
         if coarse.is_empty() {
             return self.search(query, k, Some(n_probe)).await;
         }
-        let candidate_k = (k * BINARY_RERANK_EXPANSION).min(coarse.len());
         coarse.sort_by_key(|(_, h)| *h);
-        coarse.truncate(candidate_k);
 
         // ADR-023 T-D: Stage-1-only serving. When only the COLD tier is loaded
         // (cold start, no fp32), there is nothing to rerank — return the
@@ -1939,6 +1986,25 @@ impl UnifiedIvfIndex {
                 .map(|(id, hamming)| (id, hamming as f32))
                 .collect());
         }
+
+        // ADR-023 T-H: gap-based early termination (AQR-HNSW "exact only when
+        // necessary"). When the Stage-1 top-k is separated past the recall_target
+        // bar, the fp32 rerank won't reorder the boundary — return the
+        // Hamming-ranked top-k and skip the rerank. In the cold/lazy-warm path
+        // (T-E) this also skips the bandwidth-heavy fp32 fetch.
+        let recall_target = self.config.recall_target;
+        if should_early_terminate(separation_gap(&coarse, k), recall_target) {
+            coarse.truncate(k);
+            return Ok(coarse
+                .into_iter()
+                .map(|(id, hamming)| (id, hamming as f32))
+                .collect());
+        }
+
+        // ADR-023 T-H: recall-targeted Stage-1 survivor count (replaces a fixed
+        // multiplier); clamp to the candidates actually found.
+        let candidate_k = adaptive_candidate_k(k, recall_target).min(coarse.len());
+        coarse.truncate(candidate_k);
 
         // Stage 2: fp32 rerank of the survivors (exact distance, same as `search`).
         let metric = self.config.distance_metric;
@@ -2523,6 +2589,7 @@ mod tests {
             n_init: 1,
             centroid_config: CentroidConfig::default(),
             posting_list_config: PostingListConfig::default(),
+            recall_target: 0.95,
         };
 
         let mut index = UnifiedIvfIndex::new("test_collection".to_string(), config).unwrap();
@@ -2596,6 +2663,54 @@ mod tests {
         assert!(c1.hamming(&cy) > 0);
     }
 
+    #[test]
+    fn adaptive_candidate_k_and_gap_early_termination() {
+        use super::{adaptive_candidate_k, separation_gap, should_early_terminate};
+
+        // Candidate count grows with the recall target, floored.
+        assert!(adaptive_candidate_k(10, 0.98) > adaptive_candidate_k(10, 0.85));
+        assert!(adaptive_candidate_k(1, 0.85) >= super::MIN_RERANK_CANDIDATES); // floor
+
+        // Separation gap: ascending Hamming list; 0 when there's no (k+1)-th.
+        let c = |h: u32| ("x".to_string(), h);
+        assert_eq!(separation_gap(&[c(1), c(2)], 5), 0.0); // fewer than k+1
+        assert_eq!(separation_gap(&[c(0), c(10)], 1), 1.0); // d_k=0, d_{k+1}=10 → 1.0
+        let g = separation_gap(&[c(2), c(3)], 1); // (3-2)/3 ≈ 0.33
+        assert!((0.30..0.36).contains(&g));
+
+        // Early-termination bar: rt=1.0 never; lower rt fires on enough separation.
+        assert!(!should_early_terminate(0.99, 1.0)); // rt 1.0 disables
+        assert!(should_early_terminate(0.6, 0.5)); // gap above bar
+        assert!(!should_early_terminate(0.4, 0.5)); // gap below bar
+    }
+
+    #[tokio::test]
+    async fn low_recall_target_early_terminates_but_stays_correct() {
+        // A low recall_target makes early termination fire; correctness (top-1)
+        // must still hold for a well-separated (exact-match) query.
+        let _ = proximadb_hardware::hardware_capabilities();
+        let mut cfg = binary_ivf_config(4, 2);
+        cfg.recall_target = 0.5; // aggressive early termination
+        let mut index = UnifiedIvfIndex::new("c_et".to_string(), cfg).unwrap();
+        let data = mixed_sign_vectors();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        // Exact-match query → its rotated residual matches the stored code
+        // (Hamming 0) and is well separated, so early termination returns it first.
+        let query = data[0].1.clone(); // "v0"
+        let results = index
+            .search_with_binary_acceleration(&query, 3, None)
+            .await
+            .unwrap();
+        assert!(!results.is_empty());
+        assert_eq!(results[0].0, "v0", "top-1 correct even when early-terminated");
+    }
+
     fn binary_ivf_config(dim: usize, n_clusters: usize) -> UnifiedIvfConfig {
         UnifiedIvfConfig {
             n_clusters,
@@ -2614,6 +2729,9 @@ mod tests {
             n_init: 1,
             centroid_config: CentroidConfig::default(),
             posting_list_config: PostingListConfig::default(),
+            // recall_target 1.0 disables early termination so the two-stage
+            // correctness tests get exact (full-rerank) results deterministically.
+            recall_target: 1.0,
         }
     }
 
