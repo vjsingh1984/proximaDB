@@ -620,6 +620,7 @@ impl UniversalDistanceAdapter {
                             values: int8_data,
                             scale: 1.0,    // Default scale
                             zero_point: 0, // Default zero point
+                            length_renorm: None,
                         }),
                         pq: None,
                     }
@@ -641,6 +642,7 @@ impl UniversalDistanceAdapter {
                             codes: pq_data,
                             codebook: vec![], // Would need actual codebook
                             codebook_hash: 0, // Placeholder
+                            length_renorm: None,
                         }),
                     }
                 }

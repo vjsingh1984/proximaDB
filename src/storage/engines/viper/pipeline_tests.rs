@@ -262,6 +262,8 @@ pub mod viper_pipeline_tests {
                 QuantizationLevel::Scalar(_) | QuantizationLevel::Binary(_) => assert!(true),
                 QuantizationLevel::None(_) => assert!(true),
                 QuantizationLevel::Uniform(_) | QuantizationLevel::Custom(_) => assert!(true),
+                #[cfg(feature = "experimental-turboquant")]
+                QuantizationLevel::TurboQuant(_) => assert!(true),
             }
         }
     }

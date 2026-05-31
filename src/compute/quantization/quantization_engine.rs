@@ -315,6 +315,18 @@ impl UnifiedQuantizationEngine {
                 codebook_id: Some(format!("pq_{}_{}", level.level_id, level.bits)),
                 adaptive_subvectors: false,
             })),
+            // TurboQuant uses its own (bit_width, calibration, rotation_seed)
+            // shape and does not project onto the legacy QuantizationLevel
+            // matrix here. ADR-021 / TURBOQUANT_LLD §"Phase Plan" P8 wires
+            // the engine integration; until then this branch is unreachable
+            // through the unified engine dispatch path.
+            #[cfg(feature = "experimental-turboquant")]
+            QuantizationType::TurboQuant => {
+                anyhow::bail!(
+                    "TurboQuant is not yet wired into UnifiedQuantizationEngine \
+                     (pending P8 per TURBOQUANT_LLD_2026_05_30)",
+                )
+            }
         };
 
         Ok(UnifiedQuantizationLevel { level_type })
@@ -449,6 +461,17 @@ impl UnifiedQuantizationEngine {
                 // Custom quantization allows user-defined compression schemes
                 // We'll implement a flexible approach that supports various custom methods
                 self.quantize_custom(vector, c)
+            }
+
+            // TurboQuant uses its own encode pipeline in
+            // `proximadb_vector::quantization::turboquant::encode::encode_batch`.
+            // Engine integration is P8 per TURBOQUANT_LLD_2026_05_30.
+            #[cfg(feature = "experimental-turboquant")]
+            Some(QuantizationLevel::TurboQuant(_)) => {
+                anyhow::bail!(
+                    "TurboQuant quantize() not yet wired through UnifiedQuantizationEngine \
+                     (pending P8 per TURBOQUANT_LLD_2026_05_30)",
+                )
             }
         }
     }
@@ -1753,6 +1776,20 @@ impl UnifiedQuantizationEngine {
                 Some(QuantizationLevel::Custom(_))
             )
         );
+        // TurboQuant: same-type pair. Match arm is feature-gated so the
+        // default build sees the original pattern unchanged.
+        #[cfg(feature = "experimental-turboquant")]
+        let same_type = same_type
+            || matches!(
+                (
+                    &query.quantization_level.level_type,
+                    &data.quantization_level.level_type
+                ),
+                (
+                    Some(QuantizationLevel::TurboQuant(_)),
+                    Some(QuantizationLevel::TurboQuant(_))
+                )
+            );
 
         if !same_type {
             debug!("⚠️ Quantization level mismatch");
@@ -1790,6 +1827,12 @@ impl UnifiedQuantizationEngine {
                 }
             }
             Some(QuantizationLevel::Custom(_)) => f32::INFINITY,
+            // TurboQuant distance must go through `turboquant::kernel::search`
+            // (see P4); the legacy quantize-then-distance pipeline above
+            // doesn't know how to score TurboQuant codes. Surface as
+            // unsupported until P8 routes it.
+            #[cfg(feature = "experimental-turboquant")]
+            Some(QuantizationLevel::TurboQuant(_)) => f32::INFINITY,
         }
     }
 
@@ -1841,6 +1884,15 @@ impl UnifiedQuantizationEngine {
                 // Custom dequantization using cached parameters
                 self.dequantize_custom(&quantized_vector.data, c)
             }
+            // TurboQuant codes are not dequantizable through the legacy
+            // path — they live in the `proximadb_vector::quantization::turboquant`
+            // module's own scoring kernel. Surface as unsupported here;
+            // P8 wires the proper dispatch.
+            #[cfg(feature = "experimental-turboquant")]
+            Some(QuantizationLevel::TurboQuant(_)) => anyhow::bail!(
+                "TurboQuant codes cannot be dequantized through UnifiedQuantizationEngine \
+                 (pending P8 per TURBOQUANT_LLD_2026_05_30)",
+            ),
         }
     }
 }

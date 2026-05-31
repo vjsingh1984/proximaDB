@@ -2323,6 +2323,16 @@ impl ParquetFlusher {
                         );
                     }
                 }
+                // TurboQuant codes are not stored through the VIPER columnar
+                // pipeline below — they have their own `.tq` wire format
+                // (LLD §3). Skip here; P8 wires the durable storage path.
+                #[cfg(feature = "experimental-turboquant")]
+                Some(crate::compute::quantization::types::QuantizationLevel::TurboQuant(_)) => {
+                    debug!(
+                        "TurboQuant quantization level encountered in VIPER pipeline; \
+                         skipping (storage routes through .tq files per TURBOQUANT_LLD §3)",
+                    );
+                }
             }
         }
 
@@ -2341,6 +2351,8 @@ impl ParquetFlusher {
                 Some(QuantizationLevel::Pq(pq)) => (pq.bits_per_code as u8, true),
                 Some(QuantizationLevel::Custom(c)) => (c.bits_per_element as u8, false),
                 None | Some(QuantizationLevel::None(_)) => (32, false), // Default to FP32
+                #[cfg(feature = "experimental-turboquant")]
+                Some(QuantizationLevel::TurboQuant(tq)) => (tq.bit_width, false),
             };
             bits_per_value.push(bits);
 

@@ -185,6 +185,12 @@ pub mod conversion {
                     StorageQuantizationFormat::ProductFormat(ProductQuantizationBits::PQ8)
                 }
                 QuantizationType::Binary => StorageQuantizationFormat::BinaryFormat,
+                // TurboQuant has no analogue in the legacy
+                // StorageQuantizationFormat enum. Map to the binary format
+                // sentinel here; real routing lives in
+                // `proximadb_vector::quantization::turboquant` (P8).
+                #[cfg(feature = "experimental-turboquant")]
+                QuantizationType::TurboQuant => StorageQuantizationFormat::BinaryFormat,
             }
         }
     }

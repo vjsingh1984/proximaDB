@@ -393,6 +393,16 @@ impl ProgressiveSearchExecutor {
                 self.score_full_precision(&mut candidates, query_vector, ctx.distance_metric())
                     .await?;
             }
+            // TurboQuant scoring routes through `proximadb_vector::quantization::
+            // turboquant::kernel::search`, not the progressive-stage scorers
+            // below. Engine integration is P8 per TURBOQUANT_LLD_2026_05_30.
+            #[cfg(feature = "experimental-turboquant")]
+            QuantizationType::TurboQuant => {
+                anyhow::bail!(
+                    "TurboQuant stage is not wired into progressive search \
+                     (pending P8 per TURBOQUANT_LLD_2026_05_30)",
+                )
+            }
         }
 
         // Sort by score (ascending for distance, descending for similarity)
@@ -763,6 +773,12 @@ impl ProgressiveSearchExecutor {
             QuantizationType::Scalar => SearchStage::Int8Ranking,
             QuantizationType::Product => SearchStage::PqRanking,
             QuantizationType::None => SearchStage::FullPrecision,
+            // TurboQuant is not part of the progressive-search stage
+            // sequence; it has its own scoring kernel. Map to the
+            // FullPrecision sentinel so any caller that asks for "the
+            // stage" gets a sane fallback. Real dispatch lands in P8.
+            #[cfg(feature = "experimental-turboquant")]
+            QuantizationType::TurboQuant => SearchStage::FullPrecision,
         }
     }
 

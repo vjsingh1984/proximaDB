@@ -659,6 +659,7 @@ impl ProgressiveRefinementPipeline {
                 values: int8_data,
                 scale: 1.0,
                 zero_point: 0,
+                length_renorm: None,
             }),
             pq: None,
         })
@@ -683,6 +684,7 @@ impl ProgressiveRefinementPipeline {
                 codes,
                 codebook: vec![vec![0.0; 8]; segments], // Placeholder codebook
                 codebook_hash: 0,                       // Placeholder hash
+                length_renorm: None,
             }),
         })
     }

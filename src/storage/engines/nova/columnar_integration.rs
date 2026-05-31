@@ -880,6 +880,7 @@ impl NovaUnifiedEngine {
                     values: vec![100; 768],
                     scale: 0.01,
                     zero_point: 0,
+                    length_renorm: None,
                 }),
                 pq: None,
             };
