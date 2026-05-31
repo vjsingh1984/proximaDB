@@ -304,11 +304,21 @@ grep -A1 "AXIS vs force_exact" /tmp/bench_output.txt | tail -1
   if the collection is heavily queried. The new graph is published
   via atomic swap at the end — readers see the old graph until then.
 
-* **Preliminary m=48 sweep finding** (in flight, cell-1 of 10):
-  ef=400 at m=48 delivered recall=0.995 — significantly higher
-  than the advisor's prediction of 0.975 at ef=568. The advisor
-  appears to **over-provision** at m=48; expect a follow-up
-  recalibration once the full sweep lands.
+* **m=48 sweep finding** (HNSW path complete, HMGI cancelled — see
+  next caveat): ef=400 at m=48 delivered recall=0.995, ef=600
+  delivered 1.000 (saturated). The advisor's `r=0.99 → ef=905`
+  recommendation over-provisions by ~50% at m=48; `r=0.995 →
+  ef=1214` over-provisions ~2×. A follow-up recalibration adds
+  m-aware scaling once the m=40 sweep lands the curve's middle
+  point.
+
+* **HMGI = HNSW on single-partition collections**: across m=16,
+  m=32, and m=48 sweeps the HMGI recall numbers tracked the
+  matching HNSW cells to 4 decimal places. This is expected —
+  HMGI is a partition wrapper around HNSW, and the bench's
+  default is a single partition. Calibration sweeps for the
+  advisor only need to run HNSW; HMGI cells are pure compute
+  waste in that context.
 
 * `target_vector_count:` defaults to 100K. A collection projected to
   grow to 10M without setting the tag will get under-sized initial
