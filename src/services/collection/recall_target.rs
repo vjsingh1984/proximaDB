@@ -82,12 +82,20 @@ pub fn parse_recall_target(config: &CollectionConfig) -> Option<f32> {
 /// to — empty if nothing changed (no HNSW indexes, all pinned, or
 /// no recall_target set).
 ///
-/// Mutates `config.index_configs[*].hnsw_config` in place.
+/// **Auto-add behavior**: if `config.index_configs` contains *zero*
+/// HNSW entries and there's at least one filterable column or no
+/// indexes at all, the function appends a fresh
+/// `IndexConfig { algorithm: HNSW, … }` with name
+/// `[`AUTO_HNSW_INDEX_NAME`]` so the caller's `recall_target:` tag
+/// is honored end-to-end (otherwise the advisor would have nothing
+/// to size and the operator would silently get the legacy default
+/// HNSW parameters).
+///
+/// Mutates `config.index_configs` in place.
 pub fn apply_advisor_to_hnsw_indexes(
     config: &mut CollectionConfig,
     recall_target: f32,
 ) -> Vec<(String, HnswSizingOutput)> {
-    let n = config.dimension as u64; // placeholder until we have steady-state estimate
     let metric = convert_distance_metric(config.distance_metric);
     let dimension = config.dimension;
 
@@ -97,6 +105,25 @@ pub fn apply_advisor_to_hnsw_indexes(
     // reasonable cold-start estimate; the AdaptiveIndexEngine retunes
     // as the real corpus grows past tier boundaries.
     let target_n = parse_target_vector_count(config).unwrap_or(100_000);
+
+    // Auto-add a stub HNSW IndexConfig when the caller asked for a
+    // recall_target but didn't attach an HNSW index. The advisor
+    // loop below then fills in m / efc / ef_search on this stub.
+    // Skips when the caller already attached a non-HNSW index they
+    // want to use instead (IVF, etc.) — that's an explicit choice.
+    let has_any_hnsw = config
+        .index_configs
+        .iter()
+        .any(|idx| idx.algorithm == IndexingAlgorithm::Hnsw as i32);
+    if !has_any_hnsw && config.index_configs.is_empty() && dimension > 0 {
+        config
+            .index_configs
+            .push(crate::proto::proximadb_v1::IndexConfig {
+                index_name: AUTO_HNSW_INDEX_NAME.to_string(),
+                algorithm: IndexingAlgorithm::Hnsw as i32,
+                ..Default::default()
+            });
+    }
 
     let mut applied: Vec<(String, HnswSizingOutput)> = Vec::new();
 
@@ -132,10 +159,14 @@ pub fn apply_advisor_to_hnsw_indexes(
         applied.push((idx.index_name.clone(), out));
     }
 
-    let _unused = n; // silence — we used target_n instead
-
     applied
 }
+
+/// Index name used when `apply_advisor_to_hnsw_indexes` synthesizes
+/// a stub HNSW IndexConfig from a bare `recall_target:` tag.
+/// Exposed so operator tooling can detect "this index was auto-
+/// created from a tag, not explicitly requested by the caller".
+pub const AUTO_HNSW_INDEX_NAME: &str = "auto_hnsw_recall_target";
 
 /// Optional steady-state size hint via `target_vector_count:` tag.
 /// Operators use it to ask "size for the corpus I expect to have"
@@ -251,6 +282,52 @@ mod tests {
         let h = c.index_configs[0].hnsw_config.as_ref().unwrap();
         assert_eq!(h.m, Some(64));
         assert!(h.ef_search.is_none()); // wasn't pinned, but we don't touch the block
+    }
+
+    #[test]
+    fn apply_advisor_auto_adds_hnsw_when_none_present() {
+        // A recall_target tag with no index_configs at all should
+        // get an auto-synthesized HNSW IndexConfig sized by the
+        // advisor. Otherwise the recall_target would be a silent
+        // no-op.
+        let mut c = cfg("c_auto", 128, &["recall_target:0.95"]);
+        assert!(c.index_configs.is_empty());
+
+        let applied = apply_advisor_to_hnsw_indexes(&mut c, 0.95);
+        assert_eq!(applied.len(), 1, "advisor must stamp the auto-added index");
+        assert_eq!(c.index_configs.len(), 1);
+        assert_eq!(c.index_configs[0].index_name, AUTO_HNSW_INDEX_NAME);
+        assert_eq!(
+            c.index_configs[0].algorithm,
+            IndexingAlgorithm::Hnsw as i32
+        );
+
+        let h = c.index_configs[0].hnsw_config.as_ref().unwrap();
+        assert!(h.m.is_some());
+        assert!(h.ef_construction.is_some());
+        assert!(h.ef_search.is_some());
+    }
+
+    #[test]
+    fn apply_advisor_does_not_auto_add_when_caller_provided_ivf() {
+        // The caller chose IVF explicitly — don't second-guess by
+        // also adding an HNSW. (recall_target on an IVF-only
+        // collection is a no-op today; that's the caller's
+        // signal that they accept it.)
+        let mut c = cfg("c_ivf", 128, &["recall_target:0.95"]);
+        c.index_configs.push(crate::proto::proximadb_v1::IndexConfig {
+            index_name: "explicit_ivf".to_string(),
+            algorithm: IndexingAlgorithm::Ivf as i32,
+            ..Default::default()
+        });
+
+        let applied = apply_advisor_to_hnsw_indexes(&mut c, 0.95);
+        assert_eq!(applied.len(), 0, "no HNSW to stamp");
+        assert_eq!(c.index_configs.len(), 1, "no auto-HNSW added");
+        assert_eq!(
+            c.index_configs[0].algorithm,
+            IndexingAlgorithm::Ivf as i32
+        );
     }
 
     #[test]

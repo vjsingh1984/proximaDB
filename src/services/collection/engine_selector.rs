@@ -36,12 +36,17 @@
 //!    caller wins. The heuristic only fires when the engine is unset.
 //! 2. If `auto_index_selection == false`, defer to the SST default and
 //!    leave engine choice to the caller (operator opted out of auto-routing).
-//! 3. If the collection has `index_configs` populated OR
+//! 3. If a `recall_target:<float>` tag is set on the collection, choose
+//!    **SST**. The recall-target adaptive stack (advisor, drift
+//!    detector, hot-swap, /recluster) lives exclusively on SST+HNSW;
+//!    HELIX's Hilbert-sorted block pruning has no ef/m tuning surface,
+//!    so a recall_target on HELIX would be a no-op promise.
+//! 4. If the collection has `index_configs` populated OR
 //!    `quantization.enabled = true`, choose **SST**. Indexes + progressive
 //!    quantization compensate for SST's block-pruning limitation.
-//! 4. Otherwise (vector collection with no index and no quantization)
-//!    choose **HELIX**. Its Hilbert-sorted blocks deliver ANN-quality
-//!    recall without an external index.
+//! 5. Otherwise (vector collection with no index and no quantization
+//!    and no recall_target) choose **HELIX**. Its Hilbert-sorted
+//!    blocks deliver ANN-quality recall without an external index.
 //!
 //! # Observability
 //!
@@ -78,6 +83,7 @@ pub mod reasons {
     pub const HAS_INDEX: &str = "has_index_config_route_sst";
     pub const HAS_QUANTIZATION: &str = "has_quantization_route_sst";
     pub const HAS_BOTH: &str = "has_index_and_quantization_route_sst";
+    pub const RECALL_TARGET_SET: &str = "recall_target_route_sst";
     pub const VECTOR_NO_INDEX: &str = "vector_no_index_route_helix";
     pub const NON_VECTOR_DEFAULT_SST: &str = "non_vector_default_sst";
 }
@@ -107,7 +113,18 @@ pub fn infer_storage_engine(config: &CollectionConfig) -> (StorageEngine, &'stat
         return (StorageEngine::Sst, reasons::AUTO_SELECT_DISABLED);
     }
 
-    // (3) Vector collections that opted into an index or quantization
+    // (3a) Vector collections that committed to a recall_target tag
+    // are opting into the adaptive HNSW path — that path lives
+    // exclusively on SST (HELIX's Hilbert-sorted block pruning has
+    // no ef/m tuning surface). Route them to SST even when the
+    // caller didn't explicitly attach an HNSW IndexConfig — the
+    // recall_target wiring downstream synthesizes one from the
+    // advisor's recommendation.
+    if super::recall_target::parse_recall_target(config).is_some() {
+        return (StorageEngine::Sst, reasons::RECALL_TARGET_SET);
+    }
+
+    // (3b) Vector collections that opted into an index or quantization
     // get SST. The index/quantization handles ANN; SST handles
     // oid-keyed point lookups efficiently via bloom + binary search.
     let has_index = !config.index_configs.is_empty();
@@ -217,6 +234,32 @@ mod tests {
         let (engine, reason) = infer_storage_engine(&cfg);
         assert_eq!(engine, StorageEngine::Helix);
         assert_eq!(reason, reasons::VECTOR_NO_INDEX);
+    }
+
+    #[test]
+    fn recall_target_tag_routes_to_sst_without_explicit_index() {
+        // A recall_target tag alone, no index_configs, no
+        // quantization, vector collection: the previous default
+        // would have been HELIX (vector-no-index rule), but the
+        // recall-target adaptive stack only works on SST+HNSW,
+        // so the override fires.
+        let mut cfg = vec_config("t10");
+        cfg.tags = vec!["recall_target:0.95".to_string()];
+        let (engine, reason) = infer_storage_engine(&cfg);
+        assert_eq!(engine, StorageEngine::Sst);
+        assert_eq!(reason, reasons::RECALL_TARGET_SET);
+    }
+
+    #[test]
+    fn recall_target_tag_still_loses_to_explicit_engine() {
+        // The explicit-override rule from step (1) takes precedence
+        // — operators who pin storage_engine know what they want.
+        let mut cfg = vec_config("t11");
+        cfg.tags = vec!["recall_target:0.95".to_string()];
+        cfg.storage_engine = Some(StorageEngine::Helix as i32);
+        let (engine, reason) = infer_storage_engine(&cfg);
+        assert_eq!(engine, StorageEngine::Helix);
+        assert_eq!(reason, reasons::EXPLICIT_OVERRIDE);
     }
 
     #[test]
