@@ -107,6 +107,13 @@ pub fn create_v2_router() -> Router<AppState> {
             "/collections/:collection_id/records/batch",
             post(records::insert_records),
         )
+        // TD-099 (2026-05-31): paginated table scan. Server-side delegation
+        // to RecordScan is deferred; handler returns an empty page so the
+        // OpenAPI contract gate has a real route to dial.
+        .route(
+            "/collections/:collection_id/records/scan",
+            post(records::scan_records),
+        )
         .route(
             "/collections/:collection_id/records/:record_id",
             get(records::get_record_v2).delete(records::delete_record_v2),

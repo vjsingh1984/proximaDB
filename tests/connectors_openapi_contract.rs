@@ -29,7 +29,10 @@ use proximadb::connectors::duckdb::{
     DuckDBConnectorConfig, DuckDBInsert, DuckDBTableScan, DuckDBVectorSearch,
     DuckDBVectorSearchParams,
 };
-use proximadb::connectors::hadoop::{HadoopShimConfig, ProximaRecordWriter};
+use proximadb::connectors::hadoop::{
+    HadoopInputSplit, HadoopShimConfig, ProximaRecordReader, ProximaRecordWriter,
+};
+use proximadb::storage::formats::{SplitStatistics, SplitType};
 use proximadb_distance_types::DistanceMetric;
 use std::collections::HashMap;
 
@@ -59,7 +62,8 @@ async fn duckdb_bind_fetches_collection_schema_v2() {
 
     let mock = server
         .mock_async(|when, then| {
-            when.method(Method::GET).path("/api/v2/collections/col1/schema");
+            when.method(Method::GET)
+                .path("/api/v2/collections/col1/schema");
             then.status(200)
                 .header("content-type", "application/json")
                 // Minimal SchemaDefinition shape: columns list + name.
@@ -166,7 +170,11 @@ async fn duckdb_insert_posts_v2_records_batch() {
     // synthesizes a `records` list of that length; the contract gate
     // only validates that `records` is present.
     let ids: ArrayRef = Arc::new(StringArray::from(vec!["r1", "r2"]));
-    let schema = Arc::new(ArrowSchema::new(vec![Field::new("id", DataType::Utf8, false)]));
+    let schema = Arc::new(ArrowSchema::new(vec![Field::new(
+        "id",
+        DataType::Utf8,
+        false,
+    )]));
     let batch = RecordBatch::try_new(schema, vec![ids]).expect("batch builds");
 
     let result = svc.insert(&batch).await;
@@ -214,10 +222,79 @@ async fn hadoop_flush_batch_posts_v2_records_batch() {
     // via the public force-flush method so the test isn't tied to the
     // batch-size threshold.
     let mut row = HashMap::new();
-    row.insert("id".to_string(), proximadb::connectors::hadoop::HadoopWritable::Text("r1".to_string()));
+    row.insert(
+        "id".to_string(),
+        proximadb::connectors::hadoop::HadoopWritable::Text("r1".to_string()),
+    );
     writer.buffer_row(row);
     let result = writer.flush_now().await;
     assert!(result.is_ok(), "flush_now() must succeed: {result:?}");
+
+    mock.assert_async().await;
+}
+
+#[tokio::test]
+async fn hadoop_fetch_next_page_posts_v2_records_scan() {
+    let spec = load_spec();
+    let op = operation(
+        &spec,
+        "/api/v2/collections/{collection_id}/records/scan",
+        "post",
+    );
+    assert_eq!(operation_id(op), "scanRecords");
+
+    // Spec required-keys: empty (all body fields optional). We assert
+    // the op exists, has a requestBody, and the SDK can POST with a
+    // bare-cursor body shape.
+    let body_schema = request_body_schema(&spec, op)
+        .expect("scanRecords must declare requestBody");
+    let required = collect_required_fields(&spec, body_schema);
+    assert!(
+        required.is_empty(),
+        "scanRecords body is fully optional; got required={required:?}"
+    );
+
+    let server = MockServer::start_async().await;
+    let mock = server
+        .mock_async(|when, then| {
+            when.method(Method::POST)
+                .path("/api/v2/collections/hadoop_col/records/scan")
+                .header("content-type", "application/json");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(r#"{"records":[],"next_cursor":null,"scanned_count":0}"#);
+        })
+        .await;
+
+    let config = HadoopShimConfig {
+        host: server.host(),
+        port: server.port(),
+        collection: "hadoop_col".to_string(),
+        ..HadoopShimConfig::default()
+    };
+    // Minimal HadoopInputSplit — unused by the scan path but required
+    // by the reader's constructor signature.
+    let split = HadoopInputSplit {
+        split_id: "s0".to_string(),
+        file_split: proximadb::storage::formats::FileSplit {
+            split_id: "s0".to_string(),
+            file_path: String::new(),
+            offset: 0,
+            length: 0,
+            split_type: SplitType::ByteRange {
+                estimated_records: 0,
+            },
+            statistics: SplitStatistics::default(),
+            locality: proximadb::storage::formats::SplitLocality::default(),
+        },
+        length: 0,
+        locations: vec!["localhost".to_string()],
+    };
+    let mut reader = ProximaRecordReader::new(split, config);
+    let result = reader.fetch_next_page().await;
+    assert!(result.is_ok(), "fetch_next_page() must succeed: {result:?}");
+    let records = result.unwrap();
+    assert!(records.is_empty(), "stub returns empty page");
 
     mock.assert_async().await;
 }

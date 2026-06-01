@@ -208,7 +208,6 @@ pub struct ProximaRecordReader {
     #[allow(dead_code)]
     split: HadoopInputSplit,
     /// Configuration
-    #[allow(dead_code)]
     config: HadoopShimConfig,
     /// Current batch
     #[allow(dead_code)]
@@ -217,16 +216,24 @@ pub struct ProximaRecordReader {
     #[allow(dead_code)]
     current_row: usize,
     /// Total rows read
-    #[allow(dead_code)]
     total_rows_read: u64,
     /// Whether reader is exhausted
-    #[allow(dead_code)]
     exhausted: bool,
+    /// Continuation cursor from the most recent scan response. `None`
+    /// before the first fetch; `Some` between pages; cleared (and
+    /// `exhausted` flipped) when the server returns `next_cursor: null`.
+    cursor: Option<String>,
+    /// Shared HTTP client for the v2 scan endpoint.
+    http: reqwest::Client,
 }
 
 impl ProximaRecordReader {
     /// Create new record reader
     pub fn new(split: HadoopInputSplit, config: HadoopShimConfig) -> Self {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             split,
             config,
@@ -234,6 +241,8 @@ impl ProximaRecordReader {
             current_row: 0,
             total_rows_read: 0,
             exhausted: false,
+            cursor: None,
+            http,
         }
     }
 
@@ -243,15 +252,73 @@ impl ProximaRecordReader {
         Ok(())
     }
 
+    /// Fetch the next page from `POST /api/v2/collections/{id}/records/scan`
+    /// (operationId `scanRecords`). Returns the page's `records` array
+    /// and updates the reader's continuation cursor + exhausted flag.
+    ///
+    /// Async because Hadoop's `next_record() -> bool` is sync; callers
+    /// drive this method from an async wrapper (or via
+    /// `tokio::runtime::Handle::block_on` in the Hadoop ABI).
+    pub async fn fetch_next_page(&mut self) -> Result<Vec<serde_json::Value>, HadoopError> {
+        if self.exhausted {
+            return Ok(vec![]);
+        }
+        let url = format!(
+            "http://{}:{}/api/v2/collections/{}/records/scan",
+            self.config.host, self.config.port, self.config.collection
+        );
+        let body = serde_json::json!({
+            "cursor": self.cursor,
+            "limit": 1000,
+        });
+        let resp = self
+            .http
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| HadoopError {
+                message: format!("POST {url}: {e}"),
+                code: HadoopErrorCode::Connection,
+            })?;
+        if !resp.status().is_success() {
+            return Err(HadoopError {
+                message: format!("POST {url} returned {}", resp.status()),
+                code: HadoopErrorCode::IO,
+            });
+        }
+        let parsed: serde_json::Value = resp.json().await.map_err(|e| HadoopError {
+            message: format!("decode scan body: {e}"),
+            code: HadoopErrorCode::IO,
+        })?;
+        let records = parsed
+            .get("records")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        self.cursor = parsed
+            .get("next_cursor")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        if self.cursor.is_none() {
+            self.exhausted = true;
+        }
+        self.total_rows_read = self.total_rows_read.saturating_add(records.len() as u64);
+        Ok(records)
+    }
+
     /// Read next key-value pair
     ///
-    /// Returns false when no more records.
+    /// Returns false when no more records. Stub today (sync ABI for
+    /// the Hadoop InputFormat contract): forwarding to
+    /// [`Self::fetch_next_page`] requires an async runtime; the
+    /// async-bridge wiring lands when the Hadoop OutputCommitter
+    /// protocol is implemented end-to-end. The contract gate exercises
+    /// `fetch_next_page` directly.
     pub fn next_record(&mut self) -> bool {
         if self.exhausted {
             return false;
         }
-
-        // Read next: fetch batch via Arrow Flight or REST API
         self.exhausted = true;
         false
     }

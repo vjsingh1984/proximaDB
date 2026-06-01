@@ -1972,6 +1972,80 @@ pub async fn delete_record_v2(
     }
 }
 
+// ── TD-099: paginated records scan ──────────────────────────────────
+//
+// Cursor-paginated table-scan over a collection. Spec'd at
+// `POST /api/v2/collections/{collection_id}/records/scan`
+// (operationId `scanRecords`). The Hadoop connector's RecordReader and
+// Spark's planInputPartitions use this to drain a collection without
+// the similarity bias of `searchRecords`.
+//
+// Storage-engine delegation (the actual scan over RecordScan) is
+// deferred — see TD-099 in docs/10-quality/TECHNICAL_DEBT.adoc. The
+// stub below returns an empty page so the OpenAPI contract gate has a
+// real route to dial; SDKs already speak the wire shape.
+
+/// Body of `POST /records/scan`. Mirrors the OpenAPI `ScanRecordsRequest`
+/// schema; all fields optional so an empty `{}` returns the first page.
+#[derive(Debug, Deserialize, Default)]
+pub struct ScanRecordsRequest {
+    /// Opaque continuation token returned as `next_cursor` from a
+    /// prior page. Omit / null to start from the beginning.
+    #[serde(default)]
+    pub cursor: Option<String>,
+    /// Max records to return in this page. Server enforces upper bound.
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Metadata filter. Format mirrors `searchRecords.filters`; the
+    /// stub accepts the field but does not yet filter.
+    #[serde(default)]
+    pub filter: Option<serde_json::Value>,
+    #[serde(default)]
+    pub include_vector: Option<bool>,
+    #[serde(default)]
+    pub include_text: Option<bool>,
+}
+
+/// Response shape for `scanRecords`. Empty `records` + null
+/// `next_cursor` signals end-of-scan.
+#[derive(Debug, Serialize)]
+pub struct ScanRecordsResponse {
+    pub records: Vec<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scanned_count: Option<u64>,
+}
+
+/// POST /api/v2/collections/{collection_id}/records/scan
+///
+/// Returns the next page of records. Stub today (TD-099): empty page,
+/// no cursor — i.e. "scan complete on first call". The spec contract
+/// is honored: SDKs that dial this route get a well-formed response
+/// shape. Storage delegation to `RecordScan` is the follow-up.
+pub async fn scan_records(
+    Path(collection_id): Path<String>,
+    State(_state): State<AppState>,
+    Extension(_tenant): Extension<TenantContext>,
+    Json(_request): Json<ScanRecordsRequest>,
+) -> ApiResult<Json<ScanRecordsResponse>> {
+    debug!("V2 API: scan_records for collection '{}'", collection_id);
+
+    if collection_id.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
+    }
+
+    // Stub: empty page, scan complete. Replace with `RecordScan` delegation
+    // when the follow-up half of TD-099 lands.
+    Ok(Json(ScanRecordsResponse {
+        records: vec![],
+        next_cursor: None,
+        scanned_count: Some(0),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

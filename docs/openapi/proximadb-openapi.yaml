@@ -175,6 +175,37 @@ paths:
                 $ref: "#/components/schemas/InsertRecordsResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /api/v2/collections/{collection_id}/records/scan:
+    parameters:
+      - $ref: "#/components/parameters/CollectionId"
+    post:
+      tags: [Records]
+      operationId: scanRecords
+      summary: Paginated scan of records in a collection.
+      description: |
+        Cursor-paginated table-scan over a collection. Unlike `searchRecords`
+        (similarity search with `top_k`), this endpoint streams records in
+        a stable order so Hadoop/Spark InputFormats and bulk export pipelines
+        can drain a collection without similarity bias. Initial scope (TD-099,
+        2026-05-31): handler stub returns an empty page; full storage-engine
+        delegation lands in a follow-up.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanRecordsRequest"
+      responses:
+        "200":
+          description: Page of records + optional next cursor.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanRecordsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /api/v2/collections/{collection_id}/records/{record_id}:
     parameters:
       - $ref: "#/components/parameters/CollectionId"
@@ -900,6 +931,58 @@ components:
           type: array
           items:
             type: string
+    ScanRecordsRequest:
+      type: object
+      description: |
+        Cursor-paginated scan body. All fields are optional; an empty
+        body `{}` returns the first page with the server-default limit.
+      properties:
+        cursor:
+          type: string
+          nullable: true
+          description: |
+            Opaque continuation token returned as `next_cursor` from a
+            prior page. Omit / null to start from the beginning.
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          default: 1000
+          description: Max records to return in this page.
+        filter:
+          type: array
+          nullable: true
+          description: |
+            Optional metadata filter — same shape as `searchRecords.filters`.
+            Server-side filter pushdown when supported by the storage
+            engine; client-side filtering as a fallback. May be omitted
+            for a pure table scan.
+          items:
+            $ref: "#/components/schemas/TypedFilter"
+        include_vector:
+          type: boolean
+          default: false
+        include_text:
+          type: boolean
+          default: false
+    ScanRecordsResponse:
+      type: object
+      required: [records]
+      description: |
+        One page of records plus an optional `next_cursor`. When
+        `next_cursor` is null/absent the scan is complete.
+      properties:
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecordResponse"
+        next_cursor:
+          type: string
+          nullable: true
+        scanned_count:
+          type: integer
+          nullable: true
+          description: Records examined server-side (post-filter).
     InsertError:
       type: object
       required: [index, error]
