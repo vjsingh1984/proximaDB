@@ -89,8 +89,70 @@ pub struct ProximaFlightService {
     /// Absent means the action returns `Unimplemented` (deployments that
     /// didn't opt into the ranking framework don't pay for it).
     rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+    /// Slice 6.2: primary-pod write router. Same shape as the gRPC v2
+    /// service's `primary_pod_gate` — when present, `do_put` consults
+    /// the registry before any storage work and rejects misrouted
+    /// writes with `failed_precondition` + trailing metadata. Covers
+    /// Insert/Upsert/Delete (every mutation, not just Insert) because
+    /// any of them landing on the wrong pod's memtable would be
+    /// invisible to the readers on the primary pod.
+    primary_pod_gate: Option<FlightPrimaryPodGate>,
     _codec: ArrowProtoCodec,
     file_export_handler: ArrowFileExportHandler,
+}
+
+/// Slice 6.2 gate-input bundle. Distinct from the gRPC v2 service's
+/// `PrimaryPodGate` only because module privacy keeps each surface
+/// self-contained; the wire contract is identical.
+#[derive(Clone)]
+struct FlightPrimaryPodGate {
+    registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+    self_pod_id: String,
+}
+
+/// Slice 6.2 testable gate check. Same logic as the gRPC v2
+/// `check_primary_pod_gate` — free function so unit tests can call
+/// it without constructing the full `ProximaFlightService`.
+fn check_flight_primary_pod_gate(
+    gate: &Option<FlightPrimaryPodGate>,
+    tenant_id: &str,
+    collection_id: &str,
+) -> Result<(), TonicStatus> {
+    let Some(gate) = gate else {
+        return Ok(());
+    };
+    match crate::cluster::primary_pod_registry::consult_for_write(
+        &gate.registry,
+        &gate.self_pod_id,
+        tenant_id,
+        collection_id,
+    ) {
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Allow => {
+            if gate.registry.is_assigned(tenant_id, collection_id) {
+                crate::metrics::primary_pod_metrics::record_allowed_bound(tenant_id);
+            } else {
+                crate::metrics::primary_pod_metrics::record_allowed_unbounded(tenant_id);
+            }
+            Ok(())
+        }
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Misrouted { target_pod } => {
+            crate::metrics::primary_pod_metrics::record_misrouted(tenant_id);
+            tracing::warn!(
+                target = "proximadb.primary_pod.misroute",
+                self_pod = %gate.self_pod_id,
+                target_pod = %target_pod,
+                tenant_id = %tenant_id,
+                collection_id = %collection_id,
+                "Arrow Flight do_put misrouted — client should retry against the primary pod"
+            );
+            let api_err = crate::errors::ApiError::Misdirected {
+                target_pod,
+                tenant_id: tenant_id.to_string(),
+                collection_id: collection_id.to_string(),
+            };
+            Err(api_err.into())
+        }
+    }
 }
 
 impl ProximaFlightService {
@@ -113,9 +175,26 @@ impl ProximaFlightService {
             security_coordinator: None,
             catalog_manager: None,
             rank_services: None,
+            primary_pod_gate: None,
             _codec: ArrowProtoCodec,
             file_export_handler: ArrowFileExportHandler::new(storage_locations),
         }
+    }
+
+    /// Slice 6.2: attach the primary-pod write router. Once set,
+    /// `do_put` rejects misrouted Insert/Upsert/Delete batches with
+    /// `failed_precondition` + `x-primary-pod` trailing metadata
+    /// before consuming a single record from the stream.
+    pub fn with_primary_pod_gate(
+        mut self,
+        registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+        self_pod_id: String,
+    ) -> Self {
+        self.primary_pod_gate = Some(FlightPrimaryPodGate {
+            registry,
+            self_pod_id,
+        });
+        self
     }
 
     /// R-7c.4b: attach the shared RankServices singleton so the
@@ -1216,6 +1295,18 @@ impl FlightService for ProximaFlightService {
             &write_target,
             operation,
             0,
+        )?;
+
+        // Slice 6.2: primary-pod write-router gate. Runs AFTER auth +
+        // capability validation (so a malformed/unauthorized request
+        // still gets the right error) and BEFORE the streaming write
+        // loop (so a misroute never touches the WAL on this pod).
+        // Covers Insert/Upsert/Delete — all mutations participate;
+        // pure reads use do_get and don't pass through here.
+        check_flight_primary_pod_gate(
+            &self.primary_pod_gate,
+            auth_context.tenant_id.as_deref().unwrap_or(""),
+            &write_target,
         )?;
 
         let mut batch_stream = Self::record_batch_stream(first_msg, stream);
@@ -3264,5 +3355,91 @@ mod tests {
             ProximaFlightService::extract_record_text(&ProximaRecord::default()),
             None
         );
+    }
+
+    // ── Slice 6.2: primary-pod gate ─────────────────────────────────
+
+    use crate::cluster::primary_pod_registry::{AssignmentReason, PrimaryPodRegistry};
+
+    fn make_gate(
+        registry: Arc<PrimaryPodRegistry>,
+        self_pod_id: &str,
+    ) -> Option<FlightPrimaryPodGate> {
+        Some(FlightPrimaryPodGate {
+            registry,
+            self_pod_id: self_pod_id.to_string(),
+        })
+    }
+
+    #[test]
+    fn flight_gate_unconfigured_allows_writes() {
+        // Backwards-compat: deployments that don't set
+        // with_primary_pod_gate (eg. embedded / unit-test
+        // construction) must NOT see any new rejections.
+        assert!(check_flight_primary_pod_gate(&None, "tenant-a", "coll-1").is_ok());
+    }
+
+    #[test]
+    fn flight_gate_allows_when_no_binding_exists() {
+        let registry = Arc::new(PrimaryPodRegistry::new());
+        let g = make_gate(registry, "pod-self");
+        assert!(check_flight_primary_pod_gate(&g, "tenant-a", "coll-1").is_ok());
+    }
+
+    #[test]
+    fn flight_gate_allows_when_binding_matches_self_pod() {
+        let registry = Arc::new(PrimaryPodRegistry::new());
+        registry.assign("tenant-a", "coll-1", "pod-self", AssignmentReason::Create);
+        let g = make_gate(registry, "pod-self");
+        assert!(check_flight_primary_pod_gate(&g, "tenant-a", "coll-1").is_ok());
+    }
+
+    #[test]
+    fn flight_gate_rejects_misrouted_with_failed_precondition_and_metadata() {
+        // Locks the wire contract: same Status code + same trailing
+        // metadata keys as the gRPC v2 path (covered by
+        // record_service tests). A future change that drops one of
+        // these headers breaks both at once — that's the point.
+        let registry = Arc::new(PrimaryPodRegistry::new());
+        registry.assign(
+            "tenant-a",
+            "coll-1",
+            "pod-other",
+            AssignmentReason::Operator,
+        );
+        let g = make_gate(registry, "pod-self");
+        let status = check_flight_primary_pod_gate(&g, "tenant-a", "coll-1")
+            .expect_err("must reject misrouted write");
+
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+
+        let md = status.metadata();
+        assert_eq!(
+            md.get("x-primary-pod").unwrap().to_str().unwrap(),
+            "pod-other"
+        );
+        assert_eq!(md.get("x-tenant-id").unwrap().to_str().unwrap(), "tenant-a");
+        assert_eq!(
+            md.get("x-collection-id").unwrap().to_str().unwrap(),
+            "coll-1"
+        );
+    }
+
+    #[test]
+    fn flight_gate_scopes_per_tenant_collection_pair() {
+        // Binding on (tenant-a, coll-1) must not leak to other pairs.
+        // Same property the gRPC v2 + REST v2 paths enforce.
+        let registry = Arc::new(PrimaryPodRegistry::new());
+        registry.assign(
+            "tenant-a",
+            "coll-1",
+            "pod-other",
+            AssignmentReason::Operator,
+        );
+        let g = make_gate(registry, "pod-self");
+
+        assert!(check_flight_primary_pod_gate(&g, "tenant-a", "coll-2").is_ok());
+        assert!(check_flight_primary_pod_gate(&g, "tenant-b", "coll-1").is_ok());
+        assert!(check_flight_primary_pod_gate(&g, "tenant-a", "coll-1").is_err());
     }
 }
