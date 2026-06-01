@@ -3039,6 +3039,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cold_tier_is_a_small_fraction_of_the_full_index() {
+        // ADR-023 T-F (success criterion #1): the COLD blob — loaded before
+        // serving begins — is a small fraction of the full index. The per-vector
+        // ratio is ~1/32 (1 sign bit vs fp32) asymptotically; at modest scale the
+        // fixed centroid cost lifts it, so we assert a conservative envelope.
+        use crate::index::axis::storage::serialization::IndexSerializer;
+        let _ = proximadb_hardware::hardware_capabilities();
+        let dim = 64;
+        let n = 128usize;
+        let mut cfg = binary_ivf_config(dim, 8);
+        cfg.min_train_size = 8;
+        let mut index = UnifiedIvfIndex::new("c_tf".to_string(), cfg).unwrap();
+        let data: Vec<(String, Vec<f32>)> = (0..n)
+            .map(|i| {
+                let v: Vec<f32> = (0..dim)
+                    .map(|d| (((i * 31 + d * 17) % 13) as f32) - 6.0)
+                    .collect();
+                (format!("v{i}"), v)
+            })
+            .collect();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+
+        let bytes = IndexSerializer::serialize_ivf(&index, "c_tf").await.unwrap();
+        let (_idx, meta) = IndexSerializer::deserialize_ivf(&bytes).await.unwrap();
+        let p = meta.cold_path_profile().unwrap();
+        assert!(p.has_binary_tier);
+        assert!(
+            p.cold_tier_bytes * 4 < p.warm_tier_bytes,
+            "COLD tier {} bytes (served first) must be << WARM {} bytes (deferred fp32)",
+            p.cold_tier_bytes,
+            p.warm_tier_bytes,
+        );
+    }
+
+    #[tokio::test]
     async fn load_ivf_cold_path_auto_selects_policy() {
         // ADR-023 T-E: a binary-tier index loads cold-first (WARM deferred); a
         // non-binary index loads fully (WARM None), since its membership lives
