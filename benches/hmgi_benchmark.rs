@@ -73,6 +73,8 @@ fn modality_query(modality: &str) -> HybridQuery {
         top_k: TOP_K,
         include_expired: false,
         ann_filtering_mode: Default::default(),
+        ann_filtering_policy: None,
+        estimated_selectivity: None,
     }
 }
 
