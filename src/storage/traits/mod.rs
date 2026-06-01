@@ -626,6 +626,29 @@ pub trait UnifiedStorageFormat: Send + Sync {
         }
     }
 
+    // ── Format-vocabulary aliases (engines → formats convergence) ───────────
+    // Canonical `format_*` names delegating to the legacy `engine_*` required
+    // methods, so consumer call sites can read a storage format's identity via
+    // the format vocabulary the catalog already uses. Override only the
+    // `engine_*` methods; these aliases follow. A mechanical `engine_*` rename
+    // is unsafe (the name is shared by unrelated traits/types), so the additive
+    // default mirrors the type-alias pattern. See NAMING_CONVENTIONS.adoc.
+
+    /// Canonical alias for [`Self::engine_name`].
+    fn format_name(&self) -> &'static str {
+        self.engine_name()
+    }
+
+    /// Canonical alias for [`Self::engine_version`].
+    fn format_version(&self) -> &'static str {
+        self.engine_version()
+    }
+
+    /// Canonical alias for [`Self::engine_type`].
+    fn format_type(&self) -> StorageEngineType {
+        self.engine_type()
+    }
+
     /// Core flush operation - engine-specific implementation (required)
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult>;
 

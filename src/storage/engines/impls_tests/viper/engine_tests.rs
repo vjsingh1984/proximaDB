@@ -39,7 +39,7 @@ async fn test_viper_engine_creation() {
     .await
     .expect("Failed to create VIPER storage_engine");
 
-    assert_eq!(engine.engine_name(), "VIPER");
+    assert_eq!(engine.format_name(), "VIPER");
 }
 
 #[tokio::test]
@@ -47,9 +47,9 @@ async fn test_viper_unified_storage_engine_traits() -> Result<()> {
     let (viper_engine, _temp_dir) = create_test_viper_engine().await?;
 
     // Test engine identification
-    assert_eq!(viper_engine.engine_name(), "VIPER");
+    assert_eq!(viper_engine.format_name(), "VIPER");
     assert_eq!(
-        viper_engine.engine_version(),
+        viper_engine.format_version(),
         crate::version::PROXIMADB_VERSION
     );
     assert_eq!(viper_engine.strategy(), StorageFormatStrategy::Viper);

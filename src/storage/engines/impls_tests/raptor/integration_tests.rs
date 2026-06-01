@@ -28,8 +28,8 @@ use std::sync::Arc;
 async fn test_engine_basic_info() -> Result<()> {
     let engine = create_test_engine().await?;
 
-    assert_eq!(engine.engine_name(), "RAPTOR");
-    assert_eq!(engine.engine_version(), "1.0.0");
+    assert_eq!(engine.format_name(), "RAPTOR");
+    assert_eq!(engine.format_version(), "1.0.0");
     assert_eq!(
         engine.strategy(),
         crate::storage::traits::StorageFormatStrategy::Raptor

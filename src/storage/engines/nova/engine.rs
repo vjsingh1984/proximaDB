@@ -2039,8 +2039,8 @@ mod tests {
     async fn test_nova_engine_creation() {
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = NovaEngine::new().await.unwrap();
-        assert_eq!(engine.engine_name(), "NOVA");
-        assert_eq!(engine.engine_version(), "1.0.0");
+        assert_eq!(engine.format_name(), "NOVA");
+        assert_eq!(engine.format_version(), "1.0.0");
     }
 
     #[tokio::test]

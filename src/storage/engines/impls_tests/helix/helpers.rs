@@ -653,7 +653,7 @@ mod tests {
         let result = create_test_engine().await;
         assert!(result.is_ok());
         let engine = result.unwrap();
-        assert_eq!(engine.engine_name(), "helix");
+        assert_eq!(engine.format_name(), "helix");
     }
 
     #[tokio::test]
@@ -662,7 +662,7 @@ mod tests {
         assert!(result.is_ok());
 
         let (engine, _temp_dir, collection) = result.unwrap();
-        assert_eq!(engine.engine_name(), "helix");
+        assert_eq!(engine.format_name(), "helix");
         assert_eq!(collection.id, "test_collection");
         assert_eq!(collection.config.as_ref().unwrap().dimension, 128);
     }

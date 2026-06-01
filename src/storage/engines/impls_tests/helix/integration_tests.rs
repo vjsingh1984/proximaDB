@@ -99,8 +99,8 @@ fn create_test_vectors(count: usize, dimensions: usize) -> Vec<VectorRecord> {
 async fn test_helix_engine_initialization() {
     let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
     let (engine, _temp_dir) = create_test_helix_engine().await;
-    assert_eq!(engine.engine_name(), "helix");
-    assert_eq!(engine.engine_version(), "1.0.0");
+    assert_eq!(engine.format_name(), "helix");
+    assert_eq!(engine.format_version(), "1.0.0");
 }
 
 /// Test PCA model training and projection
@@ -755,8 +755,8 @@ async fn test_helix_engine_creation() {
 
     let (engine, _helix_temp) = create_test_helix_engine().await;
 
-    assert_eq!(engine.engine_name(), "helix");
-    assert_eq!(engine.engine_version(), "1.0.0");
+    assert_eq!(engine.format_name(), "helix");
+    assert_eq!(engine.format_version(), "1.0.0");
 }
 
 #[tokio::test]

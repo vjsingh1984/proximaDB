@@ -289,7 +289,7 @@ mod tests {
         .await
         .expect("Failed to create VIPER storage_engine");
 
-        assert_eq!(engine.engine_name(), "VIPER");
+        assert_eq!(engine.format_name(), "VIPER");
     }
 
     #[tokio::test]

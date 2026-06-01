@@ -271,7 +271,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_test_engine() {
         let engine = create_test_engine().await;
-        assert_eq!(engine.engine_name(), "SWIFT");
+        assert_eq!(engine.format_name(), "SWIFT");
     }
 
     #[test]

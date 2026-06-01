@@ -314,7 +314,7 @@ impl UnifiedStorageFormat for SstEngine {
 
         metrics.insert(
             "version".to_string(),
-            serde_json::Value::String(self.engine_version().to_string()),
+            serde_json::Value::String(self.format_version().to_string()),
         );
 
         // Add SST-specific metrics
@@ -433,7 +433,7 @@ mod tests {
     #[tokio::test]
     async fn test_engine_name() {
         let engine = create_test_engine().await;
-        assert_eq!(engine.engine_name(), "sst");
+        assert_eq!(engine.format_name(), "sst");
     }
 
     #[tokio::test]

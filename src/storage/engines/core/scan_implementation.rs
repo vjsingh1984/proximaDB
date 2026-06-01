@@ -538,7 +538,7 @@ pub async fn create_unified_scan(
     strategy: ScanStrategy,
     collection_config: Option<&crate::proto::proximadb_v1::Collection>,
 ) -> Result<Box<dyn ScanIterator>> {
-    let impl_helper = UnifiedScanImpl::new(engine.engine_name());
+    let impl_helper = UnifiedScanImpl::new(engine.format_name());
     impl_helper
         .create_scan(engine, collection_id, strategy, collection_config)
         .await

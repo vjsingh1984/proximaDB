@@ -69,7 +69,7 @@ pub trait ProximaBlockQuantization {
         }
 
         tracing::info!("📦 {}: Created {} ProximaDataBlocks with quantization",
-            self.engine_name(), blocks.len());
+            self.format_name(), blocks.len());
         Ok(blocks)
     }
 
@@ -87,7 +87,7 @@ pub trait ProximaBlockQuantization {
 
         let vector_layout = self.select_optimal_layout(dimension);
         tracing::debug!("📐 {}: Using vector layout {:?} for dimension {}",
-            self.engine_name(), vector_layout, dimension);
+            self.format_name(), vector_layout, dimension);
 
         // Create block with engine-specific profile
         let compression_config = self.get_compression_config(vector_layout.clone());
@@ -115,7 +115,7 @@ pub trait ProximaBlockQuantization {
             }
 
             tracing::info!("🎯 {}: Added quantization to block {} (binary: {}, int8: {}, pq: {})",
-                self.engine_name(),
+                self.format_name(),
                 block_id,
                 block.metadata.quantization_stats.has_binary,
                 block.metadata.quantization_stats.has_int8,
@@ -307,7 +307,7 @@ pub trait ProximaBlockQuantization {
 
         tracing::info!(
             "🔄 {} FLUSH+QUANT: Starting flush with quantization for {} vectors",
-            self.engine_name(),
+            self.format_name(),
             params.vector_records.len()
         );
 
@@ -318,7 +318,7 @@ pub trait ProximaBlockQuantization {
 
         // Perform quantization if enabled
         let quantized_batch = if quantization_enabled {
-            tracing::info!("⚡ {}: Quantizing vectors during flush", self.engine_name());
+            tracing::info!("⚡ {}: Quantizing vectors during flush", self.format_name());
             let service = QuantizationPrecomputeService::global();
             let collection_config = params.collection_config.as_ref()
                 .ok_or_else(|| anyhow::anyhow!("Collection config required for quantization"))?;
@@ -328,7 +328,7 @@ pub trait ProximaBlockQuantization {
                 collection_config
             ).await?
         } else {
-            tracing::info!("⏭️ {}: Quantization disabled, using unquantized batch", self.engine_name());
+            tracing::info!("⏭️ {}: Quantization disabled, using unquantized batch", self.format_name());
             QuantizedBatch::unquantized(params.vector_records.clone())
         };
 
@@ -341,7 +341,7 @@ pub trait ProximaBlockQuantization {
         let duration = start_time.elapsed();
         tracing::info!(
             "✅ {} FLUSH+QUANT: Completed in {:.2}ms - {} vectors",
-            self.engine_name(),
+            self.format_name(),
             duration.as_millis(),
             flush_result.entries_flushed.unwrap_or(0)
         );

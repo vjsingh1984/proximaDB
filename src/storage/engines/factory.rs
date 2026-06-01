@@ -134,7 +134,7 @@ pub fn global_capability_registry() -> &'static CapabilityRegistry {
 /// what each engine supports.
 fn register_engine_capabilities(engine: &Arc<dyn UnifiedStorageFormat>) {
     let caps = engine.capabilities();
-    let engine_name = engine.engine_name();
+    let engine_name = engine.format_name();
     global_capability_registry().register_capabilities(engine_name, caps);
     info!("✅ Registered capabilities for engine: {}", engine_name);
 }
@@ -1012,7 +1012,7 @@ mod tests {
         let engine = StorageEngineFactory::create_sst_async()
             .await
             .expect("Failed to create SST engine");
-        assert_eq!(engine.engine_name(), "sst");
+        assert_eq!(engine.format_name(), "sst");
     }
 
     #[tokio::test]
@@ -1020,7 +1020,7 @@ mod tests {
         let engine = StorageEngineFactory::create_viper_async()
             .await
             .expect("Failed to create VIPER engine");
-        assert_eq!(engine.engine_name(), "VIPER");
+        assert_eq!(engine.format_name(), "VIPER");
     }
 
     #[tokio::test]
@@ -1028,7 +1028,7 @@ mod tests {
         let engine = StorageEngineFactory::create_nova_async()
             .await
             .expect("Failed to create NOVA engine");
-        assert_eq!(engine.engine_name(), "NOVA");
+        assert_eq!(engine.format_name(), "NOVA");
     }
 
     #[tokio::test]
@@ -1036,7 +1036,7 @@ mod tests {
         let engine = StorageEngineFactory::create_helix_async()
             .await
             .expect("Failed to create HELIX engine");
-        assert_eq!(engine.engine_name(), "helix");
+        assert_eq!(engine.format_name(), "helix");
     }
 
     #[tokio::test]
@@ -1044,7 +1044,7 @@ mod tests {
         let engine = StorageEngineFactory::create_cedar_async()
             .await
             .expect("Failed to create CEDAR engine");
-        assert_eq!(engine.engine_name(), "cedar");
+        assert_eq!(engine.format_name(), "cedar");
     }
 
     #[tokio::test]
@@ -1052,7 +1052,7 @@ mod tests {
         let engine = StorageEngineFactory::create_chrono_async()
             .await
             .expect("Failed to create CHRONO engine");
-        assert_eq!(engine.engine_name(), "chrono");
+        assert_eq!(engine.format_name(), "chrono");
     }
 
     #[tokio::test]
@@ -1071,7 +1071,7 @@ mod tests {
         let engine = StorageEngineFactory::create_tst_async()
             .await
             .expect("Failed to create TST engine");
-        assert_eq!(engine.engine_name(), "tst");
+        assert_eq!(engine.format_name(), "tst");
     }
 
     #[tokio::test]
@@ -1080,7 +1080,7 @@ mod tests {
         let engine = StorageEngineFactory::create_from_proto_async(ProtoStorageEngine::Unspecified)
             .await
             .expect("Failed to create default engine");
-        assert_eq!(engine.engine_name(), "sst");
+        assert_eq!(engine.format_name(), "sst");
     }
 
     #[tokio::test]
@@ -1123,7 +1123,7 @@ mod tests {
             mmap_engine.is_ok(),
             "Mmap should fallback to SST, not error"
         );
-        assert_eq!(mmap_engine.as_ref().unwrap().engine_name(), "sst");
+        assert_eq!(mmap_engine.as_ref().unwrap().format_name(), "sst");
 
         let hybrid_engine =
             StorageEngineFactory::create_from_proto_async(ProtoStorageEngine::Hybrid).await;
@@ -1131,7 +1131,7 @@ mod tests {
             hybrid_engine.is_ok(),
             "Hybrid should fallback to SST, not error"
         );
-        assert_eq!(hybrid_engine.as_ref().unwrap().engine_name(), "sst");
+        assert_eq!(hybrid_engine.as_ref().unwrap().format_name(), "sst");
     }
 
     // -----------------------------------------------------------------------

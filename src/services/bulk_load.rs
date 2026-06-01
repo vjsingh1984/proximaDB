@@ -172,7 +172,7 @@ impl BulkLoader {
                 Ok(seg) if seg.used_engine_specific_path => {
                     debug!(
                         collection_id = %collection_id,
-                        engine = engine.engine_name(),
+                        engine = engine.format_name(),
                         record_count,
                         synthetic_segment_id = %seg.synthetic_segment_id,
                         "bulk_load: engine-specific LSM bypass committed segment",
@@ -186,14 +186,14 @@ impl BulkLoader {
                 Ok(_) => {
                     debug!(
                         collection_id = %collection_id,
-                        engine = engine.engine_name(),
+                        engine = engine.format_name(),
                         "bulk_load: engine has no LSM bypass override; falling back to per-record path",
                     );
                 }
                 Err(e) => {
                     warn!(
                         collection_id = %collection_id,
-                        engine = engine.engine_name(),
+                        engine = engine.format_name(),
                         error = %e,
                         "bulk_load: engine override errored; falling back to per-record path",
                     );

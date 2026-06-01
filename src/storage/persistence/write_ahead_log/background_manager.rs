@@ -179,7 +179,7 @@ impl BackgroundMaintenanceManager {
 
         info!(
             "📋 [COMPACTION] Delegating to {} engine: do_compact({})",
-            engine.engine_name(),
+            engine.format_name(),
             context.collection_id
         );
 
@@ -189,7 +189,7 @@ impl BackgroundMaintenanceManager {
                 if result.success {
                     info!(
                         "✅ [COMPACTION] {} compaction completed for collection {}: {} entries processed, {} files {} → {}",
-                        engine.engine_name(),
+                        engine.format_name(),
                         context.collection_id,
                         result.entries_processed.unwrap_or(0),
                         result.input_files.unwrap_or(0),
@@ -228,7 +228,7 @@ impl BackgroundMaintenanceManager {
                 } else {
                     warn!(
                         "❌ [COMPACTION] {} compaction failed for collection {}",
-                        engine.engine_name(),
+                        engine.format_name(),
                         context.collection_id
                     );
                     Err(anyhow::anyhow!("Storage engine compaction failed"))
@@ -237,7 +237,7 @@ impl BackgroundMaintenanceManager {
             Err(e) => {
                 warn!(
                     "❌ [COMPACTION] {} compaction error for collection {}: {}",
-                    engine.engine_name(),
+                    engine.format_name(),
                     context.collection_id,
                     e
                 );

@@ -1004,7 +1004,7 @@ mod tests {
     fn test_sequoia_engine_identity() {
         let engine = SequoiaEngine::new();
         assert_eq!(UnifiedStorageFormat::engine_name(&engine), "sequoia");
-        assert_eq!(engine.engine_version(), "0.1.0");
+        assert_eq!(engine.format_version(), "0.1.0");
         assert_eq!(engine.strategy(), StorageFormatStrategy::Sst);
     }
 }

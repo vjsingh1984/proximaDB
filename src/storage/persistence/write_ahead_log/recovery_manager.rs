@@ -141,7 +141,7 @@ impl RecoveryManager {
 
         // Also register with flush coordinator by engine type
         // The flush coordinator needs engines registered by type (VIPER, LSM), not collection
-        let engine_type = engine.engine_name(); // Get the engine name
+        let engine_type = engine.format_name(); // Get the engine name
         self.flush_coordinator
             .register_storage_engine(engine_type, engine)
             .await;

@@ -563,7 +563,7 @@ async fn quick_storage_check(state: &HealthState) -> Result<(), String> {
             .request_handlers
             .vector_operations_service
             .unified_engine()
-            .engine_name();
+            .format_name();
     })
     .await
     .map_err(|_| "Storage engine timeout".to_string())?;

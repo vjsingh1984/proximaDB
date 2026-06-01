@@ -120,8 +120,8 @@ impl<E: UnifiedStorageFormat> InternalFormatAdapter<E> {
 impl<E: UnifiedStorageFormat> Debug for InternalFormatAdapter<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InternalFormatAdapter")
-            .field("engine_name", &self.engine.engine_name())
-            .field("engine_version", &self.engine.engine_version())
+            .field("engine_name", &self.engine.format_name())
+            .field("engine_version", &self.engine.format_version())
             .field("format_version", &self.format_version)
             .finish()
     }
@@ -134,7 +134,7 @@ impl<E: UnifiedStorageFormat> Debug for InternalFormatAdapter<E> {
 #[async_trait]
 impl<E: UnifiedStorageFormat + 'static> StorageFormat for InternalFormatAdapter<E> {
     fn format_name(&self) -> &str {
-        self.engine.engine_name()
+        self.engine.format_name()
     }
 
     fn format_version(&self) -> &str {

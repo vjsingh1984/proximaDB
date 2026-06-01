@@ -34,8 +34,8 @@ async fn test_swift_engine_creation() {
     let engine = crate::storage::engines::swift::SwiftEngine::new()
         .await
         .unwrap();
-    assert_eq!(engine.engine_name(), "SWIFT");
-    assert_eq!(engine.engine_version(), "1.0.0");
+    assert_eq!(engine.format_name(), "SWIFT");
+    assert_eq!(engine.format_version(), "1.0.0");
 }
 
 #[tokio::test]

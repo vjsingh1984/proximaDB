@@ -61,7 +61,7 @@ mod tests {
 
         // Verify core components are initialized
         assert_eq!(engine.config().block_size_kb, config.block_size_kb);
-        assert_eq!(engine.engine_name(), "sst");
+        assert_eq!(engine.format_name(), "sst");
     }
 
     /// Test flush module coordination
@@ -92,7 +92,7 @@ mod tests {
         let _operations = SearchOperations::new(engine_arc.clone());
 
         // Basic test
-        assert_eq!(engine_arc.engine_name(), "sst");
+        assert_eq!(engine_arc.format_name(), "sst");
     }
 
     /// Test blocks module structures
@@ -174,8 +174,8 @@ mod tests {
         let engine = create_test_engine().await;
 
         // Test UnifiedStorageFormat trait methods
-        assert_eq!(engine.engine_name(), "sst");
-        assert_eq!(engine.engine_version(), crate::version::PROXIMADB_VERSION);
+        assert_eq!(engine.format_name(), "sst");
+        assert_eq!(engine.format_version(), crate::version::PROXIMADB_VERSION);
 
         let strategy = engine.strategy();
         assert!(matches!(
@@ -184,8 +184,8 @@ mod tests {
         ));
 
         // Test that basic trait methods work
-        assert!(engine.engine_name().len() > 0);
-        assert!(engine.engine_version().len() > 0);
+        assert!(engine.format_name().len() > 0);
+        assert!(engine.format_version().len() > 0);
     }
 
     /// Test module interaction - flush to search pipeline
@@ -203,7 +203,7 @@ mod tests {
         let _search_optimizer = SearchOptimizer::new();
 
         // Basic validation
-        assert_eq!(engine_arc.engine_name(), "sst");
+        assert_eq!(engine_arc.format_name(), "sst");
     }
 
     /// Test error handling across modules

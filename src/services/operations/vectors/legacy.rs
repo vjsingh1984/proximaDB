@@ -3432,7 +3432,7 @@ impl VectorOperationsService {
         } else {
             debug!(
                 "Stage 3: Searching storage engine ({}) for {} (need {} more results)",
-                engine.engine_name(),
+                engine.format_name(),
                 collection_id,
                 candidates - total_indexed_results
             );

@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn test_titan_engine_name() {
         let engine = TitanEngine::new();
-        assert_eq!(engine.engine_name(), "titan");
+        assert_eq!(engine.format_name(), "titan");
     }
 
     #[test]

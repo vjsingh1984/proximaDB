@@ -30,7 +30,7 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 /// # Example
 /// ```ignore
 /// let (engine, _temp_dir) = create_test_viper_engine().await?;
-/// assert_eq!(engine.engine_name(), "VIPER");
+/// assert_eq!(engine.format_name(), "VIPER");
 /// ```
 pub async fn create_test_viper_engine() -> Result<(ViperEngine, TempDir)> {
     let temp_dir = TempDir::new()?;
@@ -712,7 +712,7 @@ mod tests {
         assert!(result.is_ok());
 
         let (engine, _temp_dir) = result.unwrap();
-        assert_eq!(engine.engine_name(), "VIPER");
+        assert_eq!(engine.format_name(), "VIPER");
     }
 
     #[test]

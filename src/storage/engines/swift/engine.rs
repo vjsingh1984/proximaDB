@@ -2068,8 +2068,8 @@ mod tests {
             ),
         );
         let engine = SwiftEngine::new().await.unwrap();
-        assert_eq!(engine.engine_name(), "SWIFT");
-        assert_eq!(engine.engine_version(), "1.0.0");
+        assert_eq!(engine.format_name(), "SWIFT");
+        assert_eq!(engine.format_version(), "1.0.0");
     }
 
     #[tokio::test]
@@ -2171,8 +2171,8 @@ mod tests {
     async fn test_swift_engine_name_and_version() {
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let engine = SwiftEngine::new().await.unwrap();
-        assert_eq!(engine.engine_name(), "SWIFT");
-        assert_eq!(engine.engine_version(), "1.0.0");
+        assert_eq!(engine.format_name(), "SWIFT");
+        assert_eq!(engine.format_version(), "1.0.0");
     }
 
     #[tokio::test]
