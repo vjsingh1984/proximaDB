@@ -85,6 +85,41 @@ pub trait AxisVectorIndex: Send + Sync {
         self.search(query, top_k, None).await
     }
 
+    /// Phase D — Quantization Trait Convergence Plan: search with a
+    /// generic [`CandidateSet`] allowlist.
+    ///
+    /// The default implementation calls `search(query, top_k, None)` then
+    /// post-filters via `cs.contains(id)`. This is the correct shape for
+    /// every AXIS adapter today (Annoy/HNSW/IVF/LSH) — none of them have
+    /// a scoring kernel that consumes a packed bitmap directly.
+    ///
+    /// The new `TurboQuantAxisIndex` adapter (next to this trait in
+    /// `src/index/axis/indexes/turboquant_index.rs`) overrides this
+    /// method to push the bitmap straight into the modality crate's
+    /// SIMD kernel via `src/index/turboquant_bridge.rs`. The override
+    /// avoids the post-filter pass entirely, which is the load-bearing
+    /// win for high-selectivity (≤10%) queries — the headline result
+    /// from ADR-021 §"In-kernel allowlist".
+    ///
+    /// Trait contract: `QuantizationMethod::supports_candidate_mask()`
+    /// (in the foundation crate, Phase A) declares whether an adapter
+    /// has a real override here. Default `false` ⇒ default impl runs.
+    /// `true` ⇒ adapter overrides.
+    async fn search_with_candidate_set(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        candidate_set: Option<&dyn crate::core::search::filter_contract::CandidateSet>,
+    ) -> Result<Vec<(String, f32)>> {
+        // Default: ignore the mask shape, run the normal search, then
+        // post-filter. Correct but slower than a kernel-pushed mask.
+        let hits = self.search(query, top_k, None).await?;
+        Ok(match candidate_set {
+            None => hits,
+            Some(cs) => hits.into_iter().filter(|(id, _)| cs.contains(id)).collect(),
+        })
+    }
+
     /// Remove a vector from the index
     async fn remove(&self, id: &str) -> Result<()>;
 
