@@ -2,7 +2,9 @@
 
 pub mod adaptive_engine;
 pub mod analyzer;
+pub mod ann_advisor;
 pub mod hnsw_param_advisor;
+pub mod ivf_param_advisor;
 pub mod manager;
 pub mod migration_engine;
 pub mod monitor;
@@ -21,12 +23,17 @@ pub use adaptive_engine::{
 };
 
 pub use analyzer::CollectionAnalyzer;
-pub use hnsw_param_advisor::{
-    EF_SEARCH_MAX, EF_SEARCH_MIN, HnswSizingInput, HnswSizingOutput, advise_hnsw_params,
+pub use ann_advisor::{
+    AnnAdvisorInput, AnnAdvisorOutput, AnnIndexAdvisor, AnnSelector, SupportedAlgorithm,
 };
-pub use recall_drift::{DriftKind, RecallDriftInput, RecallDriftReport, detect_recall_drift};
+pub use hnsw_param_advisor::{
+    EF_SEARCH_MAX, EF_SEARCH_MIN, HnswIndexAdvisor, HnswSizingInput, HnswSizingOutput,
+    advise_hnsw_params,
+};
+pub use ivf_param_advisor::{IvfIndexAdvisor, nlist_for_n, nprobe_for_recall, recall_for_nprobe};
 pub use migration_engine::{
     IndexMigrationEngine, MigrationComplexity, MigrationDecision, MigrationPhase, MigrationPlan,
 };
 pub use monitor::{AxisMonitor, MonitoringMetrics};
+pub use recall_drift::{DriftKind, RecallDriftInput, RecallDriftReport, detect_recall_drift};
 pub use strategy::{IndexStrategy, StrategyRecommendation, StrategySelector};

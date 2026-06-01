@@ -910,11 +910,41 @@ pub struct RecallDriftHealth {
     ///   `recall_target:` tag; the adaptive stack is dormant.
     ///   Add the tag (e.g. `recall_target:0.95`) and the next
     ///   create-collection / drift sweep will start populating.
+    /// * `"raise_max_ef_or_bump_m"` — the advisor's recommended ef
+    ///   was **clamped** by the operator's `max_ef_search:` tag
+    ///   and `projected_recall_at_clamped_ef` falls below
+    ///   `recall_target`. Three resolutions: raise the cap (more
+    ///   latency), bump m via /recluster (less ef needed), or
+    ///   accept the projected recall. This action wins even when
+    ///   `kind == "none"` — a "no-drift" status that's silently
+    ///   clamped is misleading.
     ///
     /// The literals are stable identifiers — dashboard / runbook
     /// templates can switch on them without parsing the human
     /// `summary`.
     pub recommended_action: &'static str,
+    /// The operator's `max_ef_search:` cap, if any. `None` when no
+    /// such tag is set on the collection.
+    pub max_ef_search: Option<u32>,
+    /// True when the advisor's recommended ef was capped down to
+    /// `max_ef_search`. The `current_params.ef_search` reflects the
+    /// clamped value; `projected_recall_at_clamped_ef` reports the
+    /// recall the index will actually deliver at that ef.
+    pub clamped_by_max_ef: bool,
+    /// When `clamped_by_max_ef = true`, the recall the index will
+    /// actually achieve at the clamped ef. Typically lower than
+    /// `recall_target` — that gap is exactly what
+    /// `recommended_action="raise_max_ef_or_bump_m"` is signaling.
+    pub projected_recall_at_clamped_ef: Option<f32>,
+    /// **Which algorithm** the advisor sized for this collection
+    /// (P1: "hnsw" / "ivf"). Stable literal — matches
+    /// `SupportedAlgorithm::label()`. `"hnsw"` for any collection
+    /// whose drift-detection path is HNSW-specific today
+    /// (the existing detector covers HNSW only in P1; IVF
+    /// drift / hot-swap / recluster surfaces ship in P2). Dashboard
+    /// filters can switch on this without parsing
+    /// `current_params`.
+    pub algorithm: &'static str,
 }
 
 /// Snapshot of `(m, ef_construction, ef_search)` exposed on the
@@ -943,14 +973,33 @@ impl RecallDriftHealth {
             baseline_params: None,
             current_params: None,
             recommended_action: "set_recall_target_tag",
+            max_ef_search: None,
+            clamped_by_max_ef: false,
+            projected_recall_at_clamped_ef: None,
+            // Default to "hnsw" — the legacy detector covers HNSW
+            // only; collections without recall_target tags still
+            // assume HNSW from the rest of the stack. IVF reports
+            // its own discriminator only when the algorithm-aware
+            // detector lands (P2).
+            algorithm: "hnsw",
         }
     }
 }
 
-/// Map a drift `kind` string to the operator-facing next-step
-/// pointer. Shared by route-health and recall-tune so both surfaces
-/// agree on the recommended path.
-pub(super) fn recommended_action_for_kind(kind: &str) -> &'static str {
+/// Stable action literal for the latency-budget conflict.
+pub const ACTION_RAISE_MAX_EF_OR_BUMP_M: &str = "raise_max_ef_or_bump_m";
+
+/// Map a drift `(kind, clamped)` pair to the operator-facing
+/// next-step pointer. Shared by route-health and recall-tune so
+/// both surfaces agree on the recommended path.
+///
+/// `clamped == true` ALWAYS wins over kind, even when kind="none" —
+/// a "no-drift" status that's silently clamped is misleading; the
+/// real choice is "raise the cap or bump m".
+pub(super) fn recommended_action_for(kind: &str, clamped: bool) -> &'static str {
+    if clamped {
+        return ACTION_RAISE_MAX_EF_OR_BUMP_M;
+    }
     match kind {
         "none" => "none",
         "ef_search_only" => "call_recall_tune",
@@ -1567,6 +1616,8 @@ pub async fn get_collection_route_health_v2(
             _ => crate::compute::distance_computation::DistanceMetric::Cosine,
         };
         let top_k = crate::services::collection::recall_target::resolve_top_k(&config);
+        let max_ef_search =
+            crate::services::collection::recall_target::parse_max_ef_search(&config);
         let report = crate::index::axis::management::detect_recall_drift(
             crate::index::axis::management::RecallDriftInput {
                 baseline_n,
@@ -1575,12 +1626,19 @@ pub async fn get_collection_route_health_v2(
                 top_k,
                 dimension: config.dimension,
                 distance_metric: metric,
+                max_ef_search,
             },
         );
         let kind: &'static str = match report.drift_kind {
             crate::index::axis::management::DriftKind::None => "none",
             crate::index::axis::management::DriftKind::EfSearchOnly => "ef_search_only",
             crate::index::axis::management::DriftKind::EfConstructionOrM => "rebuild_required",
+            // IVF variants — when the route-health handler grows
+            // an IVF dispatch path (P2 commit 4) these branches
+            // will fire on `detect_ivf_recall_drift` output. For
+            // now the HNSW-only handler can't produce them.
+            crate::index::axis::management::DriftKind::NprobeOnly => "ef_search_only",
+            crate::index::axis::management::DriftKind::NlistOrQuantizer => "rebuild_required",
         };
         let baseline_params = Some(RecallAdvisedParams {
             m: report.baseline_params.m,
@@ -1592,6 +1650,8 @@ pub async fn get_collection_route_health_v2(
             ef_construction: report.current_params.ef_construction,
             ef_search: report.current_params.ef_search,
         });
+        let clamped = report.current_params.clamped_by_max_ef;
+        let projected = report.current_params.projected_recall_if_clamped;
         health.recall_drift = RecallDriftHealth {
             wired: true,
             recall_target: Some(recall_target),
@@ -1603,7 +1663,14 @@ pub async fn get_collection_route_health_v2(
             summary: report.summary,
             baseline_params,
             current_params,
-            recommended_action: recommended_action_for_kind(kind),
+            recommended_action: recommended_action_for(kind, clamped),
+            max_ef_search,
+            clamped_by_max_ef: clamped,
+            projected_recall_at_clamped_ef: projected,
+            // P1: recall_drift detector is HNSW-only; report
+            // "hnsw" verbatim. IVF discriminator surfaces in P2
+            // when the detector grows the second algorithm arm.
+            algorithm: "hnsw",
         };
         crate::metrics::recall_drift_metrics::record_recall_drift_observation(
             &collection_id_for_discovery,
@@ -1811,6 +1878,8 @@ pub async fn post_collection_recall_tune_v2(
     };
 
     let top_k = crate::services::collection::recall_target::resolve_top_k(&config);
+    let max_ef_search =
+        crate::services::collection::recall_target::parse_max_ef_search(&config);
     let drift = crate::index::axis::management::detect_recall_drift(
         crate::index::axis::management::RecallDriftInput {
             baseline_n,
@@ -1819,6 +1888,7 @@ pub async fn post_collection_recall_tune_v2(
             top_k,
             dimension: config.dimension,
             distance_metric: metric,
+            max_ef_search,
         },
     );
 
@@ -1826,8 +1896,12 @@ pub async fn post_collection_recall_tune_v2(
         crate::index::axis::management::DriftKind::None => "none",
         crate::index::axis::management::DriftKind::EfSearchOnly => "ef_search_only",
         crate::index::axis::management::DriftKind::EfConstructionOrM => "rebuild_required",
+        crate::index::axis::management::DriftKind::NprobeOnly => "ef_search_only",
+        crate::index::axis::management::DriftKind::NlistOrQuantizer => "rebuild_required",
     };
 
+    let clamped = drift.current_params.clamped_by_max_ef;
+    let projected = drift.current_params.projected_recall_if_clamped;
     let report = RecallDriftHealth {
         wired: true,
         recall_target: Some(recall_target),
@@ -1847,7 +1921,11 @@ pub async fn post_collection_recall_tune_v2(
             ef_construction: drift.current_params.ef_construction,
             ef_search: drift.current_params.ef_search,
         }),
-        recommended_action: recommended_action_for_kind(kind_str),
+        recommended_action: recommended_action_for(kind_str, clamped),
+        max_ef_search,
+        clamped_by_max_ef: clamped,
+        projected_recall_at_clamped_ef: projected,
+        algorithm: "hnsw",
     };
     crate::metrics::recall_drift_metrics::record_recall_drift_observation(&collection_id, kind_str);
 
@@ -2188,6 +2266,8 @@ pub async fn post_collection_recluster_v2(
 
     let count = records.len() as u64;
     let top_k = crate::services::collection::recall_target::resolve_top_k(&config);
+    let max_ef_search =
+        crate::services::collection::recall_target::parse_max_ef_search(&config);
 
     // (3) Rebuild + atomic swap.
     let advised = axis_manager
@@ -2196,6 +2276,7 @@ pub async fn post_collection_recluster_v2(
             &records,
             recall_target,
             top_k,
+            max_ef_search,
         )
         .await
         .map_err(|e| ApiError::Internal(format!("HNSW rebuild failed: {}", e)))?;
@@ -2855,6 +2936,10 @@ mod tests {
                 ef_search: 622,
             }),
             recommended_action: "call_recall_tune",
+            max_ef_search: None,
+            clamped_by_max_ef: false,
+            projected_recall_at_clamped_ef: None,
+            algorithm: "hnsw",
         };
         let v = serde_json::to_value(&h).unwrap();
         assert_eq!(v["baseline_params"]["m"], 32);
@@ -2869,26 +2954,109 @@ mod tests {
     #[test]
     fn recommended_action_pins_kind_to_next_step() {
         // Stable mapping — dashboard / runbook templates can
-        // switch on these literals.
-        assert_eq!(recommended_action_for_kind("none"), "none");
+        // switch on these literals. `clamped=false` here means the
+        // pure kind→action mapping.
+        assert_eq!(recommended_action_for("none", false), "none");
         assert_eq!(
-            recommended_action_for_kind("ef_search_only"),
+            recommended_action_for("ef_search_only", false),
             "call_recall_tune"
         );
         assert_eq!(
-            recommended_action_for_kind("rebuild_required"),
+            recommended_action_for("rebuild_required", false),
             "call_recluster"
         );
         // Anything else (including "unwired") points operators
         // back to the entry-point — set the tag.
         assert_eq!(
-            recommended_action_for_kind("unwired"),
+            recommended_action_for("unwired", false),
             "set_recall_target_tag"
         );
         assert_eq!(
-            recommended_action_for_kind("garbage_value"),
+            recommended_action_for("garbage_value", false),
             "set_recall_target_tag"
         );
+    }
+
+    #[test]
+    fn recommended_action_clamp_overrides_every_kind() {
+        // The latency-budget clamp signal wins over kind — even
+        // "none" / "rebuild_required" — because the operator's real
+        // choice is "raise the cap or bump m", not the drift state.
+        for kind in ["none", "ef_search_only", "rebuild_required", "unwired"] {
+            assert_eq!(
+                recommended_action_for(kind, true),
+                ACTION_RAISE_MAX_EF_OR_BUMP_M,
+                "clamped=true must override kind={}",
+                kind
+            );
+        }
+    }
+
+    #[test]
+    fn recall_drift_unwired_omits_clamp_fields() {
+        let h = RecallDriftHealth::unwired();
+        assert!(h.max_ef_search.is_none());
+        assert!(!h.clamped_by_max_ef);
+        assert!(h.projected_recall_at_clamped_ef.is_none());
+        let v = serde_json::to_value(&h).unwrap();
+        assert!(v["max_ef_search"].is_null());
+        assert_eq!(v["clamped_by_max_ef"], false);
+        assert!(v["projected_recall_at_clamped_ef"].is_null());
+    }
+
+    #[test]
+    fn recall_drift_clamped_serializes_max_ef_fields() {
+        let h = RecallDriftHealth {
+            wired: true,
+            recall_target: Some(0.95),
+            baseline_vector_count: Some(100_000),
+            current_vector_count: Some(100_000),
+            kind: "none",
+            needs_rebuild: false,
+            hot_swap_possible: false,
+            summary: "ef clamped to 300".to_string(),
+            baseline_params: Some(RecallAdvisedParams {
+                m: 32,
+                ef_construction: 256,
+                ef_search: 300,
+            }),
+            current_params: Some(RecallAdvisedParams {
+                m: 32,
+                ef_construction: 256,
+                ef_search: 300,
+            }),
+            recommended_action: ACTION_RAISE_MAX_EF_OR_BUMP_M,
+            max_ef_search: Some(300),
+            clamped_by_max_ef: true,
+            projected_recall_at_clamped_ef: Some(0.93),
+            algorithm: "hnsw",
+        };
+        let v = serde_json::to_value(&h).unwrap();
+        assert_eq!(v["max_ef_search"], 300);
+        assert_eq!(v["clamped_by_max_ef"], true);
+        let projected = v["projected_recall_at_clamped_ef"].as_f64().unwrap();
+        assert!((projected - 0.93).abs() < 1e-3);
+        assert_eq!(v["recommended_action"], ACTION_RAISE_MAX_EF_OR_BUMP_M);
+    }
+
+    #[test]
+    fn recall_drift_health_carries_algorithm_field() {
+        // The route-health surface admits a stable `algorithm:`
+        // literal so dashboards can switch on HNSW vs IVF without
+        // parsing `current_params`. P1 always reports "hnsw"
+        // because the drift detector covers HNSW only; the field
+        // exists so the IVF surface (P2) doesn't break the shape.
+        let unwired = RecallDriftHealth::unwired();
+        assert_eq!(unwired.algorithm, "hnsw");
+        let v = serde_json::to_value(&unwired).unwrap();
+        assert_eq!(v["algorithm"], "hnsw");
+
+        // Allowed values are the SupportedAlgorithm labels.
+        // Pinned via the ann_advisor module's label() function so
+        // both surfaces stay in lockstep.
+        use crate::index::axis::management::SupportedAlgorithm;
+        assert_eq!(SupportedAlgorithm::Hnsw.label(), "hnsw");
+        assert_eq!(SupportedAlgorithm::Ivf.label(), "ivf");
     }
 
     #[test]
@@ -2924,7 +3092,11 @@ mod tests {
                 summary: "test".to_string(),
                 baseline_params: None,
                 current_params: None,
-                recommended_action: recommended_action_for_kind(kind),
+                recommended_action: recommended_action_for(kind, false),
+                max_ef_search: None,
+                clamped_by_max_ef: false,
+                projected_recall_at_clamped_ef: None,
+                algorithm: "hnsw",
             };
             let v = serde_json::to_value(&h).unwrap();
             assert_eq!(v["kind"], kind);

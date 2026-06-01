@@ -513,29 +513,33 @@ impl CollectionService {
         );
 
         // Recall-target advisor wiring: when the caller asked for a
-        // specific recall (via a `recall_target:<f32>` tag), size
-        // every HNSW IndexConfig that wasn't already pinned by the
-        // caller. See crate::services::collection::recall_target for
-        // the parse + apply contract.
+        // specific recall (via a `recall_target:<f32>` tag), invoke
+        // the algorithm-agnostic advisor. The selector picks HNSW
+        // vs IVF based on declared budgets (max_memory_mb,
+        // max_query_latency_ms) and sizes the chosen algorithm's
+        // params; results are stamped into the matching IndexConfig.
+        // See crate::services::collection::recall_target for the
+        // parse + apply contract.
         if let Some(recall_target) =
             crate::services::collection::recall_target::parse_recall_target(&enriched_config)
         {
-            let applied =
-                crate::services::collection::recall_target::apply_advisor_to_hnsw_indexes(
-                    &mut enriched_config,
-                    recall_target,
-                );
-            for (index_name, out) in &applied {
+            let applied = crate::services::collection::recall_target::apply_advisor_to_indexes(
+                &mut enriched_config,
+                recall_target,
+            );
+            for advice in &applied {
                 tracing::info!(
                     target: "collection.recall_target",
                     collection = %enriched_config.name,
-                    index = %index_name,
+                    index = %advice.index_name,
                     recall_target = recall_target,
-                    m = out.m,
-                    ef_construction = out.ef_construction,
-                    ef_search = out.ef_search,
-                    rationale = %out.rationale,
-                    "auto-sized HNSW from recall_target"
+                    algorithm = %advice.output.kind.label(),
+                    clamped_by_budget = advice.output.clamped_by_budget,
+                    projected_recall = ?advice.output.projected_recall,
+                    estimated_memory_mb = advice.output.estimated_memory_mb,
+                    estimated_per_query_work = advice.output.estimated_per_query_work,
+                    rationale = %advice.output.rationale,
+                    "auto-sized index from recall_target"
                 );
             }
         }

@@ -173,6 +173,9 @@ impl RecallDriftSweeper {
             let top_k = crate::services::collection::recall_target::parse_target_top_k(config)
                 .unwrap_or(self.default_top_k);
 
+            let max_ef_search =
+                crate::services::collection::recall_target::parse_max_ef_search(config);
+
             let report = detect_recall_drift(RecallDriftInput {
                 baseline_n,
                 current_n,
@@ -180,6 +183,7 @@ impl RecallDriftSweeper {
                 top_k,
                 dimension: config.dimension,
                 distance_metric: metric,
+                max_ef_search,
             });
 
             let kind = drift_kind_str(report.drift_kind);
@@ -256,8 +260,13 @@ impl RecallDriftSweeper {
 fn drift_kind_str(kind: DriftKind) -> &'static str {
     match kind {
         DriftKind::None => "none",
-        DriftKind::EfSearchOnly => "ef_search_only",
-        DriftKind::EfConstructionOrM => "rebuild_required",
+        // HNSW and IVF hot-swap-able variants map to the same
+        // "ef_search_only" label on the Prometheus surface — they
+        // both signal "live-tunable, no rebuild needed".
+        DriftKind::EfSearchOnly | DriftKind::NprobeOnly => "ef_search_only",
+        // HNSW and IVF rebuild-required variants map to the same
+        // "rebuild_required" label — both signal a /recluster.
+        DriftKind::EfConstructionOrM | DriftKind::NlistOrQuantizer => "rebuild_required",
     }
 }
 

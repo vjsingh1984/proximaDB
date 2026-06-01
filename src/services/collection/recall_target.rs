@@ -40,7 +40,9 @@
 //! and why.
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::index::axis::management::{HnswSizingInput, HnswSizingOutput, advise_hnsw_params};
+use crate::index::axis::management::{
+    AnnIndexAdvisor, HnswSizingInput, HnswSizingOutput, advise_hnsw_params,
+};
 #[cfg(test)]
 use crate::proto::proximadb_v1::IndexConfig;
 use crate::proto::proximadb_v1::{
@@ -106,6 +108,7 @@ pub fn apply_advisor_to_hnsw_indexes(
     // as the real corpus grows past tier boundaries.
     let target_n = parse_target_vector_count(config).unwrap_or(100_000);
     let top_k = resolve_top_k(config);
+    let max_ef_search = parse_max_ef_search(config);
 
     // Auto-add a stub HNSW IndexConfig when the caller asked for a
     // recall_target but didn't attach an HNSW index. The advisor
@@ -149,6 +152,7 @@ pub fn apply_advisor_to_hnsw_indexes(
             recall_target,
             dimension,
             distance_metric: metric,
+            max_ef_search,
         });
 
         idx.hnsw_config = Some(HnswConfig {
@@ -169,6 +173,247 @@ pub fn apply_advisor_to_hnsw_indexes(
 /// Exposed so operator tooling can detect "this index was auto-
 /// created from a tag, not explicitly requested by the caller".
 pub const AUTO_HNSW_INDEX_NAME: &str = "auto_hnsw_recall_target";
+
+/// Index name used when the [`apply_advisor_to_indexes`] selector
+/// picks IVF and synthesizes a stub IndexConfig from a bare
+/// `recall_target:` tag.
+pub const AUTO_IVF_INDEX_NAME: &str = "auto_ivf_recall_target";
+
+/// Result of an algorithm-agnostic advisor pass over a
+/// `CollectionConfig`. One entry per HNSW / IVF / … index the
+/// advisor sized, carrying the discriminator + full
+/// [`AnnAdvisorOutput`] (which itself carries the sized
+/// `IndexAlgorithm` + memory/work estimates + rationale).
+#[derive(Debug, Clone)]
+pub struct AppliedAdvice {
+    /// The IndexConfig name that received the sized params.
+    /// `AUTO_HNSW_INDEX_NAME` / `AUTO_IVF_INDEX_NAME` when the
+    /// IndexConfig was synthesized from the tag set.
+    pub index_name: String,
+    /// Full advisor output — algorithm-tagged with kind, carries
+    /// memory + work estimates + projected recall when clamped.
+    pub output: crate::index::axis::management::AnnAdvisorOutput,
+}
+
+/// Algorithm-agnostic advisor entry point. Walks the config's
+/// `index_configs`:
+///
+/// * **HNSW** entries with unpinned params: size via the HNSW
+///   per-algo path (preserves the existing
+///   `apply_advisor_to_hnsw_indexes` behavior).
+/// * **IVF** entries with unpinned params: size via the IVF
+///   per-algo path (new in P1).
+/// * **No index_configs** + `dimension > 0`: invoke the
+///   [`AnnSelector`] to pick HNSW vs IVF based on the declared
+///   budgets, then synthesize a stub IndexConfig (named
+///   `AUTO_HNSW_INDEX_NAME` or `AUTO_IVF_INDEX_NAME`) and stamp
+///   the sized params.
+/// * **Caller-pinned** indexes (any of `m` / `efc` / `ef_search` /
+///   `nlist` / `nprobe` set): skip; explicit caller intent always
+///   wins.
+///
+/// The legacy [`apply_advisor_to_hnsw_indexes`] is still public
+/// (used by tests + the existing manager call site) — it now
+/// delegates to this function and filters the result to HNSW
+/// entries for back-compat with callers that expected
+/// `Vec<(String, HnswSizingOutput)>`.
+pub fn apply_advisor_to_indexes(
+    config: &mut CollectionConfig,
+    recall_target: f32,
+) -> Vec<AppliedAdvice> {
+    use crate::index::axis::management::{AnnAdvisorInput, AnnSelector, SupportedAlgorithm};
+    use crate::index::axis::types::IndexAlgorithm;
+
+    let metric = convert_distance_metric(config.distance_metric);
+    let dimension = config.dimension;
+    let target_n = parse_target_vector_count(config).unwrap_or(100_000);
+    let top_k = resolve_top_k(config);
+    let max_ef_search_legacy = parse_max_ef_search(config);
+    let max_query_latency_ms = parse_max_query_latency_ms(config);
+    let max_memory_mb = parse_max_memory_mb(config);
+    let binary_rerank_allowed = parse_binary_rerank_allowed(config);
+
+    // Auto-add a stub IndexConfig when no indexes exist. Use the
+    // selector to decide HNSW vs IVF.
+    if config.index_configs.is_empty() && dimension > 0 {
+        let selector = AnnSelector::default_set();
+        let input = AnnAdvisorInput {
+            vector_count: target_n,
+            top_k,
+            recall_target,
+            dimension,
+            distance_metric: metric,
+            max_query_latency_ms,
+            max_memory_mb,
+            binary_rerank_allowed,
+        };
+        if let Some(picked) = selector.select_and_advise(&input) {
+            match &picked.algorithm {
+                IndexAlgorithm::HNSW { m, ef_construction, ef_search, .. } => {
+                    let m = *m;
+                    let ef_construction = *ef_construction;
+                    let ef_search = *ef_search;
+                    config
+                        .index_configs
+                        .push(crate::proto::proximadb_v1::IndexConfig {
+                            index_name: AUTO_HNSW_INDEX_NAME.to_string(),
+                            algorithm: IndexingAlgorithm::Hnsw as i32,
+                            hnsw_config: Some(HnswConfig {
+                                m: Some(m),
+                                ef_construction: Some(ef_construction),
+                                ef_search: Some(ef_search),
+                                ..Default::default()
+                            }),
+                            ..Default::default()
+                        });
+                    return vec![AppliedAdvice {
+                        index_name: AUTO_HNSW_INDEX_NAME.to_string(),
+                        output: picked,
+                    }];
+                }
+                IndexAlgorithm::IVF { nlist, nprobe, .. } => {
+                    let nlist = *nlist;
+                    let nprobe = *nprobe;
+                    config
+                        .index_configs
+                        .push(crate::proto::proximadb_v1::IndexConfig {
+                            index_name: AUTO_IVF_INDEX_NAME.to_string(),
+                            algorithm: IndexingAlgorithm::Ivf as i32,
+                            ivf_config: Some(
+                                crate::proto::proximadb_v1::IvfConfig {
+                                    n_lists: Some(nlist),
+                                    n_probe: Some(nprobe),
+                                    ..Default::default()
+                                },
+                            ),
+                            ..Default::default()
+                        });
+                    return vec![AppliedAdvice {
+                        index_name: AUTO_IVF_INDEX_NAME.to_string(),
+                        output: picked,
+                    }];
+                }
+                _ => {
+                    // Selector returned an algorithm the auto-add
+                    // path doesn't synthesize for (PQ/Annoy in P2/P3).
+                    // No-op for now.
+                }
+            }
+        }
+        // Selector declined every advisor (e.g. all clamped + no
+        // best-effort). Fall through with no auto-add.
+    }
+
+    // Walk pre-existing index_configs and size HNSW / IVF entries
+    // per their algorithm-specific advisor.
+    let mut applied: Vec<AppliedAdvice> = Vec::new();
+    for idx in config.index_configs.iter_mut() {
+        let algo = IndexingAlgorithm::try_from(idx.algorithm)
+            .unwrap_or(IndexingAlgorithm::Unspecified);
+        match algo {
+            IndexingAlgorithm::Hnsw => {
+                // Skip caller-pinned HNSW.
+                let already_pinned = idx
+                    .hnsw_config
+                    .as_ref()
+                    .is_some_and(|h| {
+                        h.m.is_some() || h.ef_construction.is_some() || h.ef_search.is_some()
+                    });
+                if already_pinned {
+                    continue;
+                }
+                let advisor = crate::index::axis::management::HnswIndexAdvisor::new();
+                if let Some(out) = advisor.advise(&AnnAdvisorInput {
+                    vector_count: target_n,
+                    top_k,
+                    recall_target,
+                    dimension,
+                    distance_metric: metric,
+                    // Honor either the legacy max_ef_search tag OR
+                    // the new max_query_latency_ms — HNSW advisor
+                    // accepts either. Tag-level precedence: explicit
+                    // max_ef_search wins (operator already knows the
+                    // HNSW knob); else fall back to the latency
+                    // budget translated via the advisor's cost model.
+                    max_query_latency_ms: if max_ef_search_legacy.is_some() {
+                        None
+                    } else {
+                        max_query_latency_ms
+                    },
+                    max_memory_mb,
+                    binary_rerank_allowed,
+                }) {
+                    if let IndexAlgorithm::HNSW {
+                        m,
+                        ef_construction,
+                        ef_search,
+                        ..
+                    } = out.algorithm
+                    {
+                        idx.hnsw_config = Some(HnswConfig {
+                            m: Some(m),
+                            ef_construction: Some(ef_construction),
+                            // If the operator pinned max_ef_search
+                            // (legacy tag), clamp here too — the
+                            // HnswIndexAdvisor::advise call above
+                            // skipped max_query_latency_ms for that
+                            // reason, so we re-apply.
+                            ef_search: Some(
+                                max_ef_search_legacy
+                                    .map(|cap| ef_search.min(cap))
+                                    .unwrap_or(ef_search),
+                            ),
+                            ..idx.hnsw_config.clone().unwrap_or_default()
+                        });
+                        applied.push(AppliedAdvice {
+                            index_name: idx.index_name.clone(),
+                            output: out,
+                        });
+                    }
+                }
+            }
+            IndexingAlgorithm::Ivf => {
+                // Skip caller-pinned IVF.
+                let already_pinned = idx
+                    .ivf_config
+                    .as_ref()
+                    .is_some_and(|i| i.n_lists.is_some() || i.n_probe.is_some());
+                if already_pinned {
+                    continue;
+                }
+                let advisor = crate::index::axis::management::IvfIndexAdvisor::new();
+                if let Some(out) = advisor.advise(&AnnAdvisorInput {
+                    vector_count: target_n,
+                    top_k,
+                    recall_target,
+                    dimension,
+                    distance_metric: metric,
+                    max_query_latency_ms,
+                    max_memory_mb,
+                    binary_rerank_allowed,
+                }) && let IndexAlgorithm::IVF { nlist, nprobe, .. } = out.algorithm
+                {
+                    idx.ivf_config = Some(crate::proto::proximadb_v1::IvfConfig {
+                        n_lists: Some(nlist),
+                        n_probe: Some(nprobe),
+                        ..idx.ivf_config.clone().unwrap_or_default()
+                    });
+                    applied.push(AppliedAdvice {
+                        index_name: idx.index_name.clone(),
+                        output: out,
+                    });
+                }
+            }
+            _ => continue, // PQ/Annoy/LSH/etc — skip in P1.
+        }
+    }
+
+    // Silence unused — the legacy `Hnsw` discriminator is referenced
+    // above; this asserts `SupportedAlgorithm::Hnsw` is reachable so
+    // the trait re-export survives `cargo fix` cleanups.
+    let _ = SupportedAlgorithm::Hnsw;
+    applied
+}
 
 /// Optional steady-state size hint via `target_vector_count:` tag.
 /// Operators use it to ask "size for the corpus I expect to have"
@@ -223,6 +468,105 @@ pub fn parse_target_top_k(config: &CollectionConfig) -> Option<u32> {
 /// stays in one place.
 pub fn resolve_top_k(config: &CollectionConfig) -> u32 {
     parse_target_top_k(config).unwrap_or(DEFAULT_TOP_K)
+}
+
+/// Optional latency-budget cap on `ef_search` via `max_ef_search:`
+/// tag. When set, the advisor never recommends an ef above this
+/// value — it clamps to the cap and surfaces the resulting
+/// (possibly lower) recall on route-health as
+/// `projected_recall_at_clamped_ef`. Lets operators trade off recall
+/// vs query latency without manual ef tuning.
+///
+/// Clamps to `[EF_SEARCH_MIN, EF_SEARCH_MAX]` = `[16, 2048]` — same
+/// bounds the advisor enforces internally on the unclamped ef.
+///
+/// **HNSW-specific**. For the **algorithm-agnostic** latency budget
+/// (used by the [`AnnSelector`] across HNSW + IVF), prefer
+/// [`parse_max_query_latency_ms`] — the selector translates it to
+/// `max_ef_search` for HNSW and `max_nprobe` for IVF via per-algo
+/// cost models.
+pub fn parse_max_ef_search(config: &CollectionConfig) -> Option<u32> {
+    use crate::index::axis::management::{EF_SEARCH_MAX, EF_SEARCH_MIN};
+    const TAG: &str = "max_ef_search:";
+    let mut latest: Option<u32> = None;
+    for tag in &config.tags {
+        if let Some(rest) = tag.strip_prefix(TAG)
+            && let Ok(v) = rest.trim().parse::<u32>()
+        {
+            latest = Some(v.clamp(EF_SEARCH_MIN, EF_SEARCH_MAX));
+        }
+    }
+    latest
+}
+
+/// Optional per-query latency budget in milliseconds via
+/// `max_query_latency_ms:` tag. Algorithm-agnostic: the
+/// [`AnnSelector`] hands this to each advisor, which maps it to
+/// algorithm-specific budgets (HNSW `max_ef_search`, IVF
+/// `max_nprobe`) via internal cost models. Lets operators declare
+/// "I'd rather miss recall than blow my latency SLO" without
+/// knowing the indexing internals.
+///
+/// Parses an `f64` from the tag value. Clamps to `[0.1, 10000.0]`
+/// — below 100μs the per-algo cost models are noise-dominated;
+/// above 10s the budget is effectively unbounded.
+pub fn parse_max_query_latency_ms(config: &CollectionConfig) -> Option<f64> {
+    const TAG: &str = "max_query_latency_ms:";
+    let mut latest: Option<f64> = None;
+    for tag in &config.tags {
+        if let Some(rest) = tag.strip_prefix(TAG)
+            && let Ok(v) = rest.trim().parse::<f64>()
+            && v.is_finite()
+        {
+            latest = Some(v.clamp(0.1, 10_000.0));
+        }
+    }
+    latest
+}
+
+/// Optional memory budget in MB via `max_memory_mb:` tag.
+/// Algorithm-agnostic: the selector compares each candidate
+/// algorithm's `estimated_memory_mb` against this cap and excludes
+/// those that exceed it. Drives the HNSW↔IVF (and later HNSW↔IVF+PQ)
+/// selection when memory is the binding constraint.
+///
+/// Parses an `f64` MB value. Clamps to `[1.0, 1_048_576.0]` (1 MB to
+/// 1 TB) — anything outside is degenerate or unbounded.
+pub fn parse_max_memory_mb(config: &CollectionConfig) -> Option<f64> {
+    const TAG: &str = "max_memory_mb:";
+    let mut latest: Option<f64> = None;
+    for tag in &config.tags {
+        if let Some(rest) = tag.strip_prefix(TAG)
+            && let Ok(v) = rest.trim().parse::<f64>()
+            && v.is_finite()
+        {
+            latest = Some(v.clamp(1.0, 1_048_576.0));
+        }
+    }
+    latest
+}
+
+/// Operator opt-in for IVF binary / PQ rerank via the
+/// `binary_rerank:enabled` tag. When present, the IVF advisor
+/// lifts its recall ceiling from ~0.74 to ~0.95 and emits an
+/// `IndexAlgorithm::IVF` with `quantizer: Some(Box<PQ {...}>)`.
+///
+/// Defaults to `false` for backward compatibility — legacy IVF
+/// collections without this tag stay on the single-stage path
+/// with the 0.74 ceiling. The matching `BINARY_TIER_ENV`
+/// process-level env knob still works for global rollouts.
+///
+/// Recognised values: `enabled`, `on`, `true`, `1`,
+/// `yes` (case-insensitive). Anything else parses as disabled.
+pub fn parse_binary_rerank_allowed(config: &CollectionConfig) -> bool {
+    const TAG: &str = "binary_rerank:";
+    for tag in &config.tags {
+        if let Some(rest) = tag.strip_prefix(TAG) {
+            let val = rest.trim().to_ascii_lowercase();
+            return matches!(val.as_str(), "enabled" | "on" | "true" | "1" | "yes");
+        }
+    }
+    false
 }
 
 fn convert_distance_metric(raw: Option<i32>) -> DistanceMetric {
@@ -469,5 +813,214 @@ mod tests {
             parse_target_vector_count(&cfg("c", 128, &["target_vector_count:50000000000"])),
             Some(1_000_000_000)
         );
+    }
+
+    // ───── max_ef_search latency budget ────────────────────────
+
+    #[test]
+    fn parse_max_ef_search_happy_path() {
+        let c = cfg("c", 128, &["max_ef_search:300"]);
+        assert_eq!(parse_max_ef_search(&c), Some(300));
+    }
+
+    #[test]
+    fn parse_max_ef_search_missing_returns_none() {
+        let c = cfg("c", 128, &["recall_target:0.95"]);
+        assert_eq!(parse_max_ef_search(&c), None);
+    }
+
+    #[test]
+    fn parse_max_ef_search_clamps_extremes() {
+        // Below EF_SEARCH_MIN (16) → clamps up
+        assert_eq!(
+            parse_max_ef_search(&cfg("c", 128, &["max_ef_search:5"])),
+            Some(16)
+        );
+        // Above EF_SEARCH_MAX (2048) → clamps down
+        assert_eq!(
+            parse_max_ef_search(&cfg("c", 128, &["max_ef_search:99999"])),
+            Some(2048)
+        );
+    }
+
+    #[test]
+    fn max_ef_search_clamps_advised_ef_at_create_time() {
+        // r=0.95 at N=100K, m=32 wants ef≈405. Cap to 300 — the
+        // advisor must clamp + the stamped HnswConfig.ef_search
+        // should be 300 (not 405).
+        let mut c = cfg(
+            "c_clamp",
+            128,
+            &[
+                "recall_target:0.95",
+                "max_ef_search:300",
+                "target_vector_count:100000",
+            ],
+        );
+        c.index_configs.push(hnsw_idx("primary"));
+
+        let applied = apply_advisor_to_hnsw_indexes(&mut c, 0.95);
+        assert_eq!(applied.len(), 1);
+        let out = &applied[0].1;
+        assert!(out.clamped_by_max_ef, "advisor must report the clamp");
+        assert_eq!(out.ef_search, 300);
+
+        // The stamped HnswConfig matches the clamped ef.
+        let h = c.index_configs[0].hnsw_config.as_ref().unwrap();
+        assert_eq!(h.ef_search, Some(300));
+    }
+
+    // ───── max_memory_mb / max_query_latency_ms parsers ──────
+
+    #[test]
+    fn parse_max_memory_mb_happy_path() {
+        let c = cfg("c", 128, &["max_memory_mb:128.5"]);
+        assert_eq!(parse_max_memory_mb(&c), Some(128.5));
+    }
+
+    #[test]
+    fn parse_max_memory_mb_clamps_extremes() {
+        // Below 1 MB → clamps up
+        let c1 = cfg("c", 128, &["max_memory_mb:0.5"]);
+        assert_eq!(parse_max_memory_mb(&c1), Some(1.0));
+        // Above 1 TB → clamps down
+        let c2 = cfg("c", 128, &["max_memory_mb:9999999"]);
+        assert_eq!(parse_max_memory_mb(&c2), Some(1_048_576.0));
+    }
+
+    #[test]
+    fn parse_max_query_latency_ms_happy_path() {
+        let c = cfg("c", 128, &["max_query_latency_ms:5.0"]);
+        assert_eq!(parse_max_query_latency_ms(&c), Some(5.0));
+    }
+
+    #[test]
+    fn parse_max_query_latency_ms_clamps_extremes() {
+        // Below 0.1 ms (= 100μs) → clamps up
+        let c1 = cfg("c", 128, &["max_query_latency_ms:0.001"]);
+        assert_eq!(parse_max_query_latency_ms(&c1), Some(0.1));
+        // Above 10s → clamps down
+        let c2 = cfg("c", 128, &["max_query_latency_ms:60000"]);
+        assert_eq!(parse_max_query_latency_ms(&c2), Some(10_000.0));
+    }
+
+    #[test]
+    fn parse_max_memory_mb_missing_returns_none() {
+        let c = cfg("c", 128, &[]);
+        assert_eq!(parse_max_memory_mb(&c), None);
+    }
+
+    // ───── apply_advisor_to_indexes (algorithm-agnostic) ─────
+
+    #[test]
+    fn apply_advisor_to_indexes_auto_synthesizes_hnsw_for_high_recall() {
+        // r=0.95: HNSW reaches; IVF declines (above ceiling).
+        // Selector picks HNSW → synthesizes auto_hnsw_recall_target.
+        let mut c = cfg("c_hnsw", 128, &["recall_target:0.95"]);
+        let advice = apply_advisor_to_indexes(&mut c, 0.95);
+        assert_eq!(advice.len(), 1);
+        assert_eq!(advice[0].index_name, AUTO_HNSW_INDEX_NAME);
+        assert_eq!(
+            advice[0].output.kind,
+            crate::index::axis::management::SupportedAlgorithm::Hnsw
+        );
+        // The synthesized IndexConfig must carry the sized HNSW
+        // params verbatim.
+        assert_eq!(c.index_configs.len(), 1);
+        assert_eq!(c.index_configs[0].algorithm, IndexingAlgorithm::Hnsw as i32);
+        let h = c.index_configs[0].hnsw_config.as_ref().unwrap();
+        assert!(h.m.is_some() && h.ef_search.is_some());
+    }
+
+    #[test]
+    fn apply_advisor_to_indexes_sizes_existing_ivf_index() {
+        // Caller attached an IVF IndexConfig with no params. The
+        // advisor sizes nlist + nprobe from a sub-ceiling recall
+        // target.
+        let mut c = cfg(
+            "c_ivf",
+            128,
+            &["recall_target:0.70", "target_vector_count:100000"],
+        );
+        c.index_configs.push(crate::proto::proximadb_v1::IndexConfig {
+            index_name: "explicit_ivf".to_string(),
+            algorithm: IndexingAlgorithm::Ivf as i32,
+            ..Default::default()
+        });
+        let advice = apply_advisor_to_indexes(&mut c, 0.70);
+        assert_eq!(advice.len(), 1);
+        assert_eq!(advice[0].index_name, "explicit_ivf");
+        assert_eq!(
+            advice[0].output.kind,
+            crate::index::axis::management::SupportedAlgorithm::Ivf
+        );
+        let i = c.index_configs[0].ivf_config.as_ref().unwrap();
+        assert!(i.n_lists.is_some() && i.n_probe.is_some());
+    }
+
+    #[test]
+    fn parse_binary_rerank_allowed_variants() {
+        for raw in ["enabled", "ENABLED", "on", "true", "1", "yes"] {
+            let c = cfg("c", 128, &[&format!("binary_rerank:{}", raw)]);
+            assert!(
+                parse_binary_rerank_allowed(&c),
+                "binary_rerank:{} must parse as true",
+                raw
+            );
+        }
+        for raw in ["off", "disabled", "0", "no", "garbage", ""] {
+            let c = cfg("c", 128, &[&format!("binary_rerank:{}", raw)]);
+            assert!(
+                !parse_binary_rerank_allowed(&c),
+                "binary_rerank:{} must parse as false",
+                raw
+            );
+        }
+        // Missing tag → false.
+        assert!(!parse_binary_rerank_allowed(&cfg("c", 128, &[])));
+    }
+
+    #[test]
+    fn binary_rerank_tag_lifts_ivf_ceiling_end_to_end() {
+        // r=0.85 without rerank tag → selector falls back to HNSW
+        // (IVF declines). r=0.85 WITH rerank → advisor stamps an
+        // IVF index with a PQ quantizer.
+        let mut c = cfg(
+            "c_rerank",
+            128,
+            &["recall_target:0.85", "binary_rerank:enabled"],
+        );
+        let advice = apply_advisor_to_indexes(&mut c, 0.85);
+        assert_eq!(advice.len(), 1);
+        // Verify the IVF path was picked (binary_rerank can only
+        // route to IVF — HNSW doesn't quantize).
+        assert_eq!(
+            advice[0].output.kind,
+            crate::index::axis::management::SupportedAlgorithm::Ivf
+        );
+        // And the stamped IndexConfig is IVF — the synthesised
+        // name reflects which path the selector took.
+        assert_eq!(c.index_configs[0].algorithm, IndexingAlgorithm::Ivf as i32);
+    }
+
+    #[test]
+    fn apply_advisor_to_indexes_respects_caller_pinned_ivf() {
+        // IVF with pinned n_lists/n_probe → no-op.
+        let mut c = cfg("c_pinned_ivf", 128, &["recall_target:0.70"]);
+        c.index_configs.push(crate::proto::proximadb_v1::IndexConfig {
+            index_name: "pinned".to_string(),
+            algorithm: IndexingAlgorithm::Ivf as i32,
+            ivf_config: Some(crate::proto::proximadb_v1::IvfConfig {
+                n_lists: Some(500),
+                n_probe: Some(25),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let advice = apply_advisor_to_indexes(&mut c, 0.70);
+        assert_eq!(advice.len(), 0, "pinned config must be untouched");
+        let i = c.index_configs[0].ivf_config.as_ref().unwrap();
+        assert_eq!(i.n_lists, Some(500)); // unchanged
+        assert_eq!(i.n_probe, Some(25));
     }
 }

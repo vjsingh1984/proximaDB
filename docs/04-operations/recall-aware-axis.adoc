@@ -13,19 +13,36 @@ case.
 
 [source,bash]
 ----
-# 1. Create with a recall target
+# 1a. High-recall workload (selector picks HNSW)
 curl -X POST http://localhost:5678/api/v1/collections \
   -d '{
-    "name": "my_vec_collection",
+    "name": "high_recall_collection",
     "dimension": 768,
     "tags": ["recall_target:0.95"]
+  }'
+
+# 1b. Memory-constrained workload (selector picks IVF)
+curl -X POST http://localhost:5678/api/v1/collections \
+  -d '{
+    "name": "tight_memory_collection",
+    "dimension": 768,
+    "tags": ["recall_target:0.65", "max_memory_mb:30"]
+  }'
+
+# 1c. Latency-bounded workload (advisor clamps + reports projected recall)
+curl -X POST http://localhost:5678/api/v1/collections \
+  -d '{
+    "name": "tight_latency_collection",
+    "dimension": 768,
+    "tags": ["recall_target:0.95", "max_query_latency_ms:0.2"]
   }'
 
 # 2. Watch drift (passive — auto every 5 min via RecallDriftSweeper)
 curl http://localhost:5678/api/v2/_diagnostics/collections/my_vec_collection/route-health \
   | jq .recall_drift
+# Response carries `algorithm: "hnsw"|"ivf"` so dashboards can split
 
-# 3. Or alert in Prometheus
+# 3. Alert in Prometheus
 # axis_recall_drift_status{kind="rebuild_required"} == 1
 
 # 4. Apply the recommended_action when route-health says so
@@ -33,6 +50,49 @@ curl -X POST http://localhost:5678/api/v2/_diagnostics/collections/my_vec_collec
 # OR (for rebuild_required)
 curl -X POST http://localhost:5678/api/v2/_diagnostics/collections/my_vec_collection/recluster
 ----
+
+=== Full tag inventory
+
+|===
+| Tag | Type | Purpose | Default | Clamps to
+
+| `recall_target:` | f32 | Required recall (0..1) | (none — required to enable) | [0.50, 0.999]
+| `target_vector_count:` | u64 | Steady-state N hint | 100K | [1K, 1B]
+| `target_top_k:` | u32 | Workload k | 10 | [1, 1000]
+| `max_ef_search:` | u32 | HNSW-specific latency cap | unset | [16, 2048]
+| `max_query_latency_ms:` | f64 | Algorithm-agnostic latency cap | unset | [0.1, 10000]
+| `max_memory_mb:` | f64 | Memory budget for algorithm selection | unset | [1.0, 1048576]
+|===
+
+== Algorithm selection (P1: HNSW + IVF)
+
+The advisor is **algorithm-agnostic** at the operator-facing layer.
+Set the budgets you care about; the [`AnnSelector`] picks the
+algorithm + sizes its params:
+
+* `recall_target:0.95` — single knob default. Picks **HNSW** (only
+  HNSW reaches r ≥ 0.85 in this codebase).
+* `recall_target:0.65 + max_memory_mb:30` — memory binds. Selector
+  picks **IVF** (HNSW at m=32 dim=128 N=100K needs ~62 MB; IVF
+  fits in ~50 MB without the m-edge overhead).
+* `recall_target:0.99 + max_query_latency_ms:1` — both budgets
+  bind. Selector clamps to best-effort + flags
+  `recommended_action="raise_max_ef_or_bump_m"`.
+
+|===
+| Algorithm | Built for | Ceiling at typical nprobe/ef | Memory @ N=100K dim=128
+| HNSW | High recall (≥0.85), low latency | ~1.0 (per m=32/48 sweeps) | ~62 MB (m=32)
+| IVF (k-means, no rerank) | Memory-constrained, r ≤ 0.74 | ~0.74 (per multi-N sweep) | ~51 MB
+| **IVF + PQ rerank** (P2, partially wired) | **Memory + r ≥ 0.85** | **~0.95** | **~30 MB with nbits=8**
+|===
+
+**The 0.74 IVF ceiling is fundamental** to k-means + centroid-distance
+probing at sub-full-scan `nprobe`. Better clustering (HKM, spherical
+k-means) lifts it by ~5-10pp; **PQ-quantized rerank** lifts it by
+~15-20pp (TD: wire `binary_rerank: bool` to `AnnAdvisorInput` →
+`use_binary` toggle is already in `dual_store_ivf`). Until PQ rerank
+ships, the advisor declines IVF for `recall_target > 0.74` and the
+selector routes to HNSW.
 
 == The one knob: `recall_target`
 
