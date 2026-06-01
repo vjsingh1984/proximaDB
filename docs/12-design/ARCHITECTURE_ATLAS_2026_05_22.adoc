@@ -2,10 +2,14 @@
 :toc:
 :toclevels: 3
 
-Status: active baseline +
+Status: active baseline (feeder) +
 Date: 2026-05-22 +
 Evidence: Cargo workspace metadata, repository layout, `docs/12-design/README.adoc`, and
 `.victor/project.db`
+
+NOTE: Subordinate to link:SYSTEM_MAP_2026_05_30.adoc[SYSTEM_MAP_2026_05_30] (the apex
+single-pane-of-glass index). This atlas remains the source of OSS/SaaS-split and connectedness detail;
+see the apex for the whole-system view and to avoid adding a competing map.
 
 This atlas is the top-down map for ProximaDB as an OSS core database and as the data plane behind
 a hosted SaaS product. It is intentionally navigation-first: it shows ownership boundaries,

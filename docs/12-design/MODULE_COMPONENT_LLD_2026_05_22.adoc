@@ -2,9 +2,13 @@
 :toc:
 :toclevels: 3
 
-Status: active baseline +
+Status: active baseline (feeder) +
 Date: 2026-05-22 +
 Companion: `ARCHITECTURE_ATLAS_2026_05_22.adoc`
+
+NOTE: Subordinate to link:SYSTEM_MAP_2026_05_30.adoc[SYSTEM_MAP_2026_05_30] (the apex
+single-pane-of-glass index). This LLD remains the per-module authority/inputs/outputs detail; the apex
+indexes it for the whole-system view.
 
 This document decomposes the ProximaDB workspace into LLD-level component groups. It is not a
 replacement for ADRs or active implementation trackers; it is the connectedness map used to decide

@@ -6,6 +6,10 @@
 [.lead]
 ProximaDB is a multi‑model database that unifies vectors, documents, graphs, and observability data behind a single data plane.
 
+NOTE: This developer-facing overview is a feeder of the apex
+link:../12-design/SYSTEM_MAP_2026_05_30.adoc[SYSTEM_MAP_2026_05_30] single-pane-of-glass index. Use the
+apex for the whole-system view; this doc stays focused on the high-level overview and request flows.
+
 == System Diagram
 
 [source,mermaid]

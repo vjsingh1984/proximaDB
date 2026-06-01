@@ -148,8 +148,13 @@ Keep this section short; detailed rules live in the referenced docs.
 - Iceberg/Delta/Hudi/Parquet paths are open-format interoperability modes. Register them in xCatalog as publications, imports, federated reads, or explicit external-authoritative assets; do not treat table logs/files as Proxima-owned hot authority unless the canonical WAL/record path owns the commit.
 - Workspace changes follow the stable map `Foundation -> Contracts -> Modality Runtime -> Cross-Model Query Runtime -> Platform Runtime -> Apps/Bindings`; add crates only for real dependency or ownership payoff.
 - Before touching records/types/catalog/storage/WAL/query/RLS/open formats/pgwire/Arrow/workspace code, read the relevant docs below and cite doc/ADR ids in PRs.
+- **Convergence Gate**: any new `struct`/`enum`/endpoint/handler/planner/config/storage path must either name the canonical surface it converges on, or cite the ADR that justifies a new seam (with `authority_mode`/`policy_boundary`/`freshness` declared). New whole-system diagrams live in `docs/12-design/SYSTEM_MAP_2026_05_30.adoc` (the apex map) or a feeder linked from it — never a new competing map. Treat a duplicate abstraction as a regression. See [docs/12-design/CONVERGENCE_AUDIT_2026_05_30.adoc](docs/12-design/CONVERGENCE_AUDIT_2026_05_30.adoc).
 
 Architecture references:
+
+- [docs/12-design/SYSTEM_MAP_2026_05_30.adoc](docs/12-design/SYSTEM_MAP_2026_05_30.adoc) - apex single-pane-of-glass system map (workspace layers, src modules, engines, write/read paths, facade-to-authority convergence); subordinates the three prior maps as feeders.
+- [docs/12-design/CONVERGENCE_AUDIT_2026_05_30.adoc](docs/12-design/CONVERGENCE_AUDIT_2026_05_30.adoc) - live divergent-seam catalog + by-design separations + the Convergence Gate governance rule.
+- [docs/12-design/adr/ADR-022-agent-memory-layer.adoc](docs/12-design/adr/ADR-022-agent-memory-layer.adoc) - agent-memory layer reusing AQL/RGL/RERANK/fusion; mem0/agentmemory as compatible consumers.
 
 - [roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc](roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc) - record/type/algebra/storage/RLS internals and sticky ADRs.
 - [docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc](docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc) - stacked durability and modality convergence.

@@ -1,0 +1,236 @@
+= ProximaDB System Map — Single Pane of Glass
+:toc: left
+:toclevels: 3
+:icons: font
+:source-highlighter: rouge
+:sectnums:
+:last-updated: 2026-05-30
+
+Status: Apex reference index (active baseline) +
+Date: 2026-05-30 +
+Scope: One recursive whole-system view — workspace layers, `src/` modules, the 6 storage / 3 graph
+engines, write/read data paths, and the protocol-facade-to-canonical-authority convergence. +
+Supersedes-as-front-door: this doc is the apex over the three pre-existing system maps; they are now
+feeders (see <<feeders>>).
+
+[.lead]
+This is the **single pane of glass** for ProximaDB. It exists to answer one question fast — "where does
+a thing live, and what does it converge on?" — across 57 workspace crates and 48 `src/` modules. It is
+navigation-first: it does not duplicate the per-module detail in the feeder docs, it indexes and ties
+them together so they stop diverging.
+
+[IMPORTANT]
+====
+**Why this doc exists.** The codebase grew three partially-overlapping whole-system maps
+(`ARCHITECTURE_ATLAS_2026_05_22`, `MODULE_COMPONENT_LLD_2026_05_22`, `docs/05-concepts/architecture.adoc`).
+Each is correct but none is canonical, so they drift. This doc is declared the apex; the three become
+subordinate feeders. New whole-system diagrams belong here or in a feeder linked from here — **not in a
+fourth competing map**. That rule is itself a convergence gate (see
+link:CONVERGENCE_AUDIT_2026_05_30.adoc[CONVERGENCE_AUDIT_2026_05_30]).
+====
+
+== How to use this map
+
+* Need the *system shape and ownership boundaries*? Start at <<workspace>> then <<feeders>>.
+* Need *where a `src/` module lives and what it does*? <<srcmap>>.
+* Need *how a write or read flows end to end*? <<writepath>> / <<readpath>>.
+* Need *why four protocols don't mean four truths*? <<convergence>>.
+* Need *where the known divergent seams are*? <<seams>>.
+
+[#workspace]
+== Layer 1 — Workspace (57 crates, layered)
+
+The workspace follows the stable map from `CLAUDE.md`:
+`Foundation -> Contracts -> Control -> Horizontal -> Modality -> Storage -> Query/Cross-Model -> Platform -> Apps/Bindings`.
+Crates are added only for real dependency or ownership payoff.
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+  classDef layer fill:#4a90e2,stroke:#2e5c8a,color:#000;
+  classDef apps fill:#cfe2f7,stroke:#2e5c8a,color:#000;
+
+  FND["<b>Foundation</b> (13)<br/>kernel · data-model · proto · records · filter-expr<br/>distance/compression/encoding/quantization-types<br/>config · hardware · pipeline-operator · relational-types"]:::layer
+  CTR["<b>Contracts</b> (1)<br/>quantization (behavior + compat gates)"]:::layer
+  CTL["<b>Control</b> (1)<br/>proximadb-catalog — xCatalog, 8 backends, route knobs"]:::layer
+  HRZ["<b>Horizontal</b> (7)<br/>codec · compression · security · telemetry<br/>runtime-common · embedded-common · recall-bench"]:::layer
+  MOD["<b>Modality Runtime</b> (11)<br/>vector · document · graph · observability · embedding · queue<br/>rank-core/features/expr/profile/onnx"]:::layer
+  STG["<b>Storage</b> (2)<br/>storage-common (engine trait, caching FS) · block-format (PAX)"]:::layer
+  QRY["<b>Query / Cross-Model</b> (19)<br/>query · uql · multimodel-{query,plan} · relational-{algebra…engine}<br/>{vector,document,graph}-query · graph-{arrow,subset}<br/>query-{capability,clauses,filter} · query-fusion (RRF+BM25)"]:::layer
+  PLT["<b>Platform</b> (2)<br/>proximadb-api (REST/gRPC/Flight/pgwire surfaces)<br/>proximadb-runtime (composition, PortUserContext)"]:::layer
+  APP["<b>Apps / Bindings</b><br/>proximadb-server · -migrate · -bench<br/>clients: rust · python · go · java · nodejs · C FFI"]:::apps
+
+  FND --> CTR --> CTL --> HRZ --> MOD --> STG --> QRY --> PLT --> APP
+----
+
+NOTE: Crate-by-crate authority/inputs/outputs live in the feeder
+link:MODULE_COMPONENT_LLD_2026_05_22.adoc[MODULE_COMPONENT_LLD_2026_05_22]; the OSS/SaaS split lives in
+link:ARCHITECTURE_ATLAS_2026_05_22.adoc[ARCHITECTURE_ATLAS_2026_05_22]. This map does not restate them.
+
+[#srcmap]
+== Layer 2 — `src/` module map (48 top-level modules)
+
+The root crate composes the workspace crates and still hosts the load-bearing runtime implementations
+(handler extraction to `proximadb-api` is in progress — see <<seams>>).
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+  classDef grp fill:#4a90e2,stroke:#2e5c8a,color:#000;
+  classDef sub fill:#eaf2fb,stroke:#2e5c8a,color:#000;
+
+  subgraph DATAEXEC[Data & Execution]
+    direction TB
+    STO["storage/<br/>6 engines: SST·HELIX·VIPER·SWIFT·NOVA·RAPTOR<br/>WAL · persistence · filesystem · document/sdp"]:::sub
+    CMP["compute/<br/>distance (L2/cos/dot) · SIMD detect · quantization/unified"]:::sub
+    IDX["index/<br/>AXIS (HNSW·IVF·PQ·Annoy·LSH) · DiskANN · geo"]:::sub
+    GRA["graph/<br/>ORION·PULSAR·QUASAR · CSR · rag/ (RGL)"]:::sub
+    QUE["query/<br/>sql · aql · nl · unified · planner (RL) · explain_schema"]:::sub
+    COR["core/<br/>record_store · search/hybrid · metadata · provenance"]:::sub
+  end
+
+  subgraph NET[Network & Protocol]
+    NWK["network/<br/>rest/{v1,v2} · grpc · postgres (pgwire 5433) · arrow_ipc<br/>multi_server · router · shared_services"]:::sub
+    APH["api_handlers/<br/>unified · ai · v1 · v2 (UnifiedHandlers — real impl)"]:::sub
+  end
+
+  subgraph SVC[Services & Catalog]
+    SRV["services/<br/>collection · operations/vectors · dml · search · documents · graph · queue · events"]:::sub
+    CAT["catalog/<br/>budget · oltp · tier (transitional shims over proximadb-catalog)"]:::sub
+  end
+
+  subgraph CTLP[Control Plane]
+    SEC["security/ (auth·rbac·encryption·rls)"]:::sub
+    OBS["observability/ + metrics/ + audit/"]:::sub
+    CLU["cluster/ (raft·replication·health)"]:::sub
+  end
+
+  subgraph INTG[Integration & AI]
+    CDC2["cdc/ · connectors/ (iceberg·delta·hudi·s3) · ingest/ · streaming/"]:::sub
+    AI2["ai/llm_integration · llm/ · embedding/ · automl/"]:::sub
+    TXN["transaction/ (mvcc·isolation·locks)"]:::sub
+  end
+
+  EMB["embedded/ (PyO3·JNI·NAPI·C FFI)"]:::grp
+
+  NET --> SVC --> DATAEXEC
+  SVC --> CTLP
+  DATAEXEC --> INTG
+  DATAEXEC --> EMB
+----
+
+[#writepath]
+== Layer 3 — Write path (end to end)
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart LR
+  classDef n fill:#4a90e2,stroke:#2e5c8a,color:#000;
+  C[Client]:::n --> N["network/<br/>(REST/gRPC/Flight/pgwire)"]:::n
+  N --> H["api_handlers/<br/>UnifiedHandlers"]:::n
+  H --> S["services/<br/>operations·dml"]:::n
+  S --> W["storage/persistence/<br/>write_ahead_log (canonical WAL)"]:::n
+  W --> E["UnifiedStorageEngine<br/>(SST/HELIX/VIPER/…)"]:::n
+  E --> F["storage/persistence/<br/>filesystem"]:::n
+  S -. authority .-> X["xCatalog<br/>(proximadb-catalog)"]:::n
+----
+
+[#readpath]
+== Layer 3 — Read / search path (end to end)
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart LR
+  classDef n fill:#4a90e2,stroke:#2e5c8a,color:#000;
+  C[Client]:::n --> N["network/"]:::n
+  N --> P["query/<br/>planner (RL) + EXPLAIN"]:::n
+  P -. route knobs .-> X["xCatalog"]:::n
+  P --> SR["core/search<br/>+ index (AXIS/DiskANN)"]:::n
+  SR --> E["UnifiedStorageEngine"]:::n
+  E --> D["compute/distance<br/>(+ quantization)"]:::n
+  D --> FU["core/search/hybrid/fusion<br/>(RRF + 11 strategies)"]:::n
+  FU --> RK["rank-* (RERANK SRF)<br/>ProductionHybridBackend"]:::n
+  RK --> C
+----
+
+[#convergence]
+== Layer 4 — Protocol-facade → canonical-authority convergence
+
+Four wire protocols are *facades*, not authorities. They lower into the same canonical record + WAL +
+catalog chain. This is the load-bearing invariant the whole architecture rests on: proliferation is
+allowed at the edge, never in the durable core.
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+  classDef edge fill:#cfe2f7,stroke:#2e5c8a,color:#000;
+  classDef core fill:#4a90e2,stroke:#2e5c8a,color:#000;
+
+  R1[REST v1]:::edge --> SVC
+  R2[REST v2]:::edge --> SVC
+  GR[gRPC]:::edge --> SVC
+  AF[Arrow Flight]:::edge --> SVC
+  PG["pgwire 5433<br/>(pgvector compat)"]:::edge --> SVC
+
+  SVC["services/ (shared)"]:::core --> REC["ProximaRecord<br/>ProximaType / ProximaValue"]:::core
+  REC --> WAL["canonical WAL"]:::core
+  WAL --> XC["xCatalog (durable authority)"]:::core
+----
+
+[#seams]
+== Where the seams are
+
+This map is the apex; it points at the live divergent seams rather than hiding them. The authoritative
+catalog with reconcile directions and queued TD items is
+link:CONVERGENCE_AUDIT_2026_05_30.adoc[CONVERGENCE_AUDIT_2026_05_30]. Summary:
+
+[cols="2,3", options="header"]
+|===
+| Seam | One-line status
+
+| Phase 9 handler/service extraction
+| Real impl in `src/api_handlers/request_handlers.rs`; `proximadb-runtime/src/handlers.rs` is a stub. Migration in progress.
+
+| Deprecated gRPC shims
+| `src/network/grpc/*_service.rs` deprecation shims; real impls migrated. Removal targeted for v0.2 (pulls forward from the code's `0.3.0` markers).
+
+| Proto-v1 internal mirrors
+| `VectorRecord`/`SqlValue`/`SqlObject` still used internally; canonical is `ProximaRecord`/`ProximaValue`.
+
+| Scattered configs
+| CDC + cluster config structs not yet under `crates/foundation/proximadb-config`.
+
+| PlanCache B/C/D
+| Four impls; A consolidated, B/C/D intentionally separate (documented as by-design).
+|===
+
+[#feeders]
+== Feeder docs (subordinate to this map)
+
+[cols="2,3", options="header"]
+|===
+| Feeder | Role under this apex
+
+| link:ARCHITECTURE_ATLAS_2026_05_22.adoc[ARCHITECTURE_ATLAS_2026_05_22]
+| OSS/SaaS split, workspace connectedness, use-case + deployment maps. Source of the SaaS-boundary detail this apex summarizes.
+
+| link:MODULE_COMPONENT_LLD_2026_05_22.adoc[MODULE_COMPONENT_LLD_2026_05_22]
+| Per-module authority / inputs / outputs LLD. The "where does a change belong" connectedness map.
+
+| link:../05-concepts/architecture.adoc[docs/05-concepts/architecture.adoc]
+| Developer-facing overview + request-flow diagrams + multi-model target table.
+|===
+
+== Agent-memory note
+
+ProximaDB's positioning as a memory substrate for AI agents and its mapping to the mem0 / agentmemory
+orchestration libraries are specified in
+link:adr/ADR-022-agent-memory-layer.adoc[ADR-022] +
+link:AGENT_MEMORY_LAYER_HLD_2026_05_30.adoc[AGENT_MEMORY_LAYER_HLD_2026_05_30]. The short version: the
+agent-memory layer is a *consumer* of the surfaces mapped above (AQL, Graph RAG, RERANK, hybrid fusion,
+`ProximaRecord.memory_type`, pgvector wire), not a new storage stack.

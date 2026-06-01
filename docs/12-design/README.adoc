@@ -5,6 +5,15 @@
 This directory holds current architectural decisions and active implementation blueprints.
 Historical phase reports, superseded visions, and one-off audits belong under `docs/_archive/`.
 
+[IMPORTANT]
+====
+**Start here for the whole-system view.** link:SYSTEM_MAP_2026_05_30.adoc[SYSTEM_MAP_2026_05_30] is the
+apex single-pane-of-glass index — workspace layers → `src/` modules → engines → write/read paths →
+facade-to-authority convergence, with pointers to every feeder map. New whole-system diagrams belong
+there (or a feeder linked from it), never in a new competing map — this is enforced by the Convergence
+Gate in link:CONVERGENCE_AUDIT_2026_05_30.adoc[CONVERGENCE_AUDIT_2026_05_30].
+====
+
 [TIP]
 ====
 **For a bookkeeping snapshot** (every doc here + every ADR, with status / wired-vs-not / consolidation cluster columns), see
