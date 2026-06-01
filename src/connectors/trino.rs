@@ -581,28 +581,96 @@ pub enum TrinoErrorCode {
 // Arrow Flight Integration Points
 // ============================================================================
 //
-// ⚠️  SCAFFOLD STATUS — TD-098
+// ⚠️  SCAFFOLD STATUS — TD-098 (partial: 1/7 live as of 2026-06-01)
 //
-// Every `flight_*` function below is currently a placeholder. They return
-// minimal-shape results so callers compile; none construct a
-// `FlightServiceClient` or dial the live ProximaFlightService at
-// `src/network/arrow_ipc/service.rs`. Closing the gap requires a tonic
-// `Server::builder()` test fixture (see `tests/fp16_flight_e2e.rs` for
-// the pattern) PLUS a real client mount.
+// `flight_list_schemas` is LIVE — constructs a `FlightServiceClient`,
+// dials `list_flights`, and projects descriptor paths into TrinoSchemas.
+// See its docstring + the contract gate at
+// `tests/connectors_flight_contract.rs::trino_flight_list_schemas_*` for
+// the round-trip proof (in-process tonic test fixture). Note the new
+// signature is **async** — older sync callers need a runtime handle.
 //
-// The structural shape of the FlightDescriptors / ArrowFileTickets these
-// functions need is already guarded by the contract gate at
-// `tests/connectors_flight_contract.rs`. The remaining work is wiring
-// the actual FlightClient calls; see `docs/10-quality/TECHNICAL_DEBT.adoc`
-// TD-098 for the acceptance criteria.
+// The remaining 6 `flight_*` helpers (`flight_list_tables`,
+// `flight_get_table_schema`, `flight_get_splits`, plus the Page-source /
+// sink ops) are still scaffolds. The pattern lands when this module
+// finishes its TD-098 migration; see
+// `docs/10-quality/TECHNICAL_DEBT.adoc` for the acceptance criteria.
 
-/// Flight action for listing schemas. Scaffold — see TD-098.
-pub fn flight_list_schemas(_catalog: &str) -> Vec<TrinoSchema> {
-    // Schema listing: Arrow Flight ListFlights for available schemas
-    vec![TrinoSchema {
-        name: "default".to_string(),
-        tables: Vec::new(),
-    }]
+/// Live Arrow Flight `ListFlights` query against the configured ProximaDB
+/// Flight endpoint. Returns one [`TrinoSchema`] per unique first-path
+/// segment in the returned `FlightInfo.flight_descriptor.path` — matches
+/// the server's routing convention at
+/// `src/network/arrow_ipc/service.rs:313-342` (`["relational", table_fqn]`
+/// + `["vectors", collection_id]`).
+///
+/// First live Flight method (TD-098 pilot, 2026-06-01). The other 6
+/// `flight_*` helpers below stay scaffolded; they follow the same
+/// `FlightServiceClient::connect → list_flights / get_schema / do_get`
+/// pattern and are mechanical follow-up.
+///
+/// Returns an empty Vec on connect / list failures so callers can degrade
+/// to "no schemas visible" instead of panicking on a transient blip.
+pub async fn flight_list_schemas(endpoint: &str, _catalog: &str) -> Vec<TrinoSchema> {
+    use arrow_flight::Criteria;
+    use arrow_flight::flight_service_client::FlightServiceClient;
+    use futures::StreamExt;
+    use std::collections::BTreeMap;
+
+    // Normalize `grpc://host:port` → `http://host:port` so tonic's HTTP/2
+    // transport accepts it. tonic's `Channel::from_shared` rejects the
+    // `grpc://` scheme even though the wire protocol is gRPC-over-HTTP/2.
+    let dial = endpoint
+        .strip_prefix("grpc://")
+        .map(|rest| format!("http://{rest}"))
+        .unwrap_or_else(|| endpoint.to_string());
+
+    // tonic ≥0.12 removed the convenience `connect` constructor on
+    // codegen client types; build the Channel explicitly and hand
+    // it to `FlightServiceClient::new`. Behavior unchanged from
+    // the previous `connect()` form.
+    let channel = match tonic::transport::Channel::from_shared(dial)
+        .ok()
+        .map(|e| e.connect_lazy())
+    {
+        Some(ch) => ch,
+        None => return Vec::new(),
+    };
+    let mut client = FlightServiceClient::new(channel);
+
+    let mut stream = match client
+        .list_flights(tonic::Request::new(Criteria {
+            expression: Default::default(),
+        }))
+        .await
+    {
+        Ok(resp) => resp.into_inner(),
+        Err(_) => return Vec::new(),
+    };
+
+    // Bucket each FlightInfo by its first descriptor-path segment. Tables
+    // accumulate under the same schema name; preserves insertion order
+    // via BTreeMap.
+    let mut by_schema: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    while let Some(item) = stream.next().await {
+        let Ok(flight_info) = item else { continue };
+        let Some(desc) = flight_info.flight_descriptor else {
+            continue;
+        };
+        let mut path_iter = desc.path.into_iter();
+        let Some(schema_name) = path_iter.next() else {
+            continue;
+        };
+        let table_name = path_iter.next().unwrap_or_default();
+        let entry = by_schema.entry(schema_name).or_default();
+        if !table_name.is_empty() && !entry.contains(&table_name) {
+            entry.push(table_name);
+        }
+    }
+
+    by_schema
+        .into_iter()
+        .map(|(name, tables)| TrinoSchema { name, tables })
+        .collect()
 }
 
 /// Flight action for listing tables
