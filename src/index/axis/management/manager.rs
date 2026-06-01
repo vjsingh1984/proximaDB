@@ -1874,13 +1874,20 @@ impl AxisManager {
                 // TD-075: route to the quantized accelerator only when the gate
                 // is open AND the index has quantized storage; otherwise exact.
                 let has_quantized = index.has_quantized_storage();
-                let use_quantized = decide_quantized_route(gate_open, has_quantized);
+                // ADR-023 T-E: a cold-loaded index (`ColdBinaryOnly`) has NO fp32
+                // store yet, so exact search would return nothing — force the
+                // binary (Stage-1) route regardless of the recall gate. The gate
+                // governs the warm (`FullTwoStage`) path normally.
+                let cold_binary = index.serving_state()
+                    == crate::index::axis::IvfServingState::ColdBinaryOnly;
+                let use_quantized =
+                    cold_binary || decide_quantized_route(gate_open, has_quantized);
                 let route = if has_quantized {
                     Some(use_quantized)
                 } else {
                     None
                 };
-                if has_quantized && !use_quantized {
+                if has_quantized && !cold_binary && !use_quantized {
                     // TD-075 / F2: quantized storage exists but the recall-probe
                     // gate forced exact — surface this degraded route to EXPLAIN
                     // via the per-request diagnostics bus (no-op outside a scope).
@@ -4662,6 +4669,70 @@ mod recluster_apply_tests {
                 rec(&format!("{prefix}{i}"), x)
             })
             .collect()
+    }
+
+    #[tokio::test]
+    async fn cold_binary_index_serves_despite_closed_recall_gate() {
+        // ADR-023 T-E: a cold-loaded (`ColdBinaryOnly`) index has no fp32 store.
+        // The recall gate is CLOSED by default on a fresh process; without forcing
+        // the binary route, `query_ivf` would route to exact search → empty fp32 →
+        // empty results. The binary (Stage-1) route must be forced while cold.
+        use crate::index::axis::indexes::dual_store_ivf::{UnifiedIvfConfig, UnifiedIvfIndex};
+        let _ = proximadb_hardware::hardware_capabilities();
+        let dim = 8;
+        let cfg = UnifiedIvfConfig {
+            use_binary: true,
+            dimension: dim,
+            n_clusters: 2,
+            n_probe: 2,
+            min_train_size: 4,
+            ..Default::default()
+        };
+        let mut full = UnifiedIvfIndex::new("colb".to_string(), cfg).unwrap();
+        let data: Vec<(String, Vec<f32>)> = (0..16)
+            .map(|i| {
+                let v: Vec<f32> = (0..dim)
+                    .map(|d| if (i + d) % 2 == 0 { 1.0 } else { -1.0 })
+                    .collect();
+                (format!("v{i}"), v)
+            })
+            .collect();
+        full.train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            full.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let cold = full.export_cold_tier().await.unwrap();
+        let mut cold_idx =
+            UnifiedIvfIndex::new("colb".to_string(), cold.config.to_config()).unwrap();
+        cold_idx.restore_cold_only(cold).await.unwrap();
+        assert_eq!(
+            cold_idx.serving_state(),
+            crate::index::axis::IvfServingState::ColdBinaryOnly
+        );
+
+        let m = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m.ivf_indexes
+            .write()
+            .await
+            .insert("colb".to_string(), Arc::new(tokio::sync::RwLock::new(cold_idx)));
+
+        let query = AxisHybridQuery {
+            collection_id: "colb".to_string(),
+            vector_query: Some(VectorQuery::Dense {
+                vector: data[0].1.clone(),
+                similarity_threshold: 0.0,
+            }),
+            top_k: 3,
+            ..AxisHybridQuery::default()
+        };
+        // gate_open = false (the fresh-process default).
+        let (results, _route) = m.query_ivf("colb", &query, false).await.unwrap();
+        assert!(
+            !results.is_empty(),
+            "ColdBinaryOnly index must serve Stage-1 despite a closed recall gate"
+        );
     }
 
     #[tokio::test]
