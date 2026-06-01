@@ -2163,17 +2163,17 @@ impl UnifiedHandlers {
         {
             let parser = crate::query::sql_frontend::SqlFrontendParser::new();
             match parser.parse_dml(inner_query) {
-                    Ok(Some(statement)) => {
-                        let explain_result = if is_analyze {
-                            dml_svc.explain_analyze_table_write(statement).await
-                        } else {
-                            dml_svc.explain_table_write(statement).await
-                        };
-                        match explain_result {
-                            Ok(explanation) => {
-                                let json = serde_json::to_string_pretty(&explanation)
-                                    .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e));
-                                return Ok(crate::proto::proximadb_v1::ExecuteSqlResponse {
+                Ok(Some(statement)) => {
+                    let explain_result = if is_analyze {
+                        dml_svc.explain_analyze_table_write(statement).await
+                    } else {
+                        dml_svc.explain_table_write(statement).await
+                    };
+                    match explain_result {
+                        Ok(explanation) => {
+                            let json = serde_json::to_string_pretty(&explanation)
+                                .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e));
+                            return Ok(crate::proto::proximadb_v1::ExecuteSqlResponse {
                                     rows: vec![crate::proto::proximadb_v1::SqlRow {
                                         fields: vec![crate::proto::proximadb_v1::SqlRowField {
                                             key: "QUERY PLAN".to_string(),
@@ -2191,19 +2191,19 @@ impl UnifiedHandlers {
                                     columns: vec!["QUERY PLAN".to_string()],
                                     column_types: vec!["jsonb".to_string()],
                                 });
-                            }
-                            Err(e) => {
-                                return Err(anyhow::anyhow!("EXPLAIN failed: {}", e));
-                            }
+                        }
+                        Err(e) => {
+                            return Err(anyhow::anyhow!("EXPLAIN failed: {}", e));
                         }
                     }
-                    Ok(None) => {
-                        return Err(anyhow::anyhow!("Invalid EXPLAIN statement"));
-                    }
-                    Err(e) => {
-                        return Err(anyhow::anyhow!("EXPLAIN parse error: {}", e));
-                    }
                 }
+                Ok(None) => {
+                    return Err(anyhow::anyhow!("Invalid EXPLAIN statement"));
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!("EXPLAIN parse error: {}", e));
+                }
+            }
             // DmlService not wired — fall through to legacy path so EXPLAIN degrades gracefully.
         }
 

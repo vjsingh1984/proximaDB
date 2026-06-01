@@ -799,10 +799,8 @@ pub async fn migrate_registry_to_catalog(
         // to `tenant_id` with `.`; we round-trip the same way here so
         // the boot-time hydrate-then-migrate cycle is symmetric and
         // can't double-write.
-        let id = proximadb_catalog::TableIdentifier::new(
-            vec![tenant_id.clone()],
-            collection_id.clone(),
-        );
+        let id =
+            proximadb_catalog::TableIdentifier::new(vec![tenant_id.clone()], collection_id.clone());
 
         let schema = match catalog.get_table(&id).await {
             Ok(s) => s,
@@ -867,19 +865,9 @@ mod tests {
     #[test]
     fn reassign_replaces_previous_and_returns_old() {
         let reg = PrimaryPodRegistry::new();
-        reg.assign(
-            "tenant-a",
-            "coll-1",
-            "pod-0",
-            AssignmentReason::Create,
-        );
+        reg.assign("tenant-a", "coll-1", "pod-0", AssignmentReason::Create);
         let prev = reg
-            .assign(
-                "tenant-a",
-                "coll-1",
-                "pod-1",
-                AssignmentReason::Failover,
-            )
+            .assign("tenant-a", "coll-1", "pod-1", AssignmentReason::Failover)
             .expect("re-assignment must report previous binding");
         assert_eq!(prev.pod, "pod-0");
         assert_eq!(prev.reason, AssignmentReason::Create);
@@ -1050,7 +1038,12 @@ mod tests {
         // populated the registry first, so the catalog replay must
         // NOT clobber a sidecar-loaded entry.
         let reg = PrimaryPodRegistry::new();
-        reg.assign("tenant-a", "coll-1", "sidecar-pod", AssignmentReason::Create);
+        reg.assign(
+            "tenant-a",
+            "coll-1",
+            "sidecar-pod",
+            AssignmentReason::Create,
+        );
 
         let catalog_state = PrimaryPod {
             pod: "catalog-pod".into(),
@@ -1108,8 +1101,11 @@ mod tests {
             .await
             .unwrap();
         let id = TableIdentifier::new(vec![tenant.to_string()], collection);
-        let schema = CatalogTableSchema::new(collection)
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64));
+        let schema = CatalogTableSchema::new(collection).with_column(CatalogColumn::new(
+            1,
+            "id",
+            CatalogDataType::Int64,
+        ));
         cat.create_table(&id, schema).await.unwrap();
         if let Some(cp) = primary {
             cat.set_primary_pod(&id, Some(cp)).await.unwrap();
@@ -1207,7 +1203,12 @@ mod tests {
         let tmp = TempDir::new().expect("tempdir");
         let mgr = manager_with_seeded_table(&tmp, "tenant-a", "coll-1", None).await;
         let reg = PrimaryPodRegistry::new();
-        reg.assign("tenant-a", "coll-1", "pod-from-sidecar", AssignmentReason::Create);
+        reg.assign(
+            "tenant-a",
+            "coll-1",
+            "pod-from-sidecar",
+            AssignmentReason::Create,
+        );
 
         let report = migrate_registry_to_catalog(&reg, &mgr).await.unwrap();
         assert_eq!(report.seen, 1);
@@ -1217,7 +1218,13 @@ mod tests {
         assert_eq!(report.failed, 0);
 
         let id = TableIdentifier::new(vec!["tenant-a".to_string()], "coll-1");
-        let schema = mgr.default_catalog().await.unwrap().get_table(&id).await.unwrap();
+        let schema = mgr
+            .default_catalog()
+            .await
+            .unwrap()
+            .get_table(&id)
+            .await
+            .unwrap();
         assert_eq!(schema.primary_pod.as_ref().unwrap().pod, "pod-from-sidecar");
     }
 
@@ -1234,7 +1241,12 @@ mod tests {
         };
         let mgr = manager_with_seeded_table(&tmp, "tenant-b", "coll-2", Some(cp)).await;
         let reg = PrimaryPodRegistry::new();
-        reg.assign("tenant-b", "coll-2", "pod-registry", AssignmentReason::Create);
+        reg.assign(
+            "tenant-b",
+            "coll-2",
+            "pod-registry",
+            AssignmentReason::Create,
+        );
 
         let report = migrate_registry_to_catalog(&reg, &mgr).await.unwrap();
         assert_eq!(report.seen, 1);
@@ -1247,7 +1259,13 @@ mod tests {
         // stale sidecar after a failover could clobber the current
         // catalog state.
         let id = TableIdentifier::new(vec!["tenant-b".to_string()], "coll-2");
-        let schema = mgr.default_catalog().await.unwrap().get_table(&id).await.unwrap();
+        let schema = mgr
+            .default_catalog()
+            .await
+            .unwrap()
+            .get_table(&id)
+            .await
+            .unwrap();
         assert_eq!(schema.primary_pod.as_ref().unwrap().pod, "pod-catalog");
     }
 
@@ -1420,14 +1438,10 @@ mod tests {
     // ── Slice 5d.2: PersistenceMode + boot-priority flip ────────────
 
     fn set_persistence_mode_env(val: &str) {
-        unsafe {
-            std::env::set_var("PROXIMADB_PRIMARY_POD_PERSISTENCE_MODE", val)
-        };
+        unsafe { std::env::set_var("PROXIMADB_PRIMARY_POD_PERSISTENCE_MODE", val) };
     }
     fn unset_persistence_mode_env() {
-        unsafe {
-            std::env::remove_var("PROXIMADB_PRIMARY_POD_PERSISTENCE_MODE")
-        };
+        unsafe { std::env::remove_var("PROXIMADB_PRIMARY_POD_PERSISTENCE_MODE") };
     }
 
     #[test]
@@ -1496,7 +1510,12 @@ mod tests {
                 path.clone(),
                 PersistenceMode::SidecarOnly,
             );
-            reg.assign("tenant-a", "coll-1", "sidecar-pod", AssignmentReason::Create);
+            reg.assign(
+                "tenant-a",
+                "coll-1",
+                "sidecar-pod",
+                AssignmentReason::Create,
+            );
         }
 
         // Now boot in CatalogPrimary mode against the same path.
@@ -1522,14 +1541,22 @@ mod tests {
                 path.clone(),
                 PersistenceMode::SidecarOnly,
             );
-            reg.assign("tenant-a", "coll-1", "sidecar-pod", AssignmentReason::Create);
+            reg.assign(
+                "tenant-a",
+                "coll-1",
+                "sidecar-pod",
+                AssignmentReason::Create,
+            );
         }
         let reg2 = PrimaryPodRegistry::load_or_create_at_with_mode(
             path.clone(),
             PersistenceMode::SidecarOnly,
         );
         assert_eq!(reg2.len(), 1);
-        assert_eq!(reg2.lookup("tenant-a", "coll-1").unwrap().pod, "sidecar-pod");
+        assert_eq!(
+            reg2.lookup("tenant-a", "coll-1").unwrap().pod,
+            "sidecar-pod"
+        );
     }
 
     #[test]
@@ -1587,16 +1614,19 @@ mod tests {
                 path.clone(),
                 PersistenceMode::CatalogPrimary,
             );
-            reg.assign("tenant-x", "coll-2", "pod-catalog-only", AssignmentReason::Operator);
+            reg.assign(
+                "tenant-x",
+                "coll-2",
+                "pod-catalog-only",
+                AssignmentReason::Operator,
+            );
         }
 
         // Roll back to SidecarOnly. The sidecar still has the
         // original binding from step 1; the step-2 binding is gone
         // from the registry until hydrate_from_catalog runs.
-        let reg_after_rollback = PrimaryPodRegistry::load_or_create_at_with_mode(
-            path,
-            PersistenceMode::SidecarOnly,
-        );
+        let reg_after_rollback =
+            PrimaryPodRegistry::load_or_create_at_with_mode(path, PersistenceMode::SidecarOnly);
         assert_eq!(
             reg_after_rollback.lookup("tenant-x", "coll-1").unwrap().pod,
             "pod-old"

@@ -138,12 +138,22 @@ async fn schedule_recluster(http: &reqwest::Client, base: &str, name: &str) -> S
         .send()
         .await
         .expect("create recluster job");
-    assert!(resp.status().is_success(), "create recluster: {}", resp.status());
+    assert!(
+        resp.status().is_success(),
+        "create recluster: {}",
+        resp.status()
+    );
     let body: serde_json::Value = resp.json().await.unwrap();
     body["job"]["job_id"].as_str().expect("job_id").to_string()
 }
 
-async fn insert_varied(http: &reqwest::Client, base: &str, name: &str, range: std::ops::Range<usize>, dim: usize) {
+async fn insert_varied(
+    http: &reqwest::Client,
+    base: &str,
+    name: &str,
+    range: std::ops::Range<usize>,
+    dim: usize,
+) {
     let mk = |i: usize| -> Vec<f32> {
         let mut v = vec![0.0f32; dim];
         v[i % dim] = 1.0;
@@ -218,7 +228,9 @@ async fn drift_watcher_auto_reclusters_after_writes() {
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let g = http
-            .get(format!("{base}/api/v2/collections/{name}/discovery-jobs/{seed_job}"))
+            .get(format!(
+                "{base}/api/v2/collections/{name}/discovery-jobs/{seed_job}"
+            ))
             .send()
             .await
             .expect("get seed job");
@@ -259,7 +271,9 @@ async fn drift_watcher_auto_reclusters_after_writes() {
                 .await
                 .unwrap();
             let body: serde_json::Value = resp.json().await.unwrap();
-            panic!("drift watcher did not auto-trigger another recluster (>{before}) in 40s: {body}");
+            panic!(
+                "drift watcher did not auto-trigger another recluster (>{before}) in 40s: {body}"
+            );
         }
         sleep(Duration::from_millis(500)).await;
     }

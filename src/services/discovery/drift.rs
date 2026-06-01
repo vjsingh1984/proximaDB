@@ -189,11 +189,7 @@ impl DriftWatcher {
     /// count (no manifest needed). `collection_id` is the user-facing **name**
     /// (`on_signal` keys by name). Returns the enqueued job, or `None` if within
     /// threshold or coalesced against an in-flight recluster.
-    fn consider_with_writes(
-        &self,
-        collection_id: &str,
-        writes_since: u64,
-    ) -> Option<DiscoveryJob> {
+    fn consider_with_writes(&self, collection_id: &str, writes_since: u64) -> Option<DiscoveryJob> {
         if drift_exceeds(writes_since, self.threshold_writes) {
             self.service
                 .on_signal(collection_id, TriggerSignal::WorkloadDrift)
@@ -248,9 +244,15 @@ mod tests {
             super::parse_threshold(Some("nope".to_string())),
             super::DEFAULT_DRIFT_THRESHOLD_WRITES
         );
-        assert_eq!(super::parse_interval(Some("2".to_string())), Duration::from_secs(2));
+        assert_eq!(
+            super::parse_interval(Some("2".to_string())),
+            Duration::from_secs(2)
+        );
         // Zero / garbage fall back to the default (never a 0s busy-loop).
-        assert_eq!(super::parse_interval(Some("0".to_string())), super::DEFAULT_DRIFT_INTERVAL);
+        assert_eq!(
+            super::parse_interval(Some("0".to_string())),
+            super::DEFAULT_DRIFT_INTERVAL
+        );
         assert_eq!(super::parse_interval(None), super::DEFAULT_DRIFT_INTERVAL);
     }
 
@@ -270,10 +272,7 @@ mod tests {
             CatalogManager::new(),
         )));
         let registry = Arc::new(DiscoveryRegistry::new());
-        let service = Arc::new(DiscoveryService::new(
-            registry.clone(),
-            coordinator.clone(),
-        ));
+        let service = Arc::new(DiscoveryService::new(registry.clone(), coordinator.clone()));
         // Threshold = 10 record writes.
         (
             Arc::new(DriftWatcher::new(service, coordinator, 10)),
@@ -306,7 +305,10 @@ mod tests {
     #[tokio::test]
     async fn sustained_drift_is_coalesced_while_recluster_in_flight() {
         let (w, _r) = watcher().await;
-        assert!(w.consider_with_writes("c1", 50).is_some(), "first drift enqueues");
+        assert!(
+            w.consider_with_writes("c1", 50).is_some(),
+            "first drift enqueues"
+        );
         assert!(
             w.consider_with_writes("c1", 60).is_none(),
             "still drifted but a recluster is in flight -> coalesced"

@@ -65,7 +65,10 @@ pub async fn run(ctx: &PassContext) -> Result<DiscoveryJobResult> {
     );
     m.insert("quality_zero_norm".to_string(), stats.zero_norm as f64);
     m.insert("quality_nonfinite".to_string(), stats.nonfinite as f64);
-    m.insert("quality_dim_mismatch".to_string(), stats.dim_mismatch as f64);
+    m.insert(
+        "quality_dim_mismatch".to_string(),
+        stats.dim_mismatch as f64,
+    );
     m.insert("quality_mean_norm".to_string(), stats.mean_norm);
     Ok(result)
 }
@@ -127,10 +130,10 @@ mod tests {
     #[test]
     fn flags_zero_norm_nonfinite_and_dim_mismatch() {
         let vectors = vec![
-            vec![1.0f32, 0.0, 0.0], // unit norm 1.0
-            vec![0.0f32, 0.0, 0.0], // zero-norm
+            vec![1.0f32, 0.0, 0.0],   // unit norm 1.0
+            vec![0.0f32, 0.0, 0.0],   // zero-norm
             vec![f32::NAN, 1.0, 0.0], // non-finite
-            vec![1.0f32, 1.0],      // dim mismatch (2 vs 3)
+            vec![1.0f32, 1.0],        // dim mismatch (2 vs 3)
         ];
         let s = compute_quality(&vectors);
         assert_eq!(s.zero_norm, 1);

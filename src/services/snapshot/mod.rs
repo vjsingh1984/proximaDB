@@ -18,4 +18,4 @@
 
 mod coordinator;
 
-pub use coordinator::{SnapshotPin, SnapshotPublishCoordinator, DISCOVERY_ACTIVE_PROJECTION};
+pub use coordinator::{DISCOVERY_ACTIVE_PROJECTION, SnapshotPin, SnapshotPublishCoordinator};

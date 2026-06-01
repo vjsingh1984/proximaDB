@@ -19,7 +19,7 @@ mod types;
 
 pub use registry::ExternalCollectionRegistry;
 pub use service::{
-    ExternalCollectionService, ExternalHit, RefreshOutcome, EXTERNAL_INDEX_PROJECTION,
+    EXTERNAL_INDEX_PROJECTION, ExternalCollectionService, ExternalHit, RefreshOutcome,
 };
 pub use types::{
     ExternalCollection, ExternalCollectionSpec, ExternalCollectionStatus, ExternalFormat,

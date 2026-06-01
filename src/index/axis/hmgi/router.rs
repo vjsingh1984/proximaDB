@@ -305,9 +305,7 @@ impl HmgiRouter {
         let raw_distance_results = index.search_simple(query_vector, k).await?;
         let metric = index.distance_metric();
 
-        use crate::compute::distance_computation::engine::{
-            DistanceMetricExt, SimilarityResult,
-        };
+        use crate::compute::distance_computation::engine::{DistanceMetricExt, SimilarityResult};
         let scored_results = raw_distance_results
             .into_iter()
             .map(|(id, raw_distance)| {
@@ -316,8 +314,7 @@ impl HmgiRouter {
                 } else {
                     raw_distance
                 };
-                let normalized =
-                    SimilarityResult::new(raw_for_similarity, metric).normalized_score;
+                let normalized = SimilarityResult::new(raw_for_similarity, metric).normalized_score;
                 ScoredResult {
                     vector_id: id,
                     similarity: normalized,

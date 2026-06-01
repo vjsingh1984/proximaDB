@@ -168,9 +168,7 @@ impl ColumnarUtilities {
         total_size_bytes: usize,
     ) -> usize {
         // Fallback assumes a 768-dim fp32 vector when no live samples exist.
-        let avg_vector_size = total_size_bytes
-            .checked_div(total_vectors)
-            .unwrap_or(3072);
+        let avg_vector_size = total_size_bytes.checked_div(total_vectors).unwrap_or(3072);
 
         // Target 128MB row groups for optimal Parquet performance
         const TARGET_ROW_GROUP_SIZE_BYTES: usize = 128 * 1024 * 1024;

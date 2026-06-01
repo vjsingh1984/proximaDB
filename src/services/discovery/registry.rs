@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
-use super::job::{now_ms, DiscoveryJob, DiscoveryJobStatus};
+use super::job::{DiscoveryJob, DiscoveryJobStatus, now_ms};
 
 const REGISTRY_SCHEMA_VERSION: u32 = 1;
 
@@ -181,7 +181,10 @@ mod tests {
     fn schedule_then_claim_transitions_to_running() {
         let reg = DiscoveryRegistry::new();
         let job = reg.schedule(DiscoveryJob::new("c1", DiscoveryJobKind::Dedup));
-        assert_eq!(reg.get(&job.job_id).unwrap().status, DiscoveryJobStatus::Scheduled);
+        assert_eq!(
+            reg.get(&job.job_id).unwrap().status,
+            DiscoveryJobStatus::Scheduled
+        );
 
         let claimed = reg.claim_next_scheduled().unwrap();
         assert_eq!(claimed.job_id, job.job_id);

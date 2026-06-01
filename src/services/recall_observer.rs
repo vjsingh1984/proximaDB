@@ -31,8 +31,8 @@ use tokio::sync::watch;
 use tracing::{info, warn};
 
 use crate::index::AxisManager;
-use crate::services::discovery::{DiscoveryService, TriggerSignal};
 use crate::services::VectorOperationsService;
+use crate::services::discovery::{DiscoveryService, TriggerSignal};
 
 /// Default interval between observation passes.
 pub const DEFAULT_OBSERVE_INTERVAL: Duration = Duration::from_secs(300);

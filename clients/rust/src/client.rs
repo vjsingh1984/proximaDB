@@ -273,10 +273,7 @@ impl ProximaClient {
     /// details as a free-form JSON document (the OpenAPI `QueryResponse`
     /// schema is `additionalProperties: true`).
     #[cfg(feature = "client")]
-    pub async fn explain_query(
-        &self,
-        req: &ExplainQueryRequest,
-    ) -> Result<serde_json::Value> {
+    pub async fn explain_query(&self, req: &ExplainQueryRequest) -> Result<serde_json::Value> {
         let url = format!("{}/api/v2/query/explain", self.inner.config.url);
         self.post(&url, req).await
     }

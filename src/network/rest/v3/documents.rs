@@ -217,69 +217,69 @@ async fn ingest_documents_inner(
         && let Some(queue) = state.queue_client.clone()
     {
         let producer = queue.producer();
-            // Build the EmbedIngestPayload directly from `records`'
-            // props (where the text was hoisted during the build-loop
-            // above). The drainer (Phase 2G) deserializes this exact
-            // shape; the contract is frozen in
-            // `services::embedding_drainer::EmbedIngestPayload`.
-            let drainer_records: Vec<crate::services::EmbedIngestRecord> = records
-                .iter()
-                .map(|r| crate::services::EmbedIngestRecord {
-                    oid: r.oid.clone(),
-                    text: extract_text(r).unwrap_or_default(),
-                    metadata: HashMap::new(),
-                })
-                .collect();
-            let payload = crate::services::EmbedIngestPayload {
-                target_collection: collection.clone(),
-                tenant_id: tenant_id.clone(),
-                records: drainer_records,
-            };
-            let payload_bytes = serde_json::to_vec(&payload)
-                .map_err(|e| ApiError::Internal(format!("queue payload serialize: {e}")))?;
-            let msg = proximadb_queue::Message::new(
-                crate::services::EMBED_INGEST_TOPIC,
-                tenant_id.clone(),
-                payload_bytes,
-            );
-            match producer.send(msg).await {
-                Ok(_receipt) => {
-                    let response = IngestDocumentsResponse {
-                        mode: "async".to_string(),
-                        records: records
-                            .iter()
-                            .map(|r| IngestedRecord {
-                                id: r.oid.clone(),
-                                // Vector dim unknown until drainer
-                                // embeds; 0 = pending.
-                                dim: 0,
-                            })
-                            .collect(),
-                        retry_after_ms: None,
-                    };
-                    return Ok((StatusCode::ACCEPTED, response));
-                }
-                Err(proximadb_queue::QueueError::Backpressure {
-                    pct,
-                    retry_after_ms,
-                }) => {
-                    warn!(pct, retry_after_ms, "v3 async ingest: queue backpressure");
-                    // ResourceExhausted maps to HTTP 503 in the
-                    // existing ApiError IntoResponse; for queue
-                    // backpressure the convention is 429 — the response
-                    // body carries `retry_after_ms` so the SDK knows
-                    // how long to back off. Translating to 429
-                    // semantically is a follow-up touch on the
-                    // IntoResponse impl.
-                    return Err(ApiError::ResourceExhausted(format!(
-                        "queue at {pct:.0}% capacity; retry after {retry_after_ms}ms"
-                    )));
-                }
-                Err(e) => {
-                    warn!(error = %e, "v3 async ingest: queue.send failed");
-                    return Err(ApiError::Internal(format!("queue.send: {e}")));
-                }
+        // Build the EmbedIngestPayload directly from `records`'
+        // props (where the text was hoisted during the build-loop
+        // above). The drainer (Phase 2G) deserializes this exact
+        // shape; the contract is frozen in
+        // `services::embedding_drainer::EmbedIngestPayload`.
+        let drainer_records: Vec<crate::services::EmbedIngestRecord> = records
+            .iter()
+            .map(|r| crate::services::EmbedIngestRecord {
+                oid: r.oid.clone(),
+                text: extract_text(r).unwrap_or_default(),
+                metadata: HashMap::new(),
+            })
+            .collect();
+        let payload = crate::services::EmbedIngestPayload {
+            target_collection: collection.clone(),
+            tenant_id: tenant_id.clone(),
+            records: drainer_records,
+        };
+        let payload_bytes = serde_json::to_vec(&payload)
+            .map_err(|e| ApiError::Internal(format!("queue payload serialize: {e}")))?;
+        let msg = proximadb_queue::Message::new(
+            crate::services::EMBED_INGEST_TOPIC,
+            tenant_id.clone(),
+            payload_bytes,
+        );
+        match producer.send(msg).await {
+            Ok(_receipt) => {
+                let response = IngestDocumentsResponse {
+                    mode: "async".to_string(),
+                    records: records
+                        .iter()
+                        .map(|r| IngestedRecord {
+                            id: r.oid.clone(),
+                            // Vector dim unknown until drainer
+                            // embeds; 0 = pending.
+                            dim: 0,
+                        })
+                        .collect(),
+                    retry_after_ms: None,
+                };
+                return Ok((StatusCode::ACCEPTED, response));
             }
+            Err(proximadb_queue::QueueError::Backpressure {
+                pct,
+                retry_after_ms,
+            }) => {
+                warn!(pct, retry_after_ms, "v3 async ingest: queue backpressure");
+                // ResourceExhausted maps to HTTP 503 in the
+                // existing ApiError IntoResponse; for queue
+                // backpressure the convention is 429 — the response
+                // body carries `retry_after_ms` so the SDK knows
+                // how long to back off. Translating to 429
+                // semantically is a follow-up touch on the
+                // IntoResponse impl.
+                return Err(ApiError::ResourceExhausted(format!(
+                    "queue at {pct:.0}% capacity; retry after {retry_after_ms}ms"
+                )));
+            }
+            Err(e) => {
+                warn!(error = %e, "v3 async ingest: queue.send failed");
+                return Err(ApiError::Internal(format!("queue.send: {e}")));
+            }
+        }
         // No queue configured — fall through to inline embed below.
     }
 

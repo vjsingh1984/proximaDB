@@ -192,7 +192,9 @@ impl IntoResponse for ApiError {
             ApiError::UnsupportedCapability(_) => {
                 (StatusCode::BAD_REQUEST, "unsupported_capability")
             }
-            ApiError::Misdirected { .. } => (StatusCode::MISDIRECTED_REQUEST, "misdirected_request"),
+            ApiError::Misdirected { .. } => {
+                (StatusCode::MISDIRECTED_REQUEST, "misdirected_request")
+            }
         };
 
         // Misdirected requests get a structured body with the target

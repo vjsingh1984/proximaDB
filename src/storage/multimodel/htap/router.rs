@@ -343,14 +343,8 @@ impl WorkloadRouter {
             // Compare average execution times — `u64::MAX` sentinel means
             // "no observations, treat as worst-case" so the comparator
             // prefers the other branch.
-            let oltp_avg = h
-                .oltp_time_ms
-                .checked_div(h.oltp_count)
-                .unwrap_or(u64::MAX);
-            let olap_avg = h
-                .olap_time_ms
-                .checked_div(h.olap_count)
-                .unwrap_or(u64::MAX);
+            let oltp_avg = h.oltp_time_ms.checked_div(h.oltp_count).unwrap_or(u64::MAX);
+            let olap_avg = h.olap_time_ms.checked_div(h.olap_count).unwrap_or(u64::MAX);
 
             if olap_avg < oltp_avg / 2 {
                 return Some(LegacyHtapRoutingDecision::olap(format!(

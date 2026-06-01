@@ -24,20 +24,18 @@
 
 use std::sync::Arc;
 
+use prometheus::{Encoder, Registry, TextEncoder};
 use proximadb::core::search::hybrid::FusionStrategy;
 use proximadb::network::rest::v1::rank::{
     CandidateProvider, HybridCoordinatorAdapter, HybridSearchBackend, MockRangeCandidateProvider,
     RankSearchRequest, RankServices,
 };
 use proximadb::network::rest::v1::rank_profile::{
-    install_rank_profile_inner, InstallRankProfileRequest,
+    InstallRankProfileRequest, install_rank_profile_inner,
 };
 use proximadb::observability::rank_metrics::RankPipelineMetrics;
 use proximadb::services::record_store::TableWalAppender;
-use proximadb::services::{
-    CanonicalWalRankProfileStore, MemoryTableWalAppender, RankProfileStore,
-};
-use prometheus::{Encoder, Registry, TextEncoder};
+use proximadb::services::{CanonicalWalRankProfileStore, MemoryTableWalAppender, RankProfileStore};
 use proximadb_rank_core::RankResult;
 
 const PROFILE_NAME: &str = "test_ce";
@@ -79,16 +77,17 @@ async fn rest_install_then_search_emits_spec_metrics() -> Result<(), Box<dyn std
     let metrics = Arc::new(RankPipelineMetrics::register(&registry)?);
 
     let appender: Arc<dyn TableWalAppender> = Arc::new(MemoryTableWalAppender::new());
-    let store: Arc<dyn RankProfileStore> =
-        Arc::new(CanonicalWalRankProfileStore::new(appender));
+    let store: Arc<dyn RankProfileStore> = Arc::new(CanonicalWalRankProfileStore::new(appender));
 
     // The candidate provider returns a fixed range of `DocHandle`s so we get
     // a deterministic 5-row result for the assertion. The HybridCoordinator
     // adapter is constructed but never invoked by the candidate-provider
     // path; we wire it to mirror the production shape.
     let candidates: Arc<dyn CandidateProvider> = Arc::new(MockRangeCandidateProvider { count: 5 });
-    let _coordinator =
-        HybridCoordinatorAdapter::new(FusionStrategy::ReciprocalRank { k: 60 }, Arc::new(NoopBackend));
+    let _coordinator = HybridCoordinatorAdapter::new(
+        FusionStrategy::ReciprocalRank { k: 60 },
+        Arc::new(NoopBackend),
+    );
     let services = Arc::new(RankServices::new(candidates).with_metrics(metrics.clone()));
 
     // ── 2. Install a profile via the REST dispatcher. ────────────────────────

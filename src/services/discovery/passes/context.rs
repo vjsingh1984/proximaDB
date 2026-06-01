@@ -13,8 +13,8 @@
 
 use std::sync::Arc;
 
-use crate::services::snapshot::SnapshotPin;
 use crate::services::VectorOperationsService;
+use crate::services::snapshot::SnapshotPin;
 
 /// Inputs to a discovery refinement pass.
 pub struct PassContext {
@@ -38,10 +38,7 @@ impl PassContext {
     }
 
     /// Attach the canonical vector-operations service (the v2 read/write path).
-    pub fn with_vector_ops(
-        mut self,
-        vector_ops: Option<Arc<VectorOperationsService>>,
-    ) -> Self {
+    pub fn with_vector_ops(mut self, vector_ops: Option<Arc<VectorOperationsService>>) -> Self {
         self.vector_ops = vector_ops;
         self
     }

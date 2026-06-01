@@ -103,12 +103,14 @@ pub async fn run(ctx: &PassContext) -> Result<DiscoveryJobResult> {
     let model = engine.train_model(collection_id, vectors).await?;
     let m = &model.metrics;
 
-    result
-        .quality_metrics
-        .insert("recluster_clusters".to_string(), model.centroids.len() as f64);
-    result
-        .quality_metrics
-        .insert("recluster_silhouette".to_string(), m.silhouette_score as f64);
+    result.quality_metrics.insert(
+        "recluster_clusters".to_string(),
+        model.centroids.len() as f64,
+    );
+    result.quality_metrics.insert(
+        "recluster_silhouette".to_string(),
+        m.silhouette_score as f64,
+    );
     result.quality_metrics.insert(
         "recluster_davies_bouldin".to_string(),
         m.davies_bouldin_index as f64,
@@ -127,7 +129,10 @@ pub async fn run(ctx: &PassContext) -> Result<DiscoveryJobResult> {
     // just metrics. Non-fatal: a rebuild error is recorded but does not fail the
     // job (the metrics pass already succeeded).
     let axis = vector_ops.axis_index_manager();
-    let swapped = match axis.rebuild_and_swap_served_index(collection_id, &records).await {
+    let swapped = match axis
+        .rebuild_and_swap_served_index(collection_id, &records)
+        .await
+    {
         Ok(applied) => applied,
         Err(e) => {
             tracing::warn!("recluster: index rebuild/swap failed for {collection_id}: {e:#}");
@@ -156,7 +161,7 @@ fn choose_k(n: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{choose_k, MAX_CLUSTERS};
+    use super::{MAX_CLUSTERS, choose_k};
 
     #[test]
     fn k_is_sqrt_n_for_mid_sizes() {

@@ -3373,9 +3373,8 @@ mod rank_profile_ddl_tests {
 
     #[test]
     fn create_rank_profile_rejects_unterminated_string() {
-        let err =
-            try_parse_create_rank_profile("CREATE RANK PROFILE basic AS 'no closing quote")
-                .unwrap_err();
+        let err = try_parse_create_rank_profile("CREATE RANK PROFILE basic AS 'no closing quote")
+            .unwrap_err();
         assert!(err.to_string().contains("unterminated"));
     }
 

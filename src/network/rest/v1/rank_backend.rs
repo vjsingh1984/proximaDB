@@ -68,12 +68,13 @@ impl HybridSearchBackend for ProductionHybridBackend {
         if trimmed.is_empty() {
             return Ok(Vec::new());
         }
-        let indexes = self.fulltext_indexes.read().map_err(|err| {
-            RankError::ModelInference {
+        let indexes = self
+            .fulltext_indexes
+            .read()
+            .map_err(|err| RankError::ModelInference {
                 model_id: "production_hybrid_backend.bm25".to_string(),
                 reason: format!("bm25 index map poisoned for '{collection}': {err}"),
-            }
-        })?;
+            })?;
         let Some(index) = indexes.get(collection) else {
             return Ok(Vec::new());
         };
@@ -121,14 +122,12 @@ impl HybridSearchBackend for ProductionHybridBackend {
             search_optimization: None,
         };
 
-        let response =
-            self.vector_ops
-                .search(request, None)
-                .await
-                .map_err(|err| RankError::ModelInference {
-                    model_id: "production_hybrid_backend.vector".to_string(),
-                    reason: format!("vector search failed for '{collection}': {err}"),
-                })?;
+        let response = self.vector_ops.search(request, None).await.map_err(|err| {
+            RankError::ModelInference {
+                model_id: "production_hybrid_backend.vector".to_string(),
+                reason: format!("vector search failed for '{collection}': {err}"),
+            }
+        })?;
 
         let results = response
             .results
@@ -150,9 +149,7 @@ impl HybridSearchBackend for ProductionHybridBackend {
 mod tests {
     use super::*;
     use crate::network::hybrid_search::HybridFullTextIndexMap;
-    use crate::proto::proximadb_v1::{
-        SearchResult, SearchVectorRecord, VectorOperationResponse,
-    };
+    use crate::proto::proximadb_v1::{SearchResult, SearchVectorRecord, VectorOperationResponse};
     use crate::storage::engines::core::formats::columnar::fulltext_index::{
         FullTextIndex, TokenizerConfig,
     };
@@ -370,11 +367,9 @@ mod tests {
     #[tokio::test]
     async fn with_recall_pool_caps_request_top_k() {
         let port = Arc::new(CapturingVectorPort::with_results(Vec::new()));
-        let backend = ProductionHybridBackend::new(port.clone(), empty_indexes()).with_recall_pool(7);
-        backend
-            .vector_search("docs", &[0.1, 0.2])
-            .await
-            .unwrap();
+        let backend =
+            ProductionHybridBackend::new(port.clone(), empty_indexes()).with_recall_pool(7);
+        backend.vector_search("docs", &[0.1, 0.2]).await.unwrap();
         let captured = port.last_request.lock().unwrap().clone().unwrap();
         assert_eq!(captured.top_k, 7);
     }

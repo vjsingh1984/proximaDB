@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 
-use super::types::{now_ms, ExternalCollection};
+use super::types::{ExternalCollection, now_ms};
 
 const REGISTRY_SCHEMA_VERSION: u32 = 1;
 

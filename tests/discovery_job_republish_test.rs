@@ -124,139 +124,139 @@ async fn discovery_dedup_and_recluster_e2e() {
     // exposes flushed records to the storage-inclusive scan: SST, VIPER, NOVA,
     // and HELIX all override it now.
     for engine in ["sst", "viper", "nova", "helix"] {
-    let name = format!("disc_dedup_{engine}_{}", nanos());
-    let dim: usize = 8;
+        let name = format!("disc_dedup_{engine}_{}", nanos());
+        let dim: usize = 8;
 
-    // CREATE (fp32 default, canonical searchable path).
-    let create = http
-        .post(format!("{base}/api/v2/collections"))
-        .json(&json!({
-            "name": name,
-            "dimension": dim,
-            "engine": engine,
-            "distance_metric": "cosine",
-            "enable_proxima_record": false,
-        }))
-        .send()
-        .await
-        .expect("v2 create");
-    assert!(
-        create.status().is_success(),
-        "v2 create: {} {}",
-        create.status(),
-        create.text().await.unwrap_or_default()
-    );
-
-    // INSERT 5 records; rec-3 duplicates rec-0 and rec-4 duplicates rec-1.
-    let unit = |i: usize| -> Vec<f32> {
-        let mut v = vec![0.0f32; dim];
-        v[i % dim] = 1.0;
-        v
-    };
-    let records = json!({
-        "records": [
-            { "id": "rec-0", "vector": unit(0) },
-            { "id": "rec-1", "vector": unit(1) },
-            { "id": "rec-2", "vector": unit(2) },
-            { "id": "rec-3", "vector": unit(0) },
-            { "id": "rec-4", "vector": unit(1) },
-        ]
-    });
-    let insert = http
-        .post(format!("{base}/api/v2/collections/{name}/records/batch"))
-        .json(&records)
-        .send()
-        .await
-        .expect("v2 insert");
-    assert!(
-        insert.status().is_success(),
-        "v2 insert: {} {}",
-        insert.status(),
-        insert.text().await.unwrap_or_default()
-    );
-
-    sleep(Duration::from_millis(500)).await;
-
-    // Force a flush so the records leave the WAL/memtable and live only in
-    // engine storage (.sst / .parquet / .helix). This makes the dedup pass
-    // exercise the storage-inclusive read leg (read_all_records) for this
-    // engine, not just the WAL leg.
-    server
-        .db
-        .as_ref()
-        .expect("db handle")
-        .force_flush_collection(&name)
-        .await
-        .unwrap_or_else(|e| panic!("[{engine}] force flush: {e}"));
-    sleep(Duration::from_millis(300)).await;
-
-    // SCHEDULE a dedup discovery job via the v2 endpoint.
-    let job_resp = http
-        .post(format!("{base}/api/v2/collections/{name}/discovery-jobs"))
-        .json(&json!({ "kind": "dedup" }))
-        .send()
-        .await
-        .expect("create discovery job");
-    assert!(
-        job_resp.status().is_success(),
-        "create discovery job: {} {}",
-        job_resp.status(),
-        job_resp.text().await.unwrap_or_default()
-    );
-    let job_body: serde_json::Value = job_resp.json().await.unwrap();
-    let job_id = job_body["job"]["job_id"]
-        .as_str()
-        .expect("job_id in response")
-        .to_string();
-
-    // POLL until the background executor finishes (it polls every ~2s).
-    let deadline = Instant::now() + Duration::from_secs(25);
-    let final_job = loop {
-        let g = http
-            .get(format!(
-                "{base}/api/v2/collections/{name}/discovery-jobs/{job_id}"
-            ))
+        // CREATE (fp32 default, canonical searchable path).
+        let create = http
+            .post(format!("{base}/api/v2/collections"))
+            .json(&json!({
+                "name": name,
+                "dimension": dim,
+                "engine": engine,
+                "distance_metric": "cosine",
+                "enable_proxima_record": false,
+            }))
             .send()
             .await
-            .expect("get discovery job");
-        assert!(g.status().is_success(), "get discovery job: {}", g.status());
-        let body: serde_json::Value = g.json().await.unwrap();
-        let status = body["job"]["status"].as_str().unwrap_or("").to_string();
-        if status == "complete" || status == "failed" {
-            break body;
-        }
-        if Instant::now() > deadline {
-            panic!("discovery job {job_id} did not finish in 25s: {body}");
-        }
+            .expect("v2 create");
+        assert!(
+            create.status().is_success(),
+            "v2 create: {} {}",
+            create.status(),
+            create.text().await.unwrap_or_default()
+        );
+
+        // INSERT 5 records; rec-3 duplicates rec-0 and rec-4 duplicates rec-1.
+        let unit = |i: usize| -> Vec<f32> {
+            let mut v = vec![0.0f32; dim];
+            v[i % dim] = 1.0;
+            v
+        };
+        let records = json!({
+            "records": [
+                { "id": "rec-0", "vector": unit(0) },
+                { "id": "rec-1", "vector": unit(1) },
+                { "id": "rec-2", "vector": unit(2) },
+                { "id": "rec-3", "vector": unit(0) },
+                { "id": "rec-4", "vector": unit(1) },
+            ]
+        });
+        let insert = http
+            .post(format!("{base}/api/v2/collections/{name}/records/batch"))
+            .json(&records)
+            .send()
+            .await
+            .expect("v2 insert");
+        assert!(
+            insert.status().is_success(),
+            "v2 insert: {} {}",
+            insert.status(),
+            insert.text().await.unwrap_or_default()
+        );
+
         sleep(Duration::from_millis(500)).await;
-    };
 
-    let job = &final_job["job"];
+        // Force a flush so the records leave the WAL/memtable and live only in
+        // engine storage (.sst / .parquet / .helix). This makes the dedup pass
+        // exercise the storage-inclusive read leg (read_all_records) for this
+        // engine, not just the WAL leg.
+        server
+            .db
+            .as_ref()
+            .expect("db handle")
+            .force_flush_collection(&name)
+            .await
+            .unwrap_or_else(|e| panic!("[{engine}] force flush: {e}"));
+        sleep(Duration::from_millis(300)).await;
 
-    // Primary gate: the full CS/CD pipeline ran end-to-end through REST —
-    // schedule (S4) -> background executor claim (S2/S2b) -> pin snapshot (S0)
-    // -> dedup pass (S3) -> atomic republish (S0 coordinator) -> Complete.
-    assert_eq!(
-        job["status"].as_str(),
-        Some("complete"),
-        "discovery job should complete (pin -> dedup -> atomic republish): {final_job}"
-    );
-    assert!(
-        job["snapshot_to_lsn"].is_u64(),
-        "completed job should record the pinned snapshot range: {final_job}"
-    );
+        // SCHEDULE a dedup discovery job via the v2 endpoint.
+        let job_resp = http
+            .post(format!("{base}/api/v2/collections/{name}/discovery-jobs"))
+            .json(&json!({ "kind": "dedup" }))
+            .send()
+            .await
+            .expect("create discovery job");
+        assert!(
+            job_resp.status().is_success(),
+            "create discovery job: {} {}",
+            job_resp.status(),
+            job_resp.text().await.unwrap_or_default()
+        );
+        let job_body: serde_json::Value = job_resp.json().await.unwrap();
+        let job_id = job_body["job"]["job_id"]
+            .as_str()
+            .expect("job_id in response")
+            .to_string();
 
-    // Dedup efficacy: the storage-inclusive scan
-    // (`list_all_records_with_tenant_context`) enumerates WAL + flushed storage,
-    // so the records are visible regardless of flush timing. The 2 duplicates
-    // (rec-3 == rec-0, rec-4 == rec-1) must be removed.
-    let input = job["input_record_count"].as_u64().unwrap_or(0);
-    let removed = job["removed_count"].as_u64().unwrap_or(0);
-    assert!(
-        removed >= 2,
-        "dedup must remove the 2 duplicate records (rec-3, rec-4); \
+        // POLL until the background executor finishes (it polls every ~2s).
+        let deadline = Instant::now() + Duration::from_secs(25);
+        let final_job = loop {
+            let g = http
+                .get(format!(
+                    "{base}/api/v2/collections/{name}/discovery-jobs/{job_id}"
+                ))
+                .send()
+                .await
+                .expect("get discovery job");
+            assert!(g.status().is_success(), "get discovery job: {}", g.status());
+            let body: serde_json::Value = g.json().await.unwrap();
+            let status = body["job"]["status"].as_str().unwrap_or("").to_string();
+            if status == "complete" || status == "failed" {
+                break body;
+            }
+            if Instant::now() > deadline {
+                panic!("discovery job {job_id} did not finish in 25s: {body}");
+            }
+            sleep(Duration::from_millis(500)).await;
+        };
+
+        let job = &final_job["job"];
+
+        // Primary gate: the full CS/CD pipeline ran end-to-end through REST —
+        // schedule (S4) -> background executor claim (S2/S2b) -> pin snapshot (S0)
+        // -> dedup pass (S3) -> atomic republish (S0 coordinator) -> Complete.
+        assert_eq!(
+            job["status"].as_str(),
+            Some("complete"),
+            "discovery job should complete (pin -> dedup -> atomic republish): {final_job}"
+        );
+        assert!(
+            job["snapshot_to_lsn"].is_u64(),
+            "completed job should record the pinned snapshot range: {final_job}"
+        );
+
+        // Dedup efficacy: the storage-inclusive scan
+        // (`list_all_records_with_tenant_context`) enumerates WAL + flushed storage,
+        // so the records are visible regardless of flush timing. The 2 duplicates
+        // (rec-3 == rec-0, rec-4 == rec-1) must be removed.
+        let input = job["input_record_count"].as_u64().unwrap_or(0);
+        let removed = job["removed_count"].as_u64().unwrap_or(0);
+        assert!(
+            removed >= 2,
+            "dedup must remove the 2 duplicate records (rec-3, rec-4); \
          got removed_count={removed}, input_record_count={input}: {final_job}"
-    );
+        );
     } // for engine
 
     // ── Recluster phase — runs against the SAME server. There is one ProximaDB
@@ -422,7 +422,11 @@ async fn discovery_quality_and_trajectory_e2e() {
         .send()
         .await
         .expect("v2 create");
-    assert!(create.status().is_success(), "v2 create: {}", create.status());
+    assert!(
+        create.status().is_success(),
+        "v2 create: {}",
+        create.status()
+    );
 
     let records: Vec<serde_json::Value> = (0..20)
         .map(|i| {
@@ -438,7 +442,11 @@ async fn discovery_quality_and_trajectory_e2e() {
         .send()
         .await
         .expect("v2 insert");
-    assert!(insert.status().is_success(), "v2 insert: {}", insert.status());
+    assert!(
+        insert.status().is_success(),
+        "v2 insert: {}",
+        insert.status()
+    );
     sleep(Duration::from_millis(500)).await;
 
     for (kind, headline) in [

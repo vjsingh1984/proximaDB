@@ -71,10 +71,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
 pub use cache_affinity::{AffinityEntry, CacheAffinityRegistry};
-pub use primary_pod_registry::{
-    AssignmentReason, PrimaryPod, PrimaryPodRegistry, WriteRoutingDecision, consult_for_write,
-    resolve_self_pod_id,
-};
 pub use consensus::{ConsensusConfig, ConsensusState, RaftConsensus};
 /// Backwards-compat alias for the per-shard SearchResult re-exported from distributed_ops.
 pub use distributed_ops::ShardSearchResult as SearchResult;
@@ -86,6 +82,10 @@ pub use distributed_ops::{
 pub use metadata_service::{ClusterMetadata, MetadataService, MetadataServiceConfig};
 pub use node_registry::{
     NodeHealth, NodeInfo, NodeRegistry, NodeRegistryConfig, NodeRole, NodeStatus,
+};
+pub use primary_pod_registry::{
+    AssignmentReason, PrimaryPod, PrimaryPodRegistry, WriteRoutingDecision, consult_for_write,
+    resolve_self_pod_id,
 };
 pub use replication::{
     EngineReplication, ReplicaState, ReplicationAck, ReplicationConfig, ReplicationEntry,
@@ -101,8 +101,8 @@ pub use shard::{
 pub use crate::index::axis::hmgi::{
     ClusterMembership as HmgiClusterMembership, ClusterNode as HmgiClusterNode,
     ClusterNodeId as HmgiClusterNodeId, DistributedPartitionLocator as HmgiPartitionLocator,
-    HmgiQueryCoordinator, HmgiRouteStats, NetworkService as HmgiNetworkService,
-    HmgiSearchRequest, NodeState as HmgiNodeState,
+    HmgiQueryCoordinator, HmgiRouteStats, HmgiSearchRequest, NetworkService as HmgiNetworkService,
+    NodeState as HmgiNodeState,
 };
 
 // Re-export RPC abstractions for inter-node communication

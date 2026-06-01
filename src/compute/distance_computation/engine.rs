@@ -473,11 +473,7 @@ impl SimilarityResult {
                 let normalized_similarity = if value.is_nan() {
                     0.5
                 } else if value.is_infinite() {
-                    if value > 0.0 {
-                        1.0
-                    } else {
-                        0.0
-                    }
+                    if value > 0.0 { 1.0 } else { 0.0 }
                 } else {
                     0.5 + 0.5 * value / (1.0 + value.abs())
                 };
@@ -2228,8 +2224,13 @@ mod tests {
 
         // NaN / infinity handling.
         let nan = SimilarityResult::new(f32::NAN, DistanceMetric::DotProduct).normalized_score;
-        assert!((nan - 0.5).abs() < 1e-6, "NaN inner product → 0.5, got {}", nan);
-        let pinf = SimilarityResult::new(f32::INFINITY, DistanceMetric::DotProduct).normalized_score;
+        assert!(
+            (nan - 0.5).abs() < 1e-6,
+            "NaN inner product → 0.5, got {}",
+            nan
+        );
+        let pinf =
+            SimilarityResult::new(f32::INFINITY, DistanceMetric::DotProduct).normalized_score;
         assert!((pinf - 1.0).abs() < 1e-6, "+inf → 1.0, got {}", pinf);
         let ninf =
             SimilarityResult::new(f32::NEG_INFINITY, DistanceMetric::DotProduct).normalized_score;

@@ -207,9 +207,7 @@ impl HmgiQueryCoordinator {
         let search_results = index.search_simple(query_vector, top_k).await?;
         let metric = index.distance_metric();
 
-        use crate::compute::distance_computation::engine::{
-            DistanceMetricExt, SimilarityResult,
-        };
+        use crate::compute::distance_computation::engine::{DistanceMetricExt, SimilarityResult};
         Ok(search_results
             .into_iter()
             .map(|(id, raw_distance)| {
@@ -220,8 +218,7 @@ impl HmgiQueryCoordinator {
                 };
                 ScoredResult {
                     vector_id: id,
-                    similarity: SimilarityResult::new(raw_for_similarity, metric)
-                        .normalized_score,
+                    similarity: SimilarityResult::new(raw_for_similarity, metric).normalized_score,
                     expires_at: None,
                 }
             })

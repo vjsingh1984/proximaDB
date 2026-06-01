@@ -29,10 +29,7 @@ use crate::services::discovery::job::{DiscoveryJobKind, DiscoveryJobResult};
 /// Not-yet-implemented kinds resolve to an identity pass: the executor then
 /// republishes the pinned snapshot unchanged, exercising the full
 /// pin → publish → atomic-switch path without altering data.
-pub(crate) async fn run(
-    kind: DiscoveryJobKind,
-    ctx: &PassContext,
-) -> Result<DiscoveryJobResult> {
+pub(crate) async fn run(kind: DiscoveryJobKind, ctx: &PassContext) -> Result<DiscoveryJobResult> {
     match kind {
         DiscoveryJobKind::Dedup => dedup::run(ctx).await,
         DiscoveryJobKind::Recluster => recluster::run(ctx).await,

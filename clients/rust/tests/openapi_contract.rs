@@ -33,7 +33,7 @@ use proximadb_sdk::{
     ColumnDefinition, ExplainQueryRequest, ProximaClient, QueryRequest, SchemaDefinition,
     UpdateSchemaRequest,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // ---------------------------------------------------------------------------
 // Spec loading
@@ -568,8 +568,7 @@ async fn create_node_matches_spec() {
     // envelope `{node: NodeInput}` where NodeInput requires `id`. We assert
     // both layers — the outer envelope requires `node`, and the inner
     // NodeInput requires `id`.
-    let body_schema =
-        request_body_schema(&spec, op).expect("POST nodes must declare requestBody");
+    let body_schema = request_body_schema(&spec, op).expect("POST nodes must declare requestBody");
     let outer_required = collect_required_fields(&spec, body_schema);
     assert!(
         outer_required.contains("node"),
@@ -616,11 +615,7 @@ async fn create_node_matches_spec() {
 async fn get_node_matches_spec() {
     let spec = load_spec();
     let server = MockServer::start_async().await;
-    let op = operation(
-        &spec,
-        "/api/v2/graphs/{graph_id}/nodes/{node_id}",
-        "get",
-    );
+    let op = operation(&spec, "/api/v2/graphs/{graph_id}/nodes/{node_id}", "get");
     assert_eq!(operation_id(op), "getNode");
 
     let mock = server
@@ -649,11 +644,7 @@ async fn get_node_matches_spec() {
 async fn delete_node_matches_spec() {
     let spec = load_spec();
     let server = MockServer::start_async().await;
-    let op = operation(
-        &spec,
-        "/api/v2/graphs/{graph_id}/nodes/{node_id}",
-        "delete",
-    );
+    let op = operation(&spec, "/api/v2/graphs/{graph_id}/nodes/{node_id}", "delete");
     assert_eq!(operation_id(op), "deleteNode");
 
     let mock = server
@@ -687,8 +678,7 @@ async fn create_edge_matches_spec() {
     // envelope `{edge: EdgeInput}` where EdgeInput requires
     // `id, from_node_id, to_node_id, edge_type` (was `source`/`target`).
     // Assert outer wrapper and inner required fields.
-    let body_schema =
-        request_body_schema(&spec, op).expect("POST edges must declare requestBody");
+    let body_schema = request_body_schema(&spec, op).expect("POST edges must declare requestBody");
     let outer_required = collect_required_fields(&spec, body_schema);
     assert!(
         outer_required.contains("edge"),

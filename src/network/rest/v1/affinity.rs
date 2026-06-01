@@ -65,7 +65,10 @@ pub enum AffinityResponse {
 #[derive(Debug, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum AffinityDeleteResponse {
-    Dropped { collection_id: String, dropped: bool },
+    Dropped {
+        collection_id: String,
+        dropped: bool,
+    },
 }
 
 #[derive(Debug, Serialize)]

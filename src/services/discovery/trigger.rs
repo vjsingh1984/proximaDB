@@ -65,16 +65,15 @@ impl DiscoveryTrigger {
     /// Consider a signal for a collection. Enqueues a discovery job unless one
     /// of the same kind is already `Scheduled`/`Running` for that collection
     /// (coalescing). Returns the enqueued job, or `None` if coalesced.
-    pub fn on_signal(
-        &self,
-        collection_id: &str,
-        signal: TriggerSignal,
-    ) -> Option<DiscoveryJob> {
+    pub fn on_signal(&self, collection_id: &str, signal: TriggerSignal) -> Option<DiscoveryJob> {
         let kind = signal.kind();
         if self.has_in_flight(collection_id, kind) {
             return None;
         }
-        Some(self.registry.schedule(DiscoveryJob::new(collection_id, kind)))
+        Some(
+            self.registry
+                .schedule(DiscoveryJob::new(collection_id, kind)),
+        )
     }
 
     /// True if a job of `kind` for `collection_id` is already `Scheduled` or
@@ -116,7 +115,8 @@ mod tests {
         assert!(first.is_some(), "first signal enqueues");
         // Same kind still pending → coalesced (no flood).
         assert!(
-            t.on_signal("c1", TriggerSignal::FreshnessBreached).is_none(),
+            t.on_signal("c1", TriggerSignal::FreshnessBreached)
+                .is_none(),
             "second signal of the same kind (Recluster) while in flight is coalesced"
         );
     }

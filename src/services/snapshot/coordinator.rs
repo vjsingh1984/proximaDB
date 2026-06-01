@@ -203,9 +203,7 @@ impl SnapshotPublishCoordinator {
             .catalog_manager
             .resolve_table(collection_id)
             .await
-            .with_context(|| {
-                format!("resolve catalog table for collection '{collection_id}'")
-            })?;
+            .with_context(|| format!("resolve catalog table for collection '{collection_id}'"))?;
 
         if !catalog.table_exists(&identifier).await? {
             anyhow::bail!(
@@ -271,8 +269,11 @@ mod tests {
         catalog
             .create_table(
                 &identifier,
-                CatalogTableSchema::new(collection.to_string())
-                    .with_column(CatalogColumn::new(0, "oid", CatalogDataType::String)),
+                CatalogTableSchema::new(collection.to_string()).with_column(CatalogColumn::new(
+                    0,
+                    "oid",
+                    CatalogDataType::String,
+                )),
             )
             .await
             .unwrap();
@@ -318,7 +319,10 @@ mod tests {
         coord.begin_publish(&pin).await.unwrap();
         coord.abort_publish(&pin).await.unwrap();
         let proj = coord.active_projection("c_abort").await.unwrap().unwrap();
-        assert_eq!(proj.freshness_state, ProjectionFreshnessState::RebuildRequired);
+        assert_eq!(
+            proj.freshness_state,
+            ProjectionFreshnessState::RebuildRequired
+        );
     }
 
     #[tokio::test]

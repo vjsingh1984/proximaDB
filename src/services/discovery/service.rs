@@ -39,11 +39,7 @@ impl DiscoveryService {
     /// coalescing against any in-flight job of the same kind for the collection.
     /// Signal sources (RecallProbeGate, freshness state machine, AutoML drift)
     /// call this; returns the enqueued job, or `None` if coalesced.
-    pub fn on_signal(
-        &self,
-        collection_id: &str,
-        signal: TriggerSignal,
-    ) -> Option<DiscoveryJob> {
+    pub fn on_signal(&self, collection_id: &str, signal: TriggerSignal) -> Option<DiscoveryJob> {
         DiscoveryTrigger::new(self.registry.clone()).on_signal(collection_id, signal)
     }
 
@@ -67,8 +63,7 @@ impl DiscoveryService {
             .list_for_collection(collection_id)
             .into_iter()
             .find(|j| {
-                j.kind == DiscoveryJobKind::Recluster
-                    && j.status == DiscoveryJobStatus::Complete
+                j.kind == DiscoveryJobKind::Recluster && j.status == DiscoveryJobStatus::Complete
             })
             .map(|j| j.collection_write_lsn)
     }

@@ -153,10 +153,12 @@ pub async fn install_rank_profile_inner(
         .map_err(|e| ApiError::Internal(format!("rank profile catalog write failed: {e}")))?;
     spec.version = stored.version;
 
-    let compiled = CompiledRankProfile::compile(spec, services.blueprint_factory.clone())
-        .map_err(|e| ApiError::Internal(format!(
-            "rank profile compile after validate succeeded should not fail: {e}"
-        )))?;
+    let compiled =
+        CompiledRankProfile::compile(spec, services.blueprint_factory.clone()).map_err(|e| {
+            ApiError::Internal(format!(
+                "rank profile compile after validate succeeded should not fail: {e}"
+            ))
+        })?;
 
     services.install_profile(compiled);
     Ok(RankProfileDto::from(stored))
@@ -204,8 +206,7 @@ mod tests {
     use std::sync::Arc;
 
     const VALID_SPEC: &str = "[first_phase]\nexpression = \"1.0\"\nheap_size = 50\n";
-    const BROKEN_SPEC: &str =
-        "[first_phase]\nexpression = \"definitely_not_a_feature(\\\"missing\\\")\"\nheap_size = 50\n";
+    const BROKEN_SPEC: &str = "[first_phase]\nexpression = \"definitely_not_a_feature(\\\"missing\\\")\"\nheap_size = 50\n";
 
     fn rank_pipeline() -> (
         Arc<dyn crate::services::RankProfileStore>,
@@ -348,9 +349,14 @@ mod tests {
         .unwrap();
         assert!(store.get("doomed").await.unwrap().is_some());
 
-        remove_rank_profile_inner(store.as_ref(), Some(services.as_ref()), "doomed".to_string(), false)
-            .await
-            .unwrap();
+        remove_rank_profile_inner(
+            store.as_ref(),
+            Some(services.as_ref()),
+            "doomed".to_string(),
+            false,
+        )
+        .await
+        .unwrap();
         assert!(store.get("doomed").await.unwrap().is_none());
         assert!(services.profile_registry.get("doomed").is_none());
     }
@@ -371,10 +377,14 @@ mod tests {
     #[tokio::test]
     async fn remove_without_if_exists_errors_for_missing() {
         let (store, services) = rank_pipeline();
-        let err =
-            remove_rank_profile_inner(store.as_ref(), Some(services.as_ref()), "ghost".to_string(), false)
-                .await
-                .expect_err("missing profile must 404 without if_exists");
+        let err = remove_rank_profile_inner(
+            store.as_ref(),
+            Some(services.as_ref()),
+            "ghost".to_string(),
+            false,
+        )
+        .await
+        .expect_err("missing profile must 404 without if_exists");
         assert!(matches!(err, ApiError::NotFound(_)));
     }
 }

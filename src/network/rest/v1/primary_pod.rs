@@ -205,9 +205,8 @@ pub fn authorize_operator(
             StatusCode::FORBIDDEN,
             Json(OperatorErrorResponse {
                 error: "operator_permission_required",
-                message:
-                    "primary-pod endpoints require SystemAdmin or ConfigureSystem permission"
-                        .to_string(),
+                message: "primary-pod endpoints require SystemAdmin or ConfigureSystem permission"
+                    .to_string(),
                 code: 403,
             }),
         ))
@@ -287,7 +286,10 @@ pub async fn get_primary_pod(
 ) -> Result<Json<LookupResponse>, (StatusCode, Json<OperatorErrorResponse>)> {
     authorize_operator(user_context.as_ref())?;
 
-    match state.primary_pod_registry.lookup(&tenant_id, &collection_id) {
+    match state
+        .primary_pod_registry
+        .lookup(&tenant_id, &collection_id)
+    {
         Some(primary) => Ok(Json(LookupResponse::Bound {
             tenant_id,
             collection_id,
@@ -493,8 +495,8 @@ mod tests {
     #[test]
     fn authorize_accepts_system_admin() {
         let ctx = ctx_with_permissions(vec![UnifiedPermission::SystemAdmin]);
-        let user_id = authorize_operator(Some(&ctx))
-            .expect("SystemAdmin must be allowed through the gate");
+        let user_id =
+            authorize_operator(Some(&ctx)).expect("SystemAdmin must be allowed through the gate");
         assert_eq!(user_id, "test-user");
     }
 
@@ -585,7 +587,13 @@ mod tests {
             .expect("mirror succeeds against native catalog");
 
         let id = TableIdentifier::new(vec!["tenant-a".to_string()], "events");
-        let schema = mgr.default_catalog().await.unwrap().get_table(&id).await.unwrap();
+        let schema = mgr
+            .default_catalog()
+            .await
+            .unwrap()
+            .get_table(&id)
+            .await
+            .unwrap();
         assert_eq!(schema.primary_pod.as_ref().unwrap().pod, "pod-1");
     }
 
@@ -604,7 +612,13 @@ mod tests {
             .unwrap();
 
         let id = TableIdentifier::new(vec!["tenant-b".to_string()], "orders");
-        let schema = mgr.default_catalog().await.unwrap().get_table(&id).await.unwrap();
+        let schema = mgr
+            .default_catalog()
+            .await
+            .unwrap()
+            .get_table(&id)
+            .await
+            .unwrap();
         assert!(
             schema.primary_pod.is_none(),
             "unassign must clear the catalog field"
@@ -648,7 +662,10 @@ mod tests {
         // are what operators grep for and what alert rules pattern
         // on. Lock them in so a refactor of the enum doesn't silently
         // rename them.
-        assert_eq!(MirrorFailure::NoDefaultCatalog.label(), "no_default_catalog");
+        assert_eq!(
+            MirrorFailure::NoDefaultCatalog.label(),
+            "no_default_catalog"
+        );
         assert_eq!(
             MirrorFailure::CatalogError("anything".into()).label(),
             "catalog_error"

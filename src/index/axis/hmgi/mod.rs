@@ -134,7 +134,9 @@ pub mod router;
 pub mod tiering;
 
 // Re-exports for convenience
-pub use coordinator::{HmgiQueryCoordinator, HmgiSearchRequest, MockNetworkService, NetworkService};
+pub use coordinator::{
+    HmgiQueryCoordinator, HmgiSearchRequest, MockNetworkService, NetworkService,
+};
 pub use detection::{
     CollectionTransition, DetectionResult, EnablementReason, ModalityDetector, VectorRecordSample,
 };

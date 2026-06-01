@@ -526,7 +526,10 @@ impl DdlService {
                 name,
                 spec_toml,
                 if_not_exists,
-            } => self.create_rank_profile(&name, &spec_toml, if_not_exists).await,
+            } => {
+                self.create_rank_profile(&name, &spec_toml, if_not_exists)
+                    .await
+            }
             DdlStatement::DropRankProfile { name, if_exists } => {
                 self.drop_rank_profile(&name, if_exists).await
             }
@@ -579,7 +582,13 @@ impl DdlService {
         store
             .install(name, spec_toml.to_string(), None, None)
             .await
-            .map_err(|e| anyhow!("CREATE RANK PROFILE '{}': catalog write failed: {}", name, e))?;
+            .map_err(|e| {
+                anyhow!(
+                    "CREATE RANK PROFILE '{}': catalog write failed: {}",
+                    name,
+                    e
+                )
+            })?;
 
         services.install_profile(compiled);
 
@@ -2431,9 +2440,7 @@ mod tests {
             &self,
             _collection: &str,
             _query: &str,
-        ) -> proximadb_rank_core::RankResult<
-            Vec<crate::core::search::hybrid::BM25Result>,
-        > {
+        ) -> proximadb_rank_core::RankResult<Vec<crate::core::search::hybrid::BM25Result>> {
             Ok(Vec::new())
         }
 
@@ -2441,16 +2448,14 @@ mod tests {
             &self,
             _collection: &str,
             _vector: &[f32],
-        ) -> proximadb_rank_core::RankResult<
-            Vec<crate::core::search::hybrid::VectorResult>,
-        > {
+        ) -> proximadb_rank_core::RankResult<Vec<crate::core::search::hybrid::VectorResult>>
+        {
             Ok(Vec::new())
         }
     }
 
     const VALID_PROFILE_TOML: &str = "[first_phase]\nexpression = \"1.0\"\nheap_size = 50\n";
-    const BROKEN_PROFILE_TOML: &str =
-        "[first_phase]\nexpression = \"definitely_not_a_feature(\\\"missing\\\")\"\nheap_size = 50\n";
+    const BROKEN_PROFILE_TOML: &str = "[first_phase]\nexpression = \"definitely_not_a_feature(\\\"missing\\\")\"\nheap_size = 50\n";
 
     #[tokio::test]
     async fn create_rank_profile_installs_into_store_and_registry() {

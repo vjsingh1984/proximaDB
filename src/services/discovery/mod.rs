@@ -22,10 +22,10 @@ mod service;
 mod trigger;
 
 pub use drift::{
-    drift_exceeds, interval_from_env, spawn_drift_watcher, threshold_writes_from_env, DriftWatcher,
-    DEFAULT_DRIFT_INTERVAL, DEFAULT_DRIFT_THRESHOLD_WRITES,
+    DEFAULT_DRIFT_INTERVAL, DEFAULT_DRIFT_THRESHOLD_WRITES, DriftWatcher, drift_exceeds,
+    interval_from_env, spawn_drift_watcher, threshold_writes_from_env,
 };
-pub use executor::{spawn_discovery_executor, DiscoveryJobExecutor, DEFAULT_POLL_INTERVAL};
+pub use executor::{DEFAULT_POLL_INTERVAL, DiscoveryJobExecutor, spawn_discovery_executor};
 pub use job::{DiscoveryJob, DiscoveryJobKind, DiscoveryJobResult, DiscoveryJobStatus};
 pub use registry::DiscoveryRegistry;
 pub use service::DiscoveryService;

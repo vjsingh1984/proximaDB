@@ -83,7 +83,10 @@ fn arrow_file_ticket_json_roundtrips() {
 #[test]
 fn flight_descriptor_relational_path_shape() {
     let desc = FlightDescriptor::new_path(vec!["relational".into(), "tenant1.users".into()]);
-    assert_eq!(desc.path, vec!["relational".to_string(), "tenant1.users".to_string()]);
+    assert_eq!(
+        desc.path,
+        vec!["relational".to_string(), "tenant1.users".to_string()]
+    );
     // First element must be one of the model-router prefixes the server recognizes.
     let head = desc.path.first().map(String::as_str);
     assert!(matches!(head, Some("relational")));
@@ -92,7 +95,10 @@ fn flight_descriptor_relational_path_shape() {
 #[test]
 fn flight_descriptor_vectors_path_shape() {
     let desc = FlightDescriptor::new_path(vec!["vectors".into(), "embeddings".into()]);
-    assert_eq!(desc.path, vec!["vectors".to_string(), "embeddings".to_string()]);
+    assert_eq!(
+        desc.path,
+        vec!["vectors".to_string(), "embeddings".to_string()]
+    );
     let head = desc.path.first().map(String::as_str);
     assert!(matches!(head, Some("vectors")));
 }

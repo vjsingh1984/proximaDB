@@ -151,16 +151,20 @@ impl DiagVisitor {
 
 impl tracing::field::Visit for DiagVisitor {
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        self.fields.push((field.name().to_string(), value.to_string()));
+        self.fields
+            .push((field.name().to_string(), value.to_string()));
     }
     fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
-        self.fields.push((field.name().to_string(), value.to_string()));
+        self.fields
+            .push((field.name().to_string(), value.to_string()));
     }
     fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
-        self.fields.push((field.name().to_string(), value.to_string()));
+        self.fields
+            .push((field.name().to_string(), value.to_string()));
     }
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
-        self.fields.push((field.name().to_string(), value.to_string()));
+        self.fields
+            .push((field.name().to_string(), value.to_string()));
     }
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         self.fields
@@ -387,14 +391,16 @@ impl SetupResult {
         //            IVF spec so `insert_dense_vector_index`
         //            dispatches to `insert_into_ivf`.
         if cfg.axis {
-            let mut axis_manager_inner = proximadb::index::AxisManager::new(
-                proximadb::index::AxisConfig::default(),
-            )
-            .await
-            .expect("axis manager");
+            let mut axis_manager_inner =
+                proximadb::index::AxisManager::new(proximadb::index::AxisConfig::default())
+                    .await
+                    .expect("axis manager");
 
             let shared_cache = std::sync::Arc::new(dashmap::DashMap::new());
-            shared_cache.insert(collection.id.clone(), std::sync::Arc::new(collection.clone()));
+            shared_cache.insert(
+                collection.id.clone(),
+                std::sync::Arc::new(collection.clone()),
+            );
             axis_manager_inner.set_shared_collection_cache(shared_cache);
 
             // Per-index-type strategy injection BEFORE wrapping in Arc.
@@ -437,8 +443,7 @@ impl SetupResult {
                     // in 476dc951a).
                     let ef_search = env_usize("BENCH_HNSW_EF", 100) as u32;
                     let m = env_usize("BENCH_HNSW_M", 16) as u32;
-                    let ef_construction =
-                        env_usize("BENCH_HNSW_EF_CONSTRUCTION", 200) as u32;
+                    let ef_construction = env_usize("BENCH_HNSW_EF_CONSTRUCTION", 200) as u32;
                     let hnsw_spec = IndexSpecification::new(
                         Data::DenseVector {
                             dimension: cfg.dimension,
@@ -520,8 +525,7 @@ impl SetupResult {
                     };
                     let ef_search = env_usize("BENCH_HNSW_EF", 100) as u32;
                     let m = env_usize("BENCH_HNSW_M", 16) as u32;
-                    let ef_construction =
-                        env_usize("BENCH_HNSW_EF_CONSTRUCTION", 200) as u32;
+                    let ef_construction = env_usize("BENCH_HNSW_EF_CONSTRUCTION", 200) as u32;
                     let hnsw_spec = IndexSpecification::new(
                         Data::DenseVector {
                             dimension: cfg.dimension,
@@ -649,7 +653,10 @@ fn main() {
         cfg.vectorized
     );
     println!("  index:      {} (BENCH_INDEX)", cfg.index.label());
-    println!("  axis:       {} (derived from BENCH_INDEX/BENCH_AXIS)", cfg.axis);
+    println!(
+        "  axis:       {} (derived from BENCH_INDEX/BENCH_AXIS)",
+        cfg.axis
+    );
     println!("  metric:     {:?} (BENCH_METRIC)", cfg.metric);
     println!();
 
@@ -689,7 +696,10 @@ fn main() {
         let recall: Option<RecallStats> = if cfg.axis {
             let recall_samples = 20usize;
             println!();
-            println!("📐 Measuring recall@{} over {} queries", cfg.top_k, recall_samples);
+            println!(
+                "📐 Measuring recall@{} over {} queries",
+                cfg.top_k, recall_samples
+            );
             let stats = measure_recall(&setup, &cfg, recall_samples).await;
             Some(stats)
         } else {
@@ -709,7 +719,10 @@ fn main() {
         }
 
         println!();
-        println!("📊 Capturing per-phase timings across {} warm queries", cfg.warm_runs);
+        println!(
+            "📊 Capturing per-phase timings across {} warm queries",
+            cfg.warm_runs
+        );
 
         let mut total_us = Vec::with_capacity(cfg.warm_runs);
         for _ in 0..cfg.warm_runs {
@@ -824,8 +837,7 @@ async fn measure_recall(setup: &SetupResult, cfg: &BenchConfig, n_queries: usize
             top_k: Some(1),
             ..Default::default()
         });
-        let probe_ctx =
-            StorageQueryContext::new(probe_params, Arc::clone(&setup.warm_collection));
+        let probe_ctx = StorageQueryContext::new(probe_params, Arc::clone(&setup.warm_collection));
         probe_ctx
             .collection_storage_path()
             .expect("collection storage path resolves")
@@ -1006,14 +1018,12 @@ async fn measure_recall(setup: &SetupResult, cfg: &BenchConfig, n_queries: usize
         // Shadow comparison 1: default-flat top_k vs true brute-force.
         // When < 1.0, default-flat is missing records the true exact
         // would have returned — its pruning is costing recall.
-        let flat_vs_fe = exact_ids.intersection(&force_exact_ids).count() as f64
-            / cfg.top_k as f64;
+        let flat_vs_fe = exact_ids.intersection(&force_exact_ids).count() as f64 / cfg.top_k as f64;
         flat_default_vs_force_exact.push(flat_vs_fe);
 
         // Shadow comparison 2: AXIS top_k vs true brute-force. This
         // is the absolute recall — what a customer would observe.
-        let axis_vs_fe = axis_ids.intersection(&force_exact_ids).count() as f64
-            / cfg.top_k as f64;
+        let axis_vs_fe = axis_ids.intersection(&force_exact_ids).count() as f64 / cfg.top_k as f64;
         axis_vs_force_exact.push(axis_vs_fe);
 
         // Score-threshold recall: independent of how AXIS reports
@@ -1024,7 +1034,11 @@ async fn measure_recall(setup: &SetupResult, cfg: &BenchConfig, n_queries: usize
         // count as recall hits.
         let mut exact_true_scores: Vec<f32> = exact
             .iter()
-            .filter_map(|r| record_lookup.get(&r.id).map(|v| true_score(cfg.metric, &query_vector, v)))
+            .filter_map(|r| {
+                record_lookup
+                    .get(&r.id)
+                    .map(|v| true_score(cfg.metric, &query_vector, v))
+            })
             .collect();
         exact_true_scores.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
         let threshold = exact_true_scores
@@ -1063,8 +1077,7 @@ fn print_recall_report(cfg: &BenchConfig, stats: &RecallStats) {
     };
     let (id_mean, id_min, id_max) = summarize(&stats.id_overlap);
     let (sc_mean, sc_min, sc_max) = summarize(&stats.score_threshold);
-    let (flat_fe_mean, flat_fe_min, flat_fe_max) =
-        summarize(&stats.flat_default_vs_force_exact);
+    let (flat_fe_mean, flat_fe_min, flat_fe_max) = summarize(&stats.flat_default_vs_force_exact);
     let (axis_fe_mean, axis_fe_min, axis_fe_max) = summarize(&stats.axis_vs_force_exact);
 
     println!();
@@ -1091,9 +1104,7 @@ fn print_recall_report(cfg: &BenchConfig, stats: &RecallStats) {
         "          mean: {:.3}   min: {:.3}   max: {:.3}",
         axis_fe_mean, axis_fe_min, axis_fe_max
     );
-    println!(
-        "  Score-threshold recall (AXIS records whose true metric score >="
-    );
+    println!("  Score-threshold recall (AXIS records whose true metric score >=");
     println!("      exact's k-th best score / k):");
     println!(
         "      mean: {:.3}   min: {:.3}   max: {:.3}",
@@ -1108,15 +1119,15 @@ fn print_recall_report(cfg: &BenchConfig, stats: &RecallStats) {
     } else if sc_mean >= 0.90 {
         println!("  status:  ⚠️  score-threshold recall acceptable but below 95%");
     } else {
-        println!("  status:  ❌ score-threshold recall below 90% — AXIS not finding good candidates");
+        println!(
+            "  status:  ❌ score-threshold recall below 90% — AXIS not finding good candidates"
+        );
     }
     if id_mean < sc_mean - 0.05 {
         println!(
             "  note:    id-overlap < score-threshold by >5% — AXIS is finding *as-good* records"
         );
-        println!(
-            "           but not the SAME records (score ties / index ordering variance)."
-        );
+        println!("           but not the SAME records (score ties / index ordering variance).");
     }
 }
 
@@ -1171,9 +1182,7 @@ fn print_report(cfg: &BenchConfig, total_us: &[u64], captured: &HashMap<String, 
     println!("   Results");
     println!("================================================================================");
     println!();
-    println!(
-        "Total query latency (warm, includes all phases + outer dispatch):"
-    );
+    println!("Total query latency (warm, includes all phases + outer dispatch):");
     print_dist("  total", total_us);
     println!();
 
@@ -1195,7 +1204,10 @@ fn print_report(cfg: &BenchConfig, total_us: &[u64], captured: &HashMap<String, 
         "axis_query",
         "axis_result_convert",
     ];
-    println!("Per-phase breakdown (microseconds, {} samples / phase):", cfg.warm_runs);
+    println!(
+        "Per-phase breakdown (microseconds, {} samples / phase):",
+        cfg.warm_runs
+    );
     println!(
         "  {:<18} {:>10} {:>10} {:>10} {:>10} {:>8}",
         "phase", "mean", "p50", "p99", "max", "% of mean total"
@@ -1323,7 +1335,9 @@ fn synthetic_records(
                 modality: "vector".to_string(),
                 dim: dim as u32,
                 values: proximadb_records::EmbeddingValues::Fp32(
-                    (0..dim).map(|j| pseudo_random_f32(i as u64 + 1, j)).collect(),
+                    (0..dim)
+                        .map(|j| pseudo_random_f32(i as u64 + 1, j))
+                        .collect(),
                 ),
                 ..Default::default()
             }],

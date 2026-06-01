@@ -3428,8 +3428,7 @@ mod tests {
         // return a collection to default routing during planned
         // maintenance.
         let bound = CatalogPrimaryPod::now("pod-a", CatalogPrimaryPodReason::Create);
-        let schema = CatalogTableSchema::new("c")
-            .with_primary_pod(Some(bound.clone()));
+        let schema = CatalogTableSchema::new("c").with_primary_pod(Some(bound.clone()));
         assert_eq!(schema.primary_pod.as_ref().unwrap().pod, "pod-a");
 
         let cleared = schema.with_primary_pod(None);

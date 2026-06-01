@@ -12,7 +12,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tracing::{error, info, warn};
 
-use super::job::{now_ms, DiscoveryJob, DiscoveryJobResult, DiscoveryJobStatus};
+use super::job::{DiscoveryJob, DiscoveryJobResult, DiscoveryJobStatus, now_ms};
 use super::passes::PassContext;
 use super::registry::DiscoveryRegistry;
 use crate::services::snapshot::{SnapshotPin, SnapshotPublishCoordinator};
@@ -74,8 +74,7 @@ impl DiscoveryJobExecutor {
         // skeleton / lightweight tests) => baseline stays 0.
         if let Some(vops) = self.vector_ops.as_ref() {
             let internal_id = vops.resolve_collection_id(&job.collection_id).await;
-            job.collection_write_lsn =
-                self.coordinator.collection_write_lsn(&internal_id).await;
+            job.collection_write_lsn = self.coordinator.collection_write_lsn(&internal_id).await;
         }
         self.registry.upsert(job.clone());
 
@@ -170,7 +169,13 @@ mod tests {
     use crate::services::discovery::job::DiscoveryJobKind;
     use proximadb_catalog::{CatalogColumn, CatalogDataType, CatalogTableSchema, TableIdentifier};
 
-    async fn wired(collection: &str) -> (Arc<DiscoveryJobExecutor>, Arc<SnapshotPublishCoordinator>, Arc<DiscoveryRegistry>) {
+    async fn wired(
+        collection: &str,
+    ) -> (
+        Arc<DiscoveryJobExecutor>,
+        Arc<SnapshotPublishCoordinator>,
+        Arc<DiscoveryRegistry>,
+    ) {
         let tmp = std::env::temp_dir().join(format!(
             "proximadb_discovery_exec_{}_{}",
             collection,
@@ -193,15 +198,21 @@ mod tests {
         catalog
             .create_table(
                 &identifier,
-                CatalogTableSchema::new(collection.to_string())
-                    .with_column(CatalogColumn::new(0, "oid", CatalogDataType::String)),
+                CatalogTableSchema::new(collection.to_string()).with_column(CatalogColumn::new(
+                    0,
+                    "oid",
+                    CatalogDataType::String,
+                )),
             )
             .await
             .unwrap();
 
         let coordinator = Arc::new(SnapshotPublishCoordinator::new(manager));
         let registry = Arc::new(DiscoveryRegistry::new());
-        let executor = Arc::new(DiscoveryJobExecutor::new(registry.clone(), coordinator.clone()));
+        let executor = Arc::new(DiscoveryJobExecutor::new(
+            registry.clone(),
+            coordinator.clone(),
+        ));
         (executor, coordinator, registry)
     }
 
@@ -218,7 +229,11 @@ mod tests {
         assert!(done.completed_at_ms.is_some());
 
         // Atomic republish landed: discovery projection is Fresh with lineage.
-        let proj = coordinator.active_projection("c_exec").await.unwrap().unwrap();
+        let proj = coordinator
+            .active_projection("c_exec")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
             proj.freshness_state,
             proximadb_catalog::ProjectionFreshnessState::Fresh

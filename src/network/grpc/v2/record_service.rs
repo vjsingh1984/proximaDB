@@ -463,7 +463,6 @@ impl ProximaRecordServiceImpl {
         self
     }
 
-
     /// Convert to a tonic server
     pub fn into_server(self) -> ProximaRecordServiceServer<Self> {
         ProximaRecordServiceServer::new(self)
@@ -2067,9 +2066,7 @@ mod tests {
 
     // ── Slice 6.1: primary-pod gate ─────────────────────────────────
 
-    use crate::cluster::primary_pod_registry::{
-        AssignmentReason, PrimaryPodRegistry,
-    };
+    use crate::cluster::primary_pod_registry::{AssignmentReason, PrimaryPodRegistry};
 
     fn gate(registry: Arc<PrimaryPodRegistry>, self_pod_id: &str) -> Option<PrimaryPodGate> {
         Some(PrimaryPodGate {
@@ -2122,9 +2119,15 @@ mod tests {
         // catches any future refactor of the ApiError → Status adapter
         // that would silently drop one.
         let md = status.metadata();
-        assert_eq!(md.get("x-primary-pod").unwrap().to_str().unwrap(), "pod-other");
+        assert_eq!(
+            md.get("x-primary-pod").unwrap().to_str().unwrap(),
+            "pod-other"
+        );
         assert_eq!(md.get("x-tenant-id").unwrap().to_str().unwrap(), "tenant-a");
-        assert_eq!(md.get("x-collection-id").unwrap().to_str().unwrap(), "coll-1");
+        assert_eq!(
+            md.get("x-collection-id").unwrap().to_str().unwrap(),
+            "coll-1"
+        );
     }
 
     #[test]

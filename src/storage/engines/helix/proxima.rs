@@ -204,7 +204,9 @@ impl HelixSIMDWriter {
         let compression_ratio = if let Some(ref encoded) = block.encoded_vectors {
             let original_size = records.len() * records.first().map_or(0, |r| r.vector.len()) * 4;
             let encoded_size: usize = encoded.iter().map(|d| d.len()).sum();
-            (encoded_size * 100).checked_div(original_size).unwrap_or(100)
+            (encoded_size * 100)
+                .checked_div(original_size)
+                .unwrap_or(100)
         } else {
             100 // No encoding applied
         };

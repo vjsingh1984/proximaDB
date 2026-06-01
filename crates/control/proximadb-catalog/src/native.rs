@@ -994,10 +994,8 @@ mod tests {
         let id = {
             let cat = fresh_catalog(&tmp).await;
             let id = make_table(&cat, "events").await;
-            let pod = crate::CatalogPrimaryPod::now(
-                "pod-d",
-                crate::CatalogPrimaryPodReason::Rebalance,
-            );
+            let pod =
+                crate::CatalogPrimaryPod::now("pod-d", crate::CatalogPrimaryPodReason::Rebalance);
             cat.set_primary_pod(&id, Some(pod)).await.unwrap();
             id
         };

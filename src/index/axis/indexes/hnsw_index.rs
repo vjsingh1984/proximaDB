@@ -1106,8 +1106,7 @@ impl AxisHnswIndex {
         );
 
         // USING UTILS: Record successful operation
-        self.stats
-            .record_success(total_us);
+        self.stats.record_success(total_us);
         Ok(results)
     }
 
@@ -1126,9 +1125,7 @@ impl AxisHnswIndex {
     /// `SimilarityResult.normalized_score` shape that the rest of
     /// the stack assumes (higher = better, range [0, 1] for the
     /// common metrics).
-    pub fn distance_metric(
-        &self,
-    ) -> crate::compute::distance_computation::DistanceMetric {
+    pub fn distance_metric(&self) -> crate::compute::distance_computation::DistanceMetric {
         self.config.distance_metric
     }
 

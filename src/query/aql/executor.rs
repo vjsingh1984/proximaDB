@@ -211,9 +211,7 @@ impl AqlExecutor {
     fn evaluate_predicate(&self, row: &HashMap<String, AqlValue>, pred: &AqlPredicate) -> bool {
         match pred {
             AqlPredicate::Equals { field, value } => row.get(field).is_some_and(|v| v == value),
-            AqlPredicate::GreaterThan { field, value } => {
-                row.get(field).is_some_and(|v| v > value)
-            }
+            AqlPredicate::GreaterThan { field, value } => row.get(field).is_some_and(|v| v > value),
             AqlPredicate::LessThan { field, value } => row.get(field).is_some_and(|v| v < value),
             AqlPredicate::Contains { field, value } => {
                 if let (Some(AqlValue::String(s)), AqlValue::String(v)) = (row.get(field), value) {

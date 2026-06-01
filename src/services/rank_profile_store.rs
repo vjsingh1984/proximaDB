@@ -425,10 +425,7 @@ heap_size = 100
             .collect::<Vec<_>>();
         assert_eq!(tenant_b, vec!["b1".to_string()]);
 
-        let none_scope = store
-            .list_for_tenant("tenant_c")
-            .await
-            .unwrap();
+        let none_scope = store.list_for_tenant("tenant_c").await.unwrap();
         assert!(
             none_scope.is_empty(),
             "tenant_c shouldn't see any other tenant's profile"

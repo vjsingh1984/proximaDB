@@ -1079,7 +1079,10 @@ mod tests {
             name: None,
             description: None,
         };
-        assert_eq!(serde_json::to_value(minimal).unwrap(), json!({"graph_id": "k"}));
+        assert_eq!(
+            serde_json::to_value(minimal).unwrap(),
+            json!({"graph_id": "k"})
+        );
 
         // CreateNodeRequest: {node: NodeInput}
         let node_request = CreateNodeRequest {

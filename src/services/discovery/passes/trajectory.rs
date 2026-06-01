@@ -50,7 +50,10 @@ pub async fn run(ctx: &PassContext) -> Result<DiscoveryJobResult> {
         "trajectory_distinct_actors".to_string(),
         stats.distinct_actors as f64,
     );
-    m.insert("trajectory_with_origin".to_string(), stats.with_origin as f64);
+    m.insert(
+        "trajectory_with_origin".to_string(),
+        stats.with_origin as f64,
+    );
     m.insert(
         "trajectory_distinct_origins".to_string(),
         stats.distinct_origins as f64,
