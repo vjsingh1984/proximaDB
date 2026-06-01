@@ -775,10 +775,21 @@ impl RestServer {
         base_router = base_router.nest("/ws", ws_routes);
         tracing::info!("✅ WebSocket streaming enabled at /ws (unified mode)");
 
-        // Apply minimal layers for unified mode
-        // (Full middleware stack is handled by the unified server)
+        // Tenant extraction layer for unified mode. v2/v3 handlers require an
+        // `Extension<MiddlewareTenantContext>`; without this layer every
+        // `/api/v2` request 500s with "missing request extension". The
+        // multi-port path applies the same layer in `create_router`; the
+        // unified path must apply it too (it is NOT wrapped by the caller).
+        // Default config resolves to the single "default" tenant in dev.
+        let tenant_extractor = TenantExtractor::with_config(TenantExtractorConfig::default());
+        let tenant_layer = middleware::from_fn_with_state(tenant_extractor, tenant_middleware);
+
+        // Layer order: TraceLayer outermost, tenant extraction inside it so the
+        // tenant context is populated before handlers run.
         use tower_http::trace::TraceLayer;
-        base_router.layer(TraceLayer::new_for_http())
+        base_router
+            .layer(tenant_layer)
+            .layer(TraceLayer::new_for_http())
     }
 
     /// Start the REST server
