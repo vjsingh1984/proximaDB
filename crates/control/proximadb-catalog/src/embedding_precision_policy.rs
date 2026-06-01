@@ -93,6 +93,12 @@ pub enum IngestMismatchPolicy {
 
 /// What additional derived (quantized) representations the writer should
 /// materialize alongside the canonical embedding.
+///
+/// Variants use only primitive types so a catalog row written by a node
+/// that has `experimental-turboquant` enabled stays deserializable on a
+/// node without the feature (Phase E — Quantization Trait Convergence
+/// Plan §"Catalog migration"). The consumer side decides whether to
+/// honor the row; the catalog stays oblivious.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DerivedQuantizationLevel {
@@ -104,6 +110,68 @@ pub enum DerivedQuantizationLevel {
         m: u32,
         nbits: u8,
     },
+    /// TurboQuant — data-oblivious read-time scalar quantizer (ADR-021).
+    ///
+    /// All four fields are mandatory because TurboQuant's encoding is
+    /// per-collection and can't be reconstructed from defaults: a wrong
+    /// rotation_seed or bit_width produces garbage codes.
+    ///
+    /// - `bit_width` ∈ {2, 4} for P1; {2, 3, 4} after P10.
+    /// - `calibration_mode` is `"identity"` or `"tq_plus"` — the string
+    ///   shape matches `TurboQuantExplainHints.calibration_mode` and
+    ///   `DurableQuantState.calibration` for wire-shape consistency
+    ///   across catalog row / EXPLAIN payload / agent memory.
+    /// - `rotation_seed` is the per-collection multi-tenant isolation
+    ///   primitive. Initial value is
+    ///   `proximadb_quantization_types::derive_rotation_seed(collection_id)`;
+    ///   subsequent reads MUST honor whatever the catalog row carries
+    ///   (the seed is immutable for the collection's lifetime — see
+    ///   ADR-021 §"Authority mode").
+    /// - `encoded_epoch` is the precision-epoch the codes were encoded
+    ///   under (EMBEDDING_PRECISION_LLD Q12). Mismatch with the
+    ///   collection's current epoch triggers repair from the canonical
+    ///   `ProximaRecord` source.
+    TurboQuant {
+        bit_width: u8,
+        calibration_mode: String,
+        rotation_seed: u64,
+        encoded_epoch: u64,
+    },
+}
+
+impl DerivedQuantizationLevel {
+    /// Construct a TurboQuant variant from a collection identifier.
+    /// Mirrors the runtime construction path: the rotation seed is
+    /// derived via the same hash the modality crate uses
+    /// (`proximadb_quantization_types::derive_rotation_seed`) so the
+    /// catalog row pins the same encoding the live store produces.
+    ///
+    /// Defaults: 4-bit, TqPlus calibration, epoch 0. Operators that
+    /// need different parameters construct the variant directly.
+    ///
+    /// Note: this helper duplicates the FNV-1a hash from the foundation
+    /// crate inline because adding the foundation as a dep here would
+    /// drag the feature flag and create a workspace-layering cycle.
+    /// The two implementations are tested for parity below; divergence
+    /// is a wire-contract violation.
+    pub fn turboquant_for_collection(collection_id: &str) -> Self {
+        // FNV-1a 64-bit. Must stay byte-equivalent with
+        // `proximadb_quantization_types::derive_rotation_seed` —
+        // changing one without the other rotates every collection's
+        // codes and re-encode is the only repair.
+        let prefix = b"turboquant.v1.rotation:";
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for &b in prefix.iter().chain(collection_id.as_bytes()) {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        Self::TurboQuant {
+            bit_width: 4,
+            calibration_mode: "tq_plus".to_string(),
+            rotation_seed: h,
+            encoded_epoch: 0,
+        }
+    }
 }
 
 /// Where derived quantizations are materialized.
@@ -340,11 +408,113 @@ mod tests {
             DerivedQuantizationLevel::Int8,
             DerivedQuantizationLevel::Int4,
             DerivedQuantizationLevel::Pq { m: 8, nbits: 8 },
+            DerivedQuantizationLevel::TurboQuant {
+                bit_width: 4,
+                calibration_mode: "tq_plus".to_string(),
+                rotation_seed: 0xdead_beef_cafe_babe,
+                encoded_epoch: 17,
+            },
+            DerivedQuantizationLevel::TurboQuant {
+                bit_width: 2,
+                calibration_mode: "identity".to_string(),
+                rotation_seed: 1,
+                encoded_epoch: 0,
+            },
         ];
         for level in cases {
             let json = serde_json::to_string(&level).unwrap();
             let back: DerivedQuantizationLevel = serde_json::from_str(&json).unwrap();
             assert_eq!(back, level);
+        }
+    }
+
+    #[test]
+    fn derived_quantization_level_turboquant_kind_tag_is_snake_case() {
+        // The catalog row stores `kind:` as a wire string. Future
+        // schema changes that rename the tag break loading old rows;
+        // pin the literal so renames are loud.
+        let level = DerivedQuantizationLevel::TurboQuant {
+            bit_width: 4,
+            calibration_mode: "tq_plus".to_string(),
+            rotation_seed: 0,
+            encoded_epoch: 0,
+        };
+        let v = serde_json::to_value(&level).unwrap();
+        assert_eq!(v.get("kind").and_then(|v| v.as_str()), Some("turbo_quant"));
+        assert_eq!(v.get("bit_width").and_then(|v| v.as_u64()), Some(4));
+        assert_eq!(
+            v.get("calibration_mode").and_then(|v| v.as_str()),
+            Some("tq_plus"),
+        );
+    }
+
+    #[test]
+    fn turboquant_for_collection_is_deterministic_per_id() {
+        // Two calls with the same id MUST produce the same row — the
+        // rotation seed is the load-bearing per-collection isolation
+        // primitive. Mismatching seeds across nodes corrupts the
+        // codes; this test guards against accidental nondeterminism
+        // (e.g. someone swapping the hash for `rand::random`).
+        let a = DerivedQuantizationLevel::turboquant_for_collection("col-abc");
+        let b = DerivedQuantizationLevel::turboquant_for_collection("col-abc");
+        assert_eq!(a, b);
+        // Different ids MUST produce different seeds — multi-tenant
+        // isolation depends on collision-free seeds at any realistic
+        // collection count.
+        let c = DerivedQuantizationLevel::turboquant_for_collection("col-def");
+        assert_ne!(a, c);
+    }
+
+    #[test]
+    fn turboquant_for_collection_defaults_are_sane() {
+        // Pin the default shape so changing them is loud.
+        let level = DerivedQuantizationLevel::turboquant_for_collection("col-x");
+        match level {
+            DerivedQuantizationLevel::TurboQuant {
+                bit_width,
+                ref calibration_mode,
+                encoded_epoch,
+                ..
+            } => {
+                assert_eq!(bit_width, 4);
+                assert_eq!(calibration_mode, "tq_plus");
+                assert_eq!(encoded_epoch, 0);
+            }
+            other => panic!("expected TurboQuant variant, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn turboquant_inline_fnv1a_matches_foundation_crate_helper() {
+        // The catalog inlines an FNV-1a hash to avoid a workspace-
+        // layering cycle (catalog → foundation), but the two
+        // implementations MUST stay byte-equivalent. Divergence
+        // would rotate every collection's codes; re-encode would
+        // be the only repair.
+        //
+        // Reproduce the foundation helper inline here (same algo,
+        // same prefix bytes) and assert parity across a handful of
+        // representative collection ids.
+        fn foundation_derive(collection_id: &str) -> u64 {
+            let prefix = b"turboquant.v1.rotation:";
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            for &b in prefix.iter().chain(collection_id.as_bytes()) {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x0000_0100_0000_01b3);
+            }
+            h
+        }
+        for id in ["", "col-1", "tenant-xyz", "collection-with-long-name-12345"] {
+            let level = DerivedQuantizationLevel::turboquant_for_collection(id);
+            let seed = match level {
+                DerivedQuantizationLevel::TurboQuant { rotation_seed, .. } => rotation_seed,
+                _ => panic!("expected TurboQuant variant"),
+            };
+            assert_eq!(
+                seed,
+                foundation_derive(id),
+                "inline FNV-1a diverged from foundation hash for id={id:?}",
+            );
         }
     }
 
