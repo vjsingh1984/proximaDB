@@ -192,6 +192,11 @@ pub mod exporters;
 /// gateway gate's allow/misroute decisions per tenant.
 pub mod primary_pod_metrics;
 pub mod query_service;
+/// AXIS ANN advisor observability — captures (predicted_recall,
+/// observed_recall, observed_latency) residuals per search to
+/// validate the advisor's closed-form formulas against real
+/// workloads (P4 of the recall-aware AXIS stack).
+pub mod advisor_observations_metrics;
 /// AXIS HNSW recall-target drift observability — one-hot status
 /// gauge + observation / hot-swap counters for /route-health +
 /// /recall-tune.

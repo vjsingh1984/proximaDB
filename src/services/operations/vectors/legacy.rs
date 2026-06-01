@@ -916,6 +916,13 @@ impl VectorOperationsService {
         &self,
         req: crate::proto::proximadb_v1::VectorSearchRequest,
     ) -> Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        // P4 advisor observability: capture per-search latency so
+        // the post-search hook can populate the recall-residual /
+        // latency histograms. Timer wraps the full search path —
+        // candidate retrieval + filter + result assembly. Zero
+        // overhead when the hook short-circuits (no strategy /
+        // no recall_target tag).
+        let search_started_at = std::time::Instant::now();
         let collection_id = req.collection_id.clone();
         let top_k = req.top_k as usize;
         let search_query = req
@@ -952,6 +959,17 @@ impl VectorOperationsService {
         if let Some(_orch) = &self.orchestrator {
             // orch.track_access_async method not available - implement as needed
         }
+        // P4: capture the advisor observation post-search. The
+        // hook reads the collection's active strategy +
+        // recall_target tag, computes the advisor's predicted
+        // recall via the matching per-algo `recall_for`, and
+        // records (predicted, observed_latency) to Prometheus +
+        // structured log + (optional) disk sidecar. Best-effort —
+        // any lookup failure short-circuits silently to avoid
+        // touching the search path's success contract.
+        let elapsed_us = search_started_at.elapsed().as_micros() as u64;
+        observe_advisor_for_search(&collection_id, top_k as u32, elapsed_us).await;
+
         Ok(crate::proto::proximadb_v1::VectorOperationResponse {
             success: true,
             operation: crate::proto::proximadb_v1::VectorServiceOperation::VsSearch as i32,
@@ -5819,4 +5837,127 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
     async fn metrics(&self) -> anyhow::Result<serde_json::Value> {
         VectorOperationsService::metrics(self).await
     }
+}
+
+// ─── P4: ANN advisor observation hook ───────────────────────────
+//
+// Post-search capture of (predicted_recall, observed_latency)
+// tuples for every search against an advisor-managed collection.
+// Free function rather than impl method because the lookup path
+// only needs the collection_id + the global AXIS manager (already
+// reachable via crate::storage::engines::sst::core::get_sst_axis_manager),
+// not VectorOperationsService state. Keeps the post-search hook
+// in legacy.rs::search_v1 to a single line.
+
+/// Post-search hook: look up the collection's active strategy,
+/// resolve the matching per-algorithm advisor, compute the
+/// predicted recall + work, and record the observation.
+/// Best-effort — any lookup miss short-circuits silently. The
+/// search path's success contract is unaffected.
+async fn observe_advisor_for_search(
+    collection_id: &str,
+    top_k: u32,
+    observed_latency_us: u64,
+) {
+    // (1) Reach the live AXIS manager to read the active strategy.
+    // Absent on HELIX-only deployments — short-circuit gracefully.
+    let Some(axis_manager) = crate::storage::engines::sst::core::get_sst_axis_manager()
+    else {
+        return;
+    };
+
+    // (2) Read the active strategy. Missing strategy → collection
+    // hasn't been opted into the advisor or wasn't given a recall
+    // target. No observation.
+    let strategy = match axis_manager.get_collection_strategy(collection_id).await {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    // (3) The strategy holds one or more index specs. Pick the
+    // first vector-search-capable one — there's typically one
+    // primary ANN index per collection. The matching advisor's
+    // `recall_for()` computes the predicted recall.
+    use crate::index::axis::management::{
+        AnnIndexAdvisor, HmgiIndexAdvisor, HnswIndexAdvisor, IvfIndexAdvisor,
+        SupportedAlgorithm,
+    };
+    use crate::index::axis::types::IndexAlgorithm;
+
+    let Some(spec) = strategy
+        .indexes
+        .iter()
+        .find(|s| s.supports_vector_search())
+    else {
+        return;
+    };
+
+    let (algorithm, predicted_recall) = match &spec.algorithm {
+        IndexAlgorithm::HNSW { .. } => {
+            let advisor = HnswIndexAdvisor::new();
+            // vector_count comes from the AXIS manager's cached
+            // stats — but reading them out of the strategy lookup
+            // path requires extra plumbing. For P4 we accept that
+            // the predicted recall is computed at a placeholder N
+            // (the strategy doesn't carry corpus size). The
+            // future RL bridge (P5+) will read the actual
+            // vector_count from the collection stats; for now
+            // the predicted value is an approximation flagged in
+            // the rationale.
+            let predicted = advisor
+                .recall_for(&spec.algorithm, 100_000, top_k)
+                .unwrap_or(0.0);
+            (SupportedAlgorithm::Hnsw, predicted)
+        }
+        IndexAlgorithm::IVF { .. } => {
+            let advisor = IvfIndexAdvisor::new();
+            let predicted = advisor
+                .recall_for(&spec.algorithm, 100_000, top_k)
+                .unwrap_or(0.0);
+            (SupportedAlgorithm::Ivf, predicted)
+        }
+        IndexAlgorithm::HMGI { .. } => {
+            let advisor = HmgiIndexAdvisor::new();
+            let predicted = advisor
+                .recall_for(&spec.algorithm, 100_000, top_k)
+                .unwrap_or(0.0);
+            (SupportedAlgorithm::Hmgi, predicted)
+        }
+        // Other index types (LSH, Annoy, etc.) don't have an
+        // advisor in P1-P3; skip observation rather than emit a
+        // misleading 0.0 prediction.
+        _ => return,
+    };
+
+    // (4) Compute predicted per-query work — same algorithm
+    // dispatch but pulling the cost-model field rather than recall.
+    // For P4 we approximate via ef_search (HNSW) / nprobe
+    // (IVF) / max(ef) (HMGI). A future commit could re-run the
+    // advisor's full `advise()` to pull `estimated_per_query_work`
+    // directly; for the hot path we keep it cheap.
+    let predicted_work: u64 = match &spec.algorithm {
+        IndexAlgorithm::HNSW { ef_search, .. } => *ef_search as u64,
+        IndexAlgorithm::IVF { nprobe, .. } => *nprobe as u64 * 316, // approx cluster_size
+        IndexAlgorithm::HMGI { per_modality, .. } => per_modality
+            .iter()
+            .map(|p| p.ef_search as u64)
+            .max()
+            .unwrap_or(0),
+        _ => 0,
+    };
+
+    // (5) observed_recall is left None — populating it requires
+    // the recall_probe gate to be active for this collection,
+    // which is a separate F2 wiring path (TD-075). The
+    // observation still drives the latency histogram + counter.
+    let obs = crate::services::advisor_observations::AdvisorObservation::now(
+        collection_id,
+        algorithm,
+        spec.algorithm.clone(),
+        predicted_recall,
+        None,
+        predicted_work,
+        observed_latency_us,
+    );
+    crate::services::advisor_observations::record_observation(&obs);
 }

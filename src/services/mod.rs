@@ -167,6 +167,7 @@
 //! - Queue depths
 //! - Cache hit rates
 
+pub mod advisor_observations;
 pub mod agent_memory;
 pub mod bulk_load;
 pub mod canonical_wal;
