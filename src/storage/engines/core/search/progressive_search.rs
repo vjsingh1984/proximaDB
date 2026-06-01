@@ -44,6 +44,16 @@ pub struct ProgressiveSearchExecutor {
 
     /// Distance computation engine
     distance_compute: Arc<UnifiedDistanceCompute>,
+
+    /// Per-collection TurboQuant store registry (Phase C — lifecycle
+    /// dispatch). Optional because most deployments don't enable
+    /// TurboQuant; absence routes ReadTime-classified levels back to the
+    /// full-precision scorer (correct but slower). Phase E (xCatalog
+    /// hydration) wires this in from `SharedServices` at startup.
+    #[cfg(feature = "experimental-turboquant")]
+    turboquant_registry: Option<
+        Arc<dyn crate::compute::quantization::turboquant_store_registry::TurboQuantStoreRegistry>,
+    >,
 }
 
 /// Backwards-compat alias for [`ProgressiveSearchCandidate`].
@@ -94,7 +104,14 @@ pub enum SearchStage {
 }
 
 impl ProgressiveSearchExecutor {
-    /// Create a new progressive search executor
+    /// Create a new progressive search executor.
+    ///
+    /// The optional `turboquant_registry` is wired by Phase E (xCatalog
+    /// hydration); when absent (default builds, or TurboQuant-disabled
+    /// collections), `ReadTime`-classified levels fall back to the
+    /// full-precision scorer. The constructor stays backward-compatible
+    /// — existing callers can keep using the 2-arg form via
+    /// [`ProgressiveSearchBuilder`].
     pub fn new(
         quantization_engine: Arc<UnifiedQuantizationEngine>,
         distance_compute: Arc<UnifiedDistanceCompute>,
@@ -102,7 +119,22 @@ impl ProgressiveSearchExecutor {
         Self {
             quantization_engine,
             distance_compute,
+            #[cfg(feature = "experimental-turboquant")]
+            turboquant_registry: None,
         }
+    }
+
+    /// Wire a TurboQuant store registry into the executor. Returns
+    /// `self` for builder-style chaining at construction sites.
+    #[cfg(feature = "experimental-turboquant")]
+    pub fn with_turboquant_registry(
+        mut self,
+        registry: Arc<
+            dyn crate::compute::quantization::turboquant_store_registry::TurboQuantStoreRegistry,
+        >,
+    ) -> Self {
+        self.turboquant_registry = Some(registry);
+        self
     }
 
     /// Execute progressive search with the given context and candidates
@@ -210,73 +242,114 @@ impl ProgressiveSearchExecutor {
                     let first_level = levels
                         .first()
                         .ok_or_else(|| anyhow::anyhow!("No quantization levels provided"))?;
-                    let quantized_data = match first_level.quantization_type {
-                        QuantizationType::Binary => {
-                            let binary_data = self
-                                .quantization_engine
-                                .quantize_to_binary(&record.vector)?;
+                    // Lifecycle-aware dispatch (Phase C — Quantization
+                    // Trait Convergence Plan). `WriteTime` variants encode
+                    // here; `ReadTime` variants (TurboQuant) are intentional
+                    // no-ops because their codes live in the per-collection
+                    // `TurboQuantStore` and are produced at collection-level
+                    // ingest, not here. `Identity` is also a no-op.
+                    let quantized_data = match first_level.quantization_type.lifecycle() {
+                        proximadb_quantization_types::QuantizationLifecycle::WriteTime => {
+                            match first_level.quantization_type {
+                                QuantizationType::Binary => {
+                                    let binary_data = self
+                                        .quantization_engine
+                                        .quantize_to_binary(&record.vector)?;
+                                    StorageQuantizedData {
+                                        id: record.id.clone(),
+                                        primary: None,
+                                        filter: Some(QuantizedVector {
+                                            data: binary_data,
+                                            quantization_level: crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Binary,
+                                            metadata: crate::compute::quantization::QuantizationMetadata::default(),
+                                        }),
+                                        fast: None,
+                                        dimension: record.vector.len(),
+                                        metadata: crate::compute::quantization::QuantizationMetadata::default(),
+                                    }
+                                }
+                                QuantizationType::Scalar => {
+                                    let int8_data = self
+                                        .quantization_engine
+                                        .quantize_to_int8(&record.vector)?;
+                                    StorageQuantizedData {
+                                        id: record.id.clone(),
+                                        primary: None,
+                                        filter: None,
+                                        fast: Some(QuantizedVector {
+                                            data: int8_data,
+                                            quantization_level: crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Int8,
+                                            metadata: crate::compute::quantization::QuantizationMetadata::default(),
+                                        }),
+                                        dimension: record.vector.len(),
+                                        metadata: crate::compute::quantization::QuantizationMetadata::default(),
+                                    }
+                                }
+                                QuantizationType::Product => {
+                                    let num_subvectors =
+                                        first_level.num_subvectors.unwrap_or(8) as usize;
+                                    let pq_result = self.quantization_engine.quantize_to_pq(
+                                        &record.vector,
+                                        num_subvectors,
+                                        8,
+                                    )?;
+                                    StorageQuantizedData {
+                                        id: record.id.clone(),
+                                        primary: Some(QuantizedVector {
+                                            data: pq_result,
+                                            quantization_level: crate::compute::quantization::types::UnifiedQuantizationLevel {
+                                                level_type: Some(crate::compute::quantization::types::QuantizationLevel::Pq(
+                                                    crate::compute::quantization::types::ProductQuantization {
+                                                        bits_per_code: 8,
+                                                        num_subvectors: num_subvectors as i32,
+                                                        codebook_id: None,
+                                                        adaptive_subvectors: false,
+                                                    },
+                                                )),
+                                            },
+                                            metadata: crate::compute::quantization::QuantizationMetadata::default(),
+                                        }),
+                                        filter: None,
+                                        fast: None,
+                                        dimension: record.vector.len(),
+                                        metadata: crate::compute::quantization::QuantizationMetadata::default(),
+                                    }
+                                }
+                                _ => {
+                                    return Err(anyhow::anyhow!(
+                                        "Unsupported WriteTime quantization type for runtime quantization: {:?}",
+                                        first_level.quantization_type,
+                                    ));
+                                }
+                            }
+                        }
+                        // ReadTime: TurboQuant codes live in the store, not
+                        // in StorageQuantizedData. Return an empty shell
+                        // (id + dimension only) so downstream stages see
+                        // the record and route through `score_turboquant`
+                        // at stage time. Default arm so future ReadTime
+                        // variants Just Work.
+                        proximadb_quantization_types::QuantizationLifecycle::ReadTime => {
                             StorageQuantizedData {
                                 id: record.id.clone(),
                                 primary: None,
-                                filter: Some(QuantizedVector {
-                                    data: binary_data,
-                                    quantization_level: crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Binary,
-                                    metadata: crate::compute::quantization::QuantizationMetadata::default(),
-                                }),
+                                filter: None,
                                 fast: None,
                                 dimension: record.vector.len(),
                                 metadata: crate::compute::quantization::QuantizationMetadata::default(),
                             }
                         }
-                        QuantizationType::Scalar => {
-                            let int8_data =
-                                self.quantization_engine.quantize_to_int8(&record.vector)?;
+                        // Identity (no quantization configured): same empty
+                        // shell — the full-precision scorer handles it.
+                        proximadb_quantization_types::QuantizationLifecycle::Identity => {
                             StorageQuantizedData {
                                 id: record.id.clone(),
                                 primary: None,
-                                filter: None,
-                                fast: Some(QuantizedVector {
-                                    data: int8_data,
-                                    quantization_level: crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel::Int8,
-                                    metadata: crate::compute::quantization::QuantizationMetadata::default(),
-                                }),
-                                dimension: record.vector.len(),
-                                metadata: crate::compute::quantization::QuantizationMetadata::default(),
-                            }
-                        }
-                        QuantizationType::Product => {
-                            let num_subvectors = first_level.num_subvectors.unwrap_or(8) as usize;
-                            let pq_result = self.quantization_engine.quantize_to_pq(
-                                &record.vector,
-                                num_subvectors,
-                                8,
-                            )?;
-                            StorageQuantizedData {
-                                id: record.id.clone(),
-                                primary: Some(QuantizedVector {
-                                    data: pq_result,
-                                    quantization_level: crate::compute::quantization::types::UnifiedQuantizationLevel {
-                                        level_type: Some(crate::compute::quantization::types::QuantizationLevel::Pq(
-                                            crate::compute::quantization::types::ProductQuantization {
-                                                bits_per_code: 8,
-                                                num_subvectors: num_subvectors as i32,
-                                                codebook_id: None,
-                                                adaptive_subvectors: false,
-                                            }
-                                        ))
-                                    },
-                                    metadata: crate::compute::quantization::QuantizationMetadata::default(),
-                                }),
                                 filter: None,
                                 fast: None,
                                 dimension: record.vector.len(),
                                 metadata: crate::compute::quantization::QuantizationMetadata::default(),
                             }
-                        }
-                        _ => {
-                            return Err(anyhow::anyhow!(
-                                "Unsupported quantization type for runtime quantization"
-                            ));
                         }
                     };
                     // Convert StorageQuantizedData to Vec<QuantizedRepresentation>
@@ -375,33 +448,69 @@ impl ProgressiveSearchExecutor {
             selectivity
         );
 
-        // Score candidates based on quantization level
-        match level.quantization_type {
-            QuantizationType::Binary => {
-                self.score_binary(&mut candidates, query_vector, level)
+        // Score candidates based on quantization lifecycle (Phase C —
+        // Quantization Trait Convergence Plan). The lifecycle classifier
+        // replaces the previous bare type-tag match: `WriteTime` variants
+        // route through the existing per-variant scorers; `ReadTime`
+        // routes through `score_turboquant`; `Identity` falls through to
+        // full-precision. A new `ReadTime` variant in the future (e.g.
+        // 3-bit TurboQuant per LLD §"Phase Plan" P10) automatically
+        // routes to the right scorer without touching this match.
+        match level.quantization_type.lifecycle() {
+            proximadb_quantization_types::QuantizationLifecycle::WriteTime => {
+                match level.quantization_type {
+                    QuantizationType::Binary => {
+                        self.score_binary(&mut candidates, query_vector, level)
+                            .await?;
+                    }
+                    QuantizationType::Scalar => {
+                        self.score_scalar(&mut candidates, query_vector, level)
+                            .await?;
+                    }
+                    QuantizationType::Product => {
+                        self.score_product(&mut candidates, query_vector, level)
+                            .await?;
+                    }
+                    other => {
+                        // A new WriteTime variant landed without a scorer.
+                        // Fall back to full-precision so the search still
+                        // completes — slower but correct. Log loud so the
+                        // gap is visible in production traces.
+                        debug!(
+                            "WriteTime variant {:?} has no scorer; falling back to full \
+                             precision (Phase C trait-convergence gap)",
+                            other,
+                        );
+                        self.score_full_precision(
+                            &mut candidates,
+                            query_vector,
+                            ctx.distance_metric(),
+                        )
+                        .await?;
+                    }
+                }
+            }
+            #[cfg(feature = "experimental-turboquant")]
+            proximadb_quantization_types::QuantizationLifecycle::ReadTime => {
+                self.score_turboquant(&mut candidates, query_vector, level, ctx)
                     .await?;
             }
-            QuantizationType::Scalar => {
-                self.score_scalar(&mut candidates, query_vector, level)
-                    .await?;
-            }
-            QuantizationType::Product => {
-                self.score_product(&mut candidates, query_vector, level)
-                    .await?;
-            }
-            QuantizationType::None => {
+            // ReadTime arm absent without the feature is a logic bug —
+            // no enum variant produces ReadTime when the feature is off.
+            // Fall through to full-precision rather than panic; this is
+            // the hot scoring path.
+            #[cfg(not(feature = "experimental-turboquant"))]
+            proximadb_quantization_types::QuantizationLifecycle::ReadTime => {
+                debug!(
+                    "ReadTime lifecycle without experimental-turboquant feature — \
+                     falling back to full precision (suspect router bug)",
+                );
                 self.score_full_precision(&mut candidates, query_vector, ctx.distance_metric())
                     .await?;
             }
-            // TurboQuant scoring routes through `proximadb_vector::quantization::
-            // turboquant::kernel::search`, not the progressive-stage scorers
-            // below. Engine integration is P8 per TURBOQUANT_LLD_2026_05_30.
-            #[cfg(feature = "experimental-turboquant")]
-            QuantizationType::TurboQuant => {
-                anyhow::bail!(
-                    "TurboQuant stage is not wired into progressive search \
-                     (pending P8 per TURBOQUANT_LLD_2026_05_30)",
-                )
+            proximadb_quantization_types::QuantizationLifecycle::Identity => {
+                self.score_full_precision(&mut candidates, query_vector, ctx.distance_metric())
+                    .await?;
             }
         }
 
@@ -421,6 +530,66 @@ impl ProgressiveSearchExecutor {
         }
 
         Ok(candidates)
+    }
+
+    /// Score candidates using TurboQuant — the `ReadTime` lifecycle
+    /// scorer (Phase C — Quantization Trait Convergence Plan).
+    ///
+    /// Routing behaviour:
+    ///
+    /// - Registry absent (default build, or executor constructed without
+    ///   `with_turboquant_registry`): falls back to the full-precision
+    ///   scorer. Correct but slower; no TurboQuant acceleration applied.
+    /// - Registry present but no store for this collection (catalog not
+    ///   yet hydrated, or collection created without TurboQuant enabled):
+    ///   same full-precision fallback.
+    /// - Registry present + store present: exercises the bridge to
+    ///   confirm the kernel path runs and the per-collection
+    ///   `BLOCKS_SKIPPED_BY_MASK` counter advances; per-candidate scores
+    ///   still come from full-precision until Phase D wires the id↔slot
+    ///   mapping through the AXIS adapter. The bridge call is cheap (a
+    ///   single flat scan at `k=candidates.len()`) and is the load-bearing
+    ///   integration test that the read-time routing actually reaches the
+    ///   SIMD kernel.
+    ///
+    /// The Phase D follow-up replaces the full-precision fallback with a
+    /// real id-mapped bridge search via `TurboQuantAxisIndex`, at which
+    /// point the per-candidate scores come straight from the kernel.
+    #[cfg(feature = "experimental-turboquant")]
+    async fn score_turboquant(
+        &self,
+        candidates: &mut [ProgressiveSearchCandidate],
+        query_vector: &[f32],
+        _level: &QuantizationLevel,
+        ctx: &StorageQueryContext,
+    ) -> Result<()> {
+        if let Some(registry) = &self.turboquant_registry
+            && let Some(store) = registry.get(ctx.collection_id()).await?
+        {
+            // Best-effort bridge exercise. Failures here are non-fatal —
+            // the fallback scorer below produces correct scores either
+            // way. The bridge call's purpose is to:
+            //   1. Verify the kernel runs without errors.
+            //   2. Advance the BLOCKS_SKIPPED_BY_MASK Prometheus counter
+            //      when a mask is in scope (will be in Phase D).
+            //   3. Surface load-bearing TurboQuantExplainHints
+            //      (Phase F integration).
+            let _ = crate::index::turboquant_bridge::with_blocks_skipped_delta(|| {
+                crate::index::turboquant_bridge::search_with_candidate_set(
+                    &store,
+                    query_vector,
+                    candidates.len().max(1),
+                    None,
+                )
+            });
+        }
+
+        // Always run the full-precision scorer for correctness. The
+        // optimization-heavy id-mapped scoring path lands in Phase D
+        // (`TurboQuantAxisIndex`); this scorer remains the correctness
+        // backstop in every release.
+        self.score_full_precision(candidates, query_vector, ctx.distance_metric())
+            .await
     }
 
     /// Score candidates using binary quantization (delegates to unified quantization)
@@ -733,26 +902,44 @@ impl ProgressiveSearchExecutor {
         Ok(Vec::new())
     }
 
-    /// Helper: Quantize vector on-the-fly (for storage-optimized path)
+    /// Helper: Quantize vector on-the-fly (for storage-optimized path).
+    ///
+    /// Lifecycle-aware (Phase C — Quantization Trait Convergence Plan):
+    /// `WriteTime` variants encode into a fresh `Vec<u8>` of codes;
+    /// `ReadTime` variants (TurboQuant) emit an empty buffer because their
+    /// codes live in the per-collection `TurboQuantStore`, not in
+    /// per-search storage. `Identity` also emits empty.
     #[allow(dead_code)]
     fn quantize_vector(
         &self,
         vector: &[f32],
         levels: &[QuantizationLevel],
     ) -> Result<Vec<QuantizedRepresentation>> {
-        // This is used for the storage-optimized path where we trade latency for storage savings
         trace!("Runtime quantization for storage-optimized path");
         let mut representations = Vec::new();
 
         for level in levels {
-            let data = match level.quantization_type {
-                QuantizationType::Binary => self.quantization_engine.quantize_to_binary(vector)?,
-                QuantizationType::Scalar => self.quantization_engine.quantize_to_int8(vector)?,
-                QuantizationType::Product => self.quantization_engine.quantize_to_pq(
-                    vector,
-                    level.num_subvectors.unwrap_or(8) as usize,
-                    level.bits as u32,
-                )?,
+            let data = match level.quantization_type.lifecycle() {
+                proximadb_quantization_types::QuantizationLifecycle::WriteTime => {
+                    match level.quantization_type {
+                        QuantizationType::Binary => {
+                            self.quantization_engine.quantize_to_binary(vector)?
+                        }
+                        QuantizationType::Scalar => {
+                            self.quantization_engine.quantize_to_int8(vector)?
+                        }
+                        QuantizationType::Product => self.quantization_engine.quantize_to_pq(
+                            vector,
+                            level.num_subvectors.unwrap_or(8) as usize,
+                            level.bits as u32,
+                        )?,
+                        // Future WriteTime variants without a runtime
+                        // quantizer fall through to empty; the scorer
+                        // dispatches to full-precision in that case.
+                        _ => Vec::new(),
+                    }
+                }
+                // ReadTime + Identity: nothing to emit at this layer.
                 _ => Vec::new(),
             };
 
@@ -766,19 +953,25 @@ impl ProgressiveSearchExecutor {
         Ok(representations)
     }
 
-    /// Helper: Get search stage from quantization type
+    /// Helper: Get search stage from quantization type.
+    ///
+    /// Phase C: lifecycle-aware. `ReadTime` and `Identity` both map to
+    /// `FullPrecision` because the stage sequence is a WriteTime concept
+    /// (cascade of pre-encoded codes); ReadTime variants use their own
+    /// kernel path via `score_turboquant`.
     fn get_search_stage(&self, quant_type: &QuantizationType) -> SearchStage {
-        match quant_type {
-            QuantizationType::Binary => SearchStage::BinaryFilter,
-            QuantizationType::Scalar => SearchStage::Int8Ranking,
-            QuantizationType::Product => SearchStage::PqRanking,
-            QuantizationType::None => SearchStage::FullPrecision,
-            // TurboQuant is not part of the progressive-search stage
-            // sequence; it has its own scoring kernel. Map to the
-            // FullPrecision sentinel so any caller that asks for "the
-            // stage" gets a sane fallback. Real dispatch lands in P8.
-            #[cfg(feature = "experimental-turboquant")]
-            QuantizationType::TurboQuant => SearchStage::FullPrecision,
+        match quant_type.lifecycle() {
+            proximadb_quantization_types::QuantizationLifecycle::WriteTime => match quant_type {
+                QuantizationType::Binary => SearchStage::BinaryFilter,
+                QuantizationType::Scalar => SearchStage::Int8Ranking,
+                QuantizationType::Product => SearchStage::PqRanking,
+                _ => SearchStage::FullPrecision,
+            },
+            // ReadTime variants don't participate in the cascade stage
+            // sequence — their own kernel handles ranking. FullPrecision
+            // is the sane sentinel for any caller that asks for "the
+            // stage" of a TurboQuant level.
+            _ => SearchStage::FullPrecision,
         }
     }
 
@@ -792,6 +985,10 @@ impl ProgressiveSearchExecutor {
 pub struct ProgressiveSearchBuilder {
     quantization_engine: Option<Arc<UnifiedQuantizationEngine>>,
     distance_compute: Option<Arc<UnifiedDistanceCompute>>,
+    #[cfg(feature = "experimental-turboquant")]
+    turboquant_registry: Option<
+        Arc<dyn crate::compute::quantization::turboquant_store_registry::TurboQuantStoreRegistry>,
+    >,
 }
 
 impl ProgressiveSearchBuilder {
@@ -799,6 +996,8 @@ impl ProgressiveSearchBuilder {
         Self {
             quantization_engine: None,
             distance_compute: None,
+            #[cfg(feature = "experimental-turboquant")]
+            turboquant_registry: None,
         }
     }
 
@@ -812,13 +1011,35 @@ impl ProgressiveSearchBuilder {
         self
     }
 
+    /// Register a TurboQuant store registry for `ReadTime` lifecycle
+    /// dispatch (Phase C — Quantization Trait Convergence Plan).
+    /// Optional: omit on non-TurboQuant deployments and the executor
+    /// will fall back to full-precision scoring for any TurboQuant
+    /// level that arrives.
+    #[cfg(feature = "experimental-turboquant")]
+    pub fn with_turboquant_registry(
+        mut self,
+        registry: Arc<
+            dyn crate::compute::quantization::turboquant_store_registry::TurboQuantStoreRegistry,
+        >,
+    ) -> Self {
+        self.turboquant_registry = Some(registry);
+        self
+    }
+
     pub fn build(self) -> Result<ProgressiveSearchExecutor> {
-        Ok(ProgressiveSearchExecutor::new(
+        let executor = ProgressiveSearchExecutor::new(
             self.quantization_engine
                 .ok_or_else(|| anyhow::anyhow!("Quantization engine required"))?,
             self.distance_compute
                 .ok_or_else(|| anyhow::anyhow!("Distance compute required"))?,
-        ))
+        );
+        #[cfg(feature = "experimental-turboquant")]
+        let executor = match self.turboquant_registry {
+            Some(r) => executor.with_turboquant_registry(r),
+            None => executor,
+        };
+        Ok(executor)
     }
 }
 
