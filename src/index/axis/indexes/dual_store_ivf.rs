@@ -2949,6 +2949,21 @@ mod tests {
         n_clusters: usize,
         per_cluster: usize,
     ) -> Vec<(String, Vec<f32>)> {
+        // Well-separated: large center amplitude vs small noise → each query's
+        // true NN all live in one cluster.
+        synth_corpus_amp(dim, n_clusters, per_cluster, 8.0, 0.6)
+    }
+
+    /// Generalized deterministic clustered corpus. `center_amp` sets cluster
+    /// separation, `noise` the intra-cluster spread; a small `center_amp/noise`
+    /// ratio makes clusters OVERLAP so a query's true neighbours span partitions.
+    fn synth_corpus_amp(
+        dim: usize,
+        n_clusters: usize,
+        per_cluster: usize,
+        center_amp: f32,
+        noise: f32,
+    ) -> Vec<(String, Vec<f32>)> {
         let mut state: u64 = 0xC0FF_EE12_3456_789A;
         let mut next = move || {
             state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -2961,11 +2976,9 @@ mod tests {
         };
         let mut out = Vec::with_capacity(n_clusters * per_cluster);
         for c in 0..n_clusters {
-            // Large center amplitude so clusters separate; small noise keeps
-            // each point near its center (a real NN lives in the same cluster).
-            let center: Vec<f32> = (0..dim).map(|_| next() * 8.0).collect();
+            let center: Vec<f32> = (0..dim).map(|_| next() * center_amp).collect();
             for j in 0..per_cluster {
-                let v: Vec<f32> = center.iter().map(|&cc| cc + next() * 0.6).collect();
+                let v: Vec<f32> = center.iter().map(|&cc| cc + next() * noise).collect();
                 out.push((format!("c{c}_v{j}"), v));
             }
         }
@@ -3095,6 +3108,115 @@ mod tests {
                 "Stage-1-only recall {recall:.3} @ n_probe={probe} degraded below \
                  the n_probe=1 floor {floor_at_1:.3} — the R3-bis estimator should \
                  prevent multi-probe contamination"
+            );
+        }
+    }
+
+    /// Companion to the recall-floor test on INTERLEAVED clusters (centroid
+    /// spacing far below intra-blob spread), where each query's true neighbours
+    /// straddle several k-means partitions. Here the R3-bis coarse+residual
+    /// estimator lets multi-probe RECOVER the cross-boundary neighbours —
+    /// `recall@10` RISES with `n_probe` instead of staying flat (the separated
+    /// case) — proving the estimator's *lift*, not just its no-degradation. This
+    /// is the realistic regime the R4 MID-tier gate cares about: with raw
+    /// frame-local Hamming the far-cluster survivors are mis-ranked and
+    /// multi-probe cannot help (it inverted to 0.145 on the separated corpus).
+    ///
+    /// MEASURED (dim=64, n=800, 16 interleaved clusters; deterministic):
+    /// ```text
+    ///   n_probe   1      2      4      8      16
+    ///   recall@10 0.235  0.275  0.288  0.308  0.287
+    /// ```
+    /// +31% from single-probe (peak at n_probe=8). Absolute recall is below the
+    /// separated corpus's 0.512 because interleaved 1-bit ANN is intrinsically
+    /// harder; the lift — and the slight n_probe=16 dip staying well above the
+    /// single-probe baseline — is the point.
+    #[tokio::test]
+    async fn cold_estimator_multi_probe_recovers_boundary_neighbours() {
+        let _ = proximadb_hardware::hardware_capabilities();
+        let dim = 64;
+        let n_clusters = 16;
+        let per_cluster = 50;
+        // center_amp << noise → blobs interleave (centroid spacing far below
+        // intra-blob spread), so IVF Voronoi cells cut through dense regions and
+        // a query's exact top-k genuinely straddle partitions — the regime where
+        // single-probe leaves true neighbours unprobed and multi-probe recovers
+        // them. (synth_clustered_corpus's separated regime cannot show this.)
+        let data = synth_corpus_amp(dim, n_clusters, per_cluster, 0.4, 3.0);
+
+        let mut full =
+            UnifiedIvfIndex::new("cold_lift".to_string(), binary_ivf_config(dim, n_clusters))
+                .unwrap();
+        full.train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            full.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        let cold_tier = full.export_cold_tier().await.unwrap();
+        let mut cold =
+            UnifiedIvfIndex::new("cold_lift".to_string(), cold_tier.config.to_config()).unwrap();
+        cold.restore_cold_only(cold_tier).await.unwrap();
+        assert_eq!(cold.serving_state(), IvfServingState::ColdBinaryOnly);
+
+        let k = 10;
+        let n_queries = 60;
+        let queries: Vec<Vec<f32>> = {
+            let mut qstate: u64 = 0x0BAD_F00D_1357_9BDF;
+            let mut jitter = move || {
+                qstate = qstate.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                let mut z = qstate;
+                z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                z ^= z >> 31;
+                ((z >> 40) as f32 / (1u32 << 24) as f32) * 2.0 - 1.0
+            };
+            (0..n_queries)
+                .map(|qi| {
+                    let base = &data[(qi * 13) % data.len()].1;
+                    base.iter().map(|&x| x + jitter() * 0.3).collect()
+                })
+                .collect()
+        };
+
+        // recall@k swept over n_probe. (Inline rather than a closure: an
+        // `async move` block would move `queries` into the first future.)
+        let probes = [1usize, 2, 4, 8, n_clusters];
+        let mut recalls: Vec<f64> = Vec::with_capacity(probes.len());
+        for &probe in &probes {
+            let mut total = 0.0f64;
+            for query in &queries {
+                let exact = full.search(query, k, Some(n_clusters)).await.unwrap();
+                let stage1 = cold
+                    .search_with_binary_acceleration(query, k, Some(probe))
+                    .await
+                    .unwrap();
+                let truth: std::collections::HashSet<&String> =
+                    exact.iter().map(|(id, _)| id).collect();
+                let hit = stage1.iter().filter(|(id, _)| truth.contains(id)).count();
+                total += hit as f64 / k as f64;
+            }
+            recalls.push(total / n_queries as f64);
+        }
+        let r1 = recalls[0];
+        let r_best = recalls.iter().cloned().fold(0.0f64, f64::max);
+        println!(
+            "ADR-023 R3-bis lift (interleaved): recall@{k} over n_probe {probes:?} = {recalls:?}"
+        );
+
+        // The estimator must turn multi-probe into a recall GAIN on boundary-
+        // spanning data (single-probe leaves cross-cluster neighbours unprobed).
+        // Also require monotone non-degradation — more probes never hurt.
+        assert!(
+            r_best >= r1 + 0.03,
+            "multi-probe should RECOVER boundary neighbours via the R3-bis \
+             estimator: best recall {r_best:.3} did not beat recall@1 {r1:.3} by ≥0.03 \
+             (sweep {recalls:?})"
+        );
+        for (probe, recall) in probes.iter().zip(&recalls) {
+            assert!(
+                *recall >= r1 - 0.02,
+                "recall {recall:.3} @ n_probe={probe} fell below the single-probe \
+                 baseline {r1:.3} — the estimator must not let multi-probe degrade"
             );
         }
     }
