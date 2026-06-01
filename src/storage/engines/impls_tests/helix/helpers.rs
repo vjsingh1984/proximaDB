@@ -580,7 +580,7 @@ pub fn create_zone_map_config(vectors_per_block: usize) -> HelixConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::traits::UnifiedStorageEngine;
+    use crate::storage::traits::UnifiedStorageFormat;
 
     #[test]
     fn test_create_test_records() {

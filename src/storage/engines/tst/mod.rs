@@ -129,7 +129,7 @@ use crate::storage::traits::{
 };
 use crate::storage::traits::{
     StorageIdentity, StorageLifecycle, StorageMetrics, StorageReader, StorageWriter,
-    UnifiedStorageEngine,
+    UnifiedStorageFormat,
 };
 
 // Re-export key types
@@ -1294,11 +1294,11 @@ impl StorageLifecycle for TimeSeriesEngine {
 }
 
 // ============================================================================
-// UnifiedStorageEngine Implementation
+// UnifiedStorageFormat Implementation
 // ============================================================================
 
 #[async_trait]
-impl UnifiedStorageEngine for TimeSeriesEngine {
+impl UnifiedStorageFormat for TimeSeriesEngine {
     // Required methods from trait
     fn engine_name(&self) -> &'static str {
         "tst"

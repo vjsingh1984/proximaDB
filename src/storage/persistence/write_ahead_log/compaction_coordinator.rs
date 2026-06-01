@@ -10,7 +10,7 @@
 //! Coordinates automatic compaction after flush operations to optimize storage efficiency.
 //! Integrates with WALFlushCoordinator to trigger compaction when needed.
 
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};

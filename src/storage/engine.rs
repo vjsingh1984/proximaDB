@@ -285,7 +285,7 @@ impl StorageEngine {
         let flush_coordinator = WALFlushCoordinator::new();
 
         // Register all SST engines from our storage map
-        // Each SST engine implements UnifiedStorageEngine
+        // Each SST engine implements UnifiedStorageFormat
         for entry in self.sst_storages.iter() {
             let engine_key = entry.key();
             let engine = entry.value();

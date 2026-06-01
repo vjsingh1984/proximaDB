@@ -36,7 +36,7 @@
 //!
 //! ## Current Role
 //!
-//! `TitanEngine` implements `UnifiedStorageEngine` with empty stubs so the
+//! `TitanEngine` implements `UnifiedStorageFormat` with empty stubs so the
 //! engine identifier `"titan"` can be registered through the standard factory
 //! without panicking.  All meaningful graph traversal work is delegated to the
 //! graph service layer via `InMemoryGraphAdjacencyProjection`.
@@ -49,11 +49,11 @@ use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageFormatStrategy,
-    StorageQueryContext, UnifiedStorageEngine,
+    StorageQueryContext, UnifiedStorageFormat,
 };
 
 // ---------------------------------------------------------------------------
-// TitanEngine -- thin UnifiedStorageEngine wrapper for factory registration
+// TitanEngine -- thin UnifiedStorageFormat wrapper for factory registration
 // ---------------------------------------------------------------------------
 
 /// Factory-registration stub for the TITAN engine identifier.
@@ -76,11 +76,11 @@ impl Default for TitanEngine {
 }
 
 // ---------------------------------------------------------------------------
-// UnifiedStorageEngine implementation (stubs)
+// UnifiedStorageFormat implementation (stubs)
 // ---------------------------------------------------------------------------
 
 #[async_trait]
-impl UnifiedStorageEngine for TitanEngine {
+impl UnifiedStorageFormat for TitanEngine {
     fn engine_name(&self) -> &'static str {
         "titan"
     }

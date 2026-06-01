@@ -81,7 +81,7 @@ graph TB
 src/storage/engines/impls/sst/
 ├── mod.rs              # Public API and module exports
 ├── core.rs             # SstEngine implementation
-├── trait_impl.rs       # UnifiedStorageEngine trait
+├── trait_impl.rs       # UnifiedStorageFormat trait
 ├── blocks.rs           # Block-level data structures
 ├── utils.rs            # Utility functions
 ├── flush/              # Flush operations (modularized)

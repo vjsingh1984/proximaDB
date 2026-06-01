@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
 use crate::proto::proximadb_v1::Collection;
 use crate::storage::document::DocumentRecord;
-use crate::storage::traits::{StorageQueryContext, UnifiedStorageEngine};
+use crate::storage::traits::{StorageQueryContext, UnifiedStorageFormat};
 
 // =============================================================================
 // TRAIT: ColdTierRetriever (Dependency Inversion Principle)
@@ -150,17 +150,17 @@ impl DocumentMetadataFilterBuilder {
 // STRUCT: StorageEngineColdTierRetriever (Open/Closed Principle)
 // =============================================================================
 
-/// Implementation of ColdTierRetriever using the UnifiedStorageEngine.
+/// Implementation of ColdTierRetriever using the UnifiedStorageFormat.
 ///
 /// This implementation uses the storage engine's search capability with
 /// metadata filtering to retrieve documents from cold storage.
 pub struct StorageEngineColdTierRetriever {
-    storage_engine: Arc<dyn UnifiedStorageEngine>,
+    storage_engine: Arc<dyn UnifiedStorageFormat>,
 }
 
 impl StorageEngineColdTierRetriever {
     /// Create a new retriever with the given storage engine.
-    pub fn new(storage_engine: Arc<dyn UnifiedStorageEngine>) -> Self {
+    pub fn new(storage_engine: Arc<dyn UnifiedStorageFormat>) -> Self {
         Self { storage_engine }
     }
 

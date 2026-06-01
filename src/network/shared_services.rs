@@ -664,7 +664,7 @@ impl SharedServices {
         debug!("✅ SharedServices::new - SST engine created successfully");
 
         // Clone SST engine reference for DocumentService (used later for DocumentStrategy)
-        let sst_engine_for_documents: Arc<dyn crate::storage::traits::UnifiedStorageEngine> =
+        let sst_engine_for_documents: Arc<dyn crate::storage::traits::UnifiedStorageFormat> =
             sst_engine.clone();
 
         // TD-075 / Phase 8 F2: the recall-probe gate is created here (rather than

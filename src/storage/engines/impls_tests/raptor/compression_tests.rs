@@ -14,7 +14,7 @@ use super::helpers::*;
 use crate::proto::proximadb_v1::{
     Collection, CollectionConfig, CompressionAlgorithm, StorageEngine,
 };
-use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use crate::storage::traits::{FlushParameters, UnifiedStorageFormat};
 use anyhow::Result;
 
 // ============================================================================

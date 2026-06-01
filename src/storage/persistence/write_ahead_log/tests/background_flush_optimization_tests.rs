@@ -19,7 +19,7 @@ mod tests {
         FlushDataSource, WALFlushCoordinator,
     };
     use crate::storage::traits::{
-        CompactionParameters, CompactionResult, FlushParameters, FlushResult, UnifiedStorageEngine,
+        CompactionParameters, CompactionResult, FlushParameters, FlushResult, UnifiedStorageFormat,
     };
     use proximadb_records::{EmbeddingCell, ProximaRecord};
 
@@ -51,7 +51,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl UnifiedStorageEngine for MockStorageEngine {
+    impl UnifiedStorageFormat for MockStorageEngine {
         fn engine_name(&self) -> &'static str {
             "mock_storage_engine"
         }
@@ -213,11 +213,11 @@ mod tests {
             let mut engines = storage_engines.write().await;
             engines.insert(
                 "viper".to_string(),
-                viper_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                viper_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             );
             engines.insert(
                 "sst".to_string(),
-                sst_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                sst_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             );
         }
 
@@ -269,11 +269,11 @@ mod tests {
         coordinator
             .register_storage_engine(
                 "viper",
-                viper_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                viper_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             )
             .await;
         coordinator
-            .register_storage_engine("sst", sst_engine.clone() as Arc<dyn UnifiedStorageEngine>)
+            .register_storage_engine("sst", sst_engine.clone() as Arc<dyn UnifiedStorageFormat>)
             .await;
 
         // Create test vectors
@@ -323,11 +323,11 @@ mod tests {
         coordinator
             .register_storage_engine(
                 "viper",
-                viper_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                viper_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             )
             .await;
         coordinator
-            .register_storage_engine("sst", sst_engine.clone() as Arc<dyn UnifiedStorageEngine>)
+            .register_storage_engine("sst", sst_engine.clone() as Arc<dyn UnifiedStorageFormat>)
             .await;
 
         let test_vectors = create_test_vectors(5);
@@ -415,7 +415,7 @@ mod tests {
         coordinator
             .register_storage_engine(
                 "viper",
-                mock_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                mock_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             )
             .await;
 
@@ -460,7 +460,7 @@ mod tests {
         coordinator
             .register_storage_engine(
                 "viper",
-                viper_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                viper_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             )
             .await;
 
@@ -470,7 +470,7 @@ mod tests {
         bg_manager
             .register_storage_engine(
                 "viper",
-                viper_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                viper_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             )
             .await
             .unwrap();
@@ -495,7 +495,7 @@ mod tests {
             let mut engines = HashMap::new();
             engines.insert(
                 "viper".to_string(),
-                viper_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                viper_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             );
             engines
         }));

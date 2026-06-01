@@ -22,7 +22,7 @@ use super::config::SyncMode;
 use super::enhanced_flush_result::EnhancedFlushResult;
 use super::flush_result_optimization::OptimizedFlushCoordinator;
 use crate::storage::background_flush_context::BackgroundFlushContext;
-use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageEngine};
+use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageFormat};
 
 /// Flush state tracking for coordinated WAL cleanup
 #[derive(Debug, Clone)]
@@ -77,7 +77,7 @@ pub struct WALFlushCoordinator {
     /// Global flush ID counter
     next_flush_id: Arc<tokio::sync::Mutex<u64>>,
     /// Storage engine registry for polymorphic flush delegation
-    storage_engines: Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
+    storage_engines: Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
     /// AXIS manager for IndexConfig-based indexing after flush
     axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
     /// Optimized flush coordinator for high-performance flushing
@@ -160,7 +160,7 @@ impl WALFlushCoordinator {
     pub async fn register_storage_engine(
         &self,
         engine_type: &str,
-        engine: Arc<dyn UnifiedStorageEngine>,
+        engine: Arc<dyn UnifiedStorageFormat>,
     ) {
         let mut engines = self.storage_engines.write().await;
         engines.insert(engine_type.to_string(), engine);

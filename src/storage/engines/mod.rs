@@ -120,7 +120,8 @@ pub mod factory;
 pub mod migration;
 pub mod universal;
 
-// Re-export traits
+// Re-export traits (legacy names kept for back-compat; the format-vocabulary
+// aliases are surfaced below).
 pub use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
     UnifiedStorageEngine,

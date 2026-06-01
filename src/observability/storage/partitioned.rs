@@ -18,7 +18,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use crate::proto::proximadb_v1::{LogEntry, SqlValue, sql_value::Value};
-use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use crate::storage::traits::{FlushParameters, UnifiedStorageFormat};
 
 /// Time-partitioned storage for logs
 pub struct PartitionedStorage {
@@ -36,7 +36,7 @@ pub struct PartitionedStorage {
     /// Total storage bytes (estimated)
     total_bytes: AtomicU64,
     /// Optional storage engine for tier transitions
-    storage_engine: Option<Arc<dyn UnifiedStorageEngine>>,
+    storage_engine: Option<Arc<dyn UnifiedStorageFormat>>,
 }
 
 /// A single time partition
@@ -128,7 +128,7 @@ impl PartitionedStorage {
     pub fn new_with_engine(
         base_path: &str,
         namespace: &str,
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
     ) -> Result<Self> {
         // Default to hourly partitions
         let partition_duration_ns = 3600 * 1_000_000_000i64;
@@ -145,7 +145,7 @@ impl PartitionedStorage {
     }
 
     /// Set the storage engine for tier transitions
-    pub fn set_storage_engine(&mut self, engine: Arc<dyn UnifiedStorageEngine>) {
+    pub fn set_storage_engine(&mut self, engine: Arc<dyn UnifiedStorageFormat>) {
         self.storage_engine = Some(engine);
     }
 
@@ -402,7 +402,7 @@ impl PartitionedStorage {
     /// Flush a partition to SST storage engine
     async fn flush_partition_to_sst(
         &self,
-        engine: &Arc<dyn UnifiedStorageEngine>,
+        engine: &Arc<dyn UnifiedStorageFormat>,
         partition: &Arc<Partition>,
         partition_key: i64,
     ) -> Result<usize> {
@@ -451,7 +451,7 @@ impl PartitionedStorage {
     /// - VIPER compression for maximal space savings
     async fn convert_partition_to_cold(
         &self,
-        engine: &Arc<dyn UnifiedStorageEngine>,
+        engine: &Arc<dyn UnifiedStorageFormat>,
         partition: &Arc<Partition>,
         partition_key: i64,
     ) -> Result<usize> {

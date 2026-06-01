@@ -1,5 +1,5 @@
 // SWIFT Engine: Storage With Instant Fast Traversal - zero-overhead vector storage
-// Implements UnifiedStorageEngine trait for integration with ProximaDB
+// Implements UnifiedStorageFormat trait for integration with ProximaDB
 
 use crate::core::search::DataFreshnessTier;
 use crate::storage::engines::core::ops::{
@@ -29,7 +29,7 @@ use crate::index::axis::management::manager::{
 };
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
-    FlushResult, StorageFormatStrategy, UnifiedStorageEngine,
+    FlushResult, StorageFormatStrategy, UnifiedStorageFormat,
 };
 use proximadb_records::ProximaRecord;
 // Removed unused import: IndexingAlgorithm
@@ -1084,7 +1084,7 @@ impl SwiftEngine {
 
 #[allow(deprecated)]
 #[async_trait]
-impl UnifiedStorageEngine for SwiftEngine {
+impl UnifiedStorageFormat for SwiftEngine {
     // =============================================================================
     // ENGINE IDENTIFICATION
     // =============================================================================

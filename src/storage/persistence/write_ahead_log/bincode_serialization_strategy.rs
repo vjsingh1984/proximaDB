@@ -20,7 +20,7 @@ use crate::storage::persistence::write_ahead_log::{
     MemtableManager, RecoveryManager, WALFlushCoordinator, WriteAheadLogDiskManager,
     serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer},
 };
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 
 /// Bincode WAL batch strategy using serialization-first architecture
 pub struct BincodeSerializationStrategy {
@@ -37,7 +37,7 @@ pub struct BincodeSerializationStrategy {
     recovery_manager: Arc<RecoveryManager>,
 
     /// Storage engine for delegated operations
-    storage_engine: Arc<tokio::sync::RwLock<Option<Arc<dyn UnifiedStorageEngine>>>>,
+    storage_engine: Arc<tokio::sync::RwLock<Option<Arc<dyn UnifiedStorageFormat>>>>,
 
     /// Flush coordinator
     #[allow(dead_code)]
@@ -144,7 +144,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
 
     fn set_storage_engine(
         &self,
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         collection_id: &str,
     ) {
         let mut engine_guard = self.storage_engine.blocking_write();

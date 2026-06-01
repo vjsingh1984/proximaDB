@@ -28,11 +28,11 @@ use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::engines::sst::core::SstEngine;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageFormatStrategy,
-    StorageQueryContext, UnifiedStorageEngine,
+    StorageQueryContext, UnifiedStorageFormat,
 };
 
 #[async_trait]
-impl UnifiedStorageEngine for SstEngine {
+impl UnifiedStorageFormat for SstEngine {
     fn engine_name(&self) -> &'static str {
         "sst"
     }

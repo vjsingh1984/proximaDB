@@ -9,7 +9,7 @@
 //! for efficient time-series ingestion with Gorilla encoding, log label indexing,
 //! and distributed trace span assembly.
 //!
-//! It also implements `UnifiedStorageEngine` as a thin stub for factory
+//! It also implements `UnifiedStorageFormat` as a thin stub for factory
 //! registration, but all real observability operations go through
 //! `ObservabilityStorageEngine`.
 
@@ -27,7 +27,7 @@ use crate::proto::proximadb_v1::{LogEntry, MetricSample, TraceData};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageFormatStrategy,
-    StorageQueryContext, UnifiedStorageEngine,
+    StorageQueryContext, UnifiedStorageFormat,
 };
 
 // ---------------------------------------------------------------------------
@@ -281,11 +281,11 @@ impl ObservabilityStorageEngine for ChronoEngine {
 }
 
 // ---------------------------------------------------------------------------
-// UnifiedStorageEngine stub (for factory registration only)
+// UnifiedStorageFormat stub (for factory registration only)
 // ---------------------------------------------------------------------------
 
 #[async_trait]
-impl UnifiedStorageEngine for ChronoEngine {
+impl UnifiedStorageFormat for ChronoEngine {
     fn engine_name(&self) -> &'static str {
         "chrono"
     }

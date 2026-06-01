@@ -58,7 +58,7 @@ use super::subscriptions::{
     ScoredResult, SubscriptionConfig, SubscriptionHandle, SubscriptionManager,
 };
 use super::{SessionConfig, StreamConfig, StreamError, StreamId, StreamResult};
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 use proximadb_records::ProximaRecord;
 
 /// Configuration for the integrated streaming service
@@ -224,7 +224,7 @@ impl IntegratedStreamingService {
     pub async fn flush_to_storage(
         &self,
         session_id: &StreamId,
-        storage: &dyn UnifiedStorageEngine,
+        storage: &dyn UnifiedStorageFormat,
     ) -> StreamResult<FlushAndNotifyResult> {
         let start = Instant::now();
 
@@ -290,7 +290,7 @@ impl IntegratedStreamingService {
     }
 
     /// Start background tasks (flush and cleanup)
-    pub async fn start_background_tasks(&self, storage: Arc<dyn UnifiedStorageEngine>) {
+    pub async fn start_background_tasks(&self, storage: Arc<dyn UnifiedStorageFormat>) {
         let mut tasks = self.background_tasks.write().await;
 
         // Cleanup task for coordinator
@@ -351,7 +351,7 @@ impl IntegratedStreamingService {
     }
 
     /// Shutdown the service gracefully
-    pub async fn shutdown(&self, storage: Option<&dyn UnifiedStorageEngine>) {
+    pub async fn shutdown(&self, storage: Option<&dyn UnifiedStorageFormat>) {
         self.shutdown
             .store(true, std::sync::atomic::Ordering::Relaxed);
 

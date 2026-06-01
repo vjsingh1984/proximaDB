@@ -13,7 +13,7 @@ use crate::catalog::internal::{
 use crate::graph::engines::GraphEngine;
 use crate::storage::traits::{
     CompactionParameters, DocumentStorageOperations, FlushParameters, MultiModelStats,
-    ObservabilityStorageOperations, UnifiedStorageEngine,
+    ObservabilityStorageOperations, UnifiedStorageFormat,
 };
 
 use super::stores::{
@@ -240,7 +240,7 @@ impl Default for MultiModelStorageFacade {
 
 #[async_trait]
 impl MultiModelStorageEngine for MultiModelStorageFacade {
-    fn vector_store(&self) -> Option<Arc<dyn UnifiedStorageEngine>> {
+    fn vector_store(&self) -> Option<Arc<dyn UnifiedStorageFormat>> {
         // Return the primary engine from VectorStore
         self.vector_store
             .as_ref()
@@ -265,7 +265,7 @@ impl MultiModelStorageEngine for MultiModelStorageFacade {
             .map(|s| s.clone() as Arc<dyn ObservabilityStorageOperations>)
     }
 
-    fn rdbms_store(&self) -> Option<Arc<dyn UnifiedStorageEngine>> {
+    fn rdbms_store(&self) -> Option<Arc<dyn UnifiedStorageFormat>> {
         // Return the primary engine from RDBMSStore
         self.rdbms_store
             .as_ref()

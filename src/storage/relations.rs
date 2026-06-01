@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tracing::debug;
 
 use crate::proto::proximadb_v1::Relation;
-use crate::storage::engines::UnifiedStorageEngine;
+use crate::storage::engines::UnifiedStorageFormat;
 
 /// Core trait for relationship storage operations
 #[async_trait]
@@ -94,7 +94,7 @@ pub struct InMemoryRelationsStore {
     reverse_edges: Arc<DashMap<String, HashMap<String, Vec<RelationEdge>>>>,
 
     /// Storage engine for persistence
-    storage_engine: Arc<dyn UnifiedStorageEngine>,
+    storage_engine: Arc<dyn UnifiedStorageFormat>,
 }
 
 #[derive(Debug, Clone)]
@@ -107,7 +107,7 @@ struct RelationEdge {
 
 impl InMemoryRelationsStore {
     /// Create a new relations store
-    pub fn new(storage_engine: Arc<dyn UnifiedStorageEngine>) -> Self {
+    pub fn new(storage_engine: Arc<dyn UnifiedStorageFormat>) -> Self {
         Self {
             forward_edges: Arc::new(DashMap::new()),
             reverse_edges: Arc::new(DashMap::new()),

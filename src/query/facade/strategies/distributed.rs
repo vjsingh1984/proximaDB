@@ -615,7 +615,7 @@ mod tests {
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::traits::{
         CompactionParameters, CompactionResult, FlushParameters, FlushResult,
-        StorageFormatStrategy, UnifiedStorageEngine,
+        StorageFormatStrategy, UnifiedStorageFormat,
     };
     use chrono::Utc;
     use std::collections::HashMap;
@@ -822,7 +822,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl UnifiedStorageEngine for MockStorageEngine {
+    impl UnifiedStorageFormat for MockStorageEngine {
         fn engine_name(&self) -> &'static str {
             "mock"
         }
@@ -895,7 +895,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_distributed_strategy_executes_document_query_locally() {
-        let storage_engine: Arc<dyn UnifiedStorageEngine> =
+        let storage_engine: Arc<dyn UnifiedStorageFormat> =
             Arc::new(MockStorageEngine::new().await);
         let document_service = Arc::new(DocumentService::new(storage_engine));
         document_service

@@ -48,7 +48,7 @@ use crate::core::search::results::OptimizedSearchRecord;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FileStorageTier;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::traits::{FlushResult, UnifiedStorageEngine};
+use crate::storage::traits::{FlushResult, UnifiedStorageFormat};
 use proximadb_records::conversions::proxima_record_to_vector;
 // Schema now uses shared ColumnarSchema from columnar module
 use super::compaction::ViperCompactionService;
@@ -1424,7 +1424,7 @@ impl ViperEngine {
     */
     // 🔴 UNUSED HEALTH CHECK METHOD - CANDIDATE FOR REMOVAL
     // This internal health check method has no callers found.
-    // Health checking is handled by the UnifiedStorageEngine trait's health_check method.
+    // Health checking is handled by the UnifiedStorageFormat trait's health_check method.
     /// Internal health check
     pub async fn internal_health_check(&self) -> Result<bool> {
         // Basic health check - can be extended to check:
@@ -1501,7 +1501,7 @@ impl ViperEngine {
     /// Public search method for testing - requires collection_id and storage URL.
     ///
     /// **Note**: This is a convenience method primarily intended for testing.
-    /// Production code should use `search_vectors_unified` via the `UnifiedStorageEngine` trait
+    /// Production code should use `search_vectors_unified` via the `UnifiedStorageFormat` trait
     /// for full control over search parameters including distance metrics and filters.
     pub async fn search_vectors(
         &self,
@@ -1873,10 +1873,10 @@ impl Default for ViperEngine {
     }
 }
 
-// UnifiedStorageEngine trait: VIPER implements via the engine module (viper/mod.rs)
+// UnifiedStorageFormat trait: VIPER implements via the engine module (viper/mod.rs)
 // This will replace the old ViperCoreEngine implementation
 #[async_trait::async_trait]
-impl UnifiedStorageEngine for ViperEngine {
+impl UnifiedStorageFormat for ViperEngine {
     // Required abstract methods
     fn engine_name(&self) -> &'static str {
         "VIPER"
@@ -3109,7 +3109,7 @@ impl UnifiedStorageEngine for ViperEngine {
             required_principal: principal.map(str::to_string),
         })
     }
-} // End of impl UnifiedStorageEngine for ViperEngine
+} // End of impl UnifiedStorageFormat for ViperEngine
 
 /// Implementation of UniversallyOptimized trait for VIPER engine
 #[async_trait::async_trait]

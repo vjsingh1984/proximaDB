@@ -19,7 +19,7 @@ use std::sync::Arc;
 use tracing::{debug, info};
 
 use crate::storage::scan_strategy::{ScanIterator, ScanStatistics, ScanStrategy};
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 use proximadb_records::ProximaRecord;
 
 /// Unified scan implementation that all engines can use
@@ -40,7 +40,7 @@ impl UnifiedScanImpl {
     /// Create scan iterator based on strategy
     pub async fn create_scan(
         &self,
-        engine: &dyn UnifiedStorageEngine,
+        engine: &dyn UnifiedStorageFormat,
         collection_id: &str,
         strategy: ScanStrategy,
         collection_config: Option<&crate::proto::proximadb_v1::Collection>,
@@ -128,7 +128,7 @@ impl UnifiedScanImpl {
     /// Create Arrow IPC scan for full table scans
     async fn create_arrow_ipc_scan(
         &self,
-        engine: &dyn UnifiedStorageEngine,
+        engine: &dyn UnifiedStorageFormat,
         collection_id: &str,
         include_deleted: bool,
         batch_size: usize,
@@ -170,7 +170,7 @@ impl UnifiedScanImpl {
     /// Create engine-specific filtered scan
     async fn create_engine_filtered_scan(
         &self,
-        engine: &dyn UnifiedStorageEngine,
+        engine: &dyn UnifiedStorageFormat,
         collection_id: &str,
         predicates: Option<crate::core::search::FilterExpression>,
         enable_pushdown: bool,
@@ -212,7 +212,7 @@ impl UnifiedScanImpl {
     /// Create NOVA progressive scan
     async fn create_nova_progressive_scan(
         &self,
-        engine: &dyn UnifiedStorageEngine,
+        engine: &dyn UnifiedStorageFormat,
         collection_id: &str,
         strategy: ScanStrategy,
     ) -> Result<Box<dyn ScanIterator>> {
@@ -223,7 +223,7 @@ impl UnifiedScanImpl {
     /// Create range scan for SST/PRISM
     async fn create_range_scan(
         &self,
-        engine: &dyn UnifiedStorageEngine,
+        engine: &dyn UnifiedStorageFormat,
         collection_id: &str,
         start_key: Option<String>,
         end_key: Option<String>,
@@ -236,7 +236,7 @@ impl UnifiedScanImpl {
     /// Get data files for a collection
     async fn get_collection_files(
         &self,
-        engine: &dyn UnifiedStorageEngine,
+        engine: &dyn UnifiedStorageFormat,
         collection_id: &str,
     ) -> Result<Vec<String>> {
         // Deferred: Get actual file paths from engine
@@ -533,7 +533,7 @@ async fn create_raptor_filtered_scan(
 
 /// Helper to integrate with existing engine implementations
 pub async fn create_unified_scan(
-    engine: &dyn UnifiedStorageEngine,
+    engine: &dyn UnifiedStorageFormat,
     collection_id: &str,
     strategy: ScanStrategy,
     collection_config: Option<&crate::proto::proximadb_v1::Collection>,

@@ -16,7 +16,7 @@ use std::sync::Arc;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::storage::engines::nova::*;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 
 // ============================================================================
 // OPTIMIZED OPERATIONS TESTS (from optimized_operations.rs)

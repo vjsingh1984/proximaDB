@@ -87,7 +87,7 @@
 //!
 //! ## Integration Points
 //!
-//! - **Storage Layer**: Connectors delegate to `UnifiedStorageEngine` implementations
+//! - **Storage Layer**: Connectors delegate to `UnifiedStorageFormat` implementations
 //! - **Index Layer**: AXIS engine handles vector search pushdown
 //! - **Graph Layer**: ORION/PULSAR engines handle graph traversal pushdown
 //! - **WAL System**: Writers integrate with WAL for transactional guarantees

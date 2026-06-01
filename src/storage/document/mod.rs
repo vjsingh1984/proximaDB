@@ -39,7 +39,7 @@ pub use self::service::DocumentService;
 
 /// Storage engine trait for document data model.
 ///
-/// Unlike `UnifiedStorageEngine` (which is vector-centric and returns
+/// Unlike `UnifiedStorageFormat` (which is vector-centric and returns
 /// `OptimizedSearchRecord`), this trait operates on `DocumentRecord` natively.
 /// CEDAR implements this trait. DocumentService delegates to it.
 #[async_trait]

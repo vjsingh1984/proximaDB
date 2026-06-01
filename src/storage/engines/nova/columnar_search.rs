@@ -1,5 +1,5 @@
 // NOVA Columnar Search - Progressive columnar search with Parquet optimization
-// Implements UnifiedStorageEngine's search_vectors_unified interface
+// Implements UnifiedStorageFormat's search_vectors_unified interface
 // Similar to VIPER but with NOVA-specific optimizations for analytics workloads
 
 use anyhow::{Result, anyhow};

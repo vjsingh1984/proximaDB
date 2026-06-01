@@ -22,7 +22,7 @@ use crate::proto::proximadb_v1::{
     EmbeddingVersion, Entity, MetadataFilter, Provenance, Relation, TemporalInfo, TypedMetadata,
 };
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
-use crate::storage::engines::UnifiedStorageEngine;
+use crate::storage::engines::UnifiedStorageFormat;
 use crate::storage::kv::{FsKV, StorageKV};
 
 /// Core trait for entity storage operations
@@ -80,7 +80,7 @@ pub struct EntityHeader {
 pub struct ProximaEntityStore {
     /// Storage engine for vectors
     #[allow(dead_code)]
-    _vector_engine: Arc<dyn UnifiedStorageEngine>,
+    _vector_engine: Arc<dyn UnifiedStorageFormat>,
 
     /// Relations store (to be implemented)
     relations_store: Arc<dyn RelationsStore>,
@@ -112,7 +112,7 @@ pub struct ProximaEntityStore {
 impl ProximaEntityStore {
     /// Create a new entity store
     pub fn new(
-        vector_engine: Arc<dyn UnifiedStorageEngine>,
+        vector_engine: Arc<dyn UnifiedStorageFormat>,
         relations_store: Arc<dyn RelationsStore>,
         provenance_registry: Arc<dyn ProvenanceRegistry>,
     ) -> Self {
@@ -133,7 +133,7 @@ impl ProximaEntityStore {
 
     /// Create a new entity store with engine-backed vector service for persistence
     pub fn with_vector_service(
-        vector_engine: Arc<dyn UnifiedStorageEngine>,
+        vector_engine: Arc<dyn UnifiedStorageFormat>,
         relations_store: Arc<dyn RelationsStore>,
         provenance_registry: Arc<dyn ProvenanceRegistry>,
         vector_service: Arc<crate::services::operations::vectors::VectorOperationsService>,
@@ -1327,7 +1327,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl UnifiedStorageEngine for NoopEngine {
+    impl UnifiedStorageFormat for NoopEngine {
         fn engine_name(&self) -> &'static str {
             "noop"
         }
@@ -1396,7 +1396,7 @@ mod tests {
     async fn test_upsert_and_persist_header_and_embeddings() {
         // Minimal engine: use a dummy unified engine from tests (SST mocked by trait objects would be heavy)
         // For persistence we use filesystem KV; embeddings stored in-memory index
-        let engine = Arc::new(NoopEngine::new().await) as Arc<dyn UnifiedStorageEngine>;
+        let engine = Arc::new(NoopEngine::new().await) as Arc<dyn UnifiedStorageFormat>;
         let store = ProximaEntityStore::new(
             engine,
             Arc::new(CsrRelationsStore::new()),

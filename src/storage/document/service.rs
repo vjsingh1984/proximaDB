@@ -24,7 +24,7 @@ use crate::proto::proximadb_v1::{
 use crate::storage::persistence::write_ahead_log::wal_operations::{
     DocumentOperation, UnifiedWALOperation, UnifiedWALWriter,
 };
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 #[cfg(feature = "canonical-document-store")]
 use proximadb_document::{DOCUMENT_COLLECTION_PROP, DOCUMENT_RECORD_LABEL, DocumentRecordKey};
 #[cfg(feature = "canonical-document-store")]
@@ -49,7 +49,7 @@ use super::{
 /// Document service for CRUD operations
 pub struct DocumentService {
     /// Storage engine for persistence (vector-centric, used for legacy flush path)
-    storage_engine: Arc<dyn UnifiedStorageEngine>,
+    storage_engine: Arc<dyn UnifiedStorageFormat>,
     /// Document-native storage engine (CEDAR) for direct document operations.
     /// When present, CRUD operations delegate to this engine instead of
     /// the in-memory HashMap cache. (Phase 2: wire CRUD through this)
@@ -81,7 +81,7 @@ pub struct DocumentService {
 
 impl DocumentService {
     /// Create a new document service (legacy mode, uses in-memory HashMap)
-    pub fn new(storage_engine: Arc<dyn UnifiedStorageEngine>) -> Self {
+    pub fn new(storage_engine: Arc<dyn UnifiedStorageFormat>) -> Self {
         Self {
             storage_engine,
             document_engine: None,
@@ -102,7 +102,7 @@ impl DocumentService {
     /// When a document engine is provided, all CRUD operations delegate to it
     /// instead of the in-memory HashMap cache.
     pub fn with_document_engine(
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         document_engine: Arc<dyn DocumentStorageEngine>,
     ) -> Self {
         Self {
@@ -122,7 +122,7 @@ impl DocumentService {
 
     /// Create a new document service with metrics collection
     pub fn new_with_metrics(
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         metrics_collector: Arc<DocumentMetricsCollector>,
     ) -> Self {
         Self {
@@ -148,7 +148,7 @@ impl DocumentService {
     /// but durable state is written/read as `ProximaRecord`.
     #[cfg(feature = "canonical-document-store")]
     pub fn with_canonical_record_store(
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         record_store: Arc<dyn RecordStorage>,
     ) -> Self {
         Self {
@@ -172,7 +172,7 @@ impl DocumentService {
     /// canonical record store, not the document facade map, owns durable state.
     #[cfg(feature = "canonical-document-store")]
     pub async fn with_canonical_record_store_and_wal(
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         record_store: Arc<dyn RecordStorage>,
         wal_base_path: &str,
     ) -> Result<Self> {
@@ -201,7 +201,7 @@ impl DocumentService {
 
     /// Create a new document service with WAL support
     pub async fn new_with_wal(
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         wal_base_path: &str,
     ) -> Result<Self> {
         Self::new_with_wal_and_metrics(storage_engine, wal_base_path, None).await
@@ -209,7 +209,7 @@ impl DocumentService {
 
     /// Create a new document service with WAL support and optional metrics
     pub async fn new_with_wal_and_metrics(
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         wal_base_path: &str,
         metrics_collector: Option<Arc<DocumentMetricsCollector>>,
     ) -> Result<Self> {
@@ -2432,7 +2432,7 @@ mod tests {
     };
     use crate::storage::traits::{
         CompactionParameters, CompactionResult, FlushParameters, FlushResult,
-        StorageFormatStrategy, UnifiedStorageEngine,
+        StorageFormatStrategy, UnifiedStorageFormat,
     };
     use async_trait::async_trait;
     use std::collections::HashMap;
@@ -2445,7 +2445,7 @@ mod tests {
     struct MockStorageEngine;
 
     #[async_trait]
-    impl UnifiedStorageEngine for MockStorageEngine {
+    impl UnifiedStorageFormat for MockStorageEngine {
         fn engine_name(&self) -> &'static str {
             "MockEngine"
         }
@@ -2524,7 +2524,7 @@ mod tests {
 
     /// Create a DocumentService backed by the mock storage engine (no WAL)
     fn create_test_service() -> DocumentService {
-        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(MockStorageEngine);
+        let engine: Arc<dyn UnifiedStorageFormat> = Arc::new(MockStorageEngine);
         DocumentService::new(engine)
     }
 
@@ -2590,7 +2590,7 @@ mod tests {
         use proximadb_records::RecordStorage;
 
         let cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
-        let storage_engine: Arc<dyn UnifiedStorageEngine> = cedar.clone();
+        let storage_engine: Arc<dyn UnifiedStorageFormat> = cedar.clone();
         let record_store: Arc<dyn RecordStorage> = cedar;
         let svc = DocumentService::with_canonical_record_store(storage_engine, record_store);
 
@@ -3111,7 +3111,7 @@ mod tests {
         use proximadb_records::RecordStorage;
 
         let cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
-        let storage_engine: Arc<dyn UnifiedStorageEngine> = cedar.clone();
+        let storage_engine: Arc<dyn UnifiedStorageFormat> = cedar.clone();
         let record_store: Arc<dyn RecordStorage> = cedar;
         let svc = DocumentService::with_canonical_record_store(storage_engine, record_store);
 
@@ -3188,7 +3188,7 @@ mod tests {
         let wal_base_path = temp_dir.path().to_str().expect("utf-8 temp path");
 
         let first_cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
-        let first_storage_engine: Arc<dyn UnifiedStorageEngine> = first_cedar.clone();
+        let first_storage_engine: Arc<dyn UnifiedStorageFormat> = first_cedar.clone();
         let first_record_store: Arc<dyn RecordStorage> = first_cedar;
         let first = DocumentService::with_canonical_record_store_and_wal(
             first_storage_engine,
@@ -3219,7 +3219,7 @@ mod tests {
         first.flush_wal().await.expect("flush wal");
 
         let restarted_cedar = Arc::new(CedarEngine::new().expect("restarted cedar engine"));
-        let restarted_storage_engine: Arc<dyn UnifiedStorageEngine> = restarted_cedar.clone();
+        let restarted_storage_engine: Arc<dyn UnifiedStorageFormat> = restarted_cedar.clone();
         let restarted_record_store: Arc<dyn RecordStorage> = restarted_cedar;
         let restarted_record_probe = restarted_record_store.clone();
         let restarted = DocumentService::with_canonical_record_store_and_wal(
@@ -3261,7 +3261,7 @@ mod tests {
         let wal_base_path = temp_dir.path().to_str().expect("utf-8 temp path");
 
         let first_cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
-        let first_storage_engine: Arc<dyn UnifiedStorageEngine> = first_cedar.clone();
+        let first_storage_engine: Arc<dyn UnifiedStorageFormat> = first_cedar.clone();
         let first_record_store: Arc<dyn RecordStorage> = first_cedar;
         let first = DocumentService::with_canonical_record_store_and_wal(
             first_storage_engine,
@@ -3298,7 +3298,7 @@ mod tests {
         first.flush_wal().await.expect("flush wal");
 
         let restarted_cedar = Arc::new(CedarEngine::new().expect("restarted cedar engine"));
-        let restarted_storage_engine: Arc<dyn UnifiedStorageEngine> = restarted_cedar.clone();
+        let restarted_storage_engine: Arc<dyn UnifiedStorageFormat> = restarted_cedar.clone();
         let restarted_record_store: Arc<dyn RecordStorage> = restarted_cedar;
         let restarted_record_probe = restarted_record_store.clone();
         let restarted = DocumentService::with_canonical_record_store_and_wal(

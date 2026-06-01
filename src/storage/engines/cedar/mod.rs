@@ -15,7 +15,7 @@
 //! implements the canonical `RecordStore`/`RecordScan` traits by adapting
 //! through the document compatibility boundary.
 //!
-//! It also implements `UnifiedStorageEngine` as a thin stub for factory
+//! It also implements `UnifiedStorageFormat` as a thin stub for factory
 //! registration, but all real document operations go through `DocumentStorageEngine`.
 
 use anyhow::Result;
@@ -35,7 +35,7 @@ use crate::storage::document::{
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageFormatStrategy,
-    StorageQueryContext, UnifiedStorageEngine,
+    StorageQueryContext, UnifiedStorageFormat,
 };
 use proximadb_records::{ProximaRecord, RecordKey, RecordScan, RecordStore, RecordStoreResult};
 
@@ -379,11 +379,11 @@ impl DocumentStorageEngine for CedarEngine {
 }
 
 // ---------------------------------------------------------------------------
-// UnifiedStorageEngine stub (for factory registration only)
+// UnifiedStorageFormat stub (for factory registration only)
 // ---------------------------------------------------------------------------
 
 #[async_trait]
-impl UnifiedStorageEngine for CedarEngine {
+impl UnifiedStorageFormat for CedarEngine {
     fn engine_name(&self) -> &'static str {
         "cedar"
     }

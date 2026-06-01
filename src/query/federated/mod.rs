@@ -410,7 +410,7 @@ mod tests {
         CompactionParameters, DataPointValue, DocumentCollectionInfo, DocumentRecord,
         DocumentStorageOperations, FlushParameters, IngestResult, LogQueryResult,
         MetricAggregationParams, MetricAggregationResult, NamespaceInfo,
-        ObservabilityStorageOperations, TimeSeriesData, UnifiedStorageEngine,
+        ObservabilityStorageOperations, TimeSeriesData, UnifiedStorageFormat,
     };
     use anyhow::Result;
     use arrow::array::{Float32Array, Float64Array, Int64Array, StringArray};
@@ -455,7 +455,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl UnifiedStorageEngine for MockVectorEngine {
+    impl UnifiedStorageFormat for MockVectorEngine {
         fn engine_name(&self) -> &'static str {
             "mock-vector"
         }
@@ -1160,7 +1160,7 @@ mod tests {
                 },
             ])
             .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
@@ -1281,7 +1281,7 @@ mod tests {
                 OptimizedSearchRecord::new("doc-2".to_string(), 0.87),
             ])
             .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
 
@@ -1347,7 +1347,7 @@ mod tests {
                 OptimizedSearchRecord::new("doc-2".to_string(), 0.87),
             ])
             .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
@@ -1388,7 +1388,7 @@ mod tests {
                 OptimizedSearchRecord::new("doc-1".to_string(), 0.91),
             ])
             .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
@@ -1429,7 +1429,7 @@ mod tests {
                 OptimizedSearchRecord::new("doc-3".to_string(), 0.47),
             ])
             .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
@@ -1485,7 +1485,7 @@ mod tests {
                 OptimizedSearchRecord::new("doc-2".to_string(), 0.12),
             ])
             .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
@@ -1534,7 +1534,7 @@ mod tests {
                 OptimizedSearchRecord::new("doc-1".to_string(), 0.87),
             ])
             .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
@@ -1563,7 +1563,7 @@ mod tests {
         let vector_engine = Arc::new(
             MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
                 .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
@@ -1594,7 +1594,7 @@ mod tests {
                 OptimizedSearchRecord::new("doc-1".to_string(), 0.91),
             ])
             .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
@@ -1636,7 +1636,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
         );
 
         let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
@@ -1713,7 +1713,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
         );
 
         let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
@@ -1794,7 +1794,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
         );
         let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
             Arc::new(MockGraphEngine::new(vec![
@@ -1870,7 +1870,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
         );
 
         let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
@@ -1927,7 +1927,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
         );
         let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
             Arc::new(MockGraphEngine::new(vec![
@@ -1990,7 +1990,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine as Arc<dyn UnifiedStorageFormat>),
         );
 
         let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
@@ -2034,7 +2034,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
         );
 
         let document_service = Arc::new(MockDocumentService::new(HashMap::from([
@@ -2116,7 +2116,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
         );
 
         let document_service = Arc::new(MockDocumentService::new(HashMap::from([
@@ -2198,7 +2198,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
         );
 
         let document_service = Arc::new(MockDocumentService::new(HashMap::from([
@@ -2280,7 +2280,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
         );
 
         let document_service = Arc::new(MockDocumentService::new(HashMap::from([
@@ -2362,7 +2362,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
         );
 
         let document_service = Arc::new(MockDocumentService::new(HashMap::from([
@@ -2428,7 +2428,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
         );
         let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
             Arc::new(MockGraphEngine::new(vec![
@@ -2509,7 +2509,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
         );
         let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
             Arc::new(MockGraphEngine::new(vec![
@@ -2590,7 +2590,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
         );
         let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
             Arc::new(MockGraphEngine::new(vec![
@@ -2671,7 +2671,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
         );
         let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
             Arc::new(MockGraphEngine::new(vec![
@@ -2735,7 +2735,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
         );
         let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
             Arc::new(MockGraphEngine::new(vec![

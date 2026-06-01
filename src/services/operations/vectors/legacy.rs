@@ -54,7 +54,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
 use crate::security::validation::{MetadataValidationConfig, MetadataValidator};
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 
 use crate::compute::quantization::types::UnifiedQuantizationLevel;
 use crate::core::search::FilterExpression;
@@ -469,7 +469,7 @@ pub struct VectorOperationsService {
 
     /// Dynamic engine cache - maps collection_id to the correct storage engine
     /// This enables each collection to use its configured engine (SST, HELIX, VIPER, etc.)
-    engine_cache: Arc<dashmap::DashMap<String, Arc<dyn UnifiedStorageEngine>>>,
+    engine_cache: Arc<dashmap::DashMap<String, Arc<dyn UnifiedStorageFormat>>>,
 
     /// WAL/Memtable for unflushed vectors (required for two-stage search)
     wal_manager: Arc<crate::storage::persistence::write_ahead_log::WriteAheadLogManager>,
@@ -562,8 +562,8 @@ impl VectorOperationsService {
         svc
     }
     /// Expose the unified storage engine as a trait object for integration points
-    pub fn unified_engine(&self) -> Arc<dyn crate::storage::traits::UnifiedStorageEngine> {
-        self.storage_engine.clone() as Arc<dyn crate::storage::traits::UnifiedStorageEngine>
+    pub fn unified_engine(&self) -> Arc<dyn crate::storage::traits::UnifiedStorageFormat> {
+        self.storage_engine.clone() as Arc<dyn crate::storage::traits::UnifiedStorageFormat>
     }
 
     /// Expose the AXIS index manager for direct index operations
@@ -3262,7 +3262,7 @@ impl VectorOperationsService {
                     },
                 };
                 // Filter pushdown: engine applies filter during scan via search params.
-                // Direct set_scan_filter deferred until UnifiedStorageEngine trait exposes it.
+                // Direct set_scan_filter deferred until UnifiedStorageFormat trait exposes it.
                 let _ = _unified_filter; // Filter prepared but applied via search params path
             }
             FilterPushdownOperation::IndexLevel { filter, index_name } => {
@@ -3597,7 +3597,7 @@ impl VectorOperationsService {
     pub async fn get_engine_for_collection(
         &self,
         collection_id: &str,
-    ) -> Result<Arc<dyn UnifiedStorageEngine>> {
+    ) -> Result<Arc<dyn UnifiedStorageFormat>> {
         // Check cache first
         if let Some(engine) = self.engine_cache.get(collection_id) {
             return Ok(engine.clone());
@@ -4260,7 +4260,7 @@ impl VectorOperationsService {
         self.wal_manager.force_flush_all().await?;
 
         // Trigger compaction in storage engine
-        // Note: compact_all is not available in UnifiedStorageEngine trait
+        // Note: compact_all is not available in UnifiedStorageFormat trait
         // Instead, we need to compact each collection individually
         let collections: Vec<String> = self
             .collection_cache

@@ -7,7 +7,7 @@
 //! relational-native trait) for efficient SQL-like table CRUD with filtering,
 //! projection, ordering, and limit/offset.
 //!
-//! It also implements `UnifiedStorageEngine` as a thin stub for factory
+//! It also implements `UnifiedStorageFormat` as a thin stub for factory
 //! registration, but all real relational operations go through
 //! `RelationalStorageEngine`.
 
@@ -21,7 +21,7 @@ use crate::core::search::results::OptimizedSearchRecord;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageFormatStrategy,
-    StorageQueryContext, UnifiedStorageEngine,
+    StorageQueryContext, UnifiedStorageFormat,
 };
 
 // ---------------------------------------------------------------------------
@@ -595,11 +595,11 @@ impl RelationalStorageEngine for SequoiaEngine {
 }
 
 // ---------------------------------------------------------------------------
-// UnifiedStorageEngine stub (for factory registration only)
+// UnifiedStorageFormat stub (for factory registration only)
 // ---------------------------------------------------------------------------
 
 #[async_trait]
-impl UnifiedStorageEngine for SequoiaEngine {
+impl UnifiedStorageFormat for SequoiaEngine {
     fn engine_name(&self) -> &'static str {
         "sequoia"
     }
@@ -998,12 +998,12 @@ mod tests {
         assert!(!dropped_again);
     }
 
-    // -- test_sequoia_engine_identity (UnifiedStorageEngine stub) --
+    // -- test_sequoia_engine_identity (UnifiedStorageFormat stub) --
 
     #[test]
     fn test_sequoia_engine_identity() {
         let engine = SequoiaEngine::new();
-        assert_eq!(UnifiedStorageEngine::engine_name(&engine), "sequoia");
+        assert_eq!(UnifiedStorageFormat::engine_name(&engine), "sequoia");
         assert_eq!(engine.engine_version(), "0.1.0");
         assert_eq!(engine.strategy(), StorageFormatStrategy::Sst);
     }

@@ -23,7 +23,7 @@ mod tests {
     use crate::storage::engines::sst::{SstConfig, core::SstEngine};
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::traits::{
-        FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
+        FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageFormat,
     };
     use tracing::info;
 

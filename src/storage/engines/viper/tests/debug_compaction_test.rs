@@ -8,7 +8,7 @@ use tracing::{debug, info};
 
 use crate::storage::engines::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use crate::storage::traits::{FlushParameters, UnifiedStorageFormat};
 use proximadb_data_model::ProximaValue;
 use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
 use proximadb_storage_common::storage_path::StoragePath;

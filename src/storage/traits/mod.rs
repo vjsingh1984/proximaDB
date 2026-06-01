@@ -15,7 +15,7 @@
 //! ## Key Components
 //!
 //! - `StorageEngineStrategy`: Enum for selecting the appropriate storage engine
-//! - `UnifiedStorageEngine`: Main trait that all storage engines must implement
+//! - `UnifiedStorageFormat`: Main trait that all storage engines must implement
 //! - `InternalCollectionProvider`: Trait for accessing collection metadata without circular dependencies
 //! - `PerformanceTier`: Data temperature hints for intelligent tiering
 //!
@@ -513,7 +513,7 @@ impl From<crate::proto::proximadb_v1::CollectionStats> for CollectionStats {
     }
 }
 
-/// Macro to implement the engine identification boilerplate for `UnifiedStorageEngine`.
+/// Macro to implement the engine identification boilerplate for `UnifiedStorageFormat`.
 ///
 /// Every engine must implement `engine_name()`, `engine_version()`, `strategy()`,
 /// and `get_filesystem_factory()`. These are purely descriptive and follow the same
@@ -522,7 +522,7 @@ impl From<crate::proto::proximadb_v1::CollectionStats> for CollectionStats {
 ///
 /// # Usage
 /// ```ignore
-/// // Inside `impl UnifiedStorageEngine for MyEngine { ... }`:
+/// // Inside `impl UnifiedStorageFormat for MyEngine { ... }`:
 /// crate::impl_engine_identity!("NOVA", crate::version::PROXIMADB_VERSION, Nova, filesystem_factory);
 /// // For engines with private fields accessed via method:
 /// crate::impl_engine_identity!("sst", crate::version::PROXIMADB_VERSION, Sst, filesystem());
@@ -571,7 +571,7 @@ macro_rules! impl_engine_identity {
     };
 }
 
-/// Returned from `UnifiedStorageEngine::ingest_sorted_segment` (Phase
+/// Returned from `UnifiedStorageFormat::ingest_sorted_segment` (Phase
 /// 2F-b). Engines that have NOT yet migrated to the LSM-bulk-load
 /// override return `used_engine_specific_path = false` so the
 /// drainer/loader can fall back through `UnifiedHandlers` for actual
@@ -594,7 +594,7 @@ pub struct SegmentIngestResult {
 /// Common operations have default implementations that can be overridden.
 /// Specialized engines only need to implement core abstract methods.
 #[async_trait]
-pub trait UnifiedStorageEngine: Send + Sync {
+pub trait UnifiedStorageFormat: Send + Sync {
     // =============================================================================
     // ABSTRACT METHODS - Must be implemented by each engine
     // =============================================================================
@@ -1768,15 +1768,14 @@ pub trait UnifiedStorageEngine: Send + Sync {
     }
 }
 
-/// Backwards-compat **format** alias for [`UnifiedStorageEngine`] (engines →
-/// formats convergence). ProximaDB's storage "engines" (SST/VIPER/HELIX/NOVA/…)
-/// are format/layout specializations, aligning the runtime with the catalog's
-/// `CatalogPhysicalFormat`/`CatalogStorageLayoutKind` vocabulary. New code may
-/// use `UnifiedStorageFormat`; `UnifiedStorageEngine` remains during the
-/// migration window (see `docs/12-design/NAMING_CONVENTIONS.adoc`). This is a
-/// re-export, so `dyn UnifiedStorageFormat` is the same trait object as
-/// `dyn UnifiedStorageEngine`.
-pub use self::UnifiedStorageEngine as UnifiedStorageFormat;
+/// Legacy alias for [`UnifiedStorageFormat`] (engines → formats convergence).
+/// ProximaDB's storage "engines" (SST/VIPER/HELIX/NOVA/…) are format/layout
+/// specializations; `UnifiedStorageFormat` is now the canonical name, aligned
+/// with the catalog's `CatalogPhysicalFormat`/`CatalogStorageLayoutKind`
+/// vocabulary. `UnifiedStorageEngine` is retained during the migration window
+/// (see `docs/12-design/NAMING_CONVENTIONS.adoc`); it is a re-export, so
+/// `dyn UnifiedStorageEngine` is the same trait object as `dyn UnifiedStorageFormat`.
+pub use self::UnifiedStorageFormat as UnifiedStorageEngine;
 
 // ---------------------------------------------------------------------------
 // Phase E RLS scaffold tests

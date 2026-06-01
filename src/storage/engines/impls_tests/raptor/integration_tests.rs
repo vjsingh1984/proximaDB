@@ -15,7 +15,7 @@
 
 use super::helpers::*;
 use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;

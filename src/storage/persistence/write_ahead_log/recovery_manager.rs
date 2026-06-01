@@ -21,7 +21,7 @@ use crate::storage::persistence::write_ahead_log::{
     recovery_thread_pool::get_recovery_thread_pool, serialization::SerializationFormat,
     serialization::SerializerFactory,
 };
-use crate::storage::traits::{InternalCollectionProvider, UnifiedStorageEngine};
+use crate::storage::traits::{InternalCollectionProvider, UnifiedStorageFormat};
 
 /// Recovery destination configuration
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -37,7 +37,7 @@ pub struct RecoveryManager {
     /// Disk manager for reading WAL files
     disk_manager: Arc<WriteAheadLogDiskManager>,
     /// Storage engines by collection (LSM or VIPER)
-    storage_engines: Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
+    storage_engines: Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
     /// Flush coordinator for managing recovery coordination
     flush_coordinator: Arc<WALFlushCoordinator>,
     /// Recovery mode
@@ -133,7 +133,7 @@ impl RecoveryManager {
     pub async fn register_storage_engine(
         &self,
         collection_id: &str,
-        engine: Arc<dyn UnifiedStorageEngine>,
+        engine: Arc<dyn UnifiedStorageFormat>,
     ) -> Result<()> {
         // Register with our internal map
         let mut engines = self.storage_engines.write().await;
@@ -403,7 +403,7 @@ impl RecoveryManager {
     async fn recover_collection_internal(
         collection_id: &str,
         disk_manager: Arc<WriteAheadLogDiskManager>,
-        storage_engines: Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
+        storage_engines: Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
         _flush_coordinator: Arc<WALFlushCoordinator>,
         recovery_mode: RecoveryMode,
         progress_callback: Option<RecoveryProgressCallback>,
@@ -630,7 +630,7 @@ impl RecoveryManager {
     async fn recover_file_internal(
         file_info: &WalFileInfo,
         disk_manager: &Arc<WriteAheadLogDiskManager>,
-        storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
+        storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
         recovery_mode: RecoveryMode,
     ) -> Result<u64> {
         debug!(
@@ -713,7 +713,7 @@ impl RecoveryManager {
         file_info: &WalFileInfo,
         vectors: Vec<proximadb_records::ProximaRecord>,
         _disk_manager: &Arc<WriteAheadLogDiskManager>,
-        storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
+        storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
         _recovery_mode: RecoveryMode,
         storage_url: &str,
         metadata_provider: &Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
@@ -888,7 +888,7 @@ impl ParallelRecoveryManager {
     pub async fn register_storage_engine(
         &self,
         collection_id: &str,
-        engine: Arc<dyn UnifiedStorageEngine>,
+        engine: Arc<dyn UnifiedStorageFormat>,
     ) -> Result<()> {
         self.recovery_manager
             .register_storage_engine(collection_id, engine)
@@ -1173,11 +1173,11 @@ mod tests {
     }
 
     // Mock storage engine for testing
-    fn create_mock_storage_engine() -> Arc<dyn UnifiedStorageEngine> {
+    fn create_mock_storage_engine() -> Arc<dyn UnifiedStorageFormat> {
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use crate::storage::traits::{
             CompactionParameters, CompactionResult, FlushParameters, FlushResult,
-            StorageFormatStrategy, UnifiedStorageEngine,
+            StorageFormatStrategy, UnifiedStorageFormat,
         };
         use async_trait::async_trait;
         use std::collections::HashMap;
@@ -1188,7 +1188,7 @@ mod tests {
         }
 
         #[async_trait]
-        impl UnifiedStorageEngine for MockStorageEngine {
+        impl UnifiedStorageFormat for MockStorageEngine {
             fn engine_name(&self) -> &'static str {
                 "MockEngine"
             }

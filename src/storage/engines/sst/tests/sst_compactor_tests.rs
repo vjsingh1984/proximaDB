@@ -18,7 +18,7 @@ mod tests {
     use crate::proto::proximadb_v1::MetadataItem;
     use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-    use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
+    use crate::storage::traits::{FlushParameters, UnifiedStorageFormat};
     use std::collections::HashMap;
 
     // Import test utilities from sst_test_config

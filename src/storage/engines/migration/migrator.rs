@@ -12,7 +12,7 @@ use super::{
 };
 use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
 use crate::storage::engines::factory::StorageFormatFactory;
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 
 /// Engine migrator for moving data between storage engines
 pub struct EngineMigrator {
@@ -21,9 +21,9 @@ pub struct EngineMigrator {
 
     /// Source and target engines
     #[allow(dead_code)]
-    source_engine: Arc<dyn UnifiedStorageEngine>,
+    source_engine: Arc<dyn UnifiedStorageFormat>,
     #[allow(dead_code)]
-    target_engine: Arc<dyn UnifiedStorageEngine>,
+    target_engine: Arc<dyn UnifiedStorageFormat>,
 
     /// Migration state
     status: Arc<RwLock<MigrationStatus>>,

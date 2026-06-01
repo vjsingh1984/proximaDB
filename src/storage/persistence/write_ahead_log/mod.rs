@@ -85,7 +85,7 @@ use crate::compute::distance_computation::engine::{
 };
 use crate::core::{String, VectorId};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
-use crate::storage::traits::{FlushResult, UnifiedStorageEngine};
+use crate::storage::traits::{FlushResult, UnifiedStorageFormat};
 use proximadb_records::{
     EmbeddingCell, ProximaRecord, ProximaTreeNode, conversions::sql_value_to_proxima,
 };
@@ -1521,7 +1521,7 @@ impl WriteAheadLogManager {
     /// Set storage engine for delegated flush/compaction operations
     pub fn set_storage_engine(
         &self,
-        _storage_engine: Arc<dyn UnifiedStorageEngine>,
+        _storage_engine: Arc<dyn UnifiedStorageFormat>,
         _collection_id: &str,
     ) {
         // Storage engine setting moved to config level — strategies receive it directly
@@ -2948,7 +2948,7 @@ impl WriteAheadLogManager {
     pub async fn register_storage_engine(
         &self,
         engine_name: &str,
-        _engine: Arc<dyn crate::storage::traits::UnifiedStorageEngine>,
+        _engine: Arc<dyn crate::storage::traits::UnifiedStorageFormat>,
     ) -> Result<()> {
         // Set the storage engine on the strategy
         // Storage engine setting moved to shared behavior initialization

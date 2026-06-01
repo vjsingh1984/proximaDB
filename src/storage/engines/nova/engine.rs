@@ -1,5 +1,5 @@
 // NOVA Engine: Next-gen Optimized Vector Analytics with columnar quantization
-// Implements UnifiedStorageEngine trait for integration with ProximaDB
+// Implements UnifiedStorageFormat trait for integration with ProximaDB
 
 use crate::core::search::DataFreshnessTier;
 use crate::proto::proximadb_v1::VectorRecord;
@@ -11,7 +11,7 @@ use crate::storage::engines::core::ops::{
 use crate::storage::engines::nova::NovaFile;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
-    FlushResult, OperationPriority, UnifiedStorageEngine,
+    FlushResult, OperationPriority, UnifiedStorageFormat,
 };
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -1327,7 +1327,7 @@ impl NovaEngine {
 }
 
 #[async_trait]
-impl UnifiedStorageEngine for NovaEngine {
+impl UnifiedStorageFormat for NovaEngine {
     // =============================================================================
     // ENGINE IDENTIFICATION
     fn engine_name(&self) -> &'static str {

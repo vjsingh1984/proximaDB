@@ -129,7 +129,7 @@ use crate::storage::engines::constants::{ENGINE_HELIX, HELIX_FILE_EXT, HELIX_MAG
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageFormatStrategy,
-    StorageQueryContext, UnifiedStorageEngine,
+    StorageQueryContext, UnifiedStorageFormat,
 };
 use proximadb_records::conversions::proxima_record_to_vector;
 use proximadb_storage_common::storage_path::StoragePath;
@@ -1214,7 +1214,7 @@ impl HelixEngine {
 }
 
 #[async_trait]
-impl UnifiedStorageEngine for HelixEngine {
+impl UnifiedStorageFormat for HelixEngine {
     fn engine_name(&self) -> &'static str {
         ENGINE_HELIX
     }

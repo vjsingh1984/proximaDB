@@ -48,7 +48,7 @@ use crate::proto::proximadb_v1::{
     MetadataItem,
 };
 use crate::storage::traits::{
-    UnifiedStorageEngine, StorageQueryContext, FlushParameters,
+    UnifiedStorageFormat, StorageQueryContext, FlushParameters,
     StorageQueryMetadata,
 };
 use crate::core::search::SearchParams;

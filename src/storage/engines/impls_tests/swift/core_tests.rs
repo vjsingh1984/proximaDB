@@ -15,7 +15,7 @@
 
 #[allow(deprecated)]
 use crate::storage::engines::swift::id_index::{BlockLocation, IdIndex};
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 use std::sync::Arc;
 
 // ============================================================================

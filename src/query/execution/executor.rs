@@ -2035,7 +2035,7 @@ mod executor_tests {
         // Setup global SKS store with one entity embedding
         struct NoopEngine;
         #[async_trait]
-        impl crate::storage::traits::UnifiedStorageEngine for NoopEngine {
+        impl crate::storage::traits::UnifiedStorageFormat for NoopEngine {
             fn engine_name(&self) -> &'static str {
                 "noop"
             }
@@ -2084,7 +2084,7 @@ mod executor_tests {
                 unimplemented!("Test method - requires async FilesystemFactory::new")
             }
         }
-        let engine = Arc::new(NoopEngine) as Arc<dyn crate::storage::traits::UnifiedStorageEngine>;
+        let engine = Arc::new(NoopEngine) as Arc<dyn crate::storage::traits::UnifiedStorageFormat>;
         let store = Arc::new(ProximaEntityStore::new(
             engine,
             Arc::new(CsrRelationsStore::new()),

@@ -39,7 +39,7 @@ mod tests {
         utils::{MemoryEstimate, SortingStats},
     };
     use crate::storage::persistence::filesystem::FilesystemFactory;
-    use crate::storage::traits::{StorageQueryContext, UnifiedStorageEngine};
+    use crate::storage::traits::{StorageQueryContext, UnifiedStorageFormat};
     use proximadb_records::{EmbeddingCell, ProximaRecord};
 
     /// Test that the core module properly initializes the engine
@@ -173,7 +173,7 @@ mod tests {
     async fn test_trait_impl_module() {
         let engine = create_test_engine().await;
 
-        // Test UnifiedStorageEngine trait methods
+        // Test UnifiedStorageFormat trait methods
         assert_eq!(engine.engine_name(), "sst");
         assert_eq!(engine.engine_version(), crate::version::PROXIMADB_VERSION);
 

@@ -38,7 +38,7 @@ mod tests {
     use crate::storage::engines::viper::ViperEngine;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::traits::{
-        FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
+        FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageFormat,
     };
 
     // Separator line constants for output formatting

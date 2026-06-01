@@ -24,7 +24,7 @@ use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::ops::proximacodec::ProximaCodec;
 use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageQueryContext,
-    UnifiedStorageEngine,
+    UnifiedStorageFormat,
 };
 use proximadb_records::conversions::proxima_record_to_vector;
 // IvfManager removed - Matrix Trinity handles clustering
@@ -232,7 +232,7 @@ pub struct RaptorEngine {
     /// **Filesystem Factory**
     ///
     /// Creates filesystem instances for different storage backends.
-    /// Required by the `UnifiedStorageEngine` trait (`get_filesystem_factory`).
+    /// Required by the `UnifiedStorageFormat` trait (`get_filesystem_factory`).
     filesystem_factory: Arc<FilesystemFactory>,
 
     /// **Filesystem Interface**
@@ -2162,7 +2162,7 @@ impl RaptorEngine {
 
 #[allow(deprecated)]
 #[async_trait]
-impl UnifiedStorageEngine for RaptorEngine {
+impl UnifiedStorageFormat for RaptorEngine {
     fn engine_name(&self) -> &'static str {
         "RAPTOR"
     }

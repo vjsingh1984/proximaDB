@@ -17,7 +17,7 @@ mod tests {
         flush_coordinator::WALFlushCoordinator,
     };
     use crate::storage::traits::{
-        CompactionParameters, CompactionResult, FlushParameters, FlushResult, UnifiedStorageEngine,
+        CompactionParameters, CompactionResult, FlushParameters, FlushResult, UnifiedStorageFormat,
     };
     use anyhow::Result;
     use std::collections::HashMap;
@@ -48,7 +48,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl UnifiedStorageEngine for MockStorageEngineWithMetrics {
+    impl UnifiedStorageFormat for MockStorageEngineWithMetrics {
         fn engine_name(&self) -> &'static str {
             "mock_engine"
         }
@@ -435,7 +435,7 @@ mod tests {
             let mut engines = HashMap::new();
             engines.insert(
                 "viper".to_string(),
-                mock_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                mock_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             );
             engines
         }));
@@ -571,7 +571,7 @@ mod tests {
             let mut engines = HashMap::new();
             engines.insert(
                 "viper".to_string(),
-                mock_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                mock_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             );
             engines
         }));

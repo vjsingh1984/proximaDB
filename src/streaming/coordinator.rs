@@ -35,7 +35,7 @@ use super::{
     BackpressureLevel, RateLimiter, SessionConfig, SessionState, StreamConfig, StreamError,
     StreamId, StreamMetrics, StreamResult, StreamSession,
 };
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 use proximadb_records::ProximaRecord;
 
 /// Result of pushing records to a stream
@@ -423,7 +423,7 @@ impl StreamCoordinator {
     pub async fn flush_to_storage(
         &self,
         session_id: &StreamId,
-        storage: &dyn UnifiedStorageEngine,
+        storage: &dyn UnifiedStorageFormat,
         collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> StreamResult<FlushStats> {
         let start = Instant::now();
@@ -519,7 +519,7 @@ impl StreamCoordinator {
     /// A JoinHandle for the background task
     pub fn start_flush_task(
         self: Arc<Self>,
-        storage: Arc<dyn UnifiedStorageEngine>,
+        storage: Arc<dyn UnifiedStorageFormat>,
         interval: Option<Duration>,
     ) -> JoinHandle<()> {
         let flush_interval = interval.unwrap_or(self.config.flush_interval);
@@ -586,7 +586,7 @@ impl StreamCoordinator {
     /// Flush all sessions immediately (useful for graceful shutdown)
     pub async fn flush_all(
         &self,
-        storage: &dyn UnifiedStorageEngine,
+        storage: &dyn UnifiedStorageFormat,
     ) -> Vec<(StreamId, StreamResult<FlushStats>)> {
         let session_ids: Vec<StreamId> = self.sessions.iter().map(|e| e.key().clone()).collect();
 
@@ -619,7 +619,7 @@ impl StreamCoordinator {
     pub async fn flush_to_storage_with_retry(
         &self,
         session_id: &StreamId,
-        storage: &dyn UnifiedStorageEngine,
+        storage: &dyn UnifiedStorageFormat,
         collection_config: Option<&crate::proto::proximadb_v1::Collection>,
         retry_config: FlushRetryConfig,
     ) -> StreamResult<FlushStats> {
@@ -752,7 +752,7 @@ impl StreamCoordinator {
     /// Flush all sessions with retry logic
     pub async fn flush_all_with_retry(
         &self,
-        storage: &dyn UnifiedStorageEngine,
+        storage: &dyn UnifiedStorageFormat,
         retry_config: FlushRetryConfig,
     ) -> Vec<(StreamId, StreamResult<FlushStats>)> {
         let session_ids: Vec<StreamId> = self.sessions.iter().map(|e| e.key().clone()).collect();

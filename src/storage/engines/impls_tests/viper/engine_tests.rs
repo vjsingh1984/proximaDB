@@ -20,7 +20,7 @@ use tracing::debug;
 
 use crate::storage::engines::viper::ViperEngine;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::traits::{FlushParameters, StorageFormatStrategy, UnifiedStorageEngine};
+use crate::storage::traits::{FlushParameters, StorageFormatStrategy, UnifiedStorageFormat};
 
 // ============================================================================
 // ENGINE CREATION & INITIALIZATION TESTS (2 tests)

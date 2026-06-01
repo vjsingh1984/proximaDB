@@ -27,7 +27,7 @@ use crate::security::rbac_service::{
 use crate::storage::document::DocumentService;
 
 /// Helper function to create a mock storage engine for testing
-async fn create_mock_storage_engine() -> Arc<dyn crate::storage::traits::UnifiedStorageEngine> {
+async fn create_mock_storage_engine() -> Arc<dyn crate::storage::traits::UnifiedStorageFormat> {
     use crate::storage::engines::factory::StorageFormatFactory;
 
     StorageFormatFactory::create_sst_async().await.unwrap()

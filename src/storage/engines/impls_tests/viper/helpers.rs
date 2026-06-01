@@ -13,7 +13,7 @@ use crate::proto::proximadb_v1::{
 };
 use crate::storage::engines::viper::{ViperEngine, ViperEngineConfig};
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 use proximadb_storage_common::storage_path::StoragePath;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 

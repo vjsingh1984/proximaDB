@@ -18,7 +18,7 @@ use super::traits::{
     DefaultFormatDetector, FormatDetector, FormatType, InternalFormat, OpenTableFormat,
     StorageFormat,
 };
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 
 // ============================================================================
 // Format Registry
@@ -317,7 +317,7 @@ impl FormatRegistry {
 
     /// Register a storage engine as an internal format using the adapter pattern
     ///
-    /// This method wraps the given `UnifiedStorageEngine` in an `InternalFormatAdapter`
+    /// This method wraps the given `UnifiedStorageFormat` in an `InternalFormatAdapter`
     /// and registers it with the appropriate format type based on the engine's strategy.
     ///
     /// ## Example
@@ -326,7 +326,7 @@ impl FormatRegistry {
     /// let sst_engine = Arc::new(SstEngine::new(config)?);
     /// registry.register_engine_as_format(sst_engine)?;
     /// ```
-    pub fn register_engine_as_format<E: UnifiedStorageEngine + 'static>(
+    pub fn register_engine_as_format<E: UnifiedStorageFormat + 'static>(
         &self,
         engine: Arc<E>,
     ) -> Result<()> {
@@ -338,7 +338,7 @@ impl FormatRegistry {
     /// Register multiple storage engines as internal formats
     ///
     /// Convenience method for registering several engines at once during initialization.
-    pub fn register_engines<E: UnifiedStorageEngine + 'static>(
+    pub fn register_engines<E: UnifiedStorageFormat + 'static>(
         &self,
         engines: Vec<Arc<E>>,
     ) -> Result<()> {

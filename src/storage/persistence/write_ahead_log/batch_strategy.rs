@@ -15,7 +15,7 @@ use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
 use crate::core::{String, VectorId};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 
 use super::{WALConfig, WALStats};
 use crate::storage::traits::FlushResult;
@@ -48,7 +48,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     /// Set storage engine for delegated flush/compaction operations
     fn set_storage_engine(
         &self,
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         collection_id: &str,
     );
 

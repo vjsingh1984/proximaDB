@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
 use crate::index::axis::AxisManager;
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 // Re-export foundation quantization types
 pub use proximadb_quantization_types::{QuantizationLevel, QuantizationType};
 
@@ -121,9 +121,9 @@ impl Default for VectorStoreConfig {
 /// ```
 pub struct VectorStore {
     /// Primary engine for high-dimensional vectors (HELIX)
-    helix_engine: Option<Arc<dyn UnifiedStorageEngine>>,
+    helix_engine: Option<Arc<dyn UnifiedStorageFormat>>,
     /// Hot tier engine for real-time vectors (SST)
-    sst_engine: Option<Arc<dyn UnifiedStorageEngine>>,
+    sst_engine: Option<Arc<dyn UnifiedStorageFormat>>,
     /// Dimension threshold for engine routing
     dimension_threshold: usize,
     /// Shared quantization engine
@@ -151,13 +151,13 @@ impl VectorStore {
     }
 
     /// Set the HELIX engine for high-dimensional vectors
-    pub fn with_helix_engine(mut self, engine: Arc<dyn UnifiedStorageEngine>) -> Self {
+    pub fn with_helix_engine(mut self, engine: Arc<dyn UnifiedStorageFormat>) -> Self {
         self.helix_engine = Some(engine);
         self
     }
 
     /// Set the SST engine for real-time operations
-    pub fn with_sst_engine(mut self, engine: Arc<dyn UnifiedStorageEngine>) -> Self {
+    pub fn with_sst_engine(mut self, engine: Arc<dyn UnifiedStorageFormat>) -> Self {
         self.sst_engine = Some(engine);
         self
     }
@@ -166,7 +166,7 @@ impl VectorStore {
     ///
     /// This is a convenience constructor that sets the given engine as the SST engine,
     /// making it available as the primary engine for vector operations in federated queries.
-    pub fn with_engine(engine: Arc<dyn UnifiedStorageEngine>) -> Self {
+    pub fn with_engine(engine: Arc<dyn UnifiedStorageFormat>) -> Self {
         Self::new(VectorStoreConfig::default()).with_sst_engine(engine)
     }
 
@@ -203,7 +203,7 @@ impl VectorStore {
     }
 
     /// Route to appropriate engine based on vector dimension
-    pub fn route_engine(&self, dimension: usize) -> Option<&Arc<dyn UnifiedStorageEngine>> {
+    pub fn route_engine(&self, dimension: usize) -> Option<&Arc<dyn UnifiedStorageFormat>> {
         if dimension > self.dimension_threshold {
             // High-dimensional: prefer HELIX
             self.helix_engine.as_ref().or(self.sst_engine.as_ref())
@@ -214,17 +214,17 @@ impl VectorStore {
     }
 
     /// Get the primary engine (SST for writes, HELIX for high-dim)
-    pub fn primary_engine(&self) -> Option<&Arc<dyn UnifiedStorageEngine>> {
+    pub fn primary_engine(&self) -> Option<&Arc<dyn UnifiedStorageFormat>> {
         self.sst_engine.as_ref().or(self.helix_engine.as_ref())
     }
 
     /// Get the SST engine directly
-    pub fn sst_engine(&self) -> Option<&Arc<dyn UnifiedStorageEngine>> {
+    pub fn sst_engine(&self) -> Option<&Arc<dyn UnifiedStorageFormat>> {
         self.sst_engine.as_ref()
     }
 
     /// Get the HELIX engine directly
-    pub fn helix_engine(&self) -> Option<&Arc<dyn UnifiedStorageEngine>> {
+    pub fn helix_engine(&self) -> Option<&Arc<dyn UnifiedStorageFormat>> {
         self.helix_engine.as_ref()
     }
 

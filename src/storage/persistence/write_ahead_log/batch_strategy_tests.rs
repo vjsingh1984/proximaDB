@@ -145,7 +145,7 @@ mod write_ahead_log_batch_strategy_tests {
 
         fn set_storage_engine(
             &self,
-            _storage_engine: Arc<dyn crate::storage::traits::UnifiedStorageEngine>,
+            _storage_engine: Arc<dyn crate::storage::traits::UnifiedStorageFormat>,
             _collection_id: &str,
         ) {
             // Mock implementation - no-op

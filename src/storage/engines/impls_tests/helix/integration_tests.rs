@@ -36,7 +36,7 @@ use crate::storage::engines::helix::*;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::{
     CompactionParameters, FlushParameters, OperationPriority, StorageQueryContext,
-    StorageQueryMetadata, UnifiedStorageEngine,
+    StorageQueryMetadata, UnifiedStorageFormat,
 };
 
 /// Create a test HelixEngine using new_with_config with a proper temp directory,

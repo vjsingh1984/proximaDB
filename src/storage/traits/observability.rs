@@ -142,7 +142,7 @@ pub struct NamespaceInfo {
 /// **SOLID Principles Applied:**
 /// - **S (Single Responsibility)**: Each sub-trait handles one data model
 /// - **O (Open/Closed)**: New data models can be added via new traits
-/// - **L (Liskov Substitution)**: Any implementing engine works as UnifiedStorageEngine
+/// - **L (Liskov Substitution)**: Any implementing engine works as UnifiedStorageFormat
 /// - **I (Interface Segregation)**: Clients can depend on specific sub-traits
 /// - **D (Dependency Inversion)**: Higher layers depend on these abstractions
 ///
@@ -150,12 +150,12 @@ pub struct NamespaceInfo {
 /// on top of their vector storage foundation.
 #[async_trait]
 pub trait MultiModelStorage:
-    super::UnifiedStorageEngine + super::DocumentStorageOperations + ObservabilityStorageOperations
+    super::UnifiedStorageFormat + super::DocumentStorageOperations + ObservabilityStorageOperations
 {
     /// Check which data models are supported by this engine.
     fn supported_models(&self) -> Vec<DataModel> {
         vec![
-            DataModel::Vector,        // Always supported via UnifiedStorageEngine
+            DataModel::Vector,        // Always supported via UnifiedStorageFormat
             DataModel::Document,      // Via DocumentStorageOperations
             DataModel::Observability, // Via ObservabilityStorageOperations
         ]

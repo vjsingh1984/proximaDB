@@ -9,7 +9,7 @@
 use crate::storage::persistence::write_ahead_log::{
     FlushDataSource, WALFlushCoordinator, config::SyncMode,
 };
-use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageEngine};
+use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageFormat};
 use anyhow::Result;
 use async_trait::async_trait;
 use proximadb_data_model::ProximaValue;
@@ -23,7 +23,7 @@ struct MockStorageEngine {
 }
 
 #[async_trait]
-impl UnifiedStorageEngine for MockStorageEngine {
+impl UnifiedStorageFormat for MockStorageEngine {
     fn engine_name(&self) -> &'static str {
         "MockEngine"
     }

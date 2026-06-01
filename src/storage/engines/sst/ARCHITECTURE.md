@@ -82,7 +82,7 @@ The SST (Sorted String Table) engine has been refactored from a monolithic 5,169
 - `SstableFileInfo`: File metadata
 
 ### Trait Implementation Module (`trait_impl.rs`) - 251 lines
-**Purpose**: Implement UnifiedStorageEngine trait
+**Purpose**: Implement UnifiedStorageFormat trait
 
 **Responsibilities**:
 - Implement all required trait methods
@@ -91,7 +91,7 @@ The SST (Sorted String Table) engine has been refactored from a monolithic 5,169
 - Performance optimization traits
 
 **Key Implementations**:
-- `UnifiedStorageEngine`: Main storage trait
+- `UnifiedStorageFormat`: Main storage trait
 - `UniversallyOptimized`: Performance optimization trait
 
 ### Blocks Module (`blocks.rs`) - 418 lines

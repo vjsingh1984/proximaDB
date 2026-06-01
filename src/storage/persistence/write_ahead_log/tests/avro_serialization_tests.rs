@@ -442,7 +442,7 @@ async fn test_avro_multiple_collections() {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageEngine};
+    use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageFormat};
     use async_trait::async_trait;
 
     /// Mock storage engine for testing
@@ -451,7 +451,7 @@ mod integration_tests {
     }
 
     #[async_trait]
-    impl UnifiedStorageEngine for MockStorageEngine {
+    impl UnifiedStorageFormat for MockStorageEngine {
         fn engine_name(&self) -> &'static str {
             "MockEngine"
         }

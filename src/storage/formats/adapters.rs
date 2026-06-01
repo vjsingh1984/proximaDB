@@ -2,7 +2,7 @@
 //!
 //! This module provides adapter types that connect the new storage format traits
 //! to existing storage engines. Following the Adapter Pattern, it wraps existing
-//! `UnifiedStorageEngine` implementations to provide the `InternalFormat` interface.
+//! `UnifiedStorageFormat` implementations to provide the `InternalFormat` interface.
 //!
 //! ## Architecture
 //!
@@ -11,7 +11,7 @@
 //! │                         ADAPTER PATTERN                                  │
 //! │                                                                          │
 //! │    ┌───────────────────────┐         ┌───────────────────────┐          │
-//! │    │   InternalFormat      │         │ UnifiedStorageEngine  │          │
+//! │    │   InternalFormat      │         │ UnifiedStorageFormat  │          │
 //! │    │   (New Trait)         │         │ (Existing Trait)      │          │
 //! │    └───────────┬───────────┘         └───────────┬───────────┘          │
 //! │                │                                 │                       │
@@ -19,7 +19,7 @@
 //! │                ▼                                 ▼                       │
 //! │    ┌─────────────────────────────────────────────────────────┐          │
 //! │    │           InternalFormatAdapter<E>                       │          │
-//! │    │   - Wraps UnifiedStorageEngine                          │          │
+//! │    │   - Wraps UnifiedStorageFormat                          │          │
 //! │    │   - Implements InternalFormat                           │          │
 //! │    │   - Translates between APIs                             │          │
 //! │    └─────────────────────────────────────────────────────────┘          │
@@ -57,17 +57,17 @@ use super::traits::{
     ReadContext, RecordBatchStream, StorageFormat, VectorBatch, VectorBatchStream,
     VectorReadContext, VectorWriteContext, WriteContext, WriteResult,
 };
-use crate::storage::traits::{StorageFormatStrategy, UnifiedStorageEngine};
+use crate::storage::traits::{StorageFormatStrategy, UnifiedStorageFormat};
 
 // ============================================================================
 // Internal Format Adapter
 // ============================================================================
 
-/// Adapter that wraps a `UnifiedStorageEngine` to provide `InternalFormat` interface.
+/// Adapter that wraps a `UnifiedStorageFormat` to provide `InternalFormat` interface.
 ///
 /// This adapter bridges the gap between:
 /// - **New API**: `InternalFormat` trait with Arrow RecordBatch-based I/O
-/// - **Existing API**: `UnifiedStorageEngine` trait with VectorRecord-based operations
+/// - **Existing API**: `UnifiedStorageFormat` trait with VectorRecord-based operations
 ///
 /// ## Design Notes
 ///
@@ -79,14 +79,14 @@ use crate::storage::traits::{StorageFormatStrategy, UnifiedStorageEngine};
 /// ## Thread Safety
 ///
 /// The adapter is `Send + Sync` as it only holds an `Arc` to the underlying engine.
-pub struct InternalFormatAdapter<E: UnifiedStorageEngine> {
+pub struct InternalFormatAdapter<E: UnifiedStorageFormat> {
     /// The wrapped storage engine
     engine: Arc<E>,
     /// Format version string
     format_version: String,
 }
 
-impl<E: UnifiedStorageEngine> InternalFormatAdapter<E> {
+impl<E: UnifiedStorageFormat> InternalFormatAdapter<E> {
     /// Create a new adapter wrapping the given storage engine
     pub fn new(engine: Arc<E>) -> Self {
         Self {
@@ -117,7 +117,7 @@ impl<E: UnifiedStorageEngine> InternalFormatAdapter<E> {
     }
 }
 
-impl<E: UnifiedStorageEngine> Debug for InternalFormatAdapter<E> {
+impl<E: UnifiedStorageFormat> Debug for InternalFormatAdapter<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InternalFormatAdapter")
             .field("engine_name", &self.engine.engine_name())
@@ -132,7 +132,7 @@ impl<E: UnifiedStorageEngine> Debug for InternalFormatAdapter<E> {
 // ============================================================================
 
 #[async_trait]
-impl<E: UnifiedStorageEngine + 'static> StorageFormat for InternalFormatAdapter<E> {
+impl<E: UnifiedStorageFormat + 'static> StorageFormat for InternalFormatAdapter<E> {
     fn format_name(&self) -> &str {
         self.engine.engine_name()
     }
@@ -225,7 +225,7 @@ impl<E: UnifiedStorageEngine + 'static> StorageFormat for InternalFormatAdapter<
 // ============================================================================
 
 #[async_trait]
-impl<E: UnifiedStorageEngine + 'static> InternalFormat for InternalFormatAdapter<E> {
+impl<E: UnifiedStorageFormat + 'static> InternalFormat for InternalFormatAdapter<E> {
     // ========================================================================
     // Read Path
     // ========================================================================

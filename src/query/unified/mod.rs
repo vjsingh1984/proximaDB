@@ -97,14 +97,14 @@ pub use uql::{UQLParser, UQLStatement};
 use crate::query::aql::{AqlQuery, AuditFrame, AuditOp, AuditOutcome, AuditTrail};
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::document::DocumentService;
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Unified query engine for cross-model queries
 pub struct UnifiedQueryEngine {
     /// Vector/document storage engine (Phase 2: direct engine access)
     #[allow(dead_code)]
-    storage_engine: Arc<dyn UnifiedStorageEngine>,
+    storage_engine: Arc<dyn UnifiedStorageFormat>,
     /// Vector operations service for vector searches (optional)
     vector_ops: Option<Arc<VectorOperationsService>>,
     /// Document service for JSON document queries
@@ -155,7 +155,7 @@ impl Default for UnifiedQueryConfig {
 impl UnifiedQueryEngine {
     /// Create a new unified query engine with full vector search support
     pub fn new(
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         vector_ops: Arc<VectorOperationsService>,
         document_service: Arc<DocumentService>,
         config: UnifiedQueryConfig,
@@ -178,7 +178,7 @@ impl UnifiedQueryEngine {
     /// queries will return empty results. Use `new()` with VectorOperationsService for
     /// full functionality.
     pub fn without_vector_ops(
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         document_service: Arc<DocumentService>,
         config: UnifiedQueryConfig,
     ) -> Self {

@@ -3,7 +3,7 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! Comprehensive unit tests for VIPER UnifiedStorageEngine implementation and atomic operations
+//! Comprehensive unit tests for VIPER UnifiedStorageFormat implementation and atomic operations
 
 use anyhow::Result;
 use std::sync::Arc;
@@ -13,7 +13,7 @@ use tokio;
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::viper::ViperEngine;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-use crate::storage::traits::{FlushParameters, StorageFormatStrategy, UnifiedStorageEngine};
+use crate::storage::traits::{FlushParameters, StorageFormatStrategy, UnifiedStorageFormat};
 use crate::storage::transaction_coordinator::{
     TransactionCoordinator, ViperTransactionalOperations,
 };
@@ -215,7 +215,7 @@ async fn test_dynamic_storage_engine_flush() -> Result<()> {
     let (viper_engine, _temp_dir) = create_test_viper_engine().await?;
 
     // This simulates how the memtable would call flush on a dynamically loaded engine
-    let storage_engine: Box<dyn UnifiedStorageEngine> = Box::new(viper_engine);
+    let storage_engine: Box<dyn UnifiedStorageFormat> = Box::new(viper_engine);
 
     let collection_id = "dynamic_test_collection";
 

@@ -1998,7 +1998,7 @@ impl BatchExtractionStats {
 // All writes go through WAL → Flush → SSTable directly
 // No intermediate memtable needed
 
-// Legacy flush method removed - all operations now use do_flush through UnifiedStorageEngine trait
+// Legacy flush method removed - all operations now use do_flush through UnifiedStorageFormat trait
 
 // SST is now pure SSTable storage - no memtable to query
 

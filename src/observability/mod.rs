@@ -132,7 +132,7 @@ use crate::proto::proximadb_v1::{
 
 /// Storage engine trait for observability data model (metrics, logs, traces).
 ///
-/// Unlike `UnifiedStorageEngine` (vector-centric), this trait operates on
+/// Unlike `UnifiedStorageFormat` (vector-centric), this trait operates on
 /// `MetricSample`, `LogEntry`, and `TraceData` natively. CHRONO implements this.
 #[async_trait]
 pub trait ObservabilityStorageEngine: Send + Sync {

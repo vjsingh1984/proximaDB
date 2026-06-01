@@ -90,7 +90,7 @@ use crate::query::unified::{
 use crate::security::rbac_service::ConsolidatedRBACManager;
 use crate::services::VectorOperationsService;
 use crate::storage::document::DocumentService;
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 use proximadb_vector_query::VectorQueryService;
 
 /// Unified Query API state with all services for cross-model queries
@@ -149,7 +149,7 @@ pub struct UnifiedQueryApiState {
     /// Document service for document queries (legacy mode)
     pub document_service: Arc<DocumentService>,
     /// Storage engine for vector queries (legacy mode)
-    pub storage_engine: Arc<dyn UnifiedStorageEngine>,
+    pub storage_engine: Arc<dyn UnifiedStorageFormat>,
     /// Vector operations service for vector searches (legacy mode)
     pub vector_ops: Option<Arc<VectorOperationsService>>,
     /// Vector query service trait object (Phase 2.3 - preferred interface)
@@ -188,7 +188,7 @@ impl UnifiedQueryApiState {
     pub fn new_with_adapter(
         adapter: Arc<QueryFacadeAdapter>,
         document_service: Arc<DocumentService>,
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
     ) -> Self {
         let config = UnifiedQueryConfig::default();
         Self {
@@ -232,7 +232,7 @@ impl UnifiedQueryApiState {
     pub fn new_with_adapter_and_prepared_config(
         adapter: Arc<QueryFacadeAdapter>,
         document_service: Arc<DocumentService>,
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         prepared_config: PreparedStatementConfig,
     ) -> Self {
         let config = UnifiedQueryConfig::default();

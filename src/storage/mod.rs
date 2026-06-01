@@ -100,9 +100,9 @@
 //! ## Key Features
 //!
 //! ### Strategy Pattern
-//! All engines implement `UnifiedStorageEngine` trait:
+//! All engines implement `UnifiedStorageFormat` trait:
 //! ```rust,ignore
-//! trait UnifiedStorageEngine {
+//! trait UnifiedStorageFormat {
 //!     async fn insert(&self, records: Vec<VectorRecord>) -> Result<InsertResult>;
 //!     async fn search(&self, query: SearchQuery) -> Result<SearchResult>;
 //!     async fn flush(&self, params: FlushParameters) -> Result<FlushResult>;
@@ -263,7 +263,7 @@ pub use types::StorageEngineType;
 // Strategy pattern exports
 pub use traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
-    FlushResult as TraitFlushResult, StorageFormatStrategy, UnifiedStorageEngine,
+    FlushResult as TraitFlushResult, StorageFormatStrategy, UnifiedStorageFormat,
 };
 
 // New decomposed trait hierarchy (ISP-compliant)

@@ -266,7 +266,7 @@ pub fn unique_collection_id(prefix: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::traits::UnifiedStorageEngine;
+    use crate::storage::traits::UnifiedStorageFormat;
 
     #[tokio::test]
     async fn test_create_test_engine() {
