@@ -62,7 +62,163 @@ curl -X POST http://localhost:5678/api/v2/_diagnostics/collections/my_vec_collec
 | `max_ef_search:` | u32 | HNSW-specific latency cap | unset | [16, 2048]
 | `max_query_latency_ms:` | f64 | Algorithm-agnostic latency cap | unset | [0.1, 10000]
 | `max_memory_mb:` | f64 | Memory budget for algorithm selection | unset | [1.0, 1048576]
+| `binary_rerank:enabled` | bool | IVF + PQ rerank — lifts IVF ceiling 0.74 → 0.95 | off | n/a
+| `modalities:text,image,…` | csv | Multi-modal collection → routes to HMGI | empty | normalised lowercase
 |===
+
+== Algorithm selection (HNSW + IVF + HMGI)
+
+The selector picks based on declared budgets and tags. Priority
+order:
+
+1. Candidates that honor `recall_target` cleanly (no clamp).
+2. Among those: filter by `max_memory_mb`.
+3. Then by `max_query_latency_ms`.
+4. Then prefer lowest `estimated_per_query_work` (or lowest memory
+   if `OptimizationGoal::MinMemory`).
+5. Tie-break: prefer HNSW (mature drift / hot-swap pipeline).
+
+|===
+| Algorithm | When the selector picks it | Recall ceiling | Memory (N=100K dim=128)
+
+| **HNSW**
+| `recall_target ≥ 0.85` with no binding memory cap.
+  Default for most collections.
+| ~1.00 at m=48 ef=600+ (per the m=48 sweep)
+| ~62 MB at m=32
+
+| **IVF (single-stage)**
+| `recall_target ≤ 0.74` AND memory budget excludes HNSW.
+  Or operator explicitly attached an IVF `IndexConfig`.
+| ~0.74 at nlist=316 nprobe=200 (k-means + centroid-probe plateau)
+| ~51 MB
+
+| **IVF + PQ rerank**
+| Same as IVF but `binary_rerank:enabled` tag set.
+  Adds a `PQ` quantizer to the IVF spec; advisor lifts ceiling.
+| ~0.95 (design-time target — empirical calibration via the
+  P2 sweep would tighten this)
+| ~1 MB (PQ codes + codebook)
+
+| **HMGI**
+| Collection has `modalities:` tag with ≥ 2 entries.
+  Each modality gets its own internal HNSW partition.
+| Bounded by the **worst** per-partition HNSW recall
+| Sum across modality partitions
+|===
+
+The 0.74 IVF ceiling is fundamental to k-means + centroid-distance
+probing at sub-full-scan `nprobe`. Better clustering (HKM,
+spherical k-means) lifts it ~5-10pp. PQ-quantized rerank (the
+**right lever**) lifts it ~15-20pp.
+
+== Multi-modal collections (HMGI)
+
+Set `modalities:text,image,video` to opt into HMGI partitioning.
+Each modality runs an internal HNSW sized per-partition by the
+HNSW advisor — operators get HNSW's recall ceiling at the
+per-modality level while reducing search space via the
+[`HmgiRouter`].
+
+[source,bash]
+----
+curl -X POST http://localhost:5678/api/v1/collections \
+  -d '{
+    "name": "multimodal_search",
+    "dimension": 768,
+    "tags": [
+      "recall_target:0.95",
+      "modalities:text,image,video"
+    ]
+  }'
+----
+
+What happens server-side:
+
+. `engine_selector` picks SST (recall_target activates the
+  recall-aware path).
+. `recall_target` wiring detects ≥ 2 modalities, routes to
+  `AnnSelector::select_and_advise` with `modalities` populated.
+. `HmgiIndexAdvisor` activates, decides per-modality N
+  (rough = `total / num_modalities`), delegates HNSW sizing
+  per partition.
+. The synthesized `IndexConfig` is named
+  `auto_hmgi_recall_target` with `IndexAlgorithm::HMGI` carrying
+  the per-modality partition specs.
+. Queries route through `HmgiRouter` — filters with
+  `_modality:text` only fan out to the text partition.
+
+Trade-offs:
+
+* Recall is bounded by the **worst** per-modality HNSW — if one
+  modality has unusual data (e.g. very high dim, very sparse) it
+  drags the joint recall.
+* Memory is **sum** across partitions — declaring 5 modalities at
+  the same total N costs ~5× the memory of a single-modality
+  HNSW (per-partition graph edges).
+* Per-query latency is **max** across probed partitions
+  (parallel fan-out via `tokio::JoinSet`).
+* `max_partitions_per_query` defaults to `num_modalities`
+  (full fan-out). Lower values trade recall for latency.
+
+== Observability — advisor accuracy metrics
+
+Every search against an advisor-managed collection emits a
+captured observation. Three Prometheus surfaces, all labelled by
+`(collection, algorithm)`:
+
+[source,promql]
+----
+# Activity heartbeat — does this collection see any traffic?
+axis_advisor_observations_total{collection="…", algorithm="hnsw"}
+
+# Advisor calibration accuracy — distribution of
+# (observed_recall - advisor_predicted_recall).
+# Centred at 0 → formula matches reality.
+# Skewed negative → advisor over-promised; positive → under-promised.
+axis_advisor_recall_residual{collection="…", algorithm="ivf"}
+
+# Per-search latency in microseconds. Used to validate the cost
+# model (`estimated_per_query_work`).
+axis_advisor_latency_us{collection="…", algorithm="hmgi"}
+----
+
+The recall-residual histogram only populates when the collection's
+`recall_probe` gate (TD-075 / F2) is active. Without recall_probe,
+observations still bump the counter + latency histogram — only the
+residual is skipped.
+
+=== Offline collection (disk sidecar)
+
+Set the env var to capture per-search JSONL observations:
+
+[source,bash]
+----
+export PROXIMADB_ADVISOR_OBS_DISK_SIDECAR=/tmp/proximadb_advisor_obs.jsonl
+# Every search now appends one line to that file:
+# {"collection_id":"...", "algorithm":"hnsw", "sized_params":{...},
+#  "advisor_predicted_recall":0.95, "observed_recall":null,
+#  "advisor_predicted_work":405, "observed_latency_us":238,
+#  "timestamp_ns":1717…}
+----
+
+Useful for offline calibration analysis without scraping
+Prometheus.
+
+=== What's deferred to a future RL bridge (P5+)
+
+P4 builds the **dataset**, not the feedback loop. The advisor's
+`A(m)`, `ceiling(m)`, `recall_factor`, `ceiling_of_n`, IVF
+formula constants remain closed-form. A P5 RL bridge would:
+
+. Read accumulated observations from Prometheus / disk sidecar.
+. Fit per-collection adjustments to the static formula constants.
+. Apply adjustments only when sample-count + regression-protection
+  thresholds clear.
+
+The query-time RL planner at `src/query/rl_planner/` (Thompson
+Sampling, experience buffer) provides the infrastructure. Bridging
+it to the index advisor is P5+ scope.
 
 == Algorithm selection (P1: HNSW + IVF)
 
