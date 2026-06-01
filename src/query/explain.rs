@@ -731,6 +731,47 @@ pub struct VectorHints {
     /// Why the planner chose this mode (selectivity estimate, policy override, degradation).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ann_mode_reason: Option<String>,
+    /// TurboQuant EXPLAIN hints (Phase F — Quantization Trait Convergence
+    /// Plan). Populated when the search ran through a `ReadTime`-lifecycle
+    /// quantization method (TurboQuant today). The value is the
+    /// `TurboQuantExplainHints` struct serialized via its own
+    /// `to_explain_value()` method (`src/index/turboquant_bridge.rs:298`),
+    /// so the wire shape stays stable across REST / gRPC / Arrow Flight /
+    /// pgwire per ADR-004 §"Plan Operators".
+    ///
+    /// The 9 fields surfaced (when present) are: `quantization`,
+    /// `calibration_mode`, `rotation_seed`, `encoded_epoch`,
+    /// `current_epoch`, `mask_pushed_to_kernel`, `kernel_arch`,
+    /// `blocks_skipped_by_mask`, `length_renorm_applied`, plus optional
+    /// `candidate_set_size` and `n_vectors_scanned`. See the
+    /// `TurboQuantExplainHints` doc in the bridge for field semantics
+    /// and the `current_epoch == None` rendering convention.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turboquant: Option<serde_json::Value>,
+}
+
+impl VectorHints {
+    /// Builder-style setter for the TurboQuant EXPLAIN hint payload.
+    /// Accepts the bridge's already-shipped `TurboQuantExplainHints`
+    /// builder output and serializes it via `to_explain_value()` so the
+    /// hint round-trips cleanly across every protocol surface (per
+    /// ADR-004). Returns `self` for chaining at the constructor site.
+    ///
+    /// Available behind `experimental-turboquant` to mirror the bridge
+    /// type's feature gate; non-TurboQuant builds carry no `serde_json`
+    /// payload here.
+    #[cfg(feature = "experimental-turboquant")]
+    pub fn with_turboquant_hints(
+        mut self,
+        hints: &crate::index::turboquant_bridge::TurboQuantExplainHints,
+    ) -> Self {
+        self.turboquant = Some(hints.to_explain_value());
+        // Mirror the quantization name into the existing top-level
+        // `quantization_level` field so legacy EXPLAIN consumers that
+        // only read that one slot still see the right value.
+        self.quantization_level = Some(hints.quantization.clone());
+        self
+    }
 }
 
 impl From<&crate::services::operations::vectors::SearchPlanHints> for VectorHints {
@@ -1876,6 +1917,92 @@ mod tests {
             vector_hints.ann_mode_reason.as_deref(),
             Some("PostFilter selected from cost_analysis selectivity=0.900000")
         );
+    }
+
+    #[test]
+    fn vector_hints_default_skips_turboquant_field_in_serialized_wire_shape() {
+        // The `turboquant` field is `Option<serde_json::Value>` with
+        // `skip_serializing_if = "Option::is_none"`. Default-constructed
+        // VectorHints must not surface a stale-null `turboquant` key —
+        // EXPLAIN consumers that read JSON would otherwise infer
+        // "TurboQuant ran but had nothing to say" from a `null`. Lock
+        // the shape with a literal-presence assertion.
+        let h = VectorHints::default();
+        let s = serde_json::to_string(&h).expect("VectorHints serializes");
+        assert!(
+            !s.contains("\"turboquant\""),
+            "wire shape leaked `turboquant` key: {s}",
+        );
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn vector_hints_with_turboquant_hints_serializes_full_payload() {
+        // Build a TurboQuantExplainHints, run it through the builder,
+        // and verify the EXPLAIN JSON carries every load-bearing field
+        // under the `turboquant` key. This is the wire-contract test
+        // for ADR-004 EXPLAIN integration of TurboQuant — every protocol
+        // (REST / gRPC / Arrow Flight / pgwire) reads the same key
+        // shape.
+        use crate::index::turboquant_bridge::{KernelArch, TurboQuantExplainHints};
+        use proximadb_quantization_types::CalibrationMode;
+        use proximadb_vector::quantization::turboquant::TurboQuantStore;
+
+        let store = TurboQuantStore::new(64, 4, CalibrationMode::Identity, 0xabcd).unwrap();
+        let tq = TurboQuantExplainHints::for_search(&store)
+            .with_encoded_epoch(11)
+            .with_current_epoch(11)
+            .with_mask_pushed(true)
+            .with_kernel_arch(KernelArch::Scalar)
+            .with_blocks_skipped(42)
+            .with_candidate_set_size(128)
+            .with_n_vectors_scanned(2048);
+
+        let hints = VectorHints::default().with_turboquant_hints(&tq);
+
+        // Top-level mirror: legacy consumers reading just
+        // `quantization_level` get the right value.
+        assert_eq!(hints.quantization_level.as_deref(), Some("turboquant_4bit"));
+
+        // Full payload under the new key.
+        let v = serde_json::to_value(&hints).expect("VectorHints serializes");
+        let tq_obj = v
+            .get("turboquant")
+            .expect("turboquant key present")
+            .as_object()
+            .expect("turboquant is a JSON object");
+        assert_eq!(tq_obj.get("quantization").and_then(|v| v.as_str()), Some("turboquant_4bit"));
+        assert_eq!(tq_obj.get("calibration_mode").and_then(|v| v.as_str()), Some("identity"));
+        assert_eq!(tq_obj.get("encoded_epoch").and_then(|v| v.as_u64()), Some(11));
+        assert_eq!(tq_obj.get("current_epoch").and_then(|v| v.as_u64()), Some(11));
+        assert_eq!(tq_obj.get("mask_pushed_to_kernel").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(tq_obj.get("kernel_arch").and_then(|v| v.as_str()), Some("scalar"));
+        assert_eq!(tq_obj.get("blocks_skipped_by_mask").and_then(|v| v.as_u64()), Some(42));
+        assert_eq!(tq_obj.get("length_renorm_applied").and_then(|v| v.as_bool()), Some(true));
+        assert_eq!(tq_obj.get("candidate_set_size").and_then(|v| v.as_u64()), Some(128));
+        assert_eq!(tq_obj.get("n_vectors_scanned").and_then(|v| v.as_u64()), Some(2048));
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn vector_hints_with_turboquant_hints_round_trips_through_serde() {
+        // Round-trip through to_string + from_str must preserve every
+        // field — otherwise a REST → server → REST shape change is
+        // silent. The contract is locked.
+        use crate::index::turboquant_bridge::TurboQuantExplainHints;
+        use proximadb_quantization_types::CalibrationMode;
+        use proximadb_vector::quantization::turboquant::TurboQuantStore;
+
+        let store = TurboQuantStore::new(64, 2, CalibrationMode::Identity, 0x1234).unwrap();
+        let tq = TurboQuantExplainHints::for_search(&store)
+            .with_encoded_epoch(1)
+            .with_mask_pushed(false)
+            .with_blocks_skipped(0);
+        let hints = VectorHints::default().with_turboquant_hints(&tq);
+        let s = serde_json::to_string(&hints).expect("serialize");
+        let back: VectorHints = serde_json::from_str(&s).expect("deserialize");
+        assert_eq!(back.quantization_level, hints.quantization_level);
+        assert_eq!(back.turboquant, hints.turboquant);
     }
 
     #[test]
